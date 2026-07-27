@@ -12,7 +12,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 compact = ToolDescription(
     tool_name="compact",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Let the model voluntarily free context-window room ahead of the "
         "mandatory retry_loop backstop compaction, when it still has work "

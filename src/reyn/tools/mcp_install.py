@@ -1,9 +1,11 @@
 """mcp_install ToolDefinition (ADR-0026 + ADR-0029).
 
-MCP_INSTALL_OP is phase-only (gates.router="deny", gates.phase="allow").
-Install operations are gated at the phase level — not callable directly
-from the router — to ensure proper registry lookup, permission gating,
-and credential prompting are executed via op_runtime.
+MCP_INSTALL_OP carries ``gates.router="deny"`` — install is deliberately not
+advertised in the chat router's ``tools=``, so registry lookup, permission
+gating and credential prompting always run through op_runtime. The phase
+surface that used to invoke it is gone (#2434 / #2438); what remains is the
+bare-name path (a pipeline ``tool: mcp_install`` step resolves through
+``ToolRegistry.lookup``, which does not consult ``gates.router``).
 
 The handler delegates to op_runtime.mcp_install.handle, which performs:
   1. Registry fetch (RegistryClient.get_server)
@@ -113,7 +115,7 @@ MCP_INSTALL_OP = ToolDefinition(
     name="mcp_install",
     description=_MCP_INSTALL_DESCRIPTION,
     parameters=_MCP_INSTALL_PARAMETERS,
-    gates=ToolGates(router="deny", phase="allow"),
+    gates=ToolGates(router="deny"),
     handler=_handle_mcp_install_op,
     category="io",
     purity="side_effect",

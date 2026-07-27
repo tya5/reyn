@@ -76,7 +76,6 @@ def test_edit_file_gates_router_and_phase_allow() -> None:
     td = get_default_registry().lookup("edit_file")
     assert td is not None
     assert td.gates.router == "allow"
-    assert td.gates.phase == "allow"
 
 
 def test_edit_file_purity_is_side_effect() -> None:

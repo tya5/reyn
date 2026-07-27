@@ -16,8 +16,12 @@ audience: [human, agent]
 > `OSRuntime` and the `control`/`artifact`/`control_ir` envelope do not exist in
 > current source. Those sections have been removed. Section 4 (the unified
 > `ToolRegistry` implementation log) remains accurate — it documents the still-
-> current architecture — except that its `gates(phase=...)` references are now
-> vestigial (no phase surface consumes them). §2.1's tool-inventory description
+> current architecture — except that its `gates(phase=...)` references describe a
+> field that **no longer exists**: the #2696 drift-audit deleted `ToolGates.phase`,
+> `ToolRegistry.for_phase()` and `ToolDefinition.render_for_phase()` outright, so
+> `ToolGates` now has a single `router` axis. Read §4's `phase=` mentions as a
+> historical record of what was registered at the time, not as current fields.
+> §2.1's tool-inventory description
 > has been corrected twice now: first from the dead "13 always-present +
 > conditional" per-kind list to an (incorrect) claim that the universal-action-
 > catalog wrapper mode is the chat layer's production default; that second

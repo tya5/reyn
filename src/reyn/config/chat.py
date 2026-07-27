@@ -101,8 +101,6 @@ class TimeoutConfig:
             Per-call timeout passed to ``litellm.acompletion``.
         llm_max_retries:
             Transient-error retry budget per call.
-        phase_seconds:
-            Soft wall-clock budget for one phase visit. ``0`` = unlimited.
         chain_seconds:
             How long a multi-agent pending chain waits for a delegate
             reply before the runtime synthesises an upstream error.
@@ -111,7 +109,6 @@ class TimeoutConfig:
 
     llm_call_seconds: float = 60.0
     llm_max_retries: int = 3
-    phase_seconds: float = 0.0
     chain_seconds: float = 60.0
 
 
@@ -145,7 +142,7 @@ class OnLimitConfig:
       extensions are acceptable.
 
     The mode applies to the user-facing limits listed in FP-0005 §
-    "limit ごとの適用可否" (router_cap, max_agent_hops, phase_seconds, chain_seconds).
+    "limit ごとの適用可否" (router_cap, max_agent_hops, chain_seconds).
     LLM call timeouts already retry via litellm and are not part of this
     pipeline.
 
@@ -522,41 +519,6 @@ class ChatConfig:
     render_mode: Literal["alt-screen", "inline", "plain", "auto"] = "alt-screen"
 
 
-@dataclass
-class PhaseActResultsCompactionConfig:
-    """`phase.act_results_compaction:` — phase act-loop control_ir_results
-    compaction policy. Sibling to CompactionConfig (chat).
-
-    When accumulated ``control_ir_results`` in a phase's act loop would push
-    the next prompt over the model's effective context budget, older results
-    (outside the ``recent_act_turns_raw`` window) are summarised by
-    ``CompactionEngine`` using a phase-specific system prompt that preserves
-    op-kind structured data (paths, line numbers, exit codes, etc.).
-
-    Fields
-    ------
-    recent_act_turns_raw:
-        Keep the last N act-turn results verbatim; compact older ones.
-        Default 5 (a wider raw window than chat compaction because phase ops
-        carry specific data the LLM needs to plan next ops).
-    control_ir_results_ratio:
-        Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
-        control_ir_results portion of the act-loop context. Sibling to
-        CompactionConfig.component_weights["body"].  Default 0.50.
-    summarize_older_threshold_tokens:
-        Total token threshold above which older results are compacted.
-        ``None`` uses ``control_ir_results_ratio × main_pool`` derived from the
-        engine's ComputedBudgets.
-    use_chars4_estimate:
-        When True, use len(text)//4 for token estimation instead of
-        litellm.token_counter (latency opt-out, mirrors CompactionConfig).
-    """
-    recent_act_turns_raw: int = 5
-    control_ir_results_ratio: float = 0.50
-    summarize_older_threshold_tokens: int | None = None
-    use_chars4_estimate: bool = False
-
-
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
     """#1652: parse ``chat.reasoning`` (continuity / display / recent_turns)."""
     defaults = ReasoningConfig()
@@ -678,57 +640,6 @@ def _build_chat_config(raw: object) -> ChatConfig:
     )
 
 
-def _build_phase_act_results_compaction_config(
-    raw: object,
-) -> "PhaseActResultsCompactionConfig":
-    """Parse ``phase.act_results_compaction:`` sub-block.
-
-    Missing / non-dict block returns defaults.  Unknown keys are ignored
-    (forward-compat).
-    """
-    defaults = PhaseActResultsCompactionConfig()
-    if not isinstance(raw, dict):
-        return defaults
-
-    recent_raw = raw.get("recent_act_turns_raw")
-    try:
-        recent = int(recent_raw) if recent_raw is not None else defaults.recent_act_turns_raw
-    except (TypeError, ValueError):
-        recent = defaults.recent_act_turns_raw
-    if recent < 0:
-        recent = defaults.recent_act_turns_raw
-
-    threshold_raw = raw.get("summarize_older_threshold_tokens")
-    if threshold_raw is None:
-        threshold: int | None = None
-    else:
-        try:
-            threshold = int(threshold_raw)
-            if threshold <= 0:
-                threshold = None
-        except (TypeError, ValueError):
-            threshold = None
-
-    ratio_raw = raw.get("control_ir_results_ratio")
-    try:
-        ratio = float(ratio_raw) if ratio_raw is not None else defaults.control_ir_results_ratio
-    except (TypeError, ValueError):
-        ratio = defaults.control_ir_results_ratio
-    if not (0.0 < ratio <= 1.0):
-        ratio = defaults.control_ir_results_ratio
-
-    use_chars4 = bool(raw.get("use_chars4_estimate", defaults.use_chars4_estimate))
-
-    return PhaseActResultsCompactionConfig(
-        recent_act_turns_raw=recent,
-        control_ir_results_ratio=ratio,
-        summarize_older_threshold_tokens=threshold,
-        use_chars4_estimate=use_chars4,
-    )
-
-
-
-
 # ── FP-0004: safety: section parsers ───────────────────────────────────────
 
 
@@ -781,9 +692,6 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         llm_max_retries=int(timeout_raw.get(
             "llm_max_retries", timeout_defaults.llm_max_retries,
-        )),
-        phase_seconds=float(timeout_raw.get(
-            "phase_seconds", timeout_defaults.phase_seconds,
         )),
         chain_seconds=float(timeout_raw.get(
             "chain_seconds", timeout_defaults.chain_seconds,

@@ -62,7 +62,6 @@ from reyn.prompt.codeact import (
 )
 from reyn.prompt.compaction import (
     COMPACTION_SYSTEM_PROMPT,
-    PHASE_COMPACTION_SYSTEM_PROMPT,
     RESUMMARIZE_SYSTEM_PROMPT,
 )
 from reyn.prompt.dogfood import (
@@ -114,7 +113,6 @@ __all__ = [
     "CODEACT_STDOUT_LABEL",
     "CODEACT_STDERR_LABEL",
     "COMPACTION_SYSTEM_PROMPT",
-    "PHASE_COMPACTION_SYSTEM_PROMPT",
     "RESUMMARIZE_SYSTEM_PROMPT",
     "DOGFOOD_INTERPRETATION_SYSTEM_PROMPT",
     "DOGFOOD_JUDGE_EVALUATOR_HEADER",

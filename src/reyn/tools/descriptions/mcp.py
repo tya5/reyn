@@ -21,7 +21,7 @@ Covers, by origin module:
     list_mcp_prompts, get_mcp_prompt.
   ``mcp_verbs.py``: mcp_install_registry, mcp_install_package,
     mcp_install_local, mcp_call_tool.
-  ``mcp_install.py``: mcp_install (phase-only legacy install op).
+  ``mcp_install.py``: mcp_install (legacy install op, gates.router=deny).
   ``mcp_drop.py``: mcp_drop_server.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 list_mcp_servers = ToolDescription(
     tool_name="list_mcp_servers",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — Type C closure",
+    surfaced="router (gates.router=allow)",
     purpose="Enumerate configured MCP servers (name + description) for this agent.",
     text=(
         "List available MCP servers configured for this agent. "
@@ -41,7 +41,7 @@ list_mcp_servers = ToolDescription(
 
 list_mcp_tools = ToolDescription(
     tool_name="list_mcp_tools",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — Type C closure",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "List the tools exposed by one MCP server, including inputSchema, "
         "so the LLM can construct call_mcp_tool args without an extra "
@@ -56,7 +56,7 @@ list_mcp_tools = ToolDescription(
 
 call_mcp_tool = ToolDescription(
     tool_name="call_mcp_tool",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Invoke a named tool on an MCP server with args matching its "
         "declared input schema."
@@ -73,7 +73,7 @@ call_mcp_tool = ToolDescription(
 
 describe_mcp_tool = ToolDescription(
     tool_name="describe_mcp_tool",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — FP-0032 D4",
+    surfaced="router (gates.router=allow) — FP-0032 D4",
     purpose=(
         "Fetch one MCP tool's input schema when unsure how to construct "
         "call_mcp_tool's args."
@@ -91,7 +91,7 @@ describe_mcp_tool = ToolDescription(
 
 list_mcp_resources = ToolDescription(
     tool_name="list_mcp_resources",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②a",
+    surfaced="router (gates.router=allow) — #2597 slice ②a",
     purpose="Enumerate one MCP server's resources (uri + description per resource).",
     text=(
         "List resources exposed by one MCP server "
@@ -102,7 +102,7 @@ list_mcp_resources = ToolDescription(
 
 list_mcp_resource_templates = ToolDescription(
     tool_name="list_mcp_resource_templates",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②a",
+    surfaced="router (gates.router=allow) — #2597 slice ②a",
     purpose=(
         "Enumerate one MCP server's parameterized resource-URI templates, "
         "distinct from list_mcp_resources' concrete resource list."
@@ -120,7 +120,7 @@ list_mcp_resource_templates = ToolDescription(
 
 read_mcp_resource = ToolDescription(
     tool_name="read_mcp_resource",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②a",
+    surfaced="router (gates.router=allow) — #2597 slice ②a",
     purpose=(
         "Read one MCP resource's content by URI, resolved from "
         "list_mcp_resources or a list_mcp_resource_templates template."
@@ -139,7 +139,7 @@ read_mcp_resource = ToolDescription(
 
 subscribe_mcp_resource = ToolDescription(
     tool_name="subscribe_mcp_resource",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②b",
+    surfaced="router (gates.router=allow) — #2597 slice ②b",
     purpose=(
         "Subscribe to server-pushed change notifications for one MCP "
         "resource; the notification itself carries no content — "
@@ -162,7 +162,7 @@ subscribe_mcp_resource = ToolDescription(
 
 unsubscribe_mcp_resource = ToolDescription(
     tool_name="unsubscribe_mcp_resource",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②b",
+    surfaced="router (gates.router=allow) — #2597 slice ②b",
     purpose="Cancel a previously-established subscribe_mcp_resource subscription.",
     text=(
         "Unsubscribe from server-pushed updates for one MCP resource by URI "
@@ -176,7 +176,7 @@ unsubscribe_mcp_resource = ToolDescription(
 
 list_mcp_prompts = ToolDescription(
     tool_name="list_mcp_prompts",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②c",
+    surfaced="router (gates.router=allow) — #2597 slice ②c",
     purpose="Enumerate one MCP server's prompts (name + description + arguments).",
     text=(
         "List prompts exposed by one MCP server "
@@ -190,7 +190,7 @@ list_mcp_prompts = ToolDescription(
 
 get_mcp_prompt = ToolDescription(
     tool_name="get_mcp_prompt",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — #2597 slice ②c",
+    surfaced="router (gates.router=allow) — #2597 slice ②c",
     purpose=(
         "Fetch one MCP prompt's rendered messages by name, using the "
         "argument schema from list_mcp_prompts."
@@ -207,7 +207,7 @@ get_mcp_prompt = ToolDescription(
 
 mcp_install_registry = ToolDescription(
     tool_name="mcp_install_registry",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — install source-axis split",
+    surfaced="router (gates.router=allow) — install source-axis split",
     purpose=(
         "Install an MCP server from the official registry by server_id "
         "(paired with mcp_search_registry candidates), handling the "
@@ -232,7 +232,7 @@ mcp_install_registry = ToolDescription(
 
 mcp_install_package = ToolDescription(
     tool_name="mcp_install_package",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — install source-axis split",
+    surfaced="router (gates.router=allow) — install source-axis split",
     purpose=(
         "Install an MCP server from a third-party package channel "
         "(npm/pypi/docker) or a GitHub repo URL, for servers not in the "
@@ -256,7 +256,7 @@ mcp_install_package = ToolDescription(
 
 mcp_install_local = ToolDescription(
     tool_name="mcp_install_local",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — install source-axis split",
+    surfaced="router (gates.router=allow) — install source-axis split",
     purpose=(
         "Register a local MCP server ({command, args} pair) directly, for "
         "LLM-authored scripts or local dev servers, bypassing package "
@@ -280,7 +280,7 @@ mcp_install_local = ToolDescription(
 mcp_call_tool = ToolDescription(
     tool_name="mcp_call_tool",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — generic "
+        "router (gates.router=allow) — generic "
         "fallback beneath per-tool universal-catalog actions"
     ),
     purpose=(
@@ -311,7 +311,7 @@ mcp_call_tool = ToolDescription(
 mcp_install = ToolDescription(
     tool_name="mcp_install",
     surfaced=(
-        "phase-only (gates.router=deny, gates.phase=allow) — legacy Control "
+        "not surfaced (gates.router=deny) — legacy Control "
         "IR install op, ADR-0026 + ADR-0029"
     ),
     purpose=(
@@ -340,7 +340,7 @@ mcp_install = ToolDescription(
 
 mcp_drop_server = ToolDescription(
     tool_name="mcp_drop_server",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow) — FP-0034 §D23",
+    surfaced="router (gates.router=allow) — FP-0034 §D23",
     purpose=(
         "Remove a configured MCP server entry (the destructor counterpart "
         "to mcp_install), optionally clearing its secrets, gated by a "

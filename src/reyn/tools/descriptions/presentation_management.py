@@ -14,7 +14,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 presentation_install = ToolDescription(
     tool_name="presentation_install_local",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Register a named presentation template (a declarative component "
         "tree) into the project config so a present(view=<name>) op can "

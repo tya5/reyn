@@ -26,7 +26,7 @@ class ToolDescription:
             belongs to (e.g. ``"semantic_search"``). Used by the liveness
             check to confirm every entry maps to a real registered tool.
         surfaced: WHEN/WHERE this description is surfaced — which gates
-            (router/phase) and which scheme(s) expose it to the LLM.
+            (``gates.router``) and which scheme(s) expose it to the LLM.
         purpose: WHY this tool exists, in one line.
         text: The EXACT string sent to the LLM as
             ``ToolDefinition.description``. Must be byte-identical to the

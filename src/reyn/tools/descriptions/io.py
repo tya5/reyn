@@ -23,7 +23,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 read_file = ToolDescription(
     tool_name="read_file",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Read a file's contents under the agent's read scope, with "
         "guidance toward conventional project-root file locations."
@@ -48,7 +48,7 @@ read_file = ToolDescription(
 
 write_file = ToolDescription(
     tool_name="write_file",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Create or overwrite a whole file under the agent's write scope; "
         "steers the LLM toward edit_file for partial changes."
@@ -69,7 +69,7 @@ write_file = ToolDescription(
 
 delete_file = ToolDescription(
     tool_name="delete_file",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose="Delete a file under the agent's write scope.",
     text="Delete a file under the agent's write scope.",
     ja="エージェントの書き込みスコープ内のファイルを削除する。",
@@ -77,7 +77,7 @@ delete_file = ToolDescription(
 
 edit_file = ToolDescription(
     tool_name="edit_file",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Replace a unique string in an existing file for a partial/surgical "
         "edit, avoiding a whole-file read+write round-trip."
@@ -101,7 +101,7 @@ edit_file = ToolDescription(
 
 grep_files = ToolDescription(
     tool_name="grep_files",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Search for a regex pattern across files under the agent's read "
         "scope, distinct from list_directory's name-only enumeration."
@@ -122,7 +122,7 @@ grep_files = ToolDescription(
 
 glob_files = ToolDescription(
     tool_name="glob_files",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Enumerate files by name/glob pattern under the agent's read scope, "
         "distinct from list_directory's flat single-level listing."
@@ -143,7 +143,7 @@ glob_files = ToolDescription(
 
 list_directory = ToolDescription(
     tool_name="list_directory",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "List a single directory's immediate contents (names + types) "
         "under the agent's read scope — the flat, non-recursive counterpart "

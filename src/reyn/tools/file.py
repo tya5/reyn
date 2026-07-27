@@ -1,14 +1,9 @@
 """file_* ToolDefinitions — fine-grained file ops migration (ADR-0026 M3 Wave 2).
 
 Per ADR-0026 Open Q #6: adopt router-side fine-grained names as canonical
-(= read_file, write_file, delete_file, list_directory). The phase-side
-coarse-grained `file` op with `op` discriminator is the legacy form
-that gets unbundled here.
-
-Per ADR-0026 Open Q #7: existing phase frontmatter `allowed_ops: ["file"]`
-will continue to work via prefix-wildcard semantics in the phase dispatcher
-(= M4 cleanup). For now, the 4 ToolDefinitions are registered with both
-router and phase gates allowed; phase-side dispatch unchanged in M3.
+(= read_file, write_file, delete_file, list_directory). The coarse-grained
+`file` op with an `op` discriminator is the legacy form that gets unbundled
+here; the 4 ToolDefinitions are registered with `gates.router="allow"`.
 
 Important: FileIROp uses `op` (not `action`) as the discriminator field.
 The `list_directory` router tool maps to `op="glob"` with a synthesised
@@ -438,7 +433,7 @@ READ_FILE = ToolDefinition(
     router_dispatched=True,
     description=_READ_FILE_DESCRIPTION,
     parameters=_READ_FILE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_read,
     category="io",
     purity="read_only",
@@ -450,7 +445,7 @@ WRITE_FILE = ToolDefinition(
     router_dispatched=True,
     description=_WRITE_FILE_DESCRIPTION,
     parameters=_WRITE_FILE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_write,
     category="io",
     purity="side_effect",
@@ -462,7 +457,7 @@ DELETE_FILE = ToolDefinition(
     router_dispatched=True,
     description=_DELETE_FILE_DESCRIPTION,
     parameters=_DELETE_FILE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_delete,
     category="io",
     purity="side_effect",
@@ -474,7 +469,7 @@ EDIT_FILE = ToolDefinition(
     router_dispatched=True,
     description=_EDIT_FILE_DESCRIPTION,
     parameters=_EDIT_FILE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_edit,
     category="io",
     purity="side_effect",
@@ -486,7 +481,7 @@ LIST_DIRECTORY = ToolDefinition(
     router_dispatched=True,
     description=_LIST_DIRECTORY_DESCRIPTION,
     parameters=_LIST_DIRECTORY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_list,
     category="io",
     purity="read_only",
@@ -498,7 +493,7 @@ GREP_FILES = ToolDefinition(
     router_dispatched=True,
     description=_GREP_FILES_DESCRIPTION,
     parameters=_GREP_FILES_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_grep,
     category="io",
     purity="read_only",
@@ -510,7 +505,7 @@ GLOB_FILES = ToolDefinition(
     router_dispatched=True,
     description=_GLOB_FILES_DESCRIPTION,
     parameters=_GLOB_FILES_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_glob,
     category="io",
     purity="read_only",

@@ -14,7 +14,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 reyn_repo_list = ToolDescription(
     tool_name="reyn_repo_list",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Discover Reyn's own source/doc layout (repo root or a "
         "subdirectory) before reading specific files."
@@ -40,7 +40,7 @@ reyn_repo_list = ToolDescription(
 
 reyn_repo_read = ToolDescription(
     tool_name="reyn_repo_read",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Read one named file from Reyn's own repository by exact path — "
         "the fallback entry point for navigating Reyn's own source / docs."
@@ -65,7 +65,7 @@ reyn_repo_read = ToolDescription(
 
 reyn_repo_glob = ToolDescription(
     tool_name="reyn_repo_glob",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Enumerate files in Reyn's own repository by structural glob "
         "pattern, distinct from content search (reyn_repo_grep) and "
@@ -90,7 +90,7 @@ reyn_repo_glob = ToolDescription(
 
 reyn_repo_grep = ToolDescription(
     tool_name="reyn_repo_grep",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Search Reyn's own repository contents by regex, for 'where is X "
         "handled in the source' style questions, distinct from structural "

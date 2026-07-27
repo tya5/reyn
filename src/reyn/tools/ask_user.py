@@ -1,6 +1,9 @@
 """ask_user ToolDefinition — ADR-0026 M3 Wave 1.
 
-Phase-only capability: gates.router="deny", gates.phase="allow".
+``gates.router="deny"`` — never advertised in the chat router's ``tools=``.
+It is reached only through a pipeline ``tool: ask_user`` step (see the #2708
+note below); the interactive chat path asks via ``OpContext.intervention_bus``
+directly, not through this ToolDefinition.
 The existing handler in src/reyn/op_runtime/ask_user.py is preserved
 and wrapped via a thin adapter that translates between the old
 (op, ctx) signature and the new (args, ctx) signature.
@@ -87,7 +90,7 @@ ASK_USER = ToolDefinition(
     name="ask_user",
     description=_ASK_USER_DESCRIPTION,
     parameters=_ASK_USER_PARAMETERS,
-    gates=ToolGates(router="deny", phase="allow"),
+    gates=ToolGates(router="deny"),
     handler=_handle,
     category="interactive",
     purity="side_effect",   # produces UserIntervention; modifies intervention queue

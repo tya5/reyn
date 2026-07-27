@@ -72,23 +72,6 @@ from reyn.schemas.models import ALL_OP_KINDS
 ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 
 
-# ---------------------------------------------------------------------------
-# _PHASE_TOOL_NAME_ALIAS — chat-name → op-kind mapping (#1240 Wave 2b)
-# ---------------------------------------------------------------------------
-# The phase-advertised chat name "call_mcp_tool" aliases to the canonical
-# execution op kind "mcp".  The phase frame shows the chat name so phase =
-# chat-tools subset (catalog-axis goal); parse boundaries in op_loop +
-# json-mode rewrite it to the op kind BEFORE Op validation.  The
-# the allowed-ops filter applies this alias so allowed_ops=[mcp]
-# matches the advertised call_mcp_tool spec.  The execution backend
-# (op_runtime/mcp.py) and Op model (MCPIROp) use the op-kind name.
-# ---------------------------------------------------------------------------
-
-_PHASE_TOOL_NAME_ALIAS: dict[str, str] = {
-    "call_mcp_tool": "mcp",
-}
-
-
 def split_tool_name(tool_name: str) -> tuple[str, str | None]:
     """Split a tool-name into ``(kind, verb)``.
 

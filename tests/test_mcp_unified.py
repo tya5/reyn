@@ -4,9 +4,9 @@ Verifies that CALL_MCP_TOOL, LIST_MCP_SERVERS, and LIST_MCP_TOOLS ToolDefinition
 - Produce correct description/parameters output matching the FP-0032 contract.
   (Prior byte-identity tests against the legacy ``tool`` param name have been
   updated to reflect the FP-0032 vocabulary unification: ``tool`` → ``mcp_tool_name``.)
-- Have the correct gates (all 3 have router=allow, phase=allow — Type C closure).
+- Have the correct gates (all 3 have router=allow).
 - Have correct purity and category.
-- Are renderable via render_for_router() and render_for_phase().
+- Are renderable via render_for_router().
 - Guard against polymorphic args contract for call_mcp_tool.
 
 No mocks of collaborators. All tests use real ToolDefinition instances.
@@ -151,26 +151,21 @@ def test_list_mcp_tools_constants_match_definition():
     assert dict(LIST_MCP_TOOLS.parameters) == _LIST_MCP_TOOLS_PARAMETERS
 
 
-# ── 4. Gate invariants (Type C closure: all 3 have phase=allow) ───────────────
+# ── 4. Gate invariants (all 3 have router=allow) ──────────────────────────────
 
 def test_call_mcp_tool_gates_both_allow():
-    """Tier 2: CALL_MCP_TOOL has gates.router=allow and gates.phase=allow."""
+    """Tier 2: CALL_MCP_TOOL has gates.router=allow."""
     assert CALL_MCP_TOOL.gates.router == "allow"
-    assert CALL_MCP_TOOL.gates.phase == "allow"
 
 
 def test_list_mcp_servers_gates_both_allow():
-    """Tier 2: LIST_MCP_SERVERS has gates.router=allow and gates.phase=allow.
-    Type C closure: phase side now sees this capability in the registry."""
+    """Tier 2: LIST_MCP_SERVERS has gates.router=allow."""
     assert LIST_MCP_SERVERS.gates.router == "allow"
-    assert LIST_MCP_SERVERS.gates.phase == "allow"
 
 
 def test_list_mcp_tools_gates_both_allow():
-    """Tier 2: LIST_MCP_TOOLS has gates.router=allow and gates.phase=allow.
-    Type C closure: phase side now sees this capability in the registry."""
+    """Tier 2: LIST_MCP_TOOLS has gates.router=allow."""
     assert LIST_MCP_TOOLS.gates.router == "allow"
-    assert LIST_MCP_TOOLS.gates.phase == "allow"
 
 
 # ── 5. Purity and category ────────────────────────────────────────────────────
@@ -197,46 +192,6 @@ def test_all_mcp_tools_category_discovery():
     assert LIST_MCP_TOOLS.category == "discovery"
 
 
-# ── 6. render_for_phase shape ─────────────────────────────────────────────────
-
-def test_call_mcp_tool_render_for_phase_shape():
-    """Tier 2: CALL_MCP_TOOL.render_for_phase() has kind, description, args_schema,
-    purity with correct FP-0032 values (mcp_tool_name instead of tool)."""
-    rendered = CALL_MCP_TOOL.render_for_phase()
-    assert rendered["kind"] == "call_mcp_tool"
-    assert rendered["description"] == _CALL_MCP_TOOL_DESCRIPTION
-    assert "server" in rendered["args_schema"]["properties"]
-    assert "mcp_tool_name" in rendered["args_schema"]["properties"]
-    assert "tool" not in rendered["args_schema"]["properties"], (
-        "Legacy 'tool' key must not appear in render_for_phase — FP-0032 rename"
-    )
-    # #1646: tool_args (renamed from args) carries the target tool's params; type
-    # object, now with a guidance description (so check type, not exact equality).
-    assert "args" not in rendered["args_schema"]["properties"]
-    assert rendered["args_schema"]["properties"]["tool_args"]["type"] == "object"
-    assert rendered["purity"] == "side_effect"
-
-
-def test_list_mcp_servers_render_for_phase_shape():
-    """Tier 2: LIST_MCP_SERVERS.render_for_phase() has kind='list_mcp_servers'
-    and correct description and args_schema."""
-    rendered = LIST_MCP_SERVERS.render_for_phase()
-    assert rendered["kind"] == "list_mcp_servers"
-    assert rendered["description"] == _LIST_MCP_SERVERS_DESCRIPTION
-    assert rendered["args_schema"]["properties"] == {}
-    assert rendered["purity"] == "read_only"
-
-
-def test_list_mcp_tools_render_for_phase_shape():
-    """Tier 2: LIST_MCP_TOOLS.render_for_phase() has kind='list_mcp_tools'
-    and correct description and args_schema."""
-    rendered = LIST_MCP_TOOLS.render_for_phase()
-    assert rendered["kind"] == "list_mcp_tools"
-    assert rendered["description"] == _LIST_MCP_TOOLS_DESCRIPTION
-    assert rendered["args_schema"]["properties"]["server"] == {"type": "string"}
-    assert rendered["purity"] == "read_only"
-
-
 # ── 7. Registry gate filtering ────────────────────────────────────────────────
 
 def test_all_three_appear_in_for_router():
@@ -250,21 +205,6 @@ def test_all_three_appear_in_for_router():
     assert CALL_MCP_TOOL in router_list
     assert LIST_MCP_SERVERS in router_list
     assert LIST_MCP_TOOLS in router_list
-
-
-def test_all_three_appear_in_for_phase():
-    """Tier 2: All 3 MCP ToolDefinitions appear in for_phase() (gates.phase=allow).
-    This is the Type C closure invariant — phase side now has access to all MCP
-    discover capabilities."""
-    registry = ToolRegistry()
-    registry.register(CALL_MCP_TOOL)
-    registry.register(LIST_MCP_SERVERS)
-    registry.register(LIST_MCP_TOOLS)
-
-    phase_list = registry.for_phase()
-    assert CALL_MCP_TOOL in phase_list
-    assert LIST_MCP_SERVERS in phase_list
-    assert LIST_MCP_TOOLS in phase_list
 
 
 def test_registry_lookup_by_name():

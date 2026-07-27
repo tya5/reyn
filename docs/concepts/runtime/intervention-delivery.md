@@ -68,7 +68,7 @@ prompt parked stalled and hung 120s rather than fail-closing.)
 
 `RouterHostAdapter`'s intervention-bus factory, every MCP op method (`_mcp_call_tool` and its
 resource/prompt siblings), and both `safety.limit` checkpoint buses — the per-LLM-call budget/
-timeout gate's `_ChatBudgetBus` and the chat-side `router_cap`/`max_agent_hops`/`phase_seconds`/
+timeout gate's `_ChatBudgetBus` and the chat-side `router_cap`/`max_agent_hops`/
 `chain_seconds` checkpoint's `_ChatLimitBus` (`Session._handle_chat_limit_checkpoint`) — all
 route through this one seam. `ask_user` and `present` already reached the originator because
 they, too, ride the spawn-time bridge (`present` via the analogous
@@ -106,7 +106,7 @@ fails on exactly that.
 ## The sibling gap that closed it uniformly (#3053)
 
 The per-LLM-call `safety.limit` gates (`cost.*`, `timeout.llm_call`, via `_ChatBudgetBus`) and the
-chat-side limit checkpoint (`router_cap`/`max_agent_hops`/`phase_seconds`/`chain_seconds`, via
+chat-side limit checkpoint (`router_cap`/`max_agent_hops`/`chain_seconds`, via
 `_ChatLimitBus`) used to each capture `self._dispatch_intervention` directly at construction time
 — a distinct bus wiring from the router-op seam above, bypassing `_intervention_bridge` entirely.
 For a spawned session that meant a `safety.limit` prompt auto-refused on the driver's own

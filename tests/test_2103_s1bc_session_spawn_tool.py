@@ -109,7 +109,7 @@ def test_session_spawn_registered_with_schema() -> None:
     params = SESSION_SPAWN.parameters
     assert params["properties"]["mode"]["enum"] == ["ephemeral", "persistent"]
     assert params["required"] == ["request"]
-    assert SESSION_SPAWN.gates.router == "allow" and SESSION_SPAWN.gates.phase == "deny"
+    assert SESSION_SPAWN.gates.router == "allow"
 
 
 @pytest.mark.asyncio

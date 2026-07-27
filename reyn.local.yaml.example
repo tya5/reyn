@@ -606,8 +606,6 @@
 # -----------------------------------------------------------------------------
 # safety:
 #   loop:
-#     max_act_turns_per_phase: 10
-#     max_phase_visits: 25
 #     max_router_calls_per_turn: 3
 #     max_router_iterations: 5  # max LLM tool-call iterations per user turn; CLI --max-iterations overrides
 #     max_tool_calls_per_turn: 50  # cost-bound: max tool_calls honoured from ONE completion; 0 = unlimited
@@ -635,7 +633,6 @@
 #   timeout:
 #     llm_call_seconds: 60.0
 #     llm_max_retries: 3
-#     phase_seconds: 0.0            # 0 = unlimited
 #     chain_seconds: 60.0           # ≤0 = disable delegate-reply wait
 #   on_limit:
 #     mode: interactive             # interactive | unattended | auto_extend

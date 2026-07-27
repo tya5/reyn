@@ -1,12 +1,12 @@
 """Tier 1: a ToolDescription's `surfaced` gate claim matches the real ToolGates.
 
-Motivated by #2996: `descriptions/hooks.py`'s `hooks_add.surfaced` claimed
-`gates.phase=allow` while the registered `ToolGates` was `phase="deny"` — a
-wrong claim in LLM-facing review-aid text, caught by a human, not a test.
-`surfaced` is free-text prose (`ToolDescription.surfaced: str`,
-`descriptions/_types.py`); nothing previously cross-checked its
-`gates.router=`/`gates.phase=` tokens against the tool's actual, registered
-`ToolGates`. This test closes that gap structurally: it derives every
+Motivated by #2996: `descriptions/hooks.py`'s `hooks_add.surfaced` made a gate
+claim that contradicted the registered `ToolGates` — a wrong claim in LLM-facing
+review-aid text, caught by a human, not a test. `surfaced` is free-text prose
+(`ToolDescription.surfaced: str`, `descriptions/_types.py`); nothing previously
+cross-checked its `gates.router=` tokens against the tool's actual, registered
+`ToolGates`. (#2696 retired the second, `gates.phase=` axis along with the phase
+engine, so `router` is the only axis left to claim.) This test closes that gap structurally: it derives every
 (claim, actual) pair from the real registry and description package, not
 from a hand-picked subset.
 
@@ -22,11 +22,11 @@ import re
 from reyn.tools import get_default_registry
 from reyn.tools.descriptions import ALL as ALL_DESCRIPTIONS
 
-_GATE_CLAIM_RE = re.compile(r"gates\.(router|phase)=(allow|deny)")
+_GATE_CLAIM_RE = re.compile(r"gates\.(router)=(allow|deny)")
 
 
 def test_surfaced_gate_claims_match_registered_tool_gates() -> None:
-    """Tier 1: every `gates.router=`/`gates.phase=` token in `surfaced` matches reality.
+    """Tier 1: every `gates.router=` token in `surfaced` matches reality.
 
     Derives the actual `ToolGates` per tool from `get_default_registry()` (the
     same construction path production uses to assemble the LLM-facing

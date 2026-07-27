@@ -26,7 +26,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 embed = ToolDescription(
     tool_name="embed",
-    surfaced="router (gates.router=allow, gates.phase=allow) — both chat and pipeline",
+    surfaced="router (gates.router=allow) — both chat and pipeline",
     purpose=(
         "Raw embedding primitive so the caller can build their OWN "
         "external RAG store (composes with an external MCP vector-DB "
@@ -53,7 +53,7 @@ embed = ToolDescription(
 
 web_fetch = ToolDescription(
     tool_name="web_fetch",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Fetch a single URL and return a structured preview + a path_ref to "
         "the full body, so the LLM can follow up a web_search result without "
@@ -78,7 +78,7 @@ web_fetch = ToolDescription(
 
 web_search = ToolDescription(
     tool_name="web_search",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Search the public web via DuckDuckGo when the user's question needs "
         "information outside reyn's indexed sources / memory."
@@ -104,7 +104,7 @@ web_search = ToolDescription(
 
 mcp_search_registry = ToolDescription(
     tool_name="mcp_search_registry",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Search the official MCP registry for servers matching a "
         "natural-language capability request, feeding mcp_install_registry."
@@ -124,7 +124,7 @@ mcp_search_registry = ToolDescription(
 
 list_actions = ToolDescription(
     tool_name="list_actions",
-    surfaced="router-only (gates.router=allow, gates.phase=deny) — universal catalog wrapper",
+    surfaced="router (gates.router=allow) — universal catalog wrapper",
     purpose=(
         "Enumerate actions in the full catalog by category (a superset of "
         "the hot-list functions), so the LLM can discover category-listable "
@@ -170,7 +170,7 @@ list_actions = ToolDescription(
 
 search_actions = ToolDescription(
     tool_name="search_actions",
-    surfaced="router-only (gates.router=allow, gates.phase=deny) — universal catalog wrapper",
+    surfaced="router (gates.router=allow) — universal catalog wrapper",
     purpose=(
         "Semantic, multilingual search across available actions, for "
         "free-text / natural-language capability requests that don't name a "
@@ -214,7 +214,7 @@ search_actions = ToolDescription(
 
 describe_action = ToolDescription(
     tool_name="describe_action",
-    surfaced="router-only (gates.router=allow, gates.phase=deny) — universal catalog wrapper",
+    surfaced="router (gates.router=allow) — universal catalog wrapper",
     purpose=(
         "Fetch the full description, input schema, and metadata for one "
         "action, so the LLM knows the exact argument shape before "
@@ -244,7 +244,7 @@ describe_action = ToolDescription(
 search_knowledge = ToolDescription(
     tool_name="search_knowledge",
     surfaced=(
-        "router-only (gates.router=allow, gates.phase=deny) — new "
+        "router (gates.router=allow) — new "
         "``knowledge`` category (FP-0066 P3c, #3247 firm §3/§5); visible "
         "only when ``embedding.enabled: true`` (shares the search_actions "
         "D14 visibility predicate — see ``is_search_available``)"

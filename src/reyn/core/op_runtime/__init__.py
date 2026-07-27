@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from reyn.core.events.event_schema import RETIRED_PHASE_FIELD
 from reyn.schemas.models import Op
 
 from .context import OpContext
@@ -54,7 +55,7 @@ async def execute_op(
             "permission_granted",
             run_id=ctx.run_id,
             actor=ctx.actor,
-            phase=ctx.current_phase,
+            phase=RETIRED_PHASE_FIELD,
             kind=op.kind,
             path=path,
         )
@@ -65,7 +66,7 @@ async def execute_op(
             "permission_denied",
             run_id=ctx.run_id,
             actor=ctx.actor,
-            phase=ctx.current_phase,
+            phase=RETIRED_PHASE_FIELD,
             kind=op.kind,
             path=path,
             reason=str(exc),

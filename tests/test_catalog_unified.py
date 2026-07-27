@@ -3,16 +3,13 @@
 Covers 2 ToolDefinitions from src/reyn/tools/catalog.py:
   LIST_AGENTS, DESCRIBE_AGENT.
 
-Type C closure invariants (phase="allow"):
-  Both tools have gates.router="allow" AND gates.phase="allow",
-  enabling future phase-side catalog browse dispatch in M4.
 
 Each ToolDefinition is verified for:
   - render_for_router() byte-identity (description + parameters match
     router_tools.py ToolSpec literals — LLMReplay fixture safety).
-  - gates.router="allow", gates.phase="allow" (Type C closure).
+  - gates.router="allow".
   - purity="read_only", category="discovery".
-  - ToolRegistry registration (for_router and for_phase both include).
+  - ToolRegistry registration (for_router includes both).
 
 No mocks of collaborators. All tests use real ToolDefinition /
 ToolRegistry instances. No private state assertions.
@@ -93,10 +90,9 @@ def test_list_agents_constants_match_render():
 
 
 def test_list_agents_gates_type_c():
-    """Tier 2: LIST_AGENTS has gates.router=allow AND gates.phase=allow
+    """Tier 2: LIST_AGENTS has gates.router=allow
     (Type C closure)."""
     assert LIST_AGENTS.gates.router == "allow"
-    assert LIST_AGENTS.gates.phase == "allow"
 
 
 def test_list_agents_purity_and_category():
@@ -145,10 +141,9 @@ def test_describe_agent_constants_match_render():
 
 
 def test_describe_agent_gates_type_c():
-    """Tier 2: DESCRIBE_AGENT has gates.router=allow AND gates.phase=allow
+    """Tier 2: DESCRIBE_AGENT has gates.router=allow
     (Type C closure)."""
     assert DESCRIBE_AGENT.gates.router == "allow"
-    assert DESCRIBE_AGENT.gates.phase == "allow"
 
 
 def test_describe_agent_purity_and_category():
@@ -158,7 +153,7 @@ def test_describe_agent_purity_and_category():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3. Registry invariants — catalog tools in for_router() AND for_phase()
+# 3. Registry invariants — catalog tools in for_router()
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_registry_contains_catalog_tools():
@@ -176,15 +171,6 @@ def test_registry_catalog_tools_in_for_router():
     router_tools = registry.for_router()
     assert LIST_AGENTS in router_tools
     assert DESCRIBE_AGENT in router_tools
-
-
-def test_registry_catalog_tools_in_for_phase():
-    """Tier 2: The catalog tools appear in registry.for_phase()
-    (gates.phase=allow on all — Type C closure)."""
-    registry = _make_registry()
-    phase_tools = registry.for_phase()
-    assert LIST_AGENTS in phase_tools
-    assert DESCRIBE_AGENT in phase_tools
 
 
 def test_registry_lookup_returns_correct_instances():

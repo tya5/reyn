@@ -4,7 +4,7 @@ Tool handlers that delegate to an ``op_runtime`` handler need an
 :class:`~reyn.core.op_runtime.context.OpContext`. The router binds the real one
 (populated ``PermissionDecl``, a real ``Workspace`` rooted at the agent's
 ``workspace_base_dir``, the flattened MCP map) via
-``ctx.router_state.op_context_factory``; phase / test callers fall back to a
+``ctx.router_state.op_context_factory``; test callers fall back to a
 minimal synthesis.
 
 This bridge is the ONE place that resolves that — extracted from

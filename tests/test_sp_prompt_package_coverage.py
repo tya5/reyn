@@ -166,7 +166,6 @@ def _assembled_output_corpus() -> str:
     # so the raw constants themselves are the assembled fixtures.
     chunks.append(_compaction_mod.COMPACTION_SYSTEM_PROMPT)
     chunks.append(_compaction_mod.RESUMMARIZE_SYSTEM_PROMPT)
-    chunks.append(_compaction_mod.PHASE_COMPACTION_SYSTEM_PROMPT)
 
     # §F turn-budget wrap-up SP: default + reason-tagged variant (exercises
     # the reason-prefix concatenation seam).

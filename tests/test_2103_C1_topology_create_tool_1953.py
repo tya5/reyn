@@ -48,7 +48,7 @@ def test_topology_create_is_advertised_router_allow():
     the LLM can actually see it (the #2120 advertise-drift lesson)."""
     from reyn.tools import get_default_registry
     d = get_default_registry().lookup("topology_create")
-    assert d is not None and d.gates.router == "allow" and d.gates.phase == "deny"
+    assert d is not None and d.gates.router == "allow"
 
 
 def test_topology_create_is_floored_default_deny():

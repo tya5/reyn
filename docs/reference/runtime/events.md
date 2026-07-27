@@ -33,7 +33,8 @@ See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agen
 
 | Kind | Key payload |
 |------|-------------|
-| `llm_called` | `phase`, `model`, `input_tokens`, `output_tokens`, `latency_ms` |
+| `llm_called` | `model` (+ `chain_id` when the call belongs to a delegation chain) |
+| `llm_response_received` | `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cache_creation_tokens`, `cost_usd` (+ `chain_id`) |
 
 ## Control IR
 

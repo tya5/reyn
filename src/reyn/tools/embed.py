@@ -100,7 +100,7 @@ EMBED = ToolDefinition(
     router_dispatched=True,
     description=_EMBED_DESCRIPTION,
     parameters=_EMBED_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_embed,
     category="discovery",
     purity="read_only",

@@ -128,7 +128,7 @@ PRESENTATION_INSTALL = ToolDefinition(
     name="presentation_install_local",
     description=_PRESENTATION_INSTALL_DESCRIPTION,
     parameters=_PRESENTATION_INSTALL_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_presentation_install,
     category="io",
     purity="side_effect",

@@ -14,7 +14,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 present = ToolDescription(
     tool_name="present",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Show bulk tool-result data to the user directly (zero-token "
         "offload) instead of the LLM re-typing it through its own output "
@@ -42,7 +42,7 @@ present = ToolDescription(
 
 render_template = ToolDescription(
     tool_name="render_template",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Render a Jinja2 template against structured data into a plain "
         "string, as a sandboxed producer with no sink of its own — the "

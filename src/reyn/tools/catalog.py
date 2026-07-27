@@ -3,13 +3,9 @@
 Covers the catalog-browse capabilities:
   list_agents, describe_agent.
 
-Type C closure: both router and phase are allowed (gates.phase="allow").
-The phase=allow gate is a metadata closure — phase Control IR currently
-emits only coarse op.kind values defined in OP_KIND_MODEL_MAP, and the
-fine-grained catalog names (``list_agents`` / ``describe_agent``) are not
-in that map, so the phase path of these handlers is unreachable today.
-Reachable phase invocation would require a separate Control IR schema
-migration to fine-grained ``op.kind`` values (out of scope for ADR-0026 M4).
+Router-surfaced (``gates.router="allow"``). ADR-0026's second, phase-style
+surface no longer exists — the phase engine and its Control IR executor were
+deleted (#2434 / #2438) and the ``gates.phase`` residue retired in #2696.
 
 Router-side dispatch (post-FP-0039 audit, 2026-05-18):
   Each handler delegates to a session-scoped function bound on
@@ -76,7 +72,7 @@ LIST_AGENTS = ToolDefinition(
     router_dispatched=True,
     description=_LIST_AGENTS_DESCRIPTION,
     parameters=_LIST_AGENTS_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_list_agents,
     purity="read_only",
     category="discovery",
@@ -130,7 +126,7 @@ DESCRIBE_AGENT = ToolDefinition(
     router_dispatched=True,
     description=_DESCRIBE_AGENT_DESCRIPTION,
     parameters=_DESCRIBE_AGENT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_describe_agent,
     purity="read_only",
     category="discovery",

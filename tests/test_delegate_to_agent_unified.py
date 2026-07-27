@@ -3,10 +3,10 @@
 Verifies that DELEGATE_TO_AGENT ToolDefinition:
 - Produces byte-identical render_for_router() output to the legacy ToolSpec
   literal for delegate_to_agent (description + static parameters).
-- Has gates.router=allow and gates.phase=deny (router-only capability).
+- Has gates.router=allow (router-only capability).
 - Has the correct purity and category.
 - Is registerable in a ToolRegistry without error.
-- Is returned by for_router() and excluded from for_phase().
+- Is returned by for_router().
 - Exposes the async-dispatch semantics via the NotImplementedError contract
   (= handler raises if accidentally called as a standalone adapter).
 
@@ -95,12 +95,6 @@ def test_delegate_to_agent_gates_router_allow():
     assert DELEGATE_TO_AGENT.gates.router == "allow"
 
 
-def test_delegate_to_agent_gates_phase_deny():
-    """Tier 2: DELEGATE_TO_AGENT has gates.phase=deny (not visible to phase).
-    Phase does not have a peer-agent-message concept; deny is correct."""
-    assert DELEGATE_TO_AGENT.gates.phase == "deny"
-
-
 # ── 3. Purity and category ────────────────────────────────────────────────────
 
 def test_delegate_to_agent_purity_side_effect():
@@ -133,13 +127,12 @@ def test_delegate_to_agent_registry_lookup():
     assert found is DELEGATE_TO_AGENT
 
 
-def test_delegate_to_agent_in_for_router_not_in_for_phase():
+def test_delegate_to_agent_in_for_router():
     """Tier 2: DELEGATE_TO_AGENT appears in registry.for_router() but NOT in
-    registry.for_phase(). Confirms router=allow / phase=deny gating."""
+    Confirms router=allow gating."""
     registry = ToolRegistry()
     registry.register(DELEGATE_TO_AGENT)
     assert DELEGATE_TO_AGENT in registry.for_router()
-    assert DELEGATE_TO_AGENT not in registry.for_phase()
 
 
 # ── 5. Handler activated (M4 Phase 3) — mis-wiring contract ──────────────────

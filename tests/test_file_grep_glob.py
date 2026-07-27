@@ -281,15 +281,13 @@ def test_glob_files_with_path_prefix(tmp_path, monkeypatch):
 
 
 def test_grep_files_gates():
-    """Tier 2: GREP_FILES has gates.router='allow' and gates.phase='allow'."""
+    """Tier 2: GREP_FILES has gates.router='allow'."""
     assert GREP_FILES.gates.router == "allow"
-    assert GREP_FILES.gates.phase == "allow"
 
 
 def test_glob_files_gates():
-    """Tier 2: GLOB_FILES has gates.router='allow' and gates.phase='allow'."""
+    """Tier 2: GLOB_FILES has gates.router='allow'."""
     assert GLOB_FILES.gates.router == "allow"
-    assert GLOB_FILES.gates.phase == "allow"
 
 
 def test_grep_files_purity_read_only():

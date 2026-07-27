@@ -46,6 +46,7 @@ import hashlib
 import json
 from typing import Any
 
+from reyn.core.events.event_schema import RETIRED_PHASE_FIELD
 from reyn.core.present import (
     PresentBlueprintError,
     PresentSourceNotFound,
@@ -143,7 +144,7 @@ def _emit_presented(
         "presented",
         run_id=ctx.run_id,
         actor=ctx.actor,
-        phase=ctx.current_phase,
+        phase=RETIRED_PHASE_FIELD,
         data_ref=data_ref,
         view=view,
         mode=mode,

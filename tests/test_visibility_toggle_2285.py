@@ -85,7 +85,7 @@ async def test_visibility_state_reflects_envelope_and_override(tmp_path, monkeyp
     """Tier 2: capability_visibility_state — authorized excludes the envelope-denied tool (never
     togglable); hidden_by_session carries the override.
 
-    #3220: ``ask_user`` is a ``gates.router="deny", gates.phase="allow"`` PHASE-ONLY
+    #3220: ``ask_user`` is a ``gates.router="deny"`` NEVER-ROUTER-ADVERTISED
     capability — it is registered in the global registry but never appears in ANY chat-layer
     scheme's composed ``tools=`` payload (it isn't in ``build_tools()``'s router=allow set,
     nor in the ``universal_catalog`` action table). Pre-#3220, ``capability_visibility_state``

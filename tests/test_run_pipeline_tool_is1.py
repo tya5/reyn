@@ -135,7 +135,7 @@ def _install_side_effect_tool(monkeypatch, out_file: Path) -> None:
         name="is1_write",
         description="IS-1 test: append content to a fixed file (real side effect).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler,
         category="io",
         purity="side_effect",

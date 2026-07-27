@@ -592,8 +592,8 @@ def _iv_meta(iv: "UserIntervention") -> dict:
 # output_reserve < threshold)] + new turn, which fits for any turn whose NEW
 # message fits the post-consolidation budget (the normal case). The only input a
 # 2nd handoff couldn't help is a single new message too large to ever fit — so at
-# the cap we raise the genuine dead-end. This is chat's bounded analogue of
-# phase's max_phase_visits (25), made tight (1) by the by-construction floor.
+# the cap we raise the genuine dead-end. It is a re-entry bound, made tight (1)
+# by the by-construction floor.
 _MAX_FORCE_CLOSE_HANDOFFS = 1
 
 
@@ -6121,7 +6121,7 @@ class Session:
         #3053: the bus resolves BRIDGE-AWARE via ``_make_router_intervention_bus``
         (the SAME seam #3052 gave every MCP router-op, and #3053 gave the
         per-LLM-call ``_ChatBudgetBus``) — this checkpoint (``router_cap`` /
-        ``max_agent_hops`` / ``phase_seconds`` / ``chain_seconds``) is reachable on
+        ``max_agent_hops`` / ``chain_seconds``) is reachable on
         an ATTACHED pipeline driver session exactly like the per-call budget gate,
         so freezing a self-bound ``_dispatch_intervention`` here would auto-refuse
         on the driver's own listener-less registry instead of reaching the
@@ -6535,7 +6535,7 @@ class Session:
              (e.g. "I've already extended this limit 5 times, refuse").
              Default policy is None — no self-answer — so the request
              falls through. Future incremental PRs add per-kind
-             policies (e.g. "max_phase_visits hit + N prior extensions
+             policies (e.g. "router_cap hit + N prior extensions
              → refuse silently") via subclassing or config-driven
              policy injection.
           2. **parent_agent.delegate** (= ``resolve_parent_agent`` hook):
@@ -6627,7 +6627,7 @@ class Session:
         Phase 4 behaviour identical to Phase 3 for unmodified agents.
 
         Examples of future overrides (NOT in this PR):
-          - "max_phase_visits limit hit + we've already auto-extended
+          - "router_cap limit hit + we've already auto-extended
             ``N`` times this chain → refuse with text='no'"
           - "permission.shell on a command in the always-allow set →
             return InterventionAnswer(choice_id='always')"

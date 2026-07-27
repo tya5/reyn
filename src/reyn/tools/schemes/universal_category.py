@@ -53,7 +53,7 @@ class UniversalCategoryScheme:
     name = "universal-category"
 
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
-        # ops.present → today's build_tools (or the phase op-catalog) + SP params.
+        # ops.present → today's build_tools + SP params.
         # #1593 PR-2 seam: build_presentation is async (enumerate-all/PR-4 do I/O),
         # but universal's body is unchanged — ops.present stays sync and is NOT
         # awaited, so the tools=/sp_params bytes are byte-identical to PR-1.
@@ -108,7 +108,7 @@ class UniversalCategoryScheme:
     async def execute(self, interp: Interpretation, exec_ctx: ExecContext, ops: SchemeOps) -> ExecutionResult:
         # Only Execute is emitted by this scheme; the OS loop never routes a
         # RePresent / CodeBlock here in PR-1. Dispatch via the OS substrate (ops),
-        # which carries the DispatchContext / phase-memo / permission (P5) path.
+        # which carries the DispatchContext / permission (P5) path.
         assert isinstance(interp, Execute), "universal-category emits only Execute"
         results = await ops.dispatch(interp.actions)
         return ExecutionResult(tool_results=results)
