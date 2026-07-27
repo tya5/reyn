@@ -70,6 +70,23 @@ def _today_iso() -> str:
     )
 
 
+def _scripted_reply(prompt_tokens: int, completion_tokens: int):
+    """A scripted ``litellm.acompletion`` returning one tool-free reply with
+    the given usage — the LLM is the only collaborator these tests fake."""
+    async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
+        return SimpleNamespace(
+            model=model,
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content="こんにちは", tool_calls=None),
+                finish_reason="stop",
+            )],
+            usage=SimpleNamespace(
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            ),
+        )
+    return _fake
+
+
 def _cost(usage: TokenUsage) -> float:
     cost, _ = estimate_cost(_MODEL, usage)
     return cost or 0.0
@@ -241,17 +258,7 @@ def test_session_turn_attributes_its_llm_calls_to_its_chain_id(tmp_path, monkeyp
     ambient turn scope, so the tokens/cost of the LLM call that turn makes are
     aggregated under that turn (and under no other)."""
     monkeypatch.chdir(tmp_path)
-
-    async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
-        return SimpleNamespace(
-            model=model,
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(content="こんにちは", tool_calls=None),
-                finish_reason="stop",
-            )],
-            usage=SimpleNamespace(prompt_tokens=1500, completion_tokens=250),
-        )
-    monkeypatch.setattr(litellm, "acompletion", _fake)
+    monkeypatch.setattr(litellm, "acompletion", _scripted_reply(1500, 250))
 
     tracker = BudgetTracker(CostConfig())
     session = make_session(agent_name="test_agent", budget_tracker=tracker)
@@ -266,3 +273,33 @@ def test_session_turn_attributes_its_llm_calls_to_its_chain_id(tmp_path, monkeyp
     assert session.last_turn_usage == latest, (
         "the session surface must report its own turn's real figures"
     )
+
+
+def test_no_turn_figure_is_published_as_unknown_never_zero(tmp_path, monkeypatch) -> None:
+    """Tier 2: when there is no per-turn figure to report, the published
+    tokens/cost are None — never a placeholder 0, which a renderer could not
+    tell apart from a turn that genuinely cost nothing.
+
+    Both no-figure cases go through the real mechanism: a session that has not
+    run a turn, and a session whose last turn is no longer the process-shared
+    tracker's latest (the everyday case — one tracker, several sessions)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(litellm, "acompletion", _scripted_reply(1500, 250))
+    tracker = BudgetTracker(CostConfig())
+    session = make_session(agent_name="test_agent", budget_tracker=tracker)
+
+    unknown = {"chain_id": None, "tokens": None, "cost_usd": None}
+    assert session.last_turn_usage == unknown, "no turn run yet ⇒ no figure"
+
+    # This session runs a real turn, so it DOES have a figure...
+    asyncio.run(session._handle_user_message("hello", chain_id="turn-mine"))
+    assert session.last_turn_usage["tokens"] == 1750
+
+    # ...until some other session's turn records spend against the shared
+    # tracker and becomes the latest. This session's own figure is now
+    # unreachable: it must read as unknown — never 0, and never the other
+    # turn's number.
+    tracker.record_llm(
+        model=_MODEL, agent="beta", usage=_CALL_B1, chain_id="turn-elsewhere",
+    )
+    assert session.last_turn_usage == unknown

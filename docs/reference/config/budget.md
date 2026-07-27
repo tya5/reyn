@@ -240,6 +240,12 @@ cost" is answerable without subtracting running totals from each other.
   The durable record of a past turn's spend is the ledger's per-call
   `chain_id`, which lets any past turn be re-grouped after the fact.
 
+When there is no per-turn figure to report — before a session's first turn,
+or when the most recent turn tracked belongs to another session sharing the
+same process-wide tracker — the reported tokens and cost are **unknown**
+rather than `0`. A zero would be indistinguishable from a turn that genuinely
+cost nothing.
+
 These figures are not a cap dimension — there is no per-turn limit to
 configure; they are the reporting counterpart to the per-agent / daily /
 monthly caps above.

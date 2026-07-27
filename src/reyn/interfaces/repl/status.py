@@ -356,10 +356,12 @@ def _snapshot(registry, config=None):
         # cumulative) and `ctx_used` (a single call). A call the OS could not
         # attribute to a turn is counted in no turn's total, so these figures
         # are never a difference of cumulative counters.
-        # `turn_chain_id is None` means THERE IS NO FIGURE (before the first
-        # turn; see Session.last_turn_usage for the other case) — the two
-        # zeros beside it are placeholders, so a renderer must branch on
-        # `turn_chain_id` rather than print "0 tokens / $0.00".
+        # All three are None when THERE IS NO FIGURE (before the first turn,
+        # or when the process-shared tracker's latest turn is a different one
+        # — see Session.last_turn_usage). Deliberately not 0: a zero would be
+        # indistinguishable from a real zero-cost turn and would render as
+        # fact, whereas None is loud in both directions (drawn as "None", or
+        # a TypeError on any arithmetic).
         "turn_chain_id": turn_usage["chain_id"],
         "turn_tokens": turn_usage["tokens"],
         "turn_cost_usd": turn_usage["cost_usd"],

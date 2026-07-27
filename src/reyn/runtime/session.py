@@ -1557,17 +1557,28 @@ class Session:
         the cost of a call the OS could not attribute to a turn is in no
         turn's total at all.
 
-        ``chain_id is None`` is the "no figure to show" signal, and the two
-        zeros beside it carry no meaning — a reader MUST branch on chain_id
-        rather than render the numbers unconditionally. It occurs before this
-        session's first router turn, with no tracker wired (unlimited mode),
-        and when the tracker's latest turn belongs to a DIFFERENT session
-        (the tracker is process-shared and answers only about the latest turn
-        process-wide, by design — see ``BudgetTracker.latest_turn_usage``).
-        Reporting "unknown" there is deliberate: this session's own last turn
-        is real, but its figure is not one this API can answer for without
-        risking another session's number."""
-        _none = {"chain_id": None, "tokens": 0, "cost_usd": 0.0}
+        When there is no figure, ALL THREE values are ``None`` — never a
+        placeholder ``0``. A zero is indistinguishable from a real zero-cost
+        turn, and a renderer that forgot to check would print it as fact;
+        ``None`` makes the same mistake loud (drawn as "None", or a
+        ``TypeError`` the moment anything does arithmetic on it). No
+        convention for a consumer to remember, and nothing to get wrong
+        silently.
+
+        "No figure" occurs before this session's first router turn, with no
+        tracker wired (unlimited mode), and when the tracker's latest turn is
+        a DIFFERENT turn than this session's last one — the tracker is
+        process-shared and answers only about the latest turn process-wide
+        (see ``BudgetTracker.latest_turn_usage``). That last case is common,
+        not exotic: several sessions share one tracker, so any turn elsewhere
+        moves "latest" off this session. This session's own last turn is real
+        and its figure IS still held in the tracker's buckets — we CHOSE not
+        to reach for it, because retrieving it means reintroducing the keyed
+        lookup that #3339 deliberately closed (a keyed read has to answer for
+        an evicted turn, and its only available answers are a fabricated 0 or
+        an unknown-sentinel every caller must remember to check). Reporting
+        "unknown" is the cost of keeping that question unaskable."""
+        _none = {"chain_id": None, "tokens": None, "cost_usd": None}
         chain_id = self._last_turn_chain_id
         tracker = self._budget_tracker
         if chain_id is None or tracker is None:
