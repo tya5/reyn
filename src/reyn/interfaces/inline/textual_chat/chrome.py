@@ -3,7 +3,9 @@
 The :class:`Composer` is the multi-line Claude-Code-style input (Enter submits,
 Shift+Enter newlines). The bottom chrome (Phase 3) is a slim :class:`StatusLine`
 of ``model │ agent │ cost │ ctx`` values plus a focusable :class:`MenuBar` (a
-``Tabs`` row); opening a menu item expands a ``ContentSwitcher`` drawer whose
+WRAPPING row of :class:`~textual.widgets.Tab` items — see :func:`pack_menu_rows`
+for why it wraps rather than scrolls); opening a menu item expands a
+``ContentSwitcher`` drawer whose
 per-tab panes are built by :func:`pane_payload` (an :class:`OptionList` for the
 interactive pickers, a plain Rich :class:`Static` for the read-only readouts).
 
@@ -58,13 +60,14 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual import events
+from textual.containers import Horizontal
 from textual.content import Content
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import (
     OptionList,
     Static,
-    Tabs,
+    Tab,
     TextArea,
 )
 
@@ -528,6 +531,27 @@ def _cost_scope_state(
     return input_cost, output_cost, saved, saved_pct, state
 
 
+#: The cost table's row labels, in render order. The label COLUMN is padded to
+#: the longest of these (:data:`_COST_LABEL_W`) rather than each row relying on
+#: its own literal's width — ``Output``/``Saved%`` are 6 chars while
+#: ``Total``/``Input``/``Saved`` are 5, so the implicit-width form (which the
+#: retired renderer used, and which this port faithfully inherited) shifted the
+#: Output row's cells one column left of every other row. Deriving the width here
+#: means adding or renaming a row later cannot re-break the alignment.
+_COST_ROW_LABELS = ("COST", "Total", "Input", "Output", "Saved", "Saved%")
+_COST_LABEL_W = max(len(label) for label in _COST_ROW_LABELS)
+_COST_COL_W = 9
+
+
+def _cost_row(label: str, cells: "Sequence[str]") -> str:
+    """One cost-table line: the label left-aligned in a FIXED-width label column,
+    then each cell right-aligned in a fixed-width value column — so every row's
+    value columns start at the same offset regardless of how long its label is."""
+    return f"{label:<{_COST_LABEL_W}}" + "".join(
+        f"{cell:>{_COST_COL_W}}" for cell in cells
+    )
+
+
 def _cost_breakdown_table(snap: dict) -> list[str]:
     """The 5-row (Total/Input/Output/Saved/Saved%) × 3-column (Session/Agent/
     Project) cost breakdown table.
@@ -539,7 +563,10 @@ def _cost_breakdown_table(snap: dict) -> list[str]:
     (see :func:`_cost_scope_state`) decides how the component cells render: exact
     (``ok``), ``~``-marked with a tiered-pricing footnote (``approx``), or ``—``
     with a DIFFERENT "unavailable" footnote (``unavail``) — never misattributed to
-    tiered pricing."""
+    tiered pricing.
+
+    Every line is assembled through :func:`_cost_row`, so the value columns line
+    up across rows by construction (see :data:`_COST_ROW_LABELS`)."""
     from reyn.llm.pricing import CostBreakdown
 
     session_total = snap.get("cost_usd", 0.0)
@@ -550,8 +577,7 @@ def _cost_breakdown_table(snap: dict) -> list[str]:
         ("Prj", snap.get("cost_breakdown_project") or CostBreakdown(),
          snap.get("cost_total", session_total)),
     ]
-    col_w = 9
-    header = "COST" + "".join(f"{name:>{col_w}}" for name, _, _ in scopes)
+    header = _cost_row("COST", [name for name, _, _ in scopes])
 
     per_scope = [
         (name, total, *_cost_scope_state(breakdown, total))
@@ -560,28 +586,34 @@ def _cost_breakdown_table(snap: dict) -> list[str]:
     any_approx = any(state == "approx" for *_rest, state in per_scope)
     any_unavail = any(state == "unavail" for *_rest, state in per_scope)
 
-    total_row = "Total" + "".join(
-        f"{'$' + format(total, '.4f'):>{col_w}}" for _, total, *_ in per_scope
+    total_row = _cost_row(
+        "Total", [f"${total:.4f}" for _, total, *_ in per_scope]
     )
 
     def _cell(value: float, state: str) -> str:
         if state == "unavail":
             return "—"
         s = f"${value:.4f}"
-        return ("~" + s)[:col_w] if state == "approx" else s
+        return ("~" + s)[:_COST_COL_W] if state == "approx" else s
 
-    input_row = "Input" + "".join(
-        f"{_cell(inp, state):>{col_w}}" for _, _, inp, _out, _sav, _pct, state in per_scope
+    input_row = _cost_row(
+        "Input",
+        [_cell(inp, state) for _, _, inp, _out, _sav, _pct, state in per_scope],
     )
-    output_row = "Output" + "".join(
-        f"{_cell(out, state):>{col_w}}" for _, _, _inp, out, _sav, _pct, state in per_scope
+    output_row = _cost_row(
+        "Output",
+        [_cell(out, state) for _, _, _inp, out, _sav, _pct, state in per_scope],
     )
-    saved_row = "Saved" + "".join(
-        f"{_cell(sav, state):>{col_w}}" for _, _, _inp, _out, sav, _pct, state in per_scope
+    saved_row = _cost_row(
+        "Saved",
+        [_cell(sav, state) for _, _, _inp, _out, sav, _pct, state in per_scope],
     )
-    pct_row = "Saved%" + "".join(
-        ("—".rjust(col_w) if state == "unavail" else f"{round(100 * pct)}%".rjust(col_w))
-        for _, _, _inp, _out, _sav, pct, state in per_scope
+    pct_row = _cost_row(
+        "Saved%",
+        [
+            "—" if state == "unavail" else f"{round(100 * pct)}%"
+            for _, _, _inp, _out, _sav, pct, state in per_scope
+        ],
     )
 
     rows = [header, total_row, input_row, output_row, saved_row, pct_row]
@@ -789,12 +821,77 @@ class StatusLine(Static):
     *items* live in the focusable :class:`MenuBar` row just below it."""
 
 
-class MenuBar(Tabs):
-    """Focusable horizontal menu row (the collapsed bottom chrome). ``← →`` move
-    the highlight, ``Enter`` opens the highlighted item's drawer, and ``↑``/``Esc``
-    close it and hand focus back to the composer. Unlike a plain :class:`Tabs`,
-    moving the highlight does NOT open anything — opening is an explicit ``Enter``
-    (the base ``Tabs.TabActivated`` fired on arrow-move is intentionally ignored)."""
+#: Horizontal cells a :class:`Tab` adds around its label (``Tab``'s own
+#: ``padding: 0 1``, restated in the app stylesheet). Used to predict a tab's
+#: rendered width when packing rows — kept as one named fact so the packer and
+#: the stylesheet cannot silently disagree.
+_TAB_H_PADDING = 2
+
+
+def pack_menu_rows(
+    items: "Sequence[tuple[str, str]]", width: int
+) -> "list[list[tuple[str, str]]]":
+    """Greedily pack ``(tab_id, label)`` items into rows no wider than ``width``.
+
+    The menu row is a WRAPPING row, not a scrolling one (#3338). A single
+    ``Tabs``-style row lays every tab out on one line regardless of terminal
+    width, so at 80 columns the last tab and at 60 columns the last FOUR were
+    positioned past the right edge — reachable only by arrowing blindly into
+    them, with no scroll affordance to say so. Wrapping keeps every tab inside
+    the screen at any width, which is the invariant #3326 should inherit when it
+    collapses this chrome rather than re-derive.
+
+    Pure, so the geometry is testable without mounting: the caller (
+    :meth:`MenuBar._repack`) passes the content width it actually has. A single
+    item wider than ``width`` still gets its own row (there is nowhere narrower
+    to put it) — with the labels this menu uses that needs a terminal under ~11
+    columns, far below anything the app is usable at."""
+    rows: "list[list[tuple[str, str]]]" = []
+    current: "list[tuple[str, str]]" = []
+    used = 0
+    for tab_id, label in items:
+        cell = len(label) + _TAB_H_PADDING
+        if current and used + cell > width:
+            rows.append(current)
+            current = []
+            used = 0
+        current.append((tab_id, label))
+        used += cell
+    if current:
+        rows.append(current)
+    return rows
+
+
+class MenuBar(Widget, can_focus=True):
+    """Focusable menu row (the collapsed bottom chrome). ``← →`` move the
+    highlight, ``Enter`` opens the highlighted item's drawer, and ``↑``/``Esc``
+    close it and hand focus back to the composer. Moving the highlight does NOT
+    open anything — opening is an explicit ``Enter``.
+
+    This was a :class:`~textual.widgets.Tabs` subclass until #3338 grew the menu
+    from 7 to 13 items. ``Tabs`` lays its children out on ONE line and relies on
+    scrolling the active tab into view, so the tabs past the right edge sat
+    outside the screen with no affordance saying so (measured: 1 tab off at
+    80×24, 4 off at 60×20). This widget instead WRAPS: :func:`pack_menu_rows`
+    packs the items into as many single-line rows as the current width needs, and
+    a resize repacks. The children are still real :class:`~textual.widgets.Tab`
+    widgets, so styling and the ``-active`` highlight are unchanged — only the
+    layout differs.
+
+    ``active`` is the highlighted tab id, the same public read the drawer control
+    and the Phase-3 keyboard gates use."""
+
+    DEFAULT_CSS = """
+    MenuBar {
+        height: auto;
+        layout: vertical;
+    }
+    MenuBar > .menubar-row {
+        height: 1;
+        width: 100%;
+        layout: horizontal;
+    }
+    """
 
     class Selected(Message):
         """Posted on an explicit ``Enter`` (opening ``tab_id``) or on ``↑``/``Esc``
@@ -803,6 +900,52 @@ class MenuBar(Tabs):
         def __init__(self, tab_id: str) -> None:
             self.tab_id = tab_id
             super().__init__()
+
+    def __init__(self, items: "Sequence[tuple[str, str]]", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._items = list(items)
+        self._packed_width = -1
+        #: The highlighted tab id. Seeded to the first item so the row has a
+        #: highlight from the very first frame (before any resize has landed).
+        self.active = self._items[0][0] if self._items else ""
+
+    def _repack(self, width: int) -> None:
+        """Rebuild the child rows for ``width``. A no-op when the width has not
+        changed, so an ordinary resize storm does not remount 13 widgets a frame."""
+        if width <= 0 or width == self._packed_width:
+            return
+        self._packed_width = width
+        rows = pack_menu_rows(self._items, width)
+        self.remove_children()
+        self.mount_all([
+            Horizontal(
+                *(Tab(label, id=tab_id) for tab_id, label in row),
+                classes="menubar-row",
+            )
+            for row in rows
+        ])
+        self.call_after_refresh(self._sync_active_class)
+
+    def _sync_active_class(self) -> None:
+        for tab in self.query(Tab):
+            tab.set_class(tab.id == self.active, "-active")
+
+    def on_mount(self) -> None:
+        self._repack(self.content_size.width or self.size.width)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._repack(self.content_size.width or event.size.width)
+
+    def _move(self, delta: int) -> None:
+        ids = [tab_id for tab_id, _label in self._items]
+        if not ids:
+            return
+        try:
+            index = ids.index(self.active)
+        except ValueError:
+            index = 0
+        self.active = ids[(index + delta) % len(ids)]
+        self._sync_active_class()
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
@@ -815,5 +958,10 @@ class MenuBar(Tabs):
             event.stop()
             event.prevent_default()
             self.post_message(self.Selected("__close__"))
+            return
+        if event.key in ("left", "right"):
+            event.stop()
+            event.prevent_default()
+            self._move(-1 if event.key == "left" else 1)
             return
         await super()._on_key(event)

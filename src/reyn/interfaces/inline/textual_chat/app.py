@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Callable
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import ContentSwitcher, OptionList, Static, Tab
+from textual.widgets import ContentSwitcher, OptionList, Static
 from textual_flowview import (
     Anchor,
     Entry,
@@ -317,8 +317,12 @@ class TextualChatApp(App):
         color: $text-muted;
         padding: 0 1;
     }
+    /* height: auto — the menu row WRAPS to as many lines as the terminal width
+       needs (chrome.pack_menu_rows), so no tab is ever laid out past the right
+       edge. A fixed height:1 here would clip the wrapped rows straight back
+       off-screen, reinstating exactly the defect the wrap exists to fix. */
     MenuBar {
-        height: 1;
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -526,7 +530,7 @@ class TextualChatApp(App):
         # downward. Phase 4 fills each pane from its canonical reyn source; each
         # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
         yield StatusLine(self._status_text())
-        yield MenuBar(*(Tab(label, id=tid) for tid, label in _MENU_TABS), id="menubar")
+        yield MenuBar(_MENU_TABS, id="menubar")
         with ContentSwitcher(initial=None, id="drawer"):
             for tid, _label in _MENU_TABS:
                 yield build_drawer_pane(tid, self._pane_rows(tid))

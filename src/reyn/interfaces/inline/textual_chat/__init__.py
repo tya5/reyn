@@ -26,8 +26,10 @@ gutter column, the split flowview's presenter/decorator protocol expects.
 Phase 3 adds the bottom-chrome tab-drawer. Below the composer sit two slim rows —
 a :class:`~reyn.interfaces.inline.textual_chat.chrome.StatusLine` of
 ``model │ agent │ cost │ ctx`` values and a focusable
-:class:`~reyn.interfaces.inline.textual_chat.chrome.MenuBar` (a ``Tabs`` row:
-``Model Agent History Cost Ctx Menu Help``) — plus a
+:class:`~reyn.interfaces.inline.textual_chat.chrome.MenuBar` (``Model Agent
+History Cost Ctx Tool MCP Skill Pipe Hook Cron Menu Help``, WRAPPED across as
+many lines as the terminal width needs so no item is ever laid out off-screen —
+see :func:`~reyn.interfaces.inline.textual_chat.chrome.pack_menu_rows`) — plus a
 :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by default and
 expands DOWNWARD when a menu item is opened. Focus flows ``↓`` from the composer's
 last line into the menu, ``← →`` move the highlight, ``Enter`` opens the

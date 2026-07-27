@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import re
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -138,6 +139,68 @@ async def test_real_snapshot_carries_every_key_the_chrome_reads(tmp_path) -> Non
 
 def _saved_pct_row(lines: "list[str]") -> str:
     return next(line for line in lines if line.startswith("Saved%"))
+
+
+#: The cost table's own lines (everything before the footnotes / token lines).
+_COST_TABLE_PREFIXES = ("COST", "Total", "Input", "Output", "Saved", "Saved%")
+
+
+def _cost_table_rows(lines: "list[str]") -> "list[str]":
+    return [ln for ln in lines if ln.startswith(_COST_TABLE_PREFIXES)]
+
+
+def _value_column_ends(row: str) -> "tuple[int, ...]":
+    """The end offsets of a table row's VALUE tokens (everything after the label).
+
+    A geometry probe, not a format pin: it measures WHERE the columns land, and
+    says nothing about how many spaces produced that. Cells are right-aligned, so
+    two rows whose value tokens end at the same offsets are column-aligned; a row
+    whose label is one char longer than the others shifts every one of its tokens
+    and the tuples differ."""
+    return tuple(m.end() for m in re.finditer(r"\S+", row))[1:]
+
+
+@pytest.mark.asyncio
+async def test_cost_table_value_columns_align_across_every_row(tmp_path) -> None:
+    """Tier 2: every row of the cost table puts its value columns at the SAME
+    offsets — a geometry invariant, not a rendered-string pin.
+
+    ★ real-TTY-witnessed (tui-coder, #3341): the row labels used to be padded
+    implicitly by their own literal width, and ``Output``/``Saved%`` are 6 chars
+    while ``Total``/``Input``/``Saved`` are 5 — so those rows' cells sat one
+    column left of the rest. The retired renderer had the identical defect and
+    this surface inherited it in the port. The label column is now padded to the
+    longest label (``chrome._COST_LABEL_W``), so adding or renaming a row later
+    cannot re-break it.
+
+    Deliberately exercised with a MIXED state set (Ses reconciles, Prj has no
+    breakdown → ``—`` cells), since differing cell widths are exactly when a
+    misalignment is easiest to miss by eye."""
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    snap["cost_breakdown_session"] = CostBreakdown(
+        prompt_cost=0.0100, completion_cost=0.0100, cache_savings=0.0050
+    )
+    snap["cost_breakdown_agent"] = CostBreakdown(
+        prompt_cost=1.0000, completion_cost=2.0000, cache_savings=0.5000
+    )
+    snap["cost_breakdown_project"] = CostBreakdown()
+    snap["cost_usd"] = 0.0200
+    snap["cost_agent"] = 3.0000
+    snap["cost_total"] = 9.8765  # breakdown absent -> "unavail" column
+
+    rows = _cost_table_rows(cost_pane_lines(snap))
+    assert {row.split()[0] for row in rows} == set(_COST_TABLE_PREFIXES), (
+        f"cost table lost or gained a row: {rows}"
+    )
+    offsets = {row: _value_column_ends(row) for row in rows}
+    reference = offsets[rows[0]]
+    misaligned = {
+        row: ends for row, ends in offsets.items() if ends != reference
+    }
+    assert not misaligned, (
+        f"these rows' value columns land elsewhere than the header's {reference}:\n"
+        + "\n".join(f"{ends}  {row!r}" for row, ends in misaligned.items())
+    )
 
 
 @pytest.mark.asyncio
@@ -589,6 +652,172 @@ async def test_open_pane_updates_on_frame_and_closed_panes_do_not(tmp_path) -> N
         assert ctx_after == ctx_before, (
             "a pane that is not open was rebuilt — the lazy compaction-status "
             f"bound is gone: {ctx_after}"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("screen_size", [(100, 30), (80, 24), (60, 20)])
+async def test_every_menu_tab_is_fully_on_screen(
+    screen_size: "tuple[int, int]", tmp_path
+) -> None:
+    """Tier 2b: ★ real-TTY-witnessed geometry guard (#3338/#3341) — EVERY menu
+    tab's region is fully inside the screen on BOTH axes (``x >= 0`` and
+    ``x + width <= screen_width``; ``y >= 0`` and ``y + height <= screen_height``),
+    at three widths.
+
+    This is the CHILD plane. The existing #3311 containment gate
+    (``test_pending_intervention_panel_does_not_swallow_the_screen``) measures
+    parent widgets on the VERTICAL axis only — the menu row's own region is
+    ``width: 100%`` and therefore always "contained", while the tabs INSIDE it
+    were laid out past the right edge with that gate fully green. Same shape as
+    the #3337 hole: a gate measuring the wrong plane.
+
+    Measured against the pre-fix single-line ``Tabs`` row (13 tabs, one line):
+    ``help`` at ``x=77 right=83`` on an 80-wide screen (1 tab off), and
+    ``hook``/``cron``/``menu``/``help`` at ``right=65/71/77/83`` on a 60-wide
+    screen (4 tabs off).
+
+    BOTH axes are load-bearing, and the second one was found by falsifying this
+    very test: with only the horizontal bounds asserted, pinning the wrapped row
+    back to ``MenuBar { height: 1 }`` stayed GREEN — the overflow rows are then
+    laid out at the correct x but BELOW the screen's last line, i.e. invisible
+    again by a different route. A horizontal-only gate would have shipped that.
+    The #3311 co-vet correction's lower-bound reasoning applies identically."""
+    from textual.widgets import Tab
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=screen_size) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen.size
+        tabs = list(app.query(Tab))
+        assert {tab.id for tab in tabs} == {tid for tid, _label in _MENU_TABS}, (
+            "wrapping the row dropped or duplicated a menu item: "
+            f"{[tab.id for tab in tabs]}"
+        )
+        offenders = {
+            tab.id: (tab.region.x, tab.region.right, tab.region.y, tab.region.bottom)
+            for tab in tabs
+            if tab.region.x < 0
+            or tab.region.right > screen.width
+            or tab.region.y < 0
+            or tab.region.bottom > screen.height
+        }
+        assert not offenders, (
+            f"tabs laid out off-screen at {screen_size} (screen={screen}); "
+            f"offender -> (x, right, y, bottom): {offenders}"
+        )
+
+
+class _PaneRefreshCountingApp:
+    """Mixin that RECORDS which panes the real app rebuilt, then delegates to the
+    real implementation — an observer, never a substitute: ``_refresh_pane``'s
+    actual body still runs, so what is counted is the production call."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.refreshed_panes: list[str] = []
+
+    def _refresh_pane(self, tab_id, *args, **kwargs):  # type: ignore[override]
+        # Pass every argument straight through — the observer must not alter the
+        # call (defaulting ``snap`` here would silently turn an open-time refresh
+        # into a pre-session "no snapshot" rebuild).
+        self.refreshed_panes.append(tab_id)
+        return super()._refresh_pane(tab_id, *args, **kwargs)  # type: ignore[misc]
+
+
+class _CountingCompactionStatus:
+    """A zero-arg callable that counts its invocations and DELEGATES to the real
+    bound ``Session.context_window_status`` — the real expensive work still runs
+    and the real dict flows into the pane. It occupies the exact slot
+    ``_snapshot()`` fills with that same bound method, so nothing is faked; the
+    counter just makes "was the expensive call made this frame?" observable."""
+
+    def __init__(self, real_fn) -> None:
+        self._real_fn = real_fn
+        self.calls = 0
+
+    def __call__(self) -> dict:
+        self.calls += 1
+        return self._real_fn()
+
+
+@pytest.mark.asyncio
+async def test_closed_pane_rebuild_is_not_invoked_on_frame_arrival(tmp_path) -> None:
+    """Tier 2: the non-vacuity half of requirement 4(b) — when a frame lands, the
+    rebuild for a pane that is NOT open is **not invoked at all**, counted on the
+    real path.
+
+    Asserting only "the closed pane's rendered content did not change" is
+    satisfiable by a build that rebuilds every pane and happens to produce
+    identical text — which is precisely the build this bound exists to forbid.
+    What actually matters is the CALL: the Ctx pane resolves
+    ``ctx_compaction_status_fn`` (= ``Session.context_window_status()``, a
+    json.dumps + token estimate of the whole router-view history), and
+    ``_snapshot()`` stores that method UNCALLED specifically so it never runs per
+    frame. So this counts both planes — the pane rebuild, and the expensive call
+    itself — and pairs the zero with a positive control (open Ctx, and the same
+    frame DOES invoke it), so the zero cannot be passing because nothing happened
+    at all."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    class _CountingApp(_PaneRefreshCountingApp, TextualChatApp):
+        pass
+
+    snap, session, _registry = await _real_snapshot(tmp_path)
+    counting_status = _CountingCompactionStatus(session.context_window_status)
+    snap["ctx_compaction_status_fn"] = counting_status
+
+    transport = _EventOnlyTransport()
+    app = _CountingApp(
+        transport=transport, read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+
+        # Cost open, Ctx closed. A frame lands.
+        app._open_drawer("cost")
+        await pilot.pause()
+        app.refreshed_panes.clear()
+        calls_before = counting_status.calls
+
+        await transport.push_event(_llm_response_event())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "cost" in app.refreshed_panes, (
+            "the OPEN pane was not rebuilt on frame arrival — the positive "
+            "control for this test did not fire"
+        )
+        assert "ctx" not in app.refreshed_panes, (
+            f"a CLOSED pane's rebuild was invoked: {app.refreshed_panes}"
+        )
+        assert counting_status.calls == calls_before, (
+            "the expensive compaction-status call ran for a pane that is not "
+            f"open ({counting_status.calls - calls_before} extra calls) — the "
+            "lazy seam has been demoted to per-frame evaluation"
+        )
+
+        # Positive control: with Ctx OPEN, the same frame DOES invoke it, so the
+        # zero above is a real absence rather than a dead code path.
+        app._open_drawer("ctx")
+        await pilot.pause()
+        app.refreshed_panes.clear()
+        calls_before = counting_status.calls
+
+        await transport.push_event(_llm_response_event())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert "ctx" in app.refreshed_panes, "the OPEN Ctx pane was not rebuilt"
+        assert counting_status.calls > calls_before, (
+            "the compaction status was never resolved even with Ctx open — the "
+            "zero asserted above would be vacuous"
         )
 
 
