@@ -45,7 +45,7 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 
 ### Understanding the system
 
-- **[P1–P8 and the code that enforces them](principles-and-code.md)** — file-by-file map of how each principle is mechanically upheld.
+- **[P1–P8 and the code that enforces them](principles-and-code.md)** — **historical.** A file-by-file map written against the deleted phase-graph skill engine; the page's own banner records which of its claims no longer hold. Read CLAUDE.md's eight lenses for the current framework.
 
 ---
 
@@ -53,9 +53,9 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 
 | File | What it does |
 |---|---|
-| `src/reyn/core/op_runtime/registry.py` | Single source of truth for op kinds, Pydantic models |
-| `src/reyn/core/context_builder.py` | Builds the ContextFrame injected into every LLM call (P4 candidates here) |
-| `src/reyn/schemas/models.py` | All Pydantic models — Phase, Skill, SkillGraph, Op |
+| `src/reyn/schemas/models.py` | Single source of truth for op kinds — `OP_KIND_MODEL_MAP` (op kind → IROp model) and the `Op` union derived from it |
+| `src/reyn/core/op_runtime/registry.py` | Op-handler registration + the `ALL_OP_KINDS` / tool-name view over the map above |
+| `src/reyn/core/context_builder.py` | The shared window-derived per-result inline read cap (`control_ir_inline_cap`) |
 | `src/reyn/core/events/events.py` | Append-only EventLog (P6) |
 | `src/reyn/data/workspace/workspace.py` | Workspace read/write with permission gating (P5) |
 

@@ -232,7 +232,6 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
             "content": truncated_content,
             "total_chars": len(content),
             "_truncated": True,
-            "_self_bounded": True,
             "note": (
                 f"content truncated to fit context ({len(truncated_content)} of "
                 f"{len(content)} chars shown); the full skill body is on disk at "
@@ -247,7 +246,6 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
         "path": op.path,
         "status": "ok",
         "content": content,
-        "_self_bounded": True,
         **enc_field,
     }
 

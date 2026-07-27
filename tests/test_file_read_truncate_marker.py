@@ -9,14 +9,16 @@ model knows it holds a PART and can re-read the original file. Real Workspace + 
 #2396 Step 4: the generic control_ir offload (``offload_control_ir_result``) this file's
 "never-offload-duplicates" test used to falsify against was retired — its last caller (the
 ContextFrame-driven phase path) was removed by earlier convergence steps, so there is no longer a
-generic offload for a self-bounded read to be exempt from. The `_self_bounded` marker assertion
-below still pins the flag being stamped (see ``tests/test_offload_recursion_2296.py`` for the fuller
-self-bounding coverage).
+generic offload for a self-bounded read to be exempt from. #3334 therefore removed the
+``_self_bounded`` stamp that marked that exemption; what this file pins instead is the property the
+stamp only *claimed* — the returned ``content`` is genuinely ≤ the inline cap.
 """
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+
+from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES as CAP
 
 
 def _read(tmp_path: Path, text: str, *, offset: int | None = None, limit: int | None = None) -> dict:
@@ -48,7 +50,7 @@ def test_large_read_is_truncated_with_llm_visible_marker(tmp_path, monkeypatch):
 
     assert res["status"] == "truncated"
     assert res["_truncated"] is True, "explicit LLM-visible truncation marker"
-    assert res["_self_bounded"] is True, "truncated read is self-bounded (offload-exempt)"
+    assert len(res["content"]) <= CAP, "the truncated read is genuinely bounded by the inline cap"
     assert res["next_offset"] is not None, "a re-read continuation offset is provided"
     note = res["note"]
     assert "big.txt" in note, "the note names the on-disk source path"

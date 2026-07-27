@@ -163,8 +163,9 @@ def _read_inline_cap(ctx: OpContext) -> int:
     Resolves ``ctx.model`` (a CLASS like ``"standard"``) to its litellm string
     BEFORE deriving the window (resolve-before-window — the #1172-correct path;
     a raw class mis-resolves to the fallback window), then reuses the shared
-    ``control_ir_inline_cap`` so read-bounding and offload use the same cap.
-    Falls back to the fixed floor when there is no resolver.
+    ``control_ir_inline_cap`` — the same window-derived read-bounding cap
+    ``load_skill`` bounds its body against, so both read verbs cut at one
+    place. Falls back to the fixed floor when there is no resolver.
     """
     from reyn.core.context_builder import control_ir_inline_cap
 
@@ -378,7 +379,7 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # truncation. Accumulate WHOLE lines from (start_line, start_char); a multi-line overflow
         # stops at the LINE boundary (byte-identical to pre-#2335 — next_char_offset stays absent);
         # a SINGLE line/segment that alone exceeds the cap is CHAR-truncated so `content` is
-        # GENUINELY ≤ cap (honest `_self_bounded`, #2335 fix), its tail paged via next_char_offset.
+        # GENUINELY ≤ cap (#2335 fix), its tail paged via next_char_offset.
         all_lines = content.splitlines(keepends=True)
         start_line = op.offset or 0
         start_char = op.char_offset or 0
@@ -432,9 +433,6 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                     f"chars shown); the full file is on disk at {op.path!r} — re-read from "
                     f"offset {next_offset} to continue."
                 ),
-                # #2296: content bound ≤ the inline cap BY CONSTRUCTION → exempt from the generic
-                # control_ir offload (else re-offload on envelope size alone and recurse).
-                "_self_bounded": True,
                 **_enc_field,
             }
             if next_char_offset is not None:
@@ -449,8 +447,6 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             "path": op.path,
             "status": "ok",
             "content": "".join(shown),
-            # #2296: content ≤ the inline cap by construction → exempt from the generic offload.
-            "_self_bounded": True,
             **_enc_field,
         }
 

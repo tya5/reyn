@@ -1,10 +1,13 @@
-"""Tier 2: #2335 — a single line exceeding the inline cap is CHAR-truncated (honest _self_bounded).
+"""Tier 2: #2335 — a single line exceeding the inline cap is CHAR-truncated, not included whole.
 
-#2296 exempts self-bounded reads from the generic offload, trusting `_self_bounded` = "content ≤ cap
-by construction". But the line-based read-bounding always included the FIRST line whole, so a single
-line > cap → content > cap yet `_self_bounded: True` (dishonest) → the huge line ESCAPED offload =
-context bloat. Fix: char-truncate the overflowing line, page its tail via (next_offset,
+The line-based read-bounding always included the FIRST line whole, so a file whose single first line
+exceeded the cap returned `content` > cap — the read was not bounded at all and the huge line reached
+the model. Fix: char-truncate the overflowing line, page its tail via (next_offset,
 next_char_offset). The LLM's line-based offset/limit contract is preserved (char_offset is edge-only).
+
+The invariant every case below pins directly is ``len(content) <= CAP``. #2296 originally expressed it
+indirectly, via a `_self_bounded` flag consumed by the generic control_ir offload; that offload and
+the flag were both retired (#2396 Step 4, #3334), so the bound is asserted on the content itself.
 """
 from __future__ import annotations
 
@@ -33,15 +36,13 @@ def _read(tmp_path: Path, **kw) -> dict:
 
 
 def test_single_line_over_cap_is_char_truncated_and_honest(tmp_path: Path):
-    """Tier 2: a file whose FIRST line alone exceeds the cap → content is CHAR-truncated to ≤ cap
-    (honest `_self_bounded`), NOT included whole. RED without the fix (content > cap yet
-    `_self_bounded` True = the dishonest state #2296's tests missed)."""
+    """Tier 2: a file whose FIRST line alone exceeds the cap → content is CHAR-truncated to ≤ cap,
+    NOT included whole. RED without the fix (content > cap = unbounded)."""
     huge = "x" * (CAP + 5000)  # a single line (no newline), well over the 8 KB floor cap
     (tmp_path / "min.js").write_text(huge)
     res = _read(tmp_path, path="min.js")
     assert res["status"] == "truncated"
-    assert res["_self_bounded"] is True
-    assert len(res["content"]) <= CAP, "content must be GENUINELY ≤ cap (honest self-bounded)"
+    assert len(res["content"]) <= CAP, "content must be GENUINELY ≤ cap"
     assert "next_char_offset" in res, "a char-truncated line pages its tail via next_char_offset"
     assert res["total_chars"] == len(huge), "total_chars reports the full size"
 
@@ -75,13 +76,13 @@ def test_multi_line_over_cap_unchanged(tmp_path: Path):
 
 
 def test_small_explicit_line_window_stays_verbatim(tmp_path: Path):
-    """Tier 2: a SMALL explicit LINE window (≤ cap) is honored VERBATIM — byte-identical, not
-    self-bounded (the common #2335 line-read contract)."""
+    """Tier 2: a SMALL explicit LINE window (≤ cap) is honored VERBATIM — byte-identical, with no
+    truncation applied (the common #2335 line-read contract)."""
     (tmp_path / "s.txt").write_text("l0\nl1\nl2\n")
     res = _read(tmp_path, path="s.txt", offset=1, limit=1)  # just line 1
     assert res["status"] == "ok"
     assert res["content"] == "l1\n"
-    assert "_self_bounded" not in res, "a small explicit window is verbatim, not self-bounded"
+    assert "_truncated" not in res, "a small explicit window is verbatim — nothing was cut"
 
 
 def test_oversized_explicit_line_window_is_truncated_not_offloaded(tmp_path: Path):
@@ -93,18 +94,16 @@ def test_oversized_explicit_line_window_is_truncated_not_offloaded(tmp_path: Pat
     (tmp_path / "f.txt").write_text("a\n" + huge_line + "\nb\n")
     res = _read(tmp_path, path="f.txt", offset=1, limit=1)  # the huge line
     assert res["status"] == "truncated"
-    assert res["_self_bounded"] is True, "an oversized explicit window is self-bounded (no offload copy)"
     assert res["_truncated"] is True, "LLM-visible truncation marker"
     assert len(res["content"]) <= CAP, "content is cut to fit the cap (full source stays on disk)"
     assert res["path"] == "f.txt", "the on-disk source path is surfaced for re-read"
 
 
 def test_small_read_unchanged(tmp_path: Path):
-    """Tier 2: a small file (≤ cap) is returned whole, self-bounded, no truncation fields (the
-    common path, byte-identical)."""
+    """Tier 2: a small file (≤ cap) is returned whole, no truncation fields (the common path,
+    byte-identical)."""
     (tmp_path / "small.py").write_text("hello = 1\nworld = 2\n")
     res = _read(tmp_path, path="small.py")
     assert res["status"] == "ok"
     assert res["content"] == "hello = 1\nworld = 2\n"
-    assert res["_self_bounded"] is True
     assert "next_offset" not in res and "next_char_offset" not in res

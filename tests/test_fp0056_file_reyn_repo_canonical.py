@@ -45,7 +45,7 @@ def test_incident_file_read_offloads_clean_text_not_whole_dict_blob():
     mapper the whole result dict fell to the structured fallback (``text=""``, structured offloaded)."""
     result = {
         "kind": "file", "op": "read", "path": "docs/reference/runtime/present.ja.md",
-        "status": "ok", "content": _BIG_DOC, "_self_bounded": True,
+        "status": "ok", "content": _BIG_DOC,
     }
     canonical = to_canonical(result, source="read_file")
     assert canonical["text"] == _BIG_DOC, "the doc body is the text payload (not offloaded as a dict)"
@@ -101,7 +101,7 @@ def test_file_read_content_is_text_path_op_status_are_signal_meta():
     """Tier 1: file read → ``content`` is ``text``; ``path``/``op``/``status`` are signal meta (which
     file, what happened), never the body."""
     c = to_canonical({"kind": "file", "op": "read", "path": "a/b.md", "status": "ok",
-                      "content": "hello world", "_self_bounded": True}, source="file")
+                      "content": "hello world"}, source="file")
     assert c["text"] == "hello world"
     assert c["meta"].get("path") == "a/b.md"
     assert c["meta"].get("op") == "read" and c["meta"].get("status") == "ok"
