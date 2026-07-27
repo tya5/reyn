@@ -21,6 +21,7 @@ from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
+from reyn.services.compaction.engine import estimate_tokens
 from reyn.services.turn_budget import (
     DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,
     build_default_turn_budget_engine,
@@ -28,6 +29,39 @@ from reyn.services.turn_budget import (
 )
 from tests._support.agent_session import make_session
 from tests._support.router_host_adapter import make_adapter as _make_adapter
+
+# ── offload_cap derivation (#2396 Step 4 co-vet) ────────────────────────────
+
+
+def test_offload_cap_is_derived_from_tool_result_cap_ceiling_not_hardcoded(monkeypatch) -> None:
+    """Tier 2: ``offload_cap`` is a READ of the offload path's own inline ceiling
+    (``tool_result_cap.MAX_TOOL_RESULT_INLINE_BYTES``), not an independently
+    duplicated constant — semantically required, since ``offload_cap`` is defined
+    as "the largest a single tool_result can re-add once offload has capped it":
+    if the offload path's cap changes, a turn_budget that kept computing off a
+    stale duplicate would silently under/over-reserve. Monkeypatches the ceiling
+    to an off-default value and asserts the derived ``offload_cap`` tracks it —
+    a value-equality-only assert (e.g. against the literal 16384) would stay
+    GREEN even if someone re-hardcoded the old constant instead of importing it,
+    because both sides would still equal 16384 by coincidence. This RED-guards
+    that specific regression."""
+    import reyn.runtime.services.tool_result_cap as tool_result_cap
+
+    model = "gpt-4o-mini"
+    default_eng = build_default_turn_budget_engine(model, use_chars4=True)
+
+    off_default_ceiling = tool_result_cap.MAX_TOOL_RESULT_INLINE_BYTES + 12_000
+    monkeypatch.setattr(tool_result_cap, "MAX_TOOL_RESULT_INLINE_BYTES", off_default_ceiling)
+    patched_eng = build_default_turn_budget_engine(model, use_chars4=True)
+
+    assert patched_eng.budget.offload_cap != default_eng.budget.offload_cap, (
+        "offload_cap must move when the offload path's own ceiling moves — a "
+        "duplicated/hardcoded constant would leave it unchanged"
+    )
+    assert patched_eng.budget.offload_cap == estimate_tokens(
+        "x" * off_default_ceiling, model, use_chars4=True
+    ), "offload_cap must be exactly the token-estimate of the (patched) ceiling — a live derivation"
+
 
 # ── adapter property ─────────────────────────────────────────────────────────
 
