@@ -22,6 +22,11 @@ accumulate, but the row is only re-rendered while it is on screen —
 ``FlowView.track_visibility`` replays the accumulated text in one update if the
 row scrolls back, so scrolling away never truncates a reply.
 
+Either gutter can be HIDDEN at runtime (#3352, ``ctrl+g`` / ``ctrl+r`` — see
+:attr:`TextualChatApp.BINDINGS`), handing its whole column back to the
+conversation body. The start state comes from ``chat.gutters.left`` /
+``chat.gutters.right``; the keypress is session-scoped and never writes back.
+
 This module is part of the TTY-only ``textual_chat`` package (imported lazily via
 :mod:`reyn.interfaces.repl.client_driver`); its ``textual`` / ``textual_flowview``
 imports never reach an always-loaded module.
@@ -116,6 +121,27 @@ _TURN_END_EVENT_TYPES = frozenset({"turn_settled", "turn_completed", "turn_cance
 #: FlowView gutter column width (state-coloured marker). Wired into
 #: ``compose``'s ``FlowView(gutter_width=…)`` config.
 _GUTTER_WIDTH = 2
+
+def _configured_gutter_visibility(config) -> "tuple[bool, bool]":
+    """``(left, right)`` gutter START visibility from ``chat.gutters`` (#3352).
+
+    Defaults come from :class:`~reyn.config.chat.GutterConfig` (both ``True``)
+    rather than being re-typed here, so the config dataclass stays the single
+    place the default lives. A missing/partial config (``None``, or a remote
+    client with no config object) falls back to those defaults — the same
+    ``try``/``AttributeError`` shape ``client_driver._configured_render_mode``
+    uses for the sibling ``chat.render_mode`` read."""
+    from reyn.config.chat import GutterConfig  # noqa: PLC0415 — TTY-local read
+
+    defaults = GutterConfig()
+    if config is None:
+        return (defaults.left, defaults.right)
+    try:
+        gutters = config.chat.gutters
+        return (bool(gutters.left), bool(gutters.right))
+    except AttributeError:
+        return (defaults.left, defaults.right)
+
 
 #: Sentinel for :meth:`TextualChatApp._pane_rows`'s optional ``snap`` argument —
 #: distinguishes "no snapshot passed, read a fresh one" from an explicit ``None``
@@ -358,6 +384,22 @@ class TextualChatApp(App):
         # Global fallback so Esc closes the drawer even when focus is INSIDE it
         # (an OptionList pane); the MenuBar's own ↑/Esc handles the menu-row case.
         ("escape", "close_drawer", "Close drawer"),
+        # #3352: hide/show either gutter, handing its whole column back to the
+        # conversation body. Two bindings, not one, because the upstream
+        # granularity is two INDEPENDENT flags (``FlowView.left_gutter_visible``
+        # / ``right_gutter_visible``) — reyn follows it rather than inventing a
+        # coarser "both" switch. Keys chosen after enumerating every binding
+        # reachable from this app: Textual's own ``App``/``Screen`` defaults
+        # (ctrl+c, ctrl+q, tab, shift+tab), ``TextArea``'s (the Composer owns
+        # focus most of the time — ctrl+k/u/v/w/x/y/z/d/a/e, ctrl+arrows,
+        # f6/f7), ``OptionList``'s (the drawer panes), and reyn's own imperative
+        # ``Composer``/``MenuBar`` ``_on_key`` keys plus ``SentQueue``/
+        # ``InterventionPanel`` ``BINDINGS`` (enter/escape/tab/arrows). ctrl+g
+        # and ctrl+r appear in NONE of them, and neither is one of the four
+        # keys (↑ ↓ tab esc) the in-flight composer-completion popup (#3358)
+        # borrows while it is open.
+        ("ctrl+g", "toggle_left_gutter", "Show/hide left gutter (state)"),
+        ("ctrl+r", "toggle_right_gutter", "Show/hide right gutter (elapsed/tokens)"),
     ]
 
     CSS = """
@@ -588,6 +630,15 @@ class TextualChatApp(App):
         # One-shot latch so a raising lookup is logged once, not once per
         # rendered row per repaint (see :meth:`_turn_usage`).
         self._turn_usage_lookup_failed = False
+        # #3352: each gutter's START visibility, read from
+        # ``chat.gutters.left`` / ``chat.gutters.right`` and applied to the
+        # FlowView in :meth:`compose`. Runtime toggles
+        # (:meth:`action_toggle_left_gutter` / :meth:`action_toggle_right_gutter`)
+        # go straight to the widget and are NOT mirrored back here — the
+        # FlowView's own ``left_gutter_visible`` / ``right_gutter_visible`` is
+        # the single source of truth for the live state, so there is no second
+        # copy to drift.
+        self._gutter_start = _configured_gutter_visibility(config)
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -614,6 +665,14 @@ class TextualChatApp(App):
             # re-invokes the time-based ReynGutter each tick (no app-side timer).
             animation_fps=self.ANIMATION_FPS,
         )
+        # #3352: apply the configured START state. flowview has no constructor
+        # parameter for gutter visibility (both flags initialise True), so the
+        # only way to open with one hidden is to set it here — before mount,
+        # where ``set_gutter_visible`` short-circuits its relayout and geometry
+        # syncs on its own at mount time. No flash: nothing has painted yet.
+        left_start, right_start = self._gutter_start
+        self._flow.set_gutter_visible("left", left_start)
+        self._flow.set_gutter_visible("right", right_start)
         yield self._flow
         # #3299 P1: the grouped intervention panel sits BETWEEN the flow and
         # the input row (region order shared with the sibling #3300 queue arc:
@@ -982,6 +1041,24 @@ class TextualChatApp(App):
 
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
+
+    def action_toggle_left_gutter(self) -> None:
+        """``ctrl+g`` — flip the LEFT (state-marker) gutter's visibility.
+
+        Delegates straight to flowview's ``toggle_gutter`` (#3352): hiding a
+        gutter hands its configured width back to the conversation body and
+        reflows, all upstream (``FlowView.body_width`` grows by exactly the
+        hidden gutter's width, and the presenter is re-invoked at the new
+        width). reyn adds no width arithmetic and no relayout of its own —
+        there is nothing here to keep in sync with the library."""
+        self._flow.toggle_gutter("left")
+
+    def action_toggle_right_gutter(self) -> None:
+        """``ctrl+r`` — flip the RIGHT (elapsed / turn-token) gutter's
+        visibility. The right sibling of :meth:`action_toggle_left_gutter`;
+        two independent actions because upstream's granularity is two
+        independent flags."""
+        self._flow.toggle_gutter("right")
 
     def _present_intervention(
         self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"

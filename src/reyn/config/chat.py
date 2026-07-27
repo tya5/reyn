@@ -502,8 +502,35 @@ CHAT_RENDER_MODES = ("alt-screen", "inline", "plain", "auto")
 
 
 @dataclass
+class GutterConfig:
+    """`chat.gutters:` — the TTY conversation pane's two gutter columns (#3352).
+
+    The Textual conversation pane draws a LEFT gutter (the state-coloured
+    marker, #3273 Phase 2) and a RIGHT gutter (per-entry elapsed / the turn's
+    prompt+completion token split, #3283 Phase ④). Each costs a fixed number
+    of columns on EVERY row, taken off the conversation body's width.
+
+    These two flags are the STARTING state of each gutter when the pane
+    mounts — the user can flip either one at runtime from the keyboard
+    (``ctrl+g`` / ``ctrl+r``, see the app's ``BINDINGS``). A runtime toggle is
+    SESSION-SCOPED by decision: it never writes back here, so a keypress can
+    never silently rewrite the operator's ``reyn.yaml``. Set these to persist
+    a preference across runs.
+
+    Granularity follows the upstream contract exactly (two independent
+    ``FlowView`` flags — ``left_gutter_visible`` / ``right_gutter_visible``);
+    reyn does not invent a coarser or finer one.
+    """
+    left: bool = True
+    right: bool = True
+
+
+@dataclass
 class ChatConfig:
     """`chat:` — chat-session-specific runtime knobs.
+
+    ``gutters`` (#3352): the TTY conversation pane's per-side gutter start
+    state — see :class:`GutterConfig`.
 
     ``render_mode`` (#3273): selects the interactive chat renderer/driver —
     ``alt-screen`` (default, full-screen), ``inline`` (legacy bounded driver;
@@ -517,6 +544,7 @@ class ChatConfig:
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     render_mode: Literal["alt-screen", "inline", "plain", "auto"] = "alt-screen"
+    gutters: GutterConfig = field(default_factory=GutterConfig)
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -548,6 +576,17 @@ def _build_render_mode(raw: object) -> str:
     return mode
 
 
+def _build_gutter_config(raw: object) -> GutterConfig:
+    """#3352: parse ``chat.gutters`` (left / right start visibility)."""
+    defaults = GutterConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    return GutterConfig(
+        left=bool(raw.get("left", defaults.left)),
+        right=bool(raw.get("right", defaults.right)),
+    )
+
+
 def _build_chat_config(raw: object) -> ChatConfig:
     if not isinstance(raw, dict):
         return ChatConfig()
@@ -556,9 +595,13 @@ def _build_chat_config(raw: object) -> ChatConfig:
     reasoning = _build_reasoning_config(raw.get("reasoning"))
     # #3273: render_mode parses independently of compaction too.
     render_mode = _build_render_mode(raw.get("render_mode"))
+    # #3352: so do the gutter start-visibility flags.
+    gutters = _build_gutter_config(raw.get("gutters"))
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
-        return ChatConfig(reasoning=reasoning, render_mode=render_mode)  # type: ignore[arg-type]
+        return ChatConfig(  # type: ignore[arg-type]
+            reasoning=reasoning, render_mode=render_mode, gutters=gutters,
+        )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
     # component_weights and auto-compaction is window-relative (no turn-count
@@ -637,6 +680,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
     )
     return ChatConfig(
         compaction=compaction, reasoning=reasoning, render_mode=render_mode,  # type: ignore[arg-type]
+        gutters=gutters,
     )
 
 
