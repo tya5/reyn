@@ -134,7 +134,7 @@ def _install_side_effect_tool(monkeypatch) -> None:
         name="is2_append",
         description="IS-2 test: append a line to a file (real side effect).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler,
         category="io",
         purity="side_effect",

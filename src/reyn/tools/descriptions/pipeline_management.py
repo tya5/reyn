@@ -20,7 +20,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 pipeline_install_local = ToolDescription(
     tool_name="pipeline_install_local",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Register a local pipeline DSL file into the project config so "
         "sessions can launch it (via pipeline__<key>.<name> or "
@@ -48,7 +48,7 @@ pipeline_install_local = ToolDescription(
 
 pipeline_install_source = ToolDescription(
     tool_name="pipeline_install_source",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Fetch a pipeline from a git/GitHub URL, shallow-clone + "
         "threat-scan it, and install it into the project config."

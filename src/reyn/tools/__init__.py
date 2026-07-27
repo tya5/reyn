@@ -138,7 +138,7 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.web_search import WEB_SEARCH
 
     registry = ToolRegistry()
-    # ── Both-surface capabilities (gates.router=allow, gates.phase=allow) ──
+    # ── Router-surfaced capabilities (gates.router=allow) ──
     registry.register(WEB_SEARCH)
     registry.register(WEB_FETCH)
     # #1449: read_tool_result retired — its same-host path-ref read is covered by
@@ -171,7 +171,7 @@ def get_default_registry() -> ToolRegistry:
     # FP-0040 (#178): partial-edit op so the LLM can patch by unique-string
     # anchor instead of full-file read+write round-trip.
     registry.register(EDIT_FILE)
-    # MCP ops (Wave 2 — Type C closure: phase-side discover)
+    # MCP ops (Wave 2)
     # FP-0032: DESCRIBE_MCP_TOOL added as D4 (mirror of describe_skill).
     registry.register(CALL_MCP_TOOL)
     registry.register(LIST_MCP_SERVERS)
@@ -188,13 +188,13 @@ def get_default_registry() -> ToolRegistry:
     # #2597 slice ②c: prompts consumption (list/get).
     registry.register(LIST_MCP_PROMPTS)
     registry.register(GET_MCP_PROMPT)
-    # Memory ops (Wave 2 — Type C closure: memory write phase-side)
+    # Memory ops (Wave 2)
     registry.register(LIST_MEMORY)
     registry.register(READ_MEMORY_BODY)
     registry.register(REMEMBER_SHARED)
     registry.register(REMEMBER_AGENT)
     registry.register(FORGET_MEMORY)
-    # Catalog ops (Wave 2 — Type C closure: catalog browse phase-side)
+    # Catalog ops (Wave 2)
     registry.register(LIST_AGENTS)
     registry.register(DESCRIBE_AGENT)
     # ── Exec / lint / ask_user (gates declared per-tool) ──
@@ -209,7 +209,7 @@ def get_default_registry() -> ToolRegistry:
     # renamed the tool `sandboxed_exec` -> `exec`. ASK_USER=router="deny".
     registry.register(EXEC)
     registry.register(ASK_USER)
-    # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──
+    # ── Router-only capabilities (gates.router=allow) ──
     registry.register(DELEGATE_TO_AGENT)
     registry.register(SESSION_SPAWN)
     registry.register(AGENT_SPAWN)
@@ -235,17 +235,15 @@ def get_default_registry() -> ToolRegistry:
     # the file__glob / file__grep surfaces but scoped to the OS source tree.
     registry.register(REYN_REPO_GLOB)
     registry.register(REYN_REPO_GREP)
-    # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
-    # #1240 Wave 2b: MCP_OP coarse ToolDefinition dropped.
-    # Phase advertises "call_mcp_tool" via available_ops(); the (A)-alias in
-    # _PHASE_TOOL_NAME_ALIAS rewrites it to "mcp" at the parse boundary.
-    # Dispatch falls to the legacy execute_op path (op_runtime/mcp.py via
-    # register("mcp")).
-    # NOTE: FILE_OP coarse ToolDefinition was dropped in the previous Wave 2b step.
+    # ── Coarse-name ops ──────────────────────────────────────────────────
+    # #1240 Wave 2b dropped the coarse MCP_OP / FILE_OP ToolDefinitions.
+    # MCP_INSTALL_OP keeps gates.router="deny": install must run through
+    # op_runtime, so it is never advertised in the router's tools=. The phase
+    # surface that used to invoke it is gone (#2434 / #2438); the bare-name
+    # pipeline-step path still reaches it (#2696).
     registry.register(MCP_INSTALL_OP)
-    # FP-0034 §D23: mcp_drop_server is router+phase callable (= dual gate).
-    # Reachable via universal_action ``mcp.operation__drop_server`` AND
-    # as a phase Control IR op kind="mcp_drop_server".
+    # FP-0034 §D23: mcp_drop_server is reachable via the universal_action
+    # ``mcp.operation__drop_server`` wrapper.
     registry.register(MCP_DROP_SERVER_OP)
     # Issue #879: verb-object MCP wrappers — pure op-runtime handlers
     # (no skill spawn) under the new ``mcp`` category in _OPERATION_RULES.
@@ -284,7 +282,7 @@ def get_default_registry() -> ToolRegistry:
     # flow (not an install-error message).
     registry.register(PLUGIN_LIST)
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
-    # pipeline. Router+phase allow. IS-5: surfaced to the live LLM catalog
+    # pipeline. IS-5: surfaced to the live LLM catalog
     # via the ``pipeline`` universal-catalog category enumerator (lists
     # registered pipelines) + invoke_action (``pipeline__run`` /
     # ``run_pipeline``) — the same PR-3b-shipped path every other

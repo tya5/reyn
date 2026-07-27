@@ -43,9 +43,9 @@ reyn config set <key> <value>
 ```bash
 reyn config
 reyn config fields
-reyn config get safety.loop.max_phase_visits
+reyn config get safety.loop.max_router_iterations
 reyn config set model strong
-reyn config set safety.loop.max_phase_visits 50
+reyn config set safety.loop.max_router_iterations 50
 ```
 
 ## See also

@@ -144,7 +144,7 @@ def _install_counting_tool(monkeypatch, out_file: Path, *, on_call=None) -> None
         name="is6_step",
         description="IS-6 test: append a line per call (real side effect).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler,
         category="io",
         purity="side_effect",
@@ -473,7 +473,7 @@ async def test_attached_caller_cancel_inflight_stops_pipeline_at_boundary(
         name="is6_step",
         description="#2588 test: a gated step tool (real side effect + await gate).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler, category="io", purity="side_effect",
     )
     base = tools_pkg.get_default_registry

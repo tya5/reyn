@@ -12,7 +12,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 plugin_install = ToolDescription(
     tool_name="plugin_management__install",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Promote a just-authored, just-tested capability (an MCP server / "
         "pipeline / skill) into a reusable plugin, or install a pre-existing "
@@ -52,7 +52,7 @@ plugin_install = ToolDescription(
 
 plugin_uninstall = ToolDescription(
     tool_name="plugin_management__uninstall",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose="Remove a previously installed plugin — the inverse of plugin_install.",
     text=(
         "Uninstall a plugin previously installed via plugin_install. Removes "
@@ -70,7 +70,7 @@ plugin_uninstall = ToolDescription(
 
 plugin_list = ToolDescription(
     tool_name="plugin_management__list",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Discover which builtin plugins reyn ships and can install (#3202) "
         "-- the normal-flow answer to 'what can I install', not something "

@@ -1243,7 +1243,7 @@ LLM-authored hook-event emission (Hook-Event Redesign Phase 5 part 2, proposal
 §8/§8.4) — the FIRST place an LLM can put a `HookEvent` onto a live per-session
 `HookBus` (Phase 4a); every prior producer (`HookDispatcher.dispatch` at the 10
 builtin points, a `Composer`'s correlated output, the Ingress Adapters) is
-OS-internal code, never an LLM tool call. Router-only (`gates.phase="deny"`) —
+OS-internal code, never an LLM tool call. Router-only (`gates.router="allow"`) —
 the handler needs a live, session-bound `HookBus` + `session_id`, which only a
 chat-router `OpContext` wires.
 

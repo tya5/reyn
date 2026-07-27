@@ -104,7 +104,7 @@ _LIST_MCP_TOOLS_PARAMETERS: dict[str, Any] = {
 # collide with invoke_action's own "args" (two same-named levels), which the LLM
 # collapsed (params flat beside server/mcp_tool_name, inner level dropped) → empty args
 # at the MCP call (owner-observed). A distinct key kills the collision by construction.
-# Single-sourced so the schema decl + both read sites (router + phase) cannot drift.
+# Single-sourced so the schema decl + its read sites cannot drift.
 _MCP_TOOL_ARGS_KEY: Final[str] = "tool_args"
 
 _CALL_MCP_TOOL_PARAMETERS: dict[str, Any] = {
@@ -600,7 +600,7 @@ LIST_MCP_SERVERS = ToolDefinition(
     router_dispatched=True,
     description=_LIST_MCP_SERVERS_DESCRIPTION,
     parameters=_LIST_MCP_SERVERS_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_list_mcp_servers,
     category="discovery",
     purity="read_only",
@@ -612,7 +612,7 @@ LIST_MCP_TOOLS = ToolDefinition(
     router_dispatched=True,
     description=_LIST_MCP_TOOLS_DESCRIPTION,
     parameters=_LIST_MCP_TOOLS_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_list_mcp_tools,
     category="discovery",
     purity="read_only",
@@ -625,7 +625,7 @@ CALL_MCP_TOOL = ToolDefinition(
     router_dispatched=True,
     description=_CALL_MCP_TOOL_DESCRIPTION,
     parameters=_CALL_MCP_TOOL_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_call_mcp_tool,
     category="discovery",
     purity="side_effect",  # call_mcp_tool has arbitrary side effects
@@ -639,7 +639,7 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
     router_dispatched=True,
     description=_DESCRIBE_MCP_TOOL_DESCRIPTION,
     parameters=_DESCRIBE_MCP_TOOL_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_describe_mcp_tool,
     category="discovery",
     purity="read_only",
@@ -659,7 +659,7 @@ LIST_MCP_RESOURCES = ToolDefinition(
     router_dispatched=True,
     description=_LIST_MCP_RESOURCES_DESCRIPTION,
     parameters=_LIST_MCP_RESOURCES_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_list_mcp_resources,
     category="discovery",
     purity="read_only",
@@ -673,7 +673,7 @@ LIST_MCP_RESOURCE_TEMPLATES = ToolDefinition(
     router_dispatched=True,
     description=_LIST_MCP_RESOURCE_TEMPLATES_DESCRIPTION,
     parameters=_LIST_MCP_RESOURCE_TEMPLATES_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_list_mcp_resource_templates,
     category="discovery",
     purity="read_only",
@@ -687,7 +687,7 @@ READ_MCP_RESOURCE = ToolDefinition(
     router_dispatched=True,
     description=_READ_MCP_RESOURCE_DESCRIPTION,
     parameters=_READ_MCP_RESOURCE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_read_mcp_resource,
     category="discovery",
     purity="read_only",  # a resource read has no reyn-side side effects (unlike call_mcp_tool)
@@ -706,7 +706,7 @@ SUBSCRIBE_MCP_RESOURCE = ToolDefinition(
     router_dispatched=True,
     description=_SUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
     parameters=_SUBSCRIBE_MCP_RESOURCE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_subscribe_mcp_resource,
     category="discovery",
     purity="side_effect",  # registers server-side subscription state
@@ -719,7 +719,7 @@ UNSUBSCRIBE_MCP_RESOURCE = ToolDefinition(
     router_dispatched=True,
     description=_UNSUBSCRIBE_MCP_RESOURCE_DESCRIPTION,
     parameters=_UNSUBSCRIBE_MCP_RESOURCE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_unsubscribe_mcp_resource,
     category="discovery",
     purity="side_effect",
@@ -738,7 +738,7 @@ LIST_MCP_PROMPTS = ToolDefinition(
     router_dispatched=True,
     description=_LIST_MCP_PROMPTS_DESCRIPTION,
     parameters=_LIST_MCP_PROMPTS_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_list_mcp_prompts,
     category="discovery",
     purity="read_only",
@@ -752,7 +752,7 @@ GET_MCP_PROMPT = ToolDefinition(
     router_dispatched=True,
     description=_GET_MCP_PROMPT_DESCRIPTION,
     parameters=_GET_MCP_PROMPT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_get_mcp_prompt,
     category="discovery",
     purity="read_only",  # a prompt fetch has no reyn-side side effects (unlike call_mcp_tool)

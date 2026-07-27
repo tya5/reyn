@@ -27,7 +27,6 @@ applies_to: [reyn chat, reyn run-once]
 
 | フラグ | デフォルト | 説明 |
 |------|---------|-------------|
-| `--phase-budget SECONDS` | `safety.timeout.phase_seconds`（または `0`） | Phase ごとのウォールクロックバジェット。リトライ/ターンの境界でのソフトチェック。呼び出し途中はキャンセルしない。`0` で無効化。超過するとランはステータス `phase_budget_exceeded` で終了します。 |
 | `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds`（または `60`） | LiteLLM に渡される呼び出しごとの HTTP タイムアウト。 |
 | `--llm-max-retries N` | `safety.timeout.llm_max_retries`（または `3`） | LLM 呼び出しごとの一時的エラーのリトライ数（LiteLLM 指数バックオフ）。 |
 

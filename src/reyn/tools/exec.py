@@ -1,6 +1,6 @@
 """exec ToolDefinition — FP-0034 Phase 2 exec category.
 
-Router-and-phase callable capability that exposes the FP-0017
+Router-callable capability that exposes the FP-0017
 ``sandboxed_exec`` op_runtime handler via the universal catalog
 (``exec__run`` qualified name). #3226 Phase 3: the tool itself was
 renamed ``sandboxed_exec`` -> ``exec`` (the surviving argv-only exec
@@ -33,8 +33,8 @@ _EXEC_DESCRIPTION = _execution_descriptions.exec_.text
 # #1339 / sandbox-model completion: the tool exposes ONLY argv (+ timeout). The
 # sandbox policy (network / read_paths / write_paths / allow_subprocess /
 # env_passthrough) is operator-or-default, resolved onto the OpContext — the LLM
-# cannot set it via the tool. (The SandboxedExecIROp keeps those fields for
-# phase-authored Control IR; only this tool surface is trimmed.)
+# cannot set it via the tool. (The SandboxedExecIROp type keeps those fields;
+# only this tool surface is trimmed.)
 _EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -157,7 +157,7 @@ EXEC = ToolDefinition(
     name="exec",
     description=_EXEC_DESCRIPTION,
     parameters=_EXEC_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="execution",
     purity="side_effect",

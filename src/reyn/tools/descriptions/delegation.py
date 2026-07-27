@@ -10,8 +10,7 @@ call site is unchanged.
 
 Covers: agent_spawn (#2103 B-tool), delegate_to_agent (ADR-0026 M4),
 session_spawn (#2103 S1bc), topology_create (#2103 C1). All four are
-router-only (gates.phase=deny) — org-design / delegation primitives the
-LLM drives directly, never a phase-authored Control IR op.
+router-only — org-design / delegation primitives the LLM drives directly.
 """
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 agent_spawn = ToolDescription(
     tool_name="agent_spawn",
-    surfaced="router-only (gates.router=allow, gates.phase=deny) — #2103 B-tool",
+    surfaced="router (gates.router=allow) — #2103 B-tool",
     purpose=(
         "Create a new agent (org-design: WHO) under the caller's own "
         "authority, with capability automatically capped at a subset of "
@@ -43,7 +42,7 @@ agent_spawn = ToolDescription(
 delegate_to_agent = ToolDescription(
     tool_name="delegate_to_agent",
     surfaced=(
-        "router-only (gates.router=allow, gates.phase=deny) — async-dispatch "
+        "router (gates.router=allow) — async-dispatch "
         "(ADR-0026 §6): reply arrives in a future RouterLoop turn via "
         "PR14 pending_chain"
     ),
@@ -60,7 +59,7 @@ delegate_to_agent = ToolDescription(
 
 session_spawn = ToolDescription(
     tool_name="session_spawn",
-    surfaced="router-only (gates.router=allow, gates.phase=deny) — #2103 S1bc",
+    surfaced="router (gates.router=allow) — #2103 S1bc",
     purpose=(
         "Spawn a fresh-context session under the caller's agent to run a "
         "task in isolation (ephemeral or persistent), optionally with "
@@ -83,7 +82,7 @@ session_spawn = ToolDescription(
 
 topology_create = ToolDescription(
     tool_name="topology_create",
-    surfaced="router-only (gates.router=allow, gates.phase=deny) — #2103 C1",
+    surfaced="router (gates.router=allow) — #2103 C1",
     purpose=(
         "Wire the caller's spawned agents into a topology (org-design: "
         "WIRING) controlling who-can-message-whom, and optionally bind "

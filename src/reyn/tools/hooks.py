@@ -247,7 +247,7 @@ HOOKS_ADD = ToolDefinition(
     name="hooks_add",
     description=_HOOKS_ADD_DESCRIPTION,
     parameters=_HOOKS_ADD_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_hooks_add,
     category="hooks",
     purity="side_effect",

@@ -1,8 +1,6 @@
 """reyn_repo_list / reyn_repo_read ToolDefinitions — Wave 1 of M3 (ADR-0026).
 
-Both capabilities are router-only dev-mode tools (gates.router="allow",
-gates.phase="deny"). Phase doesn't need this; dev-debug is an
-operator-side concern, not an agent-author concern.
+Both capabilities are router-only dev-mode tools (gates.router="allow").
 
 The existing resolver in src/reyn/runtime/reyn_repo.py is preserved and
 called directly from each handler (no OpContext shim needed — these
@@ -235,7 +233,7 @@ REYN_REPO_LIST = ToolDefinition(
     router_dispatched=True,
     description=_REYN_REPO_LIST_DESCRIPTION,
     parameters=_REYN_REPO_LIST_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_list,
     purity="read_only",
     category="dev",
@@ -247,7 +245,7 @@ REYN_REPO_READ = ToolDefinition(
     router_dispatched=True,
     description=_REYN_REPO_READ_DESCRIPTION,
     parameters=_REYN_REPO_READ_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_read,
     purity="read_only",
     category="dev",
@@ -258,7 +256,7 @@ REYN_REPO_GLOB = ToolDefinition(
     name="reyn_repo_glob",
     description=_REYN_REPO_GLOB_DESCRIPTION,
     parameters=_REYN_REPO_GLOB_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_glob,
     purity="read_only",
     category="dev",
@@ -269,7 +267,7 @@ REYN_REPO_GREP = ToolDefinition(
     name="reyn_repo_grep",
     description=_REYN_REPO_GREP_DESCRIPTION,
     parameters=_REYN_REPO_GREP_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_grep,
     purity="read_only",
     category="dev",

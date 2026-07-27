@@ -210,7 +210,6 @@ def test_describe_mcp_tool_registered_in_default_registry():
     )
     assert describe_def.name == "describe_mcp_tool"
     assert describe_def.gates.router == "allow"
-    assert describe_def.gates.phase == "allow"
 
 
 # ---------------------------------------------------------------------------

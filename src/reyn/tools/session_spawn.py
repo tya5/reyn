@@ -1,6 +1,6 @@
 """session_spawn ToolDefinition — #2103 S1bc (LLM session-spawn primitive).
 
-Router-only (gates.router=allow, gates.phase=deny). Async-dispatch posture: the LLM
+Router-only (gates.router=allow). Async-dispatch posture: the LLM
 spawns a FRESH-context session under its own agent to run a task in isolation; the
 handler calls ctx.router_state.spawn_session_fn(...) and returns a spawn-ack. The
 spawned session RUNS the task (its run-loop is started); the result stays in the
@@ -82,7 +82,7 @@ SESSION_SPAWN = ToolDefinition(
     router_dispatched=True,
     description=_SESSION_SPAWN_DESCRIPTION,
     parameters=_SESSION_SPAWN_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="delegation",
     purity="side_effect",

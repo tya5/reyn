@@ -1,6 +1,6 @@
 """delegate_to_agent ToolDefinition — ADR-0026 M4 Phase 3.
 
-Router-only (gates.router=allow, gates.phase=deny).
+Router-only (gates.router=allow).
 
 Async-dispatch semantics (ADR-0026 §6)
 ---------------------------------------
@@ -144,7 +144,7 @@ DELEGATE_TO_AGENT = ToolDefinition(
     router_dispatched=True,
     description=_DELEGATE_TO_AGENT_DESCRIPTION,
     parameters=_DELEGATE_TO_AGENT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="delegation",
     purity="side_effect",

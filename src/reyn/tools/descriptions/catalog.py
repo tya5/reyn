@@ -23,7 +23,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 list_agents = ToolDescription(
     tool_name="list_agents",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Browse peer agents reachable via topology (clusters, then agents "
         "in a cluster) before delegating."
@@ -42,7 +42,7 @@ list_agents = ToolDescription(
 
 describe_agent = ToolDescription(
     tool_name="describe_agent",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Fetch one peer agent's full role/capabilities profile before "
         "delegating to it, when uncertain it fits the task."
@@ -61,7 +61,7 @@ describe_agent = ToolDescription(
 invoke_action = ToolDescription(
     tool_name="invoke_action",
     surfaced=(
-        "router-only (gates.router=allow, gates.phase=deny) — the universal "
+        "router (gates.router=allow) — the universal "
         "catalog's single dispatch entry point for all 13 action categories"
     ),
     purpose=(
@@ -98,7 +98,7 @@ invoke_action = ToolDescription(
         "or a spawned session completes (kind=spawned_session). The message "
         "carries the task's status + result "
         "fields. status='finished' means normal completion; other values "
-        "('loop_limit_exceeded', 'phase_budget_exceeded', 'budget_exceeded', "
+        "('loop_limit_exceeded', 'budget_exceeded', "
         "'error', or any non-'finished' value with result.error present) "
         "indicate the task did not complete normally. "
         ""

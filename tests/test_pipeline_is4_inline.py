@@ -121,7 +121,7 @@ def _install_write_tool(monkeypatch) -> None:
         name="is4_write",
         description="IS-4 test: append content to a file (real side effect).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler,
         category="io",
         purity="side_effect",

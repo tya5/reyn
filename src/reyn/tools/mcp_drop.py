@@ -126,7 +126,7 @@ MCP_DROP_SERVER_OP = ToolDefinition(
     name="mcp_drop_server",
     description=_MCP_DROP_SERVER_DESCRIPTION,
     parameters=_MCP_DROP_SERVER_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_mcp_drop_server_op,
     category="io",
     purity="side_effect",

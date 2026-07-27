@@ -440,15 +440,13 @@ def test_mcp_drop_server_registered_in_default_registry() -> None:
     assert td is not None
 
 
-def test_mcp_drop_server_is_router_and_phase_visible() -> None:
-    """Tier 2: mcp_drop_server is dual-gated (= router + phase, FP-0034 §D23)."""
+def test_mcp_drop_server_is_router_visible() -> None:
+    """Tier 2: mcp_drop_server is router-visible (FP-0034 §D23)."""
     from reyn.tools import get_default_registry
 
     registry = get_default_registry()
     router_names = {t.name for t in registry.for_router()}
-    phase_names = {t.name for t in registry.for_phase()}
     assert "mcp_drop_server" in router_names
-    assert "mcp_drop_server" in phase_names
 
 
 def test_mcp_drop_server_tool_schema_requires_server() -> None:

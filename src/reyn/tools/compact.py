@@ -1,7 +1,7 @@
 """compact ToolDefinition (#272 / #1128) — voluntary history compaction.
 
-Router- and phase-callable LLM entry point that lets the model voluntarily
-compact the conversation/phase history when the OS-injected context-size signal
+Router-callable LLM entry point that lets the model voluntarily
+compact the conversation history when the OS-injected context-size signal
 shows the window filling, instead of waiting for the mandatory retry_loop
 backstop. The handler delegates to ``op_runtime.compact``, which routes to the
 caller-wired ``OpContext.compact_now`` capability and returns the freed tokens +
@@ -81,7 +81,7 @@ COMPACT = ToolDefinition(
     router_dispatched=True,
     description=_COMPACT_DESCRIPTION,
     parameters=_COMPACT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_compact,
     category="context",
     purity="side_effect",

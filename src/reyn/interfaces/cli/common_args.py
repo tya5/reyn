@@ -1,8 +1,8 @@
 """Argparse helpers shared by `reyn run`, `reyn eval`, and `reyn chat`.
 
 All three subcommands accept the same set of flags: `--model`,
-`--output-language`, and the runtime-limits flags (`--phase-budget`,
-`--llm-timeout`, `--llm-max-retries`). Each defaults to the corresponding
+`--output-language`, and the runtime-limits flags (`--llm-timeout`,
+`--llm-max-retries`). Each defaults to the corresponding
 `safety.*` value from reyn.yaml (safety.loop.* / safety.timeout.*) and is
 resolved by Session.limits_for().
 """
@@ -30,16 +30,7 @@ def add_output_language_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def add_limits_args(parser: argparse.ArgumentParser) -> None:
-    """Add the runtime-limits flags (wall-clock budget, LLM timeout/retries)."""
-    parser.add_argument(
-        "--phase-budget", dest="phase_budget", type=float,
-        default=None, metavar="SECONDS",
-        help=(
-            "Per-phase wall-clock budget in seconds (0 = unlimited). "
-            "Soft check at retry/turn boundaries — does not cancel mid-call. "
-            "Default: from reyn.yaml `safety.timeout.phase_seconds` or 0."
-        ),
-    )
+    """Add the runtime-limits flags (LLM timeout / retries)."""
     parser.add_argument(
         "--llm-timeout", dest="llm_timeout", type=float,
         default=None, metavar="SECONDS",

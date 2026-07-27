@@ -13,7 +13,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 cron_register = ToolDescription(
     tool_name="cron_register",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Schedule a recurring message-to-agent job so periodic checks / "
         "reminders / summaries run without a live turn keeping them alive."
@@ -35,7 +35,7 @@ cron_register = ToolDescription(
 
 cron_unregister = ToolDescription(
     tool_name="cron_unregister",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose="Remove a previously-registered cron job so it stops firing.",
     text=(
         "Remove a previously-registered cron job by name. The schedule "
@@ -49,7 +49,7 @@ cron_unregister = ToolDescription(
 
 cron_list = ToolDescription(
     tool_name="cron_list",
-    surfaced="router-only (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Enumerate current cron jobs (legacy reyn.yaml + dynamic "
         ".reyn/config/cron.yaml, unioned) so the agent can inspect schedule "
@@ -69,7 +69,7 @@ cron_list = ToolDescription(
 
 cron_enable = ToolDescription(
     tool_name="cron_enable",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose="Resume firing a previously-disabled cron job.",
     text=(
         "Enable a previously-disabled cron job. The scheduler resumes "
@@ -83,7 +83,7 @@ cron_enable = ToolDescription(
 
 cron_disable = ToolDescription(
     tool_name="cron_disable",
-    surfaced="router-only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose="Pause a cron job without deleting it, for later re-enable.",
     text=(
         "Disable a cron job without removing it. The schedule stops firing "

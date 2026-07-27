@@ -5,8 +5,8 @@ src/reyn/op_runtime/web.py is preserved and wrapped via a thin
 adapter that translates between the old (op, ctx) signature
 and the new (args, ctx) signature.
 
-Both router-style and phase-style dispatch paths consume this
-ToolDefinition; Wave 1 verifies byte-identity for both surfaces.
+The router dispatch path consumes this ToolDefinition; Wave 1 verifies
+byte-identity against the pre-migration ToolSpec.
 """
 from __future__ import annotations
 
@@ -55,8 +55,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         ``web.fetch: deny`` actually raise on the router-invoked
         path (#53 fix).
       Fallback — minimal synthesis from ToolContext fields. Used by
-        phase-side dispatch and narrow test sites that don't exercise
-        permission gating. ``intervention_bus=None`` is acceptable
+        narrow test sites that don't exercise permission gating. ``intervention_bus=None`` is acceptable
         here because the fallback path doesn't have a session bus to
         reuse anyway.
     """
@@ -104,7 +103,7 @@ WEB_FETCH = ToolDefinition(
     router_dispatched=True,
     description=_WEB_FETCH_DESCRIPTION,
     parameters=_WEB_FETCH_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="discovery",
     purity="read_only",   # web fetch reads a URL, no workspace side effect

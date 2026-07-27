@@ -83,7 +83,7 @@ def test_invoke_action_description_carries_task_completed_status_semantics() -> 
     + "narrate in 1-2 sentences" + "Optimism bias" handling rules were
     removed per the SP-conveys-meaning / LLM-decides-handling principle.
     The description now lists the non-'finished' status values (=
-    ``loop_limit_exceeded``, ``phase_budget_exceeded``,
+    ``loop_limit_exceeded``,
     ``budget_exceeded``, ``error``) so the LLM knows their semantic and
     can judge how to narrate.
     """

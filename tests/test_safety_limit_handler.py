@@ -1,9 +1,9 @@
 """Tier 2 invariants for FP-0005 Phase 2 — the shared
 ``handle_limit_exceeded`` helper.
 
-This is the architectural contract that all six per-site call sites
-(max_phase_visits, phase_seconds, max_act_turns, router_cap,
-max_hop_depth, chain_seconds) consume. The chat-side checkpoint
+This is the architectural contract every per-site call site
+(max_router_iterations, max_act_turns, router_cap, max_hop_depth,
+chain_seconds) consumes. The chat-side checkpoint
 wrapper calls into this helper as well.
 
 These tests pin the helper's behaviour in isolation. Per-site wiring
@@ -74,7 +74,7 @@ async def test_unattended_mode_returns_refused_immediately() -> None:
     decision = await handle_limit_exceeded(
         bus=bus,
         on_limit=OnLimitConfig(mode="unattended"),
-        kind="max_phase_visits",
+        kind="max_router_iterations",
         run_id="run-A",
         prompt="?",
     )
@@ -119,7 +119,7 @@ async def test_interactive_no_returns_refusal() -> None:
     decision = await handle_limit_exceeded(
         bus=bus,
         on_limit=OnLimitConfig(mode="interactive"),
-        kind="max_phase_visits",
+        kind="max_router_iterations",
         run_id="run-C",
         prompt="?",
     )
@@ -137,7 +137,7 @@ async def test_interactive_unrecognised_choice_treated_as_refusal() -> None:
     decision = await handle_limit_exceeded(
         bus=bus,
         on_limit=OnLimitConfig(mode="interactive"),
-        kind="phase_seconds",
+        kind="chain_seconds",
         run_id="run-D",
         prompt="?",
     )
@@ -255,7 +255,7 @@ async def test_auto_extend_grants_up_to_budget_then_aborts() -> None:
     for i in range(2):
         d = await handle_limit_exceeded(
             bus=bus, on_limit=on_limit,
-            kind="max_phase_visits", run_id="run-H",
+            kind="max_router_iterations", run_id="run-H",
             prompt="?", extension_amount=5.0,
         )
         assert d.allow_continue is True, f"iteration {i}"
@@ -265,7 +265,7 @@ async def test_auto_extend_grants_up_to_budget_then_aborts() -> None:
     # Third hit exhausts the budget.
     d = await handle_limit_exceeded(
         bus=bus, on_limit=on_limit,
-        kind="max_phase_visits", run_id="run-H",
+        kind="max_router_iterations", run_id="run-H",
         prompt="?",
     )
     assert d.allow_continue is False
@@ -286,7 +286,7 @@ async def test_auto_extend_bookkeeping_per_run_per_kind() -> None:
     # run-I, kind X → grant
     d = await handle_limit_exceeded(
         bus=None, on_limit=on_limit,
-        kind="max_phase_visits", run_id="run-I", prompt="?",
+        kind="max_router_iterations", run_id="run-I", prompt="?",
     )
     assert d.allow_continue is True
 
@@ -300,14 +300,14 @@ async def test_auto_extend_bookkeeping_per_run_per_kind() -> None:
     # run-J, kind X → grant (different run)
     d = await handle_limit_exceeded(
         bus=None, on_limit=on_limit,
-        kind="max_phase_visits", run_id="run-J", prompt="?",
+        kind="max_router_iterations", run_id="run-J", prompt="?",
     )
     assert d.allow_continue is True
 
     # run-I, kind X again → exhausted
     d = await handle_limit_exceeded(
         bus=None, on_limit=on_limit,
-        kind="max_phase_visits", run_id="run-I", prompt="?",
+        kind="max_router_iterations", run_id="run-I", prompt="?",
     )
     assert d.allow_continue is False
 

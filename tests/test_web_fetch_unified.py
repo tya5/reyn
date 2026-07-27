@@ -102,9 +102,8 @@ def test_web_fetch_router_render_exact_parameters():
 # ── 2. Gate invariants ────────────────────────────────────────────────────────
 
 def test_web_fetch_gates_both_allow():
-    """Tier 2: WEB_FETCH has gates.router=allow and gates.phase=allow."""
+    """Tier 2: WEB_FETCH has gates.router=allow."""
     assert WEB_FETCH.gates.router == "allow"
-    assert WEB_FETCH.gates.phase == "allow"
 
 
 # ── 3. Purity and category ────────────────────────────────────────────────────
@@ -139,13 +138,6 @@ def test_default_registry_web_fetch_in_for_router():
     registry = get_default_registry()
     router_tools = registry.for_router()
     assert WEB_FETCH in router_tools
-
-
-def test_default_registry_web_fetch_in_for_phase():
-    """Tier 2: WEB_FETCH appears in registry.for_phase() (gates.phase=allow)."""
-    registry = get_default_registry()
-    phase_tools = registry.for_phase()
-    assert WEB_FETCH in phase_tools
 
 
 # ── 5. build_tools integration — web_fetch rendered from registry ──────────────

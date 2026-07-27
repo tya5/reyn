@@ -227,14 +227,14 @@ _PLUGIN_DOC_REF = "docs/deep-dives/proposals/0064-plugin-model.md"
 PLUGIN_INSTALL = ToolDefinition(
     canonical=plugin_install_verb_to_canonical,
     # Named distinctly from the "plugin_install" OP KIND (op_runtime/plugin_install.py,
-    # the phase-level Control IR surface — a pipeline step can also target
+    # the op-runtime surface — a pipeline step can also target
     # kind="plugin_install" directly) — a shared name would collide at
     # declare_canonical (two different mappers claiming one source_id).
     # Mirrors the "mcp_install_local" vs "mcp_install" op-kind precedent.
     name="plugin_management__install",
     description=_PLUGIN_INSTALL_DESCRIPTION,
     parameters=_PLUGIN_INSTALL_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_plugin_install,
     category="io",
     purity="side_effect",
@@ -248,7 +248,7 @@ PLUGIN_UNINSTALL = ToolDefinition(
     name="plugin_management__uninstall",
     description=_PLUGIN_UNINSTALL_DESCRIPTION,
     parameters=_PLUGIN_UNINSTALL_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_plugin_uninstall,
     category="io",
     purity="side_effect",
@@ -260,7 +260,7 @@ PLUGIN_LIST = ToolDefinition(
     name="plugin_management__list",
     description=_PLUGIN_LIST_DESCRIPTION,
     parameters=_PLUGIN_LIST_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_plugin_list,
     category="discovery",
     purity="read_only",

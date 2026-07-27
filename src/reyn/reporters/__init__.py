@@ -28,23 +28,6 @@ class ConsoleLogger:
     def on_workflow_aborted(self, data: dict) -> None:
         print(f"[os] workflow aborted — {data.get('reason', '')}")
 
-    def on_phase_budget_exceeded(self, data: dict) -> None:
-        print(
-            f"[phase:{data['phase']}] wall-clock budget exceeded "
-            f"({data['elapsed']:.2f}s > {data['budget']:.3g}s)"
-        )
-
-    # ── Phase lifecycle ────────────────────────────────────────────────────────
-
-    def on_phase_retry(self, data: dict) -> None:
-        error = data.get("error", "")
-        print(
-            f"[phase:{data['phase']}] retry {data['attempt']}/{data['max_retries']}"
-            f" — {error[:120]}"
-        )
-
-    # ── LLM ───────────────────────────────────────────────────────────────────
-
     # ── Shell ─────────────────────────────────────────────────────────────────
 
     def on_shell_started(self, data: dict) -> None:
@@ -65,7 +48,7 @@ class ConsoleLogger:
     # ── LLM ───────────────────────────────────────────────────────────────────
 
     def on_llm_called(self, data: dict) -> None:
-        print(f"[phase:{data['phase']}] calling LLM ({data.get('model', '?')})...")
+        print(f"[llm] calling {data.get('model', '?')}...")
 
     def on_context_built(self, data: dict) -> None:
         if not self.conversation:
@@ -126,45 +109,6 @@ class ConsoleLogger:
         print(f"\n[LLM OUTPUT] phase={phase}  type={data.get('response_type', '?')}")
         import json
         print(json.dumps(raw, ensure_ascii=False, indent=2))
-
-    # ── Act turn ──────────────────────────────────────────────────────────────
-
-    def on_act_executed(self, data: dict) -> None:
-        phase = data["phase"]
-        turn = data.get("act_turn", "?")
-        print(f"[phase:{phase}] act turn #{turn}")
-        for op in data.get("ops", []):
-            kind = op.get("kind")
-            if kind == "file":
-                print(f"  op: file {op.get('op')} → {op.get('path')}")
-            elif kind == "ask_user":
-                q = (op.get("question") or "")[:80]
-                print(f"  op: ask_user → {q}")
-            else:
-                print(f"  op: {kind}")
-        for r in data.get("results", []):
-            kind = r.get("kind")
-            status = r.get("status", "?")
-            if kind == "file" and r.get("op") == "read":
-                content_len = len(r.get("content", ""))
-                print(f"  result: file read {r.get('path')} [{status}] ({content_len} chars)")
-            elif kind == "file" and r.get("op") == "glob":
-                print(f"  result: file glob {r.get('pattern')} [{status}] ({r.get('count', 0)} matches)")
-            elif kind == "file":
-                print(f"  result: file write {r.get('path')} [{status}]")
-            elif kind == "ask_user":
-                answer = r.get("answer", "")
-                print(f"  result: ask_user [{status}] answer={answer!r}")
-            elif kind == "lint":
-                passed = "passed" if r.get("passed") else f"{r.get('error_count', 0)} errors"
-                print(f"  result: lint {r.get('path')} [{status}] {passed}, {r.get('warning_count', 0)} warnings")
-            elif kind == "eval":
-                score = r.get("overall_score", 0.0)
-                pc = r.get("passed_criteria", 0)
-                tc = r.get("total_criteria", 0)
-                print(f"  result: eval {r.get('spec_path')} [{status}] score={score:.2f} ({pc}/{tc})")
-            else:
-                print(f"  result: {kind} [{status}]")
 
     # ── Present (FP-0054 §8) ────────────────────────────────────────────────────
 

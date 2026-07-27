@@ -23,7 +23,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 exec_ = ToolDescription(
     tool_name="exec",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — FP-0034 "
+        "router (gates.router=allow) — FP-0034 "
         "exec category, visibility-gated on a configured sandbox backend"
     ),
     purpose=(

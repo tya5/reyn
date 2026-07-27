@@ -3,7 +3,7 @@
 Verifies that REYN_REPO_LIST and REYN_REPO_READ ToolDefinitions:
 - Produce byte-identical description/parameters output to the prior ToolSpec
   literals in router_tools.py. Drift would invalidate replay fixtures.
-- Have gates.router="allow" and gates.phase="deny" (router-only dev tools).
+- Have gates.router="allow" (router-only dev tools).
 - Have purity="read_only" and category="dev".
 - Are findable via the default registry after registration.
 
@@ -124,18 +124,16 @@ def test_reyn_repo_read_router_render_exact_parameters():
 
 # ── 3. Gate invariants ────────────────────────────────────────────────────────
 
-def test_reyn_repo_list_gates_router_allow_phase_deny():
-    """Tier 2: REYN_REPO_LIST has gates.router="allow" and gates.phase="deny".
+def test_reyn_repo_list_gates_router_allow():
+    """Tier 2: REYN_REPO_LIST has gates.router="allow".
     Phase doesn't need dev-debug tools; this is an operator-side capability."""
     assert REYN_REPO_LIST.gates.router == "allow"
-    assert REYN_REPO_LIST.gates.phase == "deny"
 
 
-def test_reyn_repo_read_gates_router_allow_phase_deny():
-    """Tier 2: REYN_REPO_READ has gates.router="allow" and gates.phase="deny".
+def test_reyn_repo_read_gates_router_allow():
+    """Tier 2: REYN_REPO_READ has gates.router="allow".
     Phase doesn't need dev-debug tools; this is an operator-side capability."""
     assert REYN_REPO_READ.gates.router == "allow"
-    assert REYN_REPO_READ.gates.phase == "deny"
 
 
 # ── 4. Purity and category ────────────────────────────────────────────────────
@@ -154,22 +152,20 @@ def test_reyn_repo_read_purity_and_category():
 
 # ── 5. Registry gate filtering ────────────────────────────────────────────────
 
-def test_reyn_repo_list_appears_in_for_router_not_for_phase():
-    """Tier 2: REYN_REPO_LIST appears in for_router() but not for_phase().
+def test_reyn_repo_list_appears_in_for_router():
+    """Tier 2: REYN_REPO_LIST appears in for_router().
     Guards the router-only gate contract."""
     registry = ToolRegistry()
     registry.register(REYN_REPO_LIST)
     assert REYN_REPO_LIST in registry.for_router()
-    assert REYN_REPO_LIST not in registry.for_phase()
 
 
-def test_reyn_repo_read_appears_in_for_router_not_for_phase():
-    """Tier 2: REYN_REPO_READ appears in for_router() but not for_phase().
+def test_reyn_repo_read_appears_in_for_router():
+    """Tier 2: REYN_REPO_READ appears in for_router().
     Guards the router-only gate contract."""
     registry = ToolRegistry()
     registry.register(REYN_REPO_READ)
     assert REYN_REPO_READ in registry.for_router()
-    assert REYN_REPO_READ not in registry.for_phase()
 
 
 # ── 6. Drift detection — description/parameters module constants match render ─

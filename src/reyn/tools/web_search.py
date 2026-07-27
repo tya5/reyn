@@ -5,8 +5,8 @@ The existing handler in src/reyn/op_runtime/web.py is preserved
 and wrapped via a thin adapter that translates between the old
 (op, ctx) signature and the new (args, ctx) signature.
 
-Both router-style and phase-style dispatch paths consume this
-ToolDefinition; M2 verifies byte-identity for both surfaces.
+The router dispatch path consumes this ToolDefinition; M2 verifies
+byte-identity against the pre-migration ToolSpec.
 """
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ WEB_SEARCH = ToolDefinition(
     router_dispatched=True,
     description=_WEB_SEARCH_DESCRIPTION,
     parameters=_WEB_SEARCH_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="discovery",
     purity="read_only",   # web search has no side effect on workspace

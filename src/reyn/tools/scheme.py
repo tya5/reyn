@@ -214,11 +214,11 @@ class SchemeOps(Protocol):
     own scheme logic instead of delegating, which is what proves the abstraction.
     Each op is the OS-substrate side of one scheme method:
 
-    - ``present``  → today's ``build_tools`` + SP params (or the phase op-catalog).
+    - ``present``  → today's ``build_tools`` + SP params.
     - ``resolve``  → dedupe + salvage/unwrap → actions carrying **effective names**
       (so the OS can exclude-gate pre-dispatch).
-    - ``dispatch`` → per-action ``dispatch_tool`` (DispatchContext / phase-memo /
-      permission — the pure-OS substrate, P5).
+    - ``dispatch`` → per-action ``dispatch_tool`` (DispatchContext / permission
+      — the pure-OS substrate, P5).
     - ``feedback`` → the basic tool_result→message formatting (op-specific plan
       handling stays in the OS loop, around this).
     """

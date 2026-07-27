@@ -1,12 +1,11 @@
 """emit_hook_event ToolDefinition (Hook-Event Redesign Phase 5 part 2,
 proposal ``docs/deep-dives/proposals/0059-hook-event-redesign.md`` §8).
 
-Router-only (``gates.phase="deny"``) — the handler needs a live, session-bound
-``HookBus`` (``ctx.hook_bus``) + session identity (``ctx.session_id``), which
-only the chat-router ``OpContext`` builders (``build_router_op_context`` /
-``RouterHostAdapter.make_router_op_context``) wire; a static-execution phase
-OpContext has neither, so the op would only ever fail-closed there — denying
-at the tool-gate is more legible than a guaranteed-denied op call.
+Router-only (``gates.router="allow"``) — the handler needs a live,
+session-bound ``HookBus`` (``ctx.hook_bus``) + session identity
+(``ctx.session_id``), which only the chat-router ``OpContext`` builders
+(``build_router_op_context`` / ``RouterHostAdapter.make_router_op_context``)
+wire.
 
 OpContext resolution mirrors ``mcp_drop.py``: prefer the router factory
 (``ctx.router_state.op_context_factory()`` — the SAME OpContext the chat
@@ -90,7 +89,7 @@ EMIT_HOOK_EVENT = ToolDefinition(
     name="emit_hook_event",
     description=_EMIT_HOOK_EVENT_DESCRIPTION,
     parameters=_EMIT_HOOK_EVENT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_emit_hook_event,
     category="hooks",
     purity="side_effect",

@@ -1,4 +1,4 @@
-"""memory ToolDefinitions — Wave 2 of M3 (ADR-0026) + Type C closure.
+"""memory ToolDefinitions — Wave 2 of M3 (ADR-0026).
 
 Five capabilities migrated from chat/router_tools.py ToolSpec literals:
   LIST_MEMORY        — purity=read_only,  category=memory
@@ -7,12 +7,9 @@ Five capabilities migrated from chat/router_tools.py ToolSpec literals:
   REMEMBER_AGENT     — purity=side_effect, category=memory
   FORGET_MEMORY      — purity=side_effect, category=memory
 
-All five carry gates(router="allow", phase="allow") — this is the
-Type C closure for memory write (ADR-0026 §1, §3): the capabilities
-were previously router-only; phase="allow" is registered as a metadata
-closure so the registry advertises memory write as phase-eligible.
+All five carry gates(router="allow").
 
-Status (post-FP-0039 audit, 2026-05-18): coarse-kind phase dispatch
+Status (post-FP-0039 audit, 2026-05-18): coarse-kind dispatch
 (= file / mcp / ask_user / web_fetch /
 web_search / mcp_install / sandboxed_exec) is wired through
 ``invoke_tool(get_default_registry(), op.kind, ...)``.  #3226 Phase 3: the
@@ -621,7 +618,7 @@ LIST_MEMORY = ToolDefinition(
     router_dispatched=True,
     description=_LIST_MEMORY_DESCRIPTION,
     parameters=_LIST_MEMORY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_list_memory,
     category="memory",
     purity="read_only",
@@ -634,7 +631,7 @@ READ_MEMORY_BODY = ToolDefinition(
     router_dispatched=True,
     description=_READ_MEMORY_BODY_DESCRIPTION,
     parameters=_READ_MEMORY_BODY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_read_memory_body,
     category="memory",
     purity="read_only",
@@ -647,7 +644,7 @@ REMEMBER_SHARED = ToolDefinition(
     router_dispatched=True,
     description=_REMEMBER_SHARED_DESCRIPTION,
     parameters=_REMEMBER_SHARED_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_remember_shared,
     category="memory",
     purity="side_effect",
@@ -659,7 +656,7 @@ REMEMBER_AGENT = ToolDefinition(
     router_dispatched=True,
     description=_REMEMBER_AGENT_DESCRIPTION,
     parameters=_REMEMBER_AGENT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_remember_agent,
     category="memory",
     purity="side_effect",
@@ -671,7 +668,7 @@ FORGET_MEMORY = ToolDefinition(
     router_dispatched=True,
     description=_FORGET_MEMORY_DESCRIPTION,
     parameters=_FORGET_MEMORY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),  # Type C closure
+    gates=ToolGates(router="allow"),
     handler=_handle_forget_memory,
     category="memory",
     purity="side_effect",

@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_tool_use_scheme(name: "str | None" = None):
     """Return the active ``ToolUseScheme`` (#1593), resolving by name and defaulting
-    to universal-category. Per-layer config (``tool_use:{chat,step,phase}``) passes
+    to universal-category. Per-layer config (``tool_use``) passes
     the selected name here.
 
     #1608 ④: the built-ins **self-register at import time** — this function names NO
@@ -1230,7 +1230,7 @@ class RouterLoop:
         self._last_call_usage: TokenUsage = TokenUsage()
         # #1593: the active tool-use scheme. PR-1 = universal-category (the shipped
         # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
-        # config selection (tool_use:{chat,step,phase}) plugs in here; with all
+        # config selection (tool_use) plugs in here; with all
         # layers defaulting to universal-category it is byte-identical today.
         self._scheme = _resolve_tool_use_scheme(scheme_name)
         # #1909 OPT-IN (default off): intra-turn untrusted-content re-narrowing.
@@ -1479,7 +1479,7 @@ class RouterLoop:
                 # FP-0034 refactor: live (= uncompacted) tool-call records
                 # are scanned on demand so the hot-list reflects in-session
                 # invocations without needing per-call disk writes. Hosts
-                # without the accessor (= older mocks, phase sub-host)
+                # without the accessor (= narrow test hosts)
                 # degrade to compacted-table-only ranking.
                 _live_records: list = []
                 _live_getter = getattr(
@@ -1513,8 +1513,7 @@ class RouterLoop:
         _ctx_signal = _render_context_size_signal_for_host(host)
         # #1593: build the presentation via the active scheme (tools= payload + SP
         # params). Universal delegates to the router's `present` op → byte-identical
-        # (the phase op-catalog REPLACES build_tools for the phase layer; chat/step
-        # use build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
+        # (build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
         # differently. The OS still projects _catalog from the payload + builds the
         # (monolithic) SP from sp_params below.
         # #1593 PR-4: capture the build_presentation inputs so the OS RePresent arm
@@ -1811,7 +1810,7 @@ class RouterLoop:
             # the bare string (kwargs dropped) — fine for the model-NAME params
             # (compaction / force-close / memo-key / events) which keep
             # resolved_model, but the actual call_llm_tools must get the spec.
-            # Host-polymorphic: phase/test hosts without resolve_model_spec fall
+            # Host-polymorphic: test hosts without resolve_model_spec fall
             # back to a kwargs-less spec = byte-identical to the prior behaviour.
             _spec_fn = getattr(host, "resolve_model_spec", None)
             if _spec_fn is not None:
@@ -1819,14 +1818,6 @@ class RouterLoop:
             else:
                 from reyn.llm.model_resolver import ModelSpec
                 resolved_spec = ModelSpec(model=resolved_model, kwargs={})
-            # #1092 PR-C-5 (2): per-turn phase wall-clock budget enforcement. A phase
-            # host implements ``check_phase_budget`` (RAISES PhaseBudgetExceededError
-            # when over budget, unless on_limit grants an extension) — the same
-            # enforcement json-mode runs before each call_llm. Chat hosts don't
-            # implement it (getattr → None) → no-op, chat byte-identical.
-            _budget_fn = getattr(self.host, "check_phase_budget", None)
-            if _budget_fn is not None:
-                await _budget_fn()
             # #1092 PR-C-4b: per-turn in-loop message-history compaction. A phase
             # host implements ``maybe_compact_messages`` to proactively bound the
             # converged op-loop's growing native tool-message history (json-mode
@@ -2828,7 +2819,7 @@ class RouterLoop:
         from topology / delegate / ephemeral narrowing."""
         if self._contextual_permission is not None:
             # #1912: the single shared contextual gate — identical check across
-            # chat / phase RouterLoop + control-IR op dispatch (no path bypass).
+            # chat RouterLoop + op dispatch (no path bypass).
             from reyn.security.permissions.effective import tool_contextually_denied
             effective = args.get("action_name") if name == "invoke_action" else name
             if tool_contextually_denied(self._contextual_permission, effective):
@@ -2847,9 +2838,9 @@ class RouterLoop:
 
     async def _dispatch_resolved(self, name: str, args: dict) -> dict:
         """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
-        (DispatchContext / phase-memo / ``dispatch_tool`` — P5). The pure-OS dispatch
+        (DispatchContext / ``dispatch_tool`` — P5). The pure-OS dispatch
         half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
-        calls to it (it never sees the DispatchContext / phase-memo).
+        calls to it (it never sees the DispatchContext).
 
         #1618 root-1: the membership/resolution gate (``tool_catalog``) is sourced
         from the scheme's DISPATCHABLE set (``self._dispatch_catalog``) — decoupled
