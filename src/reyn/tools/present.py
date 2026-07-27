@@ -128,7 +128,7 @@ PRESENT = ToolDefinition(
     router_dispatched=True,
     description=_PRESENT_DESCRIPTION,
     parameters=_PRESENT_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_present,
     category="presentation",
     purity="side_effect",

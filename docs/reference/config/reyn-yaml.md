@@ -415,7 +415,6 @@ safety:
   timeout:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
     llm_max_retries: 3         # transient-error retries per call (--llm-max-retries)
-    phase_seconds: 0           # per-phase wall-clock budget; 0 = unlimited (--phase-budget)
     chain_seconds: 60          # wait for delegate reply before upstream error
   on_limit:
     mode: interactive          # interactive | unattended | auto_extend
@@ -451,7 +450,6 @@ safety:
 |------|------|---------|----------|-------------|
 | `safety.timeout.llm_call_seconds` | float (s) | `60` | `--llm-timeout` | Per-call HTTP timeout passed to LiteLLM. |
 | `safety.timeout.llm_max_retries` | int | `3` | `--llm-max-retries` | Transient-error retries per LLM call (LiteLLM exponential backoff). |
-| `safety.timeout.phase_seconds` | float (s) | `0` | `--phase-budget` | Per-phase wall-clock budget. Soft check at retry/turn boundaries — does not cancel mid-call. `0` = unlimited. |
 | `safety.timeout.chain_seconds` | float (s) | `60` | — | How long a multi-agent chain waits for a delegate reply before synthesising an error. `0` = disabled. |
 
 ### `safety.on_limit` fields
@@ -543,30 +541,6 @@ is the presentation-axis name, and it resolves to the registered
 A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping `scheme` / `transport` changes the whole tool-use loop for the chat layer without OS changes.
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
-
-## `phase` block
-
-Per-phase runtime settings.
-
-```yaml
-phase:
-  act_results_compaction:
-    recent_act_turns_raw: 5
-    control_ir_results_ratio: 0.50
-    summarize_older_threshold_tokens: null
-    use_chars4_estimate: false
-```
-
-### `phase.act_results_compaction` fields
-
-Controls how the act-loop's accumulated `control_ir_results` are compacted when they approach the context budget. Sibling to `chat.compaction` (conversation history).
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `recent_act_turns_raw` | int | `5` | Keep the last N act-turn results verbatim; compact older ones. Set higher than the conversation-history default because phase ops carry specific structured data (paths, line numbers, exit codes) the LLM needs for planning next ops. |
-| `control_ir_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the `control_ir_results` portion of the act-loop context. Sibling to `chat.compaction.component_weights["body"]`. |
-| `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older results are compacted. `null` derives the threshold from `control_ir_results_ratio × main_pool` (via `ComputedBudgets`). |
-| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation (latency opt-out). |
 
 ## `web` block
 

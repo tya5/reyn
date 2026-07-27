@@ -27,14 +27,14 @@ if TYPE_CHECKING:
 
 
 # ToolGates: per-protocol allow/deny gate at the registry level.
-# This is Layer 1 of the 3-layer gate model (= ADR-0026 §3):
+# This is Layer 1 of the gate model (= ADR-0026 §3):
 #   Layer 1: role gate (this dataclass)
-#   Layer 2: phase narrowing (Phase.allowed_ops)
-#   Layer 3: permission resolver (per-call runtime)
+#   Layer 2: permission resolver (per-call runtime)
+# ADR-0026's Layer-2 "phase narrowing" arm is gone with the phase engine
+# (#2434 / #2438) — ``router`` is the only surface a tool can be gated for.
 @dataclass(frozen=True)
 class ToolGates:
     router: Literal["allow", "deny"] = "allow"
-    phase:  Literal["allow", "deny"] = "allow"
 
 
 # ToolResult: canonical result shape returned by handlers. The router
@@ -113,8 +113,7 @@ class RouterCallerState:
     excluded_categories: frozenset[str] = frozenset()
 
     # Memory access (= for memory tools when invoked router-side;
-    # router uses MemoryService directly, phase wraps via
-    # ctx.workspace callbacks)
+    # the router uses MemoryService directly)
     memory_service: Any = None
 
     # Catalog access callbacks (= for catalog stub handlers
@@ -128,7 +127,7 @@ class RouterCallerState:
     # so handlers can build a permission-aware OpContext (= populated
     # PermissionDecl + Workspace + actor="chat_router") matching the
     # legacy router branch behavior.  When None, handlers fall back to
-    # minimal OpContext synthesis (= test sites / phase-side).
+    # minimal OpContext synthesis (= test sites).
     op_context_factory: Callable[[], Any] | None = None
 
     # RouterLoopHost reference for handlers that need duck-typed access
@@ -136,7 +135,7 @@ class RouterCallerState:
     # MCP tools that already shipped with ``ctx.router_state`` treated as
     # host duck-type before Phase 3 step 2 introduced the typed sub-object).
     # When set, handlers may access ``rs.host.mcp_list_servers()`` etc.
-    # directly.  Phase-side and test sites leave it None.
+    # directly.  Test sites leave it None.
     host: Any = None
 
     # Memory tool callbacks (= for memory cluster handlers; Phase 3.5-B-heavy).
@@ -354,9 +353,7 @@ class ToolDefinition:
     LLM invocations.
 
     Per ADR-0026 §2. Held in a ToolRegistry; rendered to OpenAI tools[]
-    via render_for_router(). render_for_phase() renders an op-spec shape
-    retained only for the render-shape invariant tests (no production
-    caller after the control-IR / phase-dispatch removal).
+    via render_for_router().
     """
     # Identity
     name: str                                        # canonical name (= ADR-0026 Open Question #6)
@@ -394,14 +391,14 @@ class ToolDefinition:
     router_dispatched: bool = False
 
     # Per-call schema enrichment hook (= ADR-0026 M4 Phase 3).
-    # When set, callers (= build_tools / phase catalog builder) invoke
-    # this hook AFTER render_for_router/render_for_phase to inject
-    # per-session dynamic data into the schema (canonical example:
-    # delegate_to_agent.to enum from available_agents).
+    # When set, callers (= build_tools) invoke this hook AFTER
+    # render_for_router to inject per-session dynamic data into the
+    # schema (canonical example: delegate_to_agent.to enum from
+    # available_agents).
     #
     # Signature: (rendered_tool_dict, RouterCallerState) -> rendered_tool_dict
-    #   - rendered_tool_dict: the dict produced by render_for_router /
-    #     render_for_phase (= function/parameters/etc shape)
+    #   - rendered_tool_dict: the dict produced by render_for_router
+    #     (= function/parameters/etc shape)
     #   - RouterCallerState: contains available_agents and other
     #     per-session data the enricher may consult
     #   - returns: a NEW dict with dynamic enrichment applied (do NOT
@@ -467,17 +464,3 @@ class ToolDefinition:
             rendered = self.schema_enricher(rendered, state)
         return rendered
 
-    def render_for_phase(self) -> dict:
-        """Render to an op-spec entry shape (kind / description / args_schema / purity).
-
-        No production caller remains (the phase-dispatch / control-IR
-        executor path was removed); retained for the render-shape
-        invariant tests. See PR note: candidate for follow-on removal
-        alongside ToolGates.phase.
-        """
-        return {
-            "kind": self.name,
-            "description": self.description,
-            "args_schema": dict(self.parameters),
-            "purity": self.purity,
-        }

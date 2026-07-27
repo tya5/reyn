@@ -28,7 +28,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 skill_install_local = ToolDescription(
     tool_name="skill_install_local",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Register a local skill directory (SKILL.md) into the project "
         "config so it becomes available to sessions after the next "
@@ -53,7 +53,7 @@ skill_install_local = ToolDescription(
 
 skill_install_source = ToolDescription(
     tool_name="skill_install_source",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Fetch a skill from a git/GitHub URL, shallow-clone + "
         "threat-scan its SKILL.md, and install it into the project config."
@@ -79,7 +79,7 @@ skill_install_source = ToolDescription(
 
 skill_list = ToolDescription(
     tool_name="skill_list",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Discovery surface for skills that are registered but not "
         "advertised in the system-prompt menu — returns each one's name, "
@@ -114,7 +114,7 @@ skill_list = ToolDescription(
 # piggybacking on file.read).
 load_skill = ToolDescription(
     tool_name="load_skill",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Load a skill's SKILL.md body (invocation-time ${REYN_*}/${CLAUDE_*}/"
         "${env:VAR} expansion applied for a registered skill) — the "

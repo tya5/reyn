@@ -33,7 +33,7 @@ Persistence + live update:
 Permission gating:
 
   ``cron_register`` permission key (= shared across register / unregister
-  / enable / disable). The calling phase must be permitted to use this tool
+  / enable / disable). The caller must be permitted to use this tool
   AND per-job approval is collected via ``PermissionResolver.require_cron_register``.
 """
 from __future__ import annotations
@@ -176,12 +176,12 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
     The bool-axis ``require_cron_register`` per-job approval prompt was
     removed in Phase 5. Authorisation is now layered:
 
-    - The calling phase must have this tool in its permitted op set so
+    - The caller must have this tool in its permitted op set so
       the LLM is permitted to invoke it (= operator authorisation
-      happens at phase-startup time via the permission resolver).
+      happens at session-startup time via the permission resolver).
     - The runtime gate here is the standard ``require_file_write``
       against the canonical ``.reyn/config/cron.yaml`` path. Since the tool
-      is OS-internal (= no phase-specific frontmatter), we synthesise
+      is OS-internal (= no caller-specific frontmatter), we synthesise
       a minimal PermissionDecl listing the canonical path explicitly
       and route it through ``session_approve_path`` once per resolver
       instance so subsequent calls pass silently.
@@ -195,7 +195,7 @@ async def _gate(ctx: ToolContext, job_name: str) -> None:
     decl = PermissionDecl(file_write=[{"path": cron_yaml_path, "scope": "just_path"}])
     # OS-internal tool: session-approve the canonical path so the
     # require_file_write check passes without an interactive prompt.
-    # The tool-level authorisation already happened at phase-startup
+    # The tool-level authorisation already happened at session-startup
     # time via the permission resolver's op-permission check.
     ctx.permission_resolver.session_approve_path(
         cron_yaml_path, "cron", "file.write",
@@ -420,7 +420,7 @@ CRON_REGISTER = ToolDefinition(
     name="cron_register",
     description=_CRON_REGISTER_DESCRIPTION,
     parameters=_CRON_REGISTER_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_cron_register,
     category="cron",
     purity="side_effect",
@@ -431,7 +431,7 @@ CRON_UNREGISTER = ToolDefinition(
     name="cron_unregister",
     description=_CRON_UNREGISTER_DESCRIPTION,
     parameters=_CRON_NAME_ONLY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_cron_unregister,
     category="cron",
     purity="side_effect",
@@ -442,7 +442,7 @@ CRON_LIST = ToolDefinition(
     name="cron_list",
     description=_CRON_LIST_DESCRIPTION,
     parameters=_CRON_LIST_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_cron_list,
     category="cron",
     purity="read_only",
@@ -453,7 +453,7 @@ CRON_ENABLE = ToolDefinition(
     name="cron_enable",
     description=_CRON_ENABLE_DESCRIPTION,
     parameters=_CRON_NAME_ONLY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_cron_enable,
     category="cron",
     purity="side_effect",
@@ -464,7 +464,7 @@ CRON_DISABLE = ToolDefinition(
     name="cron_disable",
     description=_CRON_DISABLE_DESCRIPTION,
     parameters=_CRON_NAME_ONLY_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_cron_disable,
     category="cron",
     purity="side_effect",

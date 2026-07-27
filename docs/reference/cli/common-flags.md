@@ -27,9 +27,17 @@ All limits are read from `reyn.yaml`'s `safety:` block by default and can be ove
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--phase-budget SECONDS` | `safety.timeout.phase_seconds` (or `0`) | Per-phase wall-clock budget. Soft check at retry/turn boundaries — does not cancel mid-call. `0` disables. On exceed, the run ends with status `phase_budget_exceeded`. |
 | `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds` (or `60`) | Per-call HTTP timeout passed to LiteLLM. |
 | `--llm-max-retries N` | `safety.timeout.llm_max_retries` (or `3`) | Transient-error retries per LLM call (LiteLLM exponential backoff). |
+
+## Removed flags
+
+`argparse` reports an unrecognised flag without saying why it went away, so
+removals are recorded here.
+
+| Flag | Removed | Why |
+|------|---------|-----|
+| `--phase-budget SECONDS` | #2696 (2026-07) | Set `safety.timeout.phase_seconds`, which **no runtime code read** — the phase engine that enforced it was deleted (#2434 / #2438). Accepting the flag and doing nothing misrepresented the run as bounded, so both the flag and the config key are gone. There is no replacement: to bound a run's wall-clock, bound the loop instead (`--max-iterations` / `safety.loop.max_router_iterations`). |
 
 ## Resolution order
 

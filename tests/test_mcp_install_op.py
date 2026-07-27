@@ -552,7 +552,6 @@ def test_mcp_install_op_tool_definition_gates():
     from reyn.tools.mcp_install import MCP_INSTALL_OP
 
     assert MCP_INSTALL_OP.gates.router == "deny"
-    assert MCP_INSTALL_OP.gates.phase == "allow"
 
 
 def test_mcp_install_op_registered_in_default_registry():
@@ -562,7 +561,6 @@ def test_mcp_install_op_registered_in_default_registry():
     registry = get_default_registry()
     tool = registry.lookup("mcp_install")
     assert tool is not None
-    assert tool.gates.phase == "allow"
     assert tool.gates.router == "deny"
 
 

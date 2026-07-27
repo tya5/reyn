@@ -200,7 +200,7 @@ async def test_embed_pre_embed_redaction_seam_fires_on_a_secret(
 
 def test_embed_tool_registered_default_allow() -> None:
     """Tier 1: the `embed` ToolDefinition is registered in the default tool
-    registry with gates.router=allow / gates.phase=allow (default-ALLOW per
+    registry with gates.router=allow (default-ALLOW per
     the FP-0057 design — a compute op, individually name-gateable via
     contextual_gate rather than requiring an ask-gate by default)."""
     from reyn.tools import get_default_registry
@@ -209,7 +209,6 @@ def test_embed_tool_registered_default_allow() -> None:
     tool = registry.lookup("embed")
     assert tool is not None
     assert tool.gates.router == "allow"
-    assert tool.gates.phase == "allow"
 
 
 def test_embed_op_kind_has_a_contextual_gate_entry() -> None:

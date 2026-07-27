@@ -486,7 +486,6 @@ def test_new_tool_definitions_registered_router_and_phase_allow():
 
     for td in (LIST_MCP_PROMPTS, GET_MCP_PROMPT):
         assert td.gates.router == "allow"
-        assert td.gates.phase == "allow"
         assert td.category == "discovery"
         assert td.purity == "read_only"
 

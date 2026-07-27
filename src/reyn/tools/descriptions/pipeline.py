@@ -28,7 +28,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 pipeline_list = ToolDescription(
     tool_name="pipeline_list",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "The discovery half of the pipeline launch surface (#3026): names the "
         "REGISTERED pipelines so `run_pipeline`'s `name` argument is "
@@ -53,7 +53,7 @@ pipeline_list = ToolDescription(
 
 run_pipeline = ToolDescription(
     tool_name="run_pipeline",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Launch a REGISTERED pipeline by name and block for its final "
         "output — the sync entry point for a pre-built multi-step "
@@ -75,7 +75,7 @@ run_pipeline = ToolDescription(
 
 run_pipeline_async = ToolDescription(
     tool_name="run_pipeline_async",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Launch a REGISTERED pipeline in the background and return "
         "immediately, for a long-running workflow whose result arrives "
@@ -98,7 +98,7 @@ run_pipeline_async = ToolDescription(
 
 run_pipeline_inline = ToolDescription(
     tool_name="run_pipeline_inline",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Run an ad-hoc, agent-GENERATED DSL-string pipeline to completion, "
         "statically validated (parse / schema refs / tool names / no "
@@ -125,7 +125,7 @@ run_pipeline_inline = ToolDescription(
 
 run_pipeline_inline_async = ToolDescription(
     tool_name="run_pipeline_inline_async",
-    surfaced="router + phase (gates.router=allow, gates.phase=allow)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Launch an ad-hoc, agent-GENERATED DSL-string pipeline in the "
         "background, statically validated before spawn, result arriving "

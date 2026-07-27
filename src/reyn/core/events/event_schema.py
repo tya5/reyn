@@ -11,6 +11,27 @@ identifiers, so this file stays within the OS layer's allowed vocabulary.
 
 from __future__ import annotations
 
+# ── RETIRED_PHASE_FIELD — decision record (#2696) ────────────────────────────
+# Several audit-events below declare a mandatory ``phase`` field. The phase
+# engine that populated it was deleted (#2434 / #2438).
+#
+# DECISION: the field is RETAINED, and its value is ALWAYS the empty string.
+#   - Retained because it is a persisted, CI-checked audit-event schema:
+#     dropping it from ``EVENT_AUDIT_REQUIREMENTS`` would make every event file
+#     reyn has already written fail to replay against the current schema, and
+#     ``reyn events replay`` is the audit trail (P6 / band member).
+#   - Always empty because there is nothing left to name: the #2696 drift-audit
+#     also deleted ``OpContext.current_phase`` (which defaulted to ``""`` and
+#     was never passed a non-empty value by any caller in ``src/``), so emit
+#     sites now pass THIS constant literally rather than reading a field whose
+#     existence implied a live phase concept.
+#
+# Do NOT "wire this up" — there is no producer to reconnect to. A non-empty
+# value would require a NEW runtime concept, which is a design decision, not a
+# repair. If such a concept ever lands, name it accurately instead of reviving
+# ``phase``.
+RETIRED_PHASE_FIELD = ""
+
 # Events that must carry these audit fields (FP-0021)
 EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # LLM cost events (llm.py _emit_chat_cost_events — cost-tab observability).
@@ -19,7 +40,9 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # field), and run_id is not threaded on this path.
     "llm_called": frozenset({"model"}),
     "llm_response_received": frozenset({"prompt_tokens", "completion_tokens", "cost_usd"}),
-    # Permission events (op_runtime/__init__.py)
+    # Permission events (op_runtime/__init__.py). ``phase`` is mandatory for
+    # replay compatibility and always ``RETIRED_PHASE_FIELD`` — see the decision
+    # record at the top of this module before touching it.
     "permission_granted": frozenset({"run_id", "actor", "phase"}),
     "permission_denied": frozenset({"run_id", "actor", "phase"}),
     # User intervention (op_runtime/ask_user.py)

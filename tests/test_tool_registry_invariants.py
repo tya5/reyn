@@ -4,7 +4,7 @@ Tests cover ToolDefinition, ToolGates, ToolContext, ToolRegistry, and the
 invoke_tool dispatch helper. No mocks of collaborators — all tests use real
 ToolDefinition / ToolRegistry instances and closure-based test handlers.
 No private state assertions — all assertions use public accessors (lookup,
-names, for_router, for_phase, len, __contains__).
+names, for_router, len, __contains__).
 """
 from __future__ import annotations
 
@@ -83,20 +83,15 @@ def test_tool_definition_is_frozen():
 # ── 2. ToolGates defaults ─────────────────────────────────────────────────────
 
 def test_tool_gates_defaults():
-    """Tier 2: ToolGates defaults to router=allow, phase=allow."""
+    """Tier 2: ToolGates defaults to router=allow."""
     gates = ToolGates()
     assert gates.router == "allow"
-    assert gates.phase == "allow"
 
 
 def test_tool_gates_explicit_values():
     """Tier 2: ToolGates accepts explicit allow/deny values."""
-    g_router_deny = ToolGates(router="deny", phase="allow")
-    g_phase_deny = ToolGates(router="allow", phase="deny")
-    assert g_router_deny.router == "deny"
-    assert g_router_deny.phase == "allow"
-    assert g_phase_deny.router == "allow"
-    assert g_phase_deny.phase == "deny"
+    assert ToolGates(router="deny").router == "deny"
+    assert ToolGates(router="allow").router == "allow"
 
 
 def test_tool_gates_is_frozen():
@@ -138,39 +133,6 @@ def test_render_for_router_parameters_is_dict():
     tool = _make_tool()
     rendered = tool.render_for_router()
     assert type(rendered["function"]["parameters"]) is dict
-
-
-# ── 4. render_for_phase output shape ─────────────────────────────────────────
-
-def test_render_for_phase_shape():
-    """Tier 2: render_for_phase() produces a dict with kind, description, args_schema, purity."""
-    params = {
-        "type": "object",
-        "properties": {"url": {"type": "string"}},
-        "required": ["url"],
-    }
-    tool = ToolDefinition(
-        name="phase_tool",
-        description="A phase tool.",
-        parameters=params,
-        gates=ToolGates(),
-        handler=_noop_handler(),
-        category="io",
-        purity="side_effect",
-    )
-    rendered = tool.render_for_phase()
-
-    assert rendered["kind"] == "phase_tool"
-    assert rendered["description"] == "A phase tool."
-    assert rendered["args_schema"] == params
-    assert rendered["purity"] == "side_effect"
-
-
-def test_render_for_phase_args_schema_is_dict():
-    """Tier 2: render_for_phase() args_schema is a plain dict (not Mapping)."""
-    tool = _make_tool()
-    rendered = tool.render_for_phase()
-    assert type(rendered["args_schema"]) is dict
 
 
 # ── 5. purity defaults ────────────────────────────────────────────────────────
@@ -269,8 +231,8 @@ def test_registry_duplicate_name_raises():
 def test_for_router_filters_correctly():
     """Tier 2: ToolRegistry.for_router() returns only tools with gates.router=allow."""
     registry = ToolRegistry()
-    router_tool = _make_tool("router_only", gates=ToolGates(router="allow", phase="allow"))
-    denied_tool = _make_tool("router_denied", gates=ToolGates(router="deny", phase="allow"))
+    router_tool = _make_tool("router_only", gates=ToolGates(router="allow"))
+    denied_tool = _make_tool("router_denied", gates=ToolGates(router="deny"))
     registry.register(router_tool)
     registry.register(denied_tool)
 
@@ -285,29 +247,6 @@ def test_for_router_empty_when_all_denied():
     registry.register(_make_tool("t1", gates=ToolGates(router="deny")))
     registry.register(_make_tool("t2", gates=ToolGates(router="deny")))
     assert registry.for_router() == []
-
-
-# ── 9. for_phase filters by gates.phase == "allow" ───────────────────────────
-
-def test_for_phase_filters_correctly():
-    """Tier 2: ToolRegistry.for_phase() returns only tools with gates.phase=allow."""
-    registry = ToolRegistry()
-    phase_tool = _make_tool("phase_only", gates=ToolGates(router="allow", phase="allow"))
-    denied_tool = _make_tool("phase_denied", gates=ToolGates(router="allow", phase="deny"))
-    registry.register(phase_tool)
-    registry.register(denied_tool)
-
-    phase_list = registry.for_phase()
-    assert phase_tool in phase_list
-    assert denied_tool not in phase_list
-
-
-def test_for_phase_empty_when_all_denied():
-    """Tier 2: for_phase() returns empty list when all tools have phase=deny."""
-    registry = ToolRegistry()
-    registry.register(_make_tool("t1", gates=ToolGates(phase="deny")))
-    registry.register(_make_tool("t2", gates=ToolGates(phase="deny")))
-    assert registry.for_phase() == []
 
 
 # ── 10. invoke_tool raises ToolNotFound on unknown name ──────────────────────
@@ -368,53 +307,36 @@ async def test_invoke_tool_returns_handler_result():
     )
     registry.register(tool)
 
-    ctx = _make_context("phase")
+    ctx = _make_context("router")
     result = await invoke_tool(registry, "result_tool", {"input": "hello"}, ctx)
 
     assert result["output"] == "custom_result"
     assert result["echo"] == "hello"
 
 
-# ── 12. Gate partitioning — router=allow+phase=deny vs router=deny+phase=allow ──
+# ── 12. Gate partitioning — router=allow vs router=deny ──────────────────────
 
-def test_gate_partitioning_router_allow_phase_deny():
-    """Tier 2: A tool with router=allow, phase=deny appears only in for_router()."""
+def test_gate_partitioning_router_allow():
+    """Tier 2: A tool with router=allow is returned by for_router()."""
     registry = ToolRegistry()
-    tool = _make_tool("router_only_tool", gates=ToolGates(router="allow", phase="deny"))
+    tool = _make_tool("router_allowed_tool", gates=ToolGates(router="allow"))
     registry.register(tool)
 
     assert tool in registry.for_router()
-    assert tool not in registry.for_phase()
 
 
-def test_gate_partitioning_router_deny_phase_allow():
-    """Tier 2: A tool with router=deny, phase=allow appears only in for_phase()."""
+def test_gate_partitioning_router_deny():
+    """Tier 2: A registered tool with router=deny is withheld from for_router().
+
+    It is still reachable by name (``lookup`` / ``in``) — the gate narrows what
+    the router ADVERTISES, it does not unregister the capability.
+    """
     registry = ToolRegistry()
-    tool = _make_tool("phase_only_tool", gates=ToolGates(router="deny", phase="allow"))
+    tool = _make_tool("router_denied_tool", gates=ToolGates(router="deny"))
     registry.register(tool)
 
     assert tool not in registry.for_router()
-    assert tool in registry.for_phase()
-
-
-def test_gate_partitioning_both_allow():
-    """Tier 2: A tool with router=allow, phase=allow appears in both filtered lists."""
-    registry = ToolRegistry()
-    tool = _make_tool("both_tool", gates=ToolGates(router="allow", phase="allow"))
-    registry.register(tool)
-
-    assert tool in registry.for_router()
-    assert tool in registry.for_phase()
-
-
-def test_gate_partitioning_both_deny():
-    """Tier 2: A tool with router=deny, phase=deny appears in neither filtered list."""
-    registry = ToolRegistry()
-    tool = _make_tool("neither_tool", gates=ToolGates(router="deny", phase="deny"))
-    registry.register(tool)
-
-    assert tool not in registry.for_router()
-    assert tool not in registry.for_phase()
+    assert registry.lookup("router_denied_tool") is tool
 
 
 # ── 13. RouterCallerState typed sub-object invariants (M4 Phase 2) ───────────

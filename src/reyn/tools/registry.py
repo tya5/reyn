@@ -3,9 +3,10 @@
 Per ADR-0026 §2. The registry is the canonical source for the
 router-style (build_tools) dispatcher. M1 establishes the registry
 shape; M2/M3 migrate capabilities into it; M4 sunsets the legacy
-dual-source structures. (The phase-style dispatcher was removed with
-the control-IR executor; ``for_phase`` / ``gates.phase`` remain as a
-metadata query pending a follow-on cleanup — see #2542.)
+dual-source structures. (ADR-0026's second, phase-style dispatcher was
+removed with the control-IR executor; its ``for_phase`` / ``gates.phase``
+residue was retired in the #2696 drift-audit, so ``for_router`` is the
+only filtered view.)
 """
 from __future__ import annotations
 
@@ -67,7 +68,3 @@ class ToolRegistry:
     def for_router(self) -> list[ToolDefinition]:
         """Tools where gates.router == "allow"."""
         return [t for t in self._tools.values() if t.gates.router == "allow"]
-
-    def for_phase(self) -> list[ToolDefinition]:
-        """Tools where gates.phase == "allow"."""
-        return [t for t in self._tools.values() if t.gates.phase == "allow"]

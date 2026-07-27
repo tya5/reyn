@@ -5,11 +5,11 @@ ToolDefinitions:
 - Produce byte-identical description/parameters output to the prior ToolSpec
   literals in router_tools.py (C1-C4 block). Drift would invalidate replay
   fixtures and change LLM tool affordance.
-- Have gates.router="allow" and gates.phase="allow" (both surfaces allowed).
+- Have gates.router="allow".
 - Have the correct purity: read_only for read_file / list_directory,
   side_effect for write_file / delete_file.
 - Have category="io" for all four.
-- Are findable via ToolRegistry round-trip for both router and phase.
+- Are findable via ToolRegistry round-trip.
 - Module-level description/parameter constants match ToolDefinition fields.
 
 No mocks of collaborators. All tests use real ToolDefinition instances.
@@ -198,29 +198,25 @@ def test_delete_file_router_render_exact_parameters():
 
 # ── 5. Gate invariants ────────────────────────────────────────────────────────
 
-def test_read_file_gates_router_allow_phase_allow():
-    """Tier 2: READ_FILE has gates.router="allow" and gates.phase="allow".
-    File ops must be available to both router and phase callers."""
+def test_read_file_gates_router_allow():
+    """Tier 2: READ_FILE has gates.router="allow".
+    File ops must be advertised to the router."""
     assert READ_FILE.gates.router == "allow"
-    assert READ_FILE.gates.phase == "allow"
 
 
-def test_write_file_gates_router_allow_phase_allow():
-    """Tier 2: WRITE_FILE has gates.router="allow" and gates.phase="allow"."""
+def test_write_file_gates_router_allow():
+    """Tier 2: WRITE_FILE has gates.router="allow"."""
     assert WRITE_FILE.gates.router == "allow"
-    assert WRITE_FILE.gates.phase == "allow"
 
 
-def test_delete_file_gates_router_allow_phase_allow():
-    """Tier 2: DELETE_FILE has gates.router="allow" and gates.phase="allow"."""
+def test_delete_file_gates_router_allow():
+    """Tier 2: DELETE_FILE has gates.router="allow"."""
     assert DELETE_FILE.gates.router == "allow"
-    assert DELETE_FILE.gates.phase == "allow"
 
 
-def test_list_directory_gates_router_allow_phase_allow():
-    """Tier 2: LIST_DIRECTORY has gates.router="allow" and gates.phase="allow"."""
+def test_list_directory_gates_router_allow():
+    """Tier 2: LIST_DIRECTORY has gates.router="allow"."""
     assert LIST_DIRECTORY.gates.router == "allow"
-    assert LIST_DIRECTORY.gates.phase == "allow"
 
 
 # ── 6. Purity invariants ──────────────────────────────────────────────────────
@@ -253,39 +249,35 @@ def test_all_file_tools_category_io():
         assert tool.category == "io", f"{tool.name}.category expected 'io', got {tool.category!r}"
 
 
-# ── 8. Registry round-trip — all four appear in both for_router and for_phase ─
+# ── 8. Registry round-trip — all four appear in for_router ───────────────────
 
-def test_read_file_appears_in_for_router_and_for_phase():
-    """Tier 2: READ_FILE appears in for_router() and for_phase() after registration.
+def test_read_file_appears_in_for_router():
+    """Tier 2: READ_FILE appears in for_router() after registration.
     Guards the allow/allow gate contract for both surfaces."""
     registry = ToolRegistry()
     registry.register(READ_FILE)
     assert READ_FILE in registry.for_router()
-    assert READ_FILE in registry.for_phase()
 
 
-def test_write_file_appears_in_for_router_and_for_phase():
-    """Tier 2: WRITE_FILE appears in for_router() and for_phase() after registration."""
+def test_write_file_appears_in_for_router():
+    """Tier 2: WRITE_FILE appears in for_router() after registration."""
     registry = ToolRegistry()
     registry.register(WRITE_FILE)
     assert WRITE_FILE in registry.for_router()
-    assert WRITE_FILE in registry.for_phase()
 
 
-def test_delete_file_appears_in_for_router_and_for_phase():
-    """Tier 2: DELETE_FILE appears in for_router() and for_phase() after registration."""
+def test_delete_file_appears_in_for_router():
+    """Tier 2: DELETE_FILE appears in for_router() after registration."""
     registry = ToolRegistry()
     registry.register(DELETE_FILE)
     assert DELETE_FILE in registry.for_router()
-    assert DELETE_FILE in registry.for_phase()
 
 
-def test_list_directory_appears_in_for_router_and_for_phase():
-    """Tier 2: LIST_DIRECTORY appears in for_router() and for_phase() after registration."""
+def test_list_directory_appears_in_for_router():
+    """Tier 2: LIST_DIRECTORY appears in for_router() after registration."""
     registry = ToolRegistry()
     registry.register(LIST_DIRECTORY)
     assert LIST_DIRECTORY in registry.for_router()
-    assert LIST_DIRECTORY in registry.for_phase()
 
 
 # ── 9. Drift detection — module constants match ToolDefinition fields ─────────

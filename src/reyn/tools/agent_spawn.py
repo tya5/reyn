@@ -1,6 +1,6 @@
 """agent_spawn ToolDefinition — #2103 B-tool (LLM agent-spawn primitive, org-design).
 
-Router-only (gates.router=allow, gates.phase=deny). The LLM DESIGNS an org: it creates
+Router-only (gates.router=allow). The LLM DESIGNS an org: it creates
 a new AGENT (WHO: name + role) under its own authority. The handler calls
 ctx.router_state.spawn_agent_fn(...) → the host's create-via-spawn seam, which routes
 through registry.create_agent(parent=<the spawner>) so the new agent's spawn LINEAGE is
@@ -71,7 +71,7 @@ AGENT_SPAWN = ToolDefinition(
     router_dispatched=True,
     description=_AGENT_SPAWN_DESCRIPTION,
     parameters=_AGENT_SPAWN_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="delegation",
     purity="side_effect",

@@ -56,10 +56,7 @@ from reyn.llm.json_parse import loads_lenient
 from reyn.prompt import compaction as _prompt_compaction
 
 if TYPE_CHECKING:
-    from reyn.config import (
-        CompactionConfig,
-        PhaseActResultsCompactionConfig,
-    )
+    from reyn.config import CompactionConfig
     from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
@@ -1226,7 +1223,6 @@ async def retry_loop(
     - Planner step axis (PR-N4): best-effort — emits
       ``planner_step_results_compaction_failed`` and proceeds.
     - Phase axis (PR-N5): best-effort — emits
-      ``phase_act_results_compaction_failed`` and proceeds.
 
     Parameters
     ----------
@@ -1369,176 +1365,6 @@ def _get_learner_class() -> type:
     return TokenMultiplierLearner
 
 
-# ---------------------------------------------------------------------------
-# Phase act-results compaction (control_ir_results)
-# ---------------------------------------------------------------------------
-
-# _PHASE_COMPACTION_SYSTEM_PROMPT: relocated to reyn.prompt.compaction (SP
-# prompt-package, Phase 2 §E) — module aliased above, re-bound to this
-# underscore name so every call-site below is unchanged.
-_PHASE_COMPACTION_SYSTEM_PROMPT = _prompt_compaction.PHASE_COMPACTION_SYSTEM_PROMPT
-
-
-async def compact_control_ir_results(
-    older_results: list[dict],
-    *,
-    engine: "CompactionEngine",
-    cfg: "PhaseActResultsCompactionConfig",
-    events: "EventLog",
-    phase: str | None = None,
-    summary_memo: "Any" = None,
-) -> list[dict]:
-    """Return a list with ``older_results`` summarised into a single
-    ``__compacted_phase_results__`` placeholder entry.
-
-    PR-N5 (FP-0008): phase act-loop control_ir_results compaction.
-
-    Algorithm
-    ---------
-    1. Estimate total token cost of ``older_results`` as plain JSON text.
-    2. Compute the effective threshold: ``cfg.summarize_older_threshold_tokens``
-       when set, else ``cfg.control_ir_results_ratio × engine.budgets.main_pool``.
-    3. If total tokens ≤ threshold → return identity (older_results unchanged).
-    4. Run one LLM summarisation call on older_results via ``_PHASE_COMPACTION_SYSTEM_PROMPT``
-       and the engine's model + proxy configuration.
-    5. Apply ``hard_truncate_summary`` against ``engine.budgets.body_budget``.
-    6. Return a list of length 1 containing
-       ``{"kind": "__compacted_phase_results__", "summary": <text>,
-          "compacted_count": N, "original_tokens": T}``.
-    7. Emit ``phase_act_results_compacted`` event.
-
-    Bounded computation guarantee
-    ------------------------------
-    After compaction, token count of the returned list is bounded by
-    ``body_budget`` (from hard_truncate_summary, same cap as chat summary
-    truncation, Axis 9).
-
-    Failure modes
-    -------------
-    - LLM error → emit ``phase_act_results_compaction_failed`` + return
-      ``older_results`` unchanged (= identity, best-effort — same pattern as
-      PR-N4 planner step axis, distinct from PR-N3 chat axis fail-fast).
-      NEVER raises.
-
-    Multimodal note
-    ---------------
-    ``control_ir_results`` items are op-result dicts like ``{"kind": "grep", ...}``,
-    not multimodal Message turns.  Token estimation uses
-    ``estimate_tokens(json.dumps(item), model)`` — NOT ``estimate_tokens_for_turn``
-    which is for multimodal Message turns.
-    """
-    if not older_results:
-        return older_results
-
-    use_chars4 = cfg.use_chars4_estimate
-    model = engine._model  # noqa: SLF001 — internal use; CompactionEngine owns this
-
-    # Step 1: estimate total tokens of older_results.
-    total_tokens = sum(
-        estimate_tokens(json.dumps(item, ensure_ascii=False), model, use_chars4=use_chars4)
-        for item in older_results
-    )
-
-    # Step 2: effective threshold.
-    if cfg.summarize_older_threshold_tokens is not None:
-        threshold = cfg.summarize_older_threshold_tokens
-    else:
-        threshold = int(cfg.control_ir_results_ratio * engine.budgets.main_pool)
-        if threshold <= 0:
-            # Model context info unavailable — skip compaction.
-            return older_results
-
-    # Step 3: identity check.
-    if total_tokens <= threshold:
-        return older_results
-
-    # Serialise older_results for the LLM call.
-    older_text = json.dumps(older_results, ensure_ascii=False, indent=1)
-
-    # #1267: content args_hash for the summary memo. The summary is a PURE FUNCTION
-    # of (model, older_text) + the fixed system prompt, and ``older_results`` are
-    # op-result dicts with NO volatile fields that re-accumulate deterministically on
-    # resume (op results are memoized) — so this key is resume-stable. When a
-    # ``summary_memo`` is wired (phase paths), the summary LLM call is WAL-memoized so
-    # a compaction×resume HITS (no re-summarize → downstream act-turn memo stays
-    # stable → no op re-execution). recorded_acompletion is UNCHANGED (memo-wrap only).
-    import hashlib as _hashlib
-    summary_args_hash = _hashlib.sha256(
-        f"{model}\x00{older_text}".encode()
-    ).hexdigest()[:16]
-
-    # Step 4 + 5: call LLM summariser (or memo-replay it), then hard-truncate.
-    summary_text: str
-    try:
-        raw_summary: str | None = None
-        if summary_memo is not None:
-            raw_summary = await summary_memo.lookup_summary(phase, summary_args_hash)
-        if raw_summary is None:
-            from reyn.llm.llm import recorded_acompletion
-            response = await recorded_acompletion(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _PHASE_COMPACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": older_text},
-                ],
-                purpose="compaction",
-                recorder=getattr(engine, "_recorder", None),
-                agent=getattr(engine, "_recorder_agent", None),
-            )
-            raw_summary = (response.choices[0].message.content or "").strip()
-            if not raw_summary:
-                raise ValueError("phase act_results compaction LLM returned empty response")
-            if summary_memo is not None:
-                await summary_memo.record_summary(phase, summary_args_hash, raw_summary)
-        # Bound the summary to the engine's body_budget (Axis 9 pattern).
-        summary_text = hard_truncate_summary(
-            raw_summary,
-            engine.budgets.body_budget,
-            model,
-            events,
-            use_chars4=use_chars4,
-        )
-    except Exception as exc:  # noqa: BLE001 — best-effort; never raise
-        logger.warning(
-            "compact_control_ir_results: LLM summarisation failed (%r); "
-            "proceeding with un-compacted control_ir_results",
-            exc,
-        )
-        try:
-            events.emit(
-                "phase_act_results_compaction_failed",
-                phase=phase,
-                n_older=len(older_results),
-                error=repr(exc),
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        return older_results
-
-    # Step 6: build result list.
-    compacted_entry: dict = {
-        "kind": "__compacted_phase_results__",
-        "summary": summary_text,
-        "compacted_count": len(older_results),
-        "original_tokens": total_tokens,
-    }
-
-    # Step 7: emit event.
-    summary_tokens = estimate_tokens(summary_text, model, use_chars4=use_chars4)
-    try:
-        events.emit(
-            "phase_act_results_compacted",
-            phase=phase,
-            n_older_compacted=len(older_results),
-            original_tokens=total_tokens,
-            summary_tokens=summary_tokens,
-        )
-    except Exception:  # noqa: BLE001
-        pass
-
-    return [compacted_entry]
-
-
 __all__ = [
     "CompactionEngine",
     "ChatSummary",
@@ -1552,7 +1378,6 @@ __all__ = [
     "NewMsgExceedsBudgetError",
     "UnrecoveredError",
     "assert_static_bounds",
-    "compact_control_ir_results",
     "compute_budgets",
     "compute_covers_through_seq",
     "estimate_tokens",

@@ -1,9 +1,8 @@
 """§E — the compaction service's LLM-driven system-prompt strings.
 
 Feeds ``reyn.services.compaction.engine.CompactionEngine`` (main compaction
-call + the overshoot re-summarize pass) and its ``compact_control_ir_results``
-phase-act-results helper. All three prompts here are static string constants —
-no runtime value is interpolated into any of them — so the whole prompt text
+call + the overshoot re-summarize pass). Both prompts here are static string
+constants — no runtime value is interpolated into either of them — so the text
 lives here verbatim; the engine module imports these constants back and uses
 them as-is. (Contrast ``dogfood.py``, whose scorer SP interpolates a
 caller-supplied rubric and so keeps only the static header/label here.)
@@ -83,32 +82,4 @@ Rules:
   (PR-N6, FP-0008, issue #1035), temporal markers, exit/error codes.
 - Match the original language.
 - Output ONLY the rewritten narrative text — no JSON, no markdown, no preamble.
-"""
-
-
-# WHEN: only when a phase's act-loop accumulates control_ir_results past the
-#       configured summarize-older threshold.
-# WHERE: reyn.services.compaction.engine.compact_control_ir_results — the
-#        sole system message of that summarisation call.
-# WHY: PR-N5 (FP-0008) — keeps op-kind-specific structured data (grep matches,
-#      file read ranges, shell exit codes, http status) instead of a generic
-#      narrative summary, since the LLM uses these to plan its NEXT op.
-# 日本語訳: フェーズの act loop が control_ir_results を閾値超えて蓄積した
-#      場合のみ使う要約プロンプト。op種別ごとの構造化データ（grep一致・
-#      ファイル範囲・終了コード・httpステータス）を保持し、次のop計画に使う。
-PHASE_COMPACTION_SYSTEM_PROMPT = """\
-You are summarising older `control_ir_results` from a phase's act loop
-to keep the next prompt within the model's context budget.
-
-For each older result, preserve op-kind-specific structured data:
-  - grep:      keep matched paths + line numbers (e.g. "src/foo.py:42, src/bar.py:18")
-  - file_read: keep path + byte size + line range (e.g. "src/foo.py L1-200, 8.3 KB")
-  - shell:     keep cmd + exit code + last 5 lines of stdout (head/tail acceptable)
-  - file_write / file_edit: keep path + byte delta + summary of change
-  - web_fetch: keep url + http status + content-type
-  - other:     keep kind + status + a short fact line
-
-Do NOT generalise away path names, line numbers, exit codes, or http status
-codes — the LLM uses these to plan its next op. Keep section budgets
-tight; brevity matters more than narrative.
 """

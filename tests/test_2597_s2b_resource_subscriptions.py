@@ -454,7 +454,6 @@ def test_subscribe_tool_definitions_registered_router_allow_side_effect():
 
     for td in (SUBSCRIBE_MCP_RESOURCE, UNSUBSCRIBE_MCP_RESOURCE):
         assert td.gates.router == "allow"
-        assert td.gates.phase == "allow"
         assert td.category == "discovery"
         assert td.purity == "side_effect"
 

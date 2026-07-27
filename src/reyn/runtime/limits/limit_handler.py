@@ -2,7 +2,6 @@
 
 Four sites in the codebase raise on a safety limit hit:
 
-  - F (phase_seconds)         — the phase-budget check
   - C (router_cap)            — ``BudgetGateway.check_and_increment_router_cap``
   - E (max_hop_depth)         — ``Session._send_to_agent``
   - G (chain_seconds)         — ``ChainManager`` watchdog fire path
@@ -45,8 +44,8 @@ class LimitDecision:
             legacy abort path.
         extension:
             Site-specific magnitude of the extension. For count-based
-            limits (max_visits, router_cap, max_hop_depth) this is an
-            integer count; for time-based limits (phase_seconds,
+            limits (router_cap, max_hop_depth) this is an
+            integer count; for time-based limits (
             chain_seconds) it is seconds. The helper returns the value
             the caller passed in as ``extension_amount`` when approved,
             and ``0`` on refusal.

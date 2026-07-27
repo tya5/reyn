@@ -1,6 +1,6 @@
 """topology_create ToolDefinition — #2103 C1 (LLM topology-create primitive, org-design).
 
-Router-only (gates.router=allow, gates.phase=deny). The LLM DESIGNS an org's WIRING: it
+Router-only (gates.router=allow). The LLM DESIGNS an org's WIRING: it
 groups agents it spawned into a topology (who-can-message-whom, by kind) and optionally
 binds each member to a capability_profile (narrowing it further). The handler calls
 ctx.router_state.topology_create_fn(...) → the host's create-via-topology seam, which
@@ -116,7 +116,7 @@ TOPOLOGY_CREATE = ToolDefinition(
     router_dispatched=True,
     description=_TOPOLOGY_CREATE_DESCRIPTION,
     parameters=_TOPOLOGY_CREATE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle,
     category="delegation",
     purity="side_effect",

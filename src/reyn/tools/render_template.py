@@ -138,7 +138,7 @@ RENDER_TEMPLATE = ToolDefinition(
     router_dispatched=True,
     description=_RENDER_TEMPLATE_DESCRIPTION,
     parameters=_RENDER_TEMPLATE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="allow"),
+    gates=ToolGates(router="allow"),
     handler=_handle_render_template,
     category="presentation",
     purity="read_only",

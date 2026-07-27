@@ -33,12 +33,9 @@ the current configured value, and which config key to change.
 
 | limit | config path | default | checkpointed? | partial data? |
 |---|---|---|---|---|
-| Phase act-turns | `safety.loop.max_act_turns_per_phase` | 10 | ✅ | yes |
-| Phase visits | `safety.loop.max_phase_visits` | 25 | ✅ | yes |
 | Router calls/turn | `safety.loop.max_router_calls_per_turn` | 3 | ✅ | yes |
 | Workflow calls/chain | _(configured per workflow)_ | — | ✅ | yes |
 | Agent hops | `safety.loop.max_agent_hops` | 3 | ✅ | yes |
-| Phase wall-clock | `safety.timeout.phase_seconds` | 0 (off) | ✅ | yes |
 | Chain wait | `safety.timeout.chain_seconds` | 60 | ✅ | yes |
 | Router iterations | `safety.loop.max_router_iterations` | 5 | ✅ | partial |
 | LLM call timeout | `safety.timeout.llm_call_seconds` | 60 | ❌ auto-retry/abort | — |
@@ -95,9 +92,10 @@ because some providers reject a user turn immediately after a
 `tool_result`). When the wrap-up produces text it is delivered as an
 ordinary `kind="agent"` outbox message carrying a structured
 `meta.limit_stopped=True` + `meta.limit_kind` marker — the UI reads the
-marker to indicate a forced stop without a competing prose block. For
-phase/plan hosts the wrap-up is also handed back for checkpoint
-persistence (`record_force_close`); chat hosts no-op that hook.
+marker to indicate a forced stop without a competing prose block. A host may
+additionally implement a `record_force_close` hook to persist the wrap-up
+into its own checkpoint; the chat host does not, so the hook is inert
+today.
 
 **Decision-enabling error message contract** — emitted only on the
 **fallback** path (the wrap-up call raised or produced no text). All
@@ -118,13 +116,10 @@ safety:
     auto_extend_times: 1       # extensions granted per (run_id, limit_kind) in auto_extend mode
     ask_timeout_seconds: 0.0   # 0 = wait forever; >0 = timeout then refuse
   loop:
-    max_act_turns_per_phase: 10
-    max_phase_visits: 25
     max_router_calls_per_turn: 3
     max_agent_hops: 3
     max_router_iterations: 5   # max LLM tool-call iterations per user turn (CLI --max-iterations overrides)
   timeout:
-    phase_seconds: 0.0         # 0 = disabled
     chain_seconds: 60.0
     llm_call_seconds: 60.0
 ```

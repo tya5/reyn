@@ -1,8 +1,7 @@
 """Tier 2 invariants for the unified memory ToolDefinitions (ADR-0026 M3 Wave 2).
 
 Covers:
-  - Render shape for all 5 ToolDefinitions (render_for_router / render_for_phase)
-  - Type C closure: all 5 have gates.phase="allow"
+  - Render shape for all 5 ToolDefinitions (render_for_router)
   - Purity classification per definition
   - Category classification per definition
   - Per-call schema dynamics (layer enum on read_memory_body / forget_memory;
@@ -62,34 +61,7 @@ def test_canonical_names():
     assert FORGET_MEMORY.name == "forget_memory"
 
 
-# ── 3. Type C closure — gates.phase="allow" for all 5 ──────────────────────────
-
-def test_type_c_closure_list_memory():
-    """Tier 2: LIST_MEMORY has gates.phase='allow' (Type C closure)."""
-    assert LIST_MEMORY.gates.phase == "allow"
-
-
-def test_type_c_closure_read_memory_body():
-    """Tier 2: READ_MEMORY_BODY has gates.phase='allow' (Type C closure)."""
-    assert READ_MEMORY_BODY.gates.phase == "allow"
-
-
-def test_type_c_closure_remember_shared():
-    """Tier 2: REMEMBER_SHARED has gates.phase='allow' (Type C closure)."""
-    assert REMEMBER_SHARED.gates.phase == "allow"
-
-
-def test_type_c_closure_remember_agent():
-    """Tier 2: REMEMBER_AGENT has gates.phase='allow' (Type C closure)."""
-    assert REMEMBER_AGENT.gates.phase == "allow"
-
-
-def test_type_c_closure_forget_memory():
-    """Tier 2: FORGET_MEMORY has gates.phase='allow' (Type C closure)."""
-    assert FORGET_MEMORY.gates.phase == "allow"
-
-
-# ── 4. All 5 also have gates.router="allow" ──────────────────────────────────────
+# ── 4. All 5 have gates.router="allow" ───────────────────────────────────────────
 
 def test_router_allow_all_five():
     """Tier 2: all 5 memory ToolDefinitions have gates.router='allow'."""
@@ -172,30 +144,6 @@ def test_render_for_router_forget_memory():
     props = fn["parameters"]["properties"]
     assert props["layer"].get("enum") == ["shared", "agent"]
     assert set(fn["parameters"]["required"]) == {"layer", "slug"}
-
-
-# ── 8. render_for_phase shape ────────────────────────────────────────────────────
-
-def test_render_for_phase_list_memory():
-    """Tier 2: LIST_MEMORY.render_for_phase() has kind, description, args_schema, purity."""
-    rendered = LIST_MEMORY.render_for_phase()
-    assert rendered["kind"] == "list_memory"
-    assert rendered["purity"] == "read_only"
-    assert "path" in rendered["args_schema"]["properties"]
-
-
-def test_render_for_phase_remember_shared():
-    """Tier 2: REMEMBER_SHARED.render_for_phase() purity='side_effect'."""
-    rendered = REMEMBER_SHARED.render_for_phase()
-    assert rendered["kind"] == "remember_shared"
-    assert rendered["purity"] == "side_effect"
-
-
-def test_render_for_phase_forget_memory():
-    """Tier 2: FORGET_MEMORY.render_for_phase() purity='side_effect'."""
-    rendered = FORGET_MEMORY.render_for_phase()
-    assert rendered["kind"] == "forget_memory"
-    assert rendered["purity"] == "side_effect"
 
 
 # ── 9. Schema dynamics — layer enum present on write+delete tools ─────────────────

@@ -573,7 +573,7 @@ def test_invoke_action_delegates_to_static_target_handler() -> None:
         name="read_file",  # match the routing target for file__read
         description="fake",
         parameters={"type": "object"},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=fake_target_handler,
         category="io",
     )
@@ -664,16 +664,6 @@ def test_universal_wrappers_are_router_visible() -> None:
     for name in ("list_actions", "search_actions", "describe_action",
                  "invoke_action"):
         assert name in router_names
-
-
-def test_universal_wrappers_NOT_phase_visible() -> None:
-    """Tier 2: universal wrappers are router-only per §D21 (gates.phase=deny)."""
-    registry = get_default_registry()
-    phase_tools = registry.for_phase()
-    phase_names = {t.name for t in phase_tools}
-    for name in ("list_actions", "search_actions", "describe_action",
-                 "invoke_action"):
-        assert name not in phase_names
 
 
 def test_describe_action_via_registry_returns_target_meta() -> None:
@@ -797,10 +787,8 @@ def test_exec_exec_in_registry() -> None:
     td = registry.lookup("exec")
     assert td is not None, "exec must be in the default registry"
     assert td.name == "exec"
-    # Both router and phase callable (exec is a side-effect op usable
-    # from phase Control IR as well as the router's universal wrapper).
+    # Router-callable via the universal wrapper.
     assert td.gates.router == "allow"
-    assert td.gates.phase == "allow"
 
 
 def test_exec_describe_action_returns_exec_schema() -> None:

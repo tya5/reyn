@@ -18,7 +18,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 hooks_add = ToolDescription(
     tool_name="hooks_add",
-    surfaced="router only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Let the agent expand its own hooks (self-directed continuation or "
         "recurring injected context), bounded by the write-gate + "
@@ -48,7 +48,7 @@ hooks_add = ToolDescription(
 
 emit_hook_event = ToolDescription(
     tool_name="emit_hook_event",
-    surfaced="router only (gates.router=allow, gates.phase=deny)",
+    surfaced="router (gates.router=allow)",
     purpose=(
         "Let the agent emit its OWN llm:<session_id>:<event_name> hook-event "
         "onto this session's HookBus, so a Composer / a hook registered "

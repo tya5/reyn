@@ -28,23 +28,6 @@ class ConsoleLogger:
     def on_workflow_aborted(self, data: dict) -> None:
         print(f"[os] workflow aborted — {data.get('reason', '')}")
 
-    def on_phase_budget_exceeded(self, data: dict) -> None:
-        print(
-            f"[phase:{data['phase']}] wall-clock budget exceeded "
-            f"({data['elapsed']:.2f}s > {data['budget']:.3g}s)"
-        )
-
-    # ── Phase lifecycle ────────────────────────────────────────────────────────
-
-    def on_phase_retry(self, data: dict) -> None:
-        error = data.get("error", "")
-        print(
-            f"[phase:{data['phase']}] retry {data['attempt']}/{data['max_retries']}"
-            f" — {error[:120]}"
-        )
-
-    # ── LLM ───────────────────────────────────────────────────────────────────
-
     # ── Shell ─────────────────────────────────────────────────────────────────
 
     def on_shell_started(self, data: dict) -> None:
@@ -65,106 +48,44 @@ class ConsoleLogger:
     # ── LLM ───────────────────────────────────────────────────────────────────
 
     def on_llm_called(self, data: dict) -> None:
-        print(f"[phase:{data['phase']}] calling LLM ({data.get('model', '?')})...")
+        print(f"[llm] calling {data.get('model', '?')}...")
 
+    # ``--conversation`` mode (below) filters replay to ``context_built`` +
+    # ``llm_response_received``. #2696 finding: **``context_built`` has no
+    # producer.** Nothing in ``src/`` emits it — the phase engine that did was
+    # deleted (#2434 / #2438). This handler is therefore not "broken but
+    # reconnectable": there is no wiring to restore, and making the mode useful
+    # again means writing a NEW emitter for whatever the chat router's prompt
+    # assembly actually looks like — a feature, not a repair. Tracked separately;
+    # see #2696.
+    #
+    # The body was stripped to bones for exactly that reason. It used to read
+    # ``frame.current_phase`` / ``current_phase_role`` / ``execution.current_visit``
+    # / ``total_steps`` / ``path`` / ``candidate_outputs[].next_phase`` /
+    # ``control_ir_results`` and print a ``[LLM INPUT] phase=… visit=…`` heading —
+    # the deleted phase engine's ContextFrame shape. Left intact, it would have
+    # taught the next author that phase headings are the target output shape and
+    # led them to reintroduce the vocabulary into a phase-less system.
     def on_context_built(self, data: dict) -> None:
         if not self.conversation:
             return
         import json as _json
-        frame = data.get("frame", {})
-        phase = frame.get("current_phase", data.get("phase", "?"))
-        role = frame.get("current_phase_role") or ""
-        execution = frame.get("execution", {})
-        visit = execution.get("current_visit", 1)
-        total = execution.get("total_steps", 0)
-        path = execution.get("path", [])
-
         print(f"\n{'='*70}")
-        role_str = f"  role={role}" if role else ""
-        print(f"[LLM INPUT]  phase={phase}{role_str}  visit={visit}  total_steps={total}")
+        print("[LLM INPUT]")
         print(f"{'='*70}")
+        print(_json.dumps(data, ensure_ascii=False, indent=2, default=repr))
 
-        if path:
-            print("  path: " + " → ".join(path))
-
-        instructions = frame.get("instructions", "")
-        if instructions:
-            print("  --- instructions ---")
-            for line in instructions.splitlines():
-                print(f"  {line}")
-
-        artifact = frame.get("input_artifact", {})
-        if artifact:
-            print("  --- input_artifact ---")
-            print(_json.dumps(artifact, ensure_ascii=False, indent=4)
-                  .replace("\n", "\n  "))
-
-        candidates = frame.get("candidate_outputs", [])
-        if candidates:
-            print("  --- candidates ---")
-            for c in candidates:
-                desc = f"  {c.get('description', '')}" if c.get("description") else ""
-                print(f"    next={c.get('next_phase')}  schema={c.get('schema_name')}{desc}")
-
-        finish_criteria = frame.get("finish_criteria", [])
-        if finish_criteria:
-            print("  --- finish_criteria ---")
-            for fc in finish_criteria:
-                print(f"    {fc}")
-
-        ir_results = frame.get("control_ir_results", [])
-        if ir_results:
-            print("  --- control_ir_results (act re-call) ---")
-            print(_json.dumps(ir_results, ensure_ascii=False, indent=4)
-                  .replace("\n", "\n  "))
-
+    # ``llm_response_received`` IS live (``llm.py::_emit_chat_cost_events``), but
+    # it carries usage/cost only — never the ``phase``, ``raw`` or
+    # ``response_type`` keys this used to read, so ``--conversation`` printed a
+    # constant ``[LLM OUTPUT] phase=?  type=?`` + ``{}`` for every call. Now
+    # prints what the event actually carries (#2696).
     def on_llm_response_received(self, data: dict) -> None:
         if not self.conversation:
             return
-        phase = data.get("phase", "?")
-        raw = data.get("raw", {})
-        print(f"\n[LLM OUTPUT] phase={phase}  type={data.get('response_type', '?')}")
         import json
-        print(json.dumps(raw, ensure_ascii=False, indent=2))
-
-    # ── Act turn ──────────────────────────────────────────────────────────────
-
-    def on_act_executed(self, data: dict) -> None:
-        phase = data["phase"]
-        turn = data.get("act_turn", "?")
-        print(f"[phase:{phase}] act turn #{turn}")
-        for op in data.get("ops", []):
-            kind = op.get("kind")
-            if kind == "file":
-                print(f"  op: file {op.get('op')} → {op.get('path')}")
-            elif kind == "ask_user":
-                q = (op.get("question") or "")[:80]
-                print(f"  op: ask_user → {q}")
-            else:
-                print(f"  op: {kind}")
-        for r in data.get("results", []):
-            kind = r.get("kind")
-            status = r.get("status", "?")
-            if kind == "file" and r.get("op") == "read":
-                content_len = len(r.get("content", ""))
-                print(f"  result: file read {r.get('path')} [{status}] ({content_len} chars)")
-            elif kind == "file" and r.get("op") == "glob":
-                print(f"  result: file glob {r.get('pattern')} [{status}] ({r.get('count', 0)} matches)")
-            elif kind == "file":
-                print(f"  result: file write {r.get('path')} [{status}]")
-            elif kind == "ask_user":
-                answer = r.get("answer", "")
-                print(f"  result: ask_user [{status}] answer={answer!r}")
-            elif kind == "lint":
-                passed = "passed" if r.get("passed") else f"{r.get('error_count', 0)} errors"
-                print(f"  result: lint {r.get('path')} [{status}] {passed}, {r.get('warning_count', 0)} warnings")
-            elif kind == "eval":
-                score = r.get("overall_score", 0.0)
-                pc = r.get("passed_criteria", 0)
-                tc = r.get("total_criteria", 0)
-                print(f"  result: eval {r.get('spec_path')} [{status}] score={score:.2f} ({pc}/{tc})")
-            else:
-                print(f"  result: {kind} [{status}]")
+        print("\n[LLM OUTPUT]")
+        print(json.dumps(data, ensure_ascii=False, indent=2, default=repr))
 
     # ── Present (FP-0054 §8) ────────────────────────────────────────────────────
 

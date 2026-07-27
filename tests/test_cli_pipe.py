@@ -489,7 +489,7 @@ def _install_echo_tool(monkeypatch) -> None:
         name="cli_pipe_echo",
         description="Test tool: uppercases 'text' (no side effect).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler,
         category="io",
         purity="pure",

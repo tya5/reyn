@@ -74,7 +74,7 @@ async def _spawn(reg: AgentRegistry) -> Session:
 @pytest.mark.asyncio
 async def test_orphaned_phase_only_tool_absent_under_enumerate_all(tmp_path, monkeypatch):
     """Tier 2: OLD-bug-fixed proof (enumerate-all). ``ask_user`` (gates.router="deny",
-    gates.phase="allow") is registered globally but never appears in ANY chat-layer
+    gates.router="deny") is registered globally but never appears in ANY chat-layer
     scheme's composed ``tools=`` -- RED under the pre-#3220 registry-census source
     (which only filters by envelope, not payload-reachability); GREEN now."""
     monkeypatch.chdir(tmp_path)

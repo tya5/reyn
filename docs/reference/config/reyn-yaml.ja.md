@@ -245,7 +245,6 @@ safety:
   timeout:
     llm_call_seconds: 60         # 呼び出しごとの HTTP タイムアウト (--llm-timeout)
     llm_max_retries: 3           # 呼び出しごとの一時的エラーのリトライ数 (--llm-max-retries)
-    phase_seconds: 0             # Phase ごとのウォールクロックバジェット; 0 = 無制限 (--phase-budget)
     chain_seconds: 60            # デリゲート返答待機時間
   on_limit:
     mode: interactive            # interactive | unattended | auto_extend
@@ -267,7 +266,6 @@ safety:
 |------|------|---------|---------|-------------|
 | `safety.timeout.llm_call_seconds` | float（秒） | `60` | `--llm-timeout` | LiteLLM に渡される呼び出しごとの HTTP タイムアウト。 |
 | `safety.timeout.llm_max_retries` | int | `3` | `--llm-max-retries` | LLM 呼び出しごとの一時的エラーのリトライ数（LiteLLM 指数バックオフ）。 |
-| `safety.timeout.phase_seconds` | float（秒） | `0` | `--phase-budget` | Phase ごとのウォールクロックバジェット。リトライ/ターンの境界でのソフトチェック。呼び出し途中はキャンセルしない。`0` = 無制限。 |
 | `safety.timeout.chain_seconds` | float（秒） | `60` | — | マルチエージェントチェーンがデリゲート返答を待機する時間。上限超過後にランタイムが上流エラーを生成。`0` = 無効。 |
 
 ### `safety.on_limit` フィールド

@@ -6,9 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from reyn.config.chat import (  # #1682 #3: phase compaction config lives in chat
-    PhaseActResultsCompactionConfig,
-)
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 

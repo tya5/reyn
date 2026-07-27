@@ -339,7 +339,7 @@ def test_universal_tools_are_router_allow_phase_deny(
     phase has direct op access via Control IR allowed_ops and does not
     need the wrappers.
     """
-    assert tool.gates == ToolGates(router="allow", phase="deny")
+    assert tool.gates == ToolGates(router="allow")
 
 
 @pytest.mark.parametrize(

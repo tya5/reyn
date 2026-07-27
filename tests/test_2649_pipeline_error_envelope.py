@@ -221,7 +221,7 @@ async def test_run_pipeline_cancelled_renders_error_kind_message(tmp_path: Path,
         name="c2649_step",
         description="#2649 test: a gated step tool (real await gate, no side effect needed).",
         parameters={"type": "object", "properties": {}},
-        gates=ToolGates(router="allow", phase="allow"),
+        gates=ToolGates(router="allow"),
         handler=_handler, category="io", purity="side_effect",
     )
     base = tools_pkg.get_default_registry

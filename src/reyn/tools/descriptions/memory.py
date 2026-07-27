@@ -18,7 +18,7 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 list_memory = ToolDescription(
     tool_name="list_memory",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — Type C "
+        "router (gates.router=allow) — Type C "
         "closure per ADR-0026"
     ),
     purpose=(
@@ -42,7 +42,7 @@ list_memory = ToolDescription(
 read_memory_body = ToolDescription(
     tool_name="read_memory_body",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — Type C "
+        "router (gates.router=allow) — Type C "
         "closure per ADR-0026"
     ),
     purpose=(
@@ -63,7 +63,7 @@ read_memory_body = ToolDescription(
 remember_shared = ToolDescription(
     tool_name="remember_shared",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — Type C "
+        "router (gates.router=allow) — Type C "
         "closure per ADR-0026"
     ),
     purpose=(
@@ -85,7 +85,7 @@ remember_shared = ToolDescription(
 remember_agent = ToolDescription(
     tool_name="remember_agent",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — Type C "
+        "router (gates.router=allow) — Type C "
         "closure per ADR-0026"
     ),
     purpose=(
@@ -108,7 +108,7 @@ remember_agent = ToolDescription(
 forget_memory = ToolDescription(
     tool_name="forget_memory",
     surfaced=(
-        "router + phase (gates.router=allow, gates.phase=allow) — Type C "
+        "router (gates.router=allow) — Type C "
         "closure per ADR-0026"
     ),
     purpose=(

@@ -314,7 +314,7 @@ SEARCH_KNOWLEDGE = ToolDefinition(
     router_dispatched=True,
     description=_SEARCH_KNOWLEDGE_DESCRIPTION,
     parameters=_SEARCH_KNOWLEDGE_PARAMETERS,
-    gates=ToolGates(router="allow", phase="deny"),
+    gates=ToolGates(router="allow"),
     handler=_handle_search_knowledge,
     category="discovery",
     purity="read_only",
