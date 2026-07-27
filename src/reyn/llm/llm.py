@@ -1855,13 +1855,29 @@ async def recorded_acompletion(
         chunks, never emitted per-chunk. ``budget.py`` (the cost band,
         ``record_llm`` at budget.py:1135) is untouched by ③a.
 
-        ``stream_options={"include_usage": True}`` is added ONLY when
-        litellm's own supported-params query confirms the model accepts it
-        (an OpenAI-specific param; Gemini/Anthropic reject it) — again a
-        capability query, not a provider check. Its absence is harmless:
-        ``stream_chunk_builder`` falls back to a token-count estimate for
-        usage, the same graceful degradation litellm's own non-Reyn callers
-        rely on.
+        ★``stream_options={"include_usage": True}`` is set UNCONDITIONALLY
+        (#3348): it is what makes the provider's OWN token counts reach this
+        function at all. Without it litellm's ``CustomStreamWrapper`` never
+        yields the usage-bearing final chunk, ``stream_chunk_builder`` has no
+        provider figure to sum, and it falls back to
+        ``litellm.token_counter`` — a LOCAL ESTIMATE that then flows into
+        ``recorder.record_llm`` / ``/cost`` / budget caps as if it were the
+        provider's number (measured on a live Gemini call: 13 recorded vs 7
+        actual, +86%). Estimated spend is not spend.
+
+        This is deliberately NOT gated on a supported-params query, which is
+        what #3348 removed. The flag is consumed CLIENT-SIDE by the stream
+        wrapper (``CustomStreamWrapper.check_send_stream_usage``), so it works
+        for providers whose wire protocol has no such field; and litellm's
+        param layer skips ``stream_options`` when pruning unsupported params
+        (``litellm/utils.py``: ``if k == "user" or k == "stream_options" or k
+        == "stream": continue``), so passing it can never raise, for any
+        provider, regardless of ``drop_params``. The supported-params list
+        describes what a provider ACCEPTS ON THE WIRE — Gemini and Anthropic
+        do not list it — which is the wrong question for a client-side flag,
+        and gating on it made reyn's token accounting silently provider-
+        dependent (exact on Anthropic, estimated on Gemini). One path, no
+        provider branching.
 
         #3288 ③b: ``on_content_delta`` (the enclosing ``recorded_acompletion``'s
         parameter, closed over here) is invoked ONCE PER CHUNK that carries a
@@ -1879,12 +1895,11 @@ async def recorded_acompletion(
         stream_kwargs.pop("stream", None)
         stream_kwargs.pop("stream_options", None)
         stream_kwargs["stream"] = True
-        try:
-            _supported_params = litellm.get_supported_openai_params(model=model) or []
-        except Exception:  # noqa: BLE001 — params query is best-effort
-            _supported_params = []
-        if "stream_options" in _supported_params:
-            stream_kwargs["stream_options"] = {"include_usage": True}
+        # #3348: unconditional — see the docstring. Gating this on the
+        # provider's supported-params list is what made reyn record a LOCAL
+        # ESTIMATE instead of the provider's own token counts on every
+        # streamed Gemini call.
+        stream_kwargs["stream_options"] = {"include_usage": True}
 
         chunk_stream = await litellm.acompletion(model=model, messages=msgs, **stream_kwargs)
         if not hasattr(chunk_stream, "__aiter__"):
