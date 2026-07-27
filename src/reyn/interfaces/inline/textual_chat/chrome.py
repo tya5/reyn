@@ -1,7 +1,10 @@
 """Composer + bottom-chrome tab-drawer widgets for the Textual chat surface.
 
 The :class:`Composer` is the multi-line Claude-Code-style input (Enter submits,
-Shift+Enter newlines). The bottom chrome (Phase 3) is a slim :class:`StatusLine`
+Shift+Enter newlines) and the driver of the ``/``-command / ``:``-skill
+completion popup (:mod:`~reyn.interfaces.inline.textual_chat.completion`, #3354
+— see :class:`Composer` for the key contract and why ``↑``/``↓`` change meaning
+while it is open). The bottom chrome (Phase 3) is a slim :class:`StatusLine`
 of ``model │ agent │ cost │ ctx`` values plus a focusable :class:`MenuBar` (a
 WRAPPING row of :class:`~textual.widgets.Tab` items — see :func:`pack_menu_rows`
 for why it wraps rather than scrolls); opening a menu item expands a
@@ -71,7 +74,9 @@ from textual.widgets import (
     TextArea,
 )
 
+from .completion import CompletionPopup
 from .intervention_panel import InterventionPanel
+from .presenter import option_content_rows
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
@@ -84,9 +89,64 @@ class Composer(TextArea):
     """Multi-line Claude-Code-style input: **Enter submits**, **Shift+Enter**
     inserts a newline (the inverse of ``TextArea``'s default), auto-growing up to
     ``MAX_ROWS`` then internally scrolling. Every other key falls through to the
-    base ``TextArea`` bindings unchanged."""
+    base ``TextArea`` bindings unchanged.
+
+    **Completion (#3354).** Typing ``/`` or ``:`` opens the
+    :class:`~reyn.interfaces.inline.textual_chat.completion.CompletionPopup`
+    above the input row. The popup is non-focusable, so focus never leaves this
+    widget and this ``_on_key`` stays the single owner of every keystroke —
+    which is exactly why the key contract has to be decided here rather than
+    split across two focus targets:
+
+    - ``↑``/``↓`` move the popup's highlight **while the popup is open**, and
+      keep their existing #3314/#3277/#3327 routing (pending intervention →
+      sent-queue upward, MenuBar downward, cursor otherwise) whenever it is
+      NOT. This is a strict PRIORITY override, not a replacement: an open popup
+      is a modal-ish, transient list the user just summoned by typing, and the
+      regions those arrows otherwise reach are all still one ``Esc`` away.
+    - ``Tab`` accepts the highlighted candidate — and ONLY while the popup is
+      open. ``Tab`` is NOT a free key: ``TextArea`` defaults to
+      ``tab_behavior="focus"`` (measured, ``textual/widgets/_text_area.py``) so
+      the key bubbles to ``Screen``'s ``Binding("tab", "app.focus_next")``
+      (``textual/screen.py``), which is how the composer currently reaches the
+      MenuBar. Intercepting it conditionally BORROWS it for the duration of a
+      menu and leaves focus-cycling intact the rest of the time.
+      ``Enter`` deliberately does NOT accept (the retired prompt_toolkit
+      completer bound both, the retired Textual ``SlashPicker`` bound only
+      Tab): here Enter SENDS, so binding it to accept would silently swap a
+      fully-typed command for whichever row happened to be highlighted instead
+      of sending what the user typed.
+    - ``Esc`` dismisses the popup without touching the drawer (the app-level
+      ``escape`` → ``close_drawer`` binding only sees the key once the popup is
+      closed), and the dismissal is STICKY for that token — see
+      :meth:`~reyn.interfaces.inline.textual_chat.completion.CompletionPopup.sync`.
+
+    Every one of these keys is registered in :data:`COMPOSER_KEYS`, the Help
+    pane's single source of truth (#3314) — an unlisted key is undiscoverable.
+    ``↑``/``↓`` appear TWICE there on purpose, once per state.
+
+    **The menu is opened by TYPING, never by buffer contents.** Completion is
+    recomputed only for a text change a KEY caused (:attr:`_EDIT_KEYS` /
+    ``event.is_printable``, tracked through :meth:`_note_edit_key` and consumed
+    once in :meth:`on_text_area_changed`). Programmatic writes —
+    ``_restore_cancelled_text`` restoring a cancelled ``/command`` into the box
+    (#3300 Y-client), a session-switch reset — must NOT pop a menu the user did
+    not ask for, and additionally :meth:`clear_and_reset` closes it outright.
+    """
 
     MAX_ROWS = 6
+
+    #: Keys that EDIT the document without being printable, so a completion
+    #: recompute must follow them. Textual routes these through ``BINDINGS`` →
+    #: actions that run AFTER ``_on_key`` returns (measured: a sync at the end of
+    #: ``_on_key`` still sees the pre-backspace text), which is why the recompute
+    #: is driven off the resulting ``Changed`` message rather than from here.
+    #: ``shift+enter`` is included so inserting a newline — which disables
+    #: completion entirely — closes an open menu.
+    _EDIT_KEYS = frozenset({
+        "backspace", "delete", "shift+enter",
+        "ctrl+w", "ctrl+u", "ctrl+k", "ctrl+x", "ctrl+f",
+    })
 
     class Submitted(Message):
         """Posted when the user presses Enter with non-blank content."""
@@ -99,7 +159,86 @@ class Composer(TextArea):
         self.show_line_numbers = False
         self._sync_height()
 
+    def text_before_cursor(self) -> str:
+        """The text from the start of the document up to the cursor — the input
+        every completion decision is made from (a completion completes what is
+        BEHIND the caret, never what a later line happens to contain)."""
+        return self.get_text_range((0, 0), self.cursor_location)
+
+    def _popup(self) -> "CompletionPopup | None":
+        """The app's completion popup, or ``None`` when this composer is mounted
+        without one (the widget is optional chrome; every completion path
+        no-ops rather than requiring it)."""
+        found = self.app.query(CompletionPopup)
+        return found.first() if found else None
+
+    def _note_edit_key(self, event: events.Key) -> None:
+        """Arm ONE completion recompute if this key can edit the document.
+
+        A counter rather than a boolean: :meth:`on_text_area_changed` consumes
+        the arm by matching it, so each qualifying keypress permits at most one
+        recompute and a ``Changed`` with no keypress behind it (a programmatic
+        write) permits none. A non-editing key (an arrow) never arms, so it
+        cannot leave the gate open for a later programmatic write."""
+        if event.is_printable or event.key in self._EDIT_KEYS:
+            self._edit_key_seq = getattr(self, "_edit_key_seq", 0) + 1
+
+    def _sync_completion(self) -> None:
+        """Recompute + push the completion state for the current caret position.
+
+        The app owns resolving the live sources (slash registry, session,
+        skills) — this widget only asks for the state and hands it to the
+        popup, so a composer mounted in an app without that hook simply never
+        completes."""
+        popup = self._popup()
+        state_fn = getattr(self.app, "completion_state", None)
+        if popup is None or state_fn is None:
+            return
+        popup.sync(state_fn(self.text_before_cursor()))
+
+    def _accept_completion(self, popup: CompletionPopup) -> None:
+        """Replace the typed prefix with the highlighted candidate.
+
+        Replaces exactly ``prefix_len`` characters immediately before the caret
+        (the sigil and everything left of the token survive) via the SAME
+        ``_replace_via_keyboard`` seam Shift+Enter uses, so undo history and the
+        ``Changed`` message behave like ordinary typing — which is also what
+        re-arms the menu for the NEXT stage (``/model `` → its argument list).
+
+        A no-match menu has nothing highlighted: the key is still consumed (a
+        visible menu owning Tab is more predictable than Tab silently moving
+        focus out from under one) but nothing is inserted."""
+        candidate = popup.selected()
+        state = popup.state()
+        if candidate is None:
+            popup.close()
+            return
+        row, col = self.cursor_location
+        start = (row, max(0, col - state.prefix_len))
+        popup.close()
+        self._replace_via_keyboard(
+            candidate.value + state.accept_suffix, start, (row, col)
+        )
+
     async def _on_key(self, event: events.Key) -> None:
+        popup = self._popup()
+        if popup is not None and popup.is_open:
+            if event.key in ("up", "down"):
+                event.stop()
+                event.prevent_default()
+                popup.move_selection(-1 if event.key == "up" else 1)
+                return
+            if event.key == "tab":
+                event.stop()
+                event.prevent_default()
+                self._accept_completion(popup)
+                return
+            if event.key == "escape":
+                event.stop()
+                event.prevent_default()
+                popup.dismiss_current()
+                return
+        self._note_edit_key(event)
         if event.key == "enter":
             event.stop()
             event.prevent_default()
@@ -158,6 +297,13 @@ class Composer(TextArea):
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         self._sync_height()
+        # Consume the arm a qualifying keypress left (see :meth:`_note_edit_key`).
+        # An unmatched arm means this change came from a programmatic write, and
+        # completion stays exactly as it was — the menu is a response to TYPING.
+        armed = getattr(self, "_edit_key_seq", 0)
+        if armed != getattr(self, "_synced_key_seq", 0):
+            self._synced_key_seq = armed
+            self._sync_completion()
 
     def _sync_height(self) -> None:
         wrapped_rows = max(self.wrapped_document.height, 1)
@@ -166,6 +312,12 @@ class Composer(TextArea):
     def clear_and_reset(self) -> None:
         self.text = ""
         self._sync_height()
+        # A submitted turn empties the box; an empty box completes nothing, and
+        # leaving a stale popup up would keep swallowing ↑/↓ after the text that
+        # justified it is gone.
+        popup = self._popup()
+        if popup is not None:
+            popup.close()
 
 
 # ── bottom-chrome tab-drawer ─────────────────────────────────────────────────
@@ -228,6 +380,16 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
     # actually has something to act on, pending intervention first — see
     # ``Composer._on_key``'s "up" branch for the exact priority/fallback.
     ("↑", "focus pending intervention (else sent queue)"),
+    # #3354: the / and : completion popup. ↑/↓ are LISTED TWICE on purpose —
+    # they genuinely do two different things depending on whether the popup is
+    # open, and the Help pane is where a user learns that; collapsing the two
+    # into one row would hide the state-dependence that makes the routing
+    # predictable (and hide it in the one place #3314 designated as the source
+    # of truth for what a key does).
+    ("/ or :", "open completion"),
+    ("↑ ↓", "move completion selection (while completing)"),
+    ("tab", "accept completion (while completing)"),
+    ("esc", "dismiss completion"),
 ]
 
 #: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides).
@@ -280,8 +442,16 @@ def _history_option_content(rows: "Sequence[str]") -> list[Content]:
     (:func:`build_drawer_pane`, at ``compose`` time) and the refresh
     (``TextualChatApp._refresh_pane``, on every drawer re-open) — a fresh
     History tab was, before this fix, safe at ONE of those and broken at
-    the other depending on which code path last touched it."""
-    return [Content(row) for row in rows]
+    the other depending on which code path last touched it.
+
+    The wrap itself now lives in
+    :func:`~reyn.interfaces.inline.textual_chat.presenter.option_content_rows`
+    (#3354 gave it a second consumer — the completion popup, whose ``/image``
+    candidates are filesystem names). This function stays as the History-pane
+    NAME for it, carrying the "why only this pane" reasoning above; the
+    mechanism is shared so the two consumers cannot drift into one being safe
+    and the other not."""
+    return option_content_rows(rows)
 
 
 # ── per-pane pure formatters (registry inputs → display strings) ──────────────

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Callable
 
 from rich.console import Console, Group, RenderableType
 from rich.text import Text
+from textual.content import Content
 from textual_flowview import Presentation
 
 from reyn.interfaces.repl.renderer import (
@@ -39,6 +40,8 @@ from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from reyn.runtime.outbox import OutboxMessage
 
 # --- live RUNNING-tool indicator (Phase ②) ---------------------------------
@@ -89,6 +92,31 @@ _SPINNER_SPEED = 8
 # delivers an answer (the placeholder→resolved IN-PLACE churn-zero contract —
 # same entry, ``set_item`` — is P2 polish; this is deliberately basic).
 _PENDING_HINT = "  ⋯ respond in the panel below"
+
+
+def option_content_rows(rows: "Sequence[str]") -> "list[Content]":
+    """Wrap each row in a literal :class:`~textual.content.Content` — never a
+    bare ``str`` handed to :class:`~textual.widgets.OptionList`.
+
+    ``OptionList`` markup-parses a bare ``str`` option exactly like
+    ``Static``/``RadioButton`` do (``Option.prompt`` → ``textual.visual.
+    visualize(..., markup=True)`` by default, unset here) — the ``#3302``
+    bracket-eating class, reached through a different widget. Any option row
+    whose text is NOT an operator/config-derived identifier the operator
+    themselves typed into ``reyn.yaml`` must go through here.
+
+    Lives in this module (the display-boundary leaf that also owns
+    :func:`_neutralized_label`) rather than in ``chrome`` because it now has
+    two independent consumers — the History drawer pane
+    (``chrome._history_option_content``) and the ``/``-``:`` completion popup
+    (``completion.CompletionPopup``, whose ``/image`` candidates are FILESYSTEM
+    names) — and ``chrome`` imports ``completion``, so the shared idiom cannot
+    live there without a cycle. Re-deriving it per consumer is exactly how one
+    call site ends up safe and the other broken (the #3302 fix's own history:
+    a fresh History tab was safe on the build path and unsafe on the refresh
+    path).
+    """
+    return [Content(row) for row in rows]
 
 
 def _neutralized_label(label: str) -> str:

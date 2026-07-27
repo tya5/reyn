@@ -64,6 +64,13 @@ boundary and re-exports the public API):
   ``build_drawer_pane``) that derive each pane's rows — and the slash each
   actionable row dispatches — from its canonical source (input + bottom-chrome
   widgets).
+- :mod:`~reyn.interfaces.inline.textual_chat.completion` — ``CompletionPopup``
+  and the pure ``compute_completion`` behind the composer's ``/``-command and
+  ``:``-skill autocomplete (#3354). Supplies no candidates of its own: it calls
+  ``slash_command_completions``, each command's own ``CompleterFn``, and
+  ``skill_invoke_completions``. While the popup is open the composer's ``↑``/
+  ``↓`` move the highlight instead of stepping to the adjacent region, ``Tab``
+  accepts and ``Esc`` dismisses — all four registered in ``COMPOSER_KEYS``.
 - :mod:`~reyn.interfaces.inline.textual_chat.intervention_panel` —
   ``InterventionPanel``, the grouped panel widget (#3299 P1) an intervention's
   interaction (closed-set select / free-text answer) is answered through —
@@ -79,12 +86,14 @@ from __future__ import annotations
 
 from .app import TextualChatApp, run_textual_chat
 from .chrome import Composer, MenuBar, StatusLine
+from .completion import CompletionPopup, compute_completion
 from .gutter import ReynGutter, ReynRightGutter, ReynTimingGutter, ReynTurnUsageGutter
 from .intervention_panel import InterventionPanel
 from .presenter import ReynPresenter, _body_and_background
 
 __all__ = [
     "Composer",
+    "CompletionPopup",
     "InterventionPanel",
     "MenuBar",
     "ReynGutter",
@@ -95,5 +104,6 @@ __all__ = [
     "StatusLine",
     "TextualChatApp",
     "_body_and_background",
+    "compute_completion",
     "run_textual_chat",
 ]

@@ -134,6 +134,29 @@ class ChatReadModel(ABC):
         method's; passing a target here on a remote client is accepted but
         inert."""
 
+    def completion_session(self) -> "object | None":
+        """The LOCAL ``Session`` the TUI's completion popup needs (#3354), or
+        ``None`` when this client holds none.
+
+        Two consumers, both session-local by nature: a slash command's
+        ``CompleterFn`` is declared as ``(session, arg_partial="") -> list[str]``
+        (``/attach`` reads the agent registry off it, ``/answer`` the active
+        interventions), and the ``:`` skill completer reads the session's
+        registered skills — the same list the invocation path enforces its
+        visibility surface from.
+
+        **Concrete, not ``@abstractmethod``, unlike every accessor above.** The
+        class docstring's "abstract so a partial implementation fails at
+        construction" rule exists to catch an implementation that FORGOT a
+        member. Here there is nothing to forget: a client that is not the local,
+        registry-backed one definitionally holds no session, so ``None`` is the
+        complete and correct answer rather than a placeholder — the same
+        graceful-degrade the frame-sufficiency boundary above describes, just
+        expressed as a default instead of a repeated stub. Every consumer
+        already treats a ``None`` session as "offer nothing" (each registered
+        ``CompleterFn`` returns ``[]`` for it)."""
+        return None
+
 
 class RegistryReadModel(ChatReadModel):
     """LOCAL read-model — delegates to the same registry/session accessors the
@@ -147,6 +170,9 @@ class RegistryReadModel(ChatReadModel):
 
     def _attached(self):
         return self._registry.attached_session()
+
+    def completion_session(self):
+        return self._attached()
 
     def intervention_head(self):
         s = self._attached()
@@ -286,6 +312,16 @@ class RemoteReadModel(ChatReadModel):
         # it decodes STATE_* frames; read it live each render tick.
         values = getattr(getattr(self._transport, "status", None), "values", None)
         return project_remote_snapshot(values)
+
+    def completion_session(self):
+        # Frame-sufficiency, same boundary as every other session-local read:
+        # a remote client holds no Session, and neither the agent registry a
+        # ``CompleterFn`` walks nor the skill entry list is projected onto the
+        # wire. Stated explicitly here rather than inherited so the remote
+        # DECISION is visible at the remote implementation (the base default
+        # happens to agree). ``/`` command-name completion is unaffected — it
+        # comes off the process-local slash registry, not the session.
+        return None
 
     def intervention_head(self):
         return None

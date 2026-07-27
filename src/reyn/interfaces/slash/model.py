@@ -24,10 +24,36 @@ if TYPE_CHECKING:
     from reyn.runtime.session import Session
 
 
+def _model_class_completer(session: "Session", arg_partial: str = "") -> list[str]:
+    """Operator-configured model classes for ``/model <class>`` completion.
+
+    Wires the EXISTING public accessor
+    (:meth:`~reyn.runtime.session.Session.known_model_classes` →
+    ``ModelResolver.known_classes()``) — the same list this command's own
+    no-arg branch prints under ``available:`` and the drawer's Model pane
+    enumerates — so the completion menu can never offer a class the command
+    would then reject. No new source of truth.
+
+    ``arg_partial`` is accepted per the ``CompleterFn`` contract and unused:
+    ``/model`` takes a single argument, and prefix-filtering is the caller's
+    job (it filters by the last typed word for every command uniformly).
+    Returns ``[]`` for a session that cannot answer — a remote client holds
+    none, and a broken completer must never break the composer.
+    """
+    getter = getattr(session, "known_model_classes", None)
+    if getter is None:
+        return []
+    try:
+        return list(getter())
+    except Exception:  # noqa: BLE001 — a completer must never break the composer
+        return []
+
+
 @slash(
     "model",
     summary="Show or override the model class for this session",
     usage="/model [<class>]",
+    completer=_model_class_completer,
 )
 async def model_cmd(session: "Session", args: str) -> None:
     """/model [<class>] — show current model or set a per-session override."""
