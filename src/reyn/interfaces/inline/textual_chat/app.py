@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Callable
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import ContentSwitcher, OptionList, Static, Tab
+from textual.widgets import ContentSwitcher, OptionList, Static
 from textual_flowview import (
     Anchor,
     Entry,
@@ -53,6 +53,7 @@ from .chrome import (
     StatusLine,
     _history_option_content,
     build_drawer_pane,
+    pane_commands,
     pane_payload,
     status_line_text,
 )
@@ -156,12 +157,24 @@ class TextualChatApp(App):
 
     Phase 4 wires each drawer pane to its canonical reyn source, rebuilding the
     pane from a fresh status snapshot (:meth:`_snapshot`) on each open: Model/Agent
-    from ``model_classes`` / ``agent_names`` (the enumerating pickers derive their
+    from ``model_classes`` / ``session_tree`` (the enumerating pickers derive their
     FULL set from the registry, never a curated subset), Cost/Ctx from the live
-    token/cost figures (F5b — also surfaced on the always-visible status line),
+    token/cost/context figures (F5b — the headline cost + ctx% is also on the
+    always-visible status line), Tool/MCP/Skill/Hook from the session-scoped
+    visibility + hook toggles, Pipe/Cron from the pipeline registry + cron config,
     Menu from the slash ``REGISTRY``, History from the retained live conversation,
-    Help from the app BINDINGS. Selecting a Model/Agent row routes the equivalent
-    ``/model`` / ``/attach`` slash through the transport.
+    Help from the app BINDINGS. Selecting an actionable row routes that row's
+    slash (``/model`` / ``/attach`` / ``/session switch`` / ``/visibility`` /
+    ``/hook``) through the transport — the command comes from the SAME per-pane
+    entry list that produced the row, so index and action cannot drift.
+
+    #3338 makes both of those surfaces LIVE rather than sampled-once:
+    :meth:`_refresh_live_chrome` runs on EVERY frame — EVENT as well as DISPLAY —
+    and rebuilds the status line plus whichever pane is currently OPEN. Restricting
+    the rebuild to the open tab is load-bearing, not an optimization: the Ctx pane
+    resolves the deliberately-uncalled ``ctx_compaction_status_fn``, which
+    ``_snapshot()`` stores as a bound method precisely so it never runs per render
+    frame.
 
     Phase 5 adds restore-on-restart (CC ``--resume`` parity): :meth:`on_mount`
     hydrates the retained model from the PERSISTED conversation log BEFORE the
@@ -310,8 +323,15 @@ class TextualChatApp(App):
         color: $text-muted;
         padding: 0 1;
     }
+    /* height: auto — the menu row WRAPS to as many lines as the terminal width
+       needs (chrome.pack_menu_rows), so no tab is ever laid out past the right
+       edge. A fixed height:1 here would clip the wrapped rows straight back
+       off-screen, reinstating exactly the defect the wrap exists to fix.
+       THIS RULE IS THE SOLE OWNER of the row's height: an app stylesheet beats
+       a widget's DEFAULT_CSS, so declaring height on MenuBar in chrome.py has
+       no effect (measured). Change it here. */
     MenuBar {
-        height: 1;
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -451,13 +471,15 @@ class TextualChatApp(App):
         # client that populated this entry ever restores anything; every
         # other client applies the SAME delta as a plain removal.
         self._pending_own_cancels: "dict[str, str]" = {}
-        # Per-picker parallel id lists (class names / agent names), keyed by tab
-        # id and kept in lock-step with the OptionList options a pane was last
-        # refreshed with, so an ``OptionSelected.option_index`` maps back to the
-        # canonical id the ``/model`` / ``/attach`` slash needs. Populated on each
-        # drawer refresh (:meth:`_refresh_pane`) from the SAME snapshot that built
-        # the rows, so the option row and its id never drift.
-        self._pane_selection_ids: "dict[str, list[str]]" = {}
+        # Per-picker parallel SLASH COMMAND lists, keyed by tab id and kept in
+        # lock-step with the OptionList options a pane was last refreshed with, so
+        # an ``OptionSelected.option_index`` maps back to the command that applies
+        # that row (``/model`` / ``/attach`` / ``/session switch`` /
+        # ``/visibility`` / ``/hook``). Populated on each drawer refresh
+        # (:meth:`_refresh_pane`) from the SAME snapshot that built the rows, via
+        # the SAME per-pane entry list (``chrome._PANE_ENTRY_BUILDERS``), so the
+        # option row and its command never drift.
+        self._pane_commands: "dict[str, list[str]]" = {}
         # #3288 ③c: in-flight streamed reply, keyed by ``chain_id`` — the SAME
         # authoritative correlation id ``RouterLoop._emit_agent_delta`` stamps
         # on every ``agent_delta`` chat-event AND the one the terminal
@@ -523,7 +545,7 @@ class TextualChatApp(App):
         # downward. Phase 4 fills each pane from its canonical reyn source; each
         # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
         yield StatusLine(self._status_text())
-        yield MenuBar(*(Tab(label, id=tid) for tid, label in _MENU_TABS), id="menubar")
+        yield MenuBar(_MENU_TABS, id="menubar")
         with ContentSwitcher(initial=None, id="drawer"):
             for tid, _label in _MENU_TABS:
                 yield build_drawer_pane(tid, self._pane_rows(tid))
@@ -596,22 +618,13 @@ class TextualChatApp(App):
             app_bindings=self._app_binding_help(),
         )
 
-    def _selection_ids(self, tab_id: str, snap: "dict | None") -> "list[str]":
-        """The canonical ids parallel to a picker pane's option rows (class names
-        for Model, agent names for Agent), for mapping an ``option_index`` back to
-        the ``/model`` / ``/attach`` argument. Empty for non-actionable panes."""
-        s = snap or {}
-        if tab_id == "model":
-            return list(s.get("model_classes") or [])
-        if tab_id == "agent":
-            return list(s.get("agent_names") or [])
-        return []
-
-    def _status_text(self) -> str:
+    def _status_text(self, snap: "dict | None | object" = _UNSET) -> str:
         """The status-values line (``model │ agent │ cost │ ctx``), from the live
         status snapshot (F5b: running cost + context percent are visible even with
-        the drawer closed). Falls back to the threaded ``agent_name`` pre-session."""
-        return status_line_text(self._snapshot(), self._agent_name)
+        the drawer closed). Falls back to the threaded ``agent_name`` pre-session.
+        Pass ``snap`` to reuse an already-read snapshot (one read per frame)."""
+        snapshot = self._snapshot() if snap is _UNSET else snap
+        return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
         # Phase 5 (#3273): hydrate the retained model from the PERSISTED
@@ -741,11 +754,12 @@ class TextualChatApp(App):
         if isinstance(child, OptionList):
             child.focus()
 
-    def _refresh_pane(self, tab_id: str) -> None:
+    def _refresh_pane(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> None:
         """Re-derive ``tab_id``'s pane content from the current canonical sources
         and update the mounted widget in place (``OptionList`` options or the
         ``Static`` text). One snapshot read feeds BOTH the rows and the parallel
-        selection ids, so an ``OptionSelected`` maps back to the right id.
+        slash commands, so an ``OptionSelected`` maps back to the right command.
+        Pass ``snap`` to reuse an already-read snapshot.
 
         The History tab's rows get the SAME ``Content``-literal fidelity wrap
         :func:`~reyn.interfaces.inline.textual_chat.chrome.build_drawer_pane`
@@ -755,9 +769,9 @@ class TextualChatApp(App):
         vs the constructor), so it needs its own, independently-verified wrap;
         the row TEXT itself is already neutralized upstream, in
         :meth:`_history_turns`."""
-        snap = self._snapshot()
-        rows = self._pane_rows(tab_id, snap)
-        self._pane_selection_ids[tab_id] = self._selection_ids(tab_id, snap)
+        snapshot = self._snapshot() if snap is _UNSET else snap
+        rows = self._pane_rows(tab_id, snapshot)
+        self._pane_commands[tab_id] = pane_commands(tab_id, snapshot)  # type: ignore[arg-type]
         child = self.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
             child.clear_options()
@@ -773,19 +787,20 @@ class TextualChatApp(App):
     async def on_option_list_option_selected(
         self, event: "OptionList.OptionSelected"
     ) -> None:
-        """Apply a picked Model/Agent by routing the equivalent slash command
-        through the transport — the SAME ``/model <class>`` / ``/attach <name>``
-        slash-command contract the plain path dispatches. Non-actionable panes
-        (History/Menu = readout/Phase-5) just collapse. Then close the drawer and
-        return focus to the composer."""
+        """Apply a picked row by routing its slash command through the transport —
+        the SAME ``/model <class>`` / ``/attach <name>`` / ``/session switch <sid>``
+        / ``/visibility on|off <kind> <name>`` / ``/hook on|off <name>``
+        slash-command contract the plain path dispatches. The command comes from
+        the per-pane list :meth:`_refresh_pane` built alongside the rows
+        (:func:`~reyn.interfaces.inline.textual_chat.chrome.pane_commands`), so the
+        index can never address a different row's action. Non-actionable panes
+        (History/Menu, and a category's read-only fallback listing) carry no
+        command and just collapse. Then close the drawer and return focus to the
+        composer."""
         tab_id = event.option_list.id
-        ids = self._pane_selection_ids.get(tab_id or "", [])
-        if 0 <= event.option_index < len(ids):
-            chosen = ids[event.option_index]
-            if tab_id == "model":
-                await self._submit(f"/model {chosen}")
-            elif tab_id == "agent":
-                await self._submit(f"/attach {chosen}")
+        cmds = self._pane_commands.get(tab_id or "", [])
+        if 0 <= event.option_index < len(cmds) and cmds[event.option_index]:
+            await self._submit(cmds[event.option_index])
         self._open_drawer(None)
 
     def action_close_drawer(self) -> None:
@@ -1218,7 +1233,7 @@ class TextualChatApp(App):
           if a delta for that same msg_id ever arrived under a DIFFERENT
           attached session — clearing it here removes that (admittedly
           narrow) cross-session leak.
-        - :attr:`_pane_selection_ids` is intentionally NOT reset here — the
+        - :attr:`_pane_commands` is intentionally NOT reset here — the
           architect's design pass confirmed it is fine as-is: each drawer
           pane rebuilds it from a fresh snapshot on every open
           (:meth:`_refresh_pane`), so a stale entry can never be read before
@@ -1529,6 +1544,12 @@ class TextualChatApp(App):
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
         RUNNING when its turn ends — a confirmed orphan).
 
+        #3338: EVERY frame — event or display — ends with
+        :meth:`_refresh_live_chrome`, so the status line and any OPEN drawer pane
+        track the session as a turn runs. The refresh used to live inside the
+        display leg only, below a ``continue`` the event branch took, which meant
+        the LLM-call events that actually move cost/ctx never refreshed anything.
+
         #3288 ③c: ``agent_delta`` (:meth:`_handle_agent_delta_event`) coalesces
         streamed reply chunks into ONE flow entry per ``chain_id`` — see that
         method's docstring and :attr:`_streaming_replies`. The entry it
@@ -1629,37 +1650,69 @@ class TextualChatApp(App):
                             logger.exception(
                                 "textual chat: orphaned-tool sweep failed"
                             )
-                    continue
-                msg = frame.message
-                if msg.kind == "__end__":
-                    break
-                if msg.kind in _SKIP_KINDS:
-                    continue
+                else:
+                    msg = frame.message
+                    if msg.kind == "__end__":
+                        break
+                    if msg.kind not in _SKIP_KINDS:
+                        try:
+                            self._ingest_frame(msg)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: frame ingest failed for kind=%r",
+                                msg.kind,
+                            )
+                # F5b + #3338: refresh the live chrome (the always-visible
+                # status-values line, plus whichever drawer pane is OPEN) on EVERY
+                # frame — DISPLAY **and** EVENT alike. This used to sit inside the
+                # DISPLAY leg only, below a ``continue`` the EVENT branch took, so
+                # ``llm_called``/``llm_response_received`` — the very frames that
+                # move cost and ctx — never refreshed anything: a long tool-loop
+                # turn that interleaves no display frame left the numbers stale for
+                # its whole duration. Bounded by frame rate (far below a render
+                # loop) and guarded so a snapshot read failure never kills the pump.
                 try:
-                    self._ingest_frame(msg)
+                    self._refresh_live_chrome()
                 except Exception:
-                    logger.exception(
-                        "textual chat: frame ingest failed for kind=%r", msg.kind
-                    )
-                # F5b: refresh the always-visible status-values line (cost + ctx%)
-                # as each turn lands, so the running cost is legible in the Textual
-                # TTY like the plain path's cost_summary. Bounded by message rate
-                # (far less frequent than a render loop) and guarded so a snapshot
-                # read failure never kills the pump.
-                try:
-                    self._refresh_status()
-                except Exception:
-                    logger.exception("textual chat: status refresh failed")
+                    logger.exception("textual chat: live chrome refresh failed")
         finally:
             self.exit()
 
-    def _refresh_status(self) -> None:
-        """Re-render the bottom status-values line from a fresh snapshot."""
+    def _refresh_live_chrome(self) -> None:
+        """Re-render everything that must track live session state as frames land:
+        the collapsed status-values line, and the drawer pane that is currently
+        OPEN (#3338 — before this, a pane was built once at open time and then
+        froze, so a Cost/Ctx tab left open showed the figures from the moment it
+        was opened).
+
+        Only the OPEN tab is rebuilt, and only on frame arrival. That bound is
+        load-bearing, not an optimization: the Ctx pane's ``compaction`` row calls
+        ``ctx_compaction_status_fn`` (= ``Session.context_window_status()``, a
+        json.dumps + token-estimate of the whole router-view history), which
+        ``_snapshot()`` deliberately stores UNCALLED so it never runs per render
+        frame. Rebuilding every pane, or rebuilding on a render tick, would
+        reinstate exactly the cost that seam exists to avoid.
+
+        One snapshot read feeds both refreshes, so a frame costs one read
+        regardless of whether the drawer is open."""
+        snap = self._snapshot()
+        self._refresh_status(snap)
+        try:
+            drawer = self.query_one("#drawer", ContentSwitcher)
+        except Exception:
+            return  # not yet mounted
+        open_tab = drawer.current
+        if drawer.display and open_tab:
+            self._refresh_pane(open_tab, snap)
+
+    def _refresh_status(self, snap: "dict | None | object" = _UNSET) -> None:
+        """Re-render the bottom status-values line from a fresh snapshot (or the
+        already-read ``snap``)."""
         try:
             line = self.query_one(StatusLine)
         except Exception:
             return  # not yet mounted
-        line.update(self._status_text())
+        line.update(self._status_text(snap))
 
     async def on_composer_submitted(self, event: "Composer.Submitted") -> None:
         text = event.value.strip()

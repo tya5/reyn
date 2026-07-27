@@ -26,21 +26,26 @@ gutter column, the split flowview's presenter/decorator protocol expects.
 Phase 3 adds the bottom-chrome tab-drawer. Below the composer sit two slim rows —
 a :class:`~reyn.interfaces.inline.textual_chat.chrome.StatusLine` of
 ``model │ agent │ cost │ ctx`` values and a focusable
-:class:`~reyn.interfaces.inline.textual_chat.chrome.MenuBar` (a ``Tabs`` row:
-``Model Agent History Cost Ctx Menu Help``) — plus a
+:class:`~reyn.interfaces.inline.textual_chat.chrome.MenuBar` (``Model Agent
+History Cost Ctx Tool MCP Skill Pipe Hook Cron Menu Help``, WRAPPED across as
+many lines as the terminal width needs so no item is ever laid out off-screen —
+see :func:`~reyn.interfaces.inline.textual_chat.chrome.pack_menu_rows`) — plus a
 :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by default and
 expands DOWNWARD when a menu item is opened. Focus flows ``↓`` from the composer's
 last line into the menu, ``← →`` move the highlight, ``Enter`` opens the
 highlighted item's drawer, and ``↑``/``Esc`` close it and return focus to the
 composer (arrow-move alone never opens — opening is an explicit Enter).
 Interactive panes are Textual :class:`~textual.widgets.OptionList` widgets
-(Model/Agent/History/Menu); static readouts are plain Rich
-:class:`~textual.widgets.Static` (Cost/Ctx/Help). Phase 4 wires every pane to its
-canonical reyn source — the status snapshot (model/agent/cost/ctx), the slash
-``REGISTRY`` (menu), the live conversation (history), and the app BINDINGS (help)
-— with the enumerating panes (Model/Agent/Menu) deriving their FULL set from the
-registry (never a curated subset). See
-:func:`~reyn.interfaces.inline.textual_chat.chrome.pane_payload`.
+(Model/Agent/History/Menu plus the Tool/MCP/Skill/Hook toggle categories); static
+readouts are plain Rich :class:`~textual.widgets.Static` (Cost/Ctx/Pipe/Cron/Help).
+Phase 4 wires every pane to its canonical reyn source — the status snapshot
+(model / agent+session tree / the 3-scope cost breakdown / the context+compaction
+figures / the visibility+hook toggles / pipelines / cron), the slash ``REGISTRY``
+(menu), the live conversation (history), and the app BINDINGS (help) — with the
+enumerating panes deriving their FULL set from the registry (never a curated
+subset). See :func:`~reyn.interfaces.inline.textual_chat.chrome.pane_payload`, and
+:func:`~reyn.interfaces.inline.textual_chat.chrome.pane_commands` for the slash
+each actionable row dispatches.
 
 Package layout (Phase 3F split — this ``__init__`` is the single lazy import
 boundary and re-exports the public API):
@@ -54,8 +59,10 @@ boundary and re-exports the public API):
   time — Phase ④, #3283) + running-frame constants.
 - :mod:`~reyn.interfaces.inline.textual_chat.chrome` — ``Composer``,
   ``StatusLine``, ``MenuBar``, ``_MENU_TABS``, and the pure pane formatters
-  (``pane_payload`` / ``status_line_text`` / ``build_drawer_pane``) that derive
-  each pane's rows from its canonical source (input + bottom-chrome widgets).
+  (``pane_payload`` / ``pane_commands`` / ``status_line_text`` /
+  ``build_drawer_pane``) that derive each pane's rows — and the slash each
+  actionable row dispatches — from its canonical source (input + bottom-chrome
+  widgets).
 - :mod:`~reyn.interfaces.inline.textual_chat.intervention_panel` —
   ``InterventionPanel``, the grouped panel widget (#3299 P1) an intervention's
   interaction (closed-set select / free-text answer) is answered through —
