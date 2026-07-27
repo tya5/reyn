@@ -33,7 +33,7 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.data.skills.registry import SkillEntry
-from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
+from reyn.interfaces.inline.textual_chat import Composer, MenuBar, TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import COMPOSER_KEYS
 from reyn.interfaces.inline.textual_chat.completion import (
     KIND_ARGUMENT,
@@ -560,6 +560,68 @@ async def test_tab_accepts_and_enter_still_submits(tmp_path) -> None:
         assert transport.submitted == ["/he"], (
             "Enter with the menu open must submit the TYPED text, not accept "
             f"the highlighted candidate; got {transport.submitted}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_tab_still_cycles_focus_to_the_menubar_while_the_menu_is_closed(
+    tmp_path,
+) -> None:
+    """Tier 2b: with the menu CLOSED, ``Tab`` keeps its #3277 meaning and moves
+    focus from the composer to the :class:`MenuBar`.
+
+    The closed-state half of the ``Tab`` witness (its open-state half is
+    ``test_tab_accepts_and_enter_still_submits``). Without this pair, an
+    implementation that claimed ``Tab`` UNCONDITIONALLY would pass every other
+    test in this file — and ``Tab`` is the worst key to leave uncovered, because
+    it is the route to a DIFFERENT feature: #3277's composer→MenuBar focus
+    cycling, which a user reaches without ever opening a completion menu. A
+    regression there breaks navigation for someone who never types ``/``.
+
+    ``Tab`` is not reyn's to give away: ``TextArea`` defaults to
+    ``tab_behavior="focus"``, so the key bubbles to ``Screen``'s
+    ``Binding("tab", "app.focus_next")``. The completion menu BORROWS it while
+    open; this pins that the borrow ends when the menu closes."""
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        menubar = app.query_one(MenuBar)
+        composer.focus()
+        await pilot.pause()
+
+        assert not popup.is_open, "test setup: the menu must be closed"
+        assert composer.has_focus, "test setup: the composer must start focused"
+
+        await pilot.press("tab")
+        await pilot.pause()
+
+        assert menubar.has_focus, (
+            "Tab with the menu closed did not reach the MenuBar — #3277's "
+            "composer→menu focus cycling regressed. The completion menu must "
+            "only borrow Tab while it is OPEN"
+        )
+        assert not composer.has_focus, "focus did not leave the composer"
+
+        # Non-vacuity: the SAME key in the SAME app accepts a candidate while
+        # the menu is open, so the assertion above is not passing because Tab is
+        # inert here.
+        composer.focus()
+        await pilot.pause()
+        await pilot.press("slash", "h", "e")
+        await pilot.pause()
+        assert popup.is_open, "test setup: the menu did not open"
+        await pilot.press("tab")
+        await pilot.pause()
+        assert composer.text == "/help ", (
+            f"Tab did not accept while open; composer holds {composer.text!r}"
+        )
+        assert composer.has_focus, (
+            "accepting a candidate moved focus off the composer — Tab must not "
+            "also cycle focus when it is being used to accept"
         )
 
 
