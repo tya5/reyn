@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App
 from textual_flowview import EntryState
 
@@ -42,6 +43,7 @@ from reyn.interfaces.inline.textual_chat import (
     TextualChatApp,
     _body_and_background,
 )
+from reyn.interfaces.inline.textual_chat.gutter import _cell_pad_right
 from reyn.interfaces.repl.renderer import _CC_DONE, _CC_ERR, _CC_WARN
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
@@ -387,3 +389,40 @@ def test_failure_rows_carry_coral_background_tint() -> None:
     assert bg_error == _CC_ERR
     _, bg_agent = _body_and_background(OutboxMessage(kind="agent", text="hi"))
     assert bg_agent is None
+
+
+def test_left_gutter_pads_by_cells_not_characters() -> None:
+    """Tier 1: :func:`_cell_pad_right` — the LEFT gutter's padding function,
+    ``ReynGutter.decorate``'s counterpart to the RIGHT gutter's
+    ``_cell_pad_left`` (#3347) — aligns to a CELL count, which is what a
+    terminal column actually is, not a character count.
+
+    ★ Driven with a genuinely DOUBLE-WIDTH character. That is not decoration:
+    for the LEFT gutter's real glyph vocabulary (``· ⋯ ⎿ ◆ ○ ● ✗ ❯``) ``len()``
+    and ``cell_len()`` agree on every glyph — four of them are East Asian
+    Ambiguous width, which ``rich.cells.cell_len`` resolves to 1, the same as
+    ``len()`` — so an assertion driven only by the real vocabulary passes
+    identically for ``str.ljust`` and cannot witness the difference (#3350:
+    this is exactly why the ``ljust`` in place since #3273 was never caught).
+    A wide character is the discriminating input: ``ljust`` pads it by
+    character count and overflows the column.
+
+    The production vocabulary cannot currently emit one; this pins the
+    helper's CONTRACT so the column stays correct by construction rather than
+    by the coincidence that today's glyphs happen to be narrow or
+    ambiguous-resolved-to-1."""
+    wide = "中中"  # U+4E2D, east_asian_width "W" — wider than one cell each
+    assert cell_len(wide) > len(wide), (
+        "fixture must be text whose CELL width exceeds its CHARACTER count — "
+        "otherwise the two padding strategies agree and this cannot witness "
+        "the difference"
+    )
+    padded = _cell_pad_right(wide, 8)
+    assert cell_len(padded) == 8, (
+        f"{padded!r} occupies {cell_len(padded)} cells, not the 8 asked for — "
+        "padding is counting characters, not cells"
+    )
+    assert padded.startswith(wide), "the label itself must survive padding"
+    # An over-long label is returned unpadded rather than negative-padded;
+    # flowview's own adjust_cell_length clips it, it never steals body columns.
+    assert _cell_pad_right(wide, 2) == wide
