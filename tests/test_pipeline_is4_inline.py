@@ -333,9 +333,11 @@ async def test_inline_sync_enforces_verify_schema_pass_and_fail(
         {"definition": _SCHEMA_BAD_DEF, "input": {"out_path": str(out_file)}},
         _ctx(reg, caller, state_log),
     )
+    # #2649: standard dispatch-error envelope (was {status:error, data:{error}}).
     assert bad_result["status"] == "error"
-    assert "failed schema" in bad_result["data"]["error"]
-    assert "no schema_registry was provided" not in bad_result["data"]["error"]
+    assert bad_result["error"]["kind"] == "pipeline_failed"
+    assert "failed schema" in bad_result["error"]["message"]
+    assert "no schema_registry was provided" not in bad_result["error"]["message"]
 
 
 @pytest.mark.asyncio

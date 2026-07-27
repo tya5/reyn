@@ -262,8 +262,13 @@ async def test_run_pipeline_unknown_tool_step_fails_clearly(tmp_path: Path) -> N
 
     result = await _handle_run_pipeline({"name": "bad_tool_step"}, ctx)
 
+    # #2649: the failed-run envelope was reshaped to the standard
+    # {status:error, error:{kind,message}} dispatch-error shape (was
+    # {status:error, data:{error,run_id}}) so router_loop.feedback() renders
+    # "Error (<kind>): <message>" like every other tool.
     assert result["status"] == "error"
-    assert "bad_tool_step" in result["data"]["error"]
+    assert result["error"]["kind"] == "pipeline_failed"
+    assert "bad_tool_step" in result["error"]["message"]
 
 
 # ── S3: agent-step narrowing structurally denies run_pipeline ───────────────

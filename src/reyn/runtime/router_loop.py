@@ -3157,96 +3157,106 @@ class RouterLoop:
             # typed ``_tool_error_*`` locals and stamped onto the persisted ``_tool_meta`` below
             # (NEVER re-derived downstream by sniffing the rendered string; restore.py reads this
             # typed field directly, matching reyn's typed-over-form-sniffed convention).
+            #
+            # #2649: the dispatch-error shape check runs on the UNWRAPPED envelope, not the raw
+            # ``r`` — a tool-registry HANDLER that itself returns the standard
+            # ``{status:error, error:{kind,message}}`` shape (e.g. ``run_pipeline`` failed/cancelled)
+            # is a normal (non-exception) return, so ``dispatch_tool`` wraps it one layer deeper
+            # (``{status:ok, data:<handler's own envelope>}``) before it ever reaches here — the
+            # raw-``r`` check only ever matched dispatch_tool's OWN top-level errors (permission_denied
+            # / unknown_tool / invalid_args / exception) and pre-dispatch synthetic ones
+            # (tool_excluded), never a handler's nested one. ``unwrap_dispatch_envelope`` is a no-op
+            # on those bare shapes (no ``data`` key to peel), so moving the check here is
+            # behavior-preserving for them and additionally recognizes the wrapped case.
             scan_target: str
             _tool_error_kind: "str | None" = None
             _tool_error_message: "str | None" = None
-            if (isinstance(r, dict) and r.get("status") == "error"
-                    and isinstance(r.get("error"), dict)):
-                _err = r["error"]
+            # Unwrap dispatch-envelope layers ({status, data} with nothing else) until the op
+            # result (the dict carrying ``kind``) is reached. One layer for op_runtime ops
+            # (bare {kind:…} wrapped once by dispatch_tool); two for tool-registry handlers whose
+            # own return is already an envelope (e.g. run_pipeline → wrapped again). Shared with
+            # the pipeline `tool:` step ctx path (#2425 PR-2, executor.py::_run_tool_step).
+            _inner = unwrap_dispatch_envelope(r)
+            if (isinstance(_inner, dict) and _inner.get("status") == "error"
+                    and isinstance(_inner.get("error"), dict)):
+                _err = _inner["error"]
                 _tool_error_kind = str(_err.get("kind") or "error")
                 _tool_error_message = str(_err.get("message") or "")
                 content_str = f"Error ({_tool_error_kind}): {_tool_error_message}"
                 scan_target = content_str
+            elif not isinstance(_inner, dict):
+                # Non-dict result (rare) — render its value as plain text, losslessly.
+                content_str = _inner if isinstance(_inner, str) else json.dumps(_inner, default=str)
+                scan_target = content_str
             else:
-                # Unwrap dispatch-envelope layers ({status, data} with nothing else) until the op
-                # result (the dict carrying ``kind``) is reached. One layer for op_runtime ops
-                # (bare {kind:…} wrapped once by dispatch_tool); two for tool-registry handlers whose
-                # own return is already an envelope (e.g. run_pipeline → wrapped again). Shared with
-                # the pipeline `tool:` step ctx path (#2425 PR-2, executor.py::_run_tool_step).
-                _inner = unwrap_dispatch_envelope(r)
-                if not isinstance(_inner, dict):
-                    # Non-dict result (rare) — render its value as plain text, losslessly.
-                    content_str = _inner if isinstance(_inner, str) else json.dumps(_inner, default=str)
-                    scan_target = content_str
+                canonical = to_canonical(_inner, source=canonical_source)
+                if (canonical.get("meta") or {}).get("isError"):
+                    text_full = canonical.get("text", "") or ""
+                    scan_target = f"Error: {text_full}"
+                    text = _cap(text_full) if _cap is not None else text_full
+                    content_str = f"Error: {text}"
+                    _tool_error_message = text_full
                 else:
-                    canonical = to_canonical(_inner, source=canonical_source)
-                    if (canonical.get("meta") or {}).get("isError"):
-                        text_full = canonical.get("text", "") or ""
-                        scan_target = f"Error: {text_full}"
-                        text = _cap(text_full) if _cap is not None else text_full
-                        content_str = f"Error: {text}"
-                        _tool_error_message = text_full
-                    else:
-                        frontmatter, text, built_media, content_type = build_offload_body(
-                            canonical, save_fn=_save_fn,
-                            # opt-in flip: a host with no ``offload_enabled`` attribute
-                            # (legacy/test double) falls closed — offload stays off.
-                            enabled=getattr(host, "offload_enabled", False),
-                        )
-                        # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, a
-                        # genuinely-unregistered source, or a STRUCTURED_PASSTHROUGH whose whole-dict
-                        # blob exceeded the offload gate) emits a P6 audit event naming the source —
-                        # degrade-with-audit, never silently (the dogfood incident was one silent
-                        # fallback). Source id only; NEVER the result body.
-                        # FP-0056 v2 piece #3: passing ``canonical`` lets the classifier also fire on a
-                        # mapped producer whose inner discriminator missed (reason
-                        # ``"discriminator_miss"`` — M3, #2695), riding the same fallback event.
-                        _fallback_reason = canonical_fallback_reason(
-                            canonical_source,
-                            structured_offloaded=frontmatter.get("structured") == "offloaded",
-                            canonical=canonical,
-                        )
-                        if _fallback_reason is not None:
-                            _events = getattr(host, "events", None)
-                            if _events is not None:
-                                _events.emit(
-                                    CANONICAL_FALLBACK_EVENT,
-                                    source=canonical_source,
-                                    reason=_fallback_reason,
-                                )
-                        # FP-0056 v2 piece #2: a MAPPED producer that canonicalized to an empty view
-                        # (no text + no attachments) on a non-error result silently lost its content
-                        # (mode M2) — fire ``canonical_degraded`` (audit event + warn log,
-                        # degrade-with-audit). A legit-empty success renders an explicit marker in its
-                        # mapper and does not reach here. Source id only; NEVER the result body.
-                        _degraded_reason = canonical_degraded_reason(_inner, canonical)
-                        if _degraded_reason is not None:
-                            import logging
-                            logging.getLogger(__name__).warning(
-                                "canonical_degraded: source=%s reason=%s (a non-error tool result "
-                                "canonicalized to an empty view — no text, no attachments)",
-                                canonical_source, _degraded_reason,
+                    frontmatter, text, built_media, content_type = build_offload_body(
+                        canonical, save_fn=_save_fn,
+                        # opt-in flip: a host with no ``offload_enabled`` attribute
+                        # (legacy/test double) falls closed — offload stays off.
+                        enabled=getattr(host, "offload_enabled", False),
+                    )
+                    # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, a
+                    # genuinely-unregistered source, or a STRUCTURED_PASSTHROUGH whose whole-dict
+                    # blob exceeded the offload gate) emits a P6 audit event naming the source —
+                    # degrade-with-audit, never silently (the dogfood incident was one silent
+                    # fallback). Source id only; NEVER the result body.
+                    # FP-0056 v2 piece #3: passing ``canonical`` lets the classifier also fire on a
+                    # mapped producer whose inner discriminator missed (reason
+                    # ``"discriminator_miss"`` — M3, #2695), riding the same fallback event.
+                    _fallback_reason = canonical_fallback_reason(
+                        canonical_source,
+                        structured_offloaded=frontmatter.get("structured") == "offloaded",
+                        canonical=canonical,
+                    )
+                    if _fallback_reason is not None:
+                        _events = getattr(host, "events", None)
+                        if _events is not None:
+                            _events.emit(
+                                CANONICAL_FALLBACK_EVENT,
+                                source=canonical_source,
+                                reason=_fallback_reason,
                             )
-                            _events = getattr(host, "events", None)
-                            if _events is not None:
-                                _events.emit(
-                                    CANONICAL_DEGRADED_EVENT,
-                                    source=canonical_source,
-                                    reason=_degraded_reason,
-                                )
-                        if built_media:
-                            # media lifted from INSIDE data (the top-level strip missed it)
-                            media_blocks.extend(built_media)
-                        # FP-0050/#1822 S2: scan the FULL body BEFORE the cap truncates it, so
-                        # injection cannot hide past the size cap.
-                        scan_target = render_tool_result(frontmatter, text)
-                        if _cap is not None:
-                            # #2663: thread the canonical's renderer-only content_type through to the
-                            # text offload store as its mime_type — NEVER into frontmatter (built
-                            # above, already sealed) — so a later present(data_ref=<this ref>) can
-                            # recover it from the stored ref's file extension.
-                            text = _cap(text, content_type=content_type)
-                        content_str = render_tool_result(frontmatter, text)
+                    # FP-0056 v2 piece #2: a MAPPED producer that canonicalized to an empty view
+                    # (no text + no attachments) on a non-error result silently lost its content
+                    # (mode M2) — fire ``canonical_degraded`` (audit event + warn log,
+                    # degrade-with-audit). A legit-empty success renders an explicit marker in its
+                    # mapper and does not reach here. Source id only; NEVER the result body.
+                    _degraded_reason = canonical_degraded_reason(_inner, canonical)
+                    if _degraded_reason is not None:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "canonical_degraded: source=%s reason=%s (a non-error tool result "
+                            "canonicalized to an empty view — no text, no attachments)",
+                            canonical_source, _degraded_reason,
+                        )
+                        _events = getattr(host, "events", None)
+                        if _events is not None:
+                            _events.emit(
+                                CANONICAL_DEGRADED_EVENT,
+                                source=canonical_source,
+                                reason=_degraded_reason,
+                            )
+                    if built_media:
+                        # media lifted from INSIDE data (the top-level strip missed it)
+                        media_blocks.extend(built_media)
+                    # FP-0050/#1822 S2: scan the FULL body BEFORE the cap truncates it, so
+                    # injection cannot hide past the size cap.
+                    scan_target = render_tool_result(frontmatter, text)
+                    if _cap is not None:
+                        # #2663: thread the canonical's renderer-only content_type through to the
+                        # text offload store as its mime_type — NEVER into frontmatter (built
+                        # above, already sealed) — so a later present(data_ref=<this ref>) can
+                        # recover it from the stored ref's file extension.
+                        text = _cap(text, content_type=content_type)
+                    content_str = render_tool_result(frontmatter, text)
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"
             # FP-0050/#1822 S2: scan-all on the FULL content BEFORE cap truncates
