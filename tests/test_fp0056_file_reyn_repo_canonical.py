@@ -268,17 +268,22 @@ def test_reyn_repo_read_content_is_text_path_is_meta():
     assert c["meta"].get("path") == "README.md"
 
 
-def test_reyn_repo_error_surfaces_iserror():
-    """Tier 1: a reyn_repo error (e.g. path outside repo) surfaces the message as ``text`` + isError.
+def test_error_is_intercepted_by_the_shared_seam_before_a_success_only_mapper_runs():
+    """Tier 1: an error from a source whose declared mapper is SUCCESS-ONLY is intercepted by the shared
+    ``error_to_canonical`` seam before the mapper is reached — the message surfaces as ``text`` with
+    ``meta.isError``, and ``reyn_repo_to_canonical`` (which has no error branch) never sees it.
 
-    #3346 note on what this actually exercises: ``reyn_repo_to_canonical`` is success-only, so this
-    result never reaches it — ``to_canonical`` routes any known error shape through the shared
-    ``error_to_canonical`` seam FIRST. What this test discriminates is therefore (a) that the
-    ``reyn_repo_read`` identity is DECLARED with a mapper at all (an undeclared source takes
-    ``_fallback_structured``, whose error branch keys on the narrower ``_is_error`` and so renders this
-    ``status``-less ``{error}`` shape to empty text — verified RED), and (b) that the seam runs before
-    the success-only mapper. It is not vacuous, but it is a locality duplicate of a case already
-    parametrized in ``test_fp0056_error_seam`` with the same fixture data and the same source."""
+    That ordering invariant is what this test witnesses, and it is the reason the test is kept. It is
+    NOT a test of the ``reyn_repo`` mapper, despite living in that mapper's file: a probe that makes
+    ``reyn_repo_to_canonical`` raise on entry leaves this test GREEN, so the mapper body is provably not
+    on its path. (#3346 renamed it — it was ``test_reyn_repo_error_surfaces_iserror``, a name that
+    claimed the mapper. Read the old name and this looks like a redundant duplicate of the
+    ``reyn_repo`` case already parametrized in ``test_fp0056_error_seam``; read what it actually
+    exercises and the seam-before-mapper ordering is its own invariant.)
+
+    Two RED probes are deliberately NOT the justification: nulling every canonical declaration
+    repo-wide reddens a great many tests, and nulling just ``canonical=reyn_repo_to_canonical`` at its 4
+    sites only diverts the result to ``_fallback_structured`` — neither isolates the surface above."""
     c = to_canonical({"kind": "reyn_repo", "error": "reyn_repo: path '..' resolves outside repo"}, source="reyn_repo_read")
     assert c["meta"].get("isError") is True
     assert "outside" in c["text"]
