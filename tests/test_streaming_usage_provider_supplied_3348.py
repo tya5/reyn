@@ -14,9 +14,11 @@ ESTIMATE that then flowed into ``record_llm`` → ``/cost`` → budget caps as i
 it were the provider's own number (measured live on Gemini: 13 recorded vs 7
 actual, +86%).
 
-The flag is consumed client-side by the stream wrapper, and litellm's param
-layer never rejects it (see the Tier 1 test below), so #3348 sets it
-unconditionally — one path, no provider branching.
+The flag is consumed client-side by the stream wrapper, so #3348 sets it
+unconditionally — one path, no provider branching. Two SEPARATE properties of
+litellm's param layer make that safe, and each gets its own Tier 1 test below
+because neither implies the other: it does not **raise** for a provider that
+rejects the param (layer 1), and it does not **forward** it to one (layer 2).
 
 Real instances throughout: a real ``BudgetTracker`` is the recorder (its public
 ``agent_tokens`` read is the assertion surface), and ``litellm.acompletion`` is
@@ -49,6 +51,26 @@ _MESSAGES = [{"role": "user", "content": "hi"}]
 # Gemini has no ``stream_options``, so the pre-#3348 code never sent the flag
 # for it. This is the exact shape of the live defect.
 _GATED_MODEL = "gemini/gemini-2.5-flash-lite"
+
+# Providers whose supported-params list omits ``stream_options`` — i.e. every
+# provider for which the unconditional flag has to be absorbed by litellm's
+# param layer rather than accepted on the wire. gemini and anthropic lead the
+# list because they are what reyn's default model classes resolve to: a
+# regression in either layer below breaks the default configuration first.
+#
+# bedrock is deliberately NOT here: it LISTS ``stream_options`` as supported
+# and still does not forward it (measured — listed=True, forwarded=False),
+# so it belongs to neither side of this split cleanly. That mismatch is itself
+# the reason the two layers get separate tests: "listed", "does not raise" and
+# "reaches the wire" are three different questions, and a provider can answer
+# them inconsistently.
+_UNSUPPORTING_PROVIDERS = (
+    ("gemini-2.5-flash-lite", "gemini"),
+    ("claude-sonnet-4-5", "anthropic"),
+    ("command-r", "cohere"),
+    ("mistral-large-latest", "mistral"),
+    ("llama3", "ollama"),
+)
 
 
 def _make_fake_acompletion(seen_kwargs: "list[dict] | None" = None,
@@ -180,26 +202,66 @@ def test_call_llm_tools_records_provider_usage_on_the_router_path(monkeypatch) -
     )
 
 
-def test_stream_options_is_never_rejected_by_litellms_param_layer() -> None:
-    """Tier 1: the external contract that makes the unconditional flag safe.
+def test_stream_options_does_not_raise_for_a_provider_that_rejects_it() -> None:
+    """Tier 1: layer 1 of the contract that makes the unconditional flag safe —
+    litellm's param layer does not RAISE on ``stream_options`` for a provider
+    whose supported-params list omits it.
 
-    ``stream_options`` is exempt from litellm's unsupported-param pruning
-    (``litellm/utils.py``: ``if k == "user" or k == "stream_options" or k ==
-    "stream": continue``), so passing it to a provider that does not accept it
-    is DROPPED before the wire, never raised — with or without ``drop_params``.
-    If litellm ever changes that, the unconditional flag becomes a hard error
-    on every Gemini/Anthropic call and this goes RED first."""
-    for model, provider in (
-        ("gemini-2.5-flash-lite", "gemini"),
-        ("claude-sonnet-4-5", "anthropic"),
-    ):
-        for drop in (True, False):
+    ``drop_params=False`` is the strict setting, the one under which an
+    unsupported non-default param normally raises ``UnsupportedParamsError``.
+    ``stream_options`` escapes only because of a single ``continue`` inside
+    ``litellm/utils.py`` (``if k == "user" or k == "stream_options" or k ==
+    "stream": continue``). "Structural" therefore means structural *in this
+    litellm version*: if an upgrade drops that line, every streamed call on
+    exactly the default-config providers becomes a hard error. This is the
+    witness on that layer.
+
+    Distinct from ``…_is_not_forwarded_on_the_wire`` below: not-raising and
+    not-leaking are separate properties of separate layers, and the first does
+    not imply the second."""
+    for model, provider in _UNSUPPORTING_PROVIDERS:
+        assert "stream_options" not in (
+            litellm.get_supported_openai_params(
+                model=model, custom_llm_provider=provider,
+            ) or []
+        ), (
+            f"{provider} now lists stream_options — it no longer exercises the "
+            "unsupported-provider case this test exists for"
+        )
+        for drop in (False, True):
+            # A raise here IS the failure — no assertion needed for layer 1.
             params = get_optional_params(
                 model=model, custom_llm_provider=provider,
                 stream=True, stream_options={"include_usage": True},
                 drop_params=drop,
             )
-            assert params.get("stream") is True
+            assert params.get("stream") is True, (
+                f"{provider} did not even keep stream=True — this call shape is "
+                "not doing what the test assumes"
+            )
+
+
+def test_stream_options_is_not_forwarded_to_a_provider_that_rejects_it() -> None:
+    """Tier 1: layer 2 — the param never reaches the wire for a provider that
+    does not accept it. It is pruned at the param-mapping layer and survives
+    only for the OpenAI-compatible providers that genuinely take it.
+
+    The openai leg is the non-vacuity control: it proves this assertion can
+    observe the param's PRESENCE, so its absence for the others is a real
+    measurement rather than a check that never sees anything."""
+    for model, provider in _UNSUPPORTING_PROVIDERS:
+        for drop in (False, True):
+            params = get_optional_params(
+                model=model, custom_llm_provider=provider,
+                stream=True, stream_options={"include_usage": True},
+                drop_params=drop,
+            )
             assert "stream_options" not in params, (
                 f"{provider} unexpectedly forwards stream_options on the wire"
             )
+
+    openai_params = get_optional_params(
+        model="gpt-4o-mini", custom_llm_provider="openai",
+        stream=True, stream_options={"include_usage": True}, drop_params=False,
+    )
+    assert openai_params["stream_options"] == {"include_usage": True}
