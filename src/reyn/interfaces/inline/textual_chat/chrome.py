@@ -121,6 +121,13 @@ class Composer(TextArea):
       closed), and the dismissal is STICKY for that token — see
       :meth:`~reyn.interfaces.inline.textual_chat.completion.CompletionPopup.sync`.
 
+    All three interceptions are gated on
+    :attr:`~reyn.interfaces.inline.textual_chat.completion.CompletionPopup.owns_keys`,
+    not on mere visibility: a ``/cmd `` usage-hint popup with no candidates
+    behind it (#3364) draws its row without taking a single key, so ``Tab`` and
+    ``↑`` keep their normal meanings for the whole time the user is typing that
+    command's arguments.
+
     Every one of these keys is registered in :data:`COMPOSER_KEYS`, the Help
     pane's single source of truth (#3314) — an unlisted key is undiscoverable.
     ``↑``/``↓`` appear TWICE there on purpose, once per state.
@@ -222,7 +229,7 @@ class Composer(TextArea):
 
     async def _on_key(self, event: events.Key) -> None:
         popup = self._popup()
-        if popup is not None and popup.is_open:
+        if popup is not None and popup.owns_keys:
             if event.key in ("up", "down"):
                 event.stop()
                 event.prevent_default()

@@ -34,10 +34,16 @@ from reyn.interfaces.slash import reply, reply_error, slash
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
 
-_USAGE = (
-    "usage: /plugin install builtin|local|git <SOURCE> [as <INSTALL_NAME>]  "
+#: The bare syntax line — what ``SlashCommand.usage`` takes. Both of its
+#: renderers (``/help <cmd>``'s ``usage:`` column and the completion popup's
+#: ``↳ usage:`` header) supply the label themselves, so carrying one here
+#: printed it twice.
+_SYNTAX = (
+    "/plugin install builtin|local|git <SOURCE> [as <INSTALL_NAME>]  "
     "|  /plugin uninstall <NAME>"
 )
+#: The same line as prose, for the error replies that quote it inline.
+_USAGE = f"usage: {_SYNTAX}"
 
 
 async def _build_plugin_tool_context(session: "Session") -> Any:
@@ -77,7 +83,7 @@ def _extract_error(result: dict) -> "str | None":
 @slash(
     "plugin",
     summary="Install/uninstall a self-contained reyn plugin bundle",
-    usage=_USAGE,
+    usage=_SYNTAX,
     see_also=("docs/deep-dives/proposals/0064-plugin-model.md",),
 )
 async def plugin_cmd(session: "Session", args: str) -> None:
