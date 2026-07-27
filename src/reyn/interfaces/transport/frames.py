@@ -95,6 +95,14 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         # exactly one of these two deltas). Carries `msg_id` + `seq` (the
         # same order-race-gate token) — see ``Session.cancel_queued``.
         "inbox_cancel",
+        # #2280: the durability-halt observability surface — emitted (at most
+        # once, guarded in ``Session._fail_stop_if_durability_dead`` /
+        # ``run_one_iteration``) the moment the session's fail-stop latches, so
+        # an operator who is idle (not currently submitting an op) learns the
+        # halt proactively instead of only on their next interaction's raised
+        # ``DurabilityHaltError``. Carries ``reason`` (e.g.
+        # ``"durability_failure"``) — see ``Session.halted_reason``.
+        "session_halted",
     }
 )
 

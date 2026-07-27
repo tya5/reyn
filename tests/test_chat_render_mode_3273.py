@@ -13,8 +13,16 @@ choices"). Two OS invariants are pinned here:
   resolves to ``plain`` regardless of mode (the interactive Textual drivers need a
   real terminal — this is the guard that keeps CI / piped / sandbox paths off the
   alt-screen driver). On a TTY each mode routes to its own path.
+- **renderer selection (#3292)**: :func:`~reyn.interfaces.cli.commands.chat.
+  _renderer_is_interactive` + :func:`~reyn.interfaces.cli.logger_factory.
+  make_renderer` prove ``chat.render_mode: plain`` on a TTY (no ``--cui``) now
+  selects the SAME ``ConsoleChatRenderer`` a real ``--cui`` invocation gets —
+  genuine equivalence, not the pre-#3292 hybrid where only the input driver
+  (this file's other tests) switched while the interactive renderer stayed
+  selected.
 
-Both are pure functions over real config dataclasses — no mocks.
+All are pure functions over real config dataclasses / real renderer instances —
+no mocks.
 """
 from __future__ import annotations
 
@@ -23,7 +31,10 @@ import warnings
 import pytest
 
 from reyn.config.chat import CHAT_RENDER_MODES, ChatConfig, _build_chat_config
+from reyn.interfaces.cli.commands.chat import _renderer_is_interactive
+from reyn.interfaces.cli.logger_factory import make_renderer
 from reyn.interfaces.repl.client_driver import resolve_render_mode
+from reyn.interfaces.repl.renderer import ConsoleChatRenderer, InlineChatRenderer
 
 
 def test_render_mode_default_is_alt_screen() -> None:
@@ -72,3 +83,53 @@ def test_tty_resolution_routes_each_mode() -> None:
     assert resolve_render_mode("plain", is_tty=True) == "plain"
     # Belt-and-braces: an unvalidated/unexpected mode on a TTY → alt-screen default.
     assert resolve_render_mode("something-else", is_tty=True) == "alt-screen"
+
+
+# ── #3292: chat.render_mode: plain is genuine --cui equivalence (renderer too) ──
+
+
+@pytest.mark.parametrize("render_mode", ["alt-screen", "inline", "auto", "bogus"])
+def test_renderer_is_interactive_stays_interactive_for_non_plain_modes(render_mode: str) -> None:
+    """Tier 2: negative control — every render_mode OTHER than "plain" leaves the
+    interactive-TTY renderer selection untouched (proves the "plain" branch below
+    is a targeted carve-out, not a predicate that happens to always return False)."""
+    assert _renderer_is_interactive(is_interactive=True, render_mode=render_mode) is True
+
+
+def test_renderer_is_interactive_plain_forces_non_interactive() -> None:
+    """Tier 2: chat.render_mode: plain on an otherwise-interactive TTY (no --cui)
+    now forces the SAME renderer selection a real --cui invocation gets — genuine
+    equivalence (#3292), not the pre-#3292 hybrid (plain input loop, interactive
+    renderer output)."""
+    assert _renderer_is_interactive(is_interactive=True, render_mode="plain") is False
+
+
+def test_renderer_is_interactive_noop_when_already_noninteractive() -> None:
+    """Tier 2: render_mode is irrelevant once --cui / a non-TTY already selected
+    the non-interactive path — no render_mode value can flip it back on."""
+    for render_mode in (*CHAT_RENDER_MODES, "bogus"):
+        assert _renderer_is_interactive(is_interactive=False, render_mode=render_mode) is False
+
+
+def test_make_renderer_plain_yields_console_renderer_not_inline() -> None:
+    """Tier 2: the concrete-class witness for #3292 — feeding
+    _renderer_is_interactive's plain-mode result into the SAME make_renderer seam
+    chat.py's run() calls yields ConsoleChatRenderer (the real --cui renderer),
+    never InlineChatRenderer. Negative control below pins the interactive branch
+    still yields InlineChatRenderer, so this isn't a seam that always returns
+    ConsoleChatRenderer."""
+    renderer = make_renderer(
+        _renderer_is_interactive(is_interactive=True, render_mode="plain")
+    )
+    assert isinstance(renderer, ConsoleChatRenderer)
+    assert not isinstance(renderer, InlineChatRenderer)
+
+
+def test_make_renderer_default_interactive_still_yields_inline_renderer() -> None:
+    """Tier 2: negative control for the test above — an interactive TTY with the
+    default render_mode still gets the Claude Code-style InlineChatRenderer, so
+    the #3292 carve-out is specific to "plain", not a general regression."""
+    renderer = make_renderer(
+        _renderer_is_interactive(is_interactive=True, render_mode="alt-screen")
+    )
+    assert isinstance(renderer, InlineChatRenderer)

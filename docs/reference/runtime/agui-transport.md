@@ -441,9 +441,18 @@ state, and only the render-relevant subset is streamed.
 
 - `STATE_SNAPSHOT` — emitted **on connect**, the full read-model. Fields:
   `attached_name`, `model`, `cost_agent`, `cost_total`, `agent_tokens`,
-  `ctx_used`, `ctx_window`, `waiting_on`, `queue`, `turn_active`.
+  `ctx_used`, `ctx_window`, `waiting_on`, `queue`, `turn_active`,
+  `halted_reason`.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
+
+`halted_reason` (#2280) is `Session.halted_reason` — `None` while running, or
+the fail-stop reason (e.g. `"durability_failure"`) once the session has
+halted on a persistent durability failure (#2259). Riding this same
+snapshot+delta channel gives a remote client the SAME proactive surface the
+local TUI status line and plain `--cui` bottom toolbar show — the halt is
+already enforced synchronously elsewhere (`DurabilityHaltError`); this field
+is observability only, never load-bearing for the halt itself.
 
 `queue` and `turn_active` (#3300 P2a) publish the server-authoritative
 **sent-queue state**: `queue` is the current undispatched inbox queue (each
@@ -585,6 +594,39 @@ exactly one final entry instead of a duplicate. The plain/repl renderer has
 no equivalent branch and is unaffected — `agent_delta` there is still
 consumed-but-dropped (opt-in draw, no visible-garbage window), exactly as
 before ③c.
+
+### Textual TUI gutters — state (left) + elapsed time (right) (#3283 ①②④)
+
+The Textual TUI's `FlowView` (`interfaces/inline/textual_chat`) paints TWO
+fixed-width columns per row, both driven by flowview's `FlowDecorator`
+protocol (`decorate(entry, width, height) -> RenderableType`), never a
+second hand-rolled column:
+
+- **LEFT gutter — `ReynGutter`** (`gutter.py`): the #3273 state contract. A
+  kind-driven glyph (`❯` user, `●` assistant/tool-header, `⎿` tool-result)
+  whose COLOUR is driven by the entry's `EntryState` — RUNNING amber,
+  SUCCESS green, ERROR coral, CANCELLED dim, DEFAULT the kind's own colour.
+  A RUNNING entry's glyph BLINKS (`●`/`○`), picked from a monotonic clock
+  (`int(clock() / frame_period)`) that flowview's own
+  `FlowView(animation_fps=N)` re-invokes on each animation tick — no
+  app-side timer (#3283 ①, native-blink equivalence).
+- **RIGHT gutter — `ReynTimingGutter`** (`gutter.py`, #3283 ④): a per-entry
+  ELAPSED-TIME label (`Ns`/`Nm`/`Nh`), wired via flowview's additive
+  `right_decorator`/`right_gutter_width` params. **Content set — elapsed
+  time only**, decided against what data actually exists (owner-adjudicated
+  on #3283, issue thread): turn cost/tokens are CUMULATIVE-ONLY in
+  `BudgetTracker` (no per-turn/per-entry source — showing one would be a
+  fabricated per-entry number) and a dedicated state chip would duplicate
+  the left gutter's existing `EntryState` encoding. Only a tool-call entry
+  that actually has timing data shows a label — LIVE while RUNNING (read off
+  the same start marker the ② live-spinner body uses), or the FINAL captured
+  duration once SETTLED (stashed at settle time, before the live marker is
+  stripped). Every other entry — user/agent lines, interventions, and ANY
+  RESTORED row — renders an empty right-gutter cell: no placeholder, no
+  `"0s"`. **Restore is live-session-only by decision**: a persisted
+  `ChatMessage` carries no timing field at all, and widening that persisted
+  shape was judged out of proportion to a TUI gutter decoration — a restored
+  tool row's right gutter is always blank, never a reconstructed value.
 
 ### `reyn.intervention.<kind>`
 

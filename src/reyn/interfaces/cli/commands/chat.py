@@ -240,6 +240,24 @@ def _inline_interactive(*, cui: bool, stdin_isatty: bool, stdout_isatty: bool) -
     return not cui and stdin_isatty and stdout_isatty
 
 
+def _renderer_is_interactive(*, is_interactive: bool, render_mode: str) -> bool:
+    """#3292: fold ``chat.render_mode`` into the renderer-selection predicate.
+
+    ``is_interactive`` (``_inline_interactive``: not ``--cui``, both std streams
+    TTYs) alone used to be the ONLY input to ``make_renderer``, which is why
+    ``chat.render_mode: plain`` on a TTY (without ``--cui``) previously kept the
+    interactive ``InlineChatRenderer`` selected — a hybrid (plain input loop,
+    interactive renderer output) that contradicted both the config's name and
+    its own doc's "equivalent to ``--cui``" claim
+    (https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531). ``plain``
+    now forces the SAME ``ConsoleChatRenderer`` a real ``--cui`` invocation
+    gets — genuine equivalence, not a doc-only claim. Every other
+    ``render_mode`` value (``alt-screen`` / ``inline`` / ``auto``, or an
+    already-defaulted unknown value) leaves ``is_interactive`` untouched.
+    """
+    return is_interactive and render_mode != "plain"
+
+
 def _setup_interactive_logging(project_root: Path) -> None:
     """Route root-logger output to .reyn/logs/reyn.log for the interactive CUI.
 
@@ -595,7 +613,18 @@ def run(args: argparse.Namespace) -> None:
     # human-facing surface. --cui or a non-TTY (pipe / script / run-once) →
     # plain console output. Both drive the same run_repl loop; only the
     # renderer differs. The SAME make_renderer seam picks it on the remote path.
-    renderer = make_renderer(is_interactive)
+    #
+    # #3292: `chat.render_mode: plain` is genuine `--cui` equivalence, not a
+    # hybrid — see `_renderer_is_interactive`. `is_interactive` above stays
+    # cui+tty-only by design — it also gates the pre-config-load log redirect
+    # (#2208), computed before `session_cfg` is loaded, so it deliberately
+    # cannot see `render_mode`.
+    renderer = make_renderer(
+        _renderer_is_interactive(
+            is_interactive=is_interactive,
+            render_mode=session_cfg.config.chat.render_mode,
+        )
+    )
 
     async def _main_chat() -> None:
         # PR21: replay WAL into per-agent snapshots before any new state

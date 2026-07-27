@@ -781,12 +781,26 @@ def status_line_text(snap: "dict | None", agent_name: str) -> str:
     """The slim ``model │ agent │ cost │ ctx`` status-values line, from the live
     status snapshot (F5b: the running cost + context percent are visible here even
     when the drawer is closed). Falls back to the threaded ``agent_name`` and
-    ``—``/``$0.0000``/``—`` when no snapshot is available yet (pre-session)."""
+    ``—``/``$0.0000``/``—`` when no snapshot is available yet (pre-session).
+
+    #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on a
+    persistent durability failure — ``Session.halted_reason``), a ``HALTED``
+    banner segment is PREPENDED ahead of the usual values — this line is the
+    ONE always-visible (never-collapsed) chrome region, so it is the surface an
+    idle operator (not currently submitting anything) will proactively see the
+    halt on, rather than only learning it from the next op's raised
+    ``DurabilityHaltError``. Purely observability — the halt itself is already
+    enforced synchronously elsewhere (``_fail_stop_if_durability_dead`` /
+    ``run_one_iteration``); this never gates or delays anything."""
     snap = snap or {}
     model = snap.get("model_active_class") or snap.get("model") or "—"
     agent = snap.get("attached_name") or agent_name
     cost = snap.get("cost_agent", 0.0)
-    return f"model {model} │ agent {agent} │ cost ${cost:.4f} │ ctx {_ctx_pct(snap)}"
+    base = f"model {model} │ agent {agent} │ cost ${cost:.4f} │ ctx {_ctx_pct(snap)}"
+    halted_reason = snap.get("halted_reason")
+    if halted_reason:
+        return f"⚠ HALTED — {halted_reason} — agent stopped accepting ops │ {base}"
+    return base
 
 
 def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:

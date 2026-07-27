@@ -488,11 +488,16 @@ class ReasoningConfig:
 #   scrollback on enter/exit.
 # - ``inline``: the legacy bounded inline driver, kept as an escape hatch for
 #   users who prefer their pre-launch scrollback preserved in place above the
-#   region. CAVEAT: this mode still carries the upstream Textual inline-driver
-#   bugs #3285/#3286 (resize stacking + pane collapse); it is not the recommended
-#   default and will improve only when those land upstream.
+#   region. CAVEAT: upstream reports the Textual inline-driver bugs #3285
+#   (resize stacking) and #3286 (pane collapse) here, but reyn's own live-TTY
+#   integration did NOT reproduce #3285 across 4+ resizes in a real terminal
+#   (https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531) — treat
+#   this mode as not verified-broken but also not verified-clean; it is still
+#   not the recommended default.
 # - ``plain``: force the plain ConsoleChatRenderer (no Textual), equivalent to
-#   ``--cui``.
+#   ``--cui`` (#3292: the renderer selection in ``chat.py`` forces this too,
+#   not only the input-driver choice ``client_driver.resolve_render_mode``
+#   makes — genuine equivalence, not a hybrid).
 # - ``auto``: resolve to ``alt-screen`` on a real TTY (identical to ``alt-screen``
 #   given the TTY guard, which falls any interactive mode back to ``plain`` off a
 #   TTY); provided as the Codex-style ``auto/always/never`` affordance.
@@ -504,9 +509,11 @@ class ChatConfig:
     """`chat:` — chat-session-specific runtime knobs.
 
     ``render_mode`` (#3273): selects the interactive chat renderer/driver —
-    ``alt-screen`` (default, full-screen), ``inline`` (legacy bounded driver,
-    carries upstream bugs #3285/#3286), ``plain`` (force ConsoleChatRenderer),
-    or ``auto`` (resolve to alt-screen on a TTY). A non-TTY session always falls
+    ``alt-screen`` (default, full-screen), ``inline`` (legacy bounded driver;
+    upstream reports bugs #3285/#3286 there, not reproduced live in reyn's own
+    integration — see the ``CHAT_RENDER_MODES`` comment above), ``plain``
+    (force ``ConsoleChatRenderer``, genuine ``--cui`` equivalence, #3292), or
+    ``auto`` (resolve to alt-screen on a TTY). A non-TTY session always falls
     back to ``plain`` regardless of this value (the interactive Textual drivers
     need a real terminal).
     """

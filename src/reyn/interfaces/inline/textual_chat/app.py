@@ -44,6 +44,7 @@ from reyn.interfaces.repl.renderer import summarize_tool_result
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
+from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from .chrome import (
     _MENU_TABS,
@@ -56,7 +57,12 @@ from .chrome import (
     pane_payload,
     status_line_text,
 )
-from .gutter import _RUNNING_FRAME_PERIOD, ReynGutter
+from .gutter import (
+    _RUNNING_FRAME_PERIOD,
+    RIGHT_GUTTER_WIDTH,
+    ReynGutter,
+    ReynTimingGutter,
+)
 from .intervention_panel import InterventionPanel
 from .presenter import (
     _RESULT_KIND_KEY,
@@ -500,6 +506,12 @@ class TextualChatApp(App):
             presenter=self._presenter,
             decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
             gutter_width=_GUTTER_WIDTH,
+            # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
+            # (tool rows only — see ReynTimingGutter's docstring for the
+            # content-set decision). additive flowview params; the LEFT
+            # gutter/state contract above is untouched.
+            right_decorator=ReynTimingGutter(clock=self._clock),
+            right_gutter_width=RIGHT_GUTTER_WIDTH,
             spacing=1,
             anchor=Anchor.STICKY_BOTTOM,
             # Native running-blink: FlowView owns the animation clock and
@@ -999,6 +1011,12 @@ class TextualChatApp(App):
         merged = {k: v for k, v in started_meta.items() if k != _RUNNING_SINCE_KEY}
         merged[_RESULT_KIND_KEY] = result_msg.kind
         merged[_RESULT_META_KEY] = result_meta
+        since = started_meta.get(_RUNNING_SINCE_KEY)
+        if isinstance(since, (int, float)):
+            # Capture the FINAL elapsed seconds (Phase ④, #3283) from the SAME
+            # timestamp the live spinner was reading, before it is stripped
+            # above — the right gutter's static elapsed for a settled row.
+            merged[_ELAPSED_SECS_KEY] = max(0, int(self._clock() - since))
         try:
             started.set_item(replace(started.item, meta=merged))
         except Exception:
@@ -1047,12 +1065,17 @@ class TextualChatApp(App):
                     "textual chat: could not stop orphaned-tool animation"
                 )
             try:
+                orig_meta = entry.item.meta or {}
                 meta = {
-                    k: v
-                    for k, v in (entry.item.meta or {}).items()
-                    if k != _RUNNING_SINCE_KEY
+                    k: v for k, v in orig_meta.items() if k != _RUNNING_SINCE_KEY
                 }
                 meta[_RESULT_KIND_KEY] = _ORPHANED_RESULT_KIND
+                since = orig_meta.get(_RUNNING_SINCE_KEY)
+                if isinstance(since, (int, float)):
+                    # Same final-elapsed capture as _coalesce_tool_result — an
+                    # orphan still ran for a real, observed duration before
+                    # being force-settled (Phase ④, #3283).
+                    meta[_ELAPSED_SECS_KEY] = max(0, int(self._clock() - since))
                 entry.set_item(replace(entry.item, meta=meta))
             except Exception:
                 logger.exception(
@@ -1344,6 +1367,22 @@ class TextualChatApp(App):
         meta = dict(data.get("meta") or {})
         self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
 
+    def _handle_session_halted_event(self, event) -> None:
+        """#2280: the durability-halt observability surface. ``session_halted``
+        (``Session._fail_stop_if_durability_dead`` / ``run_one_iteration``)
+        fires the MOMENT the fail-stop latches — including while the operator
+        is fully idle, no DISPLAY frame in flight — so this is the ONE handler
+        that must call :meth:`_refresh_status` OUTSIDE the normal "a DISPLAY
+        frame landed" trigger (see the F5b refresh-per-message-frame comment in
+        :meth:`_pump_frames`): without it, an idle operator's status line would
+        stay stale until the next unrelated message happened to land. The
+        status snapshot itself already carries ``halted_reason`` live off
+        ``Session.halted_reason`` (``interfaces/repl/status.py``'s
+        ``_snapshot``) — this call is purely "go read it now", never a second
+        source of truth. Purely observability: does not touch the halt itself,
+        which is already enforced synchronously elsewhere."""
+        self._refresh_status()
+
     def _handle_inbox_cancel_event(self, event) -> None:
         """REMOVE exit (#3300 Y-client, sent-queue exit contract §6a): an
         ``inbox_cancel`` delta removes the matching queued item from the
@@ -1590,6 +1629,13 @@ class TextualChatApp(App):
                                 "textual chat: intervention_answer_submitted "
                                 "ingest failed"
                             )
+                    elif etype == "session_halted":
+                        try:
+                            self._handle_session_halted_event(frame.event)
+                        except Exception:
+                            logger.exception(
+                                "textual chat: session_halted status refresh failed"
+                            )
                     elif etype == "agent_delta":
                         try:
                             self._handle_agent_delta_event(frame.event)
@@ -1743,18 +1789,25 @@ async def run_textual_chat(
     (:func:`~reyn.interfaces.repl.client_driver.run_chat_client`) resolves this
     from ``chat.render_mode`` (#3273) — see :func:`resolve_render_mode`.
 
-    Full-screen is the default because two inline-driver bugs made bounded inline
-    unshippable: on resize the old bounded frame is not cleared so stale copies
-    stack (#3285), and the conversation pane collapses to ~1 line regardless of
-    terminal height (#3286). Both are owned by Textual's inline driver, so reyn
-    cannot fix them in inline mode; alt-screen sidesteps the driver entirely and
-    both vanish. The scrollback-preservation rationale that originally motivated
-    inline is now redundant — alt-screen auto-saves/restores terminal scrollback
-    on enter/exit, and Phase 5 restore rebuilds the conversation from
-    ``history.jsonl`` on restart. ``inline=True`` remains selectable as an escape
-    hatch (``chat.render_mode: inline``) for scrollback-preferring users, with
-    the #3285/#3286 caveat. Returns so the driver's caller can tear the transport
-    down + print the cost summary.
+    Full-screen is the default because two inline-driver bugs upstream made
+    bounded inline unshippable: on resize the old bounded frame is not cleared
+    so stale copies stack (#3285), and the conversation pane collapses to ~1
+    line regardless of terminal height (#3286). Both are owned by Textual's
+    inline driver, so reyn cannot fix them in inline mode; alt-screen
+    sidesteps the driver entirely and both vanish there. #3286 is confirmed
+    live-reproduced against reyn's own integration; #3285 is reported upstream
+    but reyn's live-TTY integration did NOT reproduce the resize-stacking
+    across 4+ resizes in a real terminal
+    (https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531) — treat
+    #3285-in-``inline`` as not verified-broken here but also not
+    verified-clean; re-check live before relying on either claim. The
+    scrollback-preservation rationale that originally motivated inline is now
+    redundant — alt-screen auto-saves/restores terminal scrollback on
+    enter/exit, and Phase 5 restore rebuilds the conversation from
+    ``history.jsonl`` on restart. ``inline=True`` remains selectable as an
+    escape hatch (``chat.render_mode: inline``) for scrollback-preferring
+    users; ``alt-screen`` stays the recommended default regardless. Returns so
+    the driver's caller can tear the transport down + print the cost summary.
     """
     app = TextualChatApp(
         transport=transport,

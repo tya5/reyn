@@ -379,4 +379,11 @@ def _snapshot(registry, config=None):
         # (seq <= this) already reflected here can never resurrect a
         # dispatched item regardless of arrival order.
         "queue_seq": s.queue_seq,
+        # #2280: the durability-halt reason (``None`` while running), read
+        # straight off Session.halted_reason — the operator-visible surface for
+        # the fail-stop set in ``Session._fail_stop_if_durability_dead`` /
+        # ``run_one_iteration``. Consumed by the TUI status line
+        # (``chrome.status_line_text``) and threaded onto the wire for remote
+        # parity (``agui.state._WIRE_KEYS`` / ``project_status``).
+        "halted_reason": s.halted_reason,
     }
