@@ -514,8 +514,11 @@ def test_help_pane_lists_composer_up_arrow_and_sentqueue_keys() -> None:
     (``SENTQUEUE_KEYS``), not go undocumented. Pure-function pane formatter —
     no widget mount needed."""
     lines = help_pane_lines()
-    assert any("focus sent queue" in line for line in lines), (
-        "composer's new '↑ -> focus sent queue' binding is missing from "
+    # #3327: ↑ now targets the pending intervention panel FIRST, the
+    # sent-queue as its fallback — the description text was updated to say
+    # so; "sent queue" itself stays a substring of the new text either way.
+    assert any("sent queue" in line for line in lines), (
+        "composer's ↑ -> sent-queue fallback binding is missing from "
         "COMPOSER_KEYS / the Help pane"
     )
     assert any("cancel" in line.lower() for line in lines), (

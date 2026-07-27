@@ -149,6 +149,14 @@ class InProcessTransport(ClientTransport):
             return ""
         return await s.submit_user_text(text)
 
+    async def deliver_pending_answer(self, text: str) -> bool:
+        # #3327: real override — see ``Session.maybe_deliver_answer_command``
+        # for the deadlock this un-queued delivery closes.
+        s = self._attached()
+        if s is None:
+            return False
+        return await s.maybe_deliver_answer_command(text)
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:
