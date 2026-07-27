@@ -1868,11 +1868,22 @@ async def recorded_acompletion(
         This is deliberately NOT gated on a supported-params query, which is
         what #3348 removed. The flag is consumed CLIENT-SIDE by the stream
         wrapper (``CustomStreamWrapper.check_send_stream_usage``), so it works
-        for providers whose wire protocol has no such field; and litellm's
-        param layer skips ``stream_options`` when pruning unsupported params
-        (``litellm/utils.py``: ``if k == "user" or k == "stream_options" or k
-        == "stream": continue``), so passing it can never raise, for any
-        provider, regardless of ``drop_params``. The supported-params list
+        for providers whose wire protocol has no such field. Two SEPARATE
+        properties of litellm's param layer make passing it unconditionally
+        safe — neither implies the other, and both are pinned by Tier 1 tests
+        in ``tests/test_streaming_usage_provider_supplied_3348.py``:
+        (1) it does not RAISE for a provider that rejects the param —
+        ``litellm/utils.py`` skips ``stream_options`` when pruning unsupported
+        params (``if k == "user" or k == "stream_options" or k == "stream":
+        continue``), so no ``UnsupportedParamsError`` even under
+        ``drop_params=False``; and (2) it does not LEAK to the wire — the
+        param-mapping layer forwards it only to the OpenAI-compatible
+        providers that genuinely take it (measured across 8 providers ×
+        ``drop_params`` ∈ {False, True}: reaches openai + groq only; dropped
+        for anthropic / gemini / cohere / mistral / bedrock / ollama).
+        Property (1) holds by way of a single ``continue`` line in litellm, so
+        it is structural in THIS litellm version, not for all time — hence the
+        witness. The supported-params list
         describes what a provider ACCEPTS ON THE WIRE — Gemini and Anthropic
         do not list it — which is the wrong question for a client-side flag,
         and gating on it made reyn's token accounting silently provider-
