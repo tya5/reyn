@@ -239,19 +239,28 @@ cost" is answerable without subtracting running totals from each other.
   record of a past turn's spend is the ledger's per-call `chain_id`, which
   lets any past turn be re-grouped after the fact.
 
-A turn total can be read either **by key** — "what did *this* turn cost", given
-its `chain_id` — or as **"whatever ran last"**, process-wide. The keyed read is
-what a per-row surface uses: the TUI's right gutter prices each agent-reply row
-against the turn that produced it, for rows scrolled arbitrarily far back, so it
-necessarily asks about turns old enough to have been evicted.
+A turn's figures are its **total tokens**, the **prompt / completion split** of
+that total, and its **USD cost**. The split is accumulated at the call alongside
+the total (it is in `TokenUsage`) rather than derived afterwards — the same
+reason the turn key itself is captured there.
 
-When there is no per-turn figure to report the reported tokens and cost are
-**unknown** rather than `0`. A zero would be indistinguishable from a turn that
-genuinely cost nothing, and a renderer that forgot to branch would print it as
-fact. "No figure" covers: before a session's first turn; a turn that made no LLM
-call; a turn evicted from the bounded buckets; a `chain_id` this process never
-saw; and a remote client, where the per-turn buckets are session-local and not
-projected onto the AG-UI wire.
+They can be read either **by key** — "what did *this* turn use", given its
+`chain_id` — or as **"whatever ran last"**, process-wide; both return the same
+shape. The keyed read is what a per-row surface uses: the TUI's right gutter
+labels each agent-reply row with the token split of the turn that produced it
+(`↑prompt ↓completion`), for rows scrolled arbitrarily far back, so it
+necessarily asks about turns old enough to have been evicted. That gutter
+deliberately does not draw the USD figure — a presentation choice at the gutter,
+not a gap in the data; `/cost` and the status line remain the spend surfaces.
+
+When there is no per-turn figure to report, every reported value is **unknown**
+rather than `0`. A zero would be indistinguishable from a turn that genuinely
+used nothing / cost nothing — which is reachable, not hypothetical — and a
+renderer that forgot to branch would print it as fact. "No figure" covers:
+before a session's first turn; a turn that made no LLM call; a turn evicted from
+the bounded buckets; a `chain_id` this process never saw; and a remote client,
+where the per-turn buckets are session-local and not projected onto the AG-UI
+wire.
 
 These figures are not a cap dimension — there is no per-turn limit to
 configure; they are the reporting counterpart to the per-agent / daily /

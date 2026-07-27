@@ -23,9 +23,18 @@ These pin:
 - **the same three outcomes on the RENDERED gutter cell** (Tier 1): the figure,
   ``—``, ``—`` — read off ``decorate()``'s output, and asserted mutually
   distinct in one place so "all three render the same thing" cannot pass.
-- **no non-zero spend ever renders as free** (Tier 1): a sub-hundredth-of-a-cent
-  turn renders a ``<``-prefixed floor, never ``$0`` (which is reserved for a
-  genuinely zero — unpriced-model — turn) and never ``—``.
+- **a real zero stays distinct from unknown** (Tier 1): a turn that recorded
+  0 tokens renders ``↑0 ↓0`` — a measured fact — while a turn with no figure
+  renders ``—``. Collapsing the two would report an unmeasured turn as a
+  measured empty one. (The USD half is no longer displayed at all — owner call;
+  ``turn_usage`` still returns ``cost_usd`` and the lookup is unchanged.)
+- **prompt and completion are separately legible** (Tier 1): the cell carries
+  BOTH figures with their direction markers, so an implementation that showed
+  only a total, or only one side, fails.
+- **the column is sized in terminal CELLS, not characters** (Tier 1): the
+  direction markers are East Asian Ambiguous width, so the width bound is
+  asserted with ``rich.cells.cell_len`` — the renderer's own measure — not
+  ``len()``.
 - **the anchor decision** (Tier 1): the turn figure rides the ``kind="agent"``
   reply row that concludes a turn's visible output, NOT every row of the turn —
   the same total repeated N times in a column whose other label family is
@@ -52,10 +61,12 @@ All collaborators are real: a real :class:`BudgetTracker` (its bound
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
+from rich.cells import cell_len
 from textual_flowview import FlowModel, FlowView
 
 from reyn.core.events.state_log import StateLog
@@ -67,9 +78,12 @@ from reyn.interfaces.inline.textual_chat import (
 )
 from reyn.interfaces.inline.textual_chat._meta_keys import RUNNING_SINCE_KEY
 from reyn.interfaces.inline.textual_chat.gutter import (
+    COMPLETION_TOKENS_MARKER,
+    PROMPT_TOKENS_MARKER,
     RIGHT_GUTTER_WIDTH,
     TURN_ANCHOR_KIND,
     TURN_USAGE_UNKNOWN,
+    _cell_pad_left,
 )
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
 from reyn.interfaces.repl.read_model import ChatReadModel, project_remote_snapshot
@@ -141,9 +155,12 @@ def test_keyed_turn_usage_answers_known_evicted_and_unseen_distinctly() -> None:
     assert known["tokens"] == 100 + len(turns) - 1 + 7, (
         "the figure must be the real sum of that turn's own calls"
     )
+    assert known["prompt_tokens"] + known["completion_tokens"] == known["tokens"], (
+        "the split must reconcile with the total it was accumulated alongside"
+    )
     assert known["cost_usd"] > 0.0, (
-        f"{_MODEL} is priced, so a real turn's cost must be non-zero — "
-        "otherwise the cost half of this gate is vacuous"
+        f"{_MODEL} is priced, so the lookup must still carry a real cost — the "
+        "gutter stopped DISPLAYING cost, the lookup did not stop returning it"
     )
 
     assert tracker.turn_usage(evicted) is None, (
@@ -173,6 +190,40 @@ def test_keyed_turn_usage_sums_a_multi_call_turn_and_isolates_turns() -> None:
     assert a["cost_usd"] > b["cost_usd"] or a["tokens"] != b["tokens"], (
         "the two turns must be separately accounted"
     )
+    assert a["prompt_tokens"] == 1234 + 89 and a["completion_tokens"] == 567 + 21, (
+        "prompt and completion must each sum over the turn's own calls"
+    )
+
+
+def test_every_per_turn_bucket_is_bounded_not_only_the_total() -> None:
+    """Tier 2: the prompt/completion buckets #3283 ④ added are evicted WITH
+    their total, so all of them stay bounded by ``TURN_BUCKET_CAP``.
+
+    ★ Why this is asserted on ``snapshot()`` rather than inferred from
+    ``turn_usage``: membership is decided by the TOTAL bucket, so a companion
+    bucket that stopped being evicted would keep growing forever while every
+    lookup still answered correctly — an invisible unbounded-memory leak. A
+    strip that removed the companion evictions initially stayed GREEN for
+    exactly that reason; the public snapshot keys are what give the bound a
+    witness. Bounding is a cross-cutting-band obligation, not an optimisation."""
+    tracker = BudgetTracker(CostConfig())
+    for i in range(TURN_BUCKET_CAP + 5):
+        _record(tracker, f"turn-{i:03d}", prompt=100 + i, completion=7)
+
+    snap = tracker.snapshot()
+    for key in ("turn_tokens", "turn_prompt_tokens", "turn_completion_tokens",
+                "turn_cost_usd"):
+        assert len(snap[key]) == TURN_BUCKET_CAP, (
+            f"{key} grew to {len(snap[key])}, past the {TURN_BUCKET_CAP} cap"
+        )
+    # ...and they evict the SAME turns, so a surviving turn is never left with
+    # a total but no split (or the reverse).
+    assert (
+        set(snap["turn_tokens"])
+        == set(snap["turn_prompt_tokens"])
+        == set(snap["turn_completion_tokens"])
+        == set(snap["turn_cost_usd"])
+    ), "the per-turn buckets evicted different turns and are now inconsistent"
 
 
 def test_a_turnless_call_creates_no_lookup_answer() -> None:
@@ -202,10 +253,10 @@ def test_a_turnless_call_creates_no_lookup_answer() -> None:
 
 def test_gutter_renders_figure_for_known_turn_and_dash_for_unknown_and_evicted() -> None:
     """Tier 1: the three outcomes as the operator sees them, asserted MUTUALLY
-    DISTINCT so "every row renders the same thing" cannot pass. A priced turn
-    shows tokens + USD; an EVICTED turn and an UNSEEN chain_id both show
-    :data:`TURN_USAGE_UNKNOWN` — never ``0``, and never an empty cell (which on
-    a row that names a turn would read as "this turn was free")."""
+    DISTINCT so "every row renders the same thing" cannot pass. A recorded turn
+    shows its prompt/completion split; an EVICTED turn and an UNSEEN chain_id
+    both show :data:`TURN_USAGE_UNKNOWN` — never ``0``, and never an empty cell
+    (which on a row that names a turn would read as "this turn used nothing")."""
     tracker = BudgetTracker(CostConfig())
     turns = [f"turn-{i:03d}" for i in range(TURN_BUCKET_CAP + 2)]
     for i, chain_id in enumerate(turns):
@@ -218,8 +269,15 @@ def test_gutter_renders_figure_for_known_turn_and_dash_for_unknown_and_evicted()
     unseen_label = _label(gutter, _agent_row("turn-never-seen"))
 
     assert known_label not in ("", TURN_USAGE_UNKNOWN), known_label
-    assert "$" in known_label, f"the USD half is missing: {known_label!r}"
-    assert "0" not in known_label.split()[0] or known_label.split()[0] != "0", known_label
+    assert PROMPT_TOKENS_MARKER in known_label, (
+        f"the prompt half is missing: {known_label!r}"
+    )
+    assert COMPLETION_TOKENS_MARKER in known_label, (
+        f"the completion half is missing: {known_label!r}"
+    )
+    assert "$" not in known_label, (
+        f"the USD figure was dropped from this column by decision: {known_label!r}"
+    )
     assert evicted_label == TURN_USAGE_UNKNOWN, evicted_label
     assert unseen_label == TURN_USAGE_UNKNOWN, unseen_label
     assert known_label != evicted_label, (
@@ -258,46 +316,58 @@ def test_remote_snapshot_publishes_no_turn_usage_lookup() -> None:
     assert project_remote_snapshot({"model": "gpt-4o"})["turn_usage_fn"] is None
 
 
-def test_zero_cost_turn_renders_a_real_zero_distinct_from_unknown() -> None:
-    """Tier 1: ``$0`` and ``—`` mean different things and must render
-    differently. A turn recorded against an UNPRICED model genuinely cost
-    nothing — that is a real figure, and it must not be laundered into
-    "unknown"; conversely "unknown" must not be laundered into ``$0``."""
+def test_zero_token_turn_renders_a_real_zero_distinct_from_unknown() -> None:
+    """Tier 1: ``↑0 ↓0`` and ``—`` mean different things and must render
+    differently. A turn whose calls reported no usage genuinely used 0 tokens —
+    that is a measured fact and must not be laundered into "unknown";
+    conversely "unknown" must never be laundered into a zero.
+
+    This is the state that SURVIVED the narrowing. Before the gutter dropped
+    cost, the real-zero-vs-unknown pair was carried by ``$0`` vs ``—``; it now
+    has to be carried by the token figures, and if it were dropped along with
+    the cost column the two meanings would silently merge."""
     tracker = BudgetTracker(CostConfig())
     tracker.record_llm(
-        model="a-model-no-catalog-prices",
+        model=_MODEL,
         agent="alpha",
-        usage=TokenUsage(prompt_tokens=500, completion_tokens=100),
-        chain_id="turn-free",
+        usage=TokenUsage(prompt_tokens=0, completion_tokens=0),
+        chain_id="turn-empty",
     )
-    usage = tracker.turn_usage("turn-free")
-    assert usage is not None and usage["cost_usd"] == 0.0, (
-        "fixture must actually be an unpriced (zero-cost) turn"
+    usage = tracker.turn_usage("turn-empty")
+    assert usage is not None and usage["tokens"] == 0, (
+        "fixture must actually be a recorded turn with a zero token total"
     )
 
     gutter = ReynTurnUsageGutter(usage_lookup=tracker.turn_usage)
-    label = _label(gutter, _agent_row("turn-free"))
+    label = _label(gutter, _agent_row("turn-empty"))
     assert label != TURN_USAGE_UNKNOWN, (
-        f"a genuinely free turn must show its real $0, not 'unknown': {label!r}"
+        f"a measured zero-token turn must show its real 0, not 'unknown': {label!r}"
     )
-    assert "600" in label, f"the token half must still be the real count: {label!r}"
-    assert "$0" in label, label
+    assert label == f"{PROMPT_TOKENS_MARKER}0 {COMPLETION_TOKENS_MARKER}0", label
+    # ...and the unknown leg still renders differently, on the same gutter.
+    assert _label(gutter, _agent_row("turn-absent")) == TURN_USAGE_UNKNOWN
 
 
-def test_a_tiny_but_real_spend_never_renders_as_free() -> None:
-    """Tier 1: the rounding hazard — a turn whose cost is smaller than the
-    smallest exactly-printable figure must NOT render as ``$0`` (free) or as
-    ``—`` (unknown). It renders a ``<``-prefixed floor: real spend, honestly
-    bounded."""
+def test_the_smallest_real_token_counts_render_exactly_not_rounded_away() -> None:
+    """Tier 1: the rounding hazard, retargeted from cost to tokens. A one-token
+    prompt or completion must render as ``1``, never rounded down into a ``0``
+    that would read as "nothing was sent/generated" and never ``—``.
+
+    Structurally safe rather than merely tested: :func:`_format_tokens` prints
+    counts below 1000 exactly (``str(n)``), so there is no band in which a
+    non-zero count can round to zero — this pins that property."""
     gutter = ReynTurnUsageGutter(
-        usage_lookup=lambda cid: {"chain_id": cid, "tokens": 3, "cost_usd": 1e-9}
+        usage_lookup=lambda cid: {
+            "chain_id": cid,
+            "tokens": 2,
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "cost_usd": 0.0,
+        }
     )
     label = _label(gutter, _agent_row("turn-tiny"))
     assert label != TURN_USAGE_UNKNOWN, label
-    assert "$0 " not in label and not label.endswith("$0"), (
-        f"a real non-zero spend rendered as free: {label!r}"
-    )
-    assert "<" in label, f"expected a bounded floor form, got {label!r}"
+    assert label == f"{PROMPT_TOKENS_MARKER}1 {COMPLETION_TOKENS_MARKER}1", label
 
 
 # ── Gate 3: the anchor decision — one figure per turn, not one per row ────────
@@ -315,23 +385,24 @@ def test_a_tiny_but_real_spend_never_renders_as_free() -> None:
         OutboxMessage(kind="reasoning", text="thinking", meta={"chain_id": "turn-A"}),
     ],
 )
-def test_non_anchor_rows_of_a_priced_turn_show_no_cost_figure(
+def test_non_anchor_rows_of_a_recorded_turn_show_no_token_figure(
     item: OutboxMessage,
 ) -> None:
     """Tier 1: the turn figure is ANCHORED to the reply row, so the turn's OTHER
     rows — its user line, its tool calls, its reasoning — render no cost cell
-    even though their frames carry the very same priced ``chain_id``. Repeating
-    one turn total down every row of the turn, in a column whose other label
-    family (elapsed) IS per-row, would read as N separate per-row costs."""
+    even though their frames carry the very same recorded ``chain_id``.
+    Repeating one turn total down every row of the turn, in a column whose
+    other label family (elapsed) IS per-row, would read as N separate per-row
+    figures."""
     tracker = BudgetTracker(CostConfig())
     _record(tracker, "turn-A", prompt=1000, completion=200)
     gutter = ReynTurnUsageGutter(usage_lookup=tracker.turn_usage)
 
     assert tracker.turn_usage("turn-A") is not None, (
-        "fixture must price turn-A, or this negative control is vacuous"
+        "fixture must record turn-A, or this negative control is vacuous"
     )
     assert _label(gutter, item) == "", (
-        f"a non-anchor row of a priced turn must show no cost figure: {item.kind}"
+        f"a non-anchor row of a recorded turn must show no figure: {item.kind}"
     )
     # ...while the anchor row of that SAME turn does — so the empty cells above
     # are the anchoring decision, not a broken lookup.
@@ -407,31 +478,41 @@ def test_the_composite_right_gutter_carries_both_label_families() -> None:
         "the elapsed half must still speak through the composite"
     )
     reply = _label(gutter, _agent_row("turn-A"))
-    assert "$" in reply, f"the turn-cost half is missing: {reply!r}"
+    assert PROMPT_TOKENS_MARKER in reply and COMPLETION_TOKENS_MARKER in reply, (
+        f"the turn-token half is missing: {reply!r}"
+    )
 
 
 def test_every_label_the_column_can_emit_fits_the_configured_width() -> None:
     """Tier 1: :data:`RIGHT_GUTTER_WIDTH` is COMPUTED from the widest label,
     not guessed — so an extreme-but-reachable figure must not overflow the
-    column. Drives the widest shapes of both halves (a huge token count, a
-    huge cost, the sub-floor cost form, a long elapsed) through the real
-    composite."""
-    token_edges = [
+    column. Sweeps every band edge of :func:`_format_tokens` against itself for
+    BOTH halves of the split (the worst case is a large prompt AND a large
+    completion), plus the elapsed family's longest label.
+
+    Measured in terminal CELLS via ``rich.cells.cell_len`` — the same measure
+    Textual's compositor applies — not ``len()``. The direction markers are
+    East Asian Ambiguous width, so a character count would be the wrong
+    question to ask even though the two agree for today's vocabulary."""
+    edges = [
         0, 1, 999, 1_000, 9_949, 9_950, 9_999, 999_499, 999_500,
         9_949_999, 9_950_000, 987_654_321,
     ]
-    cost_edges = [
-        0.0, 1e-9, 0.0001, 0.00999, 0.01, 9.999, 99.994, 99.999, 100.0, 98765.4321,
-    ]
-    for tokens in token_edges:
-        for cost_usd in cost_edges:
-            usage = {"chain_id": "t", "tokens": tokens, "cost_usd": cost_usd}
+    for prompt in edges:
+        for completion in edges:
+            usage = {
+                "chain_id": "t",
+                "tokens": prompt + completion,
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "cost_usd": 0.0,
+            }
             gutter = ReynRightGutter(usage_lookup=lambda cid, u=usage: u)
             label = _label(gutter, _agent_row("t"))
-            assert len(label) <= RIGHT_GUTTER_WIDTH - 1, (
-                f"{label!r} ({len(label)} cols) leaves no breathing room in "
-                f"RIGHT_GUTTER_WIDTH={RIGHT_GUTTER_WIDTH} "
-                f"(tokens={tokens}, cost_usd={cost_usd})"
+            assert cell_len(label) <= RIGHT_GUTTER_WIDTH - 1, (
+                f"{label!r} ({cell_len(label)} cells) leaves no breathing room "
+                f"in RIGHT_GUTTER_WIDTH={RIGHT_GUTTER_WIDTH} "
+                f"(prompt={prompt}, completion={completion})"
             )
     elapsed = ReynTimingGutter(clock=lambda: 10_000_000.0)
     long_elapsed = _label(
@@ -440,7 +521,82 @@ def test_every_label_the_column_can_emit_fits_the_configured_width() -> None:
             kind="tool_call_started", text="t", meta={RUNNING_SINCE_KEY: 0.0}
         ),
     )
-    assert 0 < len(long_elapsed) <= RIGHT_GUTTER_WIDTH, long_elapsed
+    assert 0 < cell_len(long_elapsed) <= RIGHT_GUTTER_WIDTH, long_elapsed
+
+
+def test_the_direction_markers_measure_one_cell_each() -> None:
+    """Tier 1: ★ the ambiguous-width hazard, pinned rather than assumed.
+    :data:`PROMPT_TOKENS_MARKER` / :data:`COMPLETION_TOKENS_MARKER` are East
+    Asian **Ambiguous** (``east_asian_width == "A"``), so their column count is
+    not universally fixed. The width derivation above is only sound if the
+    renderer measures them as ONE cell — this asserts that against
+    ``rich.cells.cell_len``, the very function Textual's compositor uses, so a
+    rich upgrade that reclassified ambiguous-width to 2 fails HERE with a clear
+    cause rather than as a mysteriously shifted gutter.
+
+    Not a format pin: it pins a LAYOUT invariant the fixed-width column depends
+    on, not the choice of glyph."""
+    for marker in (PROMPT_TOKENS_MARKER, COMPLETION_TOKENS_MARKER):
+        assert unicodedata.east_asian_width(marker) == "A", (
+            f"{marker!r} is no longer ambiguous-width — the note in "
+            "PROMPT_TOKENS_MARKER's docstring needs revisiting"
+        )
+        assert cell_len(marker) == 1, (
+            f"{marker!r} measures {cell_len(marker)} cells; RIGHT_GUTTER_WIDTH "
+            f"={RIGHT_GUTTER_WIDTH} is derived assuming 1"
+        )
+
+
+def test_the_column_pads_by_cells_not_characters() -> None:
+    """Tier 1: :func:`_cell_pad_left` — the gutter's padding function — aligns
+    to a CELL count, which is what a terminal column actually is.
+
+    ★ Driven with a genuinely DOUBLE-WIDTH character. That is not decoration:
+    for the gutter's real vocabulary ``len()`` and ``cell_len()`` agree (every
+    glyph in it measures one cell, ambiguous-width markers included), so an
+    assertion driven only by real labels passes identically for ``str.rjust``
+    and cannot witness the difference — it was vacuous when first written, and
+    a strip to ``rjust`` stayed green. A wide character is the discriminating
+    input: ``rjust`` pads it by character count and overflows the column.
+
+    The production vocabulary cannot currently emit one; this pins the helper's
+    CONTRACT so the column stays correct by construction rather than by the
+    coincidence that today's glyphs happen to be narrow."""
+    wide = "中中"  # U+4E2D, east_asian_width "W" — wider than one cell each
+    assert cell_len(wide) > len(wide), (
+        "fixture must be text whose CELL width exceeds its CHARACTER count — "
+        "otherwise the two padding strategies agree and this cannot witness "
+        "the difference"
+    )
+    padded = _cell_pad_left(wide, 8)
+    assert cell_len(padded) == 8, (
+        f"{padded!r} occupies {cell_len(padded)} cells, not the 8 asked for — "
+        "padding is counting characters, not cells"
+    )
+    assert padded.endswith(wide), "the label itself must survive padding"
+    # An over-long label is returned unpadded rather than negative-padded;
+    # flowview's own adjust_cell_length clips it, it never steals body columns.
+    assert _cell_pad_left(wide, 2) == wide
+
+
+def test_the_rendered_gutter_cell_occupies_exactly_the_column_width() -> None:
+    """Tier 1: through the real composite, a marker-bearing label renders a
+    cell of exactly :data:`RIGHT_GUTTER_WIDTH` cells — the property the
+    fixed-width column depends on, checked on the real render path rather than
+    on the padding helper alone."""
+    gutter = ReynRightGutter(
+        usage_lookup=lambda cid: {
+            "chain_id": cid, "tokens": 13800, "prompt_tokens": 12000,
+            "completion_tokens": 1800, "cost_usd": 0.0,
+        }
+    )
+    padded = gutter.decorate(_entry(_agent_row("t")), RIGHT_GUTTER_WIDTH, 1).plain
+    assert cell_len(padded) == RIGHT_GUTTER_WIDTH, (
+        f"{padded!r} occupies {cell_len(padded)} cells, not {RIGHT_GUTTER_WIDTH}"
+    )
+    assert padded.strip() == (
+        f"{PROMPT_TOKENS_MARKER}12k {COMPLETION_TOKENS_MARKER}1.8k"
+    ), padded
 
 
 # ── Gate 6: the real status snapshot actually publishes the lookup ────────────
@@ -593,16 +749,20 @@ def _rendered_lines(flow: "FlowView[OutboxMessage]") -> "list[str]":
 
 
 @pytest.mark.asyncio
-async def test_mounted_app_prices_a_known_turn_and_dashes_an_unknown_one() -> None:
+async def test_mounted_app_shows_a_known_turns_split_and_dashes_an_unknown_one() -> None:
     """Tier 2b: end-to-end through the REAL mounted app — the real read-model
     seam, the real ``turn_usage_fn`` publication path, the real
-    ``right_decorator`` wiring — a reply row for a PRICED turn ends in its real
-    figure and a reply row for an unknown turn ends in ``—``, read off the
-    COMPOSED row text rather than a ``decorate()`` call. Both rows are in the
-    same render, so a wiring that fell back to one answer for everything fails
-    on the other row."""
+    ``right_decorator`` wiring — a reply row for a RECORDED turn ends in its
+    real prompt/completion split and a reply row for an unknown turn ends in
+    ``—``, read off the COMPOSED row text rather than a ``decorate()`` call.
+    Both rows are in the same render, so a wiring that fell back to one answer
+    for everything fails on the other row.
+
+    BOTH halves of the split are asserted on the rendered line: an
+    implementation that rendered only the total, or only the prompt side, would
+    pass a one-figure check."""
     tracker = BudgetTracker(CostConfig())
-    _record(tracker, "turn-priced", prompt=1500, completion=250)
+    _record(tracker, "turn-recorded", prompt=1500, completion=250)
 
     transport = _QueueTransport()
     app = TextualChatApp(
@@ -612,7 +772,7 @@ async def test_mounted_app_prices_a_known_turn_and_dashes_an_unknown_one() -> No
         await pilot.pause()
         await transport.push(
             OutboxMessage(
-                kind="agent", text="priced reply", meta={"chain_id": "turn-priced"}
+                kind="agent", text="recorded reply", meta={"chain_id": "turn-recorded"}
             )
         )
         await transport.push(
@@ -624,21 +784,22 @@ async def test_mounted_app_prices_a_known_turn_and_dashes_an_unknown_one() -> No
         await pilot.pause()
 
         lines = _rendered_lines(app.query_one(FlowView))
-        priced = [ln for ln in lines if "priced reply" in ln]
+        priced = [ln for ln in lines if "recorded reply" in ln]
         mystery = [ln for ln in lines if "mystery reply" in ln]
         assert priced and mystery, lines
 
-        assert any("$" in ln for ln in priced), (
-            f"the priced turn's row carries no USD figure: {priced!r}"
+        want = f"{PROMPT_TOKENS_MARKER}1.5k {COMPLETION_TOKENS_MARKER}250"
+        assert any(ln.rstrip().endswith(want) for ln in priced), (
+            f"the recorded turn's row does not end in {want!r}: {priced!r}"
         )
         assert not any(ln.rstrip().endswith(TURN_USAGE_UNKNOWN) for ln in priced), (
-            f"a priced turn rendered as unknown: {priced!r}"
+            f"a recorded turn rendered as unknown: {priced!r}"
         )
         assert any(ln.rstrip().endswith(TURN_USAGE_UNKNOWN) for ln in mystery), (
-            f"an unpriced turn did not render {TURN_USAGE_UNKNOWN!r}: {mystery!r}"
+            f"an unrecorded turn did not render {TURN_USAGE_UNKNOWN!r}: {mystery!r}"
         )
-        assert not any("$" in ln for ln in mystery), (
-            f"an unknown turn was given a USD figure: {mystery!r}"
+        assert not any(PROMPT_TOKENS_MARKER in ln for ln in mystery), (
+            f"an unknown turn was given a token figure: {mystery!r}"
         )
 
 

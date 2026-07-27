@@ -370,14 +370,18 @@ def _snapshot(registry, config=None):
         # bounded per-turn buckets (#3283 ④ made this a KEYED read of this
         # session's own turn, so another session's turn no longer displaces it
         # — see Session.last_turn_usage). Deliberately not 0: a zero would be
-        # indistinguishable from a real zero-cost turn and would render as
-        # fact, whereas None is loud in both directions (drawn as "None", or
-        # a TypeError on any arithmetic).
+        # indistinguishable from a turn that genuinely used nothing / cost
+        # nothing and would render as fact, whereas None is loud in both
+        # directions (drawn as "None", or a TypeError on any arithmetic).
+        # `last_turn_usage` also carries a prompt/completion split (#3283 ④);
+        # this bar shows the total, and the per-row TUI gutter shows the split
+        # off `turn_usage_fn` below.
         "turn_chain_id": turn_usage["chain_id"],
         "turn_tokens": turn_usage["tokens"],
         "turn_cost_usd": turn_usage["cost_usd"],
         # #3283 ④: keyed per-turn lookup ``(chain_id) -> dict | None``, for a
-        # surface that renders one figure PER ROW rather than one per session.
+        # surface that renders one figure PER ROW rather than one per session
+        # (the TUI right gutter, which draws the prompt/completion split).
         # Deliberately NOT called here (see the assignment above).
         "turn_usage_fn": turn_usage_fn,
         "ctx_used": ctx_used,

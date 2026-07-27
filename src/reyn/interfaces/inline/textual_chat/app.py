@@ -561,7 +561,7 @@ class TextualChatApp(App):
         # session switch, so a chain_id can never leak past its turn's
         # completion.
         self._streaming_replies: "dict[str, _StreamingReply]" = {}
-        # #3283 ④: the status snapshot's keyed per-turn cost/token lookup
+        # #3283 ④: the status snapshot's keyed per-turn token/cost lookup
         # (``turn_usage_fn`` = ``Session.turn_usage``), cached off the snapshot
         # :meth:`_refresh_live_chrome` already reads once per arriving frame.
         # The right gutter calls it once PER RENDERED ROW, so it must not build
@@ -586,10 +586,11 @@ class TextualChatApp(App):
             decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
             gutter_width=_GUTTER_WIDTH,
             # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
-            # (tool rows) AND the row's turn's real tokens+cost (agent reply
-            # rows, via the keyed per-turn lookup) — see ReynRightGutter and
-            # its two halves for the content-set decisions. additive flowview
-            # params; the LEFT gutter/state contract above is untouched.
+            # (tool rows) AND the row's turn's real prompt/completion token
+            # split (agent reply rows, via the keyed per-turn lookup) — see
+            # ReynRightGutter and its two halves for the content-set decisions.
+            # additive flowview params; the LEFT gutter/state contract above is
+            # untouched.
             right_decorator=ReynRightGutter(
                 clock=self._clock, usage_lookup=self._turn_usage
             ),
@@ -647,8 +648,10 @@ class TextualChatApp(App):
             return None
 
     def _turn_usage(self, chain_id: str) -> "dict | None":
-        """The real tokens+cost of turn ``chain_id``, or ``None`` when there is
-        no figure — the right gutter's per-row lookup (#3283 ④).
+        """The real per-turn figures for ``chain_id``, or ``None`` when there
+        is no figure — the right gutter's per-row lookup (#3283 ④). The gutter
+        draws the prompt/completion token split; the dict also carries the
+        turn's USD cost for any other caller.
 
         Delegates to the snapshot's ``turn_usage_fn``
         (:attr:`_turn_usage_fn` = ``Session.turn_usage``, keyed over

@@ -1548,7 +1548,8 @@ class Session:
     @property
     def last_turn_usage(self) -> dict:
         """#3339: tokens + USD cost of this session's MOST RECENT turn —
-        ``{"chain_id", "tokens", "cost_usd"}``.
+        ``{"chain_id", "tokens", "prompt_tokens", "completion_tokens",
+        "cost_usd"}`` (the same shape ``BudgetTracker.turn_usage`` returns).
 
         A real per-turn aggregate: the durable tracker summed the actual
         per-call figures of every LLM call made under this turn's chain_id
@@ -1557,13 +1558,18 @@ class Session:
         the cost of a call the OS could not attribute to a turn is in no
         turn's total at all.
 
-        When there is no figure, ALL THREE values are ``None`` — never a
-        placeholder ``0``. A zero is indistinguishable from a real zero-cost
-        turn, and a renderer that forgot to check would print it as fact;
-        ``None`` makes the same mistake loud (drawn as "None", or a
-        ``TypeError`` the moment anything does arithmetic on it). No
-        convention for a consumer to remember, and nothing to get wrong
-        silently.
+        When there is no figure, EVERY value is ``None`` — never a placeholder
+        ``0``. A zero is indistinguishable from a turn that genuinely used
+        nothing / cost nothing, and a renderer that forgot to check would print
+        it as fact; ``None`` makes the same mistake loud (drawn as "None", or a
+        ``TypeError`` the moment anything does arithmetic on it). No convention
+        for a consumer to remember, and nothing to get wrong silently.
+
+        The KEY SET is identical in both cases, so a consumer can read any
+        field without first branching on which case it got — only the VALUES
+        differ. A no-figure dict missing the keys the success dict carries
+        would turn "no figure" into a ``KeyError`` at a different call site
+        than the one that forgot to check.
 
         "No figure" occurs before this session's first router turn, with no
         tracker wired (unlimited mode), and when this session's last turn has
@@ -1576,7 +1582,13 @@ class Session:
         this session's own last turn is sitting right there in the buckets.
         Asking for this session's own key answers the question actually being
         asked, and cannot return another session's number."""
-        _none = {"chain_id": None, "tokens": None, "cost_usd": None}
+        _none = {
+            "chain_id": None,
+            "tokens": None,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "cost_usd": None,
+        }
         chain_id = self._last_turn_chain_id
         tracker = self._budget_tracker
         if chain_id is None or tracker is None:
@@ -1585,14 +1597,17 @@ class Session:
 
     def turn_usage(self, chain_id: str) -> "dict | None":
         """#3283 ④: tokens + USD cost of the turn ``chain_id`` —
-        ``{"chain_id", "tokens", "cost_usd"}``, or ``None`` when there is no
-        figure for that turn (never recorded, evicted from the tracker's
-        bounded buckets, or no tracker wired at all).
+        ``{"chain_id", "tokens", "prompt_tokens", "completion_tokens",
+        "cost_usd"}``, or ``None`` when there is no figure for that turn (never
+        recorded, evicted from the tracker's bounded buckets, or no tracker
+        wired at all).
 
         The KEYED sibling of :attr:`last_turn_usage`, for a caller that already
         knows which turn it is asking about — the TUI's right gutter, which
-        renders one turn figure per conversation row and shows ``—`` on
-        ``None``. Same never-fabricate contract as the tracker's own
+        renders one turn's ``↑prompt ↓completion`` split per conversation row
+        and shows ``—`` on ``None``. (It does not display ``cost_usd``; the
+        field is still returned for every other caller.) Same never-fabricate
+        contract as the tracker's own
         ``turn_usage``: no ``0`` stands in for "unknown", and no figure is ever
         derived by differencing cumulative counters."""
         tracker = self._budget_tracker

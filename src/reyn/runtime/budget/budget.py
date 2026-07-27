@@ -816,7 +816,7 @@ def write_checkpoint(
 #
 # #3283 ④: readers now include a KEYED lookup for OLDER turns
 # (``turn_usage(chain_id)``), not only the latest one — the TUI's right gutter
-# asks "what did the turn this row belongs to cost", for rows scrolled well
+# asks "what did the turn this row belongs to use", for rows scrolled well
 # back. So eviction IS reachable for a real read, and the depth above is what
 # decides when. That is handled by contract rather than by depth: a keyed read
 # of an evicted (or never-recorded) turn returns ``None``, so the caller
@@ -880,7 +880,17 @@ class BudgetTracker:
         # ``_agent_cost_breakdown``): this is live-session display state, and
         # after a restart no turn of this process is in flight. The durable
         # record of a past turn's spend is the ledger's per-call ``chain_id``.
+        #
+        # #3283 ④: kept as a prompt/completion SPLIT as well as a total, so a
+        # reader can distinguish what a turn SENT from what it generated (the
+        # right gutter renders ``↑prompt ↓completion``). The split is recorded
+        # here rather than derived later for the same reason the turn key is:
+        # ``TokenUsage`` carries it at the call, and folding it to a total
+        # first would discard it irrecoverably. The ledger is unaffected — it
+        # persists ``total_tokens`` only, as before.
         self._turn_tokens: OrderedDict[str, int] = OrderedDict()
+        self._turn_prompt_tokens: OrderedDict[str, int] = OrderedDict()
+        self._turn_completion_tokens: OrderedDict[str, int] = OrderedDict()
         self._turn_cost_usd: OrderedDict[str, float] = OrderedDict()
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
         self._warned: set[tuple[str, str]] = set()
@@ -1228,7 +1238,7 @@ class BudgetTracker:
         # #3339: per-turn attribution. Guarded on a real turn key — the None
         # (no turn in scope) path deliberately records nothing here.
         if chain_id is not None:
-            self._record_turn_usage(chain_id, usage.total_tokens, cost_usd)
+            self._record_turn_usage(chain_id, usage, cost_usd)
 
         if agent is not None:
             new_tokens = self._agent_tokens[agent] + usage.total_tokens
@@ -1507,6 +1517,15 @@ class BudgetTracker:
             # the point, not a defect. ``last_turn_chain_id`` names the most
             # recent key (None before any turn recorded spend).
             "turn_tokens": dict(self._turn_tokens),
+            # #3283 ④: the prompt/completion split of the same buckets. Exposed
+            # here as well as via ``turn_usage`` so the BOUND on them is
+            # observable from the public surface — otherwise a companion bucket
+            # that stopped being evicted with its total would grow without
+            # limit and no test could see it (membership is decided by
+            # ``turn_tokens``, so the leak would be invisible through the
+            # lookup).
+            "turn_prompt_tokens": dict(self._turn_prompt_tokens),
+            "turn_completion_tokens": dict(self._turn_completion_tokens),
             "turn_cost_usd": dict(self._turn_cost_usd),
             "last_turn_chain_id": self._last_turn_chain_id,
             "rate_window": {
@@ -1582,7 +1601,9 @@ class BudgetTracker:
         the prompt/completion breakdown is not persisted per ledger record (only ``total_tokens``)."""
         return self._agent_tokens.get(agent, 0)
 
-    def _record_turn_usage(self, chain_id: str, tokens: int, cost_usd: float) -> None:
+    def _record_turn_usage(
+        self, chain_id: str, usage: "TokenUsage", cost_usd: float
+    ) -> None:
         """Accumulate one call's tokens/cost into turn ``chain_id``'s bucket,
         keeping the bucket set bounded (oldest turn evicted past
         ``TURN_BUCKET_CAP``). Insertion order = turn order; a turn already
@@ -1600,16 +1621,32 @@ class BudgetTracker:
         will have been evicted in a long session. That is answered by contract
         — ``None`` for an absent bucket, never a fabricated ``0`` — rather than
         by trying to keep every turn forever."""
-        self._turn_tokens[chain_id] = self._turn_tokens.get(chain_id, 0) + tokens
+        self._turn_tokens[chain_id] = (
+            self._turn_tokens.get(chain_id, 0) + usage.total_tokens
+        )
+        self._turn_prompt_tokens[chain_id] = (
+            self._turn_prompt_tokens.get(chain_id, 0) + usage.prompt_tokens
+        )
+        self._turn_completion_tokens[chain_id] = (
+            self._turn_completion_tokens.get(chain_id, 0) + usage.completion_tokens
+        )
         self._turn_cost_usd[chain_id] = self._turn_cost_usd.get(chain_id, 0.0) + cost_usd
         self._last_turn_chain_id = chain_id
+        # Every companion bucket is evicted with its total, so a chain_id is
+        # either present in ALL of them or in none — which is what lets
+        # ``turn_usage`` decide "known vs unknown" from the total's membership
+        # alone and still return a complete dict.
         while len(self._turn_tokens) > TURN_BUCKET_CAP:
             evicted, _ = self._turn_tokens.popitem(last=False)
+            self._turn_prompt_tokens.pop(evicted, None)
+            self._turn_completion_tokens.pop(evicted, None)
             self._turn_cost_usd.pop(evicted, None)
 
     def latest_turn_usage(self) -> dict | None:
-        """#3339: ``{"chain_id", "tokens", "cost_usd"}`` for the MOST RECENT
-        turn that recorded spend, or ``None`` when no turn has.
+        """#3339: the per-turn figures for the MOST RECENT turn that recorded
+        spend, or ``None`` when no turn has. Same shape as :meth:`turn_usage` —
+        ``{"chain_id", "tokens", "prompt_tokens", "completion_tokens",
+        "cost_usd"}``.
 
         Tokens and cost are summed over every LLM call that turn made
         (tool-loop iterations included), each priced at its own model's rate —
@@ -1623,42 +1660,54 @@ class BudgetTracker:
         chain_id = self._last_turn_chain_id
         if chain_id is None:
             return None
-        return {
-            "chain_id": chain_id,
-            "tokens": self._turn_tokens.get(chain_id, 0),
-            "cost_usd": self._turn_cost_usd.get(chain_id, 0.0),
-        }
+        return self._turn_usage_dict(chain_id)
 
     def turn_usage(self, chain_id: str) -> dict | None:
-        """#3283 ④: ``{"chain_id", "tokens", "cost_usd"}`` for the turn
-        ``chain_id``, or ``None`` when this tracker holds no figure for it.
+        """#3283 ④: ``{"chain_id", "tokens", "prompt_tokens",
+        "completion_tokens", "cost_usd"}`` for the turn ``chain_id``, or
+        ``None`` when this tracker holds no figure for it.
 
-        The KEYED per-turn read. Tokens and cost are summed over every LLM call
-        that turn made (tool-loop iterations included), each priced at its own
-        model's rate — never derived by differencing cumulative counters.
+        The KEYED per-turn read. Tokens (total AND the prompt/completion
+        split) and cost are summed over every LLM call that turn made
+        (tool-loop iterations included), each priced at its own model's rate —
+        never derived by differencing cumulative counters.
 
         ``None`` — never a ``0`` — is the answer for EVERY "no figure" case,
         and there are three, indistinguishable from here and deliberately not
         distinguished: the turn never recorded spend (it made no LLM call, or
         it is not a turn of this process at all), or its bucket has been
         EVICTED (``TURN_BUCKET_CAP``). A ``0`` would be indistinguishable from
-        a turn that genuinely cost nothing, and a renderer that forgot to
-        branch would print it as fact; ``None`` makes that mistake loud (drawn
-        as "None", or a ``TypeError`` the moment anything does arithmetic).
+        a turn that genuinely used nothing / cost nothing — a reachable state,
+        not a hypothetical — and a renderer that forgot to branch would print
+        it as fact; ``None`` makes that mistake loud (drawn as "None", or a
+        ``TypeError`` the moment anything does arithmetic).
 
         This lookup was deliberately absent when the per-turn buckets landed
         (#3339): with no consumer, nothing would have enforced branching on
         "unknown", so the API was narrowed to :meth:`latest_turn_usage` to make
         the ambiguous question unaskable. #3283 ④'s right gutter is that
-        consumer — it renders one turn figure per conversation row, for rows
-        scrolled arbitrarily far back, and renders ``—`` on ``None``. The
+        consumer — it renders one turn's token figure per conversation row,
+        for rows scrolled arbitrarily far back, and renders ``—`` on ``None``.
+        (It does not display ``cost_usd``; that is a presentation choice at the
+        gutter, and this lookup still returns it for every other caller.) The
         durable record of an evicted turn's spend is the ledger's per-call
         ``chain_id``, which lets any past turn be re-grouped after the fact."""
         if chain_id not in self._turn_tokens:
             return None
+        return self._turn_usage_dict(chain_id)
+
+    def _turn_usage_dict(self, chain_id: str) -> dict:
+        """The per-turn figure dict for a chain_id KNOWN to have a bucket.
+
+        One builder for both public readers, so the two can never drift into
+        reporting different shapes for the same turn. ``prompt_tokens`` +
+        ``completion_tokens`` == ``tokens`` (``TokenUsage.total_tokens`` is
+        their sum, accumulated call by call)."""
         return {
             "chain_id": chain_id,
-            "tokens": self._turn_tokens[chain_id],
+            "tokens": self._turn_tokens.get(chain_id, 0),
+            "prompt_tokens": self._turn_prompt_tokens.get(chain_id, 0),
+            "completion_tokens": self._turn_completion_tokens.get(chain_id, 0),
             "cost_usd": self._turn_cost_usd.get(chain_id, 0.0),
         }
 

@@ -627,7 +627,7 @@ observer via `FlowView.on_flow_clear`. The completion's own final write is NOT
 visibility-gated: the authoritative full text lands whether or not the row is
 on screen.
 
-### Textual TUI gutters — state (left) + elapsed time/turn cost (right) (#3283 ①②④)
+### Textual TUI gutters — state (left) + elapsed time/turn tokens (right) (#3283 ①②④)
 
 The Textual TUI's `FlowView` (`interfaces/inline/textual_chat`) paints TWO
 fixed-width columns per row, both driven by flowview's `FlowDecorator`
@@ -652,28 +652,43 @@ second hand-rolled column:
     RUNNING (read off the same start marker the ② live-spinner body uses), or
     the FINAL captured duration once SETTLED (stashed at settle time, before
     the live marker is stripped).
-  - **`ReynTurnUsageGutter` — the row's turn's real TOKENS + USD COST**
-    (`1.9k $0.03`), anchored to the `kind="agent"` reply row: the row that
-    concludes a turn's visible output, one figure per turn rather than the same
-    total repeated on every row of the turn. Read through a keyed lookup over
-    `BudgetTracker`'s bounded per-turn buckets (`BudgetTracker.turn_usage` via
-    `Session.turn_usage`, reached from the status snapshot's `turn_usage_fn`) —
-    the per-turn attribution #3339 captured at the source. **Never derived by
-    differencing cumulative counters.** A row that NAMES a turn
-    (`meta["chain_id"]`) whose figure the runtime does not hold renders `—`,
-    never `0`: a turn that made no LLM call, a turn EVICTED from the bounded
-    buckets, an unknown chain_id, and a REMOTE client (per-turn buckets are
-    session-local and not projected onto the wire — `turn_usage_fn` is `None`
-    there, the same frame-sufficiency boundary as the past-turn log).
+  - **`ReynTurnUsageGutter` — the row's turn's real TOKEN SPLIT**
+    (`↑12k ↓1.8k` — `↑` prompt, `↓` completion), anchored to the `kind="agent"`
+    reply row: the row that concludes a turn's visible output, one figure per
+    turn rather than the same total repeated on every row of the turn. Read
+    through a keyed lookup over `BudgetTracker`'s bounded per-turn buckets
+    (`BudgetTracker.turn_usage` via `Session.turn_usage`, reached from the
+    status snapshot's `turn_usage_fn`) — the per-turn attribution #3339
+    captured at the source, with the prompt/completion split accumulated
+    alongside the total at the call. **Never derived by differencing cumulative
+    counters.** A row that NAMES a turn (`meta["chain_id"]`) whose figure the
+    runtime does not hold renders `—`, never `0`: a turn that made no LLM call,
+    a turn EVICTED from the bounded buckets, an unknown chain_id, and a REMOTE
+    client (per-turn buckets are session-local and not projected onto the wire
+    — `turn_usage_fn` is `None` there, the same frame-sufficiency boundary as
+    the past-turn log). A turn that recorded **0** tokens renders `↑0 ↓0` — a
+    measured fact, kept distinct from `—`.
+
+    The turn's **USD cost is deliberately not drawn here** even though the
+    lookup returns it: tokens answer the question this column exists for, and
+    the narrower column leaves the conversation body room (a real-TTY read at
+    80 columns found a wider gutter left long tables and code cramped).
+    `/cost` and the status line remain the spend surfaces.
 
   A dedicated state chip, the umbrella issue's third candidate, stays dropped:
   it would duplicate the left gutter's existing `EntryState` encoding.
   A row with no data in either family renders an empty cell — no placeholder,
-  no `"0s"`, no `0`-cost. **Both families are live-session-only by decision**:
-  a persisted `ChatMessage` carries no timing field, `project_restored_frames`
-  does not carry `chain_id` onto a restored frame, and the per-turn buckets are
-  in-memory state a restart does not rehydrate — so a restored row's right
-  gutter is blank, never a reconstructed value.
+  no `"0s"`, no `0` tokens. **Both families are live-session-only by
+  decision**: a persisted `ChatMessage` carries no timing field,
+  `project_restored_frames` does not carry `chain_id` onto a restored frame,
+  and the per-turn buckets are in-memory state a restart does not rehydrate —
+  so a restored row's right gutter is blank, never a reconstructed value.
+
+  The column is a fixed width derived in terminal **cells**
+  (`rich.cells.cell_len`, the measure Textual's own compositor applies) from
+  the widest label each family can emit — not from a character count. The two
+  direction markers are East Asian *Ambiguous* width; rich resolves them to one
+  cell, so the derivation and the renderer agree by construction.
 
 ### `reyn.intervention.<kind>`
 

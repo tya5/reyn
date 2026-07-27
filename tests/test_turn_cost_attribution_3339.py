@@ -120,6 +120,10 @@ def test_two_turns_aggregate_separately() -> None:
     assert tracker.latest_turn_usage() == {
         "chain_id": "turn-B",
         "tokens": _CALL_B1.total_tokens,
+        # #3283 ④: the prompt/completion split is carried alongside the total
+        # (the right gutter renders the two separately).
+        "prompt_tokens": _CALL_B1.prompt_tokens,
+        "completion_tokens": _CALL_B1.completion_tokens,
         "cost_usd": _cost(_CALL_B1),
     }
     assert "turn-never" not in snap["turn_tokens"]
@@ -172,10 +176,13 @@ def test_turn_buckets_are_bounded_and_keep_the_newest() -> None:
         assert chain_id not in kept, "an evicted turn is absent, never a 0 total"
     # The newest turn survives and still carries its own real figure.
     newest = turns[-1]
+    _newest_usage = TokenUsage(prompt_tokens=10 + len(turns) - 1, completion_tokens=1)
     assert tracker.latest_turn_usage() == {
         "chain_id": newest,
-        "tokens": 10 + len(turns) - 1 + 1,
-        "cost_usd": _cost(TokenUsage(prompt_tokens=10 + len(turns) - 1, completion_tokens=1)),
+        "tokens": _newest_usage.total_tokens,
+        "prompt_tokens": _newest_usage.prompt_tokens,
+        "completion_tokens": _newest_usage.completion_tokens,
+        "cost_usd": _cost(_newest_usage),
     }
     # Cumulative counters are untouched by eviction — bounding the per-turn
     # view must not lose spend from the totals that enforce caps.
@@ -296,7 +303,12 @@ def test_no_turn_figure_is_published_as_unknown_never_zero(tmp_path, monkeypatch
     tracker = BudgetTracker(CostConfig())
     session = make_session(agent_name="test_agent", budget_tracker=tracker)
 
-    unknown = {"chain_id": None, "tokens": None, "cost_usd": None}
+    # Same KEY SET as the success case, all values None — a consumer can read
+    # any field without first branching on which case it got.
+    unknown = {
+        "chain_id": None, "tokens": None, "prompt_tokens": None,
+        "completion_tokens": None, "cost_usd": None,
+    }
     assert session.last_turn_usage == unknown, "no turn run yet ⇒ no figure"
 
     # This session runs a real turn, so it DOES have a figure...
