@@ -49,8 +49,9 @@ boundary and re-exports the public API):
   ``run_textual_chat`` (wiring, frame pump, blink timer, drawer control).
 - :mod:`~reyn.interfaces.inline.textual_chat.presenter` — ``ReynPresenter`` +
   ``_body_and_background`` (body cell construction).
-- :mod:`~reyn.interfaces.inline.textual_chat.gutter` — ``ReynGutter`` +
-  running-frame constants (state-coloured gutter marker).
+- :mod:`~reyn.interfaces.inline.textual_chat.gutter` — ``ReynGutter`` (LEFT,
+  state-coloured marker) + ``ReynTimingGutter`` (RIGHT, per-entry elapsed
+  time — Phase ④, #3283) + running-frame constants.
 - :mod:`~reyn.interfaces.inline.textual_chat.chrome` — ``Composer``,
   ``StatusLine``, ``MenuBar``, ``_MENU_TABS``, and the pure pane formatters
   (``pane_payload`` / ``status_line_text`` / ``build_drawer_pane``) that derive
@@ -70,7 +71,7 @@ from __future__ import annotations
 
 from .app import TextualChatApp, run_textual_chat
 from .chrome import Composer, MenuBar, StatusLine
-from .gutter import ReynGutter
+from .gutter import ReynGutter, ReynTimingGutter
 from .intervention_panel import InterventionPanel
 from .presenter import ReynPresenter, _body_and_background
 
@@ -80,6 +81,7 @@ __all__ = [
     "MenuBar",
     "ReynGutter",
     "ReynPresenter",
+    "ReynTimingGutter",
     "StatusLine",
     "TextualChatApp",
     "_body_and_background",

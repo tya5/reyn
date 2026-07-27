@@ -1,7 +1,8 @@
-"""State-coloured gutter marker for the Textual chat surface's flowview.
+"""State-coloured LEFT gutter + elapsed-time RIGHT gutter for the Textual chat
+surface's flowview.
 
-:class:`ReynGutter` fills the flowview gutter column with a kind-driven glyph
-(via :func:`_gutter_glyph_color`) whose COLOUR is driven by the entry's
+:class:`ReynGutter` fills the flowview LEFT gutter column with a kind-driven
+glyph (via :func:`_gutter_glyph_color`) whose COLOUR is driven by the entry's
 :class:`~textual_flowview.EntryState` (:data:`_STATE_COLOR`); a ``RUNNING`` entry
 BLINKS through :data:`_RUNNING_FRAMES`, the frame selected from a monotonic clock
 (``int(clock() / frame_period)``). The blink is TIME-based: ``decorate`` reads the
@@ -9,6 +10,12 @@ clock itself, and textual-flowview's own ``FlowView(animation_fps=N)`` re-invoke
 the decorator on each animation tick so the glyph advances with wall time — no
 app-held frame counter, no app-side timer. textual-flowview is never modified or
 forked.
+
+:class:`ReynTimingGutter` (Phase ④, #3283) fills the flowview RIGHT gutter
+column (``right_decorator``/``right_gutter_width``, additive flowview params)
+with a per-entry elapsed-time label — see its own docstring for the content-set
+decision (elapsed only; cost/token and a dedicated state chip were both
+evaluated and dropped) and the live-vs-restore split.
 
 This module is part of the TTY-only ``textual_chat`` package (imported lazily via
 :mod:`reyn.interfaces.repl.client_driver`); its ``textual_flowview`` import never
@@ -30,6 +37,9 @@ from reyn.interfaces.repl.renderer import (
     _CC_WARN,
     _KIND_LINE,
 )
+
+from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
+from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
 
 if TYPE_CHECKING:
     from rich.console import RenderableType
@@ -169,3 +179,79 @@ class ReynGutter:
         else:
             color = _STATE_COLOR.get(state, kind_color)
         return Text(glyph.ljust(width), style=color)
+
+
+def _format_elapsed(seconds: float) -> str:
+    """A compact elapsed-time label — ``Ns`` / ``Nm`` / ``Nh`` — bounded to at
+    most 3 characters of digits+unit so :data:`RIGHT_GUTTER_WIDTH` can stay
+    narrow. Used by :class:`ReynTimingGutter` for both the LIVE value (read off
+    the clock every repaint) and the SETTLED value (a single stashed int)."""
+    secs = max(0, int(seconds))
+    if secs < 100:
+        return f"{secs}s"
+    minutes = secs // 60
+    if minutes < 100:
+        return f"{minutes}m"
+    return f"{minutes // 60}h"
+
+
+#: FlowView RIGHT-gutter column width (Phase ④, #3283) — wide enough for
+#: :func:`_format_elapsed`'s longest label (3 characters, e.g. ``"99s"``)
+#: plus one column of breathing room. Wired into ``app.py``'s
+#: ``FlowView(right_gutter_width=…)`` config.
+RIGHT_GUTTER_WIDTH = 4
+
+
+class ReynTimingGutter:
+    """Fills the flowview RIGHT gutter with a per-entry ELAPSED-TIME label
+    (Phase ④, #3283) — the right-gutter half of the #3283 spec's "left gutter
+    keeps state, right gutter shows per-entry metadata" split. The LEFT gutter
+    (:class:`ReynGutter`) is untouched by this class.
+
+    **Content set — elapsed time only.** The umbrella issue listed turn
+    cost/tokens and a state chip as CANDIDATES; both were evaluated against
+    what data actually exists and dropped (owner-adjudicated on #3283):
+
+    - **Turn cost / tokens**: ``BudgetTracker`` (``reyn.runtime.budget``) is
+      CUMULATIVE ONLY — per-agent / daily / monthly totals. There is no
+      per-turn or per-entry cost/token field anywhere in the runtime.
+      Showing the running total on one arbitrary entry, or a value obtained
+      by dividing it, would be a FABRICATED per-entry number — not shown.
+    - **A dedicated state chip**: the left gutter already fully encodes
+      :class:`~textual_flowview.EntryState` via glyph + colour (#3273's
+      contract); a right-side chip would duplicate that same axis for no
+      new information — not added.
+
+    **Only entries that HAVE elapsed data show it** — the negative control.
+    A ``tool_call_started`` entry shows a label when it is either:
+
+    - currently RUNNING — the LIVE value, read off :data:`_RUNNING_SINCE_KEY`
+      and the injected clock on every repaint (matches the body's live
+      ``elapsed Ns`` indicator, :mod:`.presenter`); or
+    - SETTLED with a captured final duration — :data:`_ELAPSED_SECS_KEY`,
+      stamped once by ``app.py`` at settle time (``_coalesce_tool_result`` /
+      ``_sweep_orphaned_running_tools``).
+
+    Every other entry — user lines, agent replies, interventions, and ANY
+    RESTORED row (elapsed is LIVE-SESSION ONLY BY DECISION — a persisted
+    ``ChatMessage`` carries no timing field at all; see
+    :data:`_ELAPSED_SECS_KEY`'s docstring for why that is a decision, not an
+    oversight) — renders an EMPTY right-gutter cell: no placeholder, no
+    ``"0s"``, nothing carried over from a neighbouring entry.
+
+    ``clock`` is injectable (default :func:`time.monotonic`), mirroring
+    :class:`ReynGutter`, so a test can drive the live value deterministically.
+    """
+
+    def __init__(self, *, clock: "Callable[[], float]" = time.monotonic) -> None:
+        self._clock = clock
+
+    def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
+        meta = entry.item.meta or {}
+        since = meta.get(_RUNNING_SINCE_KEY)
+        if isinstance(since, (int, float)):
+            label = _format_elapsed(self._clock() - since)
+        else:
+            final = meta.get(_ELAPSED_SECS_KEY)
+            label = _format_elapsed(final) if isinstance(final, (int, float)) else ""
+        return Text(label.rjust(width), style=_CC_DIM)

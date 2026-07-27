@@ -4854,9 +4854,19 @@ class Session:
         """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``DurabilityHaltError`` (recording the
         halt reason first, so it surfaces consistently with the process-edge) when durability has
         FAILED persistently — the agent stops accepting operations rather than accept one whose
-        durable record will never land."""
+        durable record will never land.
+
+        #2280: the FIRST time this latches, also emit a ``session_halted`` chat-event (guarded by
+        ``self._halted_reason is None`` so a durability-dead session that keeps rejecting further
+        ops does not re-emit on every subsequent submit) — the observability half of the halt. The
+        raise above is unconditional and IS the safety mechanism (synchronous, on every call, no
+        gating); this emit is purely so an operator surface (TUI status line / plain bottom
+        toolbar) can proactively show the reason instead of only learning it from the exception
+        text on the operator's own next interaction."""
         if self._state_log is not None and self._state_log.durability_failed:
-            self._halted_reason = "durability_failure"
+            if self._halted_reason is None:
+                self._halted_reason = "durability_failure"
+                self._chat_events.emit("session_halted", reason=self._halted_reason)
             raise DurabilityHaltError(
                 f"agent '{self.agent_name}' halted: persistent durability failure — the agent "
                 "stopped accepting operations to avoid silent unbounded loss (in-memory state must "
@@ -5323,8 +5333,13 @@ class Session:
         # processing the next op — in-memory state must not advance into a dead disk (the owner's
         # "no silent unbounded loss"). Returns False = run()'s while-loop exits. Pairs with the
         # _put_inbox accept-edge raise (both read the latched health-signal).
+        # #2280: this is the edge an IDLE operator's halt is discovered on — no exception reaches
+        # anyone here, so emit the same `session_halted` chat-event as the accept-edge (guarded so
+        # it fires once) for the proactive TUI/plain-CUI surface, see `_fail_stop_if_durability_dead`.
         if self._state_log is not None and self._state_log.durability_failed:
-            self._halted_reason = "durability_failure"
+            if self._halted_reason is None:
+                self._halted_reason = "durability_failure"
+                self._chat_events.emit("session_halted", reason=self._halted_reason)
             return False
         # #1800 slice 4a/4b: drain up to the first wake=true trigger.
         # ride_alongs holds wake=false C messages accumulated before the

@@ -353,19 +353,34 @@ async def _handle_run_pipeline(
 
     status = outcome["status"]
     if status == "failed":
+        # #2649: the standard dispatch-error shape ({status:error, error:{kind, message}})
+        # so ``router_loop.feedback()``'s error path renders ``Error (<kind>): <message>``
+        # like every other tool, instead of falling through to the generic canonical
+        # fallback (top-level ``error`` used to be a nested string, not a dict — see
+        # ``dispatcher.py``'s ``_error`` for the vocabulary this ``kind`` follows). No data
+        # lost: ``run_id`` stays reachable for the LLM, folded into the message text (the
+        # dispatch-error envelope carries no third field alongside ``kind``/``message``).
         return {
             "status": "error",
-            "data": {
-                "error": f"pipeline {name!r} failed: {outcome.get('error')}",
-                "run_id": outcome["run_id"],
+            "error": {
+                "kind": "pipeline_failed",
+                "message": (
+                    f"pipeline {name!r} failed (run_id: {outcome['run_id']}): "
+                    f"{outcome.get('error')}"
+                ),
             },
         }
     if status == "cancelled":
+        # #2649: distinguished from ``failed`` by ``kind`` (not by a separate top-level
+        # ``status`` value anymore) — same standard shape, same reasoning as above.
         return {
-            "status": "cancelled",
-            "data": {
-                "run_id": outcome["run_id"],
-                "error": outcome.get("error"),
+            "status": "error",
+            "error": {
+                "kind": "pipeline_cancelled",
+                "message": (
+                    f"pipeline {name!r} cancelled (run_id: {outcome['run_id']}): "
+                    f"{outcome.get('error')}"
+                ),
             },
         }
     if status == "running_async":
@@ -786,17 +801,28 @@ async def _handle_run_pipeline_inline(
 
     status = outcome["status"]
     if status == "failed":
+        # #2649: standard dispatch-error shape — see the ``run_pipeline`` sync handler
+        # above for the full rationale (kind vocabulary, run_id-in-message reachability).
         return {
             "status": "error",
-            "data": {
-                "error": f"inline pipeline failed: {outcome.get('error')}",
-                "run_id": outcome["run_id"],
+            "error": {
+                "kind": "pipeline_failed",
+                "message": (
+                    f"inline pipeline failed (run_id: {outcome['run_id']}): "
+                    f"{outcome.get('error')}"
+                ),
             },
         }
     if status == "cancelled":
         return {
-            "status": "cancelled",
-            "data": {"run_id": outcome["run_id"], "error": outcome.get("error")},
+            "status": "error",
+            "error": {
+                "kind": "pipeline_cancelled",
+                "message": (
+                    f"inline pipeline cancelled (run_id: {outcome['run_id']}): "
+                    f"{outcome.get('error')}"
+                ),
+            },
         }
     if status == "running_async":
         return {"status": "started",

@@ -117,6 +117,14 @@ below it. There's no separate panel to toggle; the status bar's chips (`model`,
 `agent`, `task`, `cost`, `ctx`, and a `more` chip for `tool`/`mcp`/`skill`/`pipe`/
 `hook`/`cron`) are always visible and drill down in place.
 
+If the agent halts on a persistent durability failure (extremely rare — a dead
+disk or an unwritable state directory), the ALWAYS-VISIBLE status bar shows a
+`⚠ HALTED — <reason>` banner ahead of the usual chips the moment it happens, so
+you learn it even if you're not actively typing. The plain `--cui` renderer
+shows the same message in its bottom toolbar. This is a notification only —
+the agent has already stopped accepting new operations synchronously, whether
+or not you see the banner.
+
 ### Input
 
 | Key | Action |
