@@ -65,7 +65,7 @@ from .gutter import (
     _RUNNING_FRAME_PERIOD,
     RIGHT_GUTTER_WIDTH,
     ReynGutter,
-    ReynTimingGutter,
+    ReynRightGutter,
 )
 from .intervention_panel import InterventionPanel
 from .presenter import (
@@ -561,6 +561,20 @@ class TextualChatApp(App):
         # session switch, so a chain_id can never leak past its turn's
         # completion.
         self._streaming_replies: "dict[str, _StreamingReply]" = {}
+        # #3283 ④: the status snapshot's keyed per-turn token/cost lookup
+        # (``turn_usage_fn`` = ``Session.turn_usage``), cached off the snapshot
+        # :meth:`_refresh_live_chrome` already reads once per arriving frame.
+        # The right gutter calls it once PER RENDERED ROW, so it must not build
+        # a snapshot itself; and it must not hold the bound method forever
+        # either (a session SWITCH rebinds it), hence re-cached per frame from
+        # the same read rather than resolved once at mount. ``None`` until the
+        # first frame, and permanently ``None`` on a remote client (per-turn
+        # buckets are session-local, not on the wire) — the gutter renders
+        # ``—`` for a row whose turn it cannot price, never a fabricated 0.
+        self._turn_usage_fn: "Callable[[str], dict | None] | None" = None
+        # One-shot latch so a raising lookup is logged once, not once per
+        # rendered row per repaint (see :meth:`_turn_usage`).
+        self._turn_usage_lookup_failed = False
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -572,10 +586,14 @@ class TextualChatApp(App):
             decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
             gutter_width=_GUTTER_WIDTH,
             # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
-            # (tool rows only — see ReynTimingGutter's docstring for the
-            # content-set decision). additive flowview params; the LEFT
-            # gutter/state contract above is untouched.
-            right_decorator=ReynTimingGutter(clock=self._clock),
+            # (tool rows) AND the row's turn's real prompt/completion token
+            # split (agent reply rows, via the keyed per-turn lookup) — see
+            # ReynRightGutter and its two halves for the content-set decisions.
+            # additive flowview params; the LEFT gutter/state contract above is
+            # untouched.
+            right_decorator=ReynRightGutter(
+                clock=self._clock, usage_lookup=self._turn_usage
+            ),
             right_gutter_width=RIGHT_GUTTER_WIDTH,
             spacing=1,
             anchor=Anchor.STICKY_BOTTOM,
@@ -627,6 +645,39 @@ class TextualChatApp(App):
             return self._read_model.snapshot(self._config)
         except Exception:
             logger.exception("textual chat: status snapshot read failed")
+            return None
+
+    def _turn_usage(self, chain_id: str) -> "dict | None":
+        """The real per-turn figures for ``chain_id``, or ``None`` when there
+        is no figure — the right gutter's per-row lookup (#3283 ④). The gutter
+        draws the prompt/completion token split; the dict also carries the
+        turn's USD cost for any other caller.
+
+        Delegates to the snapshot's ``turn_usage_fn``
+        (:attr:`_turn_usage_fn` = ``Session.turn_usage``, keyed over
+        ``BudgetTracker``'s bounded per-turn buckets). ``None`` covers every
+        no-figure case uniformly — no read model / pre-first-frame, a remote
+        client (per-turn buckets are session-local), a turn that recorded no
+        LLM spend, and a turn EVICTED from the buckets — and the gutter renders
+        ``—`` for all of them. Never a fabricated ``0``, and never a figure
+        derived from cumulative counters.
+
+        A raising lookup is logged ONCE per app run, not once per row per
+        repaint: this runs on the render path, so an unconditional
+        ``logger.exception`` here would drown the log at frame rate for a
+        single persistent fault."""
+        fn = self._turn_usage_fn
+        if fn is None:
+            return None
+        try:
+            return fn(chain_id)
+        except Exception:
+            if not self._turn_usage_lookup_failed:
+                self._turn_usage_lookup_failed = True
+                logger.exception(
+                    "textual chat: per-turn usage lookup failed "
+                    "(right gutter will show '—'; logged once)"
+                )
             return None
 
     def _app_binding_help(self) -> "list[tuple[str, str]]":
@@ -1910,6 +1961,10 @@ class TextualChatApp(App):
         One snapshot read feeds both refreshes, so a frame costs one read
         regardless of whether the drawer is open."""
         snap = self._snapshot()
+        # #3283 ④: re-cache the keyed per-turn lookup off the SAME snapshot read
+        # (see :attr:`_turn_usage_fn`) — the right gutter cannot afford a
+        # snapshot per rendered row.
+        self._turn_usage_fn = (snap or {}).get("turn_usage_fn")
         self._refresh_status(snap)
         try:
             drawer = self.query_one("#drawer", ContentSwitcher)

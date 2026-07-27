@@ -242,6 +242,12 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "ctx_recent_usage": (0, 0),
         "ctx_source": "remote",
         "ctx_compaction_status_fn": None,
+        # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read
+        # (the tracker's per-turn buckets are process-local, in-memory, and not
+        # projected onto the AG-UI wire) → None for remote, and the right
+        # gutter renders "—" rather than a fabricated figure. Same
+        # frame-sufficiency boundary as ``conversation_history`` above.
+        "turn_usage_fn": None,
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],

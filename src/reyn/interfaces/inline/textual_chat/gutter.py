@@ -1,5 +1,5 @@
-"""State-coloured LEFT gutter + elapsed-time RIGHT gutter for the Textual chat
-surface's flowview.
+"""State-coloured LEFT gutter + elapsed/turn-token RIGHT gutter for the Textual
+chat surface's flowview.
 
 :class:`ReynGutter` fills the flowview LEFT gutter column with a kind-driven
 glyph (via :func:`_gutter_glyph_color`) whose COLOUR is driven by the entry's
@@ -11,11 +11,25 @@ the decorator on each animation tick so the glyph advances with wall time — no
 app-held frame counter, no app-side timer. textual-flowview is never modified or
 forked.
 
-:class:`ReynTimingGutter` (Phase ④, #3283) fills the flowview RIGHT gutter
-column (``right_decorator``/``right_gutter_width``, additive flowview params)
-with a per-entry elapsed-time label — see its own docstring for the content-set
-decision (elapsed only; cost/token and a dedicated state chip were both
-evaluated and dropped) and the live-vs-restore split.
+:class:`ReynRightGutter` (Phase ④, #3283) fills the flowview RIGHT gutter column
+(``right_decorator``/``right_gutter_width``, additive flowview params). It is a
+composite of two single-purpose label producers, since flowview takes exactly one
+right decorator:
+
+- :class:`ReynTimingGutter` — per-entry ELAPSED time (live off the clock while a
+  tool row runs, the captured final value once it settles);
+- :class:`ReynTurnUsageGutter` — the row's turn's real TOKEN COUNT, read through
+  an injected keyed lookup over ``BudgetTracker``'s per-turn buckets
+  (#3339/#3342). Unknown or evicted turns render :data:`TURN_USAGE_UNKNOWN`
+  (``"—"``), kept distinct from a real ``0``, and never a figure derived by
+  differencing cumulative counters. The lookup also returns the turn's USD cost;
+  this column deliberately does not display it (owner call — see the class).
+
+See each class's docstring for its content-set decision and its live-vs-restore
+posture (neither elapsed nor tokens survive a restart — both render honestly
+absent rather than reconstructed). A dedicated state chip, the umbrella issue's
+third right-gutter candidate, stays dropped: the LEFT gutter already encodes
+``EntryState``.
 
 This module is part of the TTY-only ``textual_chat`` package (imported lazily via
 :mod:`reyn.interfaces.repl.client_driver`); its ``textual_flowview`` import never
@@ -26,6 +40,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Callable
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual_flowview import EntryState
 
@@ -195,11 +210,101 @@ def _format_elapsed(seconds: float) -> str:
     return f"{minutes // 60}h"
 
 
-#: FlowView RIGHT-gutter column width (Phase ④, #3283) — wide enough for
-#: :func:`_format_elapsed`'s longest label (3 characters, e.g. ``"99s"``)
-#: plus one column of breathing room. Wired into ``app.py``'s
-#: ``FlowView(right_gutter_width=…)`` config.
-RIGHT_GUTTER_WIDTH = 4
+#: Rendered when the row NAMES a turn (its display frame carries a
+#: ``chain_id``) but the runtime holds NO token figure for that turn — it
+#: recorded no LLM call, or its bucket has been evicted from
+#: ``BudgetTracker``'s bounded per-turn buckets (``TURN_BUCKET_CAP``), or this
+#: is a remote client where the per-turn buckets are not on the wire at all.
+#: Explicitly NOT ``"0"`` — a turn CAN legitimately record 0 tokens (a provider
+#: that returned no usage), and that is a real figure this must stay distinct
+#: from. Explicitly not an empty cell either, which on a row that names a turn
+#: would read as "this turn used nothing".
+TURN_USAGE_UNKNOWN = "—"
+
+#: The one display-frame kind the per-turn token figure is anchored to — the
+#: agent reply, i.e. the row that CONCLUDES a turn's visible output. See
+#: :class:`ReynTurnUsageGutter` for why the figure is anchored rather than
+#: repeated on every row of the turn.
+TURN_ANCHOR_KIND = "agent"
+
+#: Direction markers for the per-turn token split — ``↑`` what the turn SENT
+#: (prompt) and ``↓`` what it generated (completion), e.g. ``"↑12k ↓1.8k"``.
+#:
+#: ★ Both are East Asian **Ambiguous** width (``unicodedata.east_asian_width``
+#: → ``"A"``), so their column count is not universally fixed. MEASURED, not
+#: assumed: ``rich.cells.cell_len`` resolves ambiguous to **1**, and that is
+#: the SAME function Textual's compositor measures this strip with — so the
+#: column arithmetic here and the renderer's agree by construction, and
+#: :data:`RIGHT_GUTTER_WIDTH` derived via :func:`_cell_pad_left` cannot
+#: overflow in process.
+#:
+#: They introduce no NEW class of risk: :data:`TURN_USAGE_UNKNOWN` (``—``,
+#: U+2014) and the LEFT gutter's ``●``/``○``/``◆`` are ambiguous-width too and
+#: have shipped since #3273. The residual — a terminal whose font/locale
+#: renders ambiguous-width as 2 columns — is a property of the terminal, not
+#: observable from inside this process, and applies equally to those existing
+#: glyphs.
+PROMPT_TOKENS_MARKER = "↑"
+COMPLETION_TOKENS_MARKER = "↓"
+
+
+def _cell_pad_left(label: str, width: int) -> str:
+    """Right-align ``label`` in a ``width``-CELL column.
+
+    ``str.rjust`` pads by CHARACTER count; a gutter column is measured in
+    terminal CELLS, and the two differ for any double-width glyph. Padding on
+    :func:`rich.cells.cell_len` — the same measurement Textual's compositor
+    applies to the resulting strip — keeps this cell correct by construction
+    rather than by the coincidence that today's vocabulary happens to be all
+    one-cell. Over-long labels are returned unpadded (flowview's own
+    ``adjust_cell_length`` clips them; they never steal body columns)."""
+    return " " * max(0, width - cell_len(label)) + label
+
+
+def _format_tokens(tokens: int) -> str:
+    """A compact token count — ``"812"`` / ``"1.9k"`` / ``"120k"`` / ``"1.2M"``
+    — bounded to 4 characters for any turn under a billion tokens, so
+    :data:`RIGHT_GUTTER_WIDTH` can be computed rather than guessed.
+
+    Each band's upper edge is the value that would ROUND into the next band
+    (9_950 → ``"9.9k"``, not ``"10.0k"``), so the 4-character bound holds at the
+    boundaries too rather than only in the middle of each band."""
+    n = max(0, int(tokens))
+    if n < 1_000:
+        return str(n)
+    if n < 9_950:
+        return f"{n / 1_000:.1f}k"
+    if n < 999_500:
+        return f"{round(n / 1_000)}k"
+    if n < 9_950_000:
+        return f"{n / 1_000_000:.1f}M"
+    return f"{round(n / 1_000_000)}M"
+
+
+#: FlowView RIGHT-gutter column width (Phase ④, #3283) — wired into ``app.py``'s
+#: ``FlowView(right_gutter_width=…)`` config. COMPUTED in terminal CELLS
+#: (:func:`rich.cells.cell_len`, the renderer's own measure) from the widest
+#: label of each family this column renders, not guessed:
+#:
+#: - elapsed (:func:`_format_elapsed`) — 3 (``"99s"``);
+#: - per-turn tokens (:class:`ReynTurnUsageGutter`) — the two-figure split
+#:   ``↑<prompt> ↓<completion>``: marker (1) + :func:`_format_tokens` (4) +
+#:   space (1) + marker (1) + :func:`_format_tokens` (4) = **11**
+#:   (e.g. ``"↑120k ↓120k"``). Both markers measure 1 cell — see
+#:   :data:`PROMPT_TOKENS_MARKER` for the ambiguous-width measurement.
+#:
+#: The two families are mutually exclusive on any one row by construction
+#: (elapsed lives on ``tool_call_started`` rows, the token figure on
+#: :data:`TURN_ANCHOR_KIND` rows), so the widest cell is ``max(3, 11) = 11``,
+#: not their sum — 11 + one column of breathing room = 12. If that exclusivity
+#: ever stopped holding, the combined label would simply be clipped by
+#: flowview's own fixed-width gutter — never allowed to steal body columns.
+#:
+#: ★ Bound re-justified against #3337's body-width floor gate at THIS width
+#: (``test_right_gutter_leaves_the_body_at_least_half_the_terminal_width``):
+#: on an 80-column terminal the body keeps ``80 - 2 (left gutter) - 12 = 66``
+#: columns against a 40-column floor.
+RIGHT_GUTTER_WIDTH = 12
 
 
 class ReynTimingGutter:
@@ -208,15 +313,12 @@ class ReynTimingGutter:
     keeps state, right gutter shows per-entry metadata" split. The LEFT gutter
     (:class:`ReynGutter`) is untouched by this class.
 
-    **Content set — elapsed time only.** The umbrella issue listed turn
-    cost/tokens and a state chip as CANDIDATES; both were evaluated against
-    what data actually exists and dropped (owner-adjudicated on #3283):
+    **This class contributes the ELAPSED half only.** The per-turn token half
+    is :class:`ReynTurnUsageGutter`, and :class:`ReynRightGutter` is the
+    decorator actually wired into ``FlowView(right_decorator=…)`` — it joins
+    both labels into the one shared column. Of the umbrella issue's three
+    right-gutter CANDIDATES, that leaves one still dropped:
 
-    - **Turn cost / tokens**: ``BudgetTracker`` (``reyn.runtime.budget``) is
-      CUMULATIVE ONLY — per-agent / daily / monthly totals. There is no
-      per-turn or per-entry cost/token field anywhere in the runtime.
-      Showing the running total on one arbitrary entry, or a value obtained
-      by dividing it, would be a FABRICATED per-entry number — not shown.
     - **A dedicated state chip**: the left gutter already fully encodes
       :class:`~textual_flowview.EntryState` via glyph + colour (#3273's
       contract); a right-side chip would duplicate that same axis for no
@@ -246,12 +348,161 @@ class ReynTimingGutter:
     def __init__(self, *, clock: "Callable[[], float]" = time.monotonic) -> None:
         self._clock = clock
 
-    def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
+    def label(self, entry: "Entry[OutboxMessage]") -> str:
+        """This entry's elapsed-time label, or ``""`` when it has no timing
+        data. The composable half of :meth:`decorate` — :class:`ReynRightGutter`
+        joins this with :meth:`ReynTurnUsageGutter.label`."""
         meta = entry.item.meta or {}
         since = meta.get(_RUNNING_SINCE_KEY)
         if isinstance(since, (int, float)):
-            label = _format_elapsed(self._clock() - since)
-        else:
-            final = meta.get(_ELAPSED_SECS_KEY)
-            label = _format_elapsed(final) if isinstance(final, (int, float)) else ""
-        return Text(label.rjust(width), style=_CC_DIM)
+            return _format_elapsed(self._clock() - since)
+        final = meta.get(_ELAPSED_SECS_KEY)
+        return _format_elapsed(final) if isinstance(final, (int, float)) else ""
+
+    def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
+        return Text(_cell_pad_left(self.label(entry), width), style=_CC_DIM)
+
+
+class ReynTurnUsageGutter:
+    """Fills the flowview RIGHT gutter with a per-entry PER-TURN TOKEN COUNT
+    (Phase ④ remainder, #3283) — the half #3337 had to leave out because the
+    data did not exist yet.
+
+    **The data now exists, and only because it was captured at the source.**
+    #3339/#3342 keyed every LLM call's real tokens+cost by its turn's
+    ``chain_id`` (``BudgetTracker``'s bounded per-turn buckets). This class
+    reads those buckets through an injected ``usage_lookup`` —
+    ``(chain_id) -> {"chain_id", "tokens", "cost_usd"} | None``, in production
+    ``Session.turn_usage`` reached via the status snapshot's ``turn_usage_fn``.
+    Nothing here derives a figure by differencing cumulative counters; that was
+    rejected repeatedly across this arc and there is no code path for it.
+
+    **Tokens only — the USD cost is deliberately NOT displayed** (owner call).
+    Tokens alone answer the question this column exists for, and dropping the
+    cost figure leaves the conversation body room: a real-TTY read at 80
+    columns found a wider gutter left long tables and code visibly cramped. The
+    lookup still RETURNS ``cost_usd`` and every caller may use it — this is a
+    presentation decision made here, not a narrowing of the data. ``/cost`` and
+    the status line remain the surfaces for spend.
+
+    **Prompt and completion are shown separately**, not as one total:
+    ``↑<prompt> ↓<completion>`` (:data:`PROMPT_TOKENS_MARKER` /
+    :data:`COMPLETION_TOKENS_MARKER`) — what the turn SENT versus what it
+    generated, which a single total cannot express and which move for entirely
+    different reasons (a growing context vs a long reply). The split is carried
+    all the way from ``TokenUsage`` at the call site through
+    ``BudgetTracker``'s per-turn buckets; it is never re-derived here.
+
+    **Anchored to one row per turn, not repeated on every row.** The figure is
+    a TURN total, so it is rendered on the row that concludes the turn's visible
+    output — the :data:`TURN_ANCHOR_KIND` (``"agent"``) reply. Painting the same
+    total onto the turn's user line and each of its tool rows would show one
+    number N times in a column whose every other label (elapsed) IS per-row,
+    which reads as N separate per-row figures. One turn, one figure.
+
+    **Three distinct renders, and they are distinct on purpose:**
+
+    - the anchor row's turn HAS a figure → its token split (``"↑12k ↓1.8k"``).
+      Including a REAL zero (``"↑0 ↓0"``): a turn whose calls reported no usage
+      genuinely used 0 tokens, and that is a fact, not an absence;
+    - the anchor row NAMES a turn (``meta["chain_id"]``) but the runtime holds
+      no figure for it → :data:`TURN_USAGE_UNKNOWN` (``"—"``). Covers a turn
+      that made no LLM call, a turn EVICTED from the bounded buckets
+      (``TURN_BUCKET_CAP`` — an old row scrolled far back), an unknown
+      chain_id, and a REMOTE client (the buckets are session-local and not on
+      the AG-UI wire). Never ``"0"`` — that is the real-zero figure above, and
+      collapsing the two would report an unmeasured turn as a measured free
+      one;
+    - the row names NO turn at all → an EMPTY cell. There is no turn to report
+      on, so there is nothing unknown about it either. This is where every
+      RESTORED row lands: ``restore.project_restored_frames`` re-projects a
+      persisted ``ChatMessage`` and does not carry ``chain_id`` onto the frame,
+      and the per-turn buckets are in-memory live-session state that a restart
+      does not rehydrate — so a restored conversation shows no token figures
+      rather than reconstructed ones. Same live-vs-restore posture #3337 landed
+      for elapsed.
+
+    ``usage_lookup=None`` (no read model / pre-session / plain fallback) makes
+    every row's lookup unknown, so a row that names a turn still renders ``—``
+    rather than silently nothing."""
+
+    def __init__(
+        self,
+        *,
+        usage_lookup: "Callable[[str], dict | None] | None" = None,
+    ) -> None:
+        self._usage_lookup = usage_lookup
+
+    def label(self, entry: "Entry[OutboxMessage]") -> str:
+        """This entry's per-turn token label: the count, ``"—"`` when the row
+        names a turn with no known figure, or ``""`` when it names no turn.
+
+        Only ``tokens`` is read off the looked-up dict; ``cost_usd`` is present
+        and valid but not displayed (see the class docstring). A missing or
+        non-numeric ``tokens`` is treated as "no figure" rather than coerced.
+
+        A lookup that raises is treated exactly like "no figure" — this runs on
+        every gutter repaint and must never be able to kill a render."""
+        if entry.item.kind != TURN_ANCHOR_KIND:
+            return ""
+        chain_id = (entry.item.meta or {}).get("chain_id")
+        if not isinstance(chain_id, str) or not chain_id:
+            return ""
+        usage: "dict | None" = None
+        if self._usage_lookup is not None:
+            try:
+                usage = self._usage_lookup(chain_id)
+            except Exception:
+                usage = None
+        if not usage:
+            return TURN_USAGE_UNKNOWN
+        prompt = usage.get("prompt_tokens")
+        completion = usage.get("completion_tokens")
+        if not isinstance(prompt, (int, float)) or not isinstance(
+            completion, (int, float)
+        ):
+            return TURN_USAGE_UNKNOWN
+        return (
+            f"{PROMPT_TOKENS_MARKER}{_format_tokens(int(prompt))} "
+            f"{COMPLETION_TOKENS_MARKER}{_format_tokens(int(completion))}"
+        )
+
+    def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
+        return Text(_cell_pad_left(self.label(entry), width), style=_CC_DIM)
+
+
+class ReynRightGutter:
+    """The RIGHT-gutter decorator actually wired into
+    ``FlowView(right_decorator=…)`` — one column, two label families.
+
+    flowview takes a single right decorator, and Phase ④ has two things to say
+    about a row: how long it ran (:class:`ReynTimingGutter`) and how many tokens
+    its turn used (:class:`ReynTurnUsageGutter`). Rather than fold both into one class,
+    each keeps its own ``label`` and this composes them, joining whatever is
+    non-empty with a single space and right-aligning the result. In practice
+    exactly one of the two ever speaks for a given row (elapsed on
+    ``tool_call_started``, the turn figure on :data:`TURN_ANCHOR_KIND`), which
+    is what lets :data:`RIGHT_GUTTER_WIDTH` be the widest single label rather
+    than the sum.
+
+    ``clock`` and ``usage_lookup`` are passed straight through to the two halves
+    (see their docstrings); both are injectable so a test can drive the live
+    elapsed value and the per-turn lookup deterministically with real
+    collaborators."""
+
+    def __init__(
+        self,
+        *,
+        clock: "Callable[[], float]" = time.monotonic,
+        usage_lookup: "Callable[[str], dict | None] | None" = None,
+    ) -> None:
+        self._timing = ReynTimingGutter(clock=clock)
+        self._turn_usage = ReynTurnUsageGutter(usage_lookup=usage_lookup)
+
+    def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
+        parts = [
+            label
+            for label in (self._timing.label(entry), self._turn_usage.label(entry))
+            if label
+        ]
+        return Text(_cell_pad_left(" ".join(parts), width), style=_CC_DIM)

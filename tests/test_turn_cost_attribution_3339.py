@@ -16,8 +16,11 @@ The invariants pinned here:
      being recorded in the cumulative counters (so the negative control is not
      vacuously satisfied by "nothing was recorded at all").
   3. The live per-turn buckets stay BOUNDED: the oldest turns are evicted and
-     read as absent (never as a zero total), while the newest — the only one
-     anything reads — survives, and the cumulative counters are untouched.
+     read as absent (never as a zero total), while the newest survives, and the
+     cumulative counters are untouched. (#3283 ④ added a KEYED reader for older
+     turns, so eviction is now observable to a real consumer — answered as
+     "unknown", never as a 0; its own gates live in
+     ``test_textual_chat_phase4_turn_cost_gutter_3283.py``.)
   4. The ledger row carries the turn key, witnessed through the real append
      path; a row written for a turnless call, and a pre-#3339 row, both stay
      valid.
@@ -117,6 +120,10 @@ def test_two_turns_aggregate_separately() -> None:
     assert tracker.latest_turn_usage() == {
         "chain_id": "turn-B",
         "tokens": _CALL_B1.total_tokens,
+        # #3283 ④: the prompt/completion split is carried alongside the total
+        # (the right gutter renders the two separately).
+        "prompt_tokens": _CALL_B1.prompt_tokens,
+        "completion_tokens": _CALL_B1.completion_tokens,
         "cost_usd": _cost(_CALL_B1),
     }
     assert "turn-never" not in snap["turn_tokens"]
@@ -150,7 +157,7 @@ def test_call_outside_any_turn_contaminates_no_turn_bucket() -> None:
 def test_turn_buckets_are_bounded_and_keep_the_newest() -> None:
     """Tier 2: the per-turn buckets are bounded — a long session evicts the
     OLDEST turns rather than accumulating one bucket per turn forever, and the
-    turn that just recorded (the only one anything reads) is never the victim.
+    turn that just recorded is never the victim.
     An evicted turn is ABSENT, not a zero total."""
     tracker = BudgetTracker(CostConfig())
     turns = [f"turn-{i:03d}" for i in range(TURN_BUCKET_CAP + 3)]
@@ -169,10 +176,13 @@ def test_turn_buckets_are_bounded_and_keep_the_newest() -> None:
         assert chain_id not in kept, "an evicted turn is absent, never a 0 total"
     # The newest turn survives and still carries its own real figure.
     newest = turns[-1]
+    _newest_usage = TokenUsage(prompt_tokens=10 + len(turns) - 1, completion_tokens=1)
     assert tracker.latest_turn_usage() == {
         "chain_id": newest,
-        "tokens": 10 + len(turns) - 1 + 1,
-        "cost_usd": _cost(TokenUsage(prompt_tokens=10 + len(turns) - 1, completion_tokens=1)),
+        "tokens": _newest_usage.total_tokens,
+        "prompt_tokens": _newest_usage.prompt_tokens,
+        "completion_tokens": _newest_usage.completion_tokens,
+        "cost_usd": _cost(_newest_usage),
     }
     # Cumulative counters are untouched by eviction — bounding the per-turn
     # view must not lose spend from the totals that enforce caps.
@@ -280,26 +290,57 @@ def test_no_turn_figure_is_published_as_unknown_never_zero(tmp_path, monkeypatch
     tokens/cost are None — never a placeholder 0, which a renderer could not
     tell apart from a turn that genuinely cost nothing.
 
-    Both no-figure cases go through the real mechanism: a session that has not
-    run a turn, and a session whose last turn is no longer the process-shared
-    tracker's latest (the everyday case — one tracker, several sessions)."""
+    The no-figure case goes through the real mechanism: a session that has not
+    run a turn at all.
+
+    #3283 ④ narrowed which cases these are. ``last_turn_usage`` now reads the
+    KEYED ``BudgetTracker.turn_usage(chain_id)`` rather than "the latest turn
+    process-wide", so another session's turn recording spend against the shared
+    tracker no longer hides this session's own figure — asserted below, because
+    that used to be an everyday unknown and is now a known."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(litellm, "acompletion", _scripted_reply(1500, 250))
     tracker = BudgetTracker(CostConfig())
     session = make_session(agent_name="test_agent", budget_tracker=tracker)
 
-    unknown = {"chain_id": None, "tokens": None, "cost_usd": None}
+    # Same KEY SET as the success case, all values None — a consumer can read
+    # any field without first branching on which case it got.
+    unknown = {
+        "chain_id": None, "tokens": None, "prompt_tokens": None,
+        "completion_tokens": None, "cost_usd": None,
+    }
     assert session.last_turn_usage == unknown, "no turn run yet ⇒ no figure"
 
     # This session runs a real turn, so it DOES have a figure...
     asyncio.run(session._handle_user_message("hello", chain_id="turn-mine"))
     assert session.last_turn_usage["tokens"] == 1750
 
-    # ...until some other session's turn records spend against the shared
-    # tracker and becomes the latest. This session's own figure is now
-    # unreachable: it must read as unknown — never 0, and never the other
-    # turn's number.
+    # ...and it KEEPS it when some other session's turn becomes the tracker's
+    # latest: the keyed read asks about this session's own chain_id, so it can
+    # neither lose the figure nor return the other turn's number.
     tracker.record_llm(
         model=_MODEL, agent="beta", usage=_CALL_B1, chain_id="turn-elsewhere",
+    )
+    assert tracker.latest_turn_usage()["chain_id"] == "turn-elsewhere", (
+        "fixture must actually move 'latest' off this session, or the "
+        "assertion below is vacuous"
+    )
+    still_mine = session.last_turn_usage
+    assert still_mine["chain_id"] == "turn-mine"
+    assert still_mine["tokens"] == 1750
+    assert still_mine["cost_usd"] is not None, (
+        "the cost must be a real figure (this fixture's model is unpriced, so "
+        "0.0 is correct) — never the None that means 'no figure'"
+    )
+
+    # The remaining unknown leg, through the real bounding mechanism: once this
+    # session's own turn is EVICTED from the bounded buckets, the figure is gone
+    # and must read as unknown — never as a 0.
+    for i in range(TURN_BUCKET_CAP + 1):
+        tracker.record_llm(
+            model=_MODEL, agent="beta", usage=_CALL_B1, chain_id=f"turn-filler-{i}",
+        )
+    assert tracker.turn_usage("turn-mine") is None, (
+        "fixture must actually evict this session's turn"
     )
     assert session.last_turn_usage == unknown
