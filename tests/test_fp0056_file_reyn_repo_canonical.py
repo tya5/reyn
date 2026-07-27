@@ -1,11 +1,18 @@
 """Tier 1: FP-0056 PR-H — canonical mappers for the file family, reyn_repo dev-reads, compact.
 
 The dogfood incident (2026-07-09): a doc read via ``reyn_repo__read`` was offloaded as a whole-dict
-``structured`` attachment (a 600-char JSON-dict preview) instead of the readable text body, because
-``_MAPPERS`` had no mapper for ``kind:"file"`` (unmapped) or the kind-less ``reyn_repo_*`` results — both
-took the whole-dict fallback. These tests pin the fix: the readable body is the ``text`` stream, never a
-whole-dict structured blob. The incident regression test is RED against pre-hotfix code (with the mappers
-removed, ``to_canonical`` falls back to a whole-dict structured attachment and ``text`` is empty).
+``structured`` attachment (a 600-char JSON-dict preview) instead of the readable text body, because no
+mapper covered the ``file`` results (unmapped) or the kind-less ``reyn_repo_*`` results — both took the
+whole-dict fallback. These tests pin the fix: the readable body is the ``text`` stream, never a whole-dict
+structured blob.
+
+Dispatch is on the **invoked identity** (op kind / router tool name), against the ``_DECLARATIONS`` table
+the two registration seams populate — not on ``result["kind"]``, and not the free-floating ``_MAPPERS``
+dict FP-0056 PR-F1 removed. See ``_registered_producers`` below for the precondition that implies (#3346).
+
+These tests are RED against the incident's defect, measured rather than asserted: with the ``file`` /
+``reyn_repo`` ToolDefinitions left ``canonical=UNDECLARED``, 8 of the 17 fail; with the ``reyn_repo``
+mapper's ``read`` branch regressed to a whole-dict blob, the 3 read-path tests fail.
 
 Mirrors the tool-result arc (#2425) mapper-contract style: real result dicts (the shapes the producers
 actually emit), no mocks, presence/absence + substring assertions (no Tier-4 formatting pins).
@@ -14,10 +21,44 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.core.offload.canonical import to_canonical
+from reyn.core.offload.canonical import canonical_declaration, to_canonical
 from reyn.core.offload.seam import build_offload_body, render_tool_result
-from reyn.tools.reyn_repo import _handle_read
+from reyn.tools import get_default_registry
 from reyn.tools.types import ToolContext
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The precondition, supplied explicitly (#3346)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ``to_canonical`` dispatches on the INVOKED IDENTITY (op kind / router tool name), resolved against
+# the declaration table that the two registration seams populate: ``op_runtime.register(kind, …,
+# canonical=…)`` at op-module import, and ``ToolRegistry.register`` when the router registry is built.
+# Neither happens as a side effect of importing this module, so every ``to_canonical(..., source=…)``
+# call below has a precondition: that source's producer must have been REGISTERED first.
+#
+# Until #3346 this file supplied neither half, and passed only when a sibling test module happened to
+# run first (``test_fp0056_canonical_coverage_gate`` builds the default registry at import). Run alone
+# it was 8 failed / 9 passed — deterministically, since an unregistered source resolves to the lossless
+# whole-dict fallback (``text=""``), which is exactly the incident shape these tests exist to forbid.
+# So the ordering luck was not merely making them green: it was the difference between the assertions
+# discriminating and them failing to even reach the mapper.
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _registered_producers() -> None:
+    """Register the producers whose canonical declarations this module dispatches on — the real
+    registration seams, no stand-ins.
+
+    - importing :mod:`reyn.core.op_runtime` declares the OP kinds (``file``, ``compact``);
+    - :func:`get_default_registry` builds the REAL default ``ToolRegistry``, whose ``register`` records
+      each ToolDefinition's ``canonical`` declaration under its tool name (``read_file``,
+      ``reyn_repo_read`` / ``_list`` / ``_grep`` / ``_glob``).
+
+    Both are idempotent for an identical re-declaration, so this is safe alongside any other module
+    that builds a registry in the same session."""
+    import reyn.core.op_runtime  # noqa: F401  # import-for-registration: declares the OP kinds
+
+    get_default_registry()
 
 
 def _fake_save(value, **_kw) -> dict:
@@ -60,9 +101,10 @@ def test_incident_file_read_offloads_clean_text_not_whole_dict_blob():
 
 
 def test_incident_reyn_repo_read_offloads_clean_text_not_whole_dict_blob():
-    """Tier 1: INCIDENT (the exact dogfood path) — a large doc read via ``reyn_repo_read`` (tagged
-    ``kind:"reyn_repo"`` at the tool seam) normalizes to a clean ``text`` body, no whole-dict blob.
-    RED pre-hotfix: the kind-less result took the fallback and offloaded the whole dict."""
+    """Tier 1: INCIDENT (the exact dogfood path) — a large doc read via ``reyn_repo_read`` normalizes to
+    a clean ``text`` body, no whole-dict blob. RED pre-hotfix: the kind-less result took the fallback and
+    offloaded the whole dict. The fixture keeps the ``kind:"reyn_repo"`` tag the tool seam still stamps,
+    but the tag is inert here — ``source`` is what resolves the mapper (see the e2e test's #3346 note)."""
     result = {"kind": "reyn_repo", "path": "docs/reference/runtime/present.ja.md", "content": _BIG_DOC}
     canonical = to_canonical(result, source="reyn_repo_read")
     assert canonical["text"] == _BIG_DOC
@@ -75,18 +117,32 @@ def test_incident_reyn_repo_read_offloads_clean_text_not_whole_dict_blob():
 
 
 @pytest.mark.asyncio
-async def test_incident_end_to_end_real_reyn_repo_read_handler_tags_kind_and_maps_clean():
-    """Tier 1: INTEGRATION — the REAL ``reyn_repo_read`` handler reads a real repo file, its result is
-    tagged ``kind:"reyn_repo"`` at the tool seam, and ``to_canonical`` yields the file body as ``text``
-    (not a structured blob). Proves the tag→mapper wiring end-to-end, not just the mapper in isolation."""
+async def test_incident_end_to_end_registered_reyn_repo_read_tool_maps_clean():
+    """Tier 1: INTEGRATION — the REAL ``reyn_repo_read`` ToolDefinition, taken from the REAL default
+    registry, reads a real repo file through its own handler, and ``to_canonical`` dispatched on that
+    tool's OWN name yields the file body as ``text`` (not a structured blob). Proves the whole wiring
+    end-to-end — registered identity → declared mapper → readable body — not just the mapper in
+    isolation, and not a hand-typed source literal that could drift from the registered name.
+
+    #3346: this test used to assert ``result["kind"] == "reyn_repo"`` with the rationale "the tool seam
+    tags the kind so the mapper (not fallback) runs". That rationale is false: FP-0056 PR-F1 moved
+    dispatch off ``result["kind"]`` onto the invoked identity, so the tag is not what routes here (see
+    ``test_fp0056_identity_dispatch`` — a kind-less result maps fine, and a correctly-tagged result with
+    an unregistered source still falls back). Asserting the tag proved nothing about the mapper wiring;
+    resolving the source from the registry does."""
+    registry = get_default_registry()
+    tool = registry.lookup("reyn_repo_read")
+    assert tool is not None, "reyn_repo_read is a registered router tool"
+    assert canonical_declaration(tool.name) is tool.canonical, \
+        "the registry seam declared THIS tool's mapper under THIS tool's name — the wiring under test"
+
     # "README.md" (not "pyproject.toml" — 0061 §3.3 narrowed the reyn_repo
     # reachable set to {README.md, CHANGELOG.md, docs, src}; pyproject.toml
     # is deliberately excluded in both dev and wheel mode now).
     ctx = ToolContext(events=None, permission_resolver=None, workspace=None, caller_kind="router")
-    result = await _handle_read({"path": "README.md"}, ctx)
-    assert result["kind"] == "reyn_repo", "the tool seam tags the kind so the mapper (not fallback) runs"
+    result = await tool.handler({"path": "README.md"}, ctx)
 
-    canonical = to_canonical(result, source="reyn_repo_read")
+    canonical = to_canonical(result, source=tool.name)
     assert canonical["text"] == result["content"], "the file body is the text payload"
     assert "Reyn" in canonical["text"], "the real file content is present as readable text"
     assert not any(a.get("kind") == "structured" for a in canonical["attachments"])
@@ -213,7 +269,16 @@ def test_reyn_repo_read_content_is_text_path_is_meta():
 
 
 def test_reyn_repo_error_surfaces_iserror():
-    """Tier 1: a reyn_repo error (e.g. path outside repo) surfaces the message as ``text`` + isError."""
+    """Tier 1: a reyn_repo error (e.g. path outside repo) surfaces the message as ``text`` + isError.
+
+    #3346 note on what this actually exercises: ``reyn_repo_to_canonical`` is success-only, so this
+    result never reaches it — ``to_canonical`` routes any known error shape through the shared
+    ``error_to_canonical`` seam FIRST. What this test discriminates is therefore (a) that the
+    ``reyn_repo_read`` identity is DECLARED with a mapper at all (an undeclared source takes
+    ``_fallback_structured``, whose error branch keys on the narrower ``_is_error`` and so renders this
+    ``status``-less ``{error}`` shape to empty text — verified RED), and (b) that the seam runs before
+    the success-only mapper. It is not vacuous, but it is a locality duplicate of a case already
+    parametrized in ``test_fp0056_error_seam`` with the same fixture data and the same source."""
     c = to_canonical({"kind": "reyn_repo", "error": "reyn_repo: path '..' resolves outside repo"}, source="reyn_repo_read")
     assert c["meta"].get("isError") is True
     assert "outside" in c["text"]

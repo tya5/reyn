@@ -17,12 +17,17 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 
 def _as_reyn_repo(result: dict) -> dict:
-    """Tag a ``reyn.runtime.reyn_repo`` helper result with ``kind:"reyn_repo"`` so the offload seam
-    (``core/offload/canonical.py``) routes it through the dedicated ``reyn_repo`` mapper — the file body
-    / listing / match lines become the LLM-readable ``text`` — instead of the whole-dict ``structured``
-    fallback that confused the agent in the FP-0056 dogfood incident (a doc read surfaced as a 600-char
-    JSON-dict preview). The runtime helpers stay pure (no ``kind``); tagging lives at this tool seam,
-    which is the only consumer of their results."""
+    """Tag a ``reyn.runtime.reyn_repo`` helper result with ``kind:"reyn_repo"`` — a descriptive
+    self-identification on the result dict, NOT the offload seam's routing key.
+
+    This tag WAS the FP-0056 hotfix's routing key, back when ``core/offload/canonical.py`` dispatched on
+    ``result["kind"]``. PR-F1 moved dispatch onto the **invoked identity** (the op kind / router tool
+    name the chokepoint called), precisely because a producer may not set ``kind`` at all — the
+    ``reyn_repo`` handlers were the incident class. The ``reyn_repo_*`` ToolDefinitions now *declare*
+    :func:`reyn.core.offload.canonical.reyn_repo_to_canonical` under their own tool names, so a
+    kind-less result routes to the mapper just the same (pinned by
+    ``tests/test_fp0056_identity_dispatch``). The runtime helpers stay pure (no ``kind``); tagging lives
+    at this tool seam, which is the only consumer of their results."""
     result["kind"] = "reyn_repo"
     return result
 

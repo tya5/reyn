@@ -9,7 +9,27 @@ error-path driver).
 """
 from __future__ import annotations
 
+import pytest
+
 from reyn.core.offload.canonical import to_canonical
+from reyn.tools import get_default_registry
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _registered_producers() -> None:
+    """Register the producers whose canonical declarations this module dispatches on — the real
+    registration seams, no stand-ins (#3346).
+
+    ``to_canonical`` resolves the mapper from a declaration table populated by
+    ``op_runtime.register(kind, …, canonical=…)`` at op-module import and by ``ToolRegistry.register``
+    when the router registry is built. Neither happens as a side effect of importing this module, so the
+    ROUTER-TOOL sources below (``run_pipeline`` / ``run_pipeline_async``) resolve to ``None`` — and take
+    the whole-dict fallback these tests exist to forbid — unless the registry has been built. This
+    module used to rely on a sibling test module having done that first (3 failed / 8 passed when run
+    alone). Both calls are idempotent for an identical re-declaration."""
+    import reyn.core.op_runtime  # noqa: F401  # import-for-registration: declares the OP kinds
+
+    get_default_registry()
 
 
 def test_mcp_content_becomes_text_structured_and_media_become_attachments():
