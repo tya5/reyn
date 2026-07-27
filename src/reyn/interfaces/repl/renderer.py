@@ -805,9 +805,18 @@ class InlineChatRenderer(ChatRenderer):
         self._waiting_on = _WAITING_ON_THINKING
         self._waiting_on_since = 0.0
         # #2280: same halt-reason surface as ConsoleChatRenderer — this
-        # renderer's own bottom_toolbar (below) is live when ``chat.render_mode``
-        # resolves ``"plain"`` on a TTY without the Textual app taking over
-        # (``client_driver.run_chat_client``).
+        # renderer's own bottom_toolbar (below) was live when ``chat.render_mode``
+        # resolved ``"plain"`` on a TTY without the Textual app taking over
+        # (``client_driver.run_chat_client``'s plain PromptSession loop wires
+        # ``bottom_toolbar=renderer.bottom_toolbar`` — see
+        # ``stream_client.run_input_loop``). #3292: that config value now
+        # selects ``ConsoleChatRenderer`` upstream instead (genuine ``--cui``
+        # equivalence). Since this class's ``uses_app_input()`` is always True
+        # (below), it now ALWAYS takes the Textual-app branch of
+        # ``run_chat_client`` and returns before reaching that loop — so this
+        # ``_halted_reason``/``bottom_toolbar`` machinery is presently dead in
+        # every production call site, kept as the class's own tested contract
+        # (defense-in-depth / future call-site safety net), not a live path.
         self._halted_reason: "str | None" = None
 
     def request_cancel(self) -> None:
@@ -849,20 +858,24 @@ class InlineChatRenderer(ChatRenderer):
             # intervention it was.
             self._set_waiting_on(_WAITING_ON_THINKING)
         elif etype == "user_submitted":
-            # #3300 P1 (C): only reachable when this renderer runs the shared
-            # plain PromptSession loop (``chat.render_mode: plain`` configured
-            # on an interactive TTY) — the default TTY path bypasses this
-            # renderer entirely for ``TextualChatApp`` (client_driver.py),
-            # which has its OWN ``user_submitted`` handler
-            # (``interfaces/inline/textual_chat/app.py``).
+            # #3300 P1 (C): before #3292, reachable when this renderer ran the
+            # shared plain PromptSession loop (``chat.render_mode: plain``
+            # configured on an interactive TTY, no ``--cui``) — the default TTY
+            # path bypasses this renderer entirely for ``TextualChatApp``
+            # (client_driver.py), which has its OWN ``user_submitted`` handler
+            # (``interfaces/inline/textual_chat/app.py``). #3292 made
+            # ``render_mode: plain`` select ``ConsoleChatRenderer`` upstream
+            # instead (genuine ``--cui`` equivalence), so this branch is
+            # presently unreached by any production call site — kept as this
+            # class's own tested contract, not a claim of live reachability.
             self.message(user_submitted_display_message(event))
         elif etype == "intervention_answer_submitted":
             # #3300: the last outbox `kind="user"` broadcast site
             # (InterventionHandler.deliver_answer_to) migrated to this
-            # chat-event — same render/neutralize idiom as user_submitted.
-            # Reachable on the SAME fallback condition noted above (plain
-            # render_mode on a TTY) — the default TTY path has its own
-            # handler (TextualChatApp._handle_intervention_answer_event).
+            # chat-event — same render/neutralize idiom as user_submitted, and
+            # the same #3292 now-unreached status (see the note above) — the
+            # default TTY path has its own handler
+            # (TextualChatApp._handle_intervention_answer_event).
             self.message(intervention_answer_display_message(event))
         elif etype == "session_halted":
             # #2280: the durability-halt observability surface — see

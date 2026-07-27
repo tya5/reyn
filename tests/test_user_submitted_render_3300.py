@@ -9,8 +9,14 @@ time — this file proves that per surface:
 - ``ConsoleChatRenderer.on_chat_event`` (the plain / --cui / non-TTY path,
   ALSO the remote/agui path when it resolves non-interactive — same renderer
   selection seam, ``logger_factory.make_renderer``).
-- ``InlineChatRenderer.on_chat_event`` (the ``chat.render_mode: plain``-on-a-
-  TTY fallback — reachable only when the Textual app is bypassed).
+- ``InlineChatRenderer.on_chat_event`` — before #3292 this was the
+  ``chat.render_mode: plain``-on-a-TTY fallback (reachable when the Textual
+  app was bypassed but the interactive renderer stayed selected). #3292 made
+  ``render_mode: plain`` force ``ConsoleChatRenderer`` too (genuine ``--cui``
+  equivalence, not a hybrid), so this branch is no longer reachable through
+  any current production call site's config alone; the coverage below is
+  retained as a direct unit-level pin on ``on_chat_event``'s own contract
+  (defense-in-depth, not a claim of live reachability).
 - ``TextualChatApp._pump_frames`` (the default interactive-TTY surface,
   ``interfaces/inline/textual_chat/app.py``) — #3300 P2b REPLACES the direct-
   to-flow append this file originally pinned with the sent-queue "upward
@@ -236,15 +242,22 @@ def test_console_renderer_neutralizes_at_render(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Surface: InlineChatRenderer (chat.render_mode=plain-on-a-TTY fallback path)
+# Surface: InlineChatRenderer — pre-#3292 this was the
+# chat.render_mode=plain-on-a-TTY fallback path; #3292 made that config value
+# select ConsoleChatRenderer instead (genuine --cui equivalence), so this
+# on_chat_event contract is no longer reachable via config alone. Coverage
+# kept as a direct unit-level pin, not a live-reachability claim.
 # ---------------------------------------------------------------------------
 
 
 def test_inline_renderer_renders_user_submitted_event(monkeypatch) -> None:
     """Tier 2: InlineChatRenderer.on_chat_event renders the user line from a
-    "user_submitted" event — the ONLY renderer entry point reachable when
-    this class runs the shared plain PromptSession loop instead of the
-    default TextualChatApp (client_driver.py: resolved render_mode="plain")."""
+    "user_submitted" event. Pre-#3292 this was the ONLY renderer entry point
+    reachable when this class ran the shared plain PromptSession loop instead
+    of the default TextualChatApp; #3292 made ``chat.render_mode: plain``
+    select ``ConsoleChatRenderer`` instead, so this is now a direct
+    unit-level contract pin on the method, not a claim of production
+    reachability."""
     out = _capture_stdout(monkeypatch)
     r = InlineChatRenderer()
     event = Event(type="user_submitted", data={"text": "hello inline", "meta": {}})
