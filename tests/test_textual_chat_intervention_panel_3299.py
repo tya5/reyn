@@ -1016,6 +1016,118 @@ async def test_pending_intervention_entry_state_is_default_with_dim_awaiting_gly
         )
 
 
+# --- #3324: a RESOLVED intervention's gutter must not read as "needs you" --
+# Owner-reported: after answering, the flow entry's gutter stayed the same
+# amber (_CC_WARN) as a still-pending one, because a resolved intervention
+# stays EntryState.DEFAULT (#3299 P2 §5) and DEFAULT falls back to the
+# entry's KIND colour — which for kind="intervention" IS that amber. Fixed
+# in ``gutter._gutter_glyph_color`` (the "intervention" branch now special-
+# cases the resolved leg too, returning ``_CC_DONE`` instead of falling
+# through to ``_KIND_LINE``'s amber).
+
+
+@pytest.mark.asyncio
+async def test_resolved_intervention_gutter_is_not_the_needs_you_amber() -> None:
+    """Tier 2b: a RESOLVED intervention's gutter colour must differ from the
+    "needs you" amber (``_CC_WARN``) — that colour must mean "still pending",
+    never "already answered".
+
+    NON-VACUITY (falsification): reverting ``gutter._gutter_glyph_color``'s
+    "intervention" branch to only special-case the PENDING leg (letting the
+    resolved leg fall through to ``_KIND_LINE["intervention"]``) makes this
+    assertion fail — verified locally: style becomes ``_CC_WARN`` again."""
+    from reyn.interfaces.inline.textual_chat.gutter import ReynGutter
+    from reyn.interfaces.repl.renderer import _CC_WARN
+
+    transport = RecordingTransport([_choice_intervention()], end=False)
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        await pilot.press("enter")  # answers the pre-highlighted "Yes"
+        await pilot.pause()
+        await pilot.pause()
+
+        entry = _iv_entry(app)
+        assert entry.state is EntryState.DEFAULT, (
+            "resolving must not leave EntryState.DEFAULT (#3299 P2 §5 — "
+            "an answer is not a SUCCESS/ERROR outcome)"
+        )
+        assert entry.item.meta.get("_answer_label") == "Yes"
+
+        gutter = ReynGutter()
+        rendered = gutter.decorate(entry, width=_GUTTER_WIDTH, height=1)
+        assert rendered.style != _CC_WARN, (
+            f"resolved intervention gutter still reads amber ('needs you'); "
+            f"style={rendered.style!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pending_resolved_and_ordinary_default_gutters_are_mutually_distinguishable() -> (
+    None
+):
+    """Tier 2b: pending (dim ``⋯``), resolved (``_CC_DONE`` ``◆``), and an
+    ordinary DEFAULT row (a plain user message, its own kind colour) render
+    THREE mutually distinct (glyph, colour) pairs — none collapses onto
+    another. Asserts on the actual rendered :class:`~rich.text.Text`
+    (glyph + style), not on a constant lookup (verification-hazards §10/11).
+
+    NON-VACUITY: with the pre-fix code (resolved intervention falling
+    through to the amber kind colour), ``resolved_render`` would equal a
+    ``(_CC_WARN, "◆")`` pair identical to what a still-pending, non-dim
+    intervention row would show — this test's core assertion is exactly the
+    inequality that regresses without the fix."""
+    from reyn.interfaces.inline.textual_chat.gutter import ReynGutter
+
+    transport = RecordingTransport(
+        [OutboxMessage(kind="agent", text="hello"), _choice_intervention()], end=False
+    )
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        gutter = ReynGutter()
+        flow = app.query_one(FlowView)
+        agent_entry = next(e for e in flow.entries if e.item.kind == "agent")
+        assert agent_entry.state is EntryState.DEFAULT
+
+        pending_entry = _iv_entry(app)
+        assert pending_entry.state is EntryState.DEFAULT
+
+        agent_render = gutter.decorate(agent_entry, width=_GUTTER_WIDTH, height=1)
+        pending_render = gutter.decorate(pending_entry, width=_GUTTER_WIDTH, height=1)
+
+        await pilot.press("enter")  # answers the pre-highlighted "Yes"
+        await pilot.pause()
+        await pilot.pause()
+
+        resolved_entry = _iv_entry(app)
+        assert resolved_entry.item.meta.get("_answer_label") == "Yes"
+        resolved_render = gutter.decorate(resolved_entry, width=_GUTTER_WIDTH, height=1)
+
+        agent_pair = (agent_render.style, agent_render.plain.strip())
+        pending_pair = (pending_render.style, pending_render.plain.strip())
+        resolved_pair = (resolved_render.style, resolved_render.plain.strip())
+
+        assert agent_pair != pending_pair, (
+            "an ordinary DEFAULT row (agent) renders identically to a PENDING "
+            f"intervention: {agent_pair!r}"
+        )
+        assert agent_pair != resolved_pair, (
+            "an ordinary DEFAULT row (agent) renders identically to a RESOLVED "
+            f"intervention: {agent_pair!r}"
+        )
+        assert pending_pair != resolved_pair, (
+            "a PENDING intervention renders identically to a RESOLVED one — "
+            f"resolving is not visually distinguishable: {pending_pair!r}"
+        )
+
+
 # --- #3299 P2 §4: placeholder→resolved is the SAME entry, churn-zero --------
 
 

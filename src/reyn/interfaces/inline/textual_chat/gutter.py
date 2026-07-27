@@ -38,11 +38,17 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 # EntryState → gutter colour (Phase 2 state-color gutter). The CC state
-# palette: RUNNING amber, SUCCESS green, ERROR coral, DEFAULT/CANCELLED dim.
-# Applied by :meth:`ReynGutter.decorate` when an entry carries a non-DEFAULT
-# lifecycle state; DEFAULT entries fall back to their kind colour.
+# palette: RUNNING amber, SUCCESS green, ERROR coral. DEFAULT has NO entry
+# here by design: :meth:`ReynGutter.decorate` handles DEFAULT with its own
+# dedicated branch that falls back to the entry's KIND colour (``kind_color``
+# from :func:`_gutter_glyph_color`), because different kinds need different
+# DEFAULT-state colours (an ordinary user/agent row vs. a resolved
+# intervention, #3324 — see that function's "intervention" branch for how a
+# resolved intervention gets a non-amber colour without leaving DEFAULT).
+# A single scalar here would force every DEFAULT row to the same colour,
+# which is wrong. CANCELLED still maps to dim (no per-kind distinction
+# needed for it).
 _STATE_COLOR: "dict[EntryState, str]" = {
-    EntryState.DEFAULT: _CC_DIM,
     EntryState.RUNNING: _CC_WARN,
     EntryState.SUCCESS: _CC_DONE,
     EntryState.ERROR: _CC_ERR,
@@ -80,15 +86,30 @@ def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
         return "⎿", _CC_DIM
     if kind == "tool_call_failed":
         return "⎿", _CC_ERR
-    if kind == "intervention" and not (msg.meta or {}).get("_answer_label"):
-        # #3299 P2 §5: a PENDING intervention stays EntryState.DEFAULT (never
-        # RUNNING/SUCCESS/ERROR — see ``TextualChatApp._resolve_pending_intervention``),
-        # so the only way to distinguish "awaiting an answer" from an ordinary
-        # DEFAULT row is a kind-driven glyph swap here: a dim "awaiting" marker
-        # instead of the kind's normal (amber, "needs you") glyph. Once resolved
-        # (``_answer_label`` set), this falls through to the normal kind glyph
-        # below — no special-casing needed for the permanent Q→A record.
-        return "⋯", _CC_DIM
+    if kind == "intervention":
+        # #3299 P2 §5: an intervention's flow entry stays EntryState.DEFAULT in
+        # BOTH the pending and resolved cases (never RUNNING/SUCCESS/ERROR — an
+        # answer is neither an outcome to celebrate nor a failure, #3296). With
+        # the state fixed at DEFAULT, the gutter's kind colour is the only axis
+        # left to distinguish the two, so both legs are special-cased here
+        # rather than falling through to ``_KIND_LINE["intervention"]``'s
+        # amber ("needs you") colour:
+        if not (msg.meta or {}).get("_answer_label"):
+            # PENDING: a dim "awaiting" marker instead of the kind's normal
+            # amber glyph.
+            return "⋯", _CC_DIM
+        # RESOLVED (#3324): reusing the amber kind colour here made a resolved
+        # intervention indistinguishable from one still awaiting an answer —
+        # both rendered the same "◆ needs you" amber, because DEFAULT-state
+        # entries fall back to their kind colour and "intervention"'s kind
+        # colour IS that amber. Keep the kind glyph (``◆``) but swap in
+        # ``_CC_DONE`` — the same green already used for the row's own
+        # "✓ answered: <label>" body line (``ReynPresenter.
+        # _present_intervention_pending``) — so pending (dim ⋯), resolved
+        # (green ◆) and an ordinary DEFAULT row (its own kind colour, e.g.
+        # plain text for user/agent) are three mutually distinct renders.
+        glyph = _KIND_LINE["intervention"][0].strip()[:1]
+        return glyph, _CC_DONE
     line = _KIND_LINE.get(kind)
     if line is None:
         return "", _CC_DIM
