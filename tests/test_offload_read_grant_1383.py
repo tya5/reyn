@@ -11,9 +11,16 @@ Fix: the offload-emit registers a scoped read-grant on EXACTLY that path
 (`grant_offload_read`), consulted by the read gate. These tests pin:
   - the grant admits the exact path but NOT a sibling (least-privilege),
   - the register→check seam (no grant → still denied = the grant is what passes),
-  - the emit→grant→check chain end-to-end for BOTH emit points
-    (maybe_ref_artifact + offload_control_ir_result),
   - the AgentLayer grant still ∩-intersects the SandboxLayer.
+
+#2396 Step 4: the two ``context_builder`` emit points that used to wire
+``on_offload_ref=r.grant_offload_read`` (``maybe_ref_artifact`` and
+``offload_control_ir_result``) were both dead in production (their only caller,
+the ContextFrame-driven phase path, was removed by earlier convergence steps)
+and were deleted along with the rest of the DICT-offload machinery. These
+tests now exercise `grant_offload_read` / the read gates directly — the
+generic primitive survives and remains available for a future offload
+producer to wire.
 
 No mocks: a real PermissionResolver with project_root ≠ the offloaded path.
 """
@@ -23,7 +30,6 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.context_builder import maybe_ref_artifact, offload_control_ir_result
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.security.sandbox.policy import SandboxPolicy
 
@@ -86,33 +92,6 @@ async def test_register_reaches_check_seam(tmp_path: Path) -> None:
     # register on this instance → the check (same instance) now passes
     r.grant_offload_read(str(offloaded))
     await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
-
-
-@pytest.mark.asyncio
-async def test_emit_artifact_ref_registers_grant_end_to_end(tmp_path: Path) -> None:
-    """Tier 2c: the artifact_ref emit point (maybe_ref_artifact) → grant → check chain.
-    A large artifact emits an artifact_ref AND the path becomes readable via the grant."""
-    r, offloaded, _ = _out_of_zone(tmp_path)
-    big = {"type": "swe_bench_input", "data": {"problem_statement": "x" * 200_000}}
-    out = maybe_ref_artifact(
-        big, str(offloaded), on_offload_ref=r.grant_offload_read
-    )
-    assert out["type"] == "artifact_ref"  # large → offloaded to a ref
-    # the emit registered the grant → the agent can read what it was told to read
-    await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
-
-
-@pytest.mark.asyncio
-async def test_emit_control_ir_offload_registers_grant_end_to_end(tmp_path: Path) -> None:
-    """Tier 2c: the generic offload emit point (offload_control_ir_result) → grant → check.
-    Covers the second of the two exhaustive emit points."""
-    r, _, state = _out_of_zone(tmp_path)
-    big_result = {"content": "y" * 200_000}
-    inline = offload_control_ir_result(
-        big_result, 0, state, cap=1024, on_offload_ref=r.grant_offload_read
-    )
-    ref_path = inline["_offload_ref"]
-    await r.require_file_read(PermissionDecl(), str(ref_path), "swe_bench")  # granted → no raise
 
 
 @pytest.mark.asyncio

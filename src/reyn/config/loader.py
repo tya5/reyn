@@ -144,14 +144,18 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
             existing = result.get("mcp", {})
             existing_servers = existing.get("servers", {}) if isinstance(existing, dict) else {}
             new_servers = val.get("servers", {}) if isinstance(val, dict) else {}
-            # Override-wins for scalar mcp keys (``search_threshold``,
-            # ``registries``), server entries union (existing ∪ new). The
-            # earlier ``{**existing, "servers": ...}`` form silently dropped
-            # the override's non-``servers`` keys, making ``mcp.search_threshold``
-            # and ``mcp.registries`` impossible to set from any config layer
-            # (they always fell back to the default). Spreading ``val`` after
-            # ``existing`` restores last-layer-wins for those scalars while the
-            # explicit ``servers`` key keeps the server union intact.
+            # Override-wins for scalar mcp keys (e.g. ``registries``), server
+            # entries union (existing ∪ new). The earlier ``{**existing,
+            # "servers": ...}`` form silently dropped the override's
+            # non-``servers`` keys, making ``mcp.registries`` impossible to
+            # set from any config layer (it always fell back to the
+            # default). Spreading ``val`` after ``existing`` restores
+            # last-layer-wins for those scalars while the explicit
+            # ``servers`` key keeps the server union intact. (``search_threshold``
+            # was one such scalar historically; #3218/FP-0066 §7 P1a fold-removed
+            # it as a dead config field — ``mcp_search_threshold`` is now purely a
+            # ``build_tools()`` function parameter, not read from this ``mcp``
+            # config dict at all — see ``router_tools.py``.)
             result["mcp"] = {
                 **existing,
                 **val,
