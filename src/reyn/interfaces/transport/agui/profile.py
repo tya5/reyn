@@ -176,6 +176,20 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "handler for this event consumes-but-drops it (no draw), unlike an "
         "unknown DISPLAY kind; ③c adds the textual_chat coalescing consumer",
     ),
+    CustomName(
+        "reyn.event.session_halted", EVENT_NS, "the event data object",
+        "the session fail-stopped on a persistent durability failure (#2259 "
+        "PR-3) — carries reason (e.g. \"durability_failure\"); emitted at "
+        "most once (Session._fail_stop_if_durability_dead / "
+        "run_one_iteration, guarded on halted_reason is None) the FIRST "
+        "time the fail-stop latches, on either the accept-edge raise or the "
+        "process-edge halt (#2280). Purely observability — the halt itself "
+        "is already enforced synchronously by the DurabilityHaltError raise "
+        "regardless of this event; a surface with no handler consumes-but-"
+        "drops it, like agent_delta above. Also rides STATE_SNAPSHOT/"
+        "STATE_DELTA as halted_reason (agui/state.py) for a remote client's "
+        "status panel, independently of this event frame",
+    ),
 )
 
 
