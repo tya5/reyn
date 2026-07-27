@@ -33,9 +33,11 @@ from reyn.llm.pricing import (
     CostBreakdown,
     EmbeddingCost,
     TokenUsage,
+    UsageSource,
     estimate_cost,
     estimate_cost_breakdown,
     estimate_embedding_cost,
+    merge_usage_sources,
 )
 
 # ── exceptions ──────────────────────────────────────────────────────────────
@@ -149,11 +151,21 @@ class BudgetLedger:
 
         {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
          "model": "...", "tokens": 300, "cost_usd": 0.0023,
-         "purpose": "main", "chain_id": "c-1a2b"}
+         "purpose": "main", "chain_id": "c-1a2b",
+         "usage_source": "provider"}
 
     ``purpose`` (#1190) and ``chain_id`` (#3339, the turn key) are optional —
     written only when known, so a record from a call with no turn, and a
     record written before either field existed, both stay valid.
+
+    ``usage_source`` (#3351) is the PROVENANCE of ``tokens``: ``"provider"``
+    (the provider reported the counts) or ``"estimated"``
+    (``litellm.token_counter`` filled them locally because the stream carried
+    no usage). Omitted when provenance was never stated, which is also how
+    every record written before #3351 reads — a MISSING field means
+    ``"unknown"``, never ``"provider"``. Together with ``chain_id`` this is
+    what makes "which turns were billed on estimated counts" answerable after
+    the fact, durably, from the same file the caps are rebuilt from.
 
     Records are fsync'd on append so a process crash cannot roll back a
     completed LLM call and under-count quota usage. This is the cap-critical
@@ -182,6 +194,7 @@ class BudgetLedger:
         cost_usd: float,
         purpose: str | None = None,
         chain_id: str | None = None,
+        usage_source: UsageSource = UsageSource.UNKNOWN,
     ) -> None:
         """Append one LLM-call record and fsync.
 
@@ -198,6 +211,11 @@ class BudgetLedger:
         null turn key, and a record
         written before #3339 simply lacks the field (readers must treat a
         missing ``chain_id`` as "no turn", never as an error).
+
+        ``usage_source`` (#3351) is the provenance of ``tokens`` — see the
+        class docstring. ``UNKNOWN`` writes NO field, which is precisely how a
+        pre-#3351 record reads, so old and unstated records are the same case
+        for a reader and neither can be mistaken for a provider-verified one.
         """
         record: dict = {
             "ts": self._now_iso(),
@@ -210,6 +228,8 @@ class BudgetLedger:
             record["purpose"] = purpose
         if chain_id is not None:
             record["chain_id"] = chain_id
+        if usage_source is not UsageSource.UNKNOWN:
+            record["usage_source"] = usage_source.value
         self._write_record(record)
 
     @staticmethod
@@ -850,6 +870,7 @@ _PER_TURN_BUCKETS: "tuple[tuple[str, str], ...]" = (
     ("_turn_prompt_tokens", "turn_prompt_tokens"),
     ("_turn_completion_tokens", "turn_completion_tokens"),
     ("_turn_cost_usd", "turn_cost_usd"),
+    ("_turn_usage_source", "turn_usage_source"),
 )
 
 
@@ -920,6 +941,14 @@ class BudgetTracker:
         self._turn_prompt_tokens: OrderedDict[str, int] = OrderedDict()
         self._turn_completion_tokens: OrderedDict[str, int] = OrderedDict()
         self._turn_cost_usd: OrderedDict[str, float] = OrderedDict()
+        # #3351: the PROVENANCE of this turn's token figures, merged
+        # least-confident-wins across the turn's calls (``TokenUsage.__add__``'s
+        # rule, applied here per bucket): a turn whose ANY call was billed on
+        # ``litellm.token_counter``'s local estimate reads ``estimated``. Lives
+        # in the same bucket set as the numbers — and is returned by the same
+        # ``turn_usage`` dict — so a reader cannot pick up the token figure
+        # while silently missing what kind of figure it is.
+        self._turn_usage_source: OrderedDict[str, UsageSource] = OrderedDict()
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
         self._warned: set[tuple[str, str]] = set()
         # PR25: persistent daily / monthly counters
@@ -1250,6 +1279,15 @@ class BudgetTracker:
         billed separately) — NO turn bucket is touched:
         the call is genuinely unattributable to a turn, and quietly adding it
         to the most recent one would invent a number.
+
+        #3351: ``usage.source`` — the PROVENANCE of the counts, carried by the
+        usage object itself — is written to the ledger record and merged into
+        the turn's provenance bucket. Nothing here changes HOW a figure is
+        computed; ``estimated`` counts are recorded and enforced exactly like
+        provider-reported ones. What changes is that the record now says which
+        it was, so a cap that fired or a `/cost` figure being audited can be
+        traced back to a provider figure or to a local
+        ``litellm.token_counter`` estimate instead of being indistinguishable.
         """
         # rate limit window
         self._call_window[model].append(time.monotonic())
@@ -1302,6 +1340,10 @@ class BudgetTracker:
                 cost_usd=cost_usd,
                 purpose=purpose,
                 chain_id=chain_id,
+                # #3351: the provenance rides ON the usage object, so this
+                # cannot fall out of sync with the number it describes and no
+                # caller has to remember to pass it.
+                usage_source=usage.source,
             )
 
         # Warn on daily / monthly thresholds
@@ -1549,7 +1591,8 @@ class BudgetTracker:
             # their BOUND observable: a bucket that stopped being evicted would
             # otherwise grow without limit while every lookup still answered
             # correctly. Keys: turn_tokens / turn_prompt_tokens /
-            # turn_completion_tokens / turn_cost_usd.
+            # turn_completion_tokens / turn_cost_usd / turn_usage_source
+            # (#3351 — each turn's token-count provenance).
             **{
                 snap_key: dict(getattr(self, attr_name))
                 for attr_name, snap_key in _PER_TURN_BUCKETS
@@ -1658,6 +1701,17 @@ class BudgetTracker:
             self._turn_completion_tokens.get(chain_id, 0) + usage.completion_tokens
         )
         self._turn_cost_usd[chain_id] = self._turn_cost_usd.get(chain_id, 0.0) + cost_usd
+        # #3351: provenance merges least-confident-wins over the turn's calls
+        # (:func:`reyn.llm.pricing.merge_usage_sources` — the same rule summed
+        # ``TokenUsage`` objects follow), so ONE estimated call marks the whole
+        # turn's figure as estimated. It must: the turn total contains that
+        # call's estimate, and an auditor reading the total is entitled to know
+        # that. Every call that reaches here contributed to the total, so none
+        # is skipped on grounds of size.
+        _prev = self._turn_usage_source.get(chain_id)
+        self._turn_usage_source[chain_id] = (
+            usage.source if _prev is None else merge_usage_sources(_prev, usage.source)
+        )
         self._last_turn_chain_id = chain_id
         # EVERY bucket is evicted together, so a chain_id is either present in
         # ALL of them or in none — which is what lets ``turn_usage`` decide
@@ -1675,7 +1729,7 @@ class BudgetTracker:
         """#3339: the per-turn figures for the MOST RECENT turn that recorded
         spend, or ``None`` when no turn has. Same shape as :meth:`turn_usage` —
         ``{"chain_id", "tokens", "prompt_tokens", "completion_tokens",
-        "cost_usd"}``.
+        "cost_usd", "usage_source"}``.
 
         Tokens and cost are summed over every LLM call that turn made
         (tool-loop iterations included), each priced at its own model's rate —
@@ -1693,8 +1747,8 @@ class BudgetTracker:
 
     def turn_usage(self, chain_id: str) -> dict | None:
         """#3283 ④: ``{"chain_id", "tokens", "prompt_tokens",
-        "completion_tokens", "cost_usd"}`` for the turn ``chain_id``, or
-        ``None`` when this tracker holds no figure for it.
+        "completion_tokens", "cost_usd", "usage_source"}`` for the turn
+        ``chain_id``, or ``None`` when this tracker holds no figure for it.
 
         The KEYED per-turn read. Tokens (total AND the prompt/completion
         split) and cost are summed over every LLM call that turn made
@@ -1720,7 +1774,10 @@ class BudgetTracker:
         (It does not display ``cost_usd``; that is a presentation choice at the
         gutter, and this lookup still returns it for every other caller.) The
         durable record of an evicted turn's spend is the ledger's per-call
-        ``chain_id``, which lets any past turn be re-grouped after the fact."""
+        ``chain_id``, which lets any past turn be re-grouped after the fact —
+        including that call's ``usage_source`` (#3351), so "was this turn billed
+        on estimated counts" stays answerable after eviction and after a
+        restart, which this in-memory bucket alone would not survive."""
         if chain_id not in self._turn_tokens:
             return None
         return self._turn_usage_dict(chain_id)
@@ -1731,13 +1788,20 @@ class BudgetTracker:
         One builder for both public readers, so the two can never drift into
         reporting different shapes for the same turn. ``prompt_tokens`` +
         ``completion_tokens`` == ``tokens`` (``TokenUsage.total_tokens`` is
-        their sum, accumulated call by call)."""
+        their sum, accumulated call by call).
+
+        #3351: ``usage_source`` ships in the SAME dict as the figures — a
+        ``UsageSource`` (``provider`` / ``estimated`` / ``unknown``), merged
+        least-confident-wins over the turn's calls. Deliberately not a separate
+        lookup: a reader that has the number has the provenance, so "forgot to
+        ask" cannot produce a confident-looking wrong answer."""
         return {
             "chain_id": chain_id,
             "tokens": self._turn_tokens.get(chain_id, 0),
             "prompt_tokens": self._turn_prompt_tokens.get(chain_id, 0),
             "completion_tokens": self._turn_completion_tokens.get(chain_id, 0),
             "cost_usd": self._turn_cost_usd.get(chain_id, 0.0),
+            "usage_source": self._turn_usage_source.get(chain_id, UsageSource.UNKNOWN),
         }
 
     def agent_cost_breakdown(self, agent: str) -> CostBreakdown:

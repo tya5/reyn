@@ -39,7 +39,14 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # usage/cost figures. agent is derived from the events file path (not an event
     # field), and run_id is not threaded on this path.
     "llm_called": frozenset({"model"}),
-    "llm_response_received": frozenset({"prompt_tokens", "completion_tokens", "cost_usd"}),
+    # ``usage_source`` (#3351) is MANDATORY, not optional: a provider-reported
+    # count and a ``litellm.token_counter`` estimate are the same int, and the
+    # audit trail is where an estimated turn has to be identifiable after the
+    # fact. Requiring it here means the cost events cannot report figures
+    # without reporting their origin.
+    "llm_response_received": frozenset(
+        {"prompt_tokens", "completion_tokens", "cost_usd", "usage_source"}
+    ),
     # Permission events (op_runtime/__init__.py). ``phase`` is mandatory for
     # replay compatibility and always ``RETIRED_PHASE_FIELD`` — see the decision
     # record at the top of this module before touching it.
