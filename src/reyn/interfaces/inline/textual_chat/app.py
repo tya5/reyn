@@ -1736,18 +1736,25 @@ async def run_textual_chat(
     (:func:`~reyn.interfaces.repl.client_driver.run_chat_client`) resolves this
     from ``chat.render_mode`` (#3273) — see :func:`resolve_render_mode`.
 
-    Full-screen is the default because two inline-driver bugs made bounded inline
-    unshippable: on resize the old bounded frame is not cleared so stale copies
-    stack (#3285), and the conversation pane collapses to ~1 line regardless of
-    terminal height (#3286). Both are owned by Textual's inline driver, so reyn
-    cannot fix them in inline mode; alt-screen sidesteps the driver entirely and
-    both vanish. The scrollback-preservation rationale that originally motivated
-    inline is now redundant — alt-screen auto-saves/restores terminal scrollback
-    on enter/exit, and Phase 5 restore rebuilds the conversation from
-    ``history.jsonl`` on restart. ``inline=True`` remains selectable as an escape
-    hatch (``chat.render_mode: inline``) for scrollback-preferring users, with
-    the #3285/#3286 caveat. Returns so the driver's caller can tear the transport
-    down + print the cost summary.
+    Full-screen is the default because two inline-driver bugs upstream made
+    bounded inline unshippable: on resize the old bounded frame is not cleared
+    so stale copies stack (#3285), and the conversation pane collapses to ~1
+    line regardless of terminal height (#3286). Both are owned by Textual's
+    inline driver, so reyn cannot fix them in inline mode; alt-screen
+    sidesteps the driver entirely and both vanish there. #3286 is confirmed
+    live-reproduced against reyn's own integration; #3285 is reported upstream
+    but reyn's live-TTY integration did NOT reproduce the resize-stacking
+    across 4+ resizes in a real terminal
+    (https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531) — treat
+    #3285-in-``inline`` as not verified-broken here but also not
+    verified-clean; re-check live before relying on either claim. The
+    scrollback-preservation rationale that originally motivated inline is now
+    redundant — alt-screen auto-saves/restores terminal scrollback on
+    enter/exit, and Phase 5 restore rebuilds the conversation from
+    ``history.jsonl`` on restart. ``inline=True`` remains selectable as an
+    escape hatch (``chat.render_mode: inline``) for scrollback-preferring
+    users; ``alt-screen`` stays the recommended default regardless. Returns so
+    the driver's caller can tear the transport down + print the cost summary.
     """
     app = TextualChatApp(
         transport=transport,
