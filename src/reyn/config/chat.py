@@ -512,7 +512,7 @@ class GutterConfig:
 
     These two flags are the STARTING state of each gutter when the pane
     mounts — the user can flip either one at runtime from the keyboard
-    (``ctrl+g`` / ``ctrl+r``, see the app's ``BINDINGS``). A runtime toggle is
+    (``ctrl+g`` / ``ctrl+t``, see the app's ``BINDINGS``). A runtime toggle is
     SESSION-SCOPED by decision: it never writes back here, so a keypress can
     never silently rewrite the operator's ``reyn.yaml``. Set these to persist
     a preference across runs.

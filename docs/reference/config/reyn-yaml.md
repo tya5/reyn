@@ -397,7 +397,7 @@ with; they are independent, matching the underlying widget's own granularity.
 | `right` | bool | `true` | Show the right (elapsed / turn-token) gutter when the pane opens. |
 
 Either can also be toggled at any time from the keyboard — `ctrl+g` (left) and
-`ctrl+r` (right), both listed in the TUI's Help pane. **A keyboard toggle is
+`ctrl+t` (right), both listed in the TUI's Help pane. **A keyboard toggle is
 session-scoped**: it changes the running pane only and never writes back here,
 so these keys are the setting to change for a lasting preference. Hiding a
 gutter hands its whole column back to the conversation body (an 80-column

@@ -359,7 +359,7 @@
 
 # chat.gutters: the TTY conversation pane's two gutter columns (#3352). Each
 # costs its width on EVERY row, taken off the conversation body. These flags set
-# what the pane OPENS with; `ctrl+g` (left) / `ctrl+r` (right) toggle either one
+# what the pane OPENS with; `ctrl+g` (left) / `ctrl+t` (right) toggle either one
 # at runtime — a keypress is session-scoped and never written back here, so set
 # these for a lasting preference. See docs/reference/config/reyn-yaml.md.
 #   gutters:

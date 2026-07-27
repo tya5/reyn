@@ -39,7 +39,10 @@ Phase 4 wires every pane to its CANONICAL reyn source (no placeholders):
 - **Help** — the app's declarative ``BINDINGS`` plus the imperative/declarative
   navigation keys each widget owns (:data:`COMPOSER_KEYS` /
   :data:`MENUBAR_KEYS` / :data:`SENTQUEUE_KEYS` — the sent-queue's own
-  select/cancel/back-to-composer keys, #3300 Y-client).
+  select/cancel/back-to-composer keys, #3300 Y-client). :data:`RESERVED_KEYS`
+  is the fifth key surface and the one the Help pane does NOT show: keys
+  claimed by an approved-but-unimplemented feature, recorded so a new binding
+  cannot silently take one (#3352).
 
 Every ENUMERATING pane (Model / Agent / Menu / the toggle categories) derives its
 full set from the canonical registry — never a hand-curated subset — so a
@@ -398,6 +401,29 @@ MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("enter", "open"),
     ("↑ / esc", "close"),
 ]
+
+#: Keys RESERVED by an approved-but-unimplemented feature — claimed, but bound
+#: nowhere in the current tree (#3352).
+#:
+#: This table exists because a key-collision sweep over live bindings CANNOT
+#: see this class of claim: the feature's implementation was deleted and its
+#: key survives only in an issue. A new binding that takes one of these looks
+#: clean in every grep and then collides the day the feature lands. Entries
+#: carry the issue that owns them, and are REMOVED when the feature either
+#: lands (the key becomes a live binding) or is dropped (the claim dies).
+#:
+#: Only claims backed by an OPEN issue belong here. The retired Textual TUI's
+#: other keys (``ctrl+g`` find-next, ``ctrl+t`` rewind-menu edit, ``ctrl+b``/
+#: ``ctrl+o``/``ctrl+w`` panel, ``ctrl+1``..``ctrl+7`` tab jump, ``f3``/``f4``/
+#: ``f7``/``f9``) are NOT listed: #2193 was re-scoped to voice alone, so those
+#: features are explicitly dropped and their keys are free.
+RESERVED_KEYS: "dict[str, str]" = {
+    # #2193 — voice input (Whisper STT). The `voice:` config block exists in
+    # `config/media.py` with nothing reading it; the retired TUI bound
+    # `voice_toggle` to Ctrl+R with F2 as its alias.
+    "ctrl+r": "voice input (STT) — #2193",
+    "f2": "voice input (STT), alias of ctrl+r — #2193",
+}
 
 #: The sent-queue region's navigation keys (#3300 Y-client,
 #: ``SentQueue.BINDINGS`` — declarative, but the Help pane still sources them

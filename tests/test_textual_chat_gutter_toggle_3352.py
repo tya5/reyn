@@ -15,7 +15,7 @@ discoverable.
 These gates pin the reyn side of that seam:
 
 - **the operation is reachable** (Tier 2b): the width recovery is driven by
-  ``pilot.press("ctrl+r")`` / ``pilot.press("ctrl+g")`` through the real
+  ``pilot.press("ctrl+t")`` / ``pilot.press("ctrl+g")`` through the real
   Textual key-dispatch path with focus where it actually sits (the Composer),
   never by calling ``FlowView.toggle_gutter`` directly.
 - **the body genuinely gets the width back** (Tier 2b): asserted on
@@ -64,6 +64,7 @@ from reyn.interfaces.inline.textual_chat.app import _GUTTER_WIDTH
 from reyn.interfaces.inline.textual_chat.chrome import (
     COMPOSER_KEYS,
     MENUBAR_KEYS,
+    RESERVED_KEYS,
     SENTQUEUE_KEYS,
     Composer,
     MenuBar,
@@ -75,7 +76,7 @@ from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 
 #: The two keys under test, and the action each is expected to run.
 LEFT_KEY = "ctrl+g"
-RIGHT_KEY = "ctrl+r"
+RIGHT_KEY = "ctrl+t"
 
 
 def _config(*, left: bool = True, right: bool = True) -> ReynConfig:
@@ -155,7 +156,7 @@ def test_both_gutter_keys_reach_the_help_pane() -> None:
 
 
 def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> None:
-    """Tier 1: ``ctrl+g``/``ctrl+r`` appear in NO other binding table reachable
+    """Tier 1: ``ctrl+g``/``ctrl+t`` appear in NO other binding table reachable
     from this app — Textual's own ``App``/``Screen`` defaults, the focusable
     widgets the pane mounts (``TextArea`` backs the Composer and holds focus
     most of the time; ``OptionList`` backs the drawer panes), reyn's own
@@ -164,11 +165,18 @@ def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> Non
     set, which consumes its keys before they can bubble), and the three
     imperative key tables the Help pane reads.
 
+    ★ The sweep also covers ``RESERVED_KEYS`` — keys claimed by an
+    approved-but-unimplemented feature (#2193's ``ctrl+r``/``f2`` for voice
+    STT). A live-binding sweep is structurally blind to those: the
+    implementation was deleted and the claim survives only in an issue, so the
+    key looks free in every grep of the tree and collides the day the feature
+    lands. That is what this arc's first key choice got wrong.
+
     Enumerated from the CLASSES and their real key constants, not from a
     hardcoded list, so a future Textual upgrade — or a future reyn widget —
     that binds either key fails here instead of silently shadowing the
     toggle."""
-    taken: set[str] = set(Composer._EDIT_KEYS)
+    taken: set[str] = set(Composer._EDIT_KEYS) | set(RESERVED_KEYS)
     for cls in (
         App, Screen, TextArea, OptionList,
         SentQueue, InterventionPanel, MenuBar, CompletionPopup,
@@ -179,8 +187,9 @@ def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> Non
                 taken.update(part.strip() for part in str(raw).split(","))
     for key, _desc in (*COMPOSER_KEYS, *MENUBAR_KEYS, *SENTQUEUE_KEYS):
         taken.update(part.strip() for part in key.replace("/", " ").split())
-    # The enumeration is non-vacuous: keys this app really does bind are in it.
-    assert {"escape", "enter", "tab", "ctrl+c"} <= taken
+    # The enumeration is non-vacuous: keys this app really does bind, AND the
+    # reserved keys the earlier draft of this feature wrongly took, are in it.
+    assert {"escape", "enter", "tab", "ctrl+c", "ctrl+r", "f2"} <= taken
     assert LEFT_KEY not in taken
     assert RIGHT_KEY not in taken
 
@@ -204,7 +213,7 @@ def test_gutter_start_state_round_trips_a_non_default_value() -> None:
 async def test_hiding_the_right_gutter_hands_its_whole_column_back_to_the_body(
     screen_size: "tuple[int, int]",
 ) -> None:
-    """Tier 2b: pressing ``ctrl+r`` grows ``FlowView.body_width`` by EXACTLY
+    """Tier 2b: pressing ``ctrl+t`` grows ``FlowView.body_width`` by EXACTLY
     ``RIGHT_GUTTER_WIDTH`` and drops ``right_gutter_effective_width`` to 0,
     and pressing it again restores both. Driven by a real key press with focus
     where it actually sits (the Composer), so this witnesses the binding →

@@ -698,10 +698,13 @@ and its whole column handed back to the conversation body:
 | Key | Effect |
 |-----|--------|
 | `ctrl+g` | Show/hide the LEFT (state-marker) gutter — 2 columns |
-| `ctrl+r` | Show/hide the RIGHT (elapsed/tokens) gutter — 12 columns |
+| `ctrl+t` | Show/hide the RIGHT (elapsed/tokens) gutter — 12 columns |
 
 Both keys appear in the TUI's **Help** pane (sourced from the app's own
-binding table). The two sides are **independent** — flowview exposes
+binding table). Note that `ctrl+r` is **not** available for new bindings: it is
+reserved for voice input (see `RESERVED_KEYS` in `textual_chat/chrome.py`), and
+it is reverse-history-search in most shells. The two sides are
+**independent** — flowview exposes
 `left_gutter_visible` / `right_gutter_visible` as two flags and reyn follows
 that granularity rather than offering a single combined switch.
 

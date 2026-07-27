@@ -22,7 +22,7 @@ accumulate, but the row is only re-rendered while it is on screen —
 ``FlowView.track_visibility`` replays the accumulated text in one update if the
 row scrolls back, so scrolling away never truncates a reply.
 
-Either gutter can be HIDDEN at runtime (#3352, ``ctrl+g`` / ``ctrl+r`` — see
+Either gutter can be HIDDEN at runtime (#3352, ``ctrl+g`` / ``ctrl+t`` — see
 :attr:`TextualChatApp.BINDINGS`), handing its whole column back to the
 conversation body. The start state comes from ``chat.gutters.left`` /
 ``chat.gutters.right``; the keypress is session-scoped and never writes back.
@@ -395,11 +395,28 @@ class TextualChatApp(App):
         # f6/f7), ``OptionList``'s (the drawer panes), and reyn's own imperative
         # ``Composer``/``MenuBar`` ``_on_key`` keys plus ``SentQueue``/
         # ``InterventionPanel`` ``BINDINGS`` (enter/escape/tab/arrows). ctrl+g
-        # and ctrl+r appear in NONE of them, and neither is one of the four
-        # keys (↑ ↓ tab esc) the in-flight composer-completion popup (#3358)
-        # borrows while it is open.
+        # and ctrl+t appear in NONE of them, and neither is one of the four
+        # keys (↑ ↓ tab esc) the composer-completion popup (#3358) borrows
+        # while it is open.
+        #
+        # A live-binding sweep is NOT sufficient on its own: a key RESERVED by
+        # an unimplemented feature exists only in an issue and in deleted code,
+        # so it appears in no grep of the current tree. #2193 (open, voice
+        # input via Whisper STT — the `voice:` block in ``config/media.py``
+        # with nothing reading it) reserves **F2 / Ctrl+R**, inherited from the
+        # retired Textual TUI's ``voice_toggle``. ctrl+r is therefore NOT free,
+        # and ctrl+r is additionally reverse-history-search in most shells —
+        # an expectation users carry into any text-input surface. The retired
+        # keymap's OTHER claims (ctrl+g `/find`, ctrl+t rewind-menu edit,
+        # ctrl+b/o/w/p/n/l, ctrl+1..7, f3/f4/f7/f9) all belong to features
+        # #2193 was explicitly re-scoped AWAY from, so they are dead
+        # reservations rather than live ones. ctrl+t's retired use was gated
+        # on a rewind MODAL that no longer exists (rewind is a slash command
+        # now), and "t" reads as the timing/token column this key hides.
+        # ``chrome.RESERVED_KEYS`` is the machine-checkable record of the one
+        # reservation that IS still live.
         ("ctrl+g", "toggle_left_gutter", "Show/hide left gutter (state)"),
-        ("ctrl+r", "toggle_right_gutter", "Show/hide right gutter (elapsed/tokens)"),
+        ("ctrl+t", "toggle_right_gutter", "Show/hide right gutter (elapsed/tokens)"),
     ]
 
     CSS = """
@@ -1054,7 +1071,7 @@ class TextualChatApp(App):
         self._flow.toggle_gutter("left")
 
     def action_toggle_right_gutter(self) -> None:
-        """``ctrl+r`` — flip the RIGHT (elapsed / turn-token) gutter's
+        """``ctrl+t`` — flip the RIGHT (elapsed / turn-token) gutter's
         visibility. The right sibling of :meth:`action_toggle_left_gutter`;
         two independent actions because upstream's granularity is two
         independent flags."""
