@@ -44,6 +44,7 @@ from reyn.interfaces.repl.renderer import summarize_tool_result
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
+from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from .chrome import (
     _MENU_TABS,
@@ -55,7 +56,12 @@ from .chrome import (
     pane_payload,
     status_line_text,
 )
-from .gutter import _RUNNING_FRAME_PERIOD, ReynGutter
+from .gutter import (
+    _RUNNING_FRAME_PERIOD,
+    RIGHT_GUTTER_WIDTH,
+    ReynGutter,
+    ReynTimingGutter,
+)
 from .intervention_panel import InterventionPanel
 from .presenter import (
     _RESULT_KIND_KEY,
@@ -478,6 +484,12 @@ class TextualChatApp(App):
             presenter=self._presenter,
             decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
             gutter_width=_GUTTER_WIDTH,
+            # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
+            # (tool rows only — see ReynTimingGutter's docstring for the
+            # content-set decision). additive flowview params; the LEFT
+            # gutter/state contract above is untouched.
+            right_decorator=ReynTimingGutter(clock=self._clock),
+            right_gutter_width=RIGHT_GUTTER_WIDTH,
             spacing=1,
             anchor=Anchor.STICKY_BOTTOM,
             # Native running-blink: FlowView owns the animation clock and
@@ -984,6 +996,12 @@ class TextualChatApp(App):
         merged = {k: v for k, v in started_meta.items() if k != _RUNNING_SINCE_KEY}
         merged[_RESULT_KIND_KEY] = result_msg.kind
         merged[_RESULT_META_KEY] = result_meta
+        since = started_meta.get(_RUNNING_SINCE_KEY)
+        if isinstance(since, (int, float)):
+            # Capture the FINAL elapsed seconds (Phase ④, #3283) from the SAME
+            # timestamp the live spinner was reading, before it is stripped
+            # above — the right gutter's static elapsed for a settled row.
+            merged[_ELAPSED_SECS_KEY] = max(0, int(self._clock() - since))
         try:
             started.set_item(replace(started.item, meta=merged))
         except Exception:
@@ -1032,12 +1050,17 @@ class TextualChatApp(App):
                     "textual chat: could not stop orphaned-tool animation"
                 )
             try:
+                orig_meta = entry.item.meta or {}
                 meta = {
-                    k: v
-                    for k, v in (entry.item.meta or {}).items()
-                    if k != _RUNNING_SINCE_KEY
+                    k: v for k, v in orig_meta.items() if k != _RUNNING_SINCE_KEY
                 }
                 meta[_RESULT_KIND_KEY] = _ORPHANED_RESULT_KIND
+                since = orig_meta.get(_RUNNING_SINCE_KEY)
+                if isinstance(since, (int, float)):
+                    # Same final-elapsed capture as _coalesce_tool_result — an
+                    # orphan still ran for a real, observed duration before
+                    # being force-settled (Phase ④, #3283).
+                    meta[_ELAPSED_SECS_KEY] = max(0, int(self._clock() - since))
                 entry.set_item(replace(entry.item, meta=meta))
             except Exception:
                 logger.exception(

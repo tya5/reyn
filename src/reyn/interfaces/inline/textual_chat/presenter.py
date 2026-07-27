@@ -36,20 +36,22 @@ from reyn.interfaces.repl.renderer import (
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
+from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
 
 if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 # --- live RUNNING-tool indicator (Phase ②) ---------------------------------
 # A ``tool_call_started`` entry that is in flight carries a monotonic START
-# timestamp under this meta key (stamped app-side by
-# ``TextualChatApp._begin_running_indicator`` when the entry goes RUNNING — tool frames
-# themselves carry no elapsed/progress, ADR finding D2). Its PRESENCE is what
-# tells :meth:`ReynPresenter.present` to render the live spinner + elapsed body
-# instead of the static ``tool(args)`` line; the completion handler REMOVES it to
-# settle the row back to static. Kept private (leading underscore) so it never
-# collides with a real display-frame meta field.
-_RUNNING_SINCE_KEY = "_running_since"
+# timestamp under ``_RUNNING_SINCE_KEY`` (stamped app-side by
+# ``TextualChatApp._begin_running_indicator`` when the entry goes RUNNING — tool
+# frames themselves carry no elapsed/progress, ADR finding D2). Its PRESENCE is
+# what tells :meth:`ReynPresenter.present` to render the live spinner + elapsed
+# body instead of the static ``tool(args)`` line; the completion handler REMOVES
+# it to settle the row back to static. Defined in :mod:`._meta_keys` (imported
+# above) because the right-gutter's live-elapsed decorator (Phase ④,
+# :mod:`.gutter`) needs the SAME key — two producers/readers must agree on the
+# exact string, same rationale as :data:`_RESULT_KIND_KEY` above.
 
 # The braille-spinner advance rate (frames/sec), reusing the plain renderer's
 # working-line idiom (``_SPINNER[int(now * 8) % len]`` — see
