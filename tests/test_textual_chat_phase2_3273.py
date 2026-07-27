@@ -43,8 +43,12 @@ from reyn.interfaces.inline.textual_chat import (
     TextualChatApp,
     _body_and_background,
 )
-from reyn.interfaces.inline.textual_chat.gutter import _cell_pad_right
-from reyn.interfaces.repl.renderer import _CC_DONE, _CC_ERR, _CC_WARN
+from reyn.interfaces.inline.textual_chat.gutter import (
+    _RUNNING_FRAMES,
+    _cell_pad_right,
+    _gutter_glyph_color,
+)
+from reyn.interfaces.repl.renderer import _CC_DONE, _CC_ERR, _CC_WARN, _KIND_LINE
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -426,3 +430,57 @@ def test_left_gutter_pads_by_cells_not_characters() -> None:
     # An over-long label is returned unpadded rather than negative-padded;
     # flowview's own adjust_cell_length clips it, it never steals body columns.
     assert _cell_pad_right(wide, 2) == wide
+
+
+def test_left_gutter_vocabulary_is_all_single_cell() -> None:
+    """Tier 1: every glyph the LEFT gutter can currently EMIT measures exactly
+    one terminal cell (:func:`rich.cells.cell_len`).
+
+    This is a DIFFERENT property from the padding gate above: that one pins
+    ``_cell_pad_right``'s CONTRACT (correct for any width, witnessed with a
+    synthetic wide character the vocabulary cannot produce today).  This one
+    pins the VOCABULARY itself — the reason `glyph.ljust(width)` shipped
+    unnoticed since #3273 is that every glyph in it happens to measure 1 cell
+    (four are East Asian Ambiguous width, which ``cell_len`` resolves to 1).
+    ``_cell_pad_right`` now makes the padding correct regardless, but a
+    single-cell vocabulary is still the realistic, cheap invariant to guard:
+    an emoji marker (most measure 2 cells) added to this vocabulary without
+    widening :data:`RIGHT_GUTTER_WIDTH`-style column accounting elsewhere
+    would be a real, silent regression this test would catch immediately.
+
+    Enumerated from the REAL registry (:data:`_KIND_LINE`, the tool-call and
+    intervention branches of :func:`_gutter_glyph_color`, and
+    :data:`_RUNNING_FRAMES`) rather than a hand-copied literal list, so a
+    future glyph added to any of those sources is automatically covered."""
+    glyphs: "set[str]" = set(_RUNNING_FRAMES)
+    for kind in _KIND_LINE:
+        glyph, _ = _gutter_glyph_color(OutboxMessage(kind=kind, text=""))
+        glyphs.add(glyph)
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_started", text="grep", meta={"tool": "grep"})
+    )
+    glyphs.add(glyph)
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_completed", text="", meta={"tool": "grep"})
+    )
+    glyphs.add(glyph)
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_failed", text="", meta={"tool": "grep"})
+    )
+    glyphs.add(glyph)
+    # intervention: pending (no _answer_label) and resolved (has one) are two
+    # distinct glyph branches (#3324) — both enumerated.
+    glyph, _ = _gutter_glyph_color(OutboxMessage(kind="intervention", text="", meta={}))
+    glyphs.add(glyph)
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="intervention", text="", meta={"_answer_label": "yes"})
+    )
+    glyphs.add(glyph)
+
+    assert glyphs, "enumeration produced no glyphs — registry sources changed shape"
+    for glyph in glyphs:
+        assert cell_len(glyph) == 1, (
+            f"{glyph!r} measures {cell_len(glyph)} cells, not 1 — a new "
+            "vocabulary entry (e.g. an emoji marker) needs its column "
+            "accounting revisited, not a silent single-cell assumption"
+        )
