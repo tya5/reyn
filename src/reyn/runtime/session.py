@@ -1662,6 +1662,21 @@ class Session:
         """
         return self._resolver.known_classes()
 
+    def available_skills(self) -> "list":
+        """The skills registered for this session — the LIVE list, so a
+        ``skills:`` hot-reload (``_reapply_skills``) is reflected on the next
+        read rather than at the next restart.
+
+        Public because a UI needs the SAME list the ``:name`` invocation path
+        resolves against (``_maybe_handle_skill_invoke`` →
+        ``invocable_skill_names``): the TUI's ``:`` completion (#3354) filters
+        it through the shared ``skill_invoke_completions``, so a ``hidden`` or
+        disabled skill can never be SUGGESTED by a surface that would then
+        refuse to invoke it. Returns a copy — the caller must not be able to
+        mutate the session's registry by editing what it was handed.
+        """
+        return list(self._available_skills or [])
+
     def active_model_class(self) -> str | None:
         """Return the class name for the currently-active model, or None.
 

@@ -129,11 +129,33 @@ or not you see the banner.
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send the current prompt (or insert a newline, if your terminal sends Shift+Enter as a distinguishable escape) |
+| `Enter` | Send the current prompt — **always**, even with the completion menu open (it never accepts a suggestion on your behalf) |
+| `Shift+Enter` | Insert a newline |
 | `Ctrl+J` | Insert a newline — the guaranteed-works fallback on any terminal, for pasting or writing a multi-line prompt |
-| `↑` | Walk back through prompt history (from an empty input, or the first line of one) |
-| `↓` | Walk forward through history, move the cursor down inside a multi-line prompt, or (from an empty input) move focus down to the status bar |
-| `Tab` / `Enter` | Accept the highlighted entry when the `/` slash-command completion menu is open |
+| `↑` | On the first line: focus a pending question, else the sent-message queue. Otherwise move the cursor up |
+| `↓` | On the last line: focus the menu row below the input. Otherwise move the cursor down |
+
+#### Completing `/` commands and `:` skills
+
+Type `/` at the start of the input to open the command menu, or `:` followed by
+at least two characters (at the start of a word) to open the skill menu. Once a
+command's name is settled by a space, the menu switches to completing that
+command's **argument** — so `/model ` lists your configured model classes and
+`/image ` lists matching files.
+
+While the menu is open it takes over the arrow keys:
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Move the highlighted suggestion |
+| `Tab` | Accept the highlighted suggestion |
+| `Esc` | Dismiss the menu. It stays dismissed while you keep typing that same word — start a new `/` or `:` word to bring it back |
+| `Enter` | Send what you typed (never accepts a suggestion) |
+
+With the menu closed, `↑`, `↓`, `Tab` and `Esc` all behave exactly as in the
+table above. Over `--connect`, `/` command names still complete (they come from
+the command registry, which every client has), but argument and `:` skill
+completion are silent — both read session-local state that is not on the wire.
 
 ### Status bar
 

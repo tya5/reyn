@@ -61,6 +61,7 @@ from .chrome import (
     pane_payload,
     status_line_text,
 )
+from .completion import CompletionPopup, CompletionState, compute_completion
 from .gutter import (
     _RUNNING_FRAME_PERIOD,
     RIGHT_GUTTER_WIDTH,
@@ -330,6 +331,18 @@ class TextualChatApp(App):
     already routes ``↑`` to the sent-queue, extended rather than replaced,
     and registered in :data:`~reyn.interfaces.inline.textual_chat.chrome.COMPOSER_KEYS`
     so the Help pane surfaces it.
+
+    **#3354 — ``/`` and ``:`` completion.** A
+    :class:`~reyn.interfaces.inline.textual_chat.completion.CompletionPopup`
+    sits directly above the input row (region order: conversation /
+    intervention panel / sent-queue / COMPLETION / input) and is driven by the
+    Composer, which stays focused throughout. :meth:`completion_state` is the
+    app's contribution: it resolves the live session + skill list off the
+    ``ChatReadModel`` seam and hands them to the pure ``compute_completion``.
+    The ``↑``/``↓`` routing above is UNCHANGED while the popup is closed and
+    PRE-EMPTED while it is open (the popup's highlight moves instead) — the
+    state-dependence is spelled out in both :data:`COMPOSER_KEYS` rows so the
+    Help pane teaches it.
     """
 
     #: FlowView animation frame rate (Hz) driving the native running-blink gutter.
@@ -618,6 +631,13 @@ class TextualChatApp(App):
         # shown while at least one message is queued, undispatched.
         self._sent_queue = SentQueue(id="sent-queue")
         yield self._sent_queue
+        # #3354: the / and : completion popup sits DIRECTLY above the input row
+        # (the last region before the composer), so the candidate list grows
+        # upward out of the line being typed — the same direction and adjacency
+        # the retired inline app's completion menu had. Collapsed by default
+        # (``display=False`` — see ``CompletionPopup.on_mount``).
+        self._completion = CompletionPopup(id="completion")
+        yield self._completion
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
@@ -646,6 +666,47 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: status snapshot read failed")
             return None
+
+    def completion_state(self, text: str) -> CompletionState:
+        """The ``/``-command / ``:``-skill completion state for ``text`` (#3354).
+
+        The app's job here is ONLY to resolve the live sources and hand them to
+        the pure
+        :func:`~reyn.interfaces.inline.textual_chat.completion.compute_completion`
+        — no candidate is produced here. The two live sources both come off the
+        SAME :class:`~reyn.interfaces.repl.read_model.ChatReadModel` seam every
+        other session-local read uses:
+
+        - the local ``Session``
+          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.completion_session`)
+          a command's ``CompleterFn`` is called with, and
+        - that session's registered skills (its public
+          :meth:`~reyn.runtime.session.Session.available_skills`), the same list
+          the ``:`` INVOCATION path filters its ``menu``/``on_demand``/``hidden``
+          surface from.
+
+        A remote client holds no session, so BOTH stay ``None`` — which
+        ``compute_completion`` reads as "source unavailable" and answers with
+        SILENCE, not an empty menu (an empty menu would read as "no such command
+        exists"; see that function's ``session``/``skills`` contract). ``/``
+        command-name completion is registry-derived and transport-independent, so
+        it keeps working there. ``None`` is likewise the answer when the skill
+        read RAISES: a failed read is an unavailable source, never an empty one.
+        Public because the ``Composer`` calls it as the app's completion hook.
+        """
+        session = None
+        skills: "list | None" = None
+        if self._read_model is not None:
+            try:
+                session = self._read_model.completion_session()
+            except Exception:
+                logger.exception("textual chat: completion session read failed")
+        if session is not None:
+            try:
+                skills = list(session.available_skills())
+            except Exception:
+                logger.exception("textual chat: completion skill read failed")
+        return compute_completion(text, session=session, skills=skills)
 
     def _turn_usage(self, chain_id: str) -> "dict | None":
         """The real per-turn figures for ``chain_id``, or ``None`` when there
@@ -1761,6 +1822,11 @@ class TextualChatApp(App):
         row = len(lines) - 1
         col = len(lines[-1])
         composer.move_cursor((row, col))
+        # #3354: this is a PROGRAMMATIC write, so the composer's key-driven gate
+        # already declines to open a menu for it — but a menu the user had open
+        # before the delta arrived would keep showing candidates for a token that
+        # is no longer under the caret. Close it outright.
+        self._completion.close()
 
     async def on_sent_queue_cancelled(self, event: "SentQueue.Cancelled") -> None:
         """The user cancelled a queued row (:class:`SentQueue`'s ``Enter``
