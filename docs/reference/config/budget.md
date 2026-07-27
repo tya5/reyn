@@ -235,16 +235,23 @@ cost" is answerable without subtracting running totals from each other.
   total. That is by design, not a rounding gap.
 - Turn totals are in-memory, live-session state for the most recent turns
   (bounded, oldest evicted) and are not restored on restart. An evicted turn
-  is **absent**, never reported as a zero total, and the live figure is only
-  ever read for the **latest** turn — which can never be the eviction victim.
-  The durable record of a past turn's spend is the ledger's per-call
-  `chain_id`, which lets any past turn be re-grouped after the fact.
+  is **absent** — reported as **unknown**, never as a zero total. The durable
+  record of a past turn's spend is the ledger's per-call `chain_id`, which
+  lets any past turn be re-grouped after the fact.
 
-When there is no per-turn figure to report — before a session's first turn,
-or when the most recent turn tracked belongs to another session sharing the
-same process-wide tracker — the reported tokens and cost are **unknown**
-rather than `0`. A zero would be indistinguishable from a turn that genuinely
-cost nothing.
+A turn total can be read either **by key** — "what did *this* turn cost", given
+its `chain_id` — or as **"whatever ran last"**, process-wide. The keyed read is
+what a per-row surface uses: the TUI's right gutter prices each agent-reply row
+against the turn that produced it, for rows scrolled arbitrarily far back, so it
+necessarily asks about turns old enough to have been evicted.
+
+When there is no per-turn figure to report the reported tokens and cost are
+**unknown** rather than `0`. A zero would be indistinguishable from a turn that
+genuinely cost nothing, and a renderer that forgot to branch would print it as
+fact. "No figure" covers: before a session's first turn; a turn that made no LLM
+call; a turn evicted from the bounded buckets; a `chain_id` this process never
+saw; and a remote client, where the per-turn buckets are session-local and not
+projected onto the AG-UI wire.
 
 These figures are not a cap dimension — there is no per-turn limit to
 configure; they are the reporting counterpart to the per-agent / daily /

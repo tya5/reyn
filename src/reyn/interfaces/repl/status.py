@@ -330,6 +330,15 @@ def _snapshot(registry, config=None):
     # #3339: per-turn token/cost aggregate (see Session.last_turn_usage) — a
     # cheap dict read off the durable tracker, safe on every render frame.
     turn_usage = s.last_turn_usage
+    # #3283 ④: the KEYED per-turn lookup, stored UNCALLED (same shape as
+    # ``ctx_compaction_status_fn`` above, for a different reason). The three
+    # ``turn_*`` scalars below answer "the most recent turn"; a per-ROW surface
+    # (the TUI's right gutter) has to ask about an arbitrary turn's chain_id,
+    # once per rendered row — a snapshot scalar cannot carry that, and building
+    # a whole snapshot per row would be absurd. Handing over the bound method
+    # lets the row surface ask directly, and keeps the never-fabricate contract
+    # in ONE place (``BudgetTracker.turn_usage`` returns None, not 0).
+    turn_usage_fn = s.turn_usage
     return {
         "model": s.model,
         "model_active_class": s.active_model_class(),
@@ -356,8 +365,10 @@ def _snapshot(registry, config=None):
         # cumulative) and `ctx_used` (a single call). A call the OS could not
         # attribute to a turn is counted in no turn's total, so these figures
         # are never a difference of cumulative counters.
-        # All three are None when THERE IS NO FIGURE (before the first turn,
-        # or when the process-shared tracker's latest turn is a different one
+        # All three are None when THERE IS NO FIGURE — before this session's
+        # first turn, or once that turn has been evicted from the tracker's
+        # bounded per-turn buckets (#3283 ④ made this a KEYED read of this
+        # session's own turn, so another session's turn no longer displaces it
         # — see Session.last_turn_usage). Deliberately not 0: a zero would be
         # indistinguishable from a real zero-cost turn and would render as
         # fact, whereas None is loud in both directions (drawn as "None", or
@@ -365,6 +376,10 @@ def _snapshot(registry, config=None):
         "turn_chain_id": turn_usage["chain_id"],
         "turn_tokens": turn_usage["tokens"],
         "turn_cost_usd": turn_usage["cost_usd"],
+        # #3283 ④: keyed per-turn lookup ``(chain_id) -> dict | None``, for a
+        # surface that renders one figure PER ROW rather than one per session.
+        # Deliberately NOT called here (see the assignment above).
+        "turn_usage_fn": turn_usage_fn,
         "ctx_used": ctx_used,
         "ctx_window": ctx_window,
         "ctx_source": ctx_source,

@@ -298,17 +298,19 @@ Capability-gated, provider-agnostic token streaming from the LLM call through to
 
 > **Differentiation vs general agents:** streaming is layered onto the SAME single-chokepoint `recorded_acompletion` call, the SAME `OutboxHub`/chat-event fan-out, and the SAME `FlowView` render model every other frame uses — no parallel streaming-only pipeline, no per-provider hardcoding, and no risk of a streamed reply diverging from its non-streamed reconstruction.
 
-#### Textual TUI: state + timing gutters (#3283 ①②④)
+#### Textual TUI: state + timing/cost gutters (#3283 ①②④)
 
 Two fixed-width `FlowView` columns per row: the left keeps entry STATE, the
-right shows per-entry ELAPSED TIME — the only right-gutter content set with
-real per-entry source data (turn cost/tokens are cumulative-only; a state
-chip would duplicate the left gutter).
+right shows per-entry ELAPSED TIME plus the row's TURN's real tokens+cost. A
+state chip, the third candidate, stays dropped — it would duplicate the left
+gutter. Neither right-gutter figure is ever fabricated: a row whose turn the
+runtime cannot price renders `—`, never `0`.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Left gutter — state-coloured glyph (#3273, #3283 ①) | Kind-driven glyph, `EntryState`-driven colour (RUNNING amber / SUCCESS green / ERROR coral / CANCELLED dim); a RUNNING glyph blinks off flowview's native `animation_fps` clock, no app-side timer | [AG-UI transport § Textual TUI gutters](reference/runtime/agui-transport.md#textual-tui-gutters--state-left--elapsed-time-right-3283-124) |
-| Right gutter — per-entry elapsed time (#3283 ④) | A tool-call row shows its LIVE elapsed while RUNNING or its captured FINAL elapsed once SETTLED, via flowview's additive `right_decorator`/`right_gutter_width`; every other entry (user/agent/intervention, and any RESTORED row) shows nothing — no fabricated per-entry cost/token, no duplicated state chip | [AG-UI transport § Textual TUI gutters](reference/runtime/agui-transport.md#textual-tui-gutters--state-left--elapsed-time-right-3283-124) |
+| Left gutter — state-coloured glyph (#3273, #3283 ①) | Kind-driven glyph, `EntryState`-driven colour (RUNNING amber / SUCCESS green / ERROR coral / CANCELLED dim); a RUNNING glyph blinks off flowview's native `animation_fps` clock, no app-side timer | [AG-UI transport § Textual TUI gutters](reference/runtime/agui-transport.md#textual-tui-gutters--state-left--elapsed-timeturn-cost-right-3283-124) |
+| Right gutter — per-entry elapsed time (#3283 ④) | A tool-call row shows its LIVE elapsed while RUNNING or its captured FINAL elapsed once SETTLED, via flowview's additive `right_decorator`/`right_gutter_width`; every other entry (user/agent/intervention, and any RESTORED row) shows nothing — no placeholder, no `"0s"` | [AG-UI transport § Textual TUI gutters](reference/runtime/agui-transport.md#textual-tui-gutters--state-left--elapsed-timeturn-cost-right-3283-124) |
+| Right gutter — per-turn cost/token (#3283 ④) | The agent-reply row that concludes a turn shows that turn's real tokens + USD, read by `chain_id` through `BudgetTracker`'s bounded per-turn buckets (#3339's source-captured attribution) — one figure per turn, never repeated per row and never differenced out of cumulative counters. A row naming a turn with no held figure (no LLM call, evicted bucket, unknown `chain_id`, or a remote client where the buckets are not on the wire) renders `—`, never `0`; a restored conversation shows no figures at all rather than reconstructed ones | [AG-UI transport § Textual TUI gutters](reference/runtime/agui-transport.md#textual-tui-gutters--state-left--elapsed-timeturn-cost-right-3283-124) |
 
 > **Unstarted direction (#3283 ⑤, not yet designed or scoped):** a LIVE dashboard surface outside the conversation pane — `reyn events` live replay, a multi-session monitor, a cost dashboard — built on flowview's `dashboard.py`/`compare.py` example patterns. This would be a Reyn-internal live view over the SAME `reyn events` audit-event log the rest of the OS already emits, not the external, queryable-database/time-series/alerting "observability dashboard" [Care boundary § Concrete examples from the landscape (Observability dashboards)](concepts/architecture/care-boundary.md#concrete-examples-from-the-landscape) deliberately keeps out of scope — that boundary is about NOT shipping BI-style cross-run aggregation infrastructure, not about the TUI never rendering a live in-process view of its own events.
 

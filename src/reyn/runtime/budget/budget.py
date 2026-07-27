@@ -809,13 +809,19 @@ def write_checkpoint(
 # ── tracker ─────────────────────────────────────────────────────────────────
 
 # #3339: how many recent turns keep a live per-turn token/cost bucket. The
-# consumer is the status surface ("what did this turn cost"), which reads the
-# most recent turn — the depth exists so a just-finished turn stays readable
-# while later turns run, not so history accumulates unbounded. The tracker is
-# process-shared, so N concurrent sessions share these buckets: the effective
-# per-session depth is CAP/N. Harmless while the only read is the latest turn
-# (never an eviction victim); a future reader of OLDER turns would have to
-# reckon with it.
+# depth exists so a just-finished turn stays readable while later turns run,
+# not so history accumulates unbounded. The tracker is process-shared, so N
+# concurrent sessions share these buckets: the effective per-session depth is
+# CAP/N.
+#
+# #3283 ④: readers now include a KEYED lookup for OLDER turns
+# (``turn_usage(chain_id)``), not only the latest one — the TUI's right gutter
+# asks "what did the turn this row belongs to cost", for rows scrolled well
+# back. So eviction IS reachable for a real read, and the depth above is what
+# decides when. That is handled by contract rather than by depth: a keyed read
+# of an evicted (or never-recorded) turn returns ``None``, so the caller
+# renders "unknown" instead of a fabricated ``0``. The durable record of an
+# evicted turn's spend is the ledger's per-call ``chain_id``.
 TURN_BUCKET_CAP = 64
 
 
@@ -1587,9 +1593,13 @@ class BudgetTracker:
         Insertion order tracks recency only because turns run SEQUENTIALLY
         within a session — a turn that stayed open across more than
         ``TURN_BUCKET_CAP`` later turns would be evicted while still live.
-        That is unreachable while a session runs one turn at a time, and the
-        only reader (``latest_turn_usage``) asks about the turn that just
-        recorded, which is never the eviction victim."""
+        That is unreachable while a session runs one turn at a time.
+
+        Eviction IS observable to a reader, though: ``turn_usage(chain_id)``
+        (#3283 ④) asks about turns arbitrarily far back, so the oldest of them
+        will have been evicted in a long session. That is answered by contract
+        — ``None`` for an absent bucket, never a fabricated ``0`` — rather than
+        by trying to keep every turn forever."""
         self._turn_tokens[chain_id] = self._turn_tokens.get(chain_id, 0) + tokens
         self._turn_cost_usd[chain_id] = self._turn_cost_usd.get(chain_id, 0.0) + cost_usd
         self._last_turn_chain_id = chain_id
@@ -1605,18 +1615,50 @@ class BudgetTracker:
         (tool-loop iterations included), each priced at its own model's rate —
         never derived by differencing cumulative counters.
 
-        Deliberately latest-turn-only, with no ``usage(chain_id)`` sibling. A
-        keyed lookup would have to answer for a turn whose bucket has been
-        evicted (``TURN_BUCKET_CAP``), and the only shapes available there are
-        a fabricated ``0`` or an ``unknown`` sentinel every caller must
-        remember to check. The latest turn can never be the eviction victim,
-        so an API that only asks about it cannot ask the ambiguous question."""
+        Convenience over :meth:`turn_usage` for the caller that does not hold a
+        chain_id — "whatever ran last, process-wide". A caller that DOES know
+        which turn it is asking about should use :meth:`turn_usage` instead:
+        the latest turn process-wide is often not the turn that caller means
+        (one tracker, several sessions)."""
         chain_id = self._last_turn_chain_id
         if chain_id is None:
             return None
         return {
             "chain_id": chain_id,
             "tokens": self._turn_tokens.get(chain_id, 0),
+            "cost_usd": self._turn_cost_usd.get(chain_id, 0.0),
+        }
+
+    def turn_usage(self, chain_id: str) -> dict | None:
+        """#3283 ④: ``{"chain_id", "tokens", "cost_usd"}`` for the turn
+        ``chain_id``, or ``None`` when this tracker holds no figure for it.
+
+        The KEYED per-turn read. Tokens and cost are summed over every LLM call
+        that turn made (tool-loop iterations included), each priced at its own
+        model's rate — never derived by differencing cumulative counters.
+
+        ``None`` — never a ``0`` — is the answer for EVERY "no figure" case,
+        and there are three, indistinguishable from here and deliberately not
+        distinguished: the turn never recorded spend (it made no LLM call, or
+        it is not a turn of this process at all), or its bucket has been
+        EVICTED (``TURN_BUCKET_CAP``). A ``0`` would be indistinguishable from
+        a turn that genuinely cost nothing, and a renderer that forgot to
+        branch would print it as fact; ``None`` makes that mistake loud (drawn
+        as "None", or a ``TypeError`` the moment anything does arithmetic).
+
+        This lookup was deliberately absent when the per-turn buckets landed
+        (#3339): with no consumer, nothing would have enforced branching on
+        "unknown", so the API was narrowed to :meth:`latest_turn_usage` to make
+        the ambiguous question unaskable. #3283 ④'s right gutter is that
+        consumer — it renders one turn figure per conversation row, for rows
+        scrolled arbitrarily far back, and renders ``—`` on ``None``. The
+        durable record of an evicted turn's spend is the ledger's per-call
+        ``chain_id``, which lets any past turn be re-grouped after the fact."""
+        if chain_id not in self._turn_tokens:
+            return None
+        return {
+            "chain_id": chain_id,
+            "tokens": self._turn_tokens[chain_id],
             "cost_usd": self._turn_cost_usd.get(chain_id, 0.0),
         }
 

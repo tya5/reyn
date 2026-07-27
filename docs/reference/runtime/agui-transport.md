@@ -627,7 +627,7 @@ observer via `FlowView.on_flow_clear`. The completion's own final write is NOT
 visibility-gated: the authoritative full text lands whether or not the row is
 on screen.
 
-### Textual TUI gutters — state (left) + elapsed time (right) (#3283 ①②④)
+### Textual TUI gutters — state (left) + elapsed time/turn cost (right) (#3283 ①②④)
 
 The Textual TUI's `FlowView` (`interfaces/inline/textual_chat`) paints TWO
 fixed-width columns per row, both driven by flowview's `FlowDecorator`
@@ -642,23 +642,38 @@ second hand-rolled column:
   (`int(clock() / frame_period)`) that flowview's own
   `FlowView(animation_fps=N)` re-invokes on each animation tick — no
   app-side timer (#3283 ①, native-blink equivalence).
-- **RIGHT gutter — `ReynTimingGutter`** (`gutter.py`, #3283 ④): a per-entry
-  ELAPSED-TIME label (`Ns`/`Nm`/`Nh`), wired via flowview's additive
-  `right_decorator`/`right_gutter_width` params. **Content set — elapsed
-  time only**, decided against what data actually exists (owner-adjudicated
-  on #3283, issue thread): turn cost/tokens are CUMULATIVE-ONLY in
-  `BudgetTracker` (no per-turn/per-entry source — showing one would be a
-  fabricated per-entry number) and a dedicated state chip would duplicate
-  the left gutter's existing `EntryState` encoding. Only a tool-call entry
-  that actually has timing data shows a label — LIVE while RUNNING (read off
-  the same start marker the ② live-spinner body uses), or the FINAL captured
-  duration once SETTLED (stashed at settle time, before the live marker is
-  stripped). Every other entry — user/agent lines, interventions, and ANY
-  RESTORED row — renders an empty right-gutter cell: no placeholder, no
-  `"0s"`. **Restore is live-session-only by decision**: a persisted
-  `ChatMessage` carries no timing field at all, and widening that persisted
-  shape was judged out of proportion to a TUI gutter decoration — a restored
-  tool row's right gutter is always blank, never a reconstructed value.
+- **RIGHT gutter — `ReynRightGutter`** (`gutter.py`, #3283 ④): one column, two
+  label families, wired via flowview's additive
+  `right_decorator`/`right_gutter_width` params. flowview takes a single right
+  decorator, so this class composes two single-purpose halves and joins
+  whatever is non-empty:
+  - **`ReynTimingGutter` — per-entry ELAPSED time** (`Ns`/`Nm`/`Nh`). Only a
+    tool-call entry that actually has timing data shows a label — LIVE while
+    RUNNING (read off the same start marker the ② live-spinner body uses), or
+    the FINAL captured duration once SETTLED (stashed at settle time, before
+    the live marker is stripped).
+  - **`ReynTurnUsageGutter` — the row's turn's real TOKENS + USD COST**
+    (`1.9k $0.03`), anchored to the `kind="agent"` reply row: the row that
+    concludes a turn's visible output, one figure per turn rather than the same
+    total repeated on every row of the turn. Read through a keyed lookup over
+    `BudgetTracker`'s bounded per-turn buckets (`BudgetTracker.turn_usage` via
+    `Session.turn_usage`, reached from the status snapshot's `turn_usage_fn`) —
+    the per-turn attribution #3339 captured at the source. **Never derived by
+    differencing cumulative counters.** A row that NAMES a turn
+    (`meta["chain_id"]`) whose figure the runtime does not hold renders `—`,
+    never `0`: a turn that made no LLM call, a turn EVICTED from the bounded
+    buckets, an unknown chain_id, and a REMOTE client (per-turn buckets are
+    session-local and not projected onto the wire — `turn_usage_fn` is `None`
+    there, the same frame-sufficiency boundary as the past-turn log).
+
+  A dedicated state chip, the umbrella issue's third candidate, stays dropped:
+  it would duplicate the left gutter's existing `EntryState` encoding.
+  A row with no data in either family renders an empty cell — no placeholder,
+  no `"0s"`, no `0`-cost. **Both families are live-session-only by decision**:
+  a persisted `ChatMessage` carries no timing field, `project_restored_frames`
+  does not carry `chain_id` onto a restored frame, and the per-turn buckets are
+  in-memory state a restart does not rehydrate — so a restored row's right
+  gutter is blank, never a reconstructed value.
 
 ### `reyn.intervention.<kind>`
 
