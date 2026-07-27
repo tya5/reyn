@@ -197,6 +197,29 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     assert TextualChatApp.ANIMATION_FPS > 0
 
 
+def test_state_color_has_no_default_entry_kind_colour_is_the_only_default_source() -> None:
+    """Tier 1: ``_STATE_COLOR`` (the EntryState → colour map) carries NO
+    ``EntryState.DEFAULT`` entry. #3324: a prior ``_STATE_COLOR[EntryState.
+    DEFAULT] = _CC_DIM`` entry was dead code (``ReynGutter.decorate``'s own
+    ``elif state is EntryState.DEFAULT: color = kind_color`` branch always
+    intercepts DEFAULT before the dict lookup) AND its comment claimed the
+    opposite of what the dict would have done if it WERE live — a resolved
+    intervention needs a different DEFAULT-state colour than an ordinary
+    user/agent row, which a single scalar here could never provide. Pins
+    that the contradiction cannot silently return: DEFAULT is absent from
+    the map, and ``decorate`` is the sole source of a DEFAULT row's colour
+    (via the per-kind ``kind_color`` from ``_gutter_glyph_color``)."""
+    from reyn.interfaces.inline.textual_chat.gutter import _STATE_COLOR
+
+    assert EntryState.DEFAULT not in _STATE_COLOR, (
+        "_STATE_COLOR must not carry a DEFAULT entry — decorate()'s dedicated "
+        "DEFAULT branch (falling back to the per-kind colour) is the only "
+        "source of a DEFAULT row's colour; a dict entry here would be "
+        "unreachable dead code (decorate() special-cases DEFAULT before ever "
+        "consulting this map) and would misstate DEFAULT's real colour."
+    )
+
+
 # ── Gate 2: native-blink equivalence + additive strip (+ non-vacuous positive) ─
 
 def test_time_based_gutter_advances_frame_across_animation_ticks() -> None:
