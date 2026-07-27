@@ -16,7 +16,11 @@ the transport send seam. The running-blink gutter animates itself off
 textual-flowview's native ``FlowView(animation_fps=N)`` clock — there is no
 app-side blink timer. A RUNNING tool row additionally grows a live spinner +
 elapsed BODY, driven by a viewport-gated per-entry ``FlowView.animate_entry``
-that is stopped when the tool completes (Phase ②, #3283).
+that is stopped when the tool completes (Phase ②, #3283). A STREAMING reply's
+live updates are likewise viewport-gated (Phase ③, #3283): the deltas always
+accumulate, but the row is only re-rendered while it is on screen —
+``FlowView.track_visibility`` replays the accumulated text in one update if the
+row scrolls back, so scrolling away never truncates a reply.
 
 This module is part of the TTY-only ``textual_chat`` package (imported lazily via
 :mod:`reyn.interfaces.repl.client_driver`); its ``textual`` / ``textual_flowview``
@@ -26,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
 from textual.app import App, ComposeResult
@@ -75,6 +79,8 @@ from .restore import project_restored_frames
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
+    from textual_flowview import VisibilityHandle
+
     from reyn.interfaces.repl.read_model import ChatReadModel
     from reyn.interfaces.transport.client_transport import ClientTransport
     from reyn.runtime.outbox import OutboxMessage
@@ -114,6 +120,53 @@ _GUTTER_WIDTH = 2
 #: distinguishes "no snapshot passed, read a fresh one" from an explicit ``None``
 #: snapshot (pre-session), which must NOT trigger a second read.
 _UNSET: object = object()
+
+
+@dataclass(slots=True)
+class _StreamingReply:
+    """One in-flight streamed reply, keyed by ``chain_id`` in
+    :attr:`TextualChatApp._streaming_replies` (#3288 ③c, visibility-gated by
+    #3283 ③).
+
+    Separates the two things a streamed reply needs to keep apart:
+
+    - :attr:`text` — the FULL accumulated reply. Authoritative, appended to on
+      EVERY delta unconditionally, whether or not the row is on screen. Nothing
+      about visibility may ever skip this line; the deferral below is a render
+      optimisation, never a data path.
+    - :attr:`rendered` — how much of :attr:`text` the flow entry has actually
+      been handed (via ``Entry.set_item``). Equal to :attr:`text` while the row
+      is on screen; LAGS it while the row is scrolled out of view.
+
+    ``rendered != text`` is therefore exactly "this row owes the viewport a
+    repaint", and :meth:`TextualChatApp._flush_streaming_reply` is the only
+    thing that closes the gap — driven either by the next delta (while visible)
+    or by ``on_show`` when the row scrolls back (while it was not).
+
+    :attr:`handle` is the ``FlowView.track_visibility`` registration whose
+    ``on_show``/``on_hide`` maintain :attr:`visible`; :meth:`release` stops it
+    idempotently (a second call, or a call after the entry was removed / the
+    model cleared, is a no-op — flowview's ``VisibilityHandle.stop`` already
+    returns early once its observer is gone)."""
+
+    entry: "Entry[OutboxMessage]"
+    text: str
+    rendered: str
+    visible: bool = True
+    handle: "VisibilityHandle | None" = None
+
+    @property
+    def pending(self) -> bool:
+        """Whether accumulated text is waiting on a repaint (deferred while the
+        row is off screen). The public read the ③ gates witness."""
+        return self.rendered != self.text
+
+    def release(self) -> None:
+        """Unregister the visibility tracker. Idempotent — safe to call on
+        completion, on session switch, and twice."""
+        handle, self.handle = self.handle, None
+        if handle is not None:
+            handle.stop()
 
 
 class TextualChatApp(App):
@@ -381,6 +434,14 @@ class TextualChatApp(App):
     #: that needs a NON-``.clear()`` reset (a fresh instance, a widget
     #: method, a follow-on hydrate) stays explicit in the reset method
     #: below — this tuple covers only the "just empty the dict" shape.
+    #:
+    #: ★``_streaming_replies`` is BOTH: its records are dropped by this
+    #: tuple's uniform ``.clear()``, but each record also OWNS a released
+    #: resource (its #3283 ③ ``FlowView.track_visibility`` handle), which a
+    #: ``.clear()`` cannot express. The reset method therefore releases those
+    #: handles explicitly, before the loop — registering a future dict here
+    #: still resets it, but a future dict whose VALUES own a resource needs
+    #: that same explicit release too.
     _PER_SESSION_DICT_STATE: "tuple[str, ...]" = (
         "_running_tools",
         "_pending_ivs",
@@ -485,17 +546,21 @@ class TextualChatApp(App):
         # on every ``agent_delta`` chat-event AND the one the terminal
         # ``kind="agent"`` OutboxMessage carries in its ``meta["chain_id"]``
         # (never a guessed key — text-match correlation was tried and
-        # reverted earlier in this arc, issue #3288/#3309). Each value is
-        # ``(entry, accumulated_text)``: the FIRST delta for a chain_id
-        # appends ONE new flow entry; every SUBSEQUENT delta for that SAME
-        # chain_id updates that SAME entry in place
+        # reverted earlier in this arc, issue #3288/#3309). Each value is a
+        # :class:`_StreamingReply`: the FIRST delta for a chain_id appends ONE
+        # new flow entry; every SUBSEQUENT delta for that SAME chain_id
+        # accumulates onto that record and updates that SAME entry in place
         # (:meth:`_handle_agent_delta_event`) rather than appending a second
-        # row. The terminal completion (:meth:`_ingest_frame`'s ``kind ==
-        # "agent"`` branch) pops this entry and finalizes it with the
-        # authoritative full text — the ONLY place a streamed reply's entry
-        # is removed from this map, so a chain_id can never leak past its
-        # turn's completion.
-        self._streaming_replies: "dict[str, tuple[Entry[OutboxMessage], str]]" = {}
+        # row. #3283 ③: the in-place update is VISIBILITY-GATED — the text
+        # always accumulates, but the entry is only handed it while the row is
+        # on screen (``FlowView.track_visibility``, replayed by ``on_show``).
+        # The terminal completion (:meth:`_ingest_frame`'s ``kind == "agent"``
+        # branch) releases the visibility tracker, pops the record and
+        # finalizes the entry with the authoritative full text — the ONLY
+        # place a streamed reply's entry is removed from this map outside a
+        # session switch, so a chain_id can never leak past its turn's
+        # completion.
+        self._streaming_replies: "dict[str, _StreamingReply]" = {}
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -933,7 +998,10 @@ class TextualChatApp(App):
         (:attr:`_streaming_replies`, #3288 ③c) does not append a second entry
         either: it FINALIZES the same entry the deltas coalesced into, with the
         completion's authoritative full text (L9 whole-persist's source of
-        truth), and pops the tracked chain_id. Every OTHER frame — including a
+        truth), pops the tracked chain_id and releases its #3283 ③
+        visibility tracker (no observer outlives a settled row — and the
+        settle write itself is NOT visibility-gated: the authoritative text
+        lands even if the row is off screen). Every OTHER frame — including a
         completion with NO matching started entry (already settled / uncorrelated)
         — is appended as its own entry: an ``intervention`` frame routes to
         :meth:`_present_intervention` (the panel, #3299 P1), everything else to
@@ -951,8 +1019,16 @@ class TextualChatApp(App):
             chain_id = meta.get("chain_id")
             streaming = self._streaming_replies.pop(chain_id, None) if chain_id else None
             if streaming is not None:
-                entry, _partial_text = streaming
-                entry.set_item(replace(entry.item, text=msg.text, meta=meta))
+                # Release the ③ visibility tracker BEFORE the final write: the
+                # record is already out of the map, so no callback could find it
+                # anyway, and nothing is left registered on a settled row.
+                streaming.release()
+                # Unconditional — the completion's authoritative full text lands
+                # whether or not the row is currently on screen. The ③ deferral
+                # governs only the intermediate partials, never this settle.
+                streaming.entry.set_item(
+                    replace(streaming.entry.item, text=msg.text, meta=meta)
+                )
                 return
         entry = self.conversation.append(msg)
         if kind == "intervention":
@@ -1223,7 +1299,12 @@ class TextualChatApp(App):
           own for "the whole displayed session changed").
         - :attr:`_streaming_replies` (#3288 ③c) — ★explicitly flagged by the
           architect as the state most likely to be forgotten by a LATER
-          phase; cleared here since it already exists.
+          phase; cleared here since it already exists. #3283 ③ made that
+          prediction concrete: each record now owns a
+          ``FlowView.track_visibility`` handle, so the clear is preceded by
+          an explicit release loop, releasing what this app acquired rather
+          than leaning on ``FlowView.on_flow_clear`` also dropping every
+          observer (it does — see the inline note at that loop).
         - :attr:`_pending_own_cancels` (#3300 Y-client) — an addition beyond
           the architect's enumerated table (found verifying it against this
           file): keyed by msg_id and normally popped once the matching
@@ -1266,6 +1347,25 @@ class TextualChatApp(App):
         data = event.data or {}
         agent = data.get("agent")
         session_id = data.get("session_id")
+        # #3283 ③: release every in-flight streamed reply's visibility tracker
+        # BEFORE the model is cleared, so no ``on_show``/``on_hide`` callback of
+        # the OLD session's rows is still registered on the flow. This is the one
+        # per-session state whose reset is not fully expressible as ``.clear()``
+        # (see :attr:`_PER_SESSION_DICT_STATE`) — the dict clear below drops the
+        # records, this loop releases the resource each record OWNS. Idempotent
+        # (:meth:`_StreamingReply.release`).
+        #
+        # ★Honest scope: for THIS path the loop is belt-and-braces — stripping it
+        # changes no observable behaviour, because ``FlowModel.clear`` below
+        # reaches ``FlowView.on_flow_clear``, which drops every observer itself
+        # (a SECOND declaration of the same release, in the library). The app
+        # releases what the app acquired rather than depending on that; the
+        # load-bearing release is the one in :meth:`_ingest_frame`, on the
+        # completion path, where nothing else would ever unregister a settled
+        # row's observer (they would accumulate for the whole session — the very
+        # scale problem ③ exists to remove).
+        for reply in self._streaming_replies.values():
+            reply.release()
         self.conversation.clear()
         # Data-driven over :attr:`_PER_SESSION_DICT_STATE` — see that
         # attribute's docstring — instead of a hand-written list of
@@ -1439,6 +1539,26 @@ class TextualChatApp(App):
         never contests with the authoritative completed text (L9
         whole-persist stays the completion's job).
 
+        **#3283 ③ — the in-place update is VISIBILITY-GATED.** The append
+        registers a ``FlowView.track_visibility`` tracker for the entry
+        (:meth:`_on_streaming_entry_shown` / :meth:`_on_streaming_entry_hidden`),
+        and a subsequent delta hands the entry its new text only while the row
+        is ON SCREEN. Off screen, the delta still accumulates onto
+        :attr:`_StreamingReply.text` — always, unconditionally — but issues NO
+        ``set_item``; the deferred text is replayed in ONE update when the row
+        scrolls back into view. So a long conversation whose streaming reply has
+        been scrolled away costs O(1) model→view updates instead of O(deltas),
+        and scrolling back shows the COMPLETE reply, never a truncated one.
+
+        This is a distinct gate from the one flowview already applies: flowview
+        skips the *present + reflow* for an off-screen update
+        (``FlowView.on_flow_update``), but the ``set_item`` itself — a new item
+        object, a revision bump, a strip-cache eviction and a model→view
+        notification per delta — happens regardless. ③ gates that *update feed*;
+        flowview gates the *render*. Neither replaces the other, and neither is
+        a correctness mechanism: strip this deferral and the reply is still
+        complete, just updated once per delta.
+
         A late-joining connection that only receives the TAIL of a stream
         (the mid-stream-join case #3288 ③d proved on the wire, handed off
         to ③c to close on the render side) is handled by this SAME code
@@ -1464,12 +1584,104 @@ class TextualChatApp(App):
             entry = self.conversation.append(
                 OutboxMessage(kind="agent", text=text, meta={"chain_id": chain_id})
             )
-            self._streaming_replies[chain_id] = (entry, text)
+            # The append already carries this first chunk, so rendered == text.
+            record = _StreamingReply(entry=entry, text=text, rendered=text)
+            self._streaming_replies[chain_id] = record
+            self._track_streaming_visibility(record)
             return
-        entry, accumulated = existing
-        accumulated += text
-        entry.set_item(replace(entry.item, text=accumulated))
-        self._streaming_replies[chain_id] = (entry, accumulated)
+        # ★Accumulate FIRST and unconditionally — the visibility gate below may
+        # skip the RENDER, never this line. An off-screen reply that is never
+        # re-shown before its completion still had every byte collected here.
+        existing.text += text
+        if existing.visible:
+            self._flush_streaming_reply(existing)
+
+    def _track_streaming_visibility(self, record: "_StreamingReply") -> None:
+        """Bind a streamed reply's live-update feed to its row's viewport state
+        (#3283 ③, ``FlowView.track_visibility``).
+
+        The two callbacks are BOUND METHODS, not per-chain closures, and they
+        recover their ``chain_id`` from the entry's own item meta — the SAME
+        authoritative key :attr:`_streaming_replies` is filed under, which every
+        write to this entry preserves (``replace`` keeps ``meta``, and the
+        terminal completion's meta carries the chain_id too). So nothing here
+        captures a chain_id, a record, or the app in a closure that could outlive
+        the tracker.
+
+        ``track_visibility`` fires ``on_show`` SYNCHRONOUSLY when the entry is
+        already on screen, which is the ordinary case for a fresh streamed reply
+        under ``STICKY_BOTTOM`` — so :attr:`_StreamingReply.visible` starts out
+        agreeing with the viewport rather than being assumed. When the flow is
+        not yet laid out (zero content width) flowview reports NOTHING visible
+        and ``on_show`` does not fire; the record's ``visible=True`` default then
+        keeps the feed live (updates are cheap and flowview drops the off-screen
+        render itself) instead of silently deferring forever.
+
+        Fully guarded, same as ② 's :meth:`_begin_running_indicator`: the gate is
+        an OPTIMISATION, so failing to register it must degrade to "update on
+        every delta" — never break the pump or lose a chunk."""
+        try:
+            record.handle = self._flow.track_visibility(
+                record.entry,
+                on_show=self._on_streaming_entry_shown,
+                on_hide=self._on_streaming_entry_hidden,
+            )
+        except Exception:
+            logger.exception("textual chat: could not track streamed-reply visibility")
+
+    def _streaming_record_for(self, entry: "Entry[OutboxMessage]") -> "_StreamingReply | None":
+        """The tracked record for ``entry``, or ``None`` if it is no longer
+        in flight (already finalized, or reset by a session switch) — the lookup
+        both visibility callbacks share, keyed by the entry's own
+        ``meta["chain_id"]``. Identity-checked: a record found under that
+        chain_id but pointing at a DIFFERENT entry is not this entry's, so a
+        stale callback can never write into a successor's row."""
+        chain_id = (entry.item.meta or {}).get("chain_id")
+        if not chain_id:
+            return None
+        record = self._streaming_replies.get(chain_id)
+        if record is None or record.entry is not entry:
+            return None
+        return record
+
+    def _on_streaming_entry_shown(self, entry: "Entry[OutboxMessage]") -> None:
+        """★The replay leg (#3283 ③): a streamed reply's row scrolled back INTO
+        view — hand the entry everything that accumulated while it was away, in
+        ONE update.
+
+        This is the leg that makes the deferral safe. Strip it and the deferral
+        becomes data loss on screen: the row would keep showing whatever text it
+        had when it scrolled away, and the deltas that arrived while off-screen
+        would never reach it until (if ever) the terminal completion frame
+        overwrote the whole body. The accumulated text itself is never at risk
+        (:meth:`_handle_agent_delta_event` appends unconditionally); this call is
+        what puts it on screen."""
+        record = self._streaming_record_for(entry)
+        if record is None:
+            return
+        record.visible = True
+        if record.pending:
+            self._flush_streaming_reply(record)
+
+    def _on_streaming_entry_hidden(self, entry: "Entry[OutboxMessage]") -> None:
+        """A streamed reply's row left the viewport (#3283 ③) — stop feeding it
+        updates. Deltas keep accumulating; only the ``set_item`` is deferred,
+        until :meth:`_on_streaming_entry_shown` replays it."""
+        record = self._streaming_record_for(entry)
+        if record is not None:
+            record.visible = False
+
+    def _flush_streaming_reply(self, record: "_StreamingReply") -> None:
+        """Hand the entry the FULL accumulated text and mark it rendered — the
+        single place a streamed partial reaches the flow, from either the
+        live leg (a delta while visible) or the replay leg (``on_show``).
+
+        ``rendered`` is advanced BEFORE the ``set_item`` on purpose:
+        ``set_item`` re-enters flowview (reflow → ``_sync_visibility``), which can
+        call straight back into :meth:`_on_streaming_entry_shown`, and a record
+        that still looked ``pending`` there would flush a second time."""
+        record.rendered = record.text
+        record.entry.set_item(replace(record.entry.item, text=record.text))
 
     def _restore_cancelled_text(self, text: str) -> None:
         """Restore a cancelled submission's text into the composer (#3300
@@ -1554,7 +1766,9 @@ class TextualChatApp(App):
         streamed reply chunks into ONE flow entry per ``chain_id`` — see that
         method's docstring and :attr:`_streaming_replies`. The entry it
         maintains is finalized by the terminal ``kind="agent"`` DISPLAY frame
-        in :meth:`_ingest_frame`, never appended a second time.
+        in :meth:`_ingest_frame`, never appended a second time. #3283 ③: that
+        coalesce is visibility-gated — an off-screen reply accumulates but does
+        not re-render, and replays in one update when it scrolls back.
 
         #3300 P2b/Y-client: ``user_submitted`` (:meth:`_handle_user_submitted_event`),
         ``turn_started`` (:meth:`_handle_turn_started_event`), and

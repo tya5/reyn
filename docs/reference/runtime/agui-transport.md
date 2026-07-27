@@ -574,7 +574,7 @@ wire.
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
 | `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. The plain codec's `CUSTOM` mapping (see the note above); on the actual AG-UI wire (`encode_frame_wire_streaming`, #3288 ③d) this rides `TEXT_MESSAGE_CONTENT` instead — see *Text lifecycle* above for the full streamed-message contract (END-only completion, reconstruction authority, late-joiner closure) |
 
-### Textual TUI streamed-reply rendering (#3288 ③c)
+### Textual TUI streamed-reply rendering (#3288 ③c, #3283 ③)
 
 The Textual TUI (`interfaces/inline/textual_chat/app.py`) is the L7 consumer
 `agent_delta` was forwarded ahead of (see the note above): `TextualChatApp.
@@ -594,6 +594,38 @@ exactly one final entry instead of a duplicate. The plain/repl renderer has
 no equivalent branch and is unaffected — `agent_delta` there is still
 consumed-but-dropped (opt-in draw, no visible-garbage window), exactly as
 before ③c.
+
+**Visibility-gated live updates (#3283 ③).** The in-place update above is
+gated on whether the row is on screen, so a long conversation whose streaming
+reply has been scrolled away costs O(1) model→view updates instead of
+O(deltas). The append registers a `FlowView.track_visibility` tracker for the
+entry; while the row is visible each delta issues its `Entry.set_item` as
+before, and while it is NOT visible the delta **still accumulates** onto the
+tracked reply text but issues no `set_item`. The tracker's `on_show` replays
+the whole accumulated text in ONE update when the row scrolls back — so
+scrolling away and back shows the COMPLETE reply, never a truncated one.
+
+Two properties are load-bearing here:
+
+- **The gate is an optimisation, not a correctness mechanism.** Text
+  accumulation is unconditional; only the render is deferred. Removing the
+  deferral leaves every reply byte-identical, just updated once per delta.
+  Removing the `on_show` replay does NOT — that is what puts deferred text on
+  screen.
+- **It is a distinct gate from flowview's own.** flowview already skips the
+  *present + reflow* for an off-screen update (`FlowView.on_flow_update`), but
+  the `set_item` itself — a new item object, a revision bump, a strip-cache
+  eviction, a model→view notification — happens regardless. #3283 ③ gates that
+  *update feed*; flowview gates the *render*. Neither replaces the other.
+
+The tracker is released when the terminal completion settles the row — the
+load-bearing release, since nothing else would ever unregister a settled row's
+observer and they would otherwise accumulate for the whole session — and, belt
+and braces, for every still-in-flight reply on a session switch
+(`session_attached`, #3310 N2), where clearing the model already drops every
+observer via `FlowView.on_flow_clear`. The completion's own final write is NOT
+visibility-gated: the authoritative full text lands whether or not the row is
+on screen.
 
 ### Textual TUI gutters — state (left) + elapsed time (right) (#3283 ①②④)
 
