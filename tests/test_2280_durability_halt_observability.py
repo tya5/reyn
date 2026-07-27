@@ -16,12 +16,17 @@ once), and that it reaches every operator-facing surface:
     ``interfaces.inline.textual_chat.chrome.status_line_text`` surface the
     reason; a healthy session's status line carries no such text (negative
     control).
-  - Gate 3 (plain --cui): both LIVE plain-path renderers' ``bottom_toolbar``
-    (``ConsoleChatRenderer`` for ``--cui``; ``InlineChatRenderer`` — the class
-    ``make_inline_renderer()`` actually constructs, NOT the unwired legacy
-    ``RichChatRenderer`` — for ``chat.render_mode: plain`` on a TTY) surface
-    the reason once ``on_chat_event`` sees the event; a fresh renderer (no
-    event yet) shows nothing (negative control).
+  - Gate 3 (plain --cui): ``bottom_toolbar`` on both renderers surfaces the
+    reason once ``on_chat_event`` sees the event; a fresh renderer (no event
+    yet) shows nothing (negative control). ``ConsoleChatRenderer`` is the LIVE
+    ``--cui`` renderer (and, since #3292, also the LIVE renderer for
+    ``chat.render_mode: plain`` on a TTY without ``--cui`` — that config now
+    selects ``ConsoleChatRenderer`` too, not ``InlineChatRenderer``, genuine
+    ``--cui`` equivalence). ``InlineChatRenderer`` — the class
+    ``make_inline_renderer()`` constructs for the default interactive-TTY
+    path, NOT the unwired legacy ``RichChatRenderer`` sibling — is covered
+    here as a direct unit-level pin on its own ``bottom_toolbar`` contract,
+    not a claim that this exact fallback is live-reachable post-#3292.
   - Gate 4 (reachable-for-purpose, TUI app level): a real ``TextualChatApp``
     driven by a real halted registry/session + a transport that forwards the
     `session_halted` event proactively (no DISPLAY frame involved at all,
@@ -242,11 +247,14 @@ def test_console_renderer_bottom_toolbar_surfaces_halt() -> None:
 
 def test_inline_renderer_bottom_toolbar_surfaces_halt() -> None:
     """Tier 1: ``InlineChatRenderer`` — the class ``make_inline_renderer()``
-    actually constructs for the interactive-TTY path (used when
-    ``chat.render_mode: plain`` is configured on a TTY without ``--cui``, the
-    plain PromptSession loop per ``client_driver.run_chat_client``; the
-    legacy ``RichChatRenderer`` sibling class is never constructed by any
-    production call site) shows the same halt banner."""
+    actually constructs for the default interactive-TTY path (the legacy
+    ``RichChatRenderer`` sibling class is never constructed by any production
+    call site) — shows the same halt banner. Pre-#3292, this class was also
+    what ran the plain PromptSession loop when ``chat.render_mode: plain`` was
+    configured on a TTY without ``--cui``; #3292 made that config select
+    ``ConsoleChatRenderer`` instead (genuine ``--cui`` equivalence), so this
+    assertion is now a direct unit-level pin on ``bottom_toolbar``'s own
+    contract, not a claim about that specific fallback's live reachability."""
     renderer = InlineChatRenderer()
     assert renderer.bottom_toolbar() is None, "negative control: healthy renderer shows nothing"
     renderer.on_chat_event(Event(type="session_halted", data={"reason": "durability_failure"}))

@@ -55,12 +55,25 @@ def resolve_render_mode(mode: str, *, is_tty: bool) -> str:
     The TTY guard is universal: a non-TTY session (piped, CI, sandbox with no
     real terminal, or a host where alt-screen would silently no-op) can never
     enter an interactive Textual driver, so it always resolves to ``"plain"``
-    regardless of the configured mode. On a TTY: ``"plain"`` forces the plain
-    path (config equivalent of ``--cui``); ``"inline"`` selects the legacy
-    bounded inline driver (retains upstream bugs #3285/#3286); ``"auto"`` and
-    ``"alt-screen"`` both resolve to ``"alt-screen"`` (full-screen). An
-    unrecognised mode is treated as the ``alt-screen`` default — config parsing
-    already validates+warns, this is a belt-and-braces fallback.
+    regardless of the configured mode. On a TTY: ``"plain"`` resolves to the
+    plain path here too, but (#3292) that is now the SECOND of two gates —
+    ``chat.py``'s renderer selection already forces ``ConsoleChatRenderer``
+    whenever ``chat.render_mode`` is ``"plain"``, so ``renderer.uses_app_input()``
+    is already ``False`` and this function is never reached with an app-input
+    renderer on a standard ``reyn chat`` invocation; this branch is a
+    defensive fallback for any caller that reaches here with an app-input
+    renderer despite a ``"plain"`` config. The net effect (renderer forced
+    Console + this fallback) is genuine ``--cui`` equivalence, not a hybrid.
+    ``"inline"`` selects the legacy bounded inline driver — upstream reports
+    resize-frame-stacking (#3285) and pane-collapse (#3286) there, but reyn's
+    live-TTY integration did NOT reproduce #3285 across 4+ resizes in a real
+    terminal (tui-coder,
+    https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531); treat
+    ``inline`` as **not verified-broken** here but **also not verified-clean**
+    — re-check live before citing either claim. ``"auto"`` and ``"alt-screen"``
+    both resolve to ``"alt-screen"`` (full-screen). An unrecognised mode is
+    treated as the ``alt-screen`` default — config parsing already
+    validates+warns, this is a belt-and-braces fallback.
     """
     if not is_tty:
         return "plain"
@@ -105,6 +118,14 @@ async def run_chat_client(
     A non-TTY session (``--cui`` / piped / CI / no real terminal) always resolves
     to ``plain`` regardless of mode. This is the SAME selection ``run_repl`` made
     locally — now applied identically to the remote path.
+
+    (#3292, local path only: the local ``reyn chat`` call site already forces
+    ``renderer`` to ``ConsoleChatRenderer`` — ``uses_app_input() is False`` —
+    whenever ``chat.render_mode`` is ``"plain"`` on a TTY, so this function's own
+    ``"plain"`` branch inside :func:`resolve_render_mode` is a defensive
+    fallback there, not the live path. The remote call site does not yet wire
+    ``chat.render_mode`` into its own renderer selection, so this function's
+    ``"plain"`` branch is still load-bearing for a remote invocation.)
 
     ``own_connection_id`` (#3287/#3309 F2): the REMOTE call site's own
     ``connection_id`` (``remote_client.py`` mints it client-side, before any
