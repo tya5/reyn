@@ -186,14 +186,19 @@ OpenAI provider 全体で #3288 のデフォルト streaming regression が再�
 を設定しませんし、あなたも設定すべきではありません。
 
 **endpoint が 405 を返す場合。** reyn はもう「自分が bridge したか」を知りません
-（litellm が内部で決定するため）が、`tools + reasoning_effort` の call 形状で
-HTTP 405 が発生した場合は、依然として decision-enabling な
-`ResponsesEndpointRequiredError` を raise します — 両方の対処法を示します:
-その agent の `reasoning_effort` を unset するか、proxy 側で `/v1/responses`
-を有効にするか。これは litellm の routing coverage が狭い場合の safety net
-として意図的に残されています: bridge が必要な model を litellm の heuristic
-がまだカバーしていない場合、405 は raw な dead-end ではなく actionable な
-guidance として表面化します。
+（litellm が内部で決定するため）が、`tools + reasoning_effort` の call 形状
+**かつ OpenAI または Azure provider に解決される** model で HTTP 405 が発生した
+場合は、依然として decision-enabling な `ResponsesEndpointRequiredError` を
+raise します — 両方の対処法を示します: その agent の `reasoning_effort` を
+unset するか、proxy 側で `/v1/responses` を有効にするか。provider による
+scope は重要です: litellm の bridge は `openai`/`azure` にしか発火しない
+ため（`litellm.main.responses_api_bridge_check` の実装を直接確認済み）、
+例えば Gemini の call がこの形状で 405 した場合、それは `/v1/responses` とは
+無関係です — その場合この error は誤解を招くため raise されません。これは
+litellm がカバーする provider の範囲内で、routing coverage が狭い場合の
+safety net として意図的に残されています: OpenAI/Azure の model で bridge が
+必要だが litellm の heuristic がまだカバーしていない場合、405 は raw な
+dead-end ではなく actionable な guidance として表面化します。
 
 **影響を受けないパス:**
 

@@ -1497,18 +1497,67 @@ def _emit_llm_request_error(
 class ResponsesEndpointRequiredError(Exception):
     """#1678, delegated to litellm at #3288-follow-up (issue #3288 comment
     thread, 2026-07-26/27): litellm >= 1.89.3 auto-bridges eligible
-    ``reasoning_effort + tools`` calls to the OpenAI ``/v1/responses`` endpoint
-    internally (``litellm.main.responses_api_bridge_check`` — reyn no longer
-    rewrites the model string itself, see ``recorded_acompletion``). reyn can
-    no longer tell whether a given call WAS bridged, so this error is now
-    raised on ANY 405 for a call shaped ``reasoning_effort + tools`` — the
-    guidance ("this needs /v1/responses, but your endpoint doesn't serve it")
-    is equally true whether litellm applied its own bridge or the operator's
-    proxy simply doesn't support the endpoint. Kept deliberately (owner
-    decision, #3288 comment thread): it is the safety net that makes
-    delegating to litellm's narrower, upstream-maintained routing decision
-    reversible — if litellm's bridge coverage misses a model that genuinely
-    needs it, this surfaces as an ACTIONABLE 405 instead of a raw one."""
+    ``reasoning_effort + tools`` calls to the OpenAI/Azure ``/v1/responses``
+    endpoint internally (``litellm.main.responses_api_bridge_check`` — reyn no
+    longer rewrites the model string itself, see ``recorded_acompletion``).
+    reyn can no longer tell whether a given call WAS bridged, so this error is
+    raised on a 405 for a call shaped ``reasoning_effort + tools`` resolved to
+    the OpenAI or Azure provider (see ``_may_need_responses_endpoint``) — the
+    guidance ("this MAY need /v1/responses, but your endpoint doesn't serve
+    it") is equally true whether litellm applied its own bridge or the
+    operator's proxy simply doesn't support the endpoint. **Provider-scoped**
+    (co-vet finding on PR #3331): litellm's bridge only ever fires for
+    ``custom_llm_provider in ("openai", "azure")`` — a Gemini 405 is
+    categorically unrelated to ``/v1/responses``, so an unscoped trigger would
+    turn a decision-enabling error into a decision-MISLEADING one for every
+    other provider. Kept deliberately (owner decision, #3288 comment thread):
+    it is the safety net that makes delegating to litellm's narrower,
+    upstream-maintained routing decision reversible — if litellm's bridge
+    coverage misses a model that genuinely needs it, this surfaces as an
+    ACTIONABLE 405 instead of a raw one."""
+
+
+def _may_need_responses_endpoint(model: str) -> bool:
+    """#3331 co-vet finding: does ``model`` resolve to a provider litellm's
+    OWN ``/v1/responses`` auto-bridge (``litellm.main.responses_api_bridge_check``,
+    delegated to at #3288-follow-up) ever applies to? Used ONLY to scope the
+    ``ResponsesEndpointRequiredError`` 405 guidance — NOT to rewrite the model
+    (reyn no longer does that; litellm decides bridging internally).
+
+    litellm's own bridge check gates on ``custom_llm_provider in ("openai",
+    "azure")`` (read directly from its source, ``litellm/main.py``) — so this
+    mirrors that pair exactly, not reyn's own judgment about who "should"
+    need it. Without this scope, the 405 guidance would fire for e.g. a
+    Gemini call shaped ``tools + reasoning_effort`` that 405s for a reason
+    entirely unrelated to ``/v1/responses`` (litellm never bridges Gemini),
+    which is categorically false guidance, not merely imprecise.
+
+    Reuses the SAME derivation this repo's #3325 fix (and the now-deleted
+    ``_requires_responses_bridge``) used: ``litellm.get_llm_provider``,
+    queried WITHOUT an explicit ``custom_llm_provider`` (``None``) — the same
+    transport-independence discipline ``_streaming_capable`` documents.
+    reyn's proxy routing (``proxy_kwargs()``) forces
+    ``custom_llm_provider="openai"`` on the wire for ALL models when an
+    operator proxy is configured, so deriving "is this OpenAI/Azure?" from
+    that forced value would make every model look eligible — the exact
+    over-wide failure #3325 fixed, reproduced one layer over. Capability (and
+    provider identity) is a property of the MODEL, not of the transport used
+    to reach it.
+
+    Any lookup failure (unmapped model, litellm internal error) is caught and
+    treated as "does not need it" — conservative in the direction that
+    matters for a diagnostic (never claim a model needs an endpoint reyn
+    can't confirm it resolves to)."""
+    try:
+        import litellm  # noqa: PLC0415
+
+        _, provider, _, _ = litellm.get_llm_provider(model=model, custom_llm_provider=None)
+        return provider in (
+            litellm.LlmProviders.OPENAI.value,
+            litellm.LlmProviders.AZURE.value,
+        )
+    except Exception:  # noqa: BLE001 — unknown provider → conservative "no"
+        return False
 
 
 def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
@@ -1728,15 +1777,18 @@ async def recorded_acompletion(
     # resolved model straight to ``litellm.acompletion`` and litellm decides
     # internally.
     #
-    # ``_needs_responses_endpoint`` no longer gates a rewrite (reyn does not
-    # know whether litellm applied its own bridge) — it ONLY gates the
-    # decision-enabling ``ResponsesEndpointRequiredError`` below, by call
-    # SHAPE (tools + reasoning_effort), per the owner's explicit call:
-    # keep the guidance regardless of who did the bridging, since a 405 on
-    # this shape means the same thing either way (endpoint/proxy does not
-    # serve /v1/responses).
+    # This no longer gates a rewrite (reyn does not know whether litellm
+    # applied its own bridge) — it ONLY gates the decision-enabling
+    # ``ResponsesEndpointRequiredError`` below, by call SHAPE (tools +
+    # reasoning_effort) AND provider (co-vet finding on PR #3331: litellm's
+    # own bridge only ever fires for openai/azure — an unscoped Gemini 405
+    # would get the SAME "/v1/responses" guidance despite litellm never
+    # bridging Gemini, which is categorically false, not merely imprecise).
+    # See ``_may_need_responses_endpoint``'s docstring.
     _needs_responses_endpoint = bool(
-        base_kwargs.get("tools") and base_kwargs.get("reasoning_effort")
+        base_kwargs.get("tools")
+        and base_kwargs.get("reasoning_effort")
+        and _may_need_responses_endpoint(effective_model)
     )
 
     # #1669: emit a P6 ``llm_request`` event (TUI-observable) carrying the
@@ -1943,21 +1995,25 @@ async def recorded_acompletion(
     except Exception as exc:
         _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
         # #1678, delegated to litellm at #3288-follow-up: this call shape
-        # (reasoning_effort + tools) MAY need /v1/responses — litellm decides
-        # internally now (see the comment above ``_needs_responses_endpoint``),
-        # so reyn can no longer tell whether IT applied a bridge. On a 405 for
-        # this shape, turn the raw dead-end into a decision-enabling error
-        # naming BOTH remedies (the raw 405 detail is already captured in the
-        # #1676 llm_request_error event above) — the guidance is equally true
+        # (reasoning_effort + tools, resolved to the openai/azure provider —
+        # see the comment above ``_needs_responses_endpoint`` and
+        # ``_may_need_responses_endpoint``'s docstring) MAY need
+        # /v1/responses — litellm decides internally now, so reyn can no
+        # longer tell whether IT applied a bridge. On a 405 for this shape,
+        # turn the raw dead-end into a decision-enabling error naming BOTH
+        # remedies (the raw 405 detail is already captured in the #1676
+        # llm_request_error event above) — the guidance is equally true
         # whether litellm's own bridge fired or the proxy just doesn't serve
-        # /v1/responses. A 405 on a call NOT shaped this way is unaffected.
+        # /v1/responses. A 405 on a call NOT shaped this way, or resolved to
+        # a provider litellm never bridges (e.g. Gemini), is unaffected.
         if _needs_responses_endpoint and getattr(exc, "status_code", None) == 405:
             raise ResponsesEndpointRequiredError(
                 f"This call combines reasoning_effort + tools on model {model!r}, "
-                "which requires the OpenAI /v1/responses endpoint — but the "
-                "configured endpoint/proxy does not serve /v1/responses (HTTP 405). "
-                "Options: (1) set reasoning_effort to none / unset it for this "
-                "agent, OR (2) enable the /v1/responses endpoint on your proxy."
+                "which MAY require the OpenAI/Azure /v1/responses endpoint — but "
+                "the configured endpoint/proxy does not serve /v1/responses "
+                "(HTTP 405). Options: (1) set reasoning_effort to none / unset it "
+                "for this agent, OR (2) enable the /v1/responses endpoint on your "
+                "proxy."
             ) from exc
         raise
 

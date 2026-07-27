@@ -22,9 +22,22 @@ internally whether to bridge.
 `ResponsesEndpointRequiredError` was DELIBERATELY KEPT (owner decision, #3288
 comment thread) as the safety net that makes this delegation reversible: since
 reyn can no longer tell whether IT applied a bridge, the decision-enabling
-error now fires on any 405 for a `tools + reasoning_effort` CALL SHAPE,
-regardless of model/provider — the guidance is equally true whether litellm's
-own bridge fired or the endpoint simply doesn't serve `/v1/responses`.
+error fires on a 405 for a `tools + reasoning_effort` CALL SHAPE — the
+guidance is equally true whether litellm's own bridge fired or the endpoint
+simply doesn't serve `/v1/responses`.
+
+**Provider-scoped (#3331 co-vet finding).** The first version of this PR
+scoped the trigger on call shape ALONE, regardless of provider. Co-vet caught
+that this makes the guidance categorically FALSE for a Gemini 405 (litellm's
+own bridge — `litellm.main.responses_api_bridge_check`, read directly from
+its source — only ever fires for `custom_llm_provider in ("openai",
+"azure")`; a Gemini 405 is unrelated to `/v1/responses` regardless of call
+shape). `_may_need_responses_endpoint(model)` reuses the SAME
+`litellm.get_llm_provider` derivation the now-deleted
+`_requires_responses_bridge` used, but ONLY to scope this diagnostic — never
+again to rewrite the model. The message also weakened "requires" → "MAY
+require", since reyn no longer controls routing and can only say the shape
+COULD have needed the bridge.
 
 No mocks: real `recorded_acompletion`, a real async fake for `litellm.acompletion`
 (capturing the model / raising a litellm-shaped 405), monkeypatched.
@@ -38,7 +51,11 @@ import litellm
 import pytest
 
 from reyn.core.events.events import EventLog, set_llm_request_event_log
-from reyn.llm.llm import ResponsesEndpointRequiredError, recorded_acompletion
+from reyn.llm.llm import (
+    ResponsesEndpointRequiredError,
+    _may_need_responses_endpoint,
+    recorded_acompletion,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +135,18 @@ def test_litellm_native_bridge_check_fires_for_reyn_verified_bug_shape() -> None
     assert model == "gpt-5.4"  # no reyn-side prefix needed
 
 
+def test_may_need_responses_endpoint_scoped_to_openai_and_azure() -> None:
+    """Tier 1: `_may_need_responses_endpoint` mirrors litellm's OWN
+    `responses_api_bridge_check` provider gate (`custom_llm_provider in
+    ("openai", "azure")`, read directly from litellm's source) — true for
+    both providers litellm ever bridges, false for a provider it never
+    does."""
+    assert _may_need_responses_endpoint("openai/gpt-5.4") is True
+    assert _may_need_responses_endpoint("azure/o1") is True
+    assert _may_need_responses_endpoint("gemini/gemini-2.5-flash-lite") is False
+    assert _may_need_responses_endpoint("anthropic/claude-opus-4-1") is False
+
+
 # ── decision-enabling error on a 405 for the tools+reasoning_effort shape ───────
 
 
@@ -130,12 +159,16 @@ class _FakeProviderError(Exception):
 
 
 def test_openai_shaped_405_raises_decision_enabling_error(monkeypatch) -> None:
-    """Tier 2: a tools+reasoning_effort call against an OpenAI-family model
-    that 405s raises the decision-enabling `ResponsesEndpointRequiredError`
-    naming BOTH remedies. Strip the `_needs_responses_endpoint` condition out
-    of the 405 handler in `recorded_acompletion` (revert to unconditional
-    re-raise) and this goes RED (the raw `_FakeProviderError` propagates
-    instead)."""
+    """Tier 2: ★POSITIVE — a tools+reasoning_effort call against an
+    OpenAI-family model that 405s raises the decision-enabling
+    `ResponsesEndpointRequiredError` naming BOTH remedies, with "MAY require"
+    wording (reyn no longer controls routing, so it can only say the shape
+    COULD have needed the bridge). Strip the provider condition out of
+    `_may_need_responses_endpoint` (force it to always return `True`) and
+    this test alone would NOT go red (openai already resolves True) — see
+    `test_gemini_shaped_405_is_not_wrapped_since_provider_unbridgeable` for
+    the negative companion that DOES catch an unscoped/wrong provider
+    check."""
     async def _raise_405(**_kwargs):
         raise _FakeProviderError("Method Not Allowed", 405)
     monkeypatch.setattr(litellm, "acompletion", _raise_405)
@@ -148,24 +181,29 @@ def test_openai_shaped_405_raises_decision_enabling_error(monkeypatch) -> None:
         ))
     msg = str(ei.value).lower()
     assert "/v1/responses" in str(ei.value)
+    assert "may require" in msg  # weakened wording — reyn doesn't control routing anymore
     assert "reasoning_effort" in msg and ("none" in msg or "unset" in msg)  # remedy 1
     assert "proxy" in msg  # remedy 2
     assert "gpt-5.4" in str(ei.value)  # names the model
 
 
-def test_gemini_shaped_405_also_raises_decision_enabling_error(monkeypatch) -> None:
-    """Tier 2: owner decision (#3288 comment thread) — the guidance fires on
-    ANY `tools + reasoning_effort` call shape that 405s, regardless of
-    provider, because reyn can no longer tell whether litellm applied its own
-    bridge for this specific model. A Gemini call is included: if it 405s
-    while shaped this way, the same guidance is offered rather than a raw
-    405. This is a deliberate behavior WIDENING versus the pre-deletion,
-    provider-gated error (#3325) — see the PR body for the rationale."""
+def test_gemini_shaped_405_is_not_wrapped_since_provider_unbridgeable(monkeypatch) -> None:
+    """Tier 2: ★NEGATIVE — #3331 co-vet finding. A Gemini call shaped
+    `tools + reasoning_effort` that 405s is NOT wrapped in
+    `ResponsesEndpointRequiredError`: litellm's own bridge
+    (`litellm.main.responses_api_bridge_check`) never fires for a non
+    openai/azure provider, so claiming "this MAY require /v1/responses" for
+    a Gemini 405 would be categorically FALSE guidance, not merely
+    imprecise — the raw error must propagate instead. This is the strip
+    target: force `_may_need_responses_endpoint` to always return `True`
+    (simulating the unscoped, shape-only version co-vet caught) and this
+    assertion goes RED (`ResponsesEndpointRequiredError` gets raised for
+    Gemini instead of the raw `_FakeProviderError` propagating)."""
     async def _raise_405(**_kwargs):
         raise _FakeProviderError("Method Not Allowed", 405)
     monkeypatch.setattr(litellm, "acompletion", _raise_405)
 
-    with pytest.raises(ResponsesEndpointRequiredError):
+    with pytest.raises(_FakeProviderError):  # raw error propagates, NOT wrapped
         asyncio.run(recorded_acompletion(
             model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,

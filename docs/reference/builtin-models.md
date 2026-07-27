@@ -209,12 +209,18 @@ you should not either.
 
 **If your endpoint 405s anyway.** Reyn no longer knows whether IT applied a
 bridge (litellm decides internally now), but it still raises a
-decision-enabling `ResponsesEndpointRequiredError` on any HTTP 405 for a
-`tools + reasoning_effort` call — naming both remedies: unset
-`reasoning_effort` for that agent, or enable `/v1/responses` on your proxy.
-This is deliberately kept as a safety net for litellm's narrower routing
-coverage: if a model needs the bridge but litellm's heuristic doesn't (yet)
-cover it, the 405 surfaces as actionable guidance instead of a raw dead-end.
+decision-enabling `ResponsesEndpointRequiredError` on an HTTP 405 for a
+`tools + reasoning_effort` call **resolved to the OpenAI or Azure
+provider** — naming both remedies: unset `reasoning_effort` for that agent,
+or enable `/v1/responses` on your proxy. The provider scope matters:
+litellm's bridge only ever fires for `openai`/`azure` (read directly from
+`litellm.main.responses_api_bridge_check`'s source), so a 405 on e.g. a
+Gemini call shaped this way is unrelated to `/v1/responses` — the error
+would be actively misleading there, and does not fire. This is deliberately
+kept as a safety net for litellm's narrower routing coverage WITHIN the
+providers it actually bridges: if an OpenAI/Azure model needs the bridge but
+litellm's heuristic doesn't (yet) cover it, the 405 surfaces as actionable
+guidance instead of a raw dead-end.
 
 **Unaffected paths:**
 
