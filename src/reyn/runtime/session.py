@@ -2931,6 +2931,51 @@ class Session:
         # `own_submissions` set).
         return msg_id
 
+    async def maybe_deliver_answer_command(self, text: str) -> bool:
+        """#3327: run an ``/answer`` command IMMEDIATELY, bypassing the inbox,
+        when there is a pending intervention to answer.
+
+        ``/answer`` is not a new turn — it acts on EXISTING pending state — so
+        it must not ride the same inbox queue a fresh turn does. When a turn is
+        blocked awaiting an intervention (the router's ``ask_user``/permission
+        await), that turn is the SOLE consumer of the inbox
+        (:meth:`run_one_iteration` does not call :meth:`_drain_to_wake` again
+        until the current turn settles), so a queued ``/answer`` can only be
+        dequeued once that SAME intervention resolves — a chicken-and-egg
+        deadlock a keyboard-only Textual-chat user could not escape (#3327:
+        ``Esc`` dismisses the intervention panel without answering, per #3299
+        P1's documented escape hatch, and the ``/answer`` fallback then hung
+        forever behind its own precondition).
+
+        This reuses the SAME unqueued, direct-delivery funnel
+        (:meth:`_maybe_handle_slash` → :meth:`_deliver_answer_to` /
+        :meth:`answer_intervention_by_id`) the
+        :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
+        already uses for its own (never-queued) answer delivery — concurrency
+        with an in-flight turn task is therefore already proven safe, not new.
+
+        Returns ``False`` — do nothing — unless ``text`` names the ``answer``
+        slash command AND at least one intervention is currently pending;
+        the caller then falls through to the ordinary ``submit_user_text``
+        queued path, UNCHANGED. This keeps the bypass narrow (#3300's
+        sent-queue keeps gating every OTHER Composer submission, including an
+        ``/answer`` typed while nothing is pending, or an unrelated slash
+        command / new turn typed during a busy turn — the regression risk of
+        widening this bypass beyond ``/answer`` specifically)."""
+        first_line = text.partition("\n")[0]
+        if not first_line.startswith("/"):
+            return False
+        body = first_line[1:].lstrip()
+        if not body:
+            return False
+        cmd = body.split(maxsplit=1)[0]
+        if cmd != "answer":
+            return False
+        if not self._interventions.list_active():
+            return False
+        await self._maybe_handle_slash(text)
+        return True
+
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
         from_sid: "str | None" = None,

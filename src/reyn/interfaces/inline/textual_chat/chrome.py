@@ -56,6 +56,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from .intervention_panel import InterventionPanel
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
@@ -110,16 +111,28 @@ class Composer(TextArea):
                     menubar.first().focus()
                     return
         if event.key == "up":
-            # ↑ on the composer's FIRST line hands focus UP into the
-            # sent-queue region (#3300 Y-client) when it holds at least one
-            # undispatched item — the mirror image of the ↓ rule above (the
-            # region sits ABOVE the composer: conversation / intervention
-            # panel / sent-queue / input). On any later line, or with an
-            # empty/absent sent-queue, ↑ moves the cursor normally (falls
-            # through to the base TextArea) — never steals focus toward a
-            # region with nothing to act on.
+            # ↑ on the composer's FIRST line hands focus UP into whichever
+            # region above the composer currently has something to act on —
+            # the mirror image of the ↓ rule above (the region sits ABOVE the
+            # composer: conversation / intervention panel / sent-queue /
+            # input). #3327: a pending intervention takes PRIORITY over the
+            # sent-queue (answering it is the more urgent action, and it sits
+            # higher in the stack) — this is also the keyboard route BACK
+            # into the panel after Esc/Tab dismissed it without answering
+            # (InterventionPanel.action_dismiss_panel), which before #3327
+            # had no way back at all. #3300 Y-client's sent-queue-focus rule
+            # is otherwise unchanged: on any later line, or with nothing
+            # pending/queued, ↑ moves the cursor normally (falls through to
+            # the base TextArea) — never steals focus toward a region with
+            # nothing to act on.
             row, _ = self.cursor_location
             if row <= 0:
+                iv_panel = self.app.query(InterventionPanel)
+                if iv_panel and iv_panel.first().has_pending():
+                    event.stop()
+                    event.prevent_default()
+                    iv_panel.first().focus_pending()
+                    return
                 sent_queue = self.app.query(SentQueue)
                 if sent_queue and sent_queue.first().has_items():
                     event.stop()
@@ -183,7 +196,10 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
     ("enter", "send"),
     ("shift+enter", "newline"),
     ("↓", "focus menu"),
-    ("↑", "focus sent queue"),
+    # #3327: ↑ now targets whichever of the two regions above the composer
+    # actually has something to act on, pending intervention first — see
+    # ``Composer._on_key``'s "up" branch for the exact priority/fallback.
+    ("↑", "focus pending intervention (else sent queue)"),
 ]
 
 #: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides).
