@@ -143,7 +143,15 @@ command's name is settled by a space, the menu switches to completing that
 command's **argument** — so `/model ` lists your configured model classes and
 `/image ` lists matching files.
 
-While the menu is open it takes over the arrow keys:
+Most commands take arguments but have no list to offer. For those, that same
+space shows the command's **usage line** instead — `/visibility ` puts
+`↳ usage: /visibility on|off <tool|mcp|category> <name>` above the input, so you
+can see what to type without breaking off to run `/help visibility`. A usage
+hint is only a hint: it takes no keys, so `↑`, `Tab` and `Esc` keep their normal
+meanings while it is up. Commands that take no arguments at all (`/cost`,
+`/list`, `/quit`, …) show nothing.
+
+While the menu is open **with suggestions in it**, it takes over the arrow keys:
 
 | Key | Action |
 |-----|--------|
@@ -153,9 +161,10 @@ While the menu is open it takes over the arrow keys:
 | `Enter` | Send what you typed (never accepts a suggestion) |
 
 With the menu closed, `↑`, `↓`, `Tab` and `Esc` all behave exactly as in the
-table above. Over `--connect`, `/` command names still complete (they come from
-the command registry, which every client has), but argument and `:` skill
-completion are silent — both read session-local state that is not on the wire.
+table above. Over `--connect`, everything that comes from the command registry —
+`/` command names and usage lines — still works, because every client has that
+registry; argument suggestions and `:` skill completion are silent, since both
+read session-local state that is not on the wire.
 
 ### Status bar
 

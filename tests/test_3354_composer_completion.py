@@ -17,6 +17,14 @@ and specifically the parts that are easy to get vacuously right:
   must not pop a menu the user never asked for).
 - the ``:`` trigger's two independent gates (word boundary AND length).
 
+#3364 extended the same menu with the argument stage's ``↳ usage:`` header row —
+the surface ``SlashCommand.usage`` was added for and no code ever read. Its tests
+live here rather than in a file of their own because they need this file's
+harness (real app + real transport + real session) and they guard the SAME
+widget; the hazards they add are the header's two structural risks: an
+informational row silently becoming the Tab target (an off-by-one accept), and
+an informational row claiming keys the user still needs.
+
 Real ``TextualChatApp`` + real ``ClientTransport`` + real ``Session`` (via the
 shared ``tests._support.agent_session.make_session``) + real ``SkillEntry``
 dataclasses, and real suppliers throughout — no mocks, no hand-rolled
@@ -41,6 +49,7 @@ from reyn.interfaces.inline.textual_chat.completion import (
     KIND_NONE,
     KIND_SKILL,
     NO_MATCH_ROW,
+    USAGE_ROW_PREFIX,
     CompletionPopup,
     compute_completion,
 )
@@ -340,9 +349,28 @@ def test_unreadable_sources_stay_silent_rather_than_showing_an_empty_menu():
     never an empty-looking menu, which would read as "no such command exists".
 
     This is the remote ``--connect`` case: no local ``Session``, so no
-    ``CompleterFn`` can be called and no skill list can be enumerated."""
-    assert compute_completion("/image ", session=None).kind == KIND_NONE, (
-        "argument completion must be silent without a session, not an empty menu"
+    ``CompleterFn`` can be called and no skill list can be enumerated.
+
+    The line the rule is drawn on is the SOURCE, not the stage: what a remote
+    client cannot compute stays absent, and what it can compute — anything
+    REGISTRY-derived, which is command names and (since #3364) the argument
+    stage's usage header — keeps working. So ``/image `` on a remote client
+    offers no filesystem candidates and no ``NO_MATCH_ROW`` (nothing was asked),
+    but still says what ``/image`` takes."""
+    remote_arg = compute_completion("/image ", session=None)
+    assert remote_arg.candidates == (), (
+        "a session-less client produced argument candidates from somewhere"
+    )
+    assert NO_MATCH_ROW not in remote_arg.rows(), (
+        "a session-less client claimed the user's argument matched nothing, when "
+        f"no completer was ever called: {remote_arg.rows()}"
+    )
+    assert not remote_arg.owns_keys, (
+        "a menu with nothing to navigate claimed the navigation keys"
+    )
+    assert compute_completion("/agents ", session=None).kind == KIND_NONE, (
+        "a command with neither an argument source nor a usage line must be "
+        "silent, not an empty menu"
     )
     assert compute_completion(":re", skills=None).kind == KIND_NONE, (
         "skill completion must be silent when the skill source is unavailable"
@@ -883,3 +911,245 @@ def test_the_registry_is_the_only_source_of_command_candidates():
         f"the command menu is not the registry's non-hidden set; "
         f"missing={expected - offered} extra={offered - expected}"
     )
+
+
+# ── #3364: the argument stage's usage header ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_argument_stage_renders_the_commands_own_usage_line(
+    tmp_path,
+) -> None:
+    """Tier 2b: typing ``/copy `` renders that command's REGISTERED ``usage`` as
+    the popup's first row (#3364).
+
+    Witnessed through the real widget — ``rendered_rows()`` reads the MOUNTED
+    options, so this cannot pass by calling a formatter the popup never uses.
+    The expected text is read from the registry rather than written out here: a
+    literal would keep passing if the header started rendering some other
+    command's line."""
+    expected = REGISTRY.get("copy").usage
+    assert expected, "test setup: /copy must declare a usage line"
+
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("slash", "c", "o", "p", "y", "space")
+        await pilot.pause()
+
+        assert composer.text == "/copy ", f"test setup: typed {composer.text!r}"
+        rows = popup.rendered_rows()
+        assert rows, (
+            "the argument stage rendered nothing for a command that documents "
+            "its own syntax — SlashCommand.usage is still unread"
+        )
+        assert rows[0].startswith(USAGE_ROW_PREFIX) and expected in rows[0], (
+            f"the first row is not this command's usage line: {rows}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_command_without_usage_renders_no_row_at_all(tmp_path) -> None:
+    """Tier 2b: ``/cost `` — a command with neither a ``usage`` line nor a
+    completer — stays completely silent: no blank row, no placeholder, no
+    no-match row, no crash.
+
+    A layout that reserves a line for an absent field is worse than no feature,
+    and ``NO_MATCH_ROW`` would be a lie here: nothing was ever asked for
+    candidates. The ``/copy `` half at the end is the non-vacuity witness — the
+    same app DOES render a header when there is one, so the silence above is not
+    the feature being dead."""
+    assert REGISTRY.get("cost").usage == "", (
+        "test setup: /cost must be one of the commands with no usage line"
+    )
+
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("slash", "c", "o", "s", "t", "space")
+        await pilot.pause()
+
+        assert composer.text == "/cost ", f"test setup: typed {composer.text!r}"
+        assert not popup.is_open, "a command with no usage opened a menu anyway"
+        assert popup.rendered_rows() == [], (
+            f"a usage-less command rendered rows: {popup.rendered_rows()}"
+        )
+
+        composer.clear_and_reset()
+        composer.focus()
+        await pilot.pause()
+        await pilot.press("slash", "c", "o", "p", "y", "space")
+        await pilot.pause()
+        assert popup.rendered_rows(), (
+            "the header never renders in this app at all — the silence asserted "
+            "above was vacuous"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_usage_header_never_becomes_the_accepted_candidate(
+    tmp_path,
+) -> None:
+    """Tier 2b: with a header AND candidates (``/model `` has both), the header
+    occupies row 0 while the SELECTION still starts on the first real candidate,
+    and ``Tab`` inserts that candidate — not the one below it.
+
+    This is the header's sharpest structural hazard: the display gained a row
+    the candidate tuple did not, so every index that crosses that boundary is a
+    potential off-by-one. An accept that silently inserts the WRONG model class
+    is invisible in a "the header renders" assertion. ``↑`` at the top is checked
+    too — it must clamp at the first candidate rather than park on a row ``Tab``
+    cannot accept."""
+    session = _real_session(tmp_path)
+    classes = list(session.known_model_classes())
+    try:
+        first_class, second_class = classes[0], classes[1]
+    except IndexError:  # pragma: no cover — test setup
+        pytest.fail(
+            "test setup: this session configures fewer than 2 model classes, so "
+            "the ↓-then-accept half below would pass vacuously"
+        )
+    assert REGISTRY.get("model").usage, "test setup: /model must declare a usage"
+
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("slash", "m", "o", "d", "e", "l", "space")
+        await pilot.pause()
+
+        rows = popup.rendered_rows()
+        assert rows[0].startswith(USAGE_ROW_PREFIX), (
+            f"the header is not the first row: {rows}"
+        )
+        assert any(first_class in row for row in rows[1:]), (
+            f"the candidates did not survive alongside the header: {rows}"
+        )
+
+        selected = popup.selected()
+        assert selected is not None and selected.value == first_class, (
+            f"the initial selection is not the first candidate: {selected} "
+            f"(the header shifted the index)"
+        )
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert popup.selected() == selected, (
+            "↑ at the top of the list moved off the first candidate — the "
+            "highlight escaped onto the header row"
+        )
+
+        await pilot.press("down")
+        await pilot.pause()
+        moved = popup.selected()
+        assert moved is not None and moved.value == second_class, (
+            f"↓ did not reach the second candidate: {moved}"
+        )
+
+        await pilot.press("up")
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert composer.text == f"/model {first_class}", (
+            f"Tab inserted the wrong candidate; composer holds {composer.text!r} "
+            f"(expected the FIRST class, {first_class!r})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_usage_only_hint_does_not_claim_the_navigation_keys(
+    tmp_path,
+) -> None:
+    """Tier 2b: a popup showing ONLY a usage header takes no keys — ``↑`` still
+    reaches the sent-queue and ``Tab`` still cycles focus to the MenuBar
+    (#3277), for the whole time the user is typing that command's arguments.
+
+    15 of the 25 non-hidden commands document a syntax and offer no completer,
+    so this state is not an edge case: it is what ``/visibility ``, ``/hook ``,
+    ``/session `` and a dozen others now look like. Claiming ``↑``/``Tab`` there
+    would eat both keys with nothing to show for it — the #3327 deadlock class.
+
+    The ``/model `` half is the other side of the two-state witness: a popup with
+    real candidates DOES claim ``Tab`` in the same app, so the assertions above
+    are about the hint state, not about completion being inert."""
+    from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
+
+    session = _real_session(tmp_path)
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_event(_user_submitted(msg_id="m1", text="q", seq=1))
+        await pilot.pause()
+
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        sent_queue = app.query_one(SentQueue)
+        menubar = app.query_one(MenuBar)
+        assert sent_queue.has_items(), "test setup: sent-queue must be non-empty"
+
+        async def _open_usage_hint() -> None:
+            composer.clear_and_reset()
+            composer.focus()
+            await pilot.pause()
+            await pilot.press("slash", "c", "o", "p", "y", "space")
+            await pilot.pause()
+            assert popup.is_open and popup.rendered_rows(), (
+                "test setup: the usage hint is not showing"
+            )
+            assert popup.selected() is None, (
+                "a hint row is offering itself as an acceptable candidate"
+            )
+
+        await _open_usage_hint()
+        await pilot.press("up")
+        await pilot.pause()
+        assert sent_queue.has_focus, (
+            "↑ was swallowed by a usage hint that has nothing to navigate — the "
+            "sent-queue became unreachable while typing a command's arguments"
+        )
+
+        await _open_usage_hint()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert menubar.has_focus, (
+            "Tab was swallowed by a usage hint — #3277's composer→MenuBar "
+            "cycling is gone for every command that documents a syntax"
+        )
+        assert composer.text == "/copy ", (
+            f"the hint row was inserted into the composer: {composer.text!r}"
+        )
+
+        # Non-vacuity: a popup with real candidates still owns Tab.
+        composer.clear_and_reset()
+        composer.focus()
+        await pilot.pause()
+        await pilot.press("slash", "m", "o", "d", "e", "l", "space")
+        await pilot.pause()
+        assert popup.selected() is not None, "test setup: /model offered nothing"
+        await pilot.press("tab")
+        await pilot.pause()
+        assert composer.text.startswith("/model ") and composer.text != "/model ", (
+            f"Tab no longer accepts a real candidate either: {composer.text!r}"
+        )

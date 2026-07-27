@@ -29,13 +29,6 @@ HandlerFn = Callable[..., Awaitable[None]]
 # so far). Completers that don't need it (e.g. ``/attach``
 # which always lists agent names) can ignore the arg via a default.
 CompleterFn = Callable[..., list[str]]
-# TabFooterFn signature: ``() -> str | None``. Supplies the optional
-# picker-hint footer line (the dim ``↳ <message>`` sub-row shown once the
-# user types ``/<cmd> ``). Returning ``None`` (or "") means "show nothing
-# right now" — the command owns both the message text and its visibility
-# condition (e.g. surface a recall affordance only when there is history
-# to recall). The picker owns the ``↳`` chrome + styling.
-TabFooterFn = Callable[[], "str | None"]
 
 
 @dataclass
@@ -49,14 +42,19 @@ class SlashCommand:
     completer: CompleterFn | None = None  # optional: (session, arg_partial="") -> list[str]
     hidden: bool = False    # if True, omit from /help and the Tab palette
                             # (still dispatchable when typed by name)
-    # Optional structured usage line — when set, the SlashPicker hint
-    # mode (= what shows once the user types ``/<cmd> ``) renders a
-    # second line ``  ↳ usage: <usage>`` below the summary. Commands
-    # that don't set this fall back to single-line hint (= current
-    # behavior, backward-compatible for all existing commands).
+    # Optional structured usage line. Two consumers, both keyed on "the user
+    # has committed to this command and needs its argument syntax":
+    # ``/help <cmd>`` focus mode (``help.py``), and the composer's completion
+    # popup, which renders it as the ``↳ usage: <usage>`` header row of the
+    # ARGUMENT stage — what shows once the user types ``/<cmd> ``
+    # (``completion._usage_header``, #3364; the retired ``SlashPicker`` this
+    # comment used to name was deleted by the #3273 Phase 6 rebuild).
+    # Commands that don't set this render no header row at all — never a blank
+    # or a placeholder.
     # Convention: ``/<name> <args>`` with ``<arg>`` for required and
     # ``[arg]`` for optional, matching the slash tradition (e.g.
-    # ``/image <path>``, ``/copy [N|list]``).
+    # ``/image <path>``, ``/copy [N|list]``). The bare syntax only — the
+    # ``usage:`` label is the renderer's, so writing it here doubles it.
     usage: str = ""
     # Optional docs paths for ``/help <cmd>`` focus mode. When non-empty,
     # the focus panel appends a ``  see also: <path1>, <path2>`` footer
@@ -65,16 +63,6 @@ class SlashCommand:
     # ``"docs/concepts/runtime/events.md"``). Defaults to empty tuple so all
     # existing commands without explicit see_also are unaffected.
     see_also: tuple[str, ...] = ()
-    # Optional picker-hint footer supplier. When set, the SlashPicker hint
-    # mode renders a dim ``  ↳ <message>`` sub-row below the summary/usage,
-    # where ``<message>`` is whatever this callable returns. The callable
-    # returns ``None`` (or "") to render nothing — letting the command gate
-    # the footer on runtime state (e.g. show a recall hint only when there is
-    # history to recall). Defaults to ``None`` so every command
-    # without an explicit footer behaves exactly as before. Keeping the
-    # message + its visibility inside the command (not the widget) is what
-    # makes the picker generic: it never hardcodes a command name.
-    tab_footer_fn: TabFooterFn | None = None
 
 
 class SlashRegistry:
@@ -191,22 +179,19 @@ def slash(
     hidden: bool = False,
     usage: str = "",
     see_also: tuple[str, ...] = (),
-    tab_footer_fn: TabFooterFn | None = None,
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator that registers `fn` as a slash command on import.
 
     Arguments mirror :class:`SlashCommand`. The decorated function must be
     `async def fn(session, args: str) -> None`.
 
-    ``usage`` is the optional structured usage line surfaced as the
-    second row of the SlashPicker hint mode (see ``SlashCommand.usage``).
+    ``usage`` is the optional structured usage line surfaced by ``/help <cmd>``
+    and as the completion popup's argument-stage header row (see
+    ``SlashCommand.usage``).
 
     ``see_also`` is an optional tuple of repo-relative doc paths surfaced
     in ``/help <cmd>`` focus mode as a footer link (see
     ``SlashCommand.see_also``).
-
-    ``tab_footer_fn`` is an optional ``() -> str | None`` supplier for the
-    picker-hint footer row (see ``SlashCommand.tab_footer_fn``).
     """
 
     def _decorator(fn: HandlerFn) -> HandlerFn:
@@ -219,7 +204,6 @@ def slash(
             hidden=hidden,
             usage=usage,
             see_also=see_also,
-            tab_footer_fn=tab_footer_fn,
         ))
         return fn
 

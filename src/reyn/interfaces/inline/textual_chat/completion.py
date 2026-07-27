@@ -38,6 +38,10 @@ ARGUMENT completions — ``/model `` stops offering ``/matrix``/``/memory`` and
 starts offering model classes. A leading ``/`` owns the whole line, so
 ``/answer :x`` is read as ``/answer``'s argument, never as a skill token.
 
+The argument stage also carries the command's :attr:`~reyn.interfaces.slash.
+SlashCommand.usage` line as a non-selectable HEADER row (#3364) — see
+:func:`_usage_header`.
+
 ``:`` triggers only when the token STARTS the input or FOLLOWS WHITESPACE, and
 only once at least :data:`SKILL_MIN_CHARS` characters follow the colon. Both
 gates are required, not either/or: a colon is far too common in ordinary prose
@@ -54,13 +58,22 @@ These are DIFFERENT states and the UI must not conflate them. A namespace whose
 SOURCE this client cannot read stays completely silent (``kind`` is
 :data:`KIND_NONE`, nothing renders); a namespace that IS readable but matched
 nothing shows the menu with an explicit :data:`NO_MATCH_ROW`. A remote
-``--connect`` client holds no ``Session``, so argument and skill completion are
-silent there rather than rendering an empty-looking menu that would read as "no
-such command exists" — see :func:`compute_completion`'s ``session`` / ``skills``
-parameters, where ``None`` means "source unavailable" and an empty sequence
-means "source readable, nothing in it".
+``--connect`` client holds no ``Session``, so argument CANDIDATES and skill
+completion are silent there rather than rendering an empty-looking menu that
+would read as "no such command exists" — see :func:`compute_completion`'s
+``session`` / ``skills`` parameters, where ``None`` means "source unavailable"
+and an empty sequence means "source readable, nothing in it". The line is drawn
+on the SOURCE, not the stage: everything REGISTRY-derived — command names, and
+the argument stage's usage header — works on every client.
 
-**Security.** Candidate rows reach the terminal through
+:attr:`CompletionState.has_candidate_source` carries that same distinction into
+the STATE, because a usage header can now open a menu with no candidate source
+behind it at all (``/compact `` — a real command with a documented usage line
+and no ``CompleterFn``). Such a menu shows the header ALONE: appending
+:data:`NO_MATCH_ROW` there would claim the user's argument matched nothing when
+nothing was ever offered to match against.
+
+**Security.** Candidate rows AND the usage header reach the terminal through
 :func:`~reyn.interfaces.inline.textual_chat.presenter._neutralized_label` and the
 shared ``Content``-literal wrap
 (:func:`~reyn.interfaces.inline.textual_chat.presenter.option_content_rows`) —
@@ -114,6 +127,12 @@ _SKILL_TOKEN_RE = re.compile(rf"(?:^|\s):([A-Za-z0-9_-]{{{SKILL_MIN_CHARS},}})$"
 #: completion feature that is not working.
 NO_MATCH_ROW = "no matches"
 
+#: Prefix of the argument-stage usage header row (#3364). The ``↳`` chrome and
+#: the ``usage:`` word are the POPUP's, not the command's — ``SlashCommand.usage``
+#: holds the bare syntax line (``/copy [N|list]``) and every command spells it
+#: the same way, so the label cannot drift per command.
+USAGE_ROW_PREFIX = "↳ usage: "
+
 
 @dataclass(frozen=True)
 class CompletionCandidate:
@@ -159,6 +178,11 @@ class CompletionState:
     exactly what advances the menu to the argument stage), but empty for an
     ARGUMENT — a ``/image`` directory row must stay navigable rather than be
     terminated.
+
+    ``header`` is an INFORMATIONAL first row that is not a candidate: it renders
+    above the candidates and can never be accepted (see :attr:`row_offset`).
+    ``has_candidate_source`` says whether anything was asked for candidates at
+    all — see the module docstring's "Source availability vs. no matches".
     """
 
     kind: str = KIND_NONE
@@ -166,15 +190,33 @@ class CompletionState:
     prefix_len: int = 0
     token_start: int = -1
     accept_suffix: str = ""
+    header: str = ""
+    has_candidate_source: bool = True
 
     @property
     def is_open(self) -> bool:
         """Whether the menu is showing — i.e. whether a namespace TRIGGERED.
-        The predicate the composer gates its key interception on, so a no-match
-        menu still owns ``↑``/``↓``/``Tab``/``Esc``: the arrows go to whatever
-        menu is visible, without the user needing to know whether it happens to
-        have rows right now."""
+        The VISIBILITY predicate; :attr:`owns_keys` is the key-interception one
+        and they differ only for a usage-header-only menu."""
         return self.kind != KIND_NONE
+
+    @property
+    def owns_keys(self) -> bool:
+        """Whether the menu should CLAIM ``↑``/``↓``/``Tab``/``Esc``, as opposed
+        to merely being visible.
+
+        These come apart exactly once: a usage-header-only menu (#3364), which
+        has no candidate source behind it and therefore nothing to navigate,
+        accept or ever have. It is a hint, not a picker — so ``Tab`` keeps its
+        #3277 composer→MenuBar meaning and ``↑`` keeps reaching the sent-queue
+        while it is up. Claiming them would eat both keys for the WHOLE time the
+        user types ``/visibility on tool foo``, with no effect to show for it.
+
+        A no-match menu still owns them: a real source WAS asked, the row set can
+        change on the next keystroke, and having Tab move focus out from under a
+        menu the user is actively narrowing is the surprise that rule exists to
+        prevent."""
+        return self.is_open and (bool(self.candidates) or self.has_candidate_source)
 
     @property
     def identity(self) -> "tuple[str, int]":
@@ -182,14 +224,33 @@ class CompletionState:
         share an identity while the user edits the SAME token."""
         return (self.kind, self.token_start)
 
+    @property
+    def row_offset(self) -> int:
+        """How many leading display rows are NOT candidates — ``1`` while a
+        ``header`` is shown, else ``0``.
+
+        The single place the header's presence turns into an index shift, so
+        :meth:`CompletionPopup.selected` and
+        :meth:`CompletionPopup.move_selection` cannot disagree about it. Without
+        it, ``highlighted == 0`` would mean "the header" on screen and "the first
+        candidate" to the accept path — Tab would insert a candidate the user
+        never highlighted.
+        """
+        return 1 if (self.is_open and self.header) else 0
+
     def rows(self) -> "list[str]":
-        """The display rows: candidate rows, or the single no-match row when the
-        namespace triggered but matched nothing."""
+        """The display rows: the optional header, then the candidate rows — or
+        the single no-match row when a REAL candidate source triggered and
+        matched nothing (see the module docstring's availability distinction).
+        """
         if not self.is_open:
             return []
-        if not self.candidates:
-            return [NO_MATCH_ROW]
-        return [c.row() for c in self.candidates]
+        out = [_neutralized_label(self.header)] if self.header else []
+        if self.candidates:
+            out.extend(c.row() for c in self.candidates)
+        elif self.has_candidate_source:
+            out.append(NO_MATCH_ROW)
+        return out
 
 
 #: The "no namespace triggered" state — shared, immutable.
@@ -237,26 +298,65 @@ def _argument_candidates(
     )
 
 
+def _usage_header(cmd: "SlashCommand") -> str:
+    """``↳ usage: <cmd.usage>``, or ``""`` for a command that declares none.
+
+    ``SlashCommand.usage`` was added FOR this row — its own comment names "what
+    shows once the user types ``/<cmd> ``" — but the surface it named (the
+    retired ``SlashPicker``) was deleted by the #3273 Phase 6 rebuild and the
+    replacement popup (#3354) never read the field (#3364).
+
+    The ARGUMENT stage is where it goes, not the command-name list. Two reasons,
+    both measured rather than assumed: 20 of the 25 non-hidden commands set
+    ``usage``, so a per-candidate second line would double the height of almost
+    every row and halve how many commands fit under the popup's 10-row cap — the
+    geometry #3358 measured at 80×24; and the argument stage is the only moment
+    the answer is ACTIONABLE, since by then the user has committed to the command
+    and is typing the very arguments the line describes.
+
+    Empty for the 5 non-hidden commands with no ``usage`` (``/agents``,
+    ``/cost``, ``/list``, ``/quit``, ``/exit`` — all of them argument-less) — the
+    header is omitted entirely rather than reserved as a blank or placeholder
+    row.
+    """
+    return f"{USAGE_ROW_PREFIX}{cmd.usage}" if cmd.usage else ""
+
+
 def _argument_state(text: str, session: object, registry) -> CompletionState:
     """The ``/cmd <arg>`` branch: the command word is settled, so command-name
     candidates STOP and the command's own ``CompleterFn`` takes over.
 
-    Stays SILENT (not a no-match menu) whenever this client has no argument
-    source at all: an unrecognised command, a command declaring no completer, or
-    no local session to call one with. Only a command that really can be
-    completed here opens a menu.
+    Opens for either of two independent reasons — the command has an argument
+    source here (a ``CompleterFn`` AND a local session to call it with), or it
+    declares a ``usage`` line to show. The second is what makes the stage useful
+    for the 15 commands that document their syntax and offer no completer
+    (``/visibility ``, ``/hook ``, ``/session ``…): before #3364 those opened
+    nothing at all. Only 5 commands have a ``CompleterFn``, so the usage line is
+    what the argument stage has to offer three times out of four.
+
+    Stays SILENT for an unrecognised command, and for a command with neither an
+    argument source nor a usage line — an empty menu would read as "no such
+    command exists".
     """
     cmd_name, _, arg_partial = text[1:].partition(" ")
     cmd = registry.get(cmd_name)
-    if cmd is None or cmd.completer is None or session is None:
+    if cmd is None:
+        return NO_COMPLETION
+    header = _usage_header(cmd)
+    has_source = cmd.completer is not None and session is not None
+    if not has_source and not header:
         return NO_COMPLETION
     word = _completing_word(arg_partial)
     return CompletionState(
         kind=KIND_ARGUMENT,
-        candidates=_argument_candidates(cmd, arg_partial, session),
+        candidates=(
+            _argument_candidates(cmd, arg_partial, session) if has_source else ()
+        ),
         prefix_len=len(word),
         token_start=len(text) - len(word),
         accept_suffix="",
+        header=header,
+        has_candidate_source=has_source,
     )
 
 
@@ -339,7 +439,7 @@ class CompletionPopup(OptionList, can_focus=False):
     (``CommandList(OptionList, can_focus=False)``). Measured: a non-focusable
     ``OptionList`` receives no key events, so focus stays on the composer and
     this widget only ever re-renders. ``chrome.Composer`` drives it through
-    :meth:`sync` and reads :attr:`is_open` before claiming a navigation key.
+    :meth:`sync` and reads :attr:`owns_keys` before claiming a navigation key.
     """
 
     DEFAULT_CSS = """
@@ -388,10 +488,19 @@ class CompletionPopup(OptionList, can_focus=False):
             # ``OptionList`` markup-parses a bare ``str`` (#3302), and ``/image``
             # candidates are filesystem names.
             self.add_options(option_content_rows(rows))
-            # A new row set always highlights its first row: a stale highlight
-            # index would point at a row from the previous keystroke's list.
-            if self.option_count:
+            # A new row set always re-seats the highlight on its first CANDIDATE
+            # row (past the usage header, when there is one): a stale index would
+            # point at a row from the previous keystroke's list, and a highlight
+            # on the header would offer an un-acceptable row as the Tab target.
+            # A header-only menu highlights NOTHING — it is a hint, and drawing
+            # it as the selected row of a list would invite a Tab that cannot do
+            # anything.
+            if state.candidates:
+                self.highlighted = state.row_offset
+            elif self.option_count and state.has_candidate_source:
                 self.highlighted = 0
+            else:
+                self.highlighted = None
 
     def dismiss_current(self) -> None:
         """Close the menu and remember the token it was showing, so typing more
@@ -413,10 +522,17 @@ class CompletionPopup(OptionList, can_focus=False):
 
     @property
     def is_open(self) -> bool:
-        """Whether the menu is showing — the predicate the composer gates its
-        key interception on. True for a no-match menu too (see
+        """Whether the menu is showing. True for a no-match menu too (see
         :attr:`CompletionState.is_open`)."""
         return self._state.is_open
+
+    @property
+    def owns_keys(self) -> bool:
+        """Whether the menu claims the navigation keys — the predicate the
+        composer gates its key interception on. Narrower than :attr:`is_open`
+        by exactly the usage-header-only menu (see
+        :attr:`CompletionState.owns_keys`)."""
+        return self._state.owns_keys
 
     def state(self) -> CompletionState:
         """The state currently displayed — the public read the composer's accept
@@ -425,14 +541,20 @@ class CompletionPopup(OptionList, can_focus=False):
         return self._state
 
     def selected(self) -> "CompletionCandidate | None":
-        """The highlighted candidate, or ``None`` when the menu is closed or
-        showing the no-match row (there is nothing to accept)."""
+        """The highlighted candidate, or ``None`` when the menu is closed, is
+        showing the no-match row, or is showing only a usage header (there is
+        nothing to accept in any of those).
+
+        The display index is translated back through
+        :attr:`CompletionState.row_offset`, so a header row highlighted by a
+        mouse click resolves to ``None`` rather than to candidate 0."""
         index = self.highlighted
         if not self._state.candidates or index is None:
             return None
-        if not 0 <= index < len(self._state.candidates):
+        position = index - self._state.row_offset
+        if not 0 <= position < len(self._state.candidates):
             return None
-        return self._state.candidates[index]
+        return self._state.candidates[position]
 
     def move_selection(self, delta: int) -> None:
         """Move the highlight by ``delta`` rows, CLAMPED at both ends.
@@ -440,12 +562,17 @@ class CompletionPopup(OptionList, can_focus=False):
         No wrap-around: the sent-queue's ``↑``/``↓`` and the drawer's
         ``OptionList`` panes both clamp, and a wrapping menu would make ``↑``
         from the first row jump to the bottom rather than feel like the edge it
-        is."""
+        is. The TOP clamp sits below the usage header when there is one, so ``↑``
+        stops at the first candidate instead of parking on a row Tab cannot
+        accept."""
         if not self._state.candidates:
             return
-        current = self.highlighted or 0
+        offset = self._state.row_offset
+        current = self.highlighted
+        if current is None:
+            current = offset
         self.highlighted = max(
-            0, min(current + delta, len(self._state.candidates) - 1)
+            offset, min(current + delta, offset + len(self._state.candidates) - 1)
         )
 
     def rendered_rows(self) -> "list[str]":
@@ -467,6 +594,7 @@ __all__ = [
     "NO_COMPLETION",
     "NO_MATCH_ROW",
     "SKILL_MIN_CHARS",
+    "USAGE_ROW_PREFIX",
     "CompletionCandidate",
     "CompletionPopup",
     "CompletionState",
