@@ -129,6 +129,22 @@ class TokenUsage:
         ``registry`` / ``router_loop`` / ``budget_gateway`` starts from) states
         nothing about numbers it does not have, and must not drag a run of
         provider-verified calls down to ``UNKNOWN``.
+
+        ★The assumption that rule rests on: **a zero-token operand is treated as
+        stating no information.** True of the empty accumulators above — but if
+        a producer ever emits zero as the RESULT OF FAILING TO COUNT, this rule
+        silently raises the aggregate's confidence:
+        ``ESTIMATED(0, 0) + PROVIDER(100, 20)`` reports ``PROVIDER`` and the
+        estimated marking disappears. Latent, not live, at the time of writing:
+        litellm's ``token_counter failed → prompt_tokens = 0`` fallback sits in
+        the text-completion branch, ``completion_tokens`` is computed
+        separately, and reyn's chat path records nothing at all when a response
+        carries no usage — so an all-zero-but-meant-something usage has no
+        production producer. It is written down because THIS module exists to
+        close a "silently raises confidence" path, and the one place such a
+        shape would be least expected is inside its own merge rule. A future
+        producer of count-failure zeros must make that state explicit (its own
+        source, or a not-a-number sentinel) rather than inherit neutrality here.
         """
         if self.total_tokens == 0 and self.cached_tokens == 0 and self.cache_creation_tokens == 0:
             return other.source
