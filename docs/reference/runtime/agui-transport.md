@@ -468,16 +468,15 @@ the item by `msg_id` (unlike `turn_started`, which matches by `chain_id`).
 The client seeds its status view from the snapshot and merges each delta, so the
 remote status panel always reflects the server's values.
 
-These are exactly the **main status-bar chip values** the inline CUI renders, so a
-remote client on an interactive TTY draws the same status bar as a local one
-(`agent` · `model` · `cost` · `ctx%`, plus the working indicator). The **dropdown
-expansions** (cost/ctx detail, the `/model` class picker, the agent/session tree,
-the task tree, the `…` overflow toggle counts), the interactive intervention /
-`/rewind` **pickers**, and the **`task` chip count** are session-local state, not
-on the wire — a remote client shows the streamed chip values and degrades those to
-empty/`—`/0. (The `task` chip is degraded rather than streamed because the task
-system is a deprecation candidate — deliberately no per-connection poll; adding any
-other field is an additive `STATE_*` key, not a client change.)
+These are exactly the **main status-line values** the interactive TUI renders, so a
+remote client on an interactive TTY draws the same status line as a local one
+(`agent` · `model` · `cost` · `ctx%`, plus the working indicator). The **drawer
+panes** behind that line (the cost breakdown and ctx/compaction detail, the
+`/model` class picker, the agent/session tree, the tool/mcp/skill/hook visibility
+and applicability toggles, the pipeline and cron listings) and the interactive
+intervention / `/rewind` **pickers** are session-local state, not on the wire — a
+remote client shows the streamed status values and degrades those to empty/`—`/0.
+Adding any other field is an additive `STATE_*` key, not a client change.
 
 ## Reconnect
 

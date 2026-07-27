@@ -320,7 +320,10 @@ class TextualChatApp(App):
     /* height: auto — the menu row WRAPS to as many lines as the terminal width
        needs (chrome.pack_menu_rows), so no tab is ever laid out past the right
        edge. A fixed height:1 here would clip the wrapped rows straight back
-       off-screen, reinstating exactly the defect the wrap exists to fix. */
+       off-screen, reinstating exactly the defect the wrap exists to fix.
+       THIS RULE IS THE SOLE OWNER of the row's height: an app stylesheet beats
+       a widget's DEFAULT_CSS, so declaring height on MenuBar in chrome.py has
+       no effect (measured). Change it here. */
     MenuBar {
         height: auto;
         color: $text-muted;

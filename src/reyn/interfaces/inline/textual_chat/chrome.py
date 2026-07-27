@@ -881,9 +881,16 @@ class MenuBar(Widget, can_focus=True):
     ``active`` is the highlighted tab id, the same public read the drawer control
     and the Phase-3 keyboard gates use."""
 
+    # NOTE: the row's HEIGHT is not declared here. The app stylesheet
+    # (``TextualChatApp.CSS``'s ``MenuBar`` rule) overrides a widget's
+    # ``DEFAULT_CSS``, so a ``height`` here would be inert — measured: stripping
+    # it changes nothing, stripping the app rule breaks the layout. It must stay
+    # ``auto`` for the wrapped rows to be visible at all (a fixed height clips
+    # them below the last screen line), so the one place to change it is
+    # ``app.py``'s rule — not this block, which is where the wrapping logic below
+    # would otherwise send you looking.
     DEFAULT_CSS = """
     MenuBar {
-        height: auto;
         layout: vertical;
     }
     MenuBar > .menubar-row {
