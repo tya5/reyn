@@ -1772,10 +1772,15 @@ async def recorded_acompletion(
     # streaming regression happened for Gemini before the #3325 provider gate
     # — a bridge that is too WIDE silently breaks streaming for models that
     # didn't need it. litellm's own narrower, upstream-maintained routing
-    # (currently gpt-5.4-family + tools + reasoning_effort, or
-    # ``mode == "responses"``) is strictly better: reyn passes the bare
-    # resolved model straight to ``litellm.acompletion`` and litellm decides
-    # internally.
+    # (read from its source, ``litellm/main.py::responses_api_bridge_check``:
+    # ``custom_llm_provider in ("openai", "azure") AND is_gpt_5_model(model)
+    # AND reasoning_effort is not None AND (reasoning_summary OR
+    # (is_gpt_5_4_plus_model(model) AND tools))``, plus a separate
+    # ``mode == "responses"`` trigger for Responses-only models like
+    # ``o1-pro`` — NOT merely "gpt-5.4-family", which would drop the
+    # ``gpt-5``/``gpt-5.1`` + explicit ``reasoning_summary`` path) is
+    # strictly better: reyn passes the bare resolved model straight to
+    # ``litellm.acompletion`` and litellm decides internally.
     #
     # This no longer gates a rewrite (reyn does not know whether litellm
     # applied its own bridge) — it ONLY gates the decision-enabling

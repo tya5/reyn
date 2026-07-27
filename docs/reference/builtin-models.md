@@ -175,14 +175,31 @@ unchanged; litellm decides internally whether to route to `/v1/responses`.
 provider-allowlist bridge was strictly *wider* than litellm's own routing —
 it fired for every OpenAI/Azure reasoning model (`o1`, `o3-mini`, …), none of
 which were ever verified to actually need the bridge, whereas litellm's
-routing is narrower (currently gpt-5.4-family + tools + reasoning_effort, or
-`model_info.mode == "responses"`) and upstream-maintained, tracking future
-provider/model changes automatically. A bridge that's too wide is not the
-safe direction — it's exactly the shape of the #3288 default-config
-regression (Gemini's `tools + reasoning_effort` primary-reply shape got
-silently rewritten to an unrecognized `responses/` model string, disabling
-token streaming) before #3325 narrowed it. Deleting reyn's own gate removes
-an unverified, frozen guess in favor of a narrower, upstream-maintained one.
+routing is narrower and upstream-maintained, tracking future provider/model
+changes automatically. Read directly from litellm's source
+(`litellm/main.py::responses_api_bridge_check`), the actual condition is a
+conjunction, not a single provider/family check:
+
+```
+custom_llm_provider in ("openai", "azure")
+  AND is_model_gpt_5_model(model)
+  AND reasoning_effort is not None
+  AND (reasoning_summary is not None OR (is_gpt_5_4_plus_model(model) AND tools))
+```
+
+(plus `model_info.get("mode") == "responses"` as a separate, model-specific
+trigger — see `o1-pro` below.) Measured per-model: `o1` / `o1-pro` / `o3-mini`
+/ `gpt-4o-mini` all resolve `is_gpt_5_model=False` (never bridged this way —
+`o1-pro` bridges instead via `mode == "responses"`); `gpt-5` / `gpt-5.1`
+resolve `is_gpt_5_model=True` but need an explicit `reasoning_summary`, not
+just `tools`; `gpt-5.4`-and-above resolve `is_gpt_5_4_plus_model=True`, where
+`tools` alone (with `reasoning_effort` set) is sufficient — this is reyn's
+own verified bug case. A bridge that's too wide is not the safe direction —
+it's exactly the shape of the #3288 default-config regression (Gemini's
+`tools + reasoning_effort` primary-reply shape got silently rewritten to an
+unrecognized `responses/` model string, disabling token streaming) before
+#3325 narrowed it. Deleting reyn's own gate removes an unverified, frozen
+guess in favor of a narrower, upstream-maintained one.
 
 litellm's bridge currently cannot map the `reasoning` output item some models
 return, so a bridged call can still raise:

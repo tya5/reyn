@@ -151,14 +151,30 @@ litellm が内部で決定します。
 provider-allowlist bridge は litellm 自身の routing より **明らかに広い**
 ことが分かりました — OpenAI/Azure の reasoning model（`o1`、`o3-mini` 等）
 すべてに対して発火していましたが、そのうちどれも実際に bridge が必要かは
-検証されていませんでした。一方 litellm の routing はより狭く（現状
-gpt-5.4-family + tools + reasoning_effort、または
-`model_info.mode == "responses"`）、upstream が保守するため将来の
-provider/model 変化に自動的に追随します。広すぎる bridge は安全な方向では
-ありません — それはまさに #3288 のデフォルト構成 regression（Gemini の
-`tools + reasoning_effort` primary-reply 形状が未認識の `responses/` model
-文字列に静かに書き換えられ、token streaming が無効化された）と同じ形です
-（#3325 で狭められました）。reyn 自身の gate を削除することは、検証されて
+検証されていませんでした。litellm の source
+（`litellm/main.py::responses_api_bridge_check`）を直接確認すると、実際の
+条件は単一の provider/family 判定ではなく連言（AND）です:
+
+```
+custom_llm_provider in ("openai", "azure")
+  AND is_model_gpt_5_model(model)
+  AND reasoning_effort is not None
+  AND (reasoning_summary is not None OR (is_gpt_5_4_plus_model(model) AND tools))
+```
+
+（加えて `model_info.get("mode") == "responses"` という model 固有の別 trigger
+もあります — 下記の `o1-pro` 参照。）model 別の実測: `o1` / `o1-pro` /
+`o3-mini` / `gpt-4o-mini` はいずれも `is_gpt_5_model=False`（この経路では
+bridge されない — `o1-pro` は `mode == "responses"` 経由で別途 bridge されます）。
+`gpt-5` / `gpt-5.1` は `is_gpt_5_model=True` ですが明示的な `reasoning_summary`
+が必要で、`tools` だけでは足りません。`gpt-5.4` 以降は
+`is_gpt_5_4_plus_model=True` で、`reasoning_effort` が設定されていれば
+`tools` だけで足ります — これが reyn 自身が検証した bug case です。
+広すぎる bridge は安全な方向ではありません — それはまさに #3288 の
+デフォルト構成 regression（Gemini の `tools + reasoning_effort`
+primary-reply 形状が未認識の `responses/` model 文字列に静かに書き換えられ、
+token streaming が無効化された）と同じ形です（#3325 で狭められました）。
+reyn 自身の gate を削除することは、検証されて
 いない凍結された推測を、より狭く upstream が保守する判断に置き換えることを
 意味します。
 
