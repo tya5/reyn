@@ -170,7 +170,7 @@ mindmap
       delegate_to_agent
     🖥️ Inline CUI
       Conversation view
-      Status chips (Agents/Cost/Model/Ctx/Tools/MCP/Skills/Hooks/Pipes/Cron)
+      Bottom-chrome drawer (Model/Agent/History/Cost/Ctx/Tool/MCP/Skill/Pipe/Hook/Cron/Menu/Help)
       Tool-result one-line summaries
       Above-input region (interventions, command UIs)
       Input + slash-command completion
@@ -619,13 +619,13 @@ still use the plain `ConsoleChatRenderer`.
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | Conversation view | Streaming conversation in scrollback with terracotta-accented `●`/`⎿` markers per message kind (agent/status/error/intervention/trace) | — |
-| Status chips | Live one-line chip bar above the input: Agents / Cost / Model / Ctx / Tools / MCP / Skills / Hooks / Pipes / Cron, each expandable in place — Ctx shows current context size vs the model's context window as a Claude Code-style %, with a dropdown for window source (litellm catalog vs fallback), cache-hit rate, and the compaction subsystem's own separate estimate | — |
+| Bottom-chrome drawer | Below the input: a live `model │ agent │ cost │ ctx` status line plus a focusable tab row that expands a drawer downward — Model / Agent (with the session tree beneath each agent) / History / Cost / Ctx / Tool / MCP / Skill / Pipe / Hook / Cron / Menu / Help. Cost shows a Session/Agent/Project × Total/Input/Output/Saved/Saved% breakdown (component cells marked `~` under >200k tiered pricing, `—` when the breakdown is unavailable — never conflated) plus the cumulative cache-hit rate; Ctx shows current context size vs the model's context window as a Claude Code-style %, the window source (litellm catalog vs fallback), free headroom, the last call's cache-hit rate, and the compaction subsystem's own separate estimate. Selecting a row dispatches its slash (`/model`, `/attach`, `/session switch`, `/visibility`, `/hook`). Status line and the open pane both refresh on every frame | — |
 | Working indicator states | The spinner row names WHAT the turn is currently blocked on, not just "something is happening": `Thinking… Ns` (waiting on the model), `Running <tool>… Ns` (a tool is executing — sequential, one at a time), `Waiting for you… Ns` (a static amber line — any of ask_user / a permission confirm / cost-warn / a safety-limit checkpoint / an MCP install confirm / a hook confirm is pending). The elapsed seconds shown reset on each state change (time-in-this-state, not turn-total) — e.g. `Running grep_files… 45s` means this specific tool call has been running 45s, not that the whole turn has | — |
 | Tool-result summaries | `summarize_tool_result` renders a best-effort one-line, per-tool summary (e.g. `Read 42 lines`, `3 matches`); always degrades gracefully to a truncated repr, never a full content preview | — |
 | Above-input region | Closed-set interventions (confirm/select/grant-deny) and command UIs (e.g. the `/rewind` checkpoint picker) render as a selectable row list above the input, rather than a modal | [Permission model](concepts/runtime/permission-model.md) |
 | Input + slash-command completion | Input bar with `/`-prefixed command autocomplete (`/rewind`, `/compact`, `/model`, `/help`, `/clear-history`, …) | — |
 
-> **Differentiation vs general agents:** Reyn's chat surface is a local, inspectable CLI with live audit chips (agents / cost / permissions) beside the conversation — the operator sees what the agent is doing and spending in real time.
+> **Differentiation vs general agents:** Reyn's chat surface is a local, inspectable CLI with a live audit drawer (agents / cost / context / permissions) beneath the conversation — the operator sees what the agent is doing and spending in real time.
 
 ---
 
