@@ -38,6 +38,7 @@ from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.status_classify import classify_op_status
 from reyn.core.pipeline.registry import PipelineNotFoundError, PipelineRegistry
+from reyn.core.turn_scope import active_turn
 from reyn.hooks.schema_registry import build_hook_payload
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
@@ -1258,6 +1259,13 @@ class Session:
         }
 
         self._budget_tracker = budget_tracker  # PR22: process-shared budget/rate-limit tracker; None -> checks noop
+        # #3339: chain_id of the most recent turn this session ran (set at the
+        # _run_router_loop seam, kept after the turn ends so an idle status
+        # surface can still report what the last turn cost). None before the
+        # session's first router turn. The ambient scope carrying the same
+        # value is per-TASK, so a render/status caller on another task cannot
+        # read it — this attribute is how the turn key leaves the turn task.
+        self._last_turn_chain_id: str | None = None
 
         _router_cap: int = _safety.loop.max_router_calls_per_turn  # per-turn router cap from safety config
 
@@ -1536,6 +1544,49 @@ class Session:
     @property
     def total_cost_usd(self) -> float:
         return self._budget.total_cost_usd
+
+    @property
+    def last_turn_usage(self) -> dict:
+        """#3339: tokens + USD cost of this session's MOST RECENT turn —
+        ``{"chain_id", "tokens", "cost_usd"}``.
+
+        A real per-turn aggregate: the durable tracker summed the actual
+        per-call figures of every LLM call made under this turn's chain_id
+        (tool-loop iterations included). It is NEVER derived by differencing
+        cumulative counters, so it cannot drift into a fabricated number —
+        the cost of a call the OS could not attribute to a turn is in no
+        turn's total at all.
+
+        When there is no figure, ALL THREE values are ``None`` — never a
+        placeholder ``0``. A zero is indistinguishable from a real zero-cost
+        turn, and a renderer that forgot to check would print it as fact;
+        ``None`` makes the same mistake loud (drawn as "None", or a
+        ``TypeError`` the moment anything does arithmetic on it). No
+        convention for a consumer to remember, and nothing to get wrong
+        silently.
+
+        "No figure" occurs before this session's first router turn, with no
+        tracker wired (unlimited mode), and when the tracker's latest turn is
+        a DIFFERENT turn than this session's last one — the tracker is
+        process-shared and answers only about the latest turn process-wide
+        (see ``BudgetTracker.latest_turn_usage``). That last case is common,
+        not exotic: several sessions share one tracker, so any turn elsewhere
+        moves "latest" off this session. This session's own last turn is real
+        and its figure IS still held in the tracker's buckets — we CHOSE not
+        to reach for it, because retrieving it means reintroducing the keyed
+        lookup that #3339 deliberately closed (a keyed read has to answer for
+        an evicted turn, and its only available answers are a fabricated 0 or
+        an unknown-sentinel every caller must remember to check). Reporting
+        "unknown" is the cost of keeping that question unaskable."""
+        _none = {"chain_id": None, "tokens": None, "cost_usd": None}
+        chain_id = self._last_turn_chain_id
+        tracker = self._budget_tracker
+        if chain_id is None or tracker is None:
+            return _none
+        latest = tracker.latest_turn_usage()
+        if latest is None or latest["chain_id"] != chain_id:
+            return _none
+        return latest
 
     @property
     def total_cost_breakdown(self):
@@ -7749,8 +7800,29 @@ class Session:
         user_text: str,
         chain_id: str,
     ) -> None:
-        """Forwarding → RouterLoopDriver.run_turn (PR-3)."""
-        await self._loop_driver.run_turn(user_text, chain_id)
+        """Forwarding → RouterLoopDriver.run_turn (PR-3).
+
+        #3339: this is the seam where the turn's ``chain_id`` becomes the
+        AMBIENT turn identity for everything the turn does — every LLM call
+        the router loop makes (including each tool-loop iteration and any
+        compaction triggered inside the turn) reads it at the cost chokepoint
+        and files its tokens/cost under this turn. The scope is bound here
+        rather than at ``turn_started`` because this is the single point every
+        turn kind (user / hook / agent_request / pipeline_result) funnels
+        through WITH its chain_id in scope, and it closes exactly where the
+        turn's work ends.
+
+        A SUB-AGENT's turn arrives here as ``agent_request`` and REBINDS to
+        its own chain_id, so it is billed to its own turn rather than the
+        parent's — even though its task inherited the parent's chain_id at
+        spawn. Work that never reaches this seam sees no turn and is recorded
+        unattributed instead of charged to the latest turn; see
+        ``reyn.core.turn_scope`` for the enumeration of those paths (the
+        ``/compact`` slash short-circuit and the dev/dogfood surfaces).
+        """
+        self._last_turn_chain_id = chain_id
+        with active_turn(chain_id):
+            await self._loop_driver.run_turn(user_text, chain_id)
         # #1800 slice 5a: turn lifecycle audit event (P6). Emitted immediately
         # after RouterLoopDriver.run_turn() returns — the router loop has
         # reached a terminal stop_reason and the turn's response is complete.

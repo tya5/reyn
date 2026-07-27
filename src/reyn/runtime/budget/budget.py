@@ -24,7 +24,7 @@ import hashlib
 import json
 import os
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -148,7 +148,12 @@ class BudgetLedger:
     Each line is an LLM-call record::
 
         {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
-         "model": "...", "tokens": 300, "cost_usd": 0.0023}
+         "model": "...", "tokens": 300, "cost_usd": 0.0023,
+         "purpose": "main", "chain_id": "c-1a2b"}
+
+    ``purpose`` (#1190) and ``chain_id`` (#3339, the turn key) are optional —
+    written only when known, so a record from a call with no turn, and a
+    record written before either field existed, both stay valid.
 
     Records are fsync'd on append so a process crash cannot roll back a
     completed LLM call and under-count quota usage. This is the cap-critical
@@ -176,6 +181,7 @@ class BudgetLedger:
         tokens: int,
         cost_usd: float,
         purpose: str | None = None,
+        chain_id: str | None = None,
     ) -> None:
         """Append one LLM-call record and fsync.
 
@@ -183,6 +189,15 @@ class BudgetLedger:
         (main/compaction/judge/dogfood). It is omitted
         from the record when None so pre-existing ledger lines stay
         byte-identical.
+
+        ``chain_id`` (#3339) is the turn key — the identity of the user
+        submission whose turn made this call — so the ledger can be
+        re-grouped per turn after the fact. Same omit-when-None rule: a
+        call made outside any turn (the ``/compact`` slash short-circuit,
+        a dev/dogfood surface) writes no ``chain_id`` at all rather than a
+        null turn key, and a record
+        written before #3339 simply lacks the field (readers must treat a
+        missing ``chain_id`` as "no turn", never as an error).
         """
         record: dict = {
             "ts": self._now_iso(),
@@ -193,6 +208,8 @@ class BudgetLedger:
         }
         if purpose is not None:
             record["purpose"] = purpose
+        if chain_id is not None:
+            record["chain_id"] = chain_id
         self._write_record(record)
 
     @staticmethod
@@ -791,6 +808,16 @@ def write_checkpoint(
 
 # ── tracker ─────────────────────────────────────────────────────────────────
 
+# #3339: how many recent turns keep a live per-turn token/cost bucket. The
+# consumer is the status surface ("what did this turn cost"), which reads the
+# most recent turn — the depth exists so a just-finished turn stays readable
+# while later turns run, not so history accumulates unbounded. The tracker is
+# process-shared, so N concurrent sessions share these buckets: the effective
+# per-session depth is CAP/N. Harmless while the only read is the latest turn
+# (never an eviction victim); a future reader of OLDER turns would have to
+# reckon with it.
+TURN_BUCKET_CAP = 64
+
 
 class BudgetTracker:
     """Process-wide accumulator + hybrid-cap enforcer.
@@ -832,6 +859,23 @@ class BudgetTracker:
         # (main/compaction/judge/dogfood) for the /budget breakdown payoff.
         self._purpose_tokens: dict[str, int] = defaultdict(int)
         self._purpose_cost_usd: dict[str, float] = defaultdict(float)
+        # #3339: per-TURN attribution, keyed by the turn's ``chain_id``. Every
+        # other counter here is cumulative, which is exactly why a per-turn
+        # figure was previously unrecoverable: the per-call numbers exist, but
+        # folding them in immediately discards which turn produced them, and a
+        # turn total can NEVER be honestly recovered by differencing cumulative
+        # counters afterwards. Recorded ONLY when ``record_llm`` is given a
+        # chain_id — a call outside any turn contributes to no bucket at all.
+        #
+        # Bounded by construction (cross-cutting band): an insertion-ordered
+        # LRU capped at ``_TURN_BUCKET_CAP`` turns, evicting the oldest turn —
+        # a long-lived session must not accumulate one bucket per turn forever.
+        # In-memory only, NOT ledger-hydrated (same posture as
+        # ``_agent_cost_breakdown``): this is live-session display state, and
+        # after a restart no turn of this process is in flight. The durable
+        # record of a past turn's spend is the ledger's per-call ``chain_id``.
+        self._turn_tokens: OrderedDict[str, int] = OrderedDict()
+        self._turn_cost_usd: OrderedDict[str, float] = OrderedDict()
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
         self._warned: set[tuple[str, str]] = set()
         # PR25: persistent daily / monthly counters
@@ -854,6 +898,10 @@ class BudgetTracker:
         # R-D8: auto-save state path + throttle. None path = no auto-save.
         self._state_path: Path | None = None
         self._save_throttle_secs: float = 1.0
+        # #3339: the most recent turn to record spend, so a reader that wants
+        # "the last turn's cost" does not have to know a chain_id. None until
+        # a call with a turn in scope is recorded.
+        self._last_turn_chain_id: str | None = None
         self._last_save_monotonic: float = 0.0  # 0 = never saved
         # R-D8: True once load_state was called. The loaded state already
         # includes every committed step's usage, so memo-hit forward-calc
@@ -1139,6 +1187,7 @@ class BudgetTracker:
         agent: str | None,
         usage: TokenUsage,
         purpose: str | None = None,
+        chain_id: str | None = None,
     ) -> BudgetCheck:
         """Update counters after a successful LLM call.
 
@@ -1146,6 +1195,17 @@ class BudgetTracker:
         Returns a BudgetCheck whose warn_dimensions list any dimensions
         that newly crossed the warn threshold (for the caller to emit
         events / outbox notifications).
+
+        ``chain_id`` (#3339) is the turn this call belongs to, read from the
+        ambient turn scope (``reyn.core.turn_scope``) at the LLM chokepoint.
+        When given, this call's tokens/cost also accumulate into that turn's
+        bucket (``turn_tokens`` / ``turn_cost_usd``) and land on the ledger
+        record. When ``None`` — anything with no turn in scope; see
+        ``reyn.core.turn_scope`` for which paths those are (a sub-agent's
+        turn is NOT one of them: it rebinds to its own chain_id and is
+        billed separately) — NO turn bucket is touched:
+        the call is genuinely unattributable to a turn, and quietly adding it
+        to the most recent one would invent a number.
         """
         # rate limit window
         self._call_window[model].append(time.monotonic())
@@ -1158,6 +1218,11 @@ class BudgetTracker:
         if purpose is not None:
             self._purpose_tokens[purpose] += usage.total_tokens
             self._purpose_cost_usd[purpose] += cost_usd
+
+        # #3339: per-turn attribution. Guarded on a real turn key — the None
+        # (no turn in scope) path deliberately records nothing here.
+        if chain_id is not None:
+            self._record_turn_usage(chain_id, usage.total_tokens, cost_usd)
 
         if agent is not None:
             new_tokens = self._agent_tokens[agent] + usage.total_tokens
@@ -1192,6 +1257,7 @@ class BudgetTracker:
                 tokens=usage.total_tokens,
                 cost_usd=cost_usd,
                 purpose=purpose,
+                chain_id=chain_id,
             )
 
         # Warn on daily / monthly thresholds
@@ -1428,6 +1494,15 @@ class BudgetTracker:
             # #1190 stage (iii): per-purpose cost attribution.
             "purpose_tokens": dict(self._purpose_tokens),
             "purpose_cost_usd": dict(self._purpose_cost_usd),
+            # #3339: per-TURN attribution, keyed by chain_id (most recent
+            # ``TURN_BUCKET_CAP`` turns). Only turns that actually recorded
+            # spend appear; calls made outside any turn appear in NO bucket,
+            # so summing these does not reproduce the session total — that is
+            # the point, not a defect. ``last_turn_chain_id`` names the most
+            # recent key (None before any turn recorded spend).
+            "turn_tokens": dict(self._turn_tokens),
+            "turn_cost_usd": dict(self._turn_cost_usd),
+            "last_turn_chain_id": self._last_turn_chain_id,
             "rate_window": {
                 m: len([t for t in q if time.monotonic() - t <= 60])
                 for m, q in self._call_window.items()
@@ -1500,6 +1575,50 @@ class BudgetTracker:
         """All-time cumulative TOTAL tokens for ``agent`` (durable, ledger-hydrated). Total only —
         the prompt/completion breakdown is not persisted per ledger record (only ``total_tokens``)."""
         return self._agent_tokens.get(agent, 0)
+
+    def _record_turn_usage(self, chain_id: str, tokens: int, cost_usd: float) -> None:
+        """Accumulate one call's tokens/cost into turn ``chain_id``'s bucket,
+        keeping the bucket set bounded (oldest turn evicted past
+        ``TURN_BUCKET_CAP``). Insertion order = turn order; a turn already
+        present keeps its original position, so a multi-call turn is not
+        re-dated by its own later calls and the eviction victim stays the
+        genuinely oldest turn.
+
+        Insertion order tracks recency only because turns run SEQUENTIALLY
+        within a session — a turn that stayed open across more than
+        ``TURN_BUCKET_CAP`` later turns would be evicted while still live.
+        That is unreachable while a session runs one turn at a time, and the
+        only reader (``latest_turn_usage``) asks about the turn that just
+        recorded, which is never the eviction victim."""
+        self._turn_tokens[chain_id] = self._turn_tokens.get(chain_id, 0) + tokens
+        self._turn_cost_usd[chain_id] = self._turn_cost_usd.get(chain_id, 0.0) + cost_usd
+        self._last_turn_chain_id = chain_id
+        while len(self._turn_tokens) > TURN_BUCKET_CAP:
+            evicted, _ = self._turn_tokens.popitem(last=False)
+            self._turn_cost_usd.pop(evicted, None)
+
+    def latest_turn_usage(self) -> dict | None:
+        """#3339: ``{"chain_id", "tokens", "cost_usd"}`` for the MOST RECENT
+        turn that recorded spend, or ``None`` when no turn has.
+
+        Tokens and cost are summed over every LLM call that turn made
+        (tool-loop iterations included), each priced at its own model's rate —
+        never derived by differencing cumulative counters.
+
+        Deliberately latest-turn-only, with no ``usage(chain_id)`` sibling. A
+        keyed lookup would have to answer for a turn whose bucket has been
+        evicted (``TURN_BUCKET_CAP``), and the only shapes available there are
+        a fabricated ``0`` or an ``unknown`` sentinel every caller must
+        remember to check. The latest turn can never be the eviction victim,
+        so an API that only asks about it cannot ask the ambiguous question."""
+        chain_id = self._last_turn_chain_id
+        if chain_id is None:
+            return None
+        return {
+            "chain_id": chain_id,
+            "tokens": self._turn_tokens.get(chain_id, 0),
+            "cost_usd": self._turn_cost_usd.get(chain_id, 0.0),
+        }
 
     def agent_cost_breakdown(self, agent: str) -> CostBreakdown:
         """Cache-aware ``CostBreakdown`` accumulated for ``agent`` (cost-panel Input/Output/Saved

@@ -327,6 +327,9 @@ def _snapshot(registry, config=None):
     # dropdown is actually open (and only once per redraw of THAT dropdown,
     # not the whole app).
     ctx_compaction_status_fn = s.context_window_status
+    # #3339: per-turn token/cost aggregate (see Session.last_turn_usage) — a
+    # cheap dict read off the durable tracker, safe on every render frame.
+    turn_usage = s.last_turn_usage
     return {
         "model": s.model,
         "model_active_class": s.active_model_class(),
@@ -347,6 +350,21 @@ def _snapshot(registry, config=None):
             if registry.attached_name else s.total_cost_breakdown
         ),
         "cost_breakdown_project": registry.project_cost_breakdown(),
+        # #3339: the CURRENT (or most recent) turn's real token/cost total —
+        # every LLM call the turn made, summed under its chain_id by the
+        # durable tracker. Distinct from BOTH `usage`/`cost_usd` (session
+        # cumulative) and `ctx_used` (a single call). A call the OS could not
+        # attribute to a turn is counted in no turn's total, so these figures
+        # are never a difference of cumulative counters.
+        # All three are None when THERE IS NO FIGURE (before the first turn,
+        # or when the process-shared tracker's latest turn is a different one
+        # — see Session.last_turn_usage). Deliberately not 0: a zero would be
+        # indistinguishable from a real zero-cost turn and would render as
+        # fact, whereas None is loud in both directions (drawn as "None", or
+        # a TypeError on any arithmetic).
+        "turn_chain_id": turn_usage["chain_id"],
+        "turn_tokens": turn_usage["tokens"],
+        "turn_cost_usd": turn_usage["cost_usd"],
         "ctx_used": ctx_used,
         "ctx_window": ctx_window,
         "ctx_source": ctx_source,

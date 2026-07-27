@@ -13,6 +13,7 @@ from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple, TypeVar, Union
 
 logger = logging.getLogger(__name__)
+from reyn.core.turn_scope import get_active_turn_chain_id
 from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
@@ -1560,13 +1561,21 @@ def _may_need_responses_endpoint(model: str) -> bool:
         return False
 
 
-def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
+def _emit_chat_cost_events(
+    model: str, usage: "TokenUsage | None", chain_id: str | None = None,
+) -> None:
     """#1683: emit the cost-tab's usage events for the chat path via the #1669
     ambient EventLog. The TUI cost tab reads ``llm_called`` (model) then accumulates
     tokens/cost on ``llm_response_received``, so emit BOTH (in that order). Minimal
     fields — the cost tab derives the label from the events file path, so no
     run_id is needed. None EventLog (no active session) → skip. Wrapped so an
-    observability emit never breaks the LLM call."""
+    observability emit never breaks the LLM call.
+
+    #3339: ``chain_id`` (the ambient turn key, see ``reyn.core.turn_scope``) is
+    stamped on both events when a turn is in scope, so the audit trail can be
+    re-grouped per turn — the same key ``turn_started`` / ``turn_completed``
+    already carry. Omitted entirely when there is no turn: an unattributable
+    call must read as "no turn", never as a turn it did not belong to."""
     if usage is None:
         return
     try:
@@ -1580,7 +1589,8 @@ def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
             model.split("/", 1)[1] if "/" in model and proxy_kwargs() else model
         )
         cost_usd, _snapshot = estimate_cost(_pricing_model, usage)
-        log.emit("llm_called", model=model)
+        turn_key = {"chain_id": chain_id} if chain_id is not None else {}
+        log.emit("llm_called", model=model, **turn_key)
         log.emit(
             "llm_response_received",
             prompt_tokens=usage.prompt_tokens,
@@ -1588,6 +1598,7 @@ def _emit_chat_cost_events(model: str, usage: "TokenUsage | None") -> None:
             cached_tokens=usage.cached_tokens,
             cache_creation_tokens=usage.cache_creation_tokens,
             cost_usd=cost_usd,
+            **turn_key,
         )
     except Exception:  # noqa: BLE001 — observability emit must never break the call
         pass
@@ -2034,9 +2045,15 @@ async def recorded_acompletion(
         _actual = getattr(response, "model", None)
         if isinstance(_actual, str) and _actual and _actual != effective_model:
             _cost_model = _actual
+    # #3339: the turn this call belongs to, read from the ambient turn scope
+    # (set once per turn at the session's router-loop seam). None outside any
+    # turn — passed through as None so the cost path files the call under no
+    # turn rather than the most recent one.
+    _chain_id = get_active_turn_chain_id()
     if recorder is not None and usage is not None:
         recorder.record_llm(
             model=_cost_model, agent=agent, usage=usage, purpose=purpose,
+            chain_id=_chain_id,
         )
     # #1683: the interactive chat path records cost to the in-memory recorder
     # (→ header) but emits NO usage event, so the TUI cost tab (which reads
@@ -2047,7 +2064,7 @@ async def recorded_acompletion(
     # (Interim: a future cleanup could centralize the kernel's emission into this
     # chokepoint and drop the flag — out of scope here.)
     if emit_cost_events:
-        _emit_chat_cost_events(_cost_model, usage)
+        _emit_chat_cost_events(_cost_model, usage, _chain_id)
     return response
 
 
@@ -2303,6 +2320,10 @@ async def call_llm_tools(
             agent=budget_agent,
             usage=usage,
             purpose=purpose,
+            # #3339: same ambient turn key as the chokepoint's own record above
+            # — this path records its own call, so it must key it too or a
+            # tool-bearing turn's spend would silently miss its bucket.
+            chain_id=get_active_turn_chain_id(),
         )
 
     # Normalize tool_calls to plain dicts so callers don't depend on litellm internals
