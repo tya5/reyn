@@ -353,7 +353,8 @@ unaffected). Both defaults are `true`.
 Chat-session runtime knobs. `chat.compaction` controls chat-history compaction
 (ratio-based budget; see `reyn.local.yaml.example`). `chat.reasoning` controls
 model reasoning/"thinking" text handling. `chat.render_mode` selects the
-interactive chat renderer/driver.
+interactive chat renderer/driver. `chat.gutters` sets the TUI conversation
+pane's two gutter columns' start state.
 
 ```yaml
 chat:
@@ -362,6 +363,9 @@ chat:
     continuity: true      # persist reasoning to history + replay recent turns
     display: true         # show reasoning in the UI (TUI + web, collapsible)
     recent_turns: 3       # turns of reasoning to replay; <=0 = unbounded
+  gutters:
+    left: true            # TUI left gutter (state marker, 2 cols) shown at start
+    right: true           # TUI right gutter (elapsed/tokens, 12 cols) shown at start
 ```
 
 ### `chat.render_mode`
@@ -379,6 +383,26 @@ terminal.
 | `auto` | Resolve to `alt-screen` on a TTY (behaviourally identical to `alt-screen` given the non-TTY→`plain` guard). |
 
 An unrecognised value warns and falls back to `alt-screen`.
+
+### `chat.gutters` fields
+
+The TTY conversation pane draws two fixed-width gutter columns — a left state
+marker (2 columns) and a right elapsed/token readout (12 columns) — and each
+costs its width on **every** row. These two flags set what the pane opens
+with; they are independent, matching the underlying widget's own granularity.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `left` | bool | `true` | Show the left (state-marker) gutter when the pane opens. |
+| `right` | bool | `true` | Show the right (elapsed / turn-token) gutter when the pane opens. |
+
+Either can also be toggled at any time from the keyboard — `ctrl+g` (left) and
+`ctrl+t` (right), both listed in the TUI's Help pane. **A keyboard toggle is
+session-scoped**: it changes the running pane only and never writes back here,
+so these keys are the setting to change for a lasting preference. Hiding a
+gutter hands its whole column back to the conversation body (an 80-column
+terminal's body goes 66 → 78 columns with the right gutter hidden, → 80 with
+both).
 
 ### `chat.reasoning` fields
 

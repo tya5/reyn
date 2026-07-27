@@ -180,7 +180,7 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     # The library's own primitives are defined in textual_flowview, untouched.
     assert Entry.set_state.__module__.startswith("textual_flowview")
     assert StateDecorator.decorate.__module__.startswith("textual_flowview")
-    assert textual_flowview.__version__ == "0.3.0.dev0"
+    assert textual_flowview.__version__ == "0.4.0"
     # The native animation primitive reyn now drives the blink through: FlowView
     # accepts an ``animation_fps`` and owns its own animation tick.
     import inspect

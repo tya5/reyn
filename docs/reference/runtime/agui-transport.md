@@ -690,6 +690,36 @@ second hand-rolled column:
   direction markers are East Asian *Ambiguous* width; rich resolves them to one
   cell, so the derivation and the renderer agree by construction.
 
+#### Hiding a gutter (#3352)
+
+Both columns cost their width on **every** row, so either can be switched off
+and its whole column handed back to the conversation body:
+
+| Key | Effect |
+|-----|--------|
+| `ctrl+g` | Show/hide the LEFT (state-marker) gutter — 2 columns |
+| `ctrl+t` | Show/hide the RIGHT (elapsed/tokens) gutter — 12 columns |
+
+Both keys appear in the TUI's **Help** pane (sourced from the app's own
+binding table). Note that `ctrl+r` is **not** available for new bindings: it is
+reserved for voice input (see `RESERVED_KEYS` in `textual_chat/chrome.py`), and
+it is reverse-history-search in most shells. The two sides are
+**independent** — flowview exposes
+`left_gutter_visible` / `right_gutter_visible` as two flags and reyn follows
+that granularity rather than offering a single combined switch.
+
+Hiding is a real width recovery, not a blank column: flowview counts a hidden
+gutter as width 0 (`left_gutter_effective_width` / `right_gutter_effective_width`),
+grows `FlowView.body_width` by exactly that amount and re-presents the body at
+the new width. Measured on an 80×24 terminal, the body goes 66 → 78 columns
+with the right gutter hidden and → 80 with both hidden. (`FlowView.region.width`
+stays the full terminal width in all cases — it does not respond to gutter
+configuration and is not the plane to read.)
+
+The **start** state is config-backed (`chat.gutters.left` / `chat.gutters.right`,
+both `true` by default); a keypress is **session-scoped** and never writes back
+to `reyn.yaml`.
+
 ### `reyn.intervention.<kind>`
 
 An **open namespace** carried differently from the two above: it is the `toolName`
