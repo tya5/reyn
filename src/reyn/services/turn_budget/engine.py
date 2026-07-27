@@ -239,21 +239,26 @@ def build_default_turn_budget_engine(
 
     The two reserves are:
     - ``offload_cap`` — the post-offload per-result inline ceiling (#1093,
-      ``context_builder.MAX_OFFLOADED_INLINE_BYTES``) converted to tokens: the
-      largest a single tool_result can re-add as the "one more turn" increment
-      once offload has capped it.
+      ``tool_result_cap.MAX_TOOL_RESULT_INLINE_BYTES`` — #2396 Step 4: this used
+      to read ``context_builder.MAX_OFFLOADED_INLINE_BYTES``, the phase-axis
+      DICT-offload's ceiling; that offloader was retired once its last caller,
+      the ContextFrame-driven phase path, was removed by earlier convergence
+      steps, so this now sources the ceiling from the ONE surviving offload
+      path's own constant instead — same value, same purpose) converted to
+      tokens: the largest a single tool_result can re-add as the "one more
+      turn" increment once offload has capped it.
     - ``output_reserve`` — :data:`DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS`.
 
     Building every axis through THIS helper keeps the threshold shape identical
     across chat/plan/phase (no per-axis drift); PR-F reuses it verbatim. The
     import of the offload ceiling is local to avoid a module-load cycle.
     """
-    from reyn.core.context_builder import MAX_OFFLOADED_INLINE_BYTES
+    from reyn.runtime.services.tool_result_cap import MAX_TOOL_RESULT_INLINE_BYTES
 
     # The offload ceiling is a BYTE bound; convert to the model's tokens so it is
     # comparable with the (token-denominated) threshold. Measured once at build.
     offload_cap = estimate_tokens(
-        "x" * MAX_OFFLOADED_INLINE_BYTES, model, use_chars4=use_chars4
+        "x" * MAX_TOOL_RESULT_INLINE_BYTES, model, use_chars4=use_chars4
     )
     return TurnBudgetEngine(
         model,

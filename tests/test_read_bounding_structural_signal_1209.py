@@ -9,8 +9,13 @@ This pins the OS behavior fix:
         file read stays inline on a large window instead of being offloaded;
   (1)   an UNBOUNDED `file.read` over the cap is truncated to a head window with a
         STRUCTURAL truncation signal in SEPARATE fields (not embedded in content),
-        bound-only-when-over (small reads + explicit offset/limit unchanged);
-  (2)   an offloaded result carries an explicit `_offload_status` flag.
+        bound-only-when-over (small reads + explicit offset/limit unchanged).
+
+#2396 Step 4: point (2) of the original pin — that an offloaded control_ir_result carries an
+explicit `_offload_status` flag — was dropped along with `offload_control_ir_result` itself (dead,
+retired in #2396 Step 4; its last caller, the ContextFrame-driven phase path, was removed by earlier
+convergence steps). `control_ir_inline_cap` — the window-derived cap this file still pins — survives
+as the shared read-bounding cap consulted by `file.py` / `load_skill.py`.
 
 Real Workspace + EventLog, no collaborator mocks; cap helper tested as a pure
 function. Behavior is at the shared OS op layer (consistent for chat/planner/phase).
@@ -23,7 +28,6 @@ from pathlib import Path
 from reyn.core.context_builder import (
     MAX_CONTROL_IR_RESULT_INLINE_BYTES,
     control_ir_inline_cap,
-    offload_control_ir_result,
 )
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
@@ -119,29 +123,3 @@ def test_explicit_offset_limit_honored_verbatim(tmp_path: Path) -> None:
     assert res["status"] == "ok"  # explicit window → not auto-truncated
     assert res["content"] == "".join(f"line {i}\n" for i in range(10, 15))
     assert "shown_lines" not in res
-
-
-# ── (2) offload structural status flag + window-derived trigger ──────────────
-
-def test_offload_carries_structural_status_flag(tmp_path: Path) -> None:
-    """Tier 2: a result over the cap is offloaded with an explicit `_offload_status` flag."""
-    big_result = {"kind": "file", "op": "read", "content": "x" * 50_000}
-    inline = offload_control_ir_result(
-        big_result, 0, tmp_path, cap=MAX_CONTROL_IR_RESULT_INLINE_BYTES,
-    )
-    assert inline.get("_offload_status") == "truncated"
-    assert inline.get("_offload_total_chars") >= 50_000
-    assert "_offload_ref" in inline
-
-
-def test_offload_trigger_uses_window_derived_cap(tmp_path: Path) -> None:
-    """Tier 2: the same 50 KB result offloads under the floor cap but stays INLINE under a high cap."""
-    big_result = {"kind": "file", "op": "read", "content": "x" * 50_000}
-
-    offloaded = offload_control_ir_result(
-        big_result, 0, tmp_path, cap=MAX_CONTROL_IR_RESULT_INLINE_BYTES,
-    )
-    assert offloaded.get("_offload_status") == "truncated"  # over 8 KB floor → offloaded
-
-    inline = offload_control_ir_result(big_result, 1, tmp_path, cap=200_000)
-    assert inline is big_result  # under the high (window-derived) cap → identity, stays inline

@@ -63,8 +63,10 @@ from typing import Literal
 MCP_SEARCH_THRESHOLD: int = 0
 # FP-0032: Default 0 (always inline D1–D4). The prior value of 30 activated
 # Anthropic's tool_search_tool_20251101, which is Anthropic-API-specific and
-# conflicts with Reyn's provider-agnostic posture. Set > 0 via reyn.yaml
-# mcp.search_threshold to opt in. Full removal of tool_search_tool is FP-0033.
+# conflicts with Reyn's provider-agnostic posture. Set > 0 by passing
+# mcp_search_threshold explicitly to build_tools() to opt in (not a reyn.yaml
+# config key — see the #3218/FP-0066 note above). Full removal of
+# tool_search_tool is FP-0033.
 
 # ── G12 attractor mitigation (B7 finding: description verbosity trigger) ──
 #
