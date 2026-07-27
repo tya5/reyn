@@ -165,18 +165,33 @@ def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> Non
     set, which consumes its keys before they can bubble), and the three
     imperative key tables the Help pane reads.
 
-    ★ The sweep also covers ``RESERVED_KEYS`` — keys claimed by an
-    approved-but-unimplemented feature (#2193's ``ctrl+r``/``f2`` for voice
-    STT). A live-binding sweep is structurally blind to those: the
-    implementation was deleted and the claim survives only in an issue, so the
-    key looks free in every grep of the tree and collides the day the feature
-    lands. That is what this arc's first key choice got wrong.
+    ★ TWO distinct properties are asserted here, because the first draft of
+    this gate stated both in prose and covered only one:
+
+    1. **the gutter keys are free** — neither appears in ``live`` (the real
+       bindings) nor in :data:`RESERVED_KEYS`;
+    2. **no reserved key is taken by anyone** — ``RESERVED_KEYS`` and ``live``
+       are disjoint.
+
+    Property 2 is what protects the RESERVATION rather than this feature.
+    Folding ``RESERVED_KEYS`` into the ``taken`` set only ever guards property
+    1: adding ``ctrl+r`` to some widget's ``BINDINGS`` — the exact scenario
+    "a new binding cannot silently take a reserved key" names — leaves both
+    gutter keys free and the gate green. The two sets must therefore be kept
+    APART and intersected, never merged and membership-tested.
+
+    ``RESERVED_KEYS`` exists at all because a live-binding sweep is
+    structurally blind to a key claimed by an approved-but-unimplemented
+    feature (#2193's ``ctrl+r``/``f2`` for voice STT): the implementation was
+    deleted and the claim survives only in an issue, so the key looks free in
+    every grep of the tree and collides the day the feature lands. That is
+    what this arc's first key choice got wrong.
 
     Enumerated from the CLASSES and their real key constants, not from a
     hardcoded list, so a future Textual upgrade — or a future reyn widget —
     that binds either key fails here instead of silently shadowing the
     toggle."""
-    taken: set[str] = set(Composer._EDIT_KEYS) | set(RESERVED_KEYS)
+    live: set[str] = set(Composer._EDIT_KEYS)
     for cls in (
         App, Screen, TextArea, OptionList,
         SentQueue, InterventionPanel, MenuBar, CompletionPopup,
@@ -184,14 +199,25 @@ def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> Non
         for ancestor in cls.__mro__:
             for binding in ancestor.__dict__.get("BINDINGS", []) or []:
                 raw = binding[0] if isinstance(binding, tuple) else getattr(binding, "key", "")
-                taken.update(part.strip() for part in str(raw).split(","))
+                live.update(part.strip() for part in str(raw).split(","))
     for key, _desc in (*COMPOSER_KEYS, *MENUBAR_KEYS, *SENTQUEUE_KEYS):
-        taken.update(part.strip() for part in key.replace("/", " ").split())
-    # The enumeration is non-vacuous: keys this app really does bind, AND the
-    # reserved keys the earlier draft of this feature wrongly took, are in it.
-    assert {"escape", "enter", "tab", "ctrl+c", "ctrl+r", "f2"} <= taken
-    assert LEFT_KEY not in taken
-    assert RIGHT_KEY not in taken
+        live.update(part.strip() for part in key.replace("/", " ").split())
+    reserved = set(RESERVED_KEYS)
+
+    # The live enumeration is non-vacuous: keys this app really does bind are
+    # in it. Asserted on ``live`` specifically — asserting it on the union
+    # would pass on the strength of RESERVED_KEYS alone.
+    assert {"escape", "enter", "tab", "ctrl+c"} <= live
+    assert reserved, "the reserved-key table is empty — property 2 would be vacuous"
+
+    # Property 2: nobody has taken a reserved key.
+    assert not (reserved & live), (
+        f"live bindings have taken reserved keys {sorted(reserved & live)} — "
+        f"each is claimed by an unimplemented feature (see RESERVED_KEYS)"
+    )
+    # Property 1: the two gutter keys are free of both planes.
+    assert LEFT_KEY not in live | reserved
+    assert RIGHT_KEY not in live | reserved
 
 
 def test_gutter_start_state_round_trips_a_non_default_value() -> None:

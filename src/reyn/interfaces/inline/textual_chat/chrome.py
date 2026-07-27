@@ -412,6 +412,15 @@ MENUBAR_KEYS: "list[tuple[str, str]]" = [
 #: carry the issue that owns them, and are REMOVED when the feature either
 #: lands (the key becomes a live binding) or is dropped (the claim dies).
 #:
+#: The table is only half of the mechanism — what ENFORCES it is
+#: ``test_neither_gutter_key_collides_with_any_other_key_the_app_can_see``,
+#: which intersects this dict with the live binding set and fails on any
+#: overlap. That gate is a REQUIRED part of this declaration: recording the
+#: claim makes it findable, not true (the gate's own first draft folded this
+#: dict into the "taken" set and membership-tested only the two new keys,
+#: which left the reservation itself completely undefended while reading, in
+#: prose, as though it were protected).
+#:
 #: Only claims backed by an OPEN issue belong here. The retired Textual TUI's
 #: other keys (``ctrl+g`` find-next, ``ctrl+t`` rewind-menu edit, ``ctrl+b``/
 #: ``ctrl+o``/``ctrl+w`` panel, ``ctrl+1``..``ctrl+7`` tab jump, ``f3``/``f4``/
