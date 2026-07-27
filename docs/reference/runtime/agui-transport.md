@@ -441,9 +441,18 @@ state, and only the render-relevant subset is streamed.
 
 - `STATE_SNAPSHOT` — emitted **on connect**, the full read-model. Fields:
   `attached_name`, `model`, `cost_agent`, `cost_total`, `agent_tokens`,
-  `ctx_used`, `ctx_window`, `waiting_on`, `queue`, `turn_active`.
+  `ctx_used`, `ctx_window`, `waiting_on`, `queue`, `turn_active`,
+  `halted_reason`.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
+
+`halted_reason` (#2280) is `Session.halted_reason` — `None` while running, or
+the fail-stop reason (e.g. `"durability_failure"`) once the session has
+halted on a persistent durability failure (#2259). Riding this same
+snapshot+delta channel gives a remote client the SAME proactive surface the
+local TUI status line and plain `--cui` bottom toolbar show — the halt is
+already enforced synchronously elsewhere (`DurabilityHaltError`); this field
+is observability only, never load-bearing for the halt itself.
 
 `queue` and `turn_active` (#3300 P2a) publish the server-authoritative
 **sent-queue state**: `queue` is the current undispatched inbox queue (each
