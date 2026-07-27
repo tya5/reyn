@@ -39,7 +39,12 @@ classifiers = [
 ]
 
 dependencies = [
-    "litellm>=1.0",
+    "litellm>=1.89.3",  # #3288 follow-up: floor raised for litellm's native
+                        # /v1/responses auto-bridge (BerriAI/litellm#23577,
+                        # merged 2026-03-13) — reyn's own manual bridge (#1678)
+                        # was deleted in favor of delegating to this; an older
+                        # litellm would silently lack the bridge reyn now
+                        # relies on for reasoning+tools calls.
     "pydantic>=2.0",
     "jsonschema>=4.0",
     "pyyaml>=6.0",

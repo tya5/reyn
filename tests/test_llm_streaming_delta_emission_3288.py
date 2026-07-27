@@ -252,20 +252,26 @@ def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> N
 
 
 def test_default_shaped_gemini_call_actually_enters_the_streaming_branch(monkeypatch) -> None:
-    """Tier 3a: #3288 follow-up — the actual goal of the provider-gate fix
-    (`src/reyn/llm/llm.py`'s `_requires_responses_bridge`): a default-shaped
-    call (tools + reasoning_effort attached, Gemini model — exactly what
-    `RouterLoop`'s primary reply sends under reyn.yaml's default model
-    classes) genuinely drives the streaming loop, witnessed via REAL chunk
-    consumption (`chunk_witness`), not merely that `_streaming_capable`
-    returns True in isolation (a terminal-state assertion that would pass
-    even if this call never reached the streaming branch at all — see
-    verification-hazards.md §10). Before the provider gate, this exact call
-    shape got silently rewritten to `responses/gemini-2.5-flash-lite`, which
-    `_streaming_capable` cannot recognize (unmapped in litellm's model map) —
-    reverting `_requires_responses_bridge` out of the `_routed_to_responses`
-    condition reproduces that and this assertion goes RED (chunk_witness stays
-    empty — the whole-collect fallback runs instead)."""
+    """Tier 3a: #3288 follow-up — a default-shaped call (tools +
+    reasoning_effort attached, Gemini model — exactly what `RouterLoop`'s
+    primary reply sends under reyn.yaml's default model classes) genuinely
+    drives the streaming loop, witnessed via REAL chunk consumption
+    (`chunk_witness`), not merely that `_streaming_capable` returns True in
+    isolation (a terminal-state assertion that would pass even if this call
+    never reached the streaming branch at all — see verification-hazards.md
+    §10).
+
+    Historical note (#3288 comment thread, #3325): before #3325, reyn's own
+    `/v1/responses` bridge (#1678) had no provider check and fired for EVERY
+    tools+reasoning_effort call, silently rewriting this exact Gemini call
+    to `responses/gemini-2.5-flash-lite`, which `_streaming_capable` could
+    not recognize (unmapped in litellm's model map) — the default-config
+    streaming regression this test guards against. #3325 fixed that with a
+    provider gate; the #3288 follow-up investigation then deleted reyn's
+    manual bridge entirely (litellm >= 1.89.3 delegates this natively), so
+    reyn no longer rewrites the model string at all — this test now also
+    covers that the model passes through UNCHANGED for a non-OpenAI model,
+    which is a stronger guarantee than "correctly gated" was."""
     chunk_witness: list[int] = []
     monkeypatch.setattr(litellm, "acompletion", _make_fake_acompletion(chunk_witness))
 
