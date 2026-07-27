@@ -106,9 +106,23 @@ the reload is scheduled and will apply at the next turn boundary.
 
 ### Agent self-reload: `hooks_add`
 
-The `hooks_add` LLM-op writes a push hook to `.reyn/config/hooks.yaml` and schedules a
-reload. The hook takes effect at the next turn boundary via the `hooks` reapply
-seam.
+The `hooks_add` LLM-op writes a push hook and schedules a reload. The hook takes
+effect at the next turn boundary via the `hooks` reapply seam.
+
+**Scope-aware write target (#2088).** The write lands at exactly one of two fixed
+paths, chosen by the CALLING session's own identity — never by LLM input:
+
+- the default/unnamed agent (`ctx.agent_name` absent, or `== DEFAULT_AGENT_NAME`)
+  writes the GLOBAL runtime layer `.reyn/config/hooks.yaml`;
+- any other (named-agent) session writes its OWN per-agent layer
+  `.reyn/agents/<name>/hooks.yaml` — the same file the per-agent COMBINE layer
+  above already reads.
+
+This closes the #2073 follow-up: operator-authored per-agent hooks were
+read+combined since #2073's per-agent-hooks add-on, but `hooks_add` itself always
+wrote the global layer regardless of which agent called it (deferred to avoid
+scope-detection complexity in the crown-jewel op). Precedence between the two
+scopes is ADDITIVE, not override — see the 3/4-layer COMBINE above.
 
 `hooks_add` parameters:
 
@@ -128,9 +142,11 @@ The tool is write-gated: the calling workflow must declare `hooks_add` in
 Hot-reload is safe-by-construction through five layers:
 
 1. **Write-gate by construction.** `load_hot_reload_config` never opens `reyn.yaml`.
-   `hooks_add` hardcodes the write target to `.reyn/config/hooks.yaml` — the path is never
-   derived from LLM input. An LLM-triggered reload structurally cannot touch the
-   OUT-set.
+   `hooks_add` hardcodes the write target to one of exactly two paths — the global
+   `.reyn/config/hooks.yaml` or the calling agent's own `.reyn/agents/<name>/hooks.yaml`
+   (#2088, scope chosen by the calling session's own identity) — never derived from
+   LLM input. An LLM-triggered reload structurally cannot touch the OUT-set, nor any
+   other agent's per-agent layer.
 2. **Validate-before-apply.** A malformed IN-set rejects the whole reload atomically —
    no half-apply, live config unchanged.
 3. **Boot resilience.** Per-layer independent try-add for untrusted layers: a bad

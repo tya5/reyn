@@ -329,6 +329,13 @@ class ToolContext:
     # config GENERATION (keyed by the WAL head) after persisting its `.yaml`. None in
     # non-session / test contexts → the handler skips it (the opt-in contract).
     state_log: Any | None = None                     # StateLog | None
+    # #2088: the CALLING session's agent name (Session.agent_name / the Agent identity
+    # SSoT), threaded so a scope-aware self-write tool (hooks_add) can target that
+    # agent's OWN per-agent layer (.reyn/agents/<name>/hooks.yaml) instead of always
+    # the global runtime layer. Same threading pattern as hot_reloader/state_log above
+    # (added for the SAME tool's needs). None in non-session/test contexts → the
+    # handler falls back to the pre-#2088 global-only write (backward-compatible).
+    agent_name: Any | None = None                    # str | None
 
 
 # ToolHandler: async callable signature.
