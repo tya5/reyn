@@ -824,6 +824,34 @@ def write_checkpoint(
 # evicted turn's spend is the ledger's per-call ``chain_id``.
 TURN_BUCKET_CAP = 64
 
+#: Every per-turn bucket, as ``(attribute name, snapshot key)`` — the SINGLE
+#: declaration of the set, iterated by ``_record_turn_usage``'s eviction loop
+#: and by ``snapshot()`` rather than each re-listing the buckets by hand. Same
+#: shape as ``TextualChatApp._PER_SESSION_DICT_STATE`` (#3310 N2).
+#:
+#: ★ Why a declaration and not four hand-written lines: membership of a turn is
+#: decided by ``_turn_tokens`` ALONE (see :meth:`BudgetTracker.turn_usage`),
+#: which is the right call — one authority, no way for the buckets to disagree
+#: about which turns exist — but it has a second-order consequence. A COMPANION
+#: bucket that stops being evicted grows without limit while every lookup keeps
+#: answering correctly, so no behavioural test can see it: the leak is
+#: invisible precisely BECAUSE the membership decision is clean. Registering a
+#: bucket here is what makes it both bounded and observable
+#: (``snapshot()`` exposes it, and the bound is asserted against that).
+#:
+#: A new bucket MUST be added here. What this tuple does NOT cover:
+#: ``_record_turn_usage``'s accumulation (each bucket sums a different field of
+#: ``TokenUsage``, so there is nothing uniform to drive) and
+#: ``_turn_usage_dict``'s return shape (hand-written on purpose — it is the
+#: documented public contract of ``turn_usage``). Missing either of those is a
+#: visible gap, not a silent leak; missing THIS one is the silent leak.
+_PER_TURN_BUCKETS: "tuple[tuple[str, str], ...]" = (
+    ("_turn_tokens", "turn_tokens"),
+    ("_turn_prompt_tokens", "turn_prompt_tokens"),
+    ("_turn_completion_tokens", "turn_completion_tokens"),
+    ("_turn_cost_usd", "turn_cost_usd"),
+)
+
 
 class BudgetTracker:
     """Process-wide accumulator + hybrid-cap enforcer.
@@ -1516,17 +1544,16 @@ class BudgetTracker:
             # so summing these does not reproduce the session total — that is
             # the point, not a defect. ``last_turn_chain_id`` names the most
             # recent key (None before any turn recorded spend).
-            "turn_tokens": dict(self._turn_tokens),
-            # #3283 ④: the prompt/completion split of the same buckets. Exposed
-            # here as well as via ``turn_usage`` so the BOUND on them is
-            # observable from the public surface — otherwise a companion bucket
-            # that stopped being evicted with its total would grow without
-            # limit and no test could see it (membership is decided by
-            # ``turn_tokens``, so the leak would be invisible through the
-            # lookup).
-            "turn_prompt_tokens": dict(self._turn_prompt_tokens),
-            "turn_completion_tokens": dict(self._turn_completion_tokens),
-            "turn_cost_usd": dict(self._turn_cost_usd),
+            # Every per-turn bucket, projected from the ONE declaration of the
+            # set (:data:`_PER_TURN_BUCKETS`). Exposing them all is what makes
+            # their BOUND observable: a bucket that stopped being evicted would
+            # otherwise grow without limit while every lookup still answered
+            # correctly. Keys: turn_tokens / turn_prompt_tokens /
+            # turn_completion_tokens / turn_cost_usd.
+            **{
+                snap_key: dict(getattr(self, attr_name))
+                for attr_name, snap_key in _PER_TURN_BUCKETS
+            },
             "last_turn_chain_id": self._last_turn_chain_id,
             "rate_window": {
                 m: len([t for t in q if time.monotonic() - t <= 60])
@@ -1632,15 +1659,17 @@ class BudgetTracker:
         )
         self._turn_cost_usd[chain_id] = self._turn_cost_usd.get(chain_id, 0.0) + cost_usd
         self._last_turn_chain_id = chain_id
-        # Every companion bucket is evicted with its total, so a chain_id is
-        # either present in ALL of them or in none — which is what lets
-        # ``turn_usage`` decide "known vs unknown" from the total's membership
-        # alone and still return a complete dict.
+        # EVERY bucket is evicted together, so a chain_id is either present in
+        # ALL of them or in none — which is what lets ``turn_usage`` decide
+        # "known vs unknown" from ``_turn_tokens``'s membership alone and still
+        # return a complete dict. Driven off :data:`_PER_TURN_BUCKETS` rather
+        # than a hand-written list of ``pop`` calls, so a future bucket is
+        # evicted the moment it is registered there — see that constant for why
+        # forgetting one is an INVISIBLE leak rather than a visible bug.
         while len(self._turn_tokens) > TURN_BUCKET_CAP:
             evicted, _ = self._turn_tokens.popitem(last=False)
-            self._turn_prompt_tokens.pop(evicted, None)
-            self._turn_completion_tokens.pop(evicted, None)
-            self._turn_cost_usd.pop(evicted, None)
+            for attr_name, _snap_key in _PER_TURN_BUCKETS:
+                getattr(self, attr_name).pop(evicted, None)
 
     def latest_turn_usage(self) -> dict | None:
         """#3339: the per-turn figures for the MOST RECENT turn that recorded

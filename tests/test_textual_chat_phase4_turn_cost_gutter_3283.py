@@ -91,7 +91,12 @@ from reyn.interfaces.repl.status import _snapshot
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.budget.budget import TURN_BUCKET_CAP, BudgetTracker, CostConfig
+from reyn.runtime.budget.budget import (
+    _PER_TURN_BUCKETS,
+    TURN_BUCKET_CAP,
+    BudgetTracker,
+    CostConfig,
+)
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -196,34 +201,52 @@ def test_keyed_turn_usage_sums_a_multi_call_turn_and_isolates_turns() -> None:
 
 
 def test_every_per_turn_bucket_is_bounded_not_only_the_total() -> None:
-    """Tier 2: the prompt/completion buckets #3283 ④ added are evicted WITH
-    their total, so all of them stay bounded by ``TURN_BUCKET_CAP``.
+    """Tier 2: EVERY per-turn bucket is evicted with its total, so all of them
+    stay bounded by ``TURN_BUCKET_CAP``.
 
-    ★ Why this is asserted on ``snapshot()`` rather than inferred from
-    ``turn_usage``: membership is decided by the TOTAL bucket, so a companion
-    bucket that stopped being evicted would keep growing forever while every
-    lookup still answered correctly — an invisible unbounded-memory leak. A
-    strip that removed the companion evictions initially stayed GREEN for
-    exactly that reason; the public snapshot keys are what give the bound a
-    witness. Bounding is a cross-cutting-band obligation, not an optimisation."""
+    ★ Enumerated from :data:`_PER_TURN_BUCKETS` — the same declaration
+    ``_record_turn_usage``'s eviction loop iterates — NOT from a hand-written
+    list of bucket names. A hand-written list reopens the very hole this test
+    exists to close: whoever adds a fifth bucket and forgets both the evict
+    loop and the list reproduces the identical invisible leak, with every
+    behavioural test still green. Sharing one declaration means registering a
+    bucket is what makes it both evicted and checked, in one edit.
+
+    ★ Why the leak is invisible without this: membership of a turn is decided
+    by ``_turn_tokens`` alone, so a companion bucket that stopped being evicted
+    would grow without limit while ``turn_usage`` kept answering correctly. The
+    correct design decision — one authority for membership — is exactly what
+    hides the defect on the memory axis. It is reachable only by stripping.
+
+    ★ Asserted on ``snapshot()`` (public) rather than the private dicts.
+    """
+    assert _PER_TURN_BUCKETS, (
+        "the bucket declaration is empty — this gate would pass by having "
+        "nothing to check"
+    )
     tracker = BudgetTracker(CostConfig())
     for i in range(TURN_BUCKET_CAP + 5):
         _record(tracker, f"turn-{i:03d}", prompt=100 + i, completion=7)
 
     snap = tracker.snapshot()
-    for key in ("turn_tokens", "turn_prompt_tokens", "turn_completion_tokens",
-                "turn_cost_usd"):
-        assert len(snap[key]) == TURN_BUCKET_CAP, (
-            f"{key} grew to {len(snap[key])}, past the {TURN_BUCKET_CAP} cap"
+    seen: "list[set[str]]" = []
+    for _attr_name, snap_key in _PER_TURN_BUCKETS:
+        assert snap_key in snap, (
+            f"{snap_key!r} is declared in _PER_TURN_BUCKETS but the snapshot "
+            "does not expose it — its bound would be unobservable"
         )
+        assert len(snap[snap_key]) == TURN_BUCKET_CAP, (
+            f"{snap_key} grew to {len(snap[snap_key])}, past the "
+            f"{TURN_BUCKET_CAP} cap"
+        )
+        seen.append(set(snap[snap_key]))
+
     # ...and they evict the SAME turns, so a surviving turn is never left with
-    # a total but no split (or the reverse).
-    assert (
-        set(snap["turn_tokens"])
-        == set(snap["turn_prompt_tokens"])
-        == set(snap["turn_completion_tokens"])
-        == set(snap["turn_cost_usd"])
-    ), "the per-turn buckets evicted different turns and are now inconsistent"
+    # a total but no split (or the reverse) — the invariant ``turn_usage``
+    # relies on when it decides membership from the total alone.
+    assert all(keys == seen[0] for keys in seen), (
+        "the per-turn buckets evicted different turns and are now inconsistent"
+    )
 
 
 def test_a_turnless_call_creates_no_lookup_answer() -> None:
