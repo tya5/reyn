@@ -34,7 +34,20 @@ See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agen
 | Kind | Key payload |
 |------|-------------|
 | `llm_called` | `model` (+ `chain_id` when the call belongs to a delegation chain) |
-| `llm_response_received` | `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cache_creation_tokens`, `cost_usd` (+ `chain_id`) |
+| `llm_response_received` | `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cache_creation_tokens`, `cost_usd`, `usage_source` (+ `chain_id`) |
+
+`usage_source` says where the token counts came from: `provider` (the provider
+reported them) or `estimated` (the provider's stream carried no usage, so
+LiteLLM filled the counts locally with its own tokenizer). `unknown` means the
+origin was not stated. An estimated figure is recorded and enforced exactly like
+a reported one — the field exists so a cost audit can tell them apart, and so
+the turns billed on an estimate can be found afterwards:
+
+```bash
+reyn events .reyn/events --filter llm_response_received   # then grep/jq for "estimated"
+```
+
+See [reference/config/budget.md](../config/budget.md) — "Token-count provenance".
 
 ## Control IR
 

@@ -1549,7 +1549,13 @@ class Session:
     def last_turn_usage(self) -> dict:
         """#3339: tokens + USD cost of this session's MOST RECENT turn —
         ``{"chain_id", "tokens", "prompt_tokens", "completion_tokens",
-        "cost_usd"}`` (the same shape ``BudgetTracker.turn_usage`` returns).
+        "cost_usd", "usage_source"}`` (the same shape
+        ``BudgetTracker.turn_usage`` returns).
+
+        ``usage_source`` (#3351) is the provenance of the token figures —
+        ``UsageSource.PROVIDER`` / ``ESTIMATED`` / ``UNKNOWN``, or ``None`` in
+        the no-figure case below. It rides the same dict as the numbers so a
+        consumer cannot read a figure while missing what kind of figure it is.
 
         A real per-turn aggregate: the durable tracker summed the actual
         per-call figures of every LLM call made under this turn's chain_id
@@ -1588,6 +1594,11 @@ class Session:
             "prompt_tokens": None,
             "completion_tokens": None,
             "cost_usd": None,
+            # #3351: present in the no-figure dict too, so the key set stays
+            # identical (see the docstring). ``None`` = there is no figure whose
+            # provenance could be stated — distinct from
+            # ``UsageSource.UNKNOWN``, which is a real figure of unstated origin.
+            "usage_source": None,
         }
         chain_id = self._last_turn_chain_id
         tracker = self._budget_tracker
@@ -1598,9 +1609,10 @@ class Session:
     def turn_usage(self, chain_id: str) -> "dict | None":
         """#3283 ④: tokens + USD cost of the turn ``chain_id`` —
         ``{"chain_id", "tokens", "prompt_tokens", "completion_tokens",
-        "cost_usd"}``, or ``None`` when there is no figure for that turn (never
-        recorded, evicted from the tracker's bounded buckets, or no tracker
-        wired at all).
+        "cost_usd", "usage_source"}``, or ``None`` when there is no figure for
+        that turn (never recorded, evicted from the tracker's bounded buckets,
+        or no tracker wired at all). ``usage_source`` (#3351) is the token
+        counts' provenance, carried alongside the counts themselves.
 
         The KEYED sibling of :attr:`last_turn_usage`, for a caller that already
         knows which turn it is asking about — the TUI's right gutter, which

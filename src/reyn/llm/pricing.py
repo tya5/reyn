@@ -10,7 +10,89 @@ eval result JSON so past runs can be audited accurately.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class UsageSource(str, Enum):
+    """Where a ``TokenUsage``'s numbers came from (#3351).
+
+    A token count is not self-describing: a provider-reported figure and a
+    LOCAL ESTIMATE computed by ``litellm.token_counter`` are the same int,
+    and both flow into ``record_llm`` → ``/cost`` → the budget caps. The
+    estimate fires whenever a streamed response carries no usage payload
+    (``litellm``'s ``stream_chunk_builder`` fills the gap with
+    ``prompt_tokens or token_counter(...)``); measured on a live Gemini call
+    it recorded 13 against a provider truth of 7 (+86%). The estimate is
+    deliberately KEPT — a number beats no number — but its ORIGIN must not
+    disappear, because a cap that stopped a run, or a `/cost` figure being
+    audited, is only interpretable if you can tell which of the two you are
+    looking at, and cost auditing happens after the fact.
+
+    ``UNKNOWN`` is the default, and that direction is the whole point: a
+    producer that forgets to state provenance yields "unknown", never a
+    falsely confident "provider". Same reasoning as ``None``-never-``0`` for
+    a per-turn figure (#3342/#3347) — the silent value must be the one that
+    cannot be mistaken for a fact.
+    """
+
+    #: The provider's own usage payload reported these counts.
+    PROVIDER = "provider"
+    #: At least one of prompt/completion was filled locally by
+    #: ``litellm.token_counter`` because the provider reported none.
+    ESTIMATED = "estimated"
+    #: Provenance was never stated — e.g. a ledger record written before
+    #: #3351, or a usage object built outside the LLM chokepoint. NOT a
+    #: claim that the number is exact.
+    UNKNOWN = "unknown"
+
+
+#: Least-confident-wins ordering for merging two sources when usage objects are
+#: summed (``__add__`` / ``__iadd__``). An aggregate is only ``PROVIDER`` when
+#: EVERY contribution was; one estimated call contaminates the total, which is
+#: exactly what an auditor of that total needs to know. ``ESTIMATED`` outranks
+#: ``UNKNOWN`` as the loudest answer: "known to be approximate" is more
+#: actionable than "not stated", and an aggregate that contains an estimate must
+#: say so rather than hide behind "unknown".
+_SOURCE_CONFIDENCE: dict[UsageSource, int] = {
+    UsageSource.PROVIDER: 2,
+    UsageSource.UNKNOWN: 1,
+    UsageSource.ESTIMATED: 0,
+}
+
+
+def merge_usage_sources(*sources: UsageSource) -> UsageSource:
+    """Provenance of a figure summed from parts whose sources are *sources*.
+
+    Least-confident wins (:data:`_SOURCE_CONFIDENCE`) — the ONE declaration of
+    that rule, used both by ``TokenUsage`` arithmetic and by ``BudgetTracker``'s
+    per-turn provenance bucket, so a turn total and a summed ``TokenUsage``
+    cannot disagree about what kind of number they are. No arguments →
+    ``UNKNOWN`` (nothing was stated).
+    """
+    if not sources:
+        return UsageSource.UNKNOWN
+    return min(sources, key=lambda s: _SOURCE_CONFIDENCE[s])
+
+
+def parse_usage_source(raw: object) -> UsageSource:
+    """Read a serialized provenance value back (#3351).
+
+    Anything this function cannot positively recognise — a missing field (every
+    ledger record and usage dict written before #3351), a null, a typo, a
+    future variant this build does not know — becomes ``UNKNOWN``. It never
+    becomes ``PROVIDER``: an unreadable origin is exactly the case that must
+    not read as provider-verified, and that is what makes old records still
+    parse without quietly gaining a claim they never made.
+    """
+    if isinstance(raw, UsageSource):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return UsageSource(raw)
+        except ValueError:
+            return UsageSource.UNKNOWN
+    return UsageSource.UNKNOWN
 
 
 @dataclass
@@ -29,10 +111,46 @@ class TokenUsage:
     #                            explicit write metric (OpenAI / Gemini).
     cached_tokens: int = 0
     cache_creation_tokens: int = 0
+    #: #3351: PROVENANCE of the counts above, carried BY the same object that
+    #: carries them — so no consumer can hold the number without also holding
+    #: its origin. Defaults to ``UNKNOWN`` (never ``PROVIDER``): a forgotten
+    #: producer reads as "not stated", not as a provider-verified fact.
+    source: UsageSource = field(default=UsageSource.UNKNOWN)
 
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+    def _merged_source(self, other: "TokenUsage") -> UsageSource:
+        """#3351: the provenance of ``self + other`` — least-confident wins.
+
+        An operand that carries NO tokens at all is provenance-neutral: an
+        empty accumulator (``TokenUsage()``, the shape every aggregation in
+        ``registry`` / ``router_loop`` / ``budget_gateway`` starts from) states
+        nothing about numbers it does not have, and must not drag a run of
+        provider-verified calls down to ``UNKNOWN``.
+
+        ★The assumption that rule rests on: **a zero-token operand is treated as
+        stating no information.** True of the empty accumulators above — but if
+        a producer ever emits zero as the RESULT OF FAILING TO COUNT, this rule
+        silently raises the aggregate's confidence:
+        ``ESTIMATED(0, 0) + PROVIDER(100, 20)`` reports ``PROVIDER`` and the
+        estimated marking disappears. Latent, not live, at the time of writing:
+        litellm's ``token_counter failed → prompt_tokens = 0`` fallback sits in
+        the text-completion branch, ``completion_tokens`` is computed
+        separately, and reyn's chat path records nothing at all when a response
+        carries no usage — so an all-zero-but-meant-something usage has no
+        production producer. It is written down because THIS module exists to
+        close a "silently raises confidence" path, and the one place such a
+        shape would be least expected is inside its own merge rule. A future
+        producer of count-failure zeros must make that state explicit (its own
+        source, or a not-a-number sentinel) rather than inherit neutrality here.
+        """
+        if self.total_tokens == 0 and self.cached_tokens == 0 and self.cache_creation_tokens == 0:
+            return other.source
+        if other.total_tokens == 0 and other.cached_tokens == 0 and other.cache_creation_tokens == 0:
+            return self.source
+        return merge_usage_sources(self.source, other.source)
 
     def __add__(self, other: "TokenUsage") -> "TokenUsage":
         return TokenUsage(
@@ -40,13 +158,18 @@ class TokenUsage:
             completion_tokens=self.completion_tokens + other.completion_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
             cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
+            source=self._merged_source(other),
         )
 
     def __iadd__(self, other: "TokenUsage") -> "TokenUsage":
+        # Merge BEFORE mutating the counts — the neutrality rule reads both
+        # operands' token totals, and self's are about to change.
+        merged = self._merged_source(other)
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         self.cached_tokens += other.cached_tokens
         self.cache_creation_tokens += other.cache_creation_tokens
+        self.source = merged
         return self
 
     def to_dict(self) -> dict:
@@ -56,6 +179,10 @@ class TokenUsage:
             "total_tokens": self.total_tokens,
             "cached_tokens": self.cached_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
+            # #3351: provenance travels with the numbers through every
+            # serialization boundary too, so a round-tripped usage cannot
+            # come back looking provider-verified.
+            "usage_source": self.source.value,
         }
 
     @classmethod
@@ -80,6 +207,7 @@ class TokenUsage:
             completion_tokens=_coerce_int(data.get("completion_tokens", 0)),
             cached_tokens=_coerce_int(data.get("cached_tokens", 0)),
             cache_creation_tokens=_coerce_int(data.get("cache_creation_tokens", 0)),
+            source=parse_usage_source(data.get("usage_source")),
         )
 
 

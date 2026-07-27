@@ -42,7 +42,7 @@ import litellm
 
 from reyn.core.turn_scope import active_turn, get_active_turn_chain_id
 from reyn.llm.llm import recorded_acompletion
-from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.llm.pricing import TokenUsage, UsageSource, estimate_cost
 from reyn.runtime.budget.budget import (
     TURN_BUCKET_CAP,
     BudgetLedger,
@@ -125,6 +125,10 @@ def test_two_turns_aggregate_separately() -> None:
         "prompt_tokens": _CALL_B1.prompt_tokens,
         "completion_tokens": _CALL_B1.completion_tokens,
         "cost_usd": _cost(_CALL_B1),
+        # #3351: provenance rides the same dict as the figures. These fixtures
+        # build TokenUsage directly (no LLM call stated an origin), so the turn
+        # reads UNKNOWN — never a falsely confident PROVIDER.
+        "usage_source": UsageSource.UNKNOWN,
     }
     assert "turn-never" not in snap["turn_tokens"]
 
@@ -183,6 +187,7 @@ def test_turn_buckets_are_bounded_and_keep_the_newest() -> None:
         "prompt_tokens": _newest_usage.prompt_tokens,
         "completion_tokens": _newest_usage.completion_tokens,
         "cost_usd": _cost(_newest_usage),
+        "usage_source": UsageSource.UNKNOWN,  # #3351: no origin stated by the fixture
     }
     # Cumulative counters are untouched by eviction — bounding the per-turn
     # view must not lose spend from the totals that enforce caps.
@@ -308,6 +313,10 @@ def test_no_turn_figure_is_published_as_unknown_never_zero(tmp_path, monkeypatch
     unknown = {
         "chain_id": None, "tokens": None, "prompt_tokens": None,
         "completion_tokens": None, "cost_usd": None,
+        # #3351: the provenance key is in the no-figure dict too (identical key
+        # set), and None here means "no figure whose origin could be stated" —
+        # distinct from UsageSource.UNKNOWN, a real figure of unstated origin.
+        "usage_source": None,
     }
     assert session.last_turn_usage == unknown, "no turn run yet ⇒ no figure"
 

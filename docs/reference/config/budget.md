@@ -206,8 +206,11 @@ Counters update after each LLM call completes successfully:
    added to that turn's own total, keyed by the turn's `chain_id` (see
    [Per-turn attribution](#per-turn-attribution) below).
 4. A record is appended to `.reyn/state/budget_ledger.jsonl` (fsync'd for
-   durability). The daily / monthly / per-agent counters are reconstructed
-   from these records on the next startup.
+   durability), carrying the call's token count, USD cost, turn key, and the
+   provenance of the token count (see
+   [Token-count provenance](#token-count-provenance) below). The daily /
+   monthly / per-agent counters are reconstructed from these records on the
+   next startup.
 5. The updated counters are checked against warn thresholds; any newly crossed
    threshold emits a warning outbox message (once per dimension per session).
 
@@ -240,9 +243,10 @@ cost" is answerable without subtracting running totals from each other.
   lets any past turn be re-grouped after the fact.
 
 A turn's figures are its **total tokens**, the **prompt / completion split** of
-that total, and its **USD cost**. The split is accumulated at the call alongside
-the total (it is in `TokenUsage`) rather than derived afterwards — the same
-reason the turn key itself is captured there.
+that total, its **USD cost**, and the **provenance** of those token counts (see
+[Token-count provenance](#token-count-provenance)). The split is accumulated at
+the call alongside the total (it is in `TokenUsage`) rather than derived
+afterwards — the same reason the turn key itself is captured there.
 
 They can be read either **by key** — "what did *this* turn use", given its
 `chain_id` — or as **"whatever ran last"**, process-wide; both return the same
@@ -265,6 +269,44 @@ wire.
 These figures are not a cap dimension — there is no per-turn limit to
 configure; they are the reporting counterpart to the per-agent / daily /
 monthly caps above.
+
+## Token-count provenance
+
+Not every token count comes from the provider. When a streamed response carries
+no usage payload at all, LiteLLM fills the counts with its own local tokenizer,
+and that estimate flows into `/cost` and the caps like any other number.
+Reyn does **not** suppress it — a number is more useful than no number, and the
+estimate is usually close — but every record says which kind of number it is:
+
+| Value | Meaning |
+|---|---|
+| `provider` | The provider reported both the prompt and the completion count. |
+| `estimated` | At least one of the two was computed locally by LiteLLM's tokenizer because the provider reported none. |
+| `unknown` | The origin was not stated. Records written before this field existed read this way. It is **not** a claim that the count is exact. |
+
+Where it appears:
+
+- **Ledger** — each `.reyn/state/budget_ledger.jsonl` record carries
+  `usage_source` next to `tokens` and `chain_id`. This is the durable,
+  restart-surviving answer to "which turns were billed on estimated counts":
+
+  ```bash
+  jq -r 'select(.usage_source == "estimated") | "\(.ts) \(.chain_id) \(.tokens)"' \
+    .reyn/state/budget_ledger.jsonl
+  ```
+
+  A record with no `usage_source` field is `unknown` — never assume `provider`.
+- **Audit-events** — `llm_response_received` carries `usage_source` alongside
+  the token figures and the turn key (see
+  [reference/runtime/events.md](../runtime/events.md)).
+- **Per-turn figures** — a turn's reported provenance is the *least confident*
+  of its calls': one estimated call in a turn makes the whole turn's figure
+  `estimated`, because the turn total contains that estimate.
+
+Why it matters: an estimate that runs high stops a run at a cap it had not
+actually reached; one that runs low lets real spend past. A live measurement
+before this was fixed recorded a prompt of 13 against a provider truth of 7
+(+86%). The estimate is not the defect — an unmarked estimate is.
 
 ## Ledger file
 

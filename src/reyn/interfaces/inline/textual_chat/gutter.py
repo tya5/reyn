@@ -142,6 +142,21 @@ def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
     return glyph, line[1]
 
 
+def _cell_pad_right(label: str, width: int) -> str:
+    """Left-align ``label`` in a ``width``-CELL column — the LEFT gutter's
+    counterpart to :func:`_cell_pad_left` (the RIGHT gutter's helper, #3347).
+
+    ``str.ljust`` pads by CHARACTER count; a gutter column is measured in
+    terminal CELLS, and the two differ for any double-width glyph. Padding on
+    :func:`rich.cells.cell_len` — the same measurement Textual's compositor
+    applies to the resulting strip — keeps this cell correct by construction
+    rather than by the coincidence that today's glyph vocabulary (``·  ⋯ ⎿ ◆
+    ○ ● ✗ ❯``) happens to measure one cell each. Over-long labels are returned
+    unpadded (flowview's own ``adjust_cell_length`` clips them; they never
+    steal body columns)."""
+    return label + " " * max(0, width - cell_len(label))
+
+
 class ReynGutter:
     """Fills the flowview gutter column with a STATE-COLOURED marker (Phase 2).
 
@@ -193,7 +208,7 @@ class ReynGutter:
             color = kind_color
         else:
             color = _STATE_COLOR.get(state, kind_color)
-        return Text(glyph.ljust(width), style=color)
+        return Text(_cell_pad_right(glyph, width), style=color)
 
 
 def _format_elapsed(seconds: float) -> str:
