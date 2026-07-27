@@ -506,9 +506,11 @@ async def test_registered_pipeline_enforces_verify_schema_sync_attached(
     assert ok_result["status"] == "ok"
 
     bad_result = await _handle_run_pipeline({"name": "bad"}, _ctx())
+    # #2649: standard dispatch-error envelope (was {status:error, data:{error}}).
     assert bad_result["status"] == "error"
-    assert "failed schema" in bad_result["data"]["error"]
-    assert "no schema_registry was provided" not in bad_result["data"]["error"]
+    assert bad_result["error"]["kind"] == "pipeline_failed"
+    assert "failed schema" in bad_result["error"]["message"]
+    assert "no schema_registry was provided" not in bad_result["error"]["message"]
 
 
 @pytest.mark.asyncio

@@ -524,7 +524,7 @@ pipeline を起動するツールは 4 つあります。いずれも同じ実�
 
 ### 同期 vs 非同期
 
-- **同期**(`run_pipeline`、`run_pipeline_inline`): 呼び出し元は driver-session の run に attach し、terminal 状態に達するまで block して、結果を in-band で読み戻します(`{status: "ok", data: {run_id, output, named_stores}}`、または `error`/`cancelled`)。ライブな `pipeline_step_started` / `pipeline_step_completed` audit-event が run の間、呼び出し元にストリームされ(TUI のライブビューが描画するもの)、協調的な Ctrl-C は次のステップ境界で run をクリーンに停止させます。attach 自体がクラッシュで中断された場合、run は失われません — 非同期と同じ recovery パスに引き渡され、結果は代わりに後で inbox メッセージとして届きます(`{status: "started", data: {run_id}}`)。
+- **同期**(`run_pipeline`、`run_pipeline_inline`): 呼び出し元は driver-session の run に attach し、terminal 状態に達するまで block して、結果を in-band で読み戻します(成功時は `{status: "ok", data: {run_id, output, named_stores}}`。失敗/キャンセル時は標準の dispatch-error 形式 `{status: "error", error: {kind, message}}` — `kind` は `pipeline_failed` または `pipeline_cancelled`(`run_id` は独立フィールドではなく `message` に埋め込まれる)で、`router_loop.feedback()` が他の全ツールエラーと同じ `Error (<kind>): <message>` 形式でレンダリングする、#2649)。ライブな `pipeline_step_started` / `pipeline_step_completed` audit-event が run の間、呼び出し元にストリームされ(TUI のライブビューが描画するもの)、協調的な Ctrl-C は次のステップ境界で run をクリーンに停止させます。attach 自体がクラッシュで中断された場合、run は失われません — 非同期と同じ recovery パスに引き渡され、結果は代わりに後で inbox メッセージとして届きます(`{status: "started", data: {run_id}}`)。
 - **非同期**(`run_pipeline_async`、`run_pipeline_inline_async`): 即座に `{status: "started", data: {run_id}}` を返します。最終結果は後で `[pipeline]` inbox メッセージとして届きます。
 
 ### Ad-hoc inline 起動
