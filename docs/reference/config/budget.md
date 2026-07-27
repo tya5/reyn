@@ -202,14 +202,43 @@ Counters update after each LLM call completes successfully:
 1. Token usage (`input_tokens + output_tokens`) is added to the per-agent
    accumulators.
 2. USD cost is estimated via LiteLLM pricing and added to the USD accumulators.
-3. A record is appended to `.reyn/state/budget_ledger.jsonl` (fsync'd for
+3. When the call was made inside a turn, its tokens and USD cost are also
+   added to that turn's own total, keyed by the turn's `chain_id` (see
+   [Per-turn attribution](#per-turn-attribution) below).
+4. A record is appended to `.reyn/state/budget_ledger.jsonl` (fsync'd for
    durability). The daily / monthly / per-agent counters are reconstructed
    from these records on the next startup.
-4. The updated counters are checked against warn thresholds; any newly crossed
+5. The updated counters are checked against warn thresholds; any newly crossed
    threshold emits a warning outbox message (once per dimension per session).
 
 Pre-call checks run before the call: if a hard cap is already exceeded, the
 call is refused at that point — no tokens are consumed.
+
+## Per-turn attribution
+
+Every other counter above is cumulative. A **turn** total is tracked
+separately, keyed by the turn's `chain_id` — the same key the
+`turn_started` / `turn_completed` audit-events carry — so "what did this turn
+cost" is answerable without subtracting running totals from each other.
+
+- A turn's total is the **sum of its own calls**, each priced at that call's
+  own model rate. Every LLM call the turn makes counts, including each
+  tool-loop iteration and any compaction triggered inside the turn.
+- A call made with **no turn in scope** — a sub-agent's own loop, a
+  background or CLI call — is counted in **no turn's total**. It still
+  updates the cumulative per-agent / daily / monthly counters, but it is
+  never folded into the most recent turn: a turn total only ever contains
+  spend that turn actually caused.
+- Consequently, summing all turn totals does **not** reproduce the session
+  total. That is by design, not a rounding gap.
+- Turn totals are in-memory, live-session state for the most recent turns
+  (bounded, oldest evicted) and are not restored on restart. The durable
+  record of a past turn's spend is the ledger's per-call `chain_id`, which
+  lets any past turn be re-grouped after the fact.
+
+These figures are not a cap dimension — there is no per-turn limit to
+configure; they are the reporting counterpart to the per-agent / daily /
+monthly caps above.
 
 ## Ledger file
 
@@ -217,8 +246,14 @@ Budget counters persist across process restarts — and crashes — via the
 fsync-per-append `.reyn/state/budget_ledger.jsonl`. One record per LLM call:
 
 ```json
-{"ts": "2026-05-09T10:23:00+09:00", "agent": "alice", "model": "openai/gpt-4o", "tokens": 312, "cost_usd": 0.00234}
+{"ts": "2026-05-09T10:23:00+09:00", "agent": "alice", "model": "openai/gpt-4o", "tokens": 312, "cost_usd": 0.00234, "purpose": "main", "chain_id": "a1b2c3d4"}
 ```
+
+`purpose` (the cost-attribution bucket: `main` / `compaction` / `judge` /
+`dogfood`) and `chain_id` (the turn the call belongs to) are optional: each is
+written only when known, so a call made outside any turn carries no
+`chain_id` at all rather than a null one, and a record written before either
+field existed stays valid on read.
 
 Legacy note: a pre-existing ledger may also contain skill-spawn records
 (`{"kind": "spawn", ...}`) written before the per-chain skill-spawn cap was

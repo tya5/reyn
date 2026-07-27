@@ -68,7 +68,7 @@ class _Recorder:
     def __init__(self) -> None:
         self.models: list[str] = []
 
-    def record_llm(self, *, model, agent, usage, purpose) -> None:
+    def record_llm(self, *, model, agent, usage, purpose, chain_id=None) -> None:
         self.models.append(model)
 
 
