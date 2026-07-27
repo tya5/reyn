@@ -2964,6 +2964,7 @@ class RouterLoop:
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
+            agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
         )
         return [
             {
@@ -3542,6 +3543,7 @@ class RouterLoop:
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
+            agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
         )
         list_actions_def = get_default_registry().lookup("list_actions")
         if list_actions_def is None:
@@ -3841,6 +3843,7 @@ class RouterLoop:
             resolver=getattr(self.host, "resolver", None),
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
+            agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
         )
         result = await invoke_tool(get_default_registry(), name, args, tool_ctx)
         return self._normalise_router_tool_result(name, result)

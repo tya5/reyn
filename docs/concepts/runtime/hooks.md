@@ -774,13 +774,22 @@ context (`wake: false`), without a restart.
 - `name` (optional) — a label surfaced as a `[hook:name]` attribution prefix
   in history.
 
-**Write target and gating**: the hook is written to `.reyn/config/hooks.yaml`
-— the runtime IN-set layer, hardcoded, never derived from LLM input, so this
-can structurally never touch `reyn.yaml` (the OUT-set). It joins the existing
-hooks additively and takes effect at the next turn boundary. The tool itself
-is write-gated (`permissions.tool`) and can be denied per-agent via a
-capability profile's `tool_deny`. Full hot-reload mechanics — the three-layer
-COMBINE, validate-before-apply, boot resilience — are covered in
+**Write target and gating**: the hook is written to one of exactly two hardcoded
+runtime IN-set targets — never derived from LLM input, only from the calling
+session's own identity (#2088):
+
+- the default/unnamed agent writes the GLOBAL `.reyn/config/hooks.yaml`;
+- a named-agent session writes ITS OWN per-agent layer
+  `.reyn/agents/<name>/hooks.yaml` — the same file an operator-authored
+  per-agent hooks file already lives at.
+
+Either way this structurally can never touch `reyn.yaml` (the OUT-set) nor
+another agent's per-agent layer. The hook joins the existing hooks
+ADDITIVELY (the two scopes never override one another) and takes effect at
+the next turn boundary. The tool itself is write-gated (`permissions.tool`)
+and can be denied per-agent via a capability profile's `tool_deny`. Full
+hot-reload mechanics — the layered COMBINE, validate-before-apply, boot
+resilience — are covered in
 [Concepts: Config hot-reload](config-hot-reload.md).
 
 ## LLM-authored hook-events (`emit_hook_event`)

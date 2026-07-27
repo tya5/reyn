@@ -344,6 +344,7 @@ class PipelineExecutorDriver:
             resolver=getattr(host, "resolver", None),
             hot_reloader=getattr(host, "hot_reloader", None),
             state_log=getattr(host, "state_log", None),
+            agent_name=getattr(host, "agent_name", None),  # #2088: scope-aware hooks_add
         )
         return _make_tool_dispatch(ctx)
 

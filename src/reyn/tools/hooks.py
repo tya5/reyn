@@ -1,15 +1,21 @@
-"""Hooks ToolDefinitions — #2073 S3 (the LLM-op self-reload trigger).
+"""Hooks ToolDefinitions — #2073 S3 (the LLM-op self-reload trigger) + #2088
+(scope-aware write).
 
 ``hooks_add`` — the agent adds a push hook at an agent-lifecycle point, written to
-the RUNTIME hooks layer (``.reyn/config/hooks.yaml``) and applied at the next turn boundary
-via the S2b hooks reapply seam. The crown-jewel of config hot-reload: the agent
-expands its own hooks (autonomous capability-expansion), bounded by the safety
-trifecta + the existing hook safeguards:
+a RUNTIME hooks layer and applied at the next turn boundary via the S2b hooks
+reapply seam. The crown-jewel of config hot-reload: the agent expands its own
+hooks (autonomous capability-expansion), bounded by the safety trifecta + the
+existing hook safeguards:
 
-- **Write-gate by construction**: the tool writes ONLY the hardcoded
-  ``.reyn/config/hooks.yaml`` (the IN-set runtime layer). It takes the hook CONTENT, never a
-  path, so it is *structurally impossible* to aim at ``reyn.yaml`` (the restart-only
-  OUT-set: security / budget / the loop valve).
+- **Write-gate by construction**: the tool writes ONLY ONE of two hardcoded
+  targets — the GLOBAL runtime layer (``.reyn/config/hooks.yaml``) when the
+  calling session is the default/unnamed agent, or that session's OWN per-agent
+  layer (``.reyn/agents/<name>/hooks.yaml``, #2088) when it is a named agent
+  (``ctx.agent_name`` not ``None`` and not ``DEFAULT_AGENT_NAME``). Both targets
+  are fixed by the SCOPE, never by LLM input — the tool takes hook CONTENT, never
+  a path, so it is *structurally impossible* to aim at ``reyn.yaml`` (the
+  restart-only OUT-set: security / budget / the loop valve) or at another
+  agent's layer.
 - **validate-before-apply** (S2b) rejects a malformed reload; **boot-resilience**
   (S2b) degrades a malformed persisted layer at the next boot. Plus write-time
   validation here (a bad hook → an op error, not a silent bad write).
@@ -17,6 +23,11 @@ trifecta + the existing hook safeguards:
   ``permissions.tool`` (``require_tool``) and the #2074 capability profile
   (``tool_deny``) can deny self-reload. The damage is bounded — F is sandboxed, E is
   loop-valved (``safety.loop.max_hook_driven_turns``), C is benign.
+- **Precedence**: the per-agent layer is ADDITIVE with the global layer (and the
+  startup + per-session layers), never an override — ``Session._build_hook_registry``
+  combines startup ∪ runtime(global) ∪ per-agent ∪ per-session and every layer's
+  hooks fire; there is no "more specific wins" shadowing (see
+  ``docs/concepts/runtime/config-hot-reload.md``).
 """
 from __future__ import annotations
 
@@ -81,12 +92,28 @@ _HOOKS_ADD_PARAMETERS: dict[str, Any] = {
 
 
 def _hooks_yaml_path(ctx: ToolContext) -> Path:
-    """The canonical ``.reyn/config/hooks.yaml`` path under the project root (HARDCODED —
-    the write target is never derived from LLM input)."""
+    """The scope-aware write target (#2088), HARDCODED to one of exactly two paths —
+    never derived from LLM input, only from the CALLING session's own identity
+    (``ctx.agent_name``, threaded like ``ctx.hot_reloader``/``ctx.state_log``):
+
+    - the default/unnamed agent (``ctx.agent_name`` is ``None`` — a non-session/test
+      context, or the pre-#2088 default — or equals ``DEFAULT_AGENT_NAME``) writes the
+      GLOBAL runtime layer ``.reyn/config/hooks.yaml`` (byte-identical to the
+      pre-#2088 behavior);
+    - any OTHER (named-agent) session writes its OWN per-agent layer
+      ``.reyn/agents/<name>/hooks.yaml`` — the SAME path
+      :func:`reyn.config.loader.load_per_agent_hooks` / ``Session._read_per_agent_hooks``
+      read from, so a scoped write lands where the loader actually reads it.
+    """
     root = getattr(ctx.workspace, "root", None) or getattr(ctx.workspace, "base_dir", None)
     if root is None:
         root = Path.cwd()
-    return Path(root) / ".reyn" / "config" / "hooks.yaml"
+    root = Path(root)
+    agent_name = getattr(ctx, "agent_name", None)
+    from reyn.runtime.registry import DEFAULT_AGENT_NAME
+    if agent_name and agent_name != DEFAULT_AGENT_NAME:
+        return root / ".reyn" / "agents" / str(agent_name) / "hooks.yaml"
+    return root / ".reyn" / "config" / "hooks.yaml"
 
 
 def _normalize_on(h: object) -> object:
@@ -126,10 +153,12 @@ def _hooks_list(data: dict) -> list:
 
 
 async def _gate(ctx: ToolContext) -> None:
-    """Permission gate: ``require_file_write`` against the canonical .reyn/config/hooks.yaml.
-    TOOL-level authorisation already happened at agent startup (``require_tool``
-    against the agent's ``permissions.tool``) + the #2074 capability profile. No-op
-    in unit-test contexts (``ctx.permission_resolver`` is None)."""
+    """Permission gate: ``require_file_write`` against the scope-derived write target
+    (#2088 — :func:`_hooks_yaml_path`: global ``.reyn/config/hooks.yaml`` or the
+    calling agent's own ``.reyn/agents/<name>/hooks.yaml``). TOOL-level authorisation
+    already happened at agent startup (``require_tool`` against the agent's
+    ``permissions.tool``) + the #2074 capability profile. No-op in unit-test contexts
+    (``ctx.permission_resolver`` is None)."""
     from reyn.security.permissions.permissions import PermissionDecl
     if ctx.permission_resolver is None:
         return
@@ -148,7 +177,9 @@ async def _gate(ctx: ToolContext) -> None:
 
 
 async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Add a push hook to the runtime layer (.reyn/config/hooks.yaml) + schedule a reload."""
+    """Add a push hook to the scope-appropriate runtime layer (#2088 — the global
+    .reyn/config/hooks.yaml, or the calling agent's own .reyn/agents/<name>/hooks.yaml
+    when ctx.agent_name names a non-default agent) + schedule a reload."""
     on = str(args["on"])
     message = str(args["message"])
     wake = bool(args.get("wake", True))
@@ -172,7 +203,8 @@ async def _handle_hooks_add(args: Mapping[str, Any], ctx: ToolContext) -> ToolRe
 
     await _gate(ctx)
 
-    # Persist to the FIXED .reyn/config/hooks.yaml (structurally cannot target reyn.yaml).
+    # Persist to the FIXED, scope-derived target (#2088) — structurally cannot target
+    # reyn.yaml, nor any path an LLM could name.
     path = _hooks_yaml_path(ctx)
     data = _read_hooks(path)
     hooks = _hooks_list(data)
