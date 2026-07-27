@@ -327,9 +327,9 @@ def _snapshot(registry, config=None):
     # dropdown is actually open (and only once per redraw of THAT dropdown,
     # not the whole app).
     ctx_compaction_status_fn = s.context_window_status
-    # #3339: per-turn token/cost aggregate (see Session.turn_usage) — a cheap
-    # dict read off the durable tracker, safe on every render frame.
-    turn_usage = s.turn_usage
+    # #3339: per-turn token/cost aggregate (see Session.last_turn_usage) — a
+    # cheap dict read off the durable tracker, safe on every render frame.
+    turn_usage = s.last_turn_usage
     return {
         "model": s.model,
         "model_active_class": s.active_model_class(),
@@ -353,10 +353,13 @@ def _snapshot(registry, config=None):
         # #3339: the CURRENT (or most recent) turn's real token/cost total —
         # every LLM call the turn made, summed under its chain_id by the
         # durable tracker. Distinct from BOTH `usage`/`cost_usd` (session
-        # cumulative) and `ctx_used` (a single call). Zeros with a None
-        # `turn_chain_id` before the session's first turn; a call the OS could
-        # not attribute to a turn is counted in no turn's total, so these
-        # figures are never a difference of cumulative counters.
+        # cumulative) and `ctx_used` (a single call). A call the OS could not
+        # attribute to a turn is counted in no turn's total, so these figures
+        # are never a difference of cumulative counters.
+        # `turn_chain_id is None` means THERE IS NO FIGURE (before the first
+        # turn; see Session.last_turn_usage for the other case) — the two
+        # zeros beside it are placeholders, so a renderer must branch on
+        # `turn_chain_id` rather than print "0 tokens / $0.00".
         "turn_chain_id": turn_usage["chain_id"],
         "turn_tokens": turn_usage["tokens"],
         "turn_cost_usd": turn_usage["cost_usd"],

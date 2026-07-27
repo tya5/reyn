@@ -15,10 +15,13 @@ The invariants pinned here:
   2. A call made with NO turn in scope lands in NO turn bucket — while still
      being recorded in the cumulative counters (so the negative control is not
      vacuously satisfied by "nothing was recorded at all").
-  3. The ledger row carries the turn key, witnessed through the real append
+  3. The live per-turn buckets stay BOUNDED: the oldest turns are evicted and
+     read as absent (never as a zero total), while the newest — the only one
+     anything reads — survives, and the cumulative counters are untouched.
+  4. The ledger row carries the turn key, witnessed through the real append
      path; a row written for a turnless call, and a pre-#3339 row, both stay
      valid.
-  4. The ambient scope actually reaches the cost path: a turn bound at the
+  5. The ambient scope actually reaches the cost path: a turn bound at the
      session's router-loop seam attributes the LLM calls its turn makes.
 
 Real ``BudgetTracker`` / ``BudgetLedger`` / ``TokenUsage`` / ``Session``
@@ -37,7 +40,12 @@ import litellm
 from reyn.core.turn_scope import active_turn, get_active_turn_chain_id
 from reyn.llm.llm import recorded_acompletion
 from reyn.llm.pricing import TokenUsage, estimate_cost
-from reyn.runtime.budget.budget import BudgetLedger, BudgetTracker, CostConfig
+from reyn.runtime.budget.budget import (
+    TURN_BUCKET_CAP,
+    BudgetLedger,
+    BudgetTracker,
+    CostConfig,
+)
 from tests._support.agent_session import make_session
 
 _MODEL = "gpt-4o"
@@ -76,22 +84,25 @@ def test_two_turns_aggregate_separately() -> None:
     tracker.record_llm(model=_MODEL, agent="alpha", usage=_CALL_A2, chain_id="turn-A")
     tracker.record_llm(model=_MODEL, agent="alpha", usage=_CALL_B1, chain_id="turn-B")
 
-    assert tracker.turn_tokens("turn-A") == _CALL_A1.total_tokens + _CALL_A2.total_tokens
-    assert tracker.turn_tokens("turn-B") == _CALL_B1.total_tokens
-    # Cost is priced per call at that call's own model rate, then summed —
-    # so turn A's cost is its two calls' costs, not "session total minus B".
-    assert tracker.turn_cost_usd("turn-A") == _cost(_CALL_A1) + _cost(_CALL_A2)
-    assert tracker.turn_cost_usd("turn-B") == _cost(_CALL_B1)
-    assert tracker.turn_cost_usd("turn-A") > 0.0, (
-        f"{_MODEL} must be priced for this test to say anything about cost"
-    )
-
     snap = tracker.snapshot()
     assert snap["turn_tokens"]["turn-A"] == _CALL_A1.total_tokens + _CALL_A2.total_tokens
     assert snap["turn_tokens"]["turn-B"] == _CALL_B1.total_tokens
+    # Cost is priced per call at that call's own model rate, then summed —
+    # so turn A's cost is its two calls' costs, not "session total minus B".
+    assert snap["turn_cost_usd"]["turn-A"] == _cost(_CALL_A1) + _cost(_CALL_A2)
+    assert snap["turn_cost_usd"]["turn-B"] == _cost(_CALL_B1)
+    assert snap["turn_cost_usd"]["turn-A"] > 0.0, (
+        f"{_MODEL} must be priced for this test to say anything about cost"
+    )
     assert snap["last_turn_chain_id"] == "turn-B"
-    # An unknown / never-run turn reads zero, not the most recent turn's figure.
-    assert tracker.turn_tokens("turn-never") == 0
+    # The latest-turn read answers about B (the turn that just recorded); a
+    # turn that never ran is simply ABSENT, never reported as a zero total.
+    assert tracker.latest_turn_usage() == {
+        "chain_id": "turn-B",
+        "tokens": _CALL_B1.total_tokens,
+        "cost_usd": _cost(_CALL_B1),
+    }
+    assert "turn-never" not in snap["turn_tokens"]
 
 
 def test_call_outside_any_turn_contaminates_no_turn_bucket() -> None:
@@ -100,8 +111,7 @@ def test_call_outside_any_turn_contaminates_no_turn_bucket() -> None:
     the most recent turn nor creates a bucket of its own."""
     tracker = BudgetTracker(CostConfig())
     tracker.record_llm(model=_MODEL, agent="alpha", usage=_CALL_A1, chain_id="turn-A")
-    before_tokens = tracker.turn_tokens("turn-A")
-    before_cost = tracker.turn_cost_usd("turn-A")
+    before = tracker.latest_turn_usage()
     agent_tokens_before = tracker.agent_tokens("alpha")
 
     # No chain_id: a sub-agent / background / CLI call.
@@ -110,13 +120,46 @@ def test_call_outside_any_turn_contaminates_no_turn_bucket() -> None:
     assert tracker.agent_tokens("alpha") == agent_tokens_before + _CALL_NO_TURN.total_tokens, (
         "the turnless call must still be RECORDED — otherwise this control is vacuous"
     )
-    assert tracker.turn_tokens("turn-A") == before_tokens
-    assert tracker.turn_cost_usd("turn-A") == before_cost
+    assert tracker.latest_turn_usage() == before, (
+        "the turnless call must leave the latest turn's figures untouched"
+    )
     snap = tracker.snapshot()
     assert list(snap["turn_tokens"]) == ["turn-A"], (
         "a turnless call must not create a bucket (incl. a None-keyed one)"
     )
     assert snap["last_turn_chain_id"] == "turn-A"
+
+
+def test_turn_buckets_are_bounded_and_keep_the_newest() -> None:
+    """Tier 2: the per-turn buckets are bounded — a long session evicts the
+    OLDEST turns rather than accumulating one bucket per turn forever, and the
+    turn that just recorded (the only one anything reads) is never the victim.
+    An evicted turn is ABSENT, not a zero total."""
+    tracker = BudgetTracker(CostConfig())
+    turns = [f"turn-{i:03d}" for i in range(TURN_BUCKET_CAP + 3)]
+    for i, chain_id in enumerate(turns):
+        # Distinct per-turn totals so an eviction cannot be masked by equality.
+        tracker.record_llm(
+            model=_MODEL, agent="alpha",
+            usage=TokenUsage(prompt_tokens=10 + i, completion_tokens=1),
+            chain_id=chain_id,
+        )
+
+    kept = tracker.snapshot()["turn_tokens"]
+    assert len(kept) == TURN_BUCKET_CAP, "the bucket set must stay bounded"
+    assert set(kept) == set(turns[3:]), "the oldest turns are the ones evicted"
+    for chain_id in turns[:3]:
+        assert chain_id not in kept, "an evicted turn is absent, never a 0 total"
+    # The newest turn survives and still carries its own real figure.
+    newest = turns[-1]
+    assert tracker.latest_turn_usage() == {
+        "chain_id": newest,
+        "tokens": 10 + len(turns) - 1 + 1,
+        "cost_usd": _cost(TokenUsage(prompt_tokens=10 + len(turns) - 1, completion_tokens=1)),
+    }
+    # Cumulative counters are untouched by eviction — bounding the per-turn
+    # view must not lose spend from the totals that enforce caps.
+    assert tracker.agent_tokens("alpha") == sum(11 + i for i in range(len(turns)))
 
 
 def test_ledger_row_carries_chain_id_through_the_real_append_path(tmp_path) -> None:
@@ -186,8 +229,9 @@ def test_ambient_turn_scope_reaches_the_cost_chokepoint(monkeypatch) -> None:
 
     asyncio.run(_call())
 
-    assert tracker.turn_tokens("turn-Z") == 367, (
-        "the chokepoint must read the ambient turn key and file the call under it"
+    assert tracker.snapshot()["turn_tokens"] == {"turn-Z": 367}, (
+        "the chokepoint must read the ambient turn key and file the in-scope call "
+        "under it — and the out-of-scope call under no turn"
     )
     assert tracker.agent_tokens("alpha") == 734, "both calls recorded cumulatively"
 
@@ -214,11 +258,11 @@ def test_session_turn_attributes_its_llm_calls_to_its_chain_id(tmp_path, monkeyp
 
     asyncio.run(session._handle_user_message("hello", chain_id="turn-live-1"))
 
-    assert tracker.turn_tokens("turn-live-1") == 1750, (
+    latest = tracker.latest_turn_usage()
+    assert latest is not None and latest["chain_id"] == "turn-live-1", (
         "the turn's own LLM call must be attributed to the turn's chain_id"
     )
-    assert session.turn_usage == {
-        "chain_id": "turn-live-1",
-        "tokens": 1750,
-        "cost_usd": tracker.turn_cost_usd("turn-live-1"),
-    }
+    assert latest["tokens"] == 1750
+    assert session.last_turn_usage == latest, (
+        "the session surface must report its own turn's real figures"
+    )

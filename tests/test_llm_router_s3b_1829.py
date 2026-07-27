@@ -10,7 +10,9 @@ resolution site so ``_use_llm_router`` and the Router builder never double-sourc
 stays byte-identical).
 
 Policy: no mocks of Reyn collaborators — real ``RouterConfig`` + real resolver +
-real ``recorded_acompletion`` + a real ``litellm.Router``. ``litellm.acompletion``
+real ``recorded_acompletion`` + a real ``litellm.Router`` + a real
+``BudgetTracker`` as the cost recorder (a stand-in recorder that has already
+absorbed one signature change stops detecting the next one). ``litellm.acompletion``
 is patched only because it IS the replay boundary (the same seam ``LLMReplay``
 monkeypatches) — used here to script a deterministic primary-fail → fallback path.
 Tier line first; no private-state / count pins beyond the public contract.
@@ -31,6 +33,7 @@ from reyn.llm.llm import (
     recorded_acompletion,
     set_router_config,
 )
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 
 _PRIMARY = "openai/gpt-4o-mini"
 _FALLBACK = "openai/gpt-3.5-turbo"
@@ -64,12 +67,11 @@ class _Resp:
         self.usage = _Usage(10, 5)
 
 
-class _Recorder:
-    def __init__(self) -> None:
-        self.models: list[str] = []
-
-    def record_llm(self, *, model, agent, usage, purpose, chain_id=None) -> None:
-        self.models.append(model)
+def _recorded_models(tracker: BudgetTracker) -> list[str]:
+    """Which model(s) the tracker recorded a call against, read off its public
+    ``snapshot()`` (the rate-limit window is keyed by the model each recorded
+    call was attributed to)."""
+    return sorted(m for m, n in tracker.snapshot()["rate_window"].items() if n > 0)
 
 
 # ── (a) single-source config resolution ──────────────────────────────────────
@@ -144,7 +146,7 @@ async def test_cost_records_actual_model_on_fallback() -> None:
     """Tier 2: when a router fallback serves the call, cost is attributed to the
     ACTUAL deployment (response.model), not the requested model."""
     set_router_config(RouterConfig(use=True, num_retries=0, fallbacks={_PRIMARY: [_FALLBACK]}))
-    rec = _Recorder()
+    tracker = BudgetTracker(CostConfig())
 
     async def _fake(*a, **k):
         if k.get("model") == _PRIMARY:
@@ -154,11 +156,11 @@ async def test_cost_records_actual_model_on_fallback() -> None:
     with mock.patch.object(litellm, "acompletion", side_effect=_fake):
         await recorded_acompletion(
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
-            purpose="dogfood", recorder=rec,
+            purpose="dogfood", recorder=tracker,
         )
-    assert rec.models == [_FALLBACK], (
+    assert _recorded_models(tracker) == [_FALLBACK], (
         "a fallback must record cost against the model that actually ran, not the "
-        f"requested one (got {rec.models!r})"
+        f"requested one (got {_recorded_models(tracker)!r})"
     )
 
 
@@ -167,7 +169,7 @@ async def test_cost_records_requested_model_when_router_off() -> None:
     """Tier 2: OFF path is byte-identical — cost records the REQUESTED model even
     if the (direct) response.model string differs (no actual-model switch)."""
     # router OFF (default). The direct litellm.acompletion path.
-    rec = _Recorder()
+    tracker = BudgetTracker(CostConfig())
 
     async def _fake(*a, **k):
         return _Resp("some/normalized-name")  # response.model != requested
@@ -175,9 +177,9 @@ async def test_cost_records_requested_model_when_router_off() -> None:
     with mock.patch.object(litellm, "acompletion", side_effect=_fake):
         await recorded_acompletion(
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
-            purpose="dogfood", recorder=rec,
+            purpose="dogfood", recorder=tracker,
         )
-    assert rec.models == [_PRIMARY], (
+    assert _recorded_models(tracker) == [_PRIMARY], (
         "OFF path must record the requested model (byte-identical), not switch to "
-        f"response.model (got {rec.models!r})"
+        f"response.model (got {_recorded_models(tracker)!r})"
     )

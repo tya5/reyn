@@ -224,17 +224,21 @@ cost" is answerable without subtracting running totals from each other.
 - A turn's total is the **sum of its own calls**, each priced at that call's
   own model rate. Every LLM call the turn makes counts, including each
   tool-loop iteration and any compaction triggered inside the turn.
-- A call made with **no turn in scope** — a sub-agent's own loop, a
-  background or CLI call — is counted in **no turn's total**. It still
+- A **sub-agent's** turn is billed to the sub-agent's own turn, not to the
+  parent turn that spawned it.
+- A call made with **no turn in scope** — the `/compact` slash command, or a
+  dev/dogfood surface — is counted in **no turn's total**. It still
   updates the cumulative per-agent / daily / monthly counters, but it is
   never folded into the most recent turn: a turn total only ever contains
   spend that turn actually caused.
 - Consequently, summing all turn totals does **not** reproduce the session
   total. That is by design, not a rounding gap.
 - Turn totals are in-memory, live-session state for the most recent turns
-  (bounded, oldest evicted) and are not restored on restart. The durable
-  record of a past turn's spend is the ledger's per-call `chain_id`, which
-  lets any past turn be re-grouped after the fact.
+  (bounded, oldest evicted) and are not restored on restart. An evicted turn
+  is **absent**, never reported as a zero total, and the live figure is only
+  ever read for the **latest** turn — which can never be the eviction victim.
+  The durable record of a past turn's spend is the ledger's per-call
+  `chain_id`, which lets any past turn be re-grouped after the fact.
 
 These figures are not a cap dimension — there is no per-turn limit to
 configure; they are the reporting counterpart to the per-agent / daily /

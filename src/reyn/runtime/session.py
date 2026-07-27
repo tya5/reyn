@@ -1546,7 +1546,7 @@ class Session:
         return self._budget.total_cost_usd
 
     @property
-    def turn_usage(self) -> dict:
+    def last_turn_usage(self) -> dict:
         """#3339: tokens + USD cost of this session's MOST RECENT turn —
         ``{"chain_id", "tokens", "cost_usd"}``.
 
@@ -1557,17 +1557,25 @@ class Session:
         the cost of a call the OS could not attribute to a turn is in no
         turn's total at all.
 
-        ``chain_id`` is None (and both figures 0) before this session's first
-        router turn, or when no tracker is wired (unlimited mode)."""
+        ``chain_id is None`` is the "no figure to show" signal, and the two
+        zeros beside it carry no meaning — a reader MUST branch on chain_id
+        rather than render the numbers unconditionally. It occurs before this
+        session's first router turn, with no tracker wired (unlimited mode),
+        and when the tracker's latest turn belongs to a DIFFERENT session
+        (the tracker is process-shared and answers only about the latest turn
+        process-wide, by design — see ``BudgetTracker.latest_turn_usage``).
+        Reporting "unknown" there is deliberate: this session's own last turn
+        is real, but its figure is not one this API can answer for without
+        risking another session's number."""
+        _none = {"chain_id": None, "tokens": 0, "cost_usd": 0.0}
         chain_id = self._last_turn_chain_id
         tracker = self._budget_tracker
         if chain_id is None or tracker is None:
-            return {"chain_id": None, "tokens": 0, "cost_usd": 0.0}
-        return {
-            "chain_id": chain_id,
-            "tokens": tracker.turn_tokens(chain_id),
-            "cost_usd": tracker.turn_cost_usd(chain_id),
-        }
+            return _none
+        latest = tracker.latest_turn_usage()
+        if latest is None or latest["chain_id"] != chain_id:
+            return _none
+        return latest
 
     @property
     def total_cost_breakdown(self):
@@ -7776,9 +7784,15 @@ class Session:
         rather than at ``turn_started`` because this is the single point every
         turn kind (user / hook / agent_request / pipeline_result) funnels
         through WITH its chain_id in scope, and it closes exactly where the
-        turn's work ends. Work outside it — a sub-agent's own run loop, a
-        background maintenance call — sees no turn and is recorded as
-        unattributed rather than charged to this turn.
+        turn's work ends.
+
+        A SUB-AGENT's turn arrives here as ``agent_request`` and REBINDS to
+        its own chain_id, so it is billed to its own turn rather than the
+        parent's — even though its task inherited the parent's chain_id at
+        spawn. Work that never reaches this seam sees no turn and is recorded
+        unattributed instead of charged to the latest turn; see
+        ``reyn.core.turn_scope`` for the enumeration of those paths (the
+        ``/compact`` slash short-circuit and the dev/dogfood surfaces).
         """
         self._last_turn_chain_id = chain_id
         with active_turn(chain_id):
