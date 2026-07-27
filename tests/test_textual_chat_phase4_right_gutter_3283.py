@@ -52,7 +52,12 @@ from textual.geometry import Offset
 from textual.selection import Selection
 from textual_flowview import EntryState, FlowModel, FlowView
 
-from reyn.interfaces.inline.textual_chat import ReynGutter, ReynTimingGutter, TextualChatApp
+from reyn.interfaces.inline.textual_chat import (
+    ReynGutter,
+    ReynPresenter,
+    ReynTimingGutter,
+    TextualChatApp,
+)
 from reyn.interfaces.inline.textual_chat._meta_keys import (
     ELAPSED_SECS_KEY,
     RUNNING_SINCE_KEY,
@@ -195,6 +200,26 @@ def _full_selection(flow: "FlowView[OutboxMessage]") -> Selection:
 
 def _entry_by_kind(app: TextualChatApp, kind: str):
     return [e for e in app.query_one(FlowView).entries if e.item.kind == kind]
+
+
+class _WidthRecordingPresenter(ReynPresenter):
+    """A real :class:`ReynPresenter` SUBCLASS (not a mock) that records the
+    ``width`` FlowView hands ``present()`` for each entry — this is the BODY
+    width (content width minus BOTH gutters), the one surface that actually
+    exposes what the right gutter's column cost the conversation content.
+    ``FlowView.region.width`` stays the FULL terminal width regardless of
+    gutter configuration (gutter consumption is internal to flowview and not
+    otherwise observable from outside it) — a co-vet finding on #3337, this
+    class is the fix: it reads the real value off the real collaboration
+    seam, not a private flowview attribute."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.widths: "list[int]" = []
+
+    async def present(self, item: "OutboxMessage", width: int):
+        self.widths.append(width)
+        return await super().present(item, width)
 
 
 # ── Gate 1: content for an entry that has it (Tier 1, pure decorate()) ────────
@@ -450,6 +475,88 @@ async def test_left_gutter_state_transitions_unchanged_with_right_gutter_wired()
         await pilot.pause()
         entry = _entry_by_kind(app, "tool_call_started")[0]
         assert entry.state is EntryState.SUCCESS
+
+
+# ── Gate 3b: bounded gutter share — the right gutter cannot silently grow ─────
+# to swallow the body. The earlier gates (containment, narrow-terminal squash)
+# treat squashing the BODY as the expected absorber for a narrow terminal —
+# which means, read alone, they impose NO UPPER BOUND on how much of an
+# ordinary-width terminal the right gutter itself may claim. A co-vet finding
+# on #3337: at ``RIGHT_GUTTER_WIDTH=40`` on an 80-column terminal (HALF the
+# screen), every existing gate in this file still passed — the right gutter
+# eats every row's width, but only tool rows ever populate it. This gate
+# closes that hole, measured on the actual BODY width FlowView hands the
+# presenter (``ReynPresenter.present(item, width)``) — the one surface that
+# exposes gutter consumption; ``FlowView.region.width`` stays the full
+# terminal width regardless (gutter cost is internal to flowview).
+
+
+@pytest.mark.asyncio
+async def test_right_gutter_leaves_the_body_at_least_half_the_terminal_width() -> None:
+    """Tier 2b: ★ #3337 co-vet finding — the combined gutters (left state +
+    right elapsed) must not claim more than HALF of an 80-column terminal's
+    width; the BODY (the actual conversation content column) must keep AT
+    LEAST half. Measured on the width :meth:`ReynPresenter.present` actually
+    receives (:class:`_WidthRecordingPresenter`), not the widget's outer
+    ``region`` (which stays the full terminal width regardless of how much
+    of it flowview hands to gutters vs. body — the co-vet's measurement-plane
+    correction).
+
+    NON-VACUITY: the paired strip below drives the SAME scenario with
+    ``RIGHT_GUTTER_WIDTH`` monkeypatched to 40 (half the 80-column screen)
+    and asserts this same floor goes RED — proving the assertion is
+    load-bearing against the actual defect shape the co-vet raised, not a
+    tautology that would pass regardless of the configured width."""
+    transport = QueueTransport()
+    presenter = _WidthRecordingPresenter()
+    app = TextualChatApp(transport=transport, presenter=presenter)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await transport.push(_started("op-share"))
+        await pilot.pause()
+
+        assert presenter.widths, "presenter never received a body width to record"
+        body_width = presenter.widths[-1]
+        assert body_width >= app.size.width // 2, (
+            f"the right gutter left only {body_width} body columns out of "
+            f"{app.size.width} — gutters are claiming more than half the "
+            f"terminal width"
+        )
+
+
+@pytest.mark.asyncio
+async def test_body_width_floor_is_load_bearing_against_an_oversized_right_gutter() -> None:
+    """Tier 2b: the non-vacuity strip for the gate above — with
+    ``RIGHT_GUTTER_WIDTH`` monkeypatched to 40 (half an 80-column terminal),
+    the SAME body-width floor assertion FAILS. Confirms the positive gate
+    above is not vacuously true regardless of configuration; this test
+    itself is expected to fail its OWN inner assertion (caught and
+    re-asserted as the outer expectation), so the suite stays green while
+    still proving the floor is load-bearing."""
+    import reyn.interfaces.inline.textual_chat.app as app_module
+
+    original = app_module.RIGHT_GUTTER_WIDTH
+    app_module.RIGHT_GUTTER_WIDTH = 40
+    try:
+        transport = QueueTransport()
+        presenter = _WidthRecordingPresenter()
+        app = TextualChatApp(transport=transport, presenter=presenter)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            await transport.push(_started("op-oversized"))
+            await pilot.pause()
+
+            assert presenter.widths, "presenter never received a body width to record"
+            body_width = presenter.widths[-1]
+            floor_violated = body_width < app.size.width // 2
+            assert floor_violated, (
+                f"expected an oversized RIGHT_GUTTER_WIDTH=40 to violate the "
+                f"body-width floor (got body_width={body_width}, "
+                f"floor={app.size.width // 2}) — the floor assertion above is "
+                f"not actually load-bearing against this defect shape"
+            )
+    finally:
+        app_module.RIGHT_GUTTER_WIDTH = original
 
 
 # ── Gate 4: geometry — bidirectional containment (★ #3311 pattern) ────────────
