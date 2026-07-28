@@ -78,3 +78,21 @@ def test_fail_loud_sections_still_raise_clear_error(tmp_path) -> None:
     (tmp_path / "reyn.yaml").write_text("tool_use: not-a-dict\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a mapping"):
         load_config(tmp_path)
+
+
+def test_yaml_parse_error_logs_warning_and_falls_back(tmp_path, caplog) -> None:
+    """Tier 2: an unparseable reyn.yaml logs a warning naming the file (#3368).
+
+    Found via bug-mining (2026-07-26): `_load_yaml`'s `except Exception:
+    return {}` swallowed parse failures with zero signal, indistinguishable
+    from the file not existing at all — an operator's malformed
+    reyn.yaml/reyn.local.yaml silently lost its entire `models:`/`permissions:`
+    section. Falsification: pre-fix, no log record was emitted here.
+    """
+    import logging
+
+    (tmp_path / "reyn.yaml").write_text("models: [unterminated\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="reyn.config.loader"):
+        cfg = load_config(tmp_path)
+    assert dict(cfg.models) == {}
+    assert any("reyn.yaml" in r.message for r in caplog.records)
