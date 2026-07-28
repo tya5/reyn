@@ -18,11 +18,13 @@ import pytest
 from reyn.config import ToolUseConfig, _build_tool_use_config
 from reyn.tools.scheme import (
     DEFAULT_SCHEME_NAME,
+    AdvertisedTools,
     ExecContext,
     Execute,
     ExecutionResult,
     Presentation,
     ToolUseScheme,
+    advertised_entries,
     get_scheme,
     register_scheme,
     registered_scheme_names,
@@ -40,7 +42,7 @@ class _RecordingOps:
 
     def present(self, available, layer_ctx) -> Presentation:
         self.calls.append("present")
-        return Presentation(llm_tools_payload=[{"t": 1}])
+        return Presentation(tools_channel=AdvertisedTools(entries=[{"t": 1}]))
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         self.calls.append("resolve")
@@ -96,7 +98,7 @@ async def test_universal_build_presentation_delegates() -> None:
     ops = _RecordingOps()
     pres = await UniversalCategoryScheme().build_presentation({}, {}, ops)
     assert "present" in ops.calls
-    assert pres.llm_tools_payload == [{"t": 1}]
+    assert advertised_entries(pres.tools_channel) == [{"t": 1}]
 
 
 def test_universal_interpret_execute_with_tool_calls() -> None:

@@ -37,20 +37,82 @@ class ToolUseLayer(str, Enum):
     CHAT = "chat"
 
 
+# ── The ``tools=`` channel (#3421) ──────────────────────────────────────────
+#
+# A transport either HAS a ``tools=`` channel or it does not, and that is a
+# different question from how many tools are in it. Expressing the second answer
+# as an empty list made the two indistinguishable: ``[]`` read equally well as
+# "this transport advertises nothing right now" (a real, reachable state — every
+# tool narrowed away by permission) and as "this transport has no such channel at
+# all" (``content_fence``, whose entire surface is the code-API in the system
+# prompt). The distinction was stated in prose at three call sites and in the
+# type at none, so no consumer could act on it.
+#
+# It is a ``{kind: ...}`` discriminated union for the same reason
+# ``exposure.ToolDescriptor`` is: the arm a value is on is a fact the producer
+# knows and the consumer must not re-derive by sniffing the value's shape.
+
+TOOLS_CHANNEL_KIND_ADVERTISED = "advertised"
+TOOLS_CHANNEL_KIND_ABSENT = "absent"
+
+
+@dataclass(frozen=True)
+class AdvertisedTools:
+    """This transport HAS a ``tools=`` channel; ``entries`` is what is in it.
+
+    ``entries == []`` is meaningful on this arm and does not mean the same thing
+    as ``NoToolsChannel``: it says the channel exists and is currently empty (no
+    tool survived exclusion / permission narrowing), which is a state the model
+    can be shown and the operator can be told about."""
+
+    entries: list[dict]
+    kind: str = TOOLS_CHANNEL_KIND_ADVERTISED
+
+
+@dataclass(frozen=True)
+class NoToolsChannel:
+    """This transport has NO ``tools=`` channel — the field does not apply.
+
+    ``content_fence`` is the case: the model expresses a chosen action by writing
+    a fenced snippet against the code-API in ``tool_use_sp``, and nothing is ever
+    advertised through ``tools=``. A cell on this arm therefore cannot use
+    advertisement as its dispatch gate, which is why ``Presentation`` requires it
+    to carry an explicit ``dispatchable_catalog`` (#1618 root-1, now checked)."""
+
+    kind: str = TOOLS_CHANNEL_KIND_ABSENT
+
+
+ToolsChannel = AdvertisedTools | NoToolsChannel
+
+
+def advertised_entries(channel: ToolsChannel) -> "list[dict]":
+    """The entries that reach the provider's ``tools=`` argument — ``[]`` on the
+    absent arm.
+
+    This is the WIRE view, and the collapse is deliberate: an absent channel and
+    an empty one send the same thing, so a consumer whose only job is to hand the
+    payload to the provider (or to name what the model can see) is right to call
+    this. A consumer that must tell the two apart branches on the arm instead —
+    which is now possible, and is the whole point of the union."""
+    if isinstance(channel, AdvertisedTools):
+        return channel.entries
+    return []
+
+
 @dataclass
 class Presentation:
-    """What a scheme shows the LLM: the ``tools=`` payload + the tool-use SP.
+    """What a scheme shows the LLM: the ``tools=`` channel + the tool-use SP.
 
     A scheme builds this by handing an ``Exposure`` (``reyn.tools.exposure`` —
     what is shown, transport-neutrally) to the encoder for its transport
     (``reyn.tools.encoders`` — how that transport writes it down). Both fields
     below are therefore encoder output, and the two channels differ by transport
-    rather than by scheme: ``tool_calls`` fills ``llm_tools_payload`` and a
-    positional slot-map; ``content_fence`` has no ``tools=`` channel at all and
-    puts its whole surface in ``tool_use_sp``.
+    rather than by scheme: ``tool_calls`` fills ``tools_channel`` with
+    ``AdvertisedTools`` and a positional slot-map; ``content_fence`` says
+    ``NoToolsChannel`` and puts its whole surface in ``tool_use_sp``.
     """
 
-    llm_tools_payload: list[dict]
+    tools_channel: ToolsChannel
     # #1593 PR-4: the scheme's current candidate set (hashable ids) — the OS reads
     # this on the RePresent loop to detect convergence (``new = candidates - seen``;
     # empty ⇒ stop). Default empty: schemes that never RePresent (universal /
@@ -58,11 +120,11 @@ class Presentation:
     candidates: tuple = field(default_factory=tuple)
     # #1618 root-1: the scheme's DISPATCHABLE action set — the membership/resolution
     # gate for ANY call (JSON tool_call OR in-code ``tool()``), in the canonical
-    # ``catalog_entries`` shape. Decoupled from ``llm_tools_payload`` (what the LLM
+    # ``catalog_entries`` shape. Decoupled from ``tools_channel`` (what the LLM
     # is ADVERTISED): a scheme can advertise nothing yet dispatch everything (CodeAct
     # writes code, advertises ∅, dispatches the full catalog). Default ``None`` ⇒
-    # dispatchable = advertised (``llm_tools_payload``) — byte-identical for
-    # universal / enumerate-all / retrieval, whose three catalog notions coincide.
+    # dispatchable = advertised — byte-identical for universal / enumerate-all /
+    # retrieval, whose three catalog notions coincide.
     dispatchable_catalog: "list[dict] | None" = None
     # #1618 root-2 / #1627 Stage 0 — positional slot-map for the tool-use SP regions.
     # ``None`` ⇒ the OS builds all three slots via build_universal_tool_use_slots
@@ -77,9 +139,28 @@ class Presentation:
     # the content is scheme-owned. OS retains identity + errors-verbatim + non-tool routing.
     tool_use_sp: "dict[str, str] | str | None" = None
 
+    def __post_init__(self) -> None:
+        # #3421: a cell with no ``tools=`` channel cannot use advertisement as its
+        # dispatch gate — there is nothing advertised to key on — so it MUST name
+        # its dispatchable set explicitly. That was already true of every
+        # ``content_fence`` cell by construction (#1618 root-1: "an empty
+        # advertisement must not become an empty dispatch gate"); it is checkable
+        # only now that "no channel" is a value rather than an empty list. Note
+        # ``dispatchable_catalog=[]`` passes: a cell that genuinely dispatches
+        # nothing says so, which is the same empty-vs-absent discipline one level
+        # down.
+        if isinstance(self.tools_channel, NoToolsChannel) and self.dispatchable_catalog is None:
+            raise ValueError(
+                "a Presentation on the NoToolsChannel arm must carry an explicit "
+                "dispatchable_catalog: with no tools= channel there is no "
+                "advertisement for the dispatch gate to fall back on, so "
+                "dispatchable_catalog=None would silently gate every call against "
+                "an empty set. Pass [] to mean 'dispatches nothing'."
+            )
+
 
 # ── Canonical catalog-shape projections (#1618 root-1) ──────────────────────
-# ``catalog_entries`` (and ``llm_tools_payload``) carry ONE canonical entry shape —
+# ``catalog_entries`` (and an ``AdvertisedTools.entries`` payload) carry ONE canonical
 # the OpenAI-nested ``{"type":"function","function":{"name","description",
 # "parameters"}}``. The OS owns the projections every consumer needs, so no consumer
 # hand-reads a nested dict at a guessed depth (the #1/#3 root: render + the exclude
@@ -314,6 +395,8 @@ DEFAULT_SCHEME_NAME = "enumerate-all"
 
 
 __all__ = [
+    "TOOLS_CHANNEL_KIND_ABSENT", "TOOLS_CHANNEL_KIND_ADVERTISED",
+    "AdvertisedTools", "NoToolsChannel", "ToolsChannel", "advertised_entries",
     "ToolUseLayer", "Presentation", "Execute", "RePresent", "CodeBlock",
     "Interpretation", "ExecutionResult", "ExecContext", "ToolUseScheme", "SchemeOps",
     "register_scheme", "get_scheme", "registered_scheme_names",

@@ -118,17 +118,21 @@ class ContentFenceCellScheme:
         """Assemble the cell's ``Presentation`` from its exposure via the
         ``content_fence`` encoder.
 
-        Both channels are encoder output. ``llm_tools_payload`` is the encoder's
-        empty list — NOT "there are no tools" but "this transport has no
-        ``tools=`` channel", which is why the empty list is returned by the
-        encoder rather than written here. ``tool_use_sp`` is the rendered
+        Both channels are encoder output. ``tools_channel`` is the encoder's
+        ``NoToolsChannel`` — NOT "there are no tools" but "this transport has no
+        ``tools=`` channel". Since #3421 that is the value's TYPE rather than a
+        sentence about an empty list, so ``capability_visibility`` and the
+        router read the distinction instead of being told it in a comment.
+        ``dispatchable_catalog`` is mandatory on that arm (``Presentation``
+        checks it): with nothing advertised there is no advertisement for the
+        dispatch gate to fall back on (#1618 root-1). ``tool_use_sp`` is the rendered
         code-API: the SOLE tool-use instruction the model sees, injected at the
         ## Capabilities position with the universal tool-use construction
         dropped (#1618 root-3 ②)."""
         exposure, dispatchable_entries = await self.build_exposure(available, layer_ctx, ops)
         encoder = encoder_for_transport(Transport.CONTENT_FENCE)
         return Presentation(
-            llm_tools_payload=encoder.encode_tools(exposure),
+            tools_channel=encoder.encode_tools(exposure),
             dispatchable_catalog=dispatchable_entries,
             tool_use_sp=encoder.encode_tool_use_sp(exposure),
         )

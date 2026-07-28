@@ -43,7 +43,12 @@ from reyn.tools.exposure import (
     descriptor_from_entry,
     descriptors_from_entries,
 )
-from reyn.tools.scheme import Presentation, get_scheme
+from reyn.tools.scheme import (
+    AdvertisedTools,
+    Presentation,
+    advertised_entries,
+    get_scheme,
+)
 from reyn.tools.schemes._enumerate_exposure import (
     CONTENT_FENCE_EXPOSURE_DEVIATION,
     TOOL_CALLS_EXPOSURE_DEVIATION,
@@ -91,7 +96,7 @@ class _Ops:
         # build their exposure from. Its *content* is irrelevant to the arms that
         # use it here (they assert a relation between two derived sets, not the
         # set itself); what matters is that it is one list, composed once.
-        return Presentation(llm_tools_payload=list(self._base) + list(self._catalog))
+        return Presentation(tools_channel=AdvertisedTools(entries=list(self._base) + list(self._catalog)))
 
 
 # ── the pair table: still a capability declaration, still fail-closed ─────────
@@ -203,7 +208,9 @@ def test_a_provider_native_entry_is_carried_verbatim_not_normalised() -> None:
     descriptor = descriptor_from_entry(entry)
     assert descriptor.kind == DESCRIPTOR_KIND_PROVIDER_NATIVE
     assert descriptor.as_tool_calls_entry() == entry
-    assert ToolCallsEncoder().encode_tools(Exposure(descriptors=(descriptor,))) == [entry]
+    assert advertised_entries(
+        ToolCallsEncoder().encode_tools(Exposure(descriptors=(descriptor,)))
+    ) == [entry]
 
 
 @pytest.mark.asyncio
@@ -229,7 +236,7 @@ async def test_production_cells_reach_the_descriptor_classifier() -> None:
         {"hot_list_aliases": []}, {"search_visible": True}, ops,
     )
     descriptors = descriptors_from_entries(base + catalog)
-    assert pres.llm_tools_payload == [d.as_tool_calls_entry() for d in descriptors]
+    assert advertised_entries(pres.tools_channel) == [d.as_tool_calls_entry() for d in descriptors]
     # Vacuity guard: the equality above must have spanned every descriptor shape,
     # otherwise it only proves the seam carries the easy one.
     assert {d.kind for d in descriptors} == {
@@ -361,7 +368,7 @@ async def test_the_production_cells_carry_those_declarations() -> None:
     )
     fence_cell = await CodeActScheme().build_presentation({}, {}, ops)
 
-    advertised = {e["function"]["name"] for e in flat_cell.llm_tools_payload}
+    advertised = {e["function"]["name"] for e in advertised_entries(flat_cell.tools_channel)}
     assert "delegate_to_agent" in advertised
     assert "mcp__call_tool" not in advertised
     assert "def delegate_to_agent(" in fence_cell.tool_use_sp
@@ -458,4 +465,4 @@ def test_presentation_no_longer_carries_the_dead_sp_channel() -> None:
     fields = {f.name for f in dataclasses.fields(Presentation)}
     assert "sp_params" not in fields
     assert "sp_fragment" not in fields
-    assert {"llm_tools_payload", "tool_use_sp"} <= fields
+    assert {"tools_channel", "tool_use_sp"} <= fields

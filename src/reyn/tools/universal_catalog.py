@@ -1091,7 +1091,7 @@ def _describe_one(
         # #3383: a LIVE LLM-payload seam, not just a tool-result one —
         # ``catalog_entries`` below reuses this ``input_schema`` as an entry's
         # ``parameters``, and the DEFAULT ``enumerate-all`` scheme concatenates
-        # ``catalog_entries()`` into ``llm_tools_payload`` → ``tools=``. Route
+        # ``catalog_entries()`` into the advertised ``tools_channel`` → ``tools=``. Route
         # through the one projection that owns the deep-copy obligation.
         "input_schema": parameters_for_export(target.parameters),
     }

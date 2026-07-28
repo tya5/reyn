@@ -1,6 +1,7 @@
 """Tier 2: #1618 root-1 + root-4 — the canonical catalog-shape contract + projections.
 
-`catalog_entries` (and `llm_tools_payload`) carry ONE canonical entry shape — the
+`catalog_entries` (and an advertised `tools_channel` payload) carry ONE canonical
+entry shape — the
 OpenAI-nested `{type, function:{name, description, parameters}}`. The OS provides the
 projections every consumer reads (`flat_catalog_entries` for render + the dispatch
 membership; `dispatch_catalog_map` for the gate), so **no consumer hand-reads a nested

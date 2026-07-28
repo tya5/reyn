@@ -24,12 +24,14 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.tools.scheme import (
+    AdvertisedTools,
     Execute,
     ExecutionResult,
     PlainText,
     Presentation,
     SchemeOps,
     ToolUseScheme,
+    advertised_entries,
 )
 from reyn.tools.schemes.enumerate_all import EnumerateAllScheme
 
@@ -41,7 +43,7 @@ class _FakeOps:
         self.dispatched: list[dict] | None = None
 
     def present(self, available, layer_ctx) -> Presentation:  # universal-only; unused here
-        return Presentation(llm_tools_payload=[{"function": {"name": "WRAPPER"}}])
+        return Presentation(tools_channel=AdvertisedTools(entries=[{"function": {"name": "WRAPPER"}}]))
 
     def base_tools(self, available, layer_ctx) -> list[dict]:
         return [{"function": {"name": "file__read"}}]
@@ -78,7 +80,7 @@ async def test_build_presentation_is_base_plus_catalog_flat() -> None:
     pres = await s.build_presentation(
         {"hot_list_aliases": []}, {"search_visible": False}, _FakeOps(),
     )
-    names = [t["function"]["name"] for t in pres.llm_tools_payload]
+    names = [t["function"]["name"] for t in advertised_entries(pres.tools_channel)]
     assert names == ["file__read", "git__commit", "web__fetch"]   # base then catalog, flat
     assert "WRAPPER" not in names                                   # NOT via ops.present
 
@@ -213,7 +215,7 @@ async def test_enumerate_all_excludes_catalog_mcp_wrapper_3219() -> None:
     pres = await s.build_presentation(
         {"hot_list_aliases": []}, {"search_visible": False}, _RealCatalogOps(),
     )
-    names = [t["function"]["name"] for t in pres.llm_tools_payload]
+    names = [t["function"]["name"] for t in advertised_entries(pres.tools_channel)]
 
     # after: MCP-call action appears in exactly one shape — native, only once.
     assert names.count("call_mcp_tool") == 1

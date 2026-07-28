@@ -113,7 +113,7 @@ class RetrievalScheme:
         answer to "how is this written down" — the seam's whole point."""
         encoder = encoder_for_transport(Transport.TOOL_CALLS)
         return Presentation(
-            llm_tools_payload=encoder.encode_tools(exposure),
+            tools_channel=encoder.encode_tools(exposure),
             tool_use_sp=encoder.encode_tool_use_sp(exposure),
             **presentation_fields,
         )

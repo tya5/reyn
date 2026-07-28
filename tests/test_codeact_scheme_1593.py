@@ -25,7 +25,13 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.runtime.router_system_prompt import build_system_prompt
-from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult, PlainText
+from reyn.tools.scheme import (
+    CodeBlock,
+    ExecContext,
+    ExecutionResult,
+    NoToolsChannel,
+    PlainText,
+)
 from reyn.tools.schemes.codeact import CodeActScheme
 
 
@@ -155,8 +161,9 @@ async def test_build_presentation_renders_code_api_into_tool_use_sp() -> None:
     tool_use_sp (the REPLACE channel); no JSON tools=. Behavior-pinned (action names
     + tool() proxy + prose=terminal contract present), not format-pinned."""
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
-    # No JSON tools= — CodeAct presents via the SP, model writes a snippet.
-    assert pres.llm_tools_payload == []
+    # No JSON tools= — CodeAct presents via the SP, model writes a snippet. #3421:
+    # the channel is declared ABSENT, which is not the same claim as "empty".
+    assert isinstance(pres.tools_channel, NoToolsChannel)
     # The actions surface in the code-API as DIRECT functions (#1658: def <name>(...),
     # not the tool('name') string-proxy), via the REPLACE channel (tool_use_sp).
     assert "file__read" in pres.tool_use_sp

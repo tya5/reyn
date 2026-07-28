@@ -40,7 +40,13 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.router_loop import RouterLoop
 from reyn.security.permissions.effective import ContextualPermission
 from reyn.tools.exposure import Exposure, ExposureDeviation
-from reyn.tools.scheme import Presentation, get_scheme
+from reyn.tools.scheme import (
+    AdvertisedTools,
+    NoToolsChannel,
+    Presentation,
+    advertised_entries,
+    get_scheme,
+)
 from reyn.tools.schemes._content_fence_cell import ContentFenceCellScheme
 from reyn.tools.schemes._retrieval_exposure import retrieval_sp_facts
 from reyn.tools.schemes.retrieval import RetrievalScheme
@@ -104,7 +110,7 @@ class _Ops:
         self._catalog = catalog
 
     def present(self, available, layer_ctx) -> Presentation:
-        return Presentation(llm_tools_payload=list(self._wrappers))
+        return Presentation(tools_channel=AdvertisedTools(entries=list(self._wrappers)))
 
     def base_tools(self, available, layer_ctx) -> "list[dict]":
         return list(_BASE)
@@ -292,18 +298,19 @@ async def test_a_withheld_row_does_not_shift_the_identifier_of_a_shown_one() -> 
 
 @pytest.mark.asyncio
 async def test_the_cell_produces_all_three_channels_of_a_presentation() -> None:
-    """Tier 2: mechanism — an empty ``tools=`` payload, a rendered code-API, and a
+    """Tier 2: mechanism — NO ``tools=`` channel, a rendered code-API, and a
     dispatch catalog.
 
-    ``llm_tools_payload == []`` is this transport's way of saying "I have no
-    ``tools=`` channel" and is the encoder's answer, not a literal in the cell.
-    The third channel is the easy one to forget: with an empty advertisement, a
-    missing ``dispatchable_catalog`` would leave the gate keyed on nothing and
-    every in-code call would come back ``unknown_tool``."""
+    ``tools_channel`` is ``NoToolsChannel`` — this transport's way of saying "the
+    ``tools=`` field does not apply to me" (#3421 made that the value's type
+    rather than a comment beside an empty list). It is the encoder's answer, not a
+    literal in the cell. The third channel is the easy one to forget: with nothing
+    advertised, a missing ``dispatchable_catalog`` would leave the gate keyed on
+    nothing and every in-code call would come back ``unknown_tool``."""
     pres = await RetrievalContentFenceScheme().build_presentation(
         {}, dict(_SEARCH_ON), _Ops(wrappers=_WRAPPERS, catalog=_catalog(5)),
     )
-    assert pres.llm_tools_payload == []
+    assert isinstance(pres.tools_channel, NoToolsChannel)
     assert isinstance(pres.tool_use_sp, str) and "def search_actions(" in pres.tool_use_sp
     assert pres.dispatchable_catalog is not None
     assert {e["function"]["name"] for e in pres.dispatchable_catalog} == {

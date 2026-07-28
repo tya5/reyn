@@ -34,7 +34,7 @@ from __future__ import annotations
 from typing import Any
 
 from reyn.tools.exposure import Exposure
-from reyn.tools.scheme import register_scheme
+from reyn.tools.scheme import advertised_entries, register_scheme
 from reyn.tools.schemes._category_exposure import (
     CONTENT_FENCE_EXPOSURE_DEVIATION,
     build_category_exposure,
@@ -77,7 +77,7 @@ class CategoryContentFenceScheme(ContentFenceCellScheme):
         inside the exposure builder rather than by the OS's post-presentation
         ``tools=`` filter, because this transport has no ``tools=`` payload for
         that filter to act on."""
-        present_entries = list(ops.present(available, layer_ctx).llm_tools_payload)
+        present_entries = advertised_entries(ops.present(available, layer_ctx).tools_channel)
         exposure = build_category_exposure(
             present_entries=present_entries,
             available=available,
