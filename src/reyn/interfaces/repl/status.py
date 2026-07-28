@@ -228,11 +228,23 @@ def _extract_hooks(config) -> list[dict]:
 def _session_visibility_items(session) -> "list[dict] | None":
     """Read visibility state from the session (#2285 backend seam).
 
-    Shape: ``[{kind, name, on, denied}, ...]``. ``on`` is the ``/visibility`` axis
-    (not hidden_by_session); ``denied`` is the SEPARATE envelope/contextual axis
-    (#3378 ``denied_by_envelope`` — a topology / delegate / per-session / ``_untrusted``
-    narrowing). A denied row is not user-flippable, so it carries ``on=False,
-    denied=True`` and a renderer must show it distinguishably from a plain ``off``.
+    Shape: ``[{kind, name, on, denied, denied_reason}, ...]``. ``on`` is the
+    ``/visibility`` axis (not hidden_by_session); ``denied`` is the SEPARATE
+    envelope/contextual axis. A denied row is not user-flippable, so it carries
+    ``on=False, denied=True`` and a renderer must show it distinguishably from a
+    plain ``off``.
+
+    #3380 — ``denied_reason`` says WHICH narrowing, because the two differ in what
+    the operator can do about them:
+
+    - ``"envelope"`` (#3378 ``denied_by_envelope``) — a topology binding / delegate
+      floor / per-session config / ⊆-parent cap. Durable for this session.
+    - ``"turn_context"`` (#3380 ``denied_by_turn_context``) — the ephemeral
+      ``_untrusted`` profile, live only while untrusted external content sits in the
+      active context; it lifts itself when that entry compacts out.
+
+    Both are re-read from the session on every snapshot (the #3338 per-frame pane
+    rebuild), so neither is a latched "as of turn N" value.
 
     Returns **None** — not ``[]`` — when the seam is absent or raised (#3378
     requirement 4): the renderer must be able to tell "this session wires no
@@ -252,12 +264,20 @@ def _session_visibility_items(session) -> "list[dict] | None":
                 "name": a["name"],
                 "on": (a["kind"], a["name"]) not in hidden,
                 "denied": False,
+                "denied_reason": None,
             }
             for a in authorized
         ]
         items += [
-            {"kind": d["kind"], "name": d["name"], "on": False, "denied": True}
-            for d in (state.get("denied_by_envelope") or [])
+            {
+                "kind": d["kind"], "name": d["name"], "on": False,
+                "denied": True, "denied_reason": reason,
+            }
+            for key, reason in (
+                ("denied_by_envelope", "envelope"),
+                ("denied_by_turn_context", "turn_context"),
+            )
+            for d in (state.get(key) or [])
         ]
         return items
     except Exception:  # noqa: BLE001
