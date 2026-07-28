@@ -21,18 +21,21 @@ substrate:
 - ``format_feedback`` → ``ops.feedback`` (the basic tool_result formatting, a JSON-
   scheme shared base — confirmed reuse, lead #1593).
 
-SP: #1627 Stage 2: ``build_presentation`` now owns its tool-use SP via the slot-map.
-It calls ``build_universal_tool_use_slots`` with enumerate's 5 inputs derived from
-``layer_ctx`` (the OS-supplied raw FACTS), and attaches the resulting slot-map to
-the returned ``Presentation`` as ``tool_use_sp``. This relocates the tier→discovery-
-mandate POLICY out of the OS and into the scheme layer (CHAR-IDENTICAL: Stage 0
-proved the two paths produce the same SP bytes). Key difference from universal:
-``search_actions_enabled = bool(search_visible)`` (NOT ``sv if univ else True`` —
-enumerate never has wrappers, so the fallback-to-True branch does not apply).
-``sp_params`` is kept AS-IS (Stage 4 removes it; harmless now).
+This module is the ``(enumerate-all, tool_calls)`` **cell**: it pairs the shared
+``enumerate-all`` Exposure (``_enumerate_exposure``, which the ``content_fence``
+cell also uses) with the ``tool_calls`` Encoder. What the two cells disagree
+about is declared as an ``ExposureDeviation``, not written twice.
+
+SP: the tool-use SP is owned by the scheme layer, not the OS — the exposure
+carries the raw FACTS derived from ``layer_ctx`` and the encoder turns them into
+the positional slot-map the ``Presentation`` hands over as ``tool_use_sp``. Key
+difference from universal: ``search_actions_enabled = bool(search_visible)``
+(NOT ``sv if univ else True`` — enumerate never has wrappers, so the
+fallback-to-True branch does not apply).
 """
 from __future__ import annotations
 
+from reyn.tools.encoders import encoder_for_transport
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -43,8 +46,11 @@ from reyn.tools.scheme import (
     SchemeOps,
     register_scheme,
 )
-from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
-from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+from reyn.tools.schemes._enumerate_exposure import (
+    TOOL_CALLS_EXPOSURE_DEVIATION,
+    build_enumerate_all_exposure,
+)
+from reyn.tools.transport import Transport
 
 
 class EnumerateAllScheme:
@@ -53,50 +59,25 @@ class EnumerateAllScheme:
     name = "enumerate-all"
 
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
-        # Self-contained presentation (e2e-agreed seam, #1593): compose the flat
-        # tools= from the router's building-block ops — the prior-shape base tools
-        # + every catalog action flat (no universal wrappers / no discovery). The
+        # Self-contained presentation (e2e-agreed seam, #1593): the exposure
+        # composes what this cell shows — the prior-shape base tools + every
+        # catalog action flat (no universal wrappers / no discovery), minus the
+        # declared exclusions — and the tool_calls encoder writes it down. The
         # router holds host context + catalog, so the scheme stays P7-clean.
         # catalog_entries is async (the live-catalog enumeration awaits the
         # router caller-state / rag manifest); base_tools stays sync.
-        #
-        # #3219: ``mcp__call_tool`` (the catalog projection of mcp_verbs.py's
-        # MCP_CALL_TOOL ToolDefinition) is a zero-capability thin adapter that
-        # purely splits ``<server>__<tool>`` and delegates to native
-        # ``call_mcp_tool`` (mcp.py) — already present in ``base_tools()`` above.
-        # Enumerate-all's own contract is "never has wrappers" (see module
-        # docstring), so this catalog wrapper leaking into the flat ``tools=``
-        # alongside its native equivalent contradicted the scheme's own rule:
-        # the model saw the same MCP-call action twice, in two arg shapes, in
-        # one payload. Excluded HERE (enumerate-all only) — capability is
-        # lossless (native ``call_mcp_tool`` covers it) and the universal
-        # scheme (which legitimately keeps the catalog-uniform wrapper for its
-        # own reasons) is untouched, since it does not build from
-        # ``catalog_entries()`` at all (see ``RouterLoop.present``).
-        _ENUMERATE_ALL_EXCLUDED_CATALOG_NAMES = frozenset({"mcp__call_tool"})
-        catalog = [
-            entry for entry in await ops.catalog_entries()
-            if entry.get("function", entry).get("name") not in _ENUMERATE_ALL_EXCLUDED_CATALOG_NAMES
-        ]
-        flat_tools = list(ops.base_tools(available, layer_ctx)) + catalog
-        # #1627 Stage 2: own the tool-use SP via the slot-map.
-        # Derive the 5 builder inputs from the raw FACTS in layer_ctx. Enumerate
-        # NEVER has universal wrappers, so universal_wrappers_enabled is always
-        # False. CRITICAL: search_actions_enabled = bool(search_visible) directly
-        # (NOT the universal formula ``sv if univ else True`` — that fallback-to-True
-        # branch only applies when universal wrappers are off; enumerate is
-        # always-off so the direct bool(search_visible) is the correct mapping).
-        slots = build_universal_tool_use_slots(
-            universal_wrappers_enabled=False,
-            search_actions_enabled=bool(layer_ctx.get("search_visible", False)),
-            discovery_mandate=tier_wants_discovery_mandate(layer_ctx.get("router_model")),
-            has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
-            non_interactive=bool(layer_ctx.get("non_interactive", False)),
-            # #2548 PR-A: skill registry snapshot → ## Skills block.
-            available_skills=layer_ctx.get("available_skills"),
+        exposure = build_enumerate_all_exposure(
+            catalog_entries=await ops.catalog_entries(),
+            available=available,
+            layer_ctx=layer_ctx,
+            ops=ops,
+            deviation=TOOL_CALLS_EXPOSURE_DEVIATION,
         )
-        # #1627 Stage 4: sp_params removed — build_system_prompt no longer reads it.
-        return Presentation(llm_tools_payload=flat_tools, tool_use_sp=slots)
+        encoder = encoder_for_transport(Transport.TOOL_CALLS)
+        return Presentation(
+            llm_tools_payload=encoder.encode_tools(exposure),
+            tool_use_sp=encoder.encode_tool_use_sp(exposure),
+        )
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # #1640: no tool_calls = a plain-text answer (the model's normal terminal) →

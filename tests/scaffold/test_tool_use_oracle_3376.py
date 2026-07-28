@@ -1,5 +1,11 @@
-# scaffold: triggered_by="#3376 P1 lands the Exposure/Encoder seam under the 4 existing (scheme x transport) cells"
-# scaffold: removed_by="The same PR that lands the P1 seam, once the 4 cells are shown byte-identical against this oracle"
+# scaffold: triggered_by="#3376 P3 lands the last (scheme x transport) cell, after which no PR in the arc still has to show the 4 pre-existing cells unchanged"
+# scaffold: removed_by="The PR that closes #3376"
+# scaffold: note="Re-pointed by the P1 seam PR. The original trigger named P1, but the
+#   arc did not end there: P2 adds the (category x content_fence) cell and P3 the
+#   remaining ones, and each of those still has to show that the 4 cells recorded
+#   here did not move. Deleting the artifact at P1 would leave the two PRs with the
+#   most cell-composition churn with no byte-identical target at all. Re-pointing is
+#   a visible decision; a trigger left silently stale is not."
 """Tier 1: the #3376 P1 byte-identical gate — the 4 registered ``(scheme x
 transport)`` cells still produce exactly the ``(llm_tools_payload,
 tool_use_sp)`` recorded in ``tool_use_oracle_3376.json``.

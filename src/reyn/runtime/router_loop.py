@@ -89,7 +89,7 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
 # turned the tool_call into a RePresent (it is never dispatched), but the message
 # history still needs every tool_call answered — this is that answer. P7-clean:
 # OS-level vocabulary, no "search" / scheme concept; the new tools= payload + the
-# scheme's sp_fragment carry the actual re-presentation meaning to the LLM.
+# scheme's tool-use SP carry the actual re-presentation meaning to the LLM.
 _REPRESENT_ACK = (
     "The available tools have been updated based on your request. "
     "The tools you can now call are listed above."
@@ -1590,11 +1590,11 @@ class RouterLoop:
         # the window is ample (then compact stays hidden + the SP header is
         # omitted); non-None when filling (compact tool + header appear together).
         _ctx_signal = _render_context_size_signal_for_host(host)
-        # #1593: build the presentation via the active scheme (tools= payload + SP
-        # params). Universal delegates to the router's `present` op → byte-identical
-        # (build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
-        # differently. The OS still projects _catalog from the payload + builds the
-        # (monolithic) SP from sp_params below.
+        # #1593: build the presentation via the active scheme (tools= payload +
+        # the tool-use SP). Universal delegates to the router's `present` op →
+        # byte-identical (build_tools with the catalog wrappers). PR-2/3 schemes
+        # shape tools= differently. The OS still projects _catalog from the
+        # payload and injects the scheme-owned SP slots below.
         # #1593 PR-4: capture the build_presentation inputs so the OS RePresent arm
         # (run_loop) can re-call build_presentation with a refinement + the
         # accumulated `presented` set. Stashed on self (RouterLoop is per-run state,
@@ -2986,9 +2986,10 @@ class RouterLoop:
 
     def present(self, available, layer_ctx):
         """SchemeOps.present: today's universal-category presentation —
-        ``build_tools`` with the catalog wrappers. #1627 Stage 4: sp_params removed
-        (build_system_prompt no longer reads them; the scheme layer owns SP via
-        tool_use_sp slot-map)."""
+        ``build_tools`` with the catalog wrappers. Carries the ``tools=`` payload
+        only; the scheme layer owns the tool-use SP (the universal-category
+        scheme turns this payload into an ``Exposure`` and lets the ``tool_calls``
+        encoder produce both channels)."""
         from reyn.tools.scheme import Presentation
 
         univ = layer_ctx["univ_enabled"]
@@ -3003,7 +3004,6 @@ class RouterLoop:
             hot_list_aliases=available["hot_list_aliases"],
             compact_visible=layer_ctx["ctx_signal_present"],
         )
-        # #1627 Stage 4: sp_params removed — build_system_prompt no longer reads it.
         return Presentation(
             llm_tools_payload=tools,
         )
