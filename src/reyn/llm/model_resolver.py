@@ -257,6 +257,14 @@ class ModelResolver:
 
         self._default_class = default_class
         self._purpose_classes: dict[str, str] = dict(purpose_classes or {})
+        # #3368: names already warned about in resolve()'s passthrough branch.
+        # resolve() sits on the per-LLM-call hot path (called once per
+        # request for the session's configured model class) — without this,
+        # a single mistyped/unregistered class name would log one warning
+        # PER CALL for the lifetime of the session, which is its own defect
+        # (log spam masking the signal it's meant to surface). Warn once per
+        # distinct unresolved name per resolver instance instead.
+        self._warned_unresolved: set[str] = set()
 
         # Flat namespace: user entries override built-ins.
         self._namespace: dict[str, Any] = {**builtin, **mapping}
@@ -303,16 +311,23 @@ class ModelResolver:
         # provider-side rejection once litellm itself receives the
         # unresolved name (#3368). Logged (not raised) so the passthrough
         # behavior is unchanged, but the case is no longer fully silent.
-        import logging
+        # Warned once per distinct name (not per call): resolve() is called
+        # once per LLM request for the session's model class, so an
+        # unresolved name would otherwise log on every single turn for the
+        # rest of the session — spam that buries the one warning that
+        # matters, not additional signal.
+        if name not in self._warned_unresolved:
+            self._warned_unresolved.add(name)
+            import logging
 
-        logging.getLogger(__name__).warning(
-            "model class %r not found among known classes (%s) — passing it "
-            "through unchanged as a literal LiteLLM model string. If this "
-            "was meant to be a configured class, check reyn.yaml/"
-            "reyn.local.yaml's `models:` section for a typo or a load "
-            "failure.",
-            name, ", ".join(sorted(self._resolved)) or "none",
-        )
+            logging.getLogger(__name__).warning(
+                "model class %r not found among known classes (%s) — passing it "
+                "through unchanged as a literal LiteLLM model string. If this "
+                "was meant to be a configured class, check reyn.yaml/"
+                "reyn.local.yaml's `models:` section for a typo or a load "
+                "failure. (This warning fires once per distinct name.)",
+                name, ", ".join(sorted(self._resolved)) or "none",
+            )
         return ModelSpec(model=name, kwargs={})
 
     def class_for_purpose(self, purpose: str) -> str:

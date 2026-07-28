@@ -10,6 +10,17 @@ F11: the system prompt built by router_system_prompt must include an explicit
 Policy: no MagicMock / AsyncMock on collaborators. Real Session and
 build_system_prompt instances. RouterLoop.run() is patched only where strictly
 necessary to avoid network calls (Tier 3 LLM-replay tests are separate).
+
+#3382 — why every F8 test below pins the LLM explicitly: the cap-exhausted
+path first attempts an LLM force-close wrap-up and only falls back to the
+canned ``_ROUTER_RETRY_EXHAUSTED_MSG`` when that wrap-up is unavailable
+(``session.py`` #1496 site C). These tests used to reach the canned leg by
+accident — the ambient environment had no usable model, so the wrap-up
+always raised — which made them green for the wrong reason and green in
+exactly one kind of environment. Each canned-leg test now injects a
+``RaisingLLM``, and ``test_retry_exhausted_wrap_up_success_...`` pins the
+OTHER leg, so a regression in either direction is visible with or without
+credentials.
 """
 from __future__ import annotations
 
@@ -25,6 +36,7 @@ from reyn.runtime.session import (
     Session,
 )
 from tests._support.agent_session import make_session
+from tests._support.router_loop import RaisingLLM, ScriptedLLM
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,6 +86,19 @@ def _text_result(text: str) -> LLMToolCallResult:
     )
 
 
+def _pin_llm(monkeypatch, caller) -> None:
+    """Pin the LLM the cap-exhausted wrap-up will reach (#3382).
+
+    ``_handle_user_message`` has no ``_llm_caller`` parameter, so the
+    wrap-up's LLM is pinned at the ``call_llm_tools`` boundary that
+    ``RouterLoop._force_close_call`` falls back to. Replacement is a real
+    callable (policy: Mock vs Fake — ``monkeypatch.setattr`` with a real
+    callable is allowed, and the LLM is the one collaborator a Tier-2c
+    test may fake).
+    """
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", caller)
+
+
 # ---------------------------------------------------------------------------
 # F8 tests — retry-exhausted fallback message language
 # ---------------------------------------------------------------------------
@@ -86,9 +111,13 @@ def test_retry_exhausted_fallback_is_japanese_when_output_language_ja(
 
     The fallback text must come from _ROUTER_RETRY_EXHAUSTED_MSG["ja"],
     not from the hardcoded English string.
+
+    #3382: the wrap-up is pinned unavailable, so the canned leg is
+    reached by construction rather than by the environment lacking a key.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="ja")
+    _pin_llm(monkeypatch, RaisingLLM())
 
     # Pre-spend the budget and suppress the reset so the very first
     # _run_router_loop attempt inside _handle_user_message is rejected.
@@ -120,6 +149,7 @@ def test_retry_exhausted_fallback_is_english_when_output_language_en(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="en")
+    _pin_llm(monkeypatch, RaisingLLM())  # #3382: canned leg by construction
 
     monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)
     session.router_invocations_this_turn = 3
@@ -145,6 +175,7 @@ def test_retry_exhausted_fallback_defaults_to_english_for_unsupported_language(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="fr")
+    _pin_llm(monkeypatch, RaisingLLM())  # #3382: canned leg by construction
 
     monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)
     session.router_invocations_this_turn = 3
@@ -344,21 +375,13 @@ def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
     global default for an internal error string when the user has not
     expressed a language preference). Regional languages like ja are
     NOT silently chosen as fallback.
+
+    #3382: uses the designed ``_llm_caller`` seam to pin the wrap-up as
+    unavailable, so the canned leg is reached by construction.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language=None)
     session.is_attached = True
-
-    delivered: list[dict] = []
-
-    async def fake_put_outbox(msg):
-        delivered.append({
-            "kind": msg.kind,
-            "text": msg.text,
-            "meta": msg.meta,
-        })
-
-    session._put_outbox = fake_put_outbox  # type: ignore[assignment]
 
     from reyn.runtime.errors import RouterCapExceeded
 
@@ -366,16 +389,56 @@ def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
         await session._emit_router_cap_exhausted_user(
             RouterCapExceeded(count=3, cap=3, last_reason="loop"),
             chain_id="chain-test",
+            _llm_caller=RaisingLLM(),
         )
 
     _run(run())
 
     # The agent reply should be the English fallback, not the Japanese one.
-    agent_msgs = [m for m in delivered if m["kind"] == "agent"]
-    assert agent_msgs, f"no agent reply emitted; got: {delivered}"
-    assert agent_msgs[0]["text"] == _ROUTER_RETRY_EXHAUSTED_MSG["en"], (
+    agent_msgs = [m for m in _drain_outbox(session) if m.kind == "agent"]
+    assert agent_msgs, "no agent reply emitted"
+    assert agent_msgs[0].text == _ROUTER_RETRY_EXHAUSTED_MSG["en"], (
         f"Expected English fallback when output_language=None; got: "
-        f"{agent_msgs[0]['text']!r}"
+        f"{agent_msgs[0].text!r}"
     )
     # Specifically NOT the ja message.
-    assert agent_msgs[0]["text"] != _ROUTER_RETRY_EXHAUSTED_MSG["ja"]
+    assert agent_msgs[0].text != _ROUTER_RETRY_EXHAUSTED_MSG["ja"]
+
+
+def test_retry_exhausted_wrap_up_success_replaces_canned_fallback(
+    tmp_path, monkeypatch
+):
+    """Tier 2: when the force-close wrap-up DOES produce text, the user
+    gets that generated summary and NOT the canned i18n fallback (#1496
+    site C's documented specification: the canned message is the fallback,
+    generation is the intent).
+
+    #3382: this is the leg the F8 tests above never had. Without it, the
+    canned-leg assertions stay green in an environment where the wrap-up
+    can never succeed — which is exactly how they came to pin the
+    then-current defect instead of the specification.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, cap=3, output_language="ja")
+    session.is_attached = True
+    _pin_llm(monkeypatch, ScriptedLLM([_text_result("完了した内容の要約です")]))
+
+    monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)
+    session.router_invocations_this_turn = 3
+    session._router_last_reason = "out_of_scope"
+
+    _run(session._handle_user_message("こんにちは", chain_id="chain-wrapup"))
+
+    msgs = _drain_outbox(session)
+    agent_msgs = [m for m in msgs if m.kind == "agent"]
+    assert agent_msgs, "Expected an agent outbox message"
+    (agent_msg,) = agent_msgs
+    assert agent_msg.text == "完了した内容の要約です", (
+        f"Expected the generated wrap-up; got: {agent_msg.text!r}"
+    )
+    assert agent_msg.text != _ROUTER_RETRY_EXHAUSTED_MSG["ja"]
+    assert (agent_msg.meta or {}).get("limit_stopped") is True
+    # The canned leg emits an error message alongside; it must not fire.
+    assert not [m for m in msgs if m.kind == "error"], (
+        "canned fallback fired despite a successful wrap-up"
+    )

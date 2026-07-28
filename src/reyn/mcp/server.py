@@ -28,8 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from reyn.core.events.progress_lifecycle import (
+    PROGRESS_LIFECYCLE_EVENTS,
+    format_progress_message,
+)
 from reyn.runtime.agent_locks import get_agent_lock as _get_agent_lock
 
 logger = logging.getLogger(__name__)
@@ -803,8 +807,8 @@ async def _make_mcp_progress_bridge(
       - the request context is unavailable for any reason (= defensive)
 
     The returned bridge has subscribed itself to the agent's chat
-    events; callers MUST call ``bridge.detach()`` in a ``finally`` to
-    avoid the subscriber leaking across calls.
+    audit-event log; callers MUST call ``bridge.detach()`` in a ``finally``
+    to avoid the subscriber leaking across calls.
     """
     try:
         ctx = server.request_context  # type: ignore[attr-defined]
@@ -829,31 +833,26 @@ async def _make_mcp_progress_bridge(
 
 
 class _MCPProgressBridge:
-    """Forwards selected agent chat-events to MCP progress notifications.
+    """Forwards selected chat audit-events of one agent to MCP progress notifications.
 
-    issue #271 M1 (= M1-b lifecycle event scope per owner decision):
-
-      - ``phase_started`` → progress = next ordinal, message = "phase: <name>"
-      - ``llm_called`` → progress = ordinal, message = "llm: <model>"
-      - ``act_executed`` → progress = ordinal, message = "act: <N> op(s)"
+    issue #271 M1 (= M1-b lifecycle scope per owner decision); the forwarded
+    selection and its wording are declared once in
+    :data:`PROGRESS_LIFECYCLE_EVENTS` / :func:`format_progress_message`, shared
+    verbatim with the A2A bridge (#3357).
 
     ``progress`` is monotonic (= ordinal counter) since we don't have a
     meaningful total. The MCP spec accepts ``total=None`` for
     indeterminate progress; clients render as raw value or spinner.
 
-    The subscriber runs synchronously in the EventLog dispatcher; it
+    The subscriber runs synchronously in the audit-event log's dispatcher; it
     schedules the actual ``send_progress_notification`` as an asyncio
-    task so we don't block the event emitter on the MCP transport. Any
+    task so we don't block the emitter on the MCP transport. Any
     transport / cancellation error in the background task is swallowed
     (= progress is best-effort; the main call must never fail because
     notification delivery failed).
     """
 
-    TRACKED_EVENTS = frozenset({
-        "phase_started",
-        "llm_called",
-        "act_executed",
-    })
+    TRACKED_EVENTS = PROGRESS_LIFECYCLE_EVENTS
 
     def __init__(
         self,
@@ -907,7 +906,7 @@ class _MCPProgressBridge:
         if event_type not in self.TRACKED_EVENTS:
             return
         data = getattr(event, "data", {}) or {}
-        message = self._format_message(event_type, data)
+        message = format_progress_message(event_type, data)
         self._ordinal += 1
         ordinal = float(self._ordinal)
         try:
@@ -918,20 +917,6 @@ class _MCPProgressBridge:
             # context picks up the next event.
             return
         self._tasks.append(task)
-
-    @staticmethod
-    def _format_message(event_type: str, data: dict) -> str:
-        if event_type == "phase_started":
-            phase = data.get("phase") or "?"
-            return f"phase: {phase}"
-        if event_type == "llm_called":
-            model = data.get("model") or "?"
-            return f"llm: {model}"
-        if event_type == "act_executed":
-            op_count = data.get("op_count") or 0
-            suffix = "" if op_count == 1 else "s"
-            return f"act: {op_count} op{suffix}"
-        return event_type
 
     async def _send(self, ordinal: float, message: str) -> None:
         send_fn = getattr(self._mcp_session, "send_progress_notification", None)
@@ -952,45 +937,37 @@ class _MCPProgressBridge:
             return
 
 
-async def serve_stdio(
-    registry: "AgentRegistry",
-    *,
-    timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
-) -> None:
-    """Run the MCP server speaking JSON-RPC over stdio until EOF / SIGINT.
+def build_init_options(server: Any) -> Any:
+    """Build the MCP ``initialize`` response options this server advertises.
 
-    On exit, the registry is shut down so any in-flight chat sessions
-    drain cleanly (mirrors what ``reyn chat`` does on quit).
+    issue #271 M3: capability advertising. Declares what this server actually
+    emits + handles so MCP clients can negotiate features before issuing
+    ``send_to_agent`` calls. Reality must match the claim (= avoid the #267 Z-b
+    "capability claim vs reality" mismatch pattern by deriving each entry from a
+    concrete production wire):
+
+      - ``NotificationOptions``: tools/prompts/resources lists are STATIC
+        (= ``_list_tools`` returns the same tools every call, no
+        ``notify_*_changed`` call sites in this module).
+      - experimental ``reyn.progress.skill_lifecycle``: ``_MCPProgressBridge``
+        subscribes the agent's chat audit-event log and emits
+        ``notifications/progress`` for each kind in
+        :data:`PROGRESS_LIFECYCLE_EVENTS` during ``send_to_agent``. The
+        advertised ``events`` list is DERIVED from that constant rather than
+        restated, so the declaration cannot drift from the filter (#3357 — it
+        previously named two kinds no producer emitted). The capability KEY is
+        a legacy artifact from the skill-based era, kept as-is because it is a
+        published wire-protocol string clients match on.
+      - experimental ``reyn.cancellation.cooperative``: ``notifications/cancelled``
+        propagation through ``asyncio.CancelledError`` → in-flight agent turn
+        interruption.
+
+    Separated from :func:`serve_stdio` so the advertisement is assertable
+    without standing up a stdio transport.
     """
-    from mcp.server.stdio import stdio_server
-
-    # No extra_tools here: the stdio MCP server hosts no gateway outbound tools
-    # (#1805) — those are reyn-web-scoped (webhook plugins mount in the FastAPI
-    # app + register_tools is collected onto app.state). A stdio CLI has no app,
-    # so there is nothing to host. The SSE path (web/routers/mcp.py) passes
-    # extra_tools; this asymmetry is by design, not an oversight.
-    server = build_server(registry, timeout=timeout)
-    # issue #271 M3: capability advertising. Declare what this server
-    # actually emits + handles so MCP clients can negotiate features
-    # before issuing send_to_agent calls. Reality must match the claim
-    # (= avoid the #267 Z-b "capability claim vs reality" mismatch
-    # pattern by deriving each entry from a concrete production wire):
-    #
-    #   - NotificationOptions: tools/prompts/resources lists are STATIC
-    #     (= ``_list_tools`` returns the same 2 tools every call, no
-    #     notify_list_changed call sites in src/reyn/mcp_server.py).
-    #   - experimental ``reyn.progress.skill_lifecycle``: PR #279 wired
-    #     ``_MCPProgressBridge`` to subscribe chat_events + emit
-    #     ``notifications/progress`` for phase_started / llm_called /
-    #     act_executed during send_to_agent. Name is a legacy artifact
-    #     from the skill-based era; the key is a published wire-protocol
-    #     string so it is kept as-is for client compatibility.
-    #   - experimental ``reyn.cancellation.cooperative``: PR #279 wired
-    #     ``notifications/cancelled`` propagation through
-    #     asyncio.CancelledError → in-flight agent turn interruption.
     from mcp.server import NotificationOptions
 
-    init_options = server.create_initialization_options(
+    return server.create_initialization_options(
         notification_options=NotificationOptions(
             prompts_changed=False,
             resources_changed=False,
@@ -999,11 +976,7 @@ async def serve_stdio(
         experimental_capabilities={
             "reyn.progress.skill_lifecycle": {
                 "version": 1,
-                "events": [
-                    "phase_started",
-                    "llm_called",
-                    "act_executed",
-                ],
+                "events": sorted(PROGRESS_LIFECYCLE_EVENTS),
             },
             "reyn.cancellation.cooperative": {
                 "version": 1,
@@ -1025,6 +998,27 @@ async def serve_stdio(
             },
         },
     )
+
+
+async def serve_stdio(
+    registry: "AgentRegistry",
+    *,
+    timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
+) -> None:
+    """Run the MCP server speaking JSON-RPC over stdio until EOF / SIGINT.
+
+    On exit, the registry is shut down so any in-flight chat sessions
+    drain cleanly (mirrors what ``reyn chat`` does on quit).
+    """
+    from mcp.server.stdio import stdio_server
+
+    # No extra_tools here: the stdio MCP server hosts no gateway outbound tools
+    # (#1805) — those are reyn-web-scoped (webhook plugins mount in the FastAPI
+    # app + register_tools is collected onto app.state). A stdio CLI has no app,
+    # so there is nothing to host. The SSE path (web/routers/mcp.py) passes
+    # extra_tools; this asymmetry is by design, not an oversight.
+    server = build_server(registry, timeout=timeout)
+    init_options = build_init_options(server)
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, init_options)
@@ -1036,6 +1030,7 @@ async def serve_stdio(
 
 
 __all__ = [
+    "build_init_options",
     "build_server",
     "list_agents_impl",
     "send_to_agent_impl",
