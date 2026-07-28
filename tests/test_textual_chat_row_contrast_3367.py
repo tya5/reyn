@@ -61,21 +61,22 @@ from reyn.runtime.outbox import DISPLAY_KINDS, OutboxMessage
 #: Minimum acceptable contrast ratio between a row's ink and the surface it is
 #: painted on — a DISTINGUISHABILITY floor, not a WCAG conformance target.
 #:
-#: Deliberately NOT WCAG AA (4.5) or AA-large (3.0): ``_CC_DIM`` is an
-#: intentionally ambient, low-contrast colour, and legislating an accessibility
-#: ratio onto it here would turn this gate into a redesign of the palette rather
-#: than a defence of the #3367 invariant. This floor is set to separate the
-#: failure mode — a foreground painted in its own or a near-identical background
-#: (ratio 1.0 exactly when equal) — from every pairing the palette actually
-#: produces. The gate asserts strict inequality alongside it, so the invariant
-#: named in the issue is pinned literally as well as by proxy. No hex value is
-#: pinned anywhere in this file.
+#: Not WCAG AA (4.5): ``_CC_DIM`` is an intentionally ambient, low-contrast
+#: colour, and legislating full AA onto it here would turn this gate into a
+#: redesign of the palette rather than a defence of the #3367 invariant.
 #:
-#: Raising this to ``3.0`` is the start condition of **#3371**: the user row
-#: (``_CC_DIM`` on ``_CC_USER_BG``, ratio 2.78) goes RED at that threshold. That
-#: is a palette DESIGN decision, tracked separately — do not raise it here as a
-#: drive-by.
-MIN_CONTRAST = 2.0
+#: #3371 raised this from ``2.0`` to WCAG AA-large's ``3.0``: the worst
+#: pairing the gate found, the user row (``_CC_DIM`` on ``_CC_USER_BG``),
+#: measured 2.78 — a real legibility gap for the one row that echoes the
+#: user's own typed input, not just an ambient log line. Fixed by darkening
+#: ``_CC_USER_BG`` (2.78 -> 3.30 measured), not by brightening ``_CC_DIM``
+#: itself (which is shared by every ambient/low-importance line elsewhere,
+#: outside this widget's background). The floor still separates the #3367
+#: failure mode — a foreground painted in its own or a near-identical
+#: background (ratio 1.0 exactly when equal) — from every pairing the
+#: palette actually produces; the gate asserts strict inequality alongside
+#: it. No hex value is pinned anywhere in this file.
+MIN_CONTRAST = 3.0
 
 #: A tool result that ``summarize_tool_result`` renders as a ``✗`` failure (the
 #: dict-with-``error`` shape). Its failure-ness is ASSERTED in the fixtures
