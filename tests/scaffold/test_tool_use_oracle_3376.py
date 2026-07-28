@@ -218,16 +218,16 @@ def test_content_fence_cell_records_the_empty_payload_verbatim() -> None:
     assert isinstance(cell["tool_use_sp"], str) and cell["tool_use_sp"]
 
 
-def test_enumerate_all_transport_asymmetry_is_recorded_not_smoothed() -> None:
-    """Tier 1: the #3381 base-tools asymmetry is preserved in the artifact.
+def test_both_enumerate_all_cells_record_the_same_exposed_population() -> None:
+    """Tier 1: the artifact records the two ``enumerate-all`` cells exposing one
+    population — #3381 settled, in the recording rather than only in the code.
 
-    The ``enumerate-all`` name spans two cells that expose DIFFERENT tool
-    populations: the ``tool_calls`` cell merges ``base_tools`` + the catalog,
-    while the ``content_fence`` (CodeAct) cell renders ``catalog_entries`` only.
-    Architect's #3376 ruling: probably a gap, but P1 must not fix it — fixing it
-    would add callables to CodeAct's system prompt and break P1's own criterion.
-    This arm makes an accidental "correction" fail loudly here rather than pass
-    as an improvement."""
+    Until #3381 this arm asserted the opposite, because until #3381 the opposite
+    was the fact: the ``tool_calls`` cell advertised ``base_tools`` + catalog
+    while the ``content_fence`` (CodeAct) cell rendered the catalog alone, and no
+    record anywhere said that was decided. The artifact is the place that keeps a
+    re-divergence from reading as an improvement, so the arm was inverted rather
+    than deleted."""
     cells = _recorded()["cells"]
     tool_calls_names = {
         t["function"]["name"] for t in cells["enumerate-all|tool_calls"]["llm_tools_payload"]
@@ -242,7 +242,12 @@ def test_enumerate_all_transport_asymmetry_is_recorded_not_smoothed() -> None:
     base_only = [n for n in ("delegate_to_agent", "read_memory_body") if n in tool_calls_names]
     assert base_only, "expected base-tool names in the tool_calls cell — arm is vacuous otherwise"
     for name in base_only:
-        assert name not in declared, (
-            f"{name} is now a callable in the CodeAct code-API. That is the #3381 "
-            "asymmetry being fixed — a behaviour change P1 explicitly excludes."
+        assert name in declared, (
+            f"{name} is advertised by the tool_calls cell but is not a callable in "
+            "the code-API — the two enumerate-all cells have diverged again (#3381)."
         )
+    assert declared == tool_calls_names, (
+        "the two cells' exposed populations differ: "
+        f"code-API only {sorted(declared - tool_calls_names)}, "
+        f"tools= only {sorted(tool_calls_names - declared)}"
+    )
