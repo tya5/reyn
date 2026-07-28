@@ -51,8 +51,9 @@ def _build_tool_use_config(raw: object) -> ToolUseConfig:
     dropped old key is a "config that doesn't take effect" trap). The
     resulting (scheme, transport) pair is validated through P4a's
     ``resolve_scheme_for_transport`` — an unregistered cell (e.g.
-    ``category`` x ``content_fence``) raises at parse time, not deep in a
-    running session."""
+    ``retrieval`` x ``content_fence``) raises at parse time, not deep in a
+    running session. ``category`` x ``content_fence`` was such a cell until
+    #3376 P2 implemented it, and is now accepted."""
     if raw is None:
         return ToolUseConfig()
     if not isinstance(raw, dict):

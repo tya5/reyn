@@ -23,14 +23,14 @@ layer, from the raw FACTS the OS supplies in ``layer_ctx`` (CHAR-IDENTICAL:
 Stage 0 proved the two paths produce the same SP bytes).
 
 This is the ``(category, tool_calls)`` **cell**: those facts and the descriptors
-the router's universal presentation produced become an ``Exposure``, and the
-``tool_calls`` encoder (``reyn.tools.encoders``) turns it into both channels of
-the ``Presentation``.
+the router's universal presentation produced become an ``Exposure``
+(``reyn.tools.schemes._category_exposure``, shared with the ``content_fence``
+cell since #3376 P2), and the ``tool_calls`` encoder (``reyn.tools.encoders``)
+turns it into both channels of the ``Presentation``.
 """
 from __future__ import annotations
 
 from reyn.tools.encoders import encoder_for_transport
-from reyn.tools.exposure import Exposure, descriptors_from_entries
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -41,7 +41,10 @@ from reyn.tools.scheme import (
     SchemeOps,
     register_scheme,
 )
-from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+from reyn.tools.schemes._category_exposure import (
+    TOOL_CALLS_EXPOSURE_DEVIATION,
+    build_category_exposure,
+)
 from reyn.tools.transport import Transport
 
 
@@ -56,48 +59,18 @@ class UniversalCategoryScheme:
     name = "universal-category"
 
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
-        # ops.present → today's build_tools payload.
+        # #1627 Stage 1: own the tool-use SP via the slot-map, now through the
+        # seam: the exposure carries what is shown (the descriptors the router's
+        # universal presentation produced — ``ops.present`` = today's build_tools
+        # payload) plus the raw facts, and the tool_calls encoder writes both down.
         # #1593 PR-2 seam: build_presentation is async (enumerate-all/PR-4 do I/O),
         # but universal's body is unchanged — ops.present stays sync and is NOT
         # awaited, so the tools= bytes are byte-identical to PR-1.
-        pres = ops.present(available, layer_ctx)
-
-        # #1627 Stage 1: own the tool-use SP via the slot-map, now through the
-        # seam: the exposure carries what is shown (the descriptors the router's
-        # universal presentation produced) plus the raw facts, and the
-        # tool_calls encoder writes both down.
-        # Derive the 5 builder inputs from the raw FACTS in layer_ctx (the OS
-        # supplies facts; the scheme computes policy). The EXACT formulas below
-        # must match what the OS computed for the None-path (router_loop.py):
-        #
-        #   universal_wrappers_enabled = layer_ctx["univ_enabled"]
-        #   search_actions_enabled     = sv if univ else True   ← CRITICAL subtlety
-        #   discovery_mandate          = tier_wants_discovery_mandate(router_model)
-        #   has_hot_list_aliases       = bool(available["hot_list_aliases"])
-        #   non_interactive            = layer_ctx["non_interactive"]
-        univ: bool = bool(layer_ctx.get("univ_enabled", False))
-        sv: bool = bool(layer_ctx.get("search_visible", True))
-        sa: bool = sv if univ else True  # the search_actions_enabled formula, unchanged
-        dm: bool = tier_wants_discovery_mandate(layer_ctx.get("router_model"))
-        hl: bool = bool((available or {}).get("hot_list_aliases"))
-        ni: bool = bool(layer_ctx.get("non_interactive", False))
-        # #1791 A2: non-Claude operational-steering policy from the raw family fact
-        # (Claude excluded — it doesn't need the hygiene reminders).
-        nc: bool = layer_ctx.get("router_model_family") != "claude"
-
-        exposure = Exposure(
-            descriptors=descriptors_from_entries(pres.llm_tools_payload),
-            sp_facts={
-                "universal_wrappers_enabled": univ,
-                "search_actions_enabled": sa,
-                "discovery_mandate": dm,
-                "has_hot_list_aliases": hl,
-                "non_interactive": ni,
-                "non_claude": nc,
-                # #2548 PR-A: skill registry snapshot from the OS layer_ctx →
-                # rendered into the ## Skills block (slot_post_skills).
-                "available_skills": layer_ctx.get("available_skills"),
-            },
+        exposure = build_category_exposure(
+            present_entries=ops.present(available, layer_ctx).llm_tools_payload,
+            available=available,
+            layer_ctx=layer_ctx,
+            deviation=TOOL_CALLS_EXPOSURE_DEVIATION,
         )
         encoder = encoder_for_transport(Transport.TOOL_CALLS)
         return Presentation(

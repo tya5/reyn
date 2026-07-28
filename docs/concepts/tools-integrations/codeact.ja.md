@@ -111,6 +111,13 @@ tool_use:
   transport: content_fence   # top-level chat router
 ```
 
+**カタログが大きい場合**: `scheme: category` + `transport: content_fence` は、
+同じ code-as-tools transport を `universal-category` のサーフェス上で表現した
+ものです。モデルはやはりフェンス付き Python を書きますが、見せられる関数は
+全アクションではなくカタログのラッパー（`invoke_action` など）なので、システム
+プロンプトがカタログと共に増えません。CodeAct を選ぶ理由は当てはまるが全件列挙
+のコストが高すぎる、という場合に使います。
+
 旧 `tool_use.chat` key は #3247 で削除済み（clean-break、compat alias 無し）
 — これを書いた `reyn.yaml` は parse 時に失敗する。
 [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.ja.md#tool_use-block) 参照。
