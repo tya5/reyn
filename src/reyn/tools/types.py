@@ -12,6 +12,7 @@ ToolContext.router_state.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Protocol
 
@@ -457,7 +458,19 @@ class ToolDefinition:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": dict(self.parameters),
+                # deepcopy, NOT dict(): a shallow copy leaves every nested
+                # sub-schema (``properties`` / each ``oneOf`` variant) ALIASED to
+                # the module-level constant this ToolDefinition was built from.
+                # litellm's provider transforms mutate the tools[] payload they
+                # are handed IN PLACE (``_build_vertex_schema`` /
+                # ``add_object_type`` / ``_remove_additional_properties`` —
+                # documented as "the input parameters, modified in place"), so a
+                # single Gemini/Vertex call used to permanently rewrite the
+                # canonical schema for the rest of the process: every later
+                # render — for ANY provider — saw the corrupted shape. That made
+                # the tool schema the LLM receives a function of process history
+                # (#3383).
+                "parameters": deepcopy(dict(self.parameters)),
             },
         }
         if self.schema_enricher is not None and state is not None:

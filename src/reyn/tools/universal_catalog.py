@@ -75,6 +75,7 @@ verification 1-9.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Collection, Final, Mapping
 
 from reyn.tools.descriptions import catalog as _catalog_descriptions
@@ -1082,7 +1083,11 @@ def _describe_one(
 
     return {
         "description": target.description,
-        "input_schema": dict(target.parameters),
+        # deepcopy for the same reason render_for_router does (#3383): a shallow
+        # copy hands the caller every nested sub-schema by reference, so anything
+        # that normalizes this describe_action payload in place would rewrite the
+        # canonical tool definition for the rest of the process.
+        "input_schema": deepcopy(dict(target.parameters)),
     }
 
 
