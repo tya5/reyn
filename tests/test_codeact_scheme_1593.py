@@ -190,11 +190,17 @@ async def test_code_api_has_no_tool_string_proxy_token() -> None:
 
 @pytest.mark.asyncio
 async def test_build_presentation_omits_excluded_actions() -> None:
-    """Tier 2: presentation parity (#1400) — an excluded action is omitted from the
-    code-API (CodeAct presentation not looser than JSON tools=). The OS supplies the
-    exclude-set via available['exclude_tools']."""
+    """Tier 2: presentation parity (#1400/#3378) — a contextually-denied action is
+    omitted from the code-API (CodeAct presentation not looser than JSON tools=). The
+    OS supplies the session's EFFECTIVE narrowing via
+    available['contextual_permission'] — the same source the live gate enforces."""
+    from reyn.security.permissions.effective import ContextualPermission
+
     pres = await CodeActScheme().build_presentation(
-        {"exclude_tools": frozenset({"web__fetch"})}, {}, _CatalogOps(),
+        {"contextual_permission": ContextualPermission(
+            tool_deny=frozenset({"web__fetch"}),
+        )},
+        {}, _CatalogOps(),
     )
     assert "file__read" in pres.tool_use_sp   # kept
     assert "web__fetch" not in pres.tool_use_sp  # excluded → omitted

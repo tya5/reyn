@@ -225,26 +225,44 @@ def _extract_hooks(config) -> list[dict]:
     return result
 
 
-def _session_visibility_items(session) -> list[dict]:
-    """Read visibility toggle state from the session (#2285 backend seam).
+def _session_visibility_items(session) -> "list[dict] | None":
+    """Read visibility state from the session (#2285 backend seam).
 
-    Returns [] until e2e lands ``capability_visibility_state`` on the Session.
-    Shape when available: [{kind, name, on}, ...] where on = not hidden_by_session.
+    Shape: ``[{kind, name, on, denied}, ...]``. ``on`` is the ``/visibility`` axis
+    (not hidden_by_session); ``denied`` is the SEPARATE envelope/contextual axis
+    (#3378 ``denied_by_envelope`` — a topology / delegate / per-session / ``_untrusted``
+    narrowing). A denied row is not user-flippable, so it carries ``on=False,
+    denied=True`` and a renderer must show it distinguishably from a plain ``off``.
+
+    Returns **None** — not ``[]`` — when the seam is absent or raised (#3378
+    requirement 4): the renderer must be able to tell "this session wires no
+    visibility state" from "it wires state and nothing is narrowed", which an empty
+    list conflates.
     """
     getter = getattr(session, "capability_visibility_state", None)
     if getter is None:
-        return []
+        return None
     try:
         state = getter()
         authorized = state.get("authorized") or []
         hidden = {(h["kind"], h["name"]) for h in (state.get("hidden_by_session") or [])}
-        return [
-            {"kind": a["kind"], "name": a["name"], "on": (a["kind"], a["name"]) not in hidden}
+        items = [
+            {
+                "kind": a["kind"],
+                "name": a["name"],
+                "on": (a["kind"], a["name"]) not in hidden,
+                "denied": False,
+            }
             for a in authorized
         ]
+        items += [
+            {"kind": d["kind"], "name": d["name"], "on": False, "denied": True}
+            for d in (state.get("denied_by_envelope") or [])
+        ]
+        return items
     except Exception:  # noqa: BLE001
-        logger.warning("capability_visibility_state() raised; visibility panel degraded to []", exc_info=True)
-        return []
+        logger.warning("capability_visibility_state() raised; visibility panel degraded to unwired", exc_info=True)
+        return None
 
 
 def _session_hook_items(session) -> list[dict]:
@@ -395,7 +413,9 @@ def _snapshot(registry, config=None):
         "hooks": _extract_hooks(config) if config is not None else [],
         "skills": _extract_skills(config) if config is not None else [],
         # #2285: session-scoped capability visibility + hook applicability toggles.
-        # Populated once e2e lands the backend; graceful fallback to [] until then.
+        # #3378: ``visibility_items`` is ``None`` when the session wires no visibility
+        # seam (or it raised) and a possibly-empty LIST when it does — the renderer
+        # needs that distinction to say "not wired" rather than "(none)".
         "visibility_items": _session_visibility_items(s),
         "hook_items": _session_hook_items(s),
         # Always available (Session owns a PipelineRegistry from __init__) —

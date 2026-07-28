@@ -1037,27 +1037,67 @@ def _operation_alias_metadata(
     return tool.description, dict(tool.parameters)
 
 
-def _apply_tool_exclusions(
-    tools: list[dict], exclude_tools: "frozenset[str] | set[str]"
-) -> list[dict]:
-    """Drop tools whose function name is in ``exclude_tools`` from the catalog.
+def gate_effective_tool_name(name: str, args: "dict | None") -> "str | None":
+    """The TOOL-axis gate's name resolution — the ONE place the wrapper unwrap lives.
 
-    The post-build filter that hides tools from the LLM-visible catalog (and,
-    in lockstep, from the dispatch catalog — both derive from this same
-    ``tools`` list). Caller: the #187 faithful SWE-eval passes the web tools
-    (``web__search`` / ``web__fetch``) so the general agent solves from the
-    repo + issue, not a web lookup of the gold solution. ``exclude_tools``
-    empty → ``tools`` returned unchanged.
+    Both halves of the #3378 advertise ⇔ enforce agreement key on this:
+    :func:`apply_contextual_visibility` (advertisement, ``args=None``) and
+    :meth:`RouterLoop._excluded_result` (enforcement, the live ``args``). A
+    ``invoke_action`` call carries its real target in ``action_name``, so the
+    effective name is knowable only at CALL time — ``args=None`` therefore
+    returns ``None`` ("undeterminable"), which the advertisement half reads as
+    "cannot pre-filter this row". That asymmetry is deliberate and load-bearing:
+    pre-filtering the wrapper itself under an allow-list contextual would hide
+    the ONLY route to every allowed action, i.e. advertise MORE narrowly than
+    enforcement denies — the mirror image of the #3378 defect.
 
-    P7-clean: no hardcoded tool names; the exclusion set is data supplied by
-    the caller.
+    ``None`` is also returned for an ``invoke_action`` whose ``action_name`` is
+    absent (a malformed call): nothing to gate on, and dispatch rejects it.
     """
-    if not exclude_tools:
+    if name == "invoke_action":
+        return (args or {}).get("action_name")
+    return name
+
+
+def apply_contextual_visibility(
+    tools: list[dict], contextual: "object | None"
+) -> list[dict]:
+    """Drop from the LLM-visible catalog every tool the CONTEXTUAL would deny at call time.
+
+    #3378: the advertisement half of the advertise ⇔ enforce agreement. It reads
+    the SAME source as the live gate — ``RouterLoop._contextual_permission``, the
+    composed effective narrowing (topology ∩ delegate floor ∩ per-session config ∩
+    ⊆-parent cap ∩ ``/visibility`` override ∩ the ephemeral ``_untrusted`` profile ∩
+    the ``exclude_tools`` bridge) — and the same
+    :func:`gate_effective_tool_name` unwrap, so a tool that would be rejected with
+    ``tool_excluded`` is never offered in the first place. The prior filter keyed on
+    ``exclude_tools`` ALONE, so any contextual that did not come from
+    ``exclude_tools`` (topology / delegate / ephemeral) left the tool advertised and
+    denied it only at call time — the owner-reported ``exec__run`` symptom.
+
+    **Not a substitute for enforcement (#187).** Hiding a row does not stop the LLM
+    from naming it anyway (native direct call, the #229 salvage, or a direct
+    ``invoke_action(action_name=…)``), which is exactly how the #187 ``web__search``
+    leak executed. ``_excluded_result`` stays the boundary; this is the presentation
+    half that keeps the model from wasting a turn on a tool it cannot have.
+
+    ``contextual is None`` (no narrowing anywhere) → ``tools`` returned unchanged.
+    P7-clean: no hardcoded tool names; the narrowing is data resolved per session.
+    """
+    if contextual is None:
         return tools
-    return [
-        t for t in tools
-        if t.get("function", {}).get("name") not in exclude_tools
-    ]
+    from reyn.security.permissions.effective import tool_contextually_denied
+
+    kept: list[dict] = []
+    for t in tools:
+        name = t.get("function", {}).get("name")
+        effective = (
+            gate_effective_tool_name(name, None) if isinstance(name, str) else None
+        )
+        if effective is not None and tool_contextually_denied(contextual, effective):
+            continue
+        kept.append(t)
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -1142,23 +1182,26 @@ class RouterLoop:
         # #1667: catalog categories skipped at the source (_enumerate_category),
         # threaded onto RouterCallerState so the universal catalog drops them.
         self._excluded_categories: frozenset[str] = frozenset(excluded_categories or set())
-        # #1827 S1 (live-gate): the TOOL-axis ENFORCEMENT now flows through the
-        # unified ∩-model (effective.py ContextualLayer) at the single live gate
-        # ``_excluded_result`` — NOT a standalone ``exclude_tools`` membership.
-        # ``_exclude_tools`` is retained as the axis-B VISIBILITY input only
-        # (``_apply_tool_exclusions``). Bridge: when no explicit contextual is
-        # given, derive one from ``exclude_tools`` so existing callers keep their
-        # execution-block byte-identically; topology / delegate / ephemeral
-        # sources (S2+) pass a ``ContextualPermission`` directly.
-        from reyn.security.permissions.effective import ContextualPermission
-        if contextual_permission is not None:
-            self._contextual_permission: "object | None" = contextual_permission
-        elif self._exclude_tools:
-            self._contextual_permission = ContextualPermission(
-                tool_deny=self._exclude_tools
-            )
-        else:
-            self._contextual_permission = None
+        # #1827 S1 (live-gate): the TOOL-axis ENFORCEMENT flows through the unified
+        # ∩-model (effective.py ContextualLayer) at the single live gate
+        # ``_excluded_result``. #3378: ``_contextual_permission`` is now the SINGLE
+        # EFFECTIVE SOURCE for BOTH halves — enforcement (``_excluded_result``) and
+        # advertisement (``apply_contextual_visibility``) — so ``exclude_tools`` is
+        # COMPOSED IN as one more restrict-only ∩ conjunct rather than living on as a
+        # parallel, advertisement-only axis.
+        #
+        # Composition (not either/or) closes the defect in BOTH directions:
+        #   - a contextual from topology / delegate / ephemeral used to leave
+        #     ``exclude_tools``-driven advertisement untouched → the tool stayed
+        #     advertised and was denied only at call time (the owner's ``exec__run``);
+        #   - the old ``if contextual is not None`` branch DISCARDED ``exclude_tools``
+        #     from enforcement whenever any contextual was present (every Session goes
+        #     through CapabilityVisibility, which yields a non-None contextual once
+        #     ``reapply_visibility_override`` has run) → a ``--exclude-tools web__search``
+        #     was hidden but NOT execution-blocked, i.e. the #187 leak in reverse.
+        self._contextual_permission: "object | None" = self._with_exclude_tools(
+            contextual_permission
+        )
         # FP-0034 Phase 2 step 1 / FP-0066 P2b (#3247): the action embedding
         # index background-build once-per-chain dedup used to live on a
         # RouterLoop instance attr (``_action_index_build_task``). That
@@ -1245,6 +1288,35 @@ class RouterLoop:
         # a later compaction evicting the ``external_source`` marker.
         self._untrusted_latched: bool = False
         self._untrusted_latched_permission: "object | None" = None
+
+    def _with_exclude_tools(self, contextual: "object | None") -> "object | None":
+        """Compose ``exclude_tools`` into ``contextual`` as one more restrict-only ∩ term.
+
+        #3378: the single place ``exclude_tools`` enters the effective narrowing, so
+        every reader of ``self._contextual_permission`` — the live enforcement gate AND
+        the advertisement filter — sees the same set. Called at construction AND on the
+        #1909 intra-turn re-resolve (which replaces the whole contextual with a
+        freshly-composed untrusted-narrowed one; without re-composing here, an
+        ``exclude_tools`` session would silently LOSE its exclusion mid-turn — the
+        composition is a meet, so re-applying it is idempotent and can only narrow).
+
+        No ``exclude_tools`` → ``contextual`` returned unchanged (identity), which keeps
+        the #1909 ``contextual_static_baseline`` identity comparison intact for the
+        overwhelmingly common no-exclude case.
+        """
+        if not self._exclude_tools:
+            return contextual
+        from reyn.security.permissions.effective import ContextualPermission
+        bridged = ContextualPermission(tool_deny=self._exclude_tools)
+        if contextual is None:
+            return bridged
+        from typing import cast
+
+        from reyn.security.permissions.capability_profile import compose_resolved
+        return compose_resolved([
+            (cast("ContextualPermission", contextual), frozenset()),
+            (bridged, frozenset()),
+        ])[0]
 
     @property
     def total_usage(self) -> TokenUsage:
@@ -1522,12 +1594,14 @@ class RouterLoop:
         # like self._catalog) — NOT the scheme (a registered singleton).
         _scheme_available = {
             "hot_list_aliases": _hot_list_aliases,
-            # #1593 PR-3: the session exclude-set so a scheme presenting actions
-            # outside tools= (CodeAct's code-API) omits excluded ones — presentation
-            # parity with the JSON path (the OS applies _apply_tool_exclusions to
-            # tools= below; sp_fragment schemes self-omit). Stashed too, so a
-            # RePresent re-present keeps it.
-            "exclude_tools": self._exclude_tools,
+            # #1593 PR-3 / #3378: the session's EFFECTIVE contextual narrowing, so a
+            # scheme presenting actions outside tools= (CodeAct's code-API) omits the
+            # same rows the JSON path drops — presentation parity with
+            # ``apply_contextual_visibility`` below, and with the live gate. Was
+            # ``exclude_tools`` (a frozenset), which could not express the
+            # topology/delegate/ephemeral narrowing NOR an allow-list. Stashed too, so
+            # a RePresent re-present keeps it.
+            "contextual_permission": self._contextual_permission,
         }
         # #1791 A2: resolve the router model class → coarse family (raw FACT; the
         # scheme derives the non-Claude operational-steering policy from it, P7-clean).
@@ -1580,7 +1654,10 @@ class RouterLoop:
         # (e.g. file__write → file__edit, #1420) hand the model the specific
         # action names it needs without re-listing the catalog; for the rest,
         # discovery is list_actions and schema is describe_action.
-        tools = _apply_tool_exclusions(tools, self._exclude_tools)
+        # #3378: advertisement is derived from the SAME effective contextual the live
+        # gate enforces (was: ``exclude_tools`` alone → a topology/delegate/ephemeral
+        # contextual left the tool advertised and denied it only at call time).
+        tools = apply_contextual_visibility(tools, self._contextual_permission)
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())  # backward compat
         # #1618 root-1: source the dispatch membership map from the scheme's
@@ -1799,10 +1876,23 @@ class RouterLoop:
                             provenance="external_source",
                         )
                     self._untrusted_latched_permission = _resolved_contextual
-                    self._contextual_permission = _resolved_contextual
+                    self._contextual_permission = self._with_exclude_tools(
+                        _resolved_contextual
+                    )
                 elif self._untrusted_latched:
                     # Compaction evicted the marker mid-turn — latch holds.
-                    self._contextual_permission = self._untrusted_latched_permission
+                    self._contextual_permission = self._with_exclude_tools(
+                        self._untrusted_latched_permission
+                    )
+                # #3378: the agreement is per-CALL, not per-turn. The re-resolve above
+                # can only NARROW, so re-run the advertisement filter on the live
+                # payload — otherwise round N+1 would be offered tools round N+1's gate
+                # now rejects (the same advertise/enforce split, at finer grain).
+                tools = apply_contextual_visibility(
+                    tools, self._contextual_permission
+                )
+                self._catalog = {t["function"]["name"]: t for t in tools}
+                self._tool_names = frozenset(self._catalog.keys())
             resolved_model = host.resolve_model(self.router_model)
             # #1654: the FULL ModelSpec (model + operator kwargs) for the LLM
             # call below, so per-model kwargs (reasoning_effort #1650/#1652,
@@ -2062,8 +2152,8 @@ class RouterLoop:
                     _represent_layer_ctx,
                     ops=self,
                 )
-                tools = _apply_tool_exclusions(
-                    _re_pres.llm_tools_payload, self._exclude_tools,
+                tools = apply_contextual_visibility(
+                    _re_pres.llm_tools_payload, self._contextual_permission,
                 )
                 self._catalog = {t["function"]["name"]: t for t in tools}
                 self._tool_names = frozenset(self._catalog.keys())
@@ -2798,8 +2888,8 @@ class RouterLoop:
         """#1406/#187: the **pre-dispatch** exclude gate. Returns the
         ``tool_excluded`` error result when the effective op is excluded, else None.
 
-        ``exclude_tools`` is not just an advertisement filter (#1400
-        ``_apply_tool_exclusions`` hides excluded tools from ``tools[]`` /
+        The narrowing is not just an advertisement filter (#1400 / #3378
+        ``apply_contextual_visibility`` hides denied tools from ``tools[]`` /
         ``self._catalog``) — the LLM can still call an excluded tool by name, which
         the #229 salvage rewrites to ``invoke_action(action_name=<excluded>)`` (or it
         is called as ``invoke_action`` directly), and ``universal_dispatch`` then
@@ -2813,16 +2903,20 @@ class RouterLoop:
         (effective.py ``ContextualLayer``) — the single live TOOL-axis enforcement
         gate. ``never-elevate`` is the structural ``all()`` in
         ``EffectivePermission`` (a contextual deny can't be re-granted). The
-        standalone ``exclude_tools`` *enforcement* membership is retired; the
-        per-session contextual is bridged from ``exclude_tools`` for callers that
-        have not yet migrated (byte-identical), and S2+ feed a real contextual
-        from topology / delegate / ephemeral narrowing."""
+        standalone ``exclude_tools`` *enforcement* membership is retired; #3378
+        COMPOSES ``exclude_tools`` into ``_contextual_permission`` (see
+        ``_with_exclude_tools``) so this gate and the advertisement filter read one
+        source, and S2+ feed a real contextual from topology / delegate / ephemeral
+        narrowing."""
         if self._contextual_permission is not None:
             # #1912: the single shared contextual gate — identical check across
             # chat RouterLoop + op dispatch (no path bypass).
             from reyn.security.permissions.effective import tool_contextually_denied
-            effective = args.get("action_name") if name == "invoke_action" else name
-            if tool_contextually_denied(self._contextual_permission, effective):
+            # #3378: the SAME unwrap the advertisement half uses (one seam).
+            effective = gate_effective_tool_name(name, args)
+            if effective is not None and tool_contextually_denied(
+                self._contextual_permission, effective
+            ):
                 return {
                     "status": "error",
                     "error": {

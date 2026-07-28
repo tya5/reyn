@@ -209,8 +209,11 @@ class CodeActScheme:
         Excluded-tool *omission from the code-API* is defense-in-depth, NOT the safety
         boundary: the real gate is the per-call exclude + ``dispatch_tool`` re-entry
         in ``execute`` (a code call to an excluded action is rejected at dispatch).
-        Presentation-level omission is deferred to a follow-up (it needs the exclude
-        set, which the OS applies post-presentation to ``tools=`` today)."""
+        #3378: the omission now reads the session's EFFECTIVE contextual narrowing
+        (``available['contextual_permission']``) — the same source the live gate
+        enforces — instead of the ``exclude_tools`` name set, which could not express a
+        topology / delegate / ephemeral narrowing (so a denied action stayed rendered in
+        the code-API) nor an allow-list."""
         entries = await ops.catalog_entries()  # canonical (OpenAI-nested) shape
         # #1618 root-1: project to the FLAT {name, params} shape the render reads (the
         # OS-owned projection — no hand-read of a nested dict at a guessed depth, which
@@ -222,11 +225,17 @@ class CodeActScheme:
         ident_by_qn = {
             qn: ident for ident, qn in _build_actions_map([e["name"] for e in flat]).items()
         }
-        # Presentation parity with the JSON path (#1400): omit excluded actions from
-        # the rendered code-API (defense-in-depth — the real gate is per-call). The OS
-        # supplies the session exclude-set via ``available``.
-        exclude = (available or {}).get("exclude_tools") or frozenset()
-        rendered = [e for e in flat if e["name"] not in exclude] if exclude else flat
+        # Presentation parity with the JSON path (#1400/#3378): omit contextually-denied
+        # actions from the rendered code-API (defense-in-depth — the real gate is
+        # per-call). The OS supplies the session's effective narrowing via ``available``.
+        contextual = (available or {}).get("contextual_permission")
+        if contextual is not None:
+            from reyn.security.permissions.effective import tool_contextually_denied
+            rendered = [
+                e for e in flat if not tool_contextually_denied(contextual, e["name"])
+            ]
+        else:
+            rendered = flat
         return Presentation(
             llm_tools_payload=[],
             # #1618 root-1: CodeAct advertises ∅ but dispatches the FULL catalog (the
