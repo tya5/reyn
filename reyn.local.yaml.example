@@ -629,16 +629,6 @@
 #     # turn-scoped latch survives a later compaction evicting the tainted
 #     # entry); emits an untrusted_narrowing_engaged audit-event on engage.
 #     intra_turn_untrusted_narrowing: false
-#     # plan() tool call parse-error self-correction (B51 NF-W6-3). 0 = disable.
-#     plan_invalid_retries: 1
-#     # Per-(chain, skill) spawn / token caps (= CostLimitConfig shape):
-#     skill_calls_per_chain:
-#       hard_limit: null
-#       warn_ratio: 0.8
-#       # extension_calls > 0 → exceed follows safety.on_limit.mode (#1877)
-#       extension_calls: 0
-#     skill_tokens_per_chain:
-#       hard_limit: null
 #   timeout:
 #     llm_call_seconds: 60.0
 #     llm_max_retries: 3

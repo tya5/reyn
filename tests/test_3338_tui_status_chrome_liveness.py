@@ -52,6 +52,8 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat.chrome import (
     _MENU_TABS,
+    MenuBar,
+    StatusLine,
     cost_pane_lines,
     ctx_pane_lines,
     pane_commands,
@@ -711,6 +713,194 @@ async def test_every_menu_tab_is_fully_on_screen(
         assert not offenders, (
             f"tabs laid out off-screen at {screen_size} (screen={screen}); "
             f"offender -> (x, right, y, bottom): {offenders}"
+        )
+
+
+def test_status_fits_last_row_pure() -> None:
+    """Tier 1: :func:`status_fits_last_row` (#3326) — pure fit-decision helper.
+
+    Mirrors the existing #3338 ``pack_menu_rows`` pure-function convention:
+    testable without mounting anything."""
+    from reyn.interfaces.inline.textual_chat.chrome import (
+        pack_menu_rows,
+        status_fits_last_row,
+    )
+
+    # All 13 (abbreviated) tabs pack onto one row at width=78+.
+    rows = pack_menu_rows(_MENU_TABS, 100)
+    # Plenty of room left (100 - 78 tabs = 22) for a short status string.
+    assert status_fits_last_row(rows, 100, status_text_len=10) is True
+    # Not enough room for a long one.
+    assert status_fits_last_row(rows, 100, status_text_len=100) is False
+
+    # A width forcing multiple rows: the LAST row (not the first, which is
+    # nearly full) is what gets checked.
+    narrow_rows = pack_menu_rows(_MENU_TABS, 40)
+    last_row_used = sum(len(label) + 2 for _tid, label in narrow_rows[-1])
+    max_fitting_len = 40 - last_row_used - 2  # 2 == _STATUS_H_PADDING
+    assert status_fits_last_row(narrow_rows, 40, status_text_len=max_fitting_len) is True
+    assert status_fits_last_row(narrow_rows, 40, status_text_len=max_fitting_len + 1) is False
+
+    # No tabs at all: fits iff the text alone fits the width.
+    assert status_fits_last_row([], 20, status_text_len=15) is True
+    assert status_fits_last_row([], 20, status_text_len=25) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("screen_size", [(100, 30), (80, 24), (60, 20)])
+async def test_status_line_on_screen_and_merge_matches_prediction(
+    screen_size: "tuple[int, int]", tmp_path
+) -> None:
+    """Tier 2b: ★ real-TTY-witnessed geometry guard (#3326).
+
+    Two invariants, both load-bearing:
+    1. :class:`StatusLine` (the #2280 ONE always-visible chrome region — the
+       halt banner rides on it) stays fully on screen on both axes, at every
+       size, regardless of whether it merged onto a tab row or got its own.
+    2. The live widget tree's ACTUAL merge decision (is StatusLine's parent
+       row also carrying Tab children, or does it have a row alone?) matches
+       what :func:`status_fits_last_row` predicts from the real packed rows
+       and the real status text — i.e. the decision is genuinely reflected
+       in what mounts, not merely computed and discarded."""
+    from textual.widgets import Tab
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+    from reyn.interfaces.inline.textual_chat.chrome import (
+        pack_menu_rows,
+        status_fits_last_row,
+    )
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=screen_size) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen.size
+
+        # query_one itself enforces "exactly one match" (raises otherwise) —
+        # the uniqueness guarantee this test needs, with no separate len() check.
+        line = app.query_one(StatusLine)
+        assert line.region.x >= 0 and line.region.right <= screen.width, (
+            f"StatusLine off-screen horizontally at {screen_size}: {line.region}"
+        )
+        assert line.region.y >= 0 and line.region.bottom <= screen.height, (
+            f"StatusLine off-screen vertically at {screen_size}: {line.region}"
+        )
+
+        parent_row = line.parent
+        tabs_sharing_the_row = list(parent_row.query(Tab)) if parent_row is not None else []
+        actually_merged = bool(tabs_sharing_the_row)
+
+        menubar = app.query_one(MenuBar)
+        content_width = menubar.content_size.width or menubar.size.width
+        rows = pack_menu_rows(_MENU_TABS, content_width)
+        predicted_merge = status_fits_last_row(
+            rows, content_width, len(status_line_text(snap, AGENT))
+        )
+        assert actually_merged == predicted_merge, (
+            f"at {screen_size} (content_width={content_width}): predicted "
+            f"merge={predicted_merge} but the live tree shows merged={actually_merged}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_status_line_stays_contained_with_a_long_raw_model_id(tmp_path) -> None:
+    """Tier 2b: ★ real-TTY-witnessed geometry guard (#3326), dedicated
+    long-string case.
+
+    ``test_status_line_on_screen_and_merge_matches_prediction`` already goes
+    RED on the ``width: auto`` overflow defect this guards against, but only
+    incidentally — it depends on the real fixture snapshot's status text
+    happening to be long enough at (60, 20). This test does not depend on
+    that: it deliberately injects a long raw ``--model`` passthrough id (the
+    #3324 shape — a model string matching no configured class), so the
+    containment invariant is pinned independent of how long the default
+    fixture's status text happens to be."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    long_raw_model = "some-provider/an-extremely-long-raw-model-identifier-98765"
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    # Shallow copy — the real snapshot carries live, unpicklable objects
+    # (thread locks etc.) that deepcopy can't touch; only two keys change here.
+    snap = {**snap, "model": long_raw_model, "model_active_class": None}
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen.size
+        line = app.query_one(StatusLine)
+        assert long_raw_model in status_line_text(snap, AGENT), (
+            "test setup did not actually produce a long status string"
+        )
+        assert line.region.x >= 0 and line.region.right <= screen.width, (
+            f"StatusLine off-screen horizontally with a long raw model id: {line.region}"
+        )
+        assert line.region.y >= 0 and line.region.bottom <= screen.height, (
+            f"StatusLine off-screen vertically with a long raw model id: {line.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_inline_code_style_toned_down_from_the_loud_default(tmp_path) -> None:
+    """Tier 2: #3326 — rich.Markdown's default inline-code style ("bold cyan
+    on black", ``rich.default_styles.DEFAULT_STYLES["markdown.code"]``) is
+    overridden app-wide, not left at the loud default.
+
+    Falsification: pre-fix, ``app.console.get_style("markdown.code")`` is
+    exactly the bold+black-background default; this asserts it no longer is,
+    and specifically that it carries neither ``bold`` nor a forced background
+    (the two components that made it read as too strong)."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        style = app.console.get_style("markdown.code")
+        assert not style.bold, f"inline-code style still bold: {style!r}"
+        assert style.bgcolor is None, (
+            f"inline-code style still forces a background: {style!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_menubar_active_tab_toned_down_to_status_line_muted_tone(
+    tmp_path,
+) -> None:
+    """Tier 2: #3326 — MenuBar's active-tab color is toned down to match
+    StatusLine's own quiet ``$text-muted`` tone, rather than Tab's default
+    full-brightness ``$foreground`` jump against every other tab's 50%-muted
+    foreground (measured: no literal underline is drawn anywhere — MenuBar
+    doesn't use Textual's ``Tabs``/``Underline`` widget — the "underline" the
+    issue named was this brightness contrast read as loud emphasis).
+
+    Falsification: pre-fix, the active tab's resolved color is the full
+    ``$foreground`` (distinctly brighter than an inactive tab's 50%-muted
+    one); this asserts the active tab's color instead matches the SAME muted
+    tone StatusLine itself uses."""
+    from textual.widgets import Tab
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        line = app.query_one(StatusLine)
+        active_tab = next(tab for tab in app.query(Tab) if tab.has_class("-active"))
+        status_color = line.styles.color
+        active_color = active_tab.styles.color
+        assert active_color == status_color, (
+            f"active tab color {active_color!r} does not match StatusLine's "
+            f"muted tone {status_color!r} — still reads as a loud, distinct highlight"
         )
 
 

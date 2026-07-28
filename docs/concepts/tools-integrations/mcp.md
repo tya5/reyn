@@ -339,6 +339,21 @@ Two tools are registered:
 
 Multi-turn continuity is preserved: each agent's `Session` keeps its `history.jsonl` between calls, so a conversation that starts in Claude Code can be resumed from `reyn chat` — or vice versa.
 
+### Progress notifications
+
+`send_to_agent` blocks for the whole turn, which can be a long time. A client that sets `_meta.progressToken` on the call receives a `notifications/progress` for each of these audit-events as the turn runs:
+
+| Audit-event | Progress message |
+|-------------|------------------|
+| `turn_started` | `turn: <inbox trigger kind>` — e.g. `turn: user` |
+| `llm_called` | `llm: <model>` |
+| `tool_returned` | `tool: <name>` |
+| `tool_failed` | `tool: <name> (failed)` |
+
+`progress` is a monotonic ordinal (1, 2, 3, …) and `total` is always absent — the turn's length is not known in advance, so clients should render a counter or a spinner rather than a percentage. Only the audit-event kind and the line above are sent; a tool's arguments and its result body never leave the process on this channel.
+
+Delivery is best-effort: if the notification cannot be pushed, the turn continues and the final `send_to_agent` reply is unaffected. The server advertises this surface as the experimental `reyn.progress.skill_lifecycle` capability in its `initialize` response, whose `events` field lists exactly the kinds above.
+
 ### What "via MCP" means for your workflows
 
 External clients see agents, not the workflow graph. From the outside, there are only two operations: list agents and send a message. The OS contract still applies on Reyn's side: permissions are checked, events are emitted, and all the normal validation runs. Workflows can be approved non-interactively if `permissions: allow` is set in `reyn.yaml` (the MCP server runs without a human at stdin, so interactive prompts would block indefinitely).

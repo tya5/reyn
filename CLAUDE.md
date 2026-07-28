@@ -141,6 +141,14 @@ Three rules then keep multi-session work coherent:
    "this PR partially closes #X". For sub-PRs in a multi-PR arc, use `part of
    #X` or `toward #X`. Only the final PR that actually completes the umbrella
    issue should use `Closes #X`.
+   **Determining "final" is not a guess**: before writing `Closes #X` into a
+   brief or PR body, enumerate every PR/issue whose body contains `part of
+   #X` (`gh pr list --state all --search "#X in:body"`) and confirm none are
+   still open. "Probably the last one" is not sufficient — a close closes
+   the umbrella issue's visibility along with it, so a wrong guess hides the
+   remaining work rather than merely failing to finish it (#3368: a `Closes`
+   fired 40 minutes before the arc's actual last PR merged, because the
+   enumeration step was skipped).
    **Reviewer recovery angle:** an unexpected issue auto-close triggered by a
    sub-PR merge is almost always a closing-keyword false positive. Reopen the
    issue and verify the arc is not half-done before assuming completion.
@@ -151,6 +159,17 @@ Three rules then keep multi-session work coherent:
    asserts (same reasoning as any other doc-drift fix, not a mirror rule); do
    not invent a "keep en/ja pairs in sync" obligation when scoping a PR. Known
    ja-parity gaps are tracked in #2967 as backlog, not a per-PR gate.
+6. **Arc-closure remainder rule.** When closing an arc, settle every remainder
+   as either **filed** or **explicitly dropped** — **in the closing comment**.
+   Never leave "next arc" as the resting state: that is a third, silent state
+   (a decayed intent, not a decision), evidenced by #2597's natural experiment
+   — one remainder recorded as "server role deferred" survived because it was
+   named in the closing comment; an informally-mentioned "spec gap analysis"
+   remainder existed nowhere (not the issue, not docs, not the proposing
+   session's own memory) and rotted invisibly. A remainder belongs on the
+   surface the merge gate actually reads (an open issue, an unchecked Test
+   plan item) — not on a surface nobody re-checks (a broker message, a memory
+   pin, a comment's prose that never becomes a ticket).
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
