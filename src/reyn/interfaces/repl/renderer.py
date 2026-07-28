@@ -355,7 +355,13 @@ _CC_COOL = "#6cb6ff"    # cool blue — a secondary accent (status-bar agent val
 #
 # Subtle background block behind the user's own submitted line (CC styles the
 # user input differently from agent output — a faint highlighted block).
-_CC_USER_BG = "#2b2f37"
+# #3371: darkened from #2b2f37 — _CC_DIM on the previous value measured a
+# 2.78 contrast ratio (below WCAG AA-large's 3.0), the worst pairing the
+# #3367 contrast gate found. Darkened within the same blue-gray family
+# (still reads as "a faint dark block", not a new hue) to raise every
+# foreground's contrast against it, _CC_DIM's included — measured 3.30 at
+# this value. Not a new color: the same named constant, same design role.
+_CC_USER_BG = "#1e222a"
 # Failure block-tint behind a failed tool call / error row. A desaturated dark
 # coral: it reads unmistakably as "the red row" edge to edge (CC's block-tint of
 # a failed tool) while _CC_ERR text on top of it stays high-contrast. #3367:
