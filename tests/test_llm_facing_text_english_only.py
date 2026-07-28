@@ -28,12 +28,9 @@ from reyn.prompt.loop_control import (
 from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools import get_default_registry
+from reyn.tools.encoders import build_actions_map, render_code_api
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
-from reyn.tools.schemes.codeact import (
-    _build_actions_map,
-    _format_codeact_observation,
-    _render_code_api,
-)
+from reyn.tools.schemes.codeact import _format_codeact_observation
 from reyn.tools.schemes.retrieval import _search_sp
 from reyn.tools.universal_dispatch import _OPERATION_RULES
 
@@ -112,7 +109,7 @@ def _all_assembled_system_prompts() -> list[tuple[str, str]]:
         )
         out.append((f"sp:{combo}", prompt))
 
-    # Retrieval scheme's own sp_fragment (both terminal states).
+    # Retrieval scheme's own search guidance (both terminal states).
     for terminal in (True, False):
         out.append((f"retrieval._search_sp(terminal={terminal})", _search_sp(terminal=terminal)))
 
@@ -123,8 +120,8 @@ def _all_assembled_system_prompts() -> list[tuple[str, str]]:
         {"qualified_name": "exec__run", "name": "exec__run",
          "description": "Run a shell command", "parameters": {"properties": {"argv": {}}}},
     ]
-    ident_by_qn = _build_actions_map([e["qualified_name"] for e in sample_entries])
-    out.append(("codeact._render_code_api", _render_code_api(sample_entries, ident_by_qn)))
+    ident_by_qn = build_actions_map([e["qualified_name"] for e in sample_entries])
+    out.append(("encoders.render_code_api", render_code_api(sample_entries, ident_by_qn)))
 
     return out
 

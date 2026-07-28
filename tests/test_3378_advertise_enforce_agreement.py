@@ -279,10 +279,6 @@ def test_intra_turn_narrowing_re_filters_the_advertised_catalog() -> None:
                     {"type": "function", "function": {"name": n, "description": ""}}
                     for n in ("list_agents", target)
                 ],
-                sp_params={
-                    "universal_wrappers_enabled": False,
-                    "search_actions_enabled": False,
-                },
             )
 
         def interpret(self, llm_response, *, tool_catalog, ops):
@@ -377,21 +373,19 @@ def test_represent_round_applies_the_advertisement_filter() -> None:
         name = "test-3378-represent"
 
         async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
-            sp = {"universal_wrappers_enabled": False, "search_actions_enabled": False}
             if not layer_ctx.get("refinement"):
                 return Presentation(
                     llm_tools_payload=[
                         {"type": "function",
                          "function": {"name": "search", "description": ""}},
                     ],
-                    sp_params=sp,
                 )
             return Presentation(
                 llm_tools_payload=[
                     {"type": "function", "function": {"name": n, "description": ""}}
                     for n in ("list_agents", target)
                 ],
-                sp_params=sp, candidates=("list_agents",),
+                candidates=("list_agents",),
             )
 
         def interpret(self, llm_response, *, tool_catalog, ops):
