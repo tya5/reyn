@@ -806,6 +806,45 @@ async def test_status_line_on_screen_and_merge_matches_prediction(
 
 
 @pytest.mark.asyncio
+async def test_status_line_stays_contained_with_a_long_raw_model_id(tmp_path) -> None:
+    """Tier 2b: ★ real-TTY-witnessed geometry guard (#3326), dedicated
+    long-string case.
+
+    ``test_status_line_on_screen_and_merge_matches_prediction`` already goes
+    RED on the ``width: auto`` overflow defect this guards against, but only
+    incidentally — it depends on the real fixture snapshot's status text
+    happening to be long enough at (60, 20). This test does not depend on
+    that: it deliberately injects a long raw ``--model`` passthrough id (the
+    #3324 shape — a model string matching no configured class), so the
+    containment invariant is pinned independent of how long the default
+    fixture's status text happens to be."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    long_raw_model = "some-provider/an-extremely-long-raw-model-identifier-98765"
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    # Shallow copy — the real snapshot carries live, unpicklable objects
+    # (thread locks etc.) that deepcopy can't touch; only two keys change here.
+    snap = {**snap, "model": long_raw_model, "model_active_class": None}
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen.size
+        line = app.query_one(StatusLine)
+        assert long_raw_model in status_line_text(snap, AGENT), (
+            "test setup did not actually produce a long status string"
+        )
+        assert line.region.x >= 0 and line.region.right <= screen.width, (
+            f"StatusLine off-screen horizontally with a long raw model id: {line.region}"
+        )
+        assert line.region.y >= 0 and line.region.bottom <= screen.height, (
+            f"StatusLine off-screen vertically with a long raw model id: {line.region}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_inline_code_style_toned_down_from_the_loud_default(tmp_path) -> None:
     """Tier 2: #3326 — rich.Markdown's default inline-code style ("bold cyan
     on black", ``rich.default_styles.DEFAULT_STYLES["markdown.code"]``) is
