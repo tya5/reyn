@@ -31,6 +31,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.router_loop import RaisingLLM
 
 
 def _run(coro):
@@ -98,9 +99,18 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
 ):
     """Tier 2: when `_handle_user_message` hits the cap, the user sees a structured
     error + a polite agent fallback on the outbox, the event is emitted,
-    and history records the fallback."""
+    and history records the fallback.
+
+    #3382: the canned fallback is only reached when the force-close
+    wrap-up is unavailable, so the wrap-up's LLM is pinned as raising.
+    Previously this test reached the canned leg only because the ambient
+    environment had no usable model — it was green for the wrong reason.
+    """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3)
+    monkeypatch.setattr(
+        "reyn.runtime.router_loop.call_llm_tools", RaisingLLM(),
+    )
 
     # Pre-spend so the very first router call in this turn is rejected.
     # Note: `_handle_user_message` resets the counter at its top, then
