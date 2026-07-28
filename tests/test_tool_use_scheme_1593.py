@@ -18,16 +18,19 @@ import pytest
 from reyn.config import ToolUseConfig, _build_tool_use_config
 from reyn.tools.scheme import (
     DEFAULT_SCHEME_NAME,
+    AdvertisedTools,
     ExecContext,
     Execute,
     ExecutionResult,
     Presentation,
     ToolUseScheme,
+    advertised_entries,
     get_scheme,
     register_scheme,
     registered_scheme_names,
 )
 from reyn.tools.schemes.universal_category import UniversalCategoryScheme
+from tests._support.tool_use_negative_examples import NOT_A_PRESENTATION
 
 
 class _RecordingOps:
@@ -39,7 +42,7 @@ class _RecordingOps:
 
     def present(self, available, layer_ctx) -> Presentation:
         self.calls.append("present")
-        return Presentation(llm_tools_payload=[{"t": 1}])
+        return Presentation(tools_channel=AdvertisedTools(entries=[{"t": 1}]))
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         self.calls.append("resolve")
@@ -95,7 +98,7 @@ async def test_universal_build_presentation_delegates() -> None:
     ops = _RecordingOps()
     pres = await UniversalCategoryScheme().build_presentation({}, {}, ops)
     assert "present" in ops.calls
-    assert pres.llm_tools_payload == [{"t": 1}]
+    assert advertised_entries(pres.tools_channel) == [{"t": 1}]
 
 
 def test_universal_interpret_execute_with_tool_calls() -> None:
@@ -179,27 +182,34 @@ def test_tool_use_config_old_chat_key_fails_loud() -> None:
 def test_tool_use_config_invalid_pair_fails_loud_at_parse_time() -> None:
     """Tier 2: FP-0066 P4b — an unregistered (scheme, transport) cell (P4a's
     valid-pair registry) raises at CONFIG PARSE time, not deep in a running
-    session. ``retrieval`` x ``content_fence`` is a real unimplemented cell
-    per the P4 firm §1 census.
+    session.
 
-    The witness was ``category`` x ``content_fence`` until #3376 P2 implemented
-    that cell. A witness that stops being unregistered stops testing
-    fail-closedness and starts failing for the opposite reason, so it moves with
-    the registry — see the arm below, which is the same pair from the other
-    side."""
+    ★ The witness is off-axis, and it took two expiries to get here. This arm
+    named ``category`` x ``content_fence`` until #3376 P2 implemented that cell,
+    then ``retrieval`` x ``content_fence`` until P3 implemented that one — both
+    times the arm stopped testing fail-closedness and started failing for the
+    opposite reason. Neither pair was ever forbidden; each was a legal
+    combination that had not arrived yet, in an arc whose purpose was to make
+    them arrive. ``NOT_A_PRESENTATION`` is not a name on the presentation axis at
+    all, so it cannot be registered by any future cell.
+
+    Paired with the arm below, which is the same axis from the other side."""
     with pytest.raises(ValueError):
-        _build_tool_use_config({"scheme": "retrieval", "transport": "content_fence"})
+        _build_tool_use_config(
+            {"scheme": NOT_A_PRESENTATION, "transport": "content_fence"}
+        )
 
 
-def test_tool_use_config_accepts_the_category_content_fence_cell() -> None:
-    """Tier 2: #3376 P2 — the config surface actually admits the new cell.
+@pytest.mark.parametrize("scheme", ["category", "retrieval"])
+def test_tool_use_config_accepts_the_content_fence_cells(scheme: str) -> None:
+    """Tier 2: #3376 P2/P3 — the config surface actually admits the new cells.
 
     Registering a cell in ``_VALID_SCHEME_TRANSPORT_PAIRS`` and having an
     operator's ``reyn.yaml`` accept it are two facts: parse-time validation reads
     that registry, so this is the arm that says the documented yaml works. Paired
     with the refusal above, which is the same axis from the other side."""
-    cfg = _build_tool_use_config({"scheme": "category", "transport": "content_fence"})
-    assert (cfg.scheme, cfg.transport) == ("category", "content_fence")
+    cfg = _build_tool_use_config({"scheme": scheme, "transport": "content_fence"})
+    assert (cfg.scheme, cfg.transport) == (scheme, "content_fence")
 
 
 def test_chat_default_matches_runtime_fallback_default() -> None:

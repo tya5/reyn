@@ -25,6 +25,7 @@ from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.scheme import (
     CodeBlock,
     ExecutionResult,
+    NoToolsChannel,
     PlainText,
     Presentation,
 )
@@ -115,7 +116,13 @@ class _FakeCodeActScheme:
 
     async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
         return Presentation(
-            llm_tools_payload=[],
+            # #3421: a CodeAct cell has NO ``tools=`` channel — not an empty one.
+            # ``dispatchable_catalog`` is mandatory on that arm because there is no
+            # advertisement for the dispatch gate to fall back on; this Fake
+            # dispatches through its own ``execute``, so it names the empty set
+            # rather than leaving the question unanswered.
+            tools_channel=NoToolsChannel(),
+            dispatchable_catalog=[],
             tool_use_sp="code-api",
         )
 

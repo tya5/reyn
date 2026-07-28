@@ -26,6 +26,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import _MAX_REPRESENT_ROUNDS, _REPRESENT_ACK
 from reyn.tools.scheme import (
+    AdvertisedTools,
     Execute,
     ExecutionResult,
     PlainText,
@@ -62,7 +63,7 @@ class _FakeRepresentScheme:
     async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
         refinement = layer_ctx.get("refinement")
         if not refinement:
-            return Presentation(llm_tools_payload=[_search_tool()])
+            return Presentation(tools_channel=AdvertisedTools(entries=[_search_tool()]))
         self.represent_calls.append({
             "refinement": refinement, "presented": layer_ctx.get("presented"),
         })
@@ -71,11 +72,11 @@ class _FakeRepresentScheme:
             # but the scheme never drops the search tool (a misbehaving scheme).
             tag = f"action_{len(self.represent_calls)}"
             return Presentation(
-                llm_tools_payload=[_matched_tool(), _search_tool()],
+                tools_channel=AdvertisedTools(entries=[_matched_tool(), _search_tool()]),
                 candidates=(tag,),
             )
         return Presentation(
-            llm_tools_payload=[_matched_tool()],
+            tools_channel=AdvertisedTools(entries=[_matched_tool()]),
             candidates=("matched_action",),
         )
 
@@ -164,7 +165,7 @@ class _TextRepresentScheme:
         self.represented = False
 
     async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
-        return Presentation(llm_tools_payload=[_matched_tool()],
+        return Presentation(tools_channel=AdvertisedTools(entries=[_matched_tool()]),
                             candidates=("matched_action",))
 
     def interpret(self, llm_response, *, tool_catalog, ops):

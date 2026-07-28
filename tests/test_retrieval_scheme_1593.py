@@ -12,7 +12,13 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.scheme import ExecContext, Execute, ExecutionResult, RePresent
+from reyn.tools.scheme import (
+    ExecContext,
+    Execute,
+    ExecutionResult,
+    RePresent,
+    advertised_entries,
+)
 from reyn.tools.schemes.retrieval import _SEARCH_TOOL_NAME, RetrievalScheme
 
 
@@ -68,7 +74,7 @@ async def test_initial_presentation_shows_search_tool(tmp_path) -> None:
     narrowing-before-call posture."""
     ops = _FakeOps()
     pres = await RetrievalScheme().build_presentation({}, {"search_visible": True}, ops)
-    names = [t["function"]["name"] for t in pres.llm_tools_payload]
+    names = [t["function"]["name"] for t in advertised_entries(pres.tools_channel)]
     assert _SEARCH_TOOL_NAME in names and "respond" in names
     assert ops.calls == []                                # no search yet (no refinement)
 
@@ -98,7 +104,7 @@ async def test_initial_presentation_falls_back_to_catalog_when_search_unavailabl
     ops = _FakeOps(catalog=[_tool("file__write"), _tool("file__read")])
     # search_visible absent (defaults False) — mirrors "no embedding configured".
     pres = await RetrievalScheme().build_presentation({}, {}, ops)
-    names = {t["function"]["name"] for t in pres.llm_tools_payload}
+    names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
     assert _SEARCH_TOOL_NAME not in names                 # search NEVER offered — would be a dead end
     assert {"file__write", "file__read"} <= names          # catalog stays fully reachable instead
     assert "respond" in names                              # base tools still present
@@ -113,7 +119,7 @@ async def test_refined_presentation_runs_search_and_exposes_candidates(tmp_path)
     Presentation.candidates (the OS convergence signal)."""
     ops = _FakeOps(matches=["file__write", "file__read"], catalog=[_tool("file__write"), _tool("file__read"), _tool("web__fetch")])
     pres = await RetrievalScheme().build_presentation({}, {"refinement": {"query": "edit a file"}}, ops)
-    names = {t["function"]["name"] for t in pres.llm_tools_payload}
+    names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
     assert {"file__write", "file__read"} <= names         # matched subset presented
     assert "web__fetch" not in names                      # unmatched NOT presented
     assert _SEARCH_TOOL_NAME in names                     # search stays (non-terminal)
@@ -132,7 +138,7 @@ async def test_convergence_drops_search_tool(tmp_path) -> None:
     pres = await RetrievalScheme().build_presentation(
         {}, {"refinement": {"query": "edit"}, "presented": ("file__write",)}, ops,
     )
-    names = {t["function"]["name"] for t in pres.llm_tools_payload}
+    names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
     assert "file__write" in names
     assert _SEARCH_TOOL_NAME not in names                 # converged → search dropped → must Execute
 
@@ -146,7 +152,7 @@ async def test_new_matches_keep_search_tool(tmp_path) -> None:
     pres = await RetrievalScheme().build_presentation(
         {}, {"refinement": {"query": "read"}, "presented": ("file__write",)}, ops,
     )
-    names = {t["function"]["name"] for t in pres.llm_tools_payload}
+    names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
     assert _SEARCH_TOOL_NAME in names                     # file__read is new → not converged → search stays
 
 

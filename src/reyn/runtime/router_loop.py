@@ -1650,7 +1650,15 @@ class RouterLoop:
         _pres = await self._scheme.build_presentation(
             _scheme_available, _scheme_layer_ctx, ops=self,
         )
-        tools = _pres.llm_tools_payload
+        from reyn.tools.scheme import advertised_entries  # noqa: PLC0415
+
+        # #3421: the WIRE view of the scheme's ``tools=`` channel. Both arms
+        # collapse to a list here and that is correct at this boundary — a
+        # transport with no channel (``content_fence``) and a channel with no
+        # eligible tool both send ``tools=[]``. What must NOT collapse is the
+        # dispatch gate, and it does not: a no-channel cell is required to carry
+        # ``dispatchable_catalog``, read below.
+        tools = advertised_entries(_pres.tools_channel)
         # #187 STEP 1c (owner principle): actions are enumerated ONLY by
         # list_actions, and their schemas ONLY by describe_action. The former
         # ARS block (B37/B38) inlined the whole session action catalog into
@@ -2061,6 +2069,7 @@ class RouterLoop:
                 Execute,
                 ExecutionResult,
                 RePresent,
+                advertised_entries,
             )
             # #1666: bound the per-turn tool_call count BEFORE interpret, so all
             # branches + the assistant↔tool-result alignment inherit the cap from a
@@ -2160,7 +2169,8 @@ class RouterLoop:
                     ops=self,
                 )
                 tools = apply_contextual_visibility(
-                    _re_pres.llm_tools_payload, self._contextual_permission,
+                    advertised_entries(_re_pres.tools_channel),
+                    self._contextual_permission,
                 )
                 self._catalog = {t["function"]["name"]: t for t in tools}
                 self._tool_names = frozenset(self._catalog.keys())
@@ -2990,7 +3000,7 @@ class RouterLoop:
         only; the scheme layer owns the tool-use SP (the universal-category
         scheme turns this payload into an ``Exposure`` and lets the ``tool_calls``
         encoder produce both channels)."""
-        from reyn.tools.scheme import Presentation
+        from reyn.tools.scheme import AdvertisedTools, Presentation
 
         univ = layer_ctx["univ_enabled"]
         search_visible = layer_ctx["search_visible"]
@@ -3005,7 +3015,9 @@ class RouterLoop:
             compact_visible=layer_ctx["ctx_signal_present"],
         )
         return Presentation(
-            llm_tools_payload=tools,
+            # The router's own presentation is always a ``tool_calls`` one, so the
+            # channel EXISTS here even when ``build_tools`` returns nothing (#3421).
+            tools_channel=AdvertisedTools(entries=tools),
         )
 
     def base_tools(self, available, layer_ctx) -> list[dict]:

@@ -37,7 +37,9 @@ JSON `tools=` payload の代わりに、 CodeAct は **code API** を作る: モ
 呼べる action の reference list を、 system prompt に `tool(...)` signature として
 render する。 permission-eligible な各 action が 1 行 — 名前・引数・短い説明 — で
 並ぶ。 この list は *提示のみ*。 モデルはそれを読んで何が callable かを知る。
-CodeAct では JSON tool payload は空 — モデルに JSON tool-calling は一切提供されない。
+CodeAct には JSON tool channel が **そもそも存在しない** — 「channel はあるが中身が
+空」とは別のことであり、何も advertise されていないのに code API からは全 action が
+呼べる理由でもある。
 
 **何が載るか**: `enumerate-all` scheme が `tool_calls` で advertise するのと同じ
 集合 — base tool（`read_file` / `delegate_to_agent` / `session_spawn` …）と
@@ -124,6 +126,12 @@ tool_use:
 全アクションではなくカタログのラッパー（`invoke_action` など）なので、システム
 プロンプトがカタログと共に増えません。CodeAct を選ぶ理由は当てはまるが全件列挙
 のコストが高すぎる、という場合に使います。
+
+**カタログが非常に大きく、ブラウズが入口として適切でない場合**: `scheme:
+retrieval` + `transport: content_fence` は `list_actions` の代わりに
+`search_actions` を見せます。モデルは欲しいものを記述し、検索が返したものを
+その場で呼び出せます — `tool_calls` 側の retrieval セルが払う再提示の 1 往復
+なしに、同一スニペット内で完結します。`embedding.enabled: true` が必要です。
 
 旧 `tool_use.chat` key は #3247 で削除済み（clean-break、compat alias 無し）
 — これを書いた `reyn.yaml` は parse 時に失敗する。

@@ -39,6 +39,7 @@ from reyn.tools.scheme import (
     PlainText,
     Presentation,
     SchemeOps,
+    advertised_entries,
     register_scheme,
 )
 from reyn.tools.schemes._category_exposure import (
@@ -67,14 +68,16 @@ class UniversalCategoryScheme:
         # but universal's body is unchanged — ops.present stays sync and is NOT
         # awaited, so the tools= bytes are byte-identical to PR-1.
         exposure = build_category_exposure(
-            present_entries=ops.present(available, layer_ctx).llm_tools_payload,
+            present_entries=advertised_entries(
+                ops.present(available, layer_ctx).tools_channel
+            ),
             available=available,
             layer_ctx=layer_ctx,
             deviation=TOOL_CALLS_EXPOSURE_DEVIATION,
         )
         encoder = encoder_for_transport(Transport.TOOL_CALLS)
         return Presentation(
-            llm_tools_payload=encoder.encode_tools(exposure),
+            tools_channel=encoder.encode_tools(exposure),
             tool_use_sp=encoder.encode_tool_use_sp(exposure),
         )
 

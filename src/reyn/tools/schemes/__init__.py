@@ -16,5 +16,6 @@ from . import (  # noqa: F401 — imported for the register_scheme import-time s
     codeact,
     enumerate_all,
     retrieval,
+    retrieval_content_fence,
     universal_category,
 )

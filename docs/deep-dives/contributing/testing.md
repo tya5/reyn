@@ -305,6 +305,49 @@ A narrow exception exists in the [Annex](#annex-scaffolding-tests) for legacy re
 
 ---
 
+## Choosing a negative example
+
+Many gates need a value the system must **refuse**: an unregistered cell, an
+unknown name, an unsupported kind. Choosing that value badly produces a test
+that silently stops testing what it claims.
+
+> **Take the negative example from OUTSIDE the space the system extends into.
+> Use something that cannot ENTER the set, not something that merely is not in
+> the set yet.**
+
+The two look identical at the call site and behave completely differently over
+time. `(retrieval, content_fence)` was never forbidden — it was a **legal**
+combination that had not been implemented, in an arc (#3376) whose stated purpose
+was to implement it. `"no-such-presentation"` is not a value of the presentation
+axis at all, so no future work can register it.
+
+Measured, not hypothesised (#3376): three tests pinned `(category,
+content_fence)` as *the* unregistered cell. P2 registered it and all three went
+RED; they were retargeted to `(retrieval, content_fence)`. P3 registered that
+one, and the same three would have gone RED again. Each retarget looked like a
+small fix and was really the same defect recurring.
+
+**If an expiring witness is unavoidable**, declare its expiry inline in
+falsifiable form (`comments.md` §4): name what registers it and what breaks when
+that happens. A permanent witness is always preferred.
+
+**Mark them.** A negative example is written exactly like a positive one, so
+nothing can tell them apart by inspection — which is why a purely syntactic gate
+for this is not possible. Importing the value from a shared, named module is the
+mark; `tests/_support/tool_use_negative_examples.py` is the worked example, and
+it is paired with an arm asserting the marked name really is off-axis. Marked
+witnesses can be gated; unmarked ones cannot, and this section is then the only
+thing standing behind them.
+
+**Related failure**: making one site derive its negative examples from a registry
+does **not** mean the value is nowhere hardcoded. After #3376 P1 derived the
+unregistered set from the live registry, three other files still held the
+literal. When you convert a site to a derivation, grep from the **value** side —
+the literal, not the concept — across `tests/`, and count what you find before
+deciding what to fix.
+
+---
+
 ## Setup discipline
 
 Reaching a particular state in a test sometimes requires a non-trivial

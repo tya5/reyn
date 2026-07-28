@@ -12,10 +12,10 @@ Two claims are kept apart throughout, as in the P1 sibling
 **production reaches the mechanism**. A fold that holds in a helper nobody calls
 protects nothing.
 
-Byte-identity of the pre-existing cells is not asserted here — that is the
-scaffolded oracle's job (``tests/scaffold/test_tool_use_oracle_3376.py``), which
-compares a fresh-process capture from a real ``SchemeOps`` against the recorded
-artifact.
+Byte-identity of the pre-existing cells was never asserted here — that was the
+scaffolded oracle's job, and it was deleted when #3376 P3 registered the last
+cell. What remains is what should: the invariants this cell has to keep, which
+are not a snapshot of what it happened to render on the day it landed.
 
 The Fake ``SchemeOps`` below is the idiom the existing scheme tests use (real
 callables, explicit returns, never a mock) and appears only where the input under
@@ -36,7 +36,13 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.router_loop import RouterLoop
 from reyn.security.permissions.effective import ContextualPermission
-from reyn.tools.scheme import Presentation, get_scheme
+from reyn.tools.scheme import (
+    AdvertisedTools,
+    NoToolsChannel,
+    Presentation,
+    advertised_entries,
+    get_scheme,
+)
 from reyn.tools.schemes._category_exposure import (
     CONTENT_FENCE_EXPOSURE_DEVIATION,
     TOOL_CALLS_EXPOSURE_DEVIATION,
@@ -98,7 +104,7 @@ class _Ops:
         self._catalog = catalog
 
     def present(self, available, layer_ctx) -> Presentation:
-        return Presentation(llm_tools_payload=list(self._wrappers))
+        return Presentation(tools_channel=AdvertisedTools(entries=list(self._wrappers)))
 
     def base_tools(self, available, layer_ctx) -> "list[dict]":
         return list(self._wrappers)
@@ -225,7 +231,7 @@ async def test_production_folds_against_the_live_catalog() -> None:
         dict(available), dict(layer_ctx), ops=calls_loop,
     )
 
-    advertised = {e["function"]["name"] for e in calls.llm_tools_payload}
+    advertised = {e["function"]["name"] for e in advertised_entries(calls.tools_channel)}
     declared = _declared(fence.tool_use_sp)
     assert declared == advertised, (
         "the two category cells no longer show the same set — the transport "
@@ -269,18 +275,20 @@ def test_the_cell_resolves_to_a_registered_live_scheme() -> None:
 
 @pytest.mark.asyncio
 async def test_the_cell_produces_both_channels_of_a_working_presentation() -> None:
-    """Tier 2: mechanism — the presentation carries an empty ``tools=`` payload,
-    a rendered code-API, and a dispatch catalog.
+    """Tier 2: mechanism — the presentation declares NO ``tools=`` channel, a
+    rendered code-API, and a dispatch catalog.
 
-    ``llm_tools_payload == []`` is this transport's way of saying "I have no
-    ``tools=`` channel" and is the encoder's answer, not a literal in the cell.
-    The third channel is the one that would be easy to forget: with an empty
-    advertisement, a missing ``dispatchable_catalog`` would leave the gate keyed
-    on nothing and every in-code call would come back ``unknown_tool``."""
+    ``tools_channel`` is ``NoToolsChannel`` — this transport's way of saying "the
+    ``tools=`` field does not apply to me", which #3421 moved out of a comment and
+    into the type so it stops reading like "there happen to be zero tools". It is
+    the encoder's answer, not a literal in the cell. The third channel is the one
+    that would be easy to forget: with nothing advertised, a missing
+    ``dispatchable_catalog`` would leave the gate keyed on nothing and every
+    in-code call would come back ``unknown_tool``."""
     pres = await CategoryContentFenceScheme().build_presentation(
         {}, {}, _Ops(wrappers=_WRAPPERS, catalog=_catalog(5)),
     )
-    assert pres.llm_tools_payload == []
+    assert isinstance(pres.tools_channel, NoToolsChannel)
     assert isinstance(pres.tool_use_sp, str) and "def invoke_action(" in pres.tool_use_sp
     assert pres.dispatchable_catalog is not None
     assert {e["function"]["name"] for e in pres.dispatchable_catalog} == {
@@ -416,7 +424,7 @@ def test_the_tool_calls_category_cell_still_runs_the_shared_exposure() -> None:
     re-encoded."""
     ops = _Ops(wrappers=_WRAPPERS, catalog=_catalog(50))
     exposure = build_category_exposure(
-        present_entries=ops.present({}, {}).llm_tools_payload,
+        present_entries=advertised_entries(ops.present({}, {}).tools_channel),
         available={"hot_list_aliases": []},
         layer_ctx={"univ_enabled": True},
         deviation=TOOL_CALLS_EXPOSURE_DEVIATION,
@@ -426,5 +434,5 @@ def test_the_tool_calls_category_cell_still_runs_the_shared_exposure() -> None:
             {"hot_list_aliases": []}, {"univ_enabled": True}, ops,
         )
     )
-    assert pres.llm_tools_payload == [d.as_tool_calls_entry() for d in exposure.descriptors]
-    assert pres.llm_tools_payload == _WRAPPERS
+    assert advertised_entries(pres.tools_channel) == [d.as_tool_calls_entry() for d in exposure.descriptors]
+    assert advertised_entries(pres.tools_channel) == _WRAPPERS

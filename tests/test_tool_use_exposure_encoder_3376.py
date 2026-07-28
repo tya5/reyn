@@ -5,10 +5,12 @@ Two claims are kept apart everywhere below, because they are different claims:
 that is right but unwired passes the first and fails the second, and only the
 second is what protects a running session.
 
-Byte-identity of the four cells is not asserted here — it is the scaffolded
-oracle's job (``tests/scaffold/test_tool_use_oracle_3376.py``), which compares a
-fresh-process capture from a real ``SchemeOps`` against a recorded artifact.
-This file pins the invariants the seam adds on top of that.
+Byte-identity of the pre-existing cells was never asserted here — it was the
+scaffolded oracle's job, and that oracle was **deleted** when #3376 P3 registered
+the last cell (a golden snapshot of current behaviour outlives its usefulness the
+moment there is no migration left to measure, and then resists correct changes
+instead of catching wrong ones). This file pins the invariants the seam adds,
+which are the ones that outlive the arc.
 
 ``SchemeOps`` is a Protocol the ``RouterLoop`` implements over a live host; the
 per-cell Fakes below are the idiom the existing scheme tests already use, and
@@ -41,7 +43,12 @@ from reyn.tools.exposure import (
     descriptor_from_entry,
     descriptors_from_entries,
 )
-from reyn.tools.scheme import Presentation, get_scheme
+from reyn.tools.scheme import (
+    AdvertisedTools,
+    Presentation,
+    advertised_entries,
+    get_scheme,
+)
 from reyn.tools.schemes._enumerate_exposure import (
     CONTENT_FENCE_EXPOSURE_DEVIATION,
     TOOL_CALLS_EXPOSURE_DEVIATION,
@@ -54,6 +61,7 @@ from reyn.tools.transport import (
     resolve_scheme_for_transport,
     valid_scheme_transport_pairs,
 )
+from tests._support.tool_use_negative_examples import NOT_A_PRESENTATION
 
 
 def _nested(name: str, *, description: str = "", properties: dict | None = None) -> dict:
@@ -88,7 +96,7 @@ class _Ops:
         # build their exposure from. Its *content* is irrelevant to the arms that
         # use it here (they assert a relation between two derived sets, not the
         # set itself); what matters is that it is one list, composed once.
-        return Presentation(llm_tools_payload=list(self._base) + list(self._catalog))
+        return Presentation(tools_channel=AdvertisedTools(entries=list(self._base) + list(self._catalog)))
 
 
 # ── the pair table: still a capability declaration, still fail-closed ─────────
@@ -123,39 +131,44 @@ def test_an_unregistered_cell_is_still_refused_fail_closed() -> None:
     every cell mechanically encodable, so the table could survive while meaning
     nothing.
 
-    The unregistered set is DERIVED — the full product of the registered scheme
-    names and every ``Transport``, minus the registered cells — so a cell added
-    to the table moves itself out of this arm rather than leaving a hand-written
-    list stale. Vacuity guard: both the registered and the unregistered set must
-    be non-empty, otherwise the loop below asserts nothing."""
+    ★ The witness comes from OUTSIDE the presentation axis, not from a gap
+    inside it. Until #3376 P3 this arm derived its witness as the complement of
+    the registered set, which read as drift-proof and was not: the arc's whole
+    purpose was to register cells, so the complement was guaranteed to empty
+    itself, and it did — P2 and P3 each falsified the witness the previous phase
+    had chosen. A negative example must be something that cannot ENTER the set,
+    not something that merely is not in it yet: ``NOT_A_PRESENTATION`` is not a
+    name on the axis at all, so no future cell can register it.
+
+    Vacuity guards, both needed: the witness must really be outside the
+    namespace (otherwise this asserts that a registered cell is refused, which
+    would be a bug in the assertion, not in the code), and ``Transport`` must be
+    non-empty (otherwise the loop runs zero times). The derived complement is
+    still exercised when it is non-empty — a new presentation name repopulates
+    it — but nothing here depends on it any more."""
     registered = set(valid_scheme_transport_pairs())
+    assert registered, "no registered cell — the pair table is empty"
+
     schemes = {scheme for scheme, _ in registered}
-    product = {(scheme, transport) for scheme in schemes for transport in Transport}
-    unregistered = product - registered
-
-    assert registered, "no registered cell — the complement below would be everything"
-    assert unregistered, (
-        "Every (scheme, transport) cell is registered, so this arm inspects nothing "
-        "and the fail-closed claim needs a different witness — the loop below can no "
-        "longer supply one, and passing vacuously would be worse than failing. "
-        "NOTE: tests/scaffold/test_tool_use_oracle_3376.py::"
-        "test_the_arc_completing_fires_this_scaffolds_deletion trips on this SAME "
-        "condition, because it IS the #3376 arc-complete signal. The two arms fire "
-        "together and are telling you one thing: every cell is now on the seam. That "
-        "means (1) delete the #3376 oracle scaffold, and (2) give this arm a real "
-        "witness — e.g. a transport with no encoder, or a presentation name that is "
-        "not registered. Do not 'fix' either arm in isolation."
+    assert NOT_A_PRESENTATION not in schemes, (
+        f"{NOT_A_PRESENTATION!r} became a real presentation name, so it is no "
+        "longer outside the namespace and cannot witness fail-closedness. Pick "
+        "another name that is not on the axis — do not switch to an unregistered "
+        "cell of a real presentation, which is what expired twice already."
     )
+    assert list(Transport), "Transport is empty — the loop below would assert nothing"
 
-    for scheme, transport in sorted(unregistered, key=lambda p: (p[0], p[1].value)):
+    for transport in Transport:
+        with pytest.raises(ValueError, match=r"no \(scheme, transport\) registration"):
+            resolve_scheme_for_transport(NOT_A_PRESENTATION, transport)
+
+    # Opportunistic, not load-bearing: today the presentation x transport product
+    # is fully registered so this set is empty, and it refills the day either axis
+    # grows. Deriving it keeps a new cell from having to be added by hand here.
+    product = {(scheme, transport) for scheme in schemes for transport in Transport}
+    for scheme, transport in sorted(product - registered, key=lambda p: (p[0], p[1].value)):
         with pytest.raises(ValueError, match=r"no \(scheme, transport\) registration"):
             resolve_scheme_for_transport(scheme, transport)
-
-    # An entirely unknown presentation name is refused for EVERY transport, not
-    # only for the ones that happen to have no encoder.
-    for transport in Transport:
-        with pytest.raises(ValueError):
-            resolve_scheme_for_transport("no-such-presentation", transport)
 
 
 # ── the descriptor union ─────────────────────────────────────────────────────
@@ -195,7 +208,9 @@ def test_a_provider_native_entry_is_carried_verbatim_not_normalised() -> None:
     descriptor = descriptor_from_entry(entry)
     assert descriptor.kind == DESCRIPTOR_KIND_PROVIDER_NATIVE
     assert descriptor.as_tool_calls_entry() == entry
-    assert ToolCallsEncoder().encode_tools(Exposure(descriptors=(descriptor,))) == [entry]
+    assert advertised_entries(
+        ToolCallsEncoder().encode_tools(Exposure(descriptors=(descriptor,)))
+    ) == [entry]
 
 
 @pytest.mark.asyncio
@@ -221,7 +236,7 @@ async def test_production_cells_reach_the_descriptor_classifier() -> None:
         {"hot_list_aliases": []}, {"search_visible": True}, ops,
     )
     descriptors = descriptors_from_entries(base + catalog)
-    assert pres.llm_tools_payload == [d.as_tool_calls_entry() for d in descriptors]
+    assert advertised_entries(pres.tools_channel) == [d.as_tool_calls_entry() for d in descriptors]
     # Vacuity guard: the equality above must have spanned every descriptor shape,
     # otherwise it only proves the seam carries the easy one.
     assert {d.kind for d in descriptors} == {
@@ -353,7 +368,7 @@ async def test_the_production_cells_carry_those_declarations() -> None:
     )
     fence_cell = await CodeActScheme().build_presentation({}, {}, ops)
 
-    advertised = {e["function"]["name"] for e in flat_cell.llm_tools_payload}
+    advertised = {e["function"]["name"] for e in advertised_entries(flat_cell.tools_channel)}
     assert "delegate_to_agent" in advertised
     assert "mcp__call_tool" not in advertised
     assert "def delegate_to_agent(" in fence_cell.tool_use_sp
@@ -450,4 +465,4 @@ def test_presentation_no_longer_carries_the_dead_sp_channel() -> None:
     fields = {f.name for f in dataclasses.fields(Presentation)}
     assert "sp_params" not in fields
     assert "sp_fragment" not in fields
-    assert {"llm_tools_payload", "tool_use_sp"} <= fields
+    assert {"tools_channel", "tool_use_sp"} <= fields

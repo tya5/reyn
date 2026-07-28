@@ -92,9 +92,11 @@ class _VisibilityProbeOps:
 
     def present(self, available: dict, layer_ctx: dict) -> Any:
         from reyn.runtime.router_tools import build_tools
-        from reyn.tools.scheme import Presentation
+        from reyn.tools.scheme import AdvertisedTools, Presentation
 
-        return Presentation(llm_tools_payload=build_tools(
+        # This probe stands in for the router's own ``present``, which is always a
+        # ``tool_calls`` presentation — the channel exists (#3421).
+        return Presentation(tools_channel=AdvertisedTools(entries=build_tools(
             self._host.list_available_agents(),
             file_permissions=self._host.get_file_permissions(),
             mcp_servers=self._host.get_mcp_servers(),
@@ -103,7 +105,7 @@ class _VisibilityProbeOps:
             search_actions_visible=layer_ctx.get("search_visible", False),
             hot_list_aliases=available.get("hot_list_aliases"),
             compact_visible=layer_ctx.get("ctx_signal_present", False),
-        ))
+        )))
 
     def base_tools(self, available: dict, layer_ctx: dict) -> "list[dict]":
         from reyn.runtime.router_tools import build_tools
@@ -219,8 +221,9 @@ class CapabilityVisibility:
         self._excluded_categories = frozenset(excluded_categories or ())
         # #3220: the chat-layer ``ToolUseScheme`` name (``reyn.tools.scheme.get_scheme``
         # registry key — "enumerate-all" / "universal-category" / "retrieval" / the
-        # two content_fence cells' resolved names: (enumerate-all, content_fence) =
-        # CodeAct, FP-0066 P4c #3247, and (category, content_fence), #3376 P2).
+        # three content_fence cells' resolved names: (enumerate-all, content_fence) =
+        # CodeAct, FP-0066 P4c #3247, plus (category, content_fence) #3376 P2 and
+        # (retrieval, content_fence) #3376 P3).
         # Immutable for the session's lifetime (Session never reassigns
         # ``self._chat_tool_use_scheme`` post-construction — same stability class as
         # ``agent_name``), so a plain field is correct here, not a live provider.
@@ -415,7 +418,7 @@ class CapabilityVisibility:
         coroutine-scheduling overhead only, not a hidden I/O wait.
 
         Wrapper-expansion (architect-confirmed granularity) still holds: whatever
-        NAMES a scheme's own ``build_presentation`` puts in ``llm_tools_payload``
+        NAMES a scheme's own ``build_presentation`` puts in ``tools_channel``
         (or ``dispatchable_catalog`` when the scheme decouples it — CodeAct) ARE
         the reachable set, by construction — ``universal-category``'s own
         ``present()`` calls ``build_tools(universal_wrappers_enabled=True)``,
@@ -427,6 +430,7 @@ class CapabilityVisibility:
         """
         from reyn.tools.scheme import (
             DEFAULT_SCHEME_NAME,
+            advertised_entries,
             flat_catalog_entries,
             get_scheme,
         )
@@ -455,11 +459,24 @@ class CapabilityVisibility:
         }
         pres = _run_coro_sync(scheme.build_presentation(available, layer_ctx, ops=ops))
 
-        names = {e["name"] for e in flat_catalog_entries(pres.llm_tools_payload)}
         if pres.dispatchable_catalog is not None:
-            # CodeAct: llm_tools_payload is genuinely [] (no tools= schema); the
-            # actually-reachable set is the code-API's dispatchable catalog.
+            # A scheme that decouples dispatch from advertisement — every
+            # ``content_fence`` cell, whose channel arm is ``NoToolsChannel``, plus
+            # any ``tool_calls`` cell that chooses to. The reachable set is the
+            # dispatchable catalog, not what is advertised.
+            #
+            # #3421: this used to read the advertised payload first and then
+            # overwrite it, with a comment explaining that the CodeAct payload was
+            # "genuinely []". The comment is gone because the type now says it:
+            # a ``NoToolsChannel`` presentation cannot reach the ``else`` branch —
+            # ``Presentation`` refuses to exist with that arm and no
+            # ``dispatchable_catalog``.
             names = {e["name"] for e in flat_catalog_entries(pres.dispatchable_catalog)}
+        else:
+            names = {
+                e["name"]
+                for e in flat_catalog_entries(advertised_entries(pres.tools_channel))
+            }
 
         if self._chat_tool_use_scheme == "universal-category":
             # Wrapper-expansion: the composed payload names the 3-4 wrapper

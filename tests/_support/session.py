@@ -39,7 +39,14 @@ def synthetic_t_max(t_max: int):
         _mb.get_max_input_tokens = original
 
 
-def make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
+def make_session(
+    tmp_path: Path,
+    *,
+    t_max: int = 1_000_000,
+    agent: Agent | None = None,
+    state_log: StateLog | None = None,
+    snapshot_path: Path | None = None,
+) -> Session:
     """Create a Session whose compaction engine uses a synthetic T_max.
 
     ``use_chars4_estimate=True`` makes token estimation deterministic:
@@ -49,18 +56,43 @@ def make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
     predictable in tests.  The default (1_000_000) is large enough that
     any realistic test conversation fits and no elide fires, unless a
     smaller t_max is passed.
+
+    ``agent`` / ``state_log`` / ``snapshot_path`` are optional explicit
+    overrides — pass one to build a Session around a caller-controlled
+    identity or recovery pair. Any omitted, defaults to a fixed
+    ``tmp_path``-derived construction (below), same as before #3413.
+    (#3413: prior to this, the three were built unconditionally inside the
+    helper with no override kwarg at all — not a default that could silently
+    absorb a caller-supplied value (structurally impossible to pass one),
+    but an AST enumeration of this helper's 15 call sites across 4 files
+    found one, ``test_skill_invoke_3100.py::_session_with_skills``, that had
+    to duplicate this entire function body verbatim just to thread an extra
+    ``capability_scope`` kwarg through — evidence the missing override path
+    was already forcing copy-paste rather than a hazard someone had
+    silently hit. What breaks if these three stay override-less: any future
+    caller needing a specific ``agent`` / ``state_log`` / ``snapshot_path``
+    duplicates the helper instead of parameterizing it, same as
+    ``test_skill_invoke_3100.py`` did. Making them explicit optional
+    overrides removes that duplication incentive without changing behaviour
+    for the 15 existing call sites, none of which pass any of the three.)
     """
-    state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
+    if agent is None:
+        # Agent is the sole identity SSoT (#3133 Priority-0 step-2 removed
+        # the flat identity kwargs Session used to also accept alongside
+        # ``agent=``).
+        agent = Agent(agent_name="default", role="")
+    if state_log is None:
+        state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
     cfg = CompactionConfig(
         body_token_cap=1500,
         use_chars4_estimate=True,  # deterministic: chars // 4
         section_caps_spec_tokens=0,  # keeps B_M positive for small T_max values
     )
-    # Agent is the sole identity SSoT (#3133 Priority-0 step-2 removed the
-    # flat identity kwargs Session used to also accept alongside ``agent=``).
-    agent = Agent(agent_name="default", role="")
-    snapshot_path = tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json"
+    if snapshot_path is None:
+        snapshot_path = (
+            tmp_path / ".reyn" / "agents" / agent.agent_name / "state" / "snapshot.json"
+        )
     # Session no longer builds its own recovery pair (generation_store ->
     # journal) — build it here from the same inputs the pre-refactor
     # Session.__init__ read internally (recovery-bundle-out-of-Session).

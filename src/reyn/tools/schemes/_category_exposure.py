@@ -75,7 +75,8 @@ def build_category_exposure(
 ) -> Exposure:
     """Build the transport-neutral exposure for one ``category`` cell.
 
-    ``present_entries`` is ``ops.present(...).llm_tools_payload`` — the router's
+    ``present_entries`` is ``advertised_entries(ops.present(...).tools_channel)``
+    — the router's
     universal-category presentation, the already-folded wrapper composition. It
     is passed in already computed because the ``content_fence`` cell needs the
     same untouched list for its dispatchable catalog, and calling ``build_tools``
