@@ -62,15 +62,20 @@ def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
     byte-for-byte, keyword-for-keyword, with no per-site kwarg rename
     required).
 
-    ``agent_name`` defaults to ``"test-agent"`` when the caller supplies
-    neither (Session's own ``agent`` param has no default, so every prior
-    direct-construction call site necessarily passed an identity already —
-    this default only covers the degenerate case of calling the helper with
-    no identity kwargs at all).
+    ``agent_name`` has no default — every call site must pass it explicitly.
+    (#3413: a prior ``kwargs.setdefault("agent_name", "test-agent")`` here
+    was verified dead — an AST enumeration of all 282 call sites across 196
+    test files found 0 that omitted ``agent_name``, so the default was never
+    exercised. Removing it costs nothing today and permanently forecloses
+    the hazard the issue raised: a test that deliberately passes a specific
+    ``agent_name`` to exercise identity-dependent behaviour could have that
+    value silently absorbed by a default if the pass-through were ever
+    dropped by a future edit. ``Agent.agent_name`` itself has no default, so
+    omitting it now raises ``TypeError`` immediately instead of falling back
+    to a fixed literal.)
     """
     if role is not None:
         kwargs.setdefault("agent_role", role)
-    kwargs.setdefault("agent_name", "test-agent")
 
     agent_field_kwargs = {
         agent_field: kwargs.pop(kwarg_name)
