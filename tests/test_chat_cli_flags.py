@@ -8,10 +8,19 @@ Two new flags exposed on ``reyn chat``:
 Implementation is split between argparse (flag definition) and a helper
 ``_reset_project_state`` that does the actual file deletion. Tests cover
 the helper directly + argparse integration.
+
+#3213 item 3: ``--no-restore`` used to skip ONLY the WAL-derived agent-state
+restore (``restore_all()``) while the persisted chat transcript was still
+loaded via ``Session.load_history()`` on a separate path gated by a ``fresh``
+flag that only ``run-once`` set. The tests below drive the REAL production
+``chat.run(args)`` entry point end to end (the exact code changed by this
+fix), not a hand-built call to ``load_history()``, so they exercise the
+wiring, not just the mechanism.
 """
 from __future__ import annotations
 
 import argparse
+import io
 from pathlib import Path
 
 from reyn.interfaces.cli.commands.chat import _reset_project_state, register
@@ -113,3 +122,119 @@ def test_reset_with_confirm_true_prompts(tmp_path, monkeypatch):
     confirmed = _reset_project_state(tmp_path, confirm=True)
     assert confirmed is True
     assert not paths["wal"].exists(), "confirmed reset must delete state"
+
+
+# ---------------------------------------------------------------------------
+# #3213 item 3 — --no-restore must also skip loading the chat transcript
+# ---------------------------------------------------------------------------
+
+
+def _run_chat_once(tmp_path, monkeypatch, *, no_restore: bool):
+    """Drive the REAL `reyn chat` entry point (`chat.run(args)`) through the
+    fast one-shot drive, with only the network-facing LLM call
+    (`send_to_agent_impl`) substituted for a same-signature stand-in — the
+    exact substitution `test_reyn_run_once_cli_reaches_registry_shutdown`
+    (test_teardown_completeness_2783.py) already uses for this same reason.
+    Returns the ``Session.load_history`` call count observed via a
+    call-through spy (real behavior still runs; only the count is watched —
+    not a private-state read).
+    """
+    from reyn.interfaces.cli.commands.chat import register as chat_register
+    from reyn.runtime.session import Session
+
+    monkeypatch.chdir(tmp_path)
+    top = argparse.ArgumentParser()
+    sub = top.add_subparsers()
+    chat_register(sub)
+    argv = ["chat"]
+    if no_restore:
+        argv.append("--no-restore")
+    args = top.parse_args(argv)
+    args.once = True  # drive the fast one-shot branch, same as `run-once`
+
+    async def _fake_send(registry, *, agent_name, message, timeout=0,
+                          intervention_override=None, sid=None) -> dict:
+        return {"reply": "ok", "limit_stopped": False}
+
+    monkeypatch.setattr("reyn.mcp.server.send_to_agent_impl", _fake_send)
+    monkeypatch.setattr("sys.stdin", io.StringIO("hi"))
+
+    orig_load_history = Session.load_history
+    calls = {"n": 0}
+
+    def _spy_load_history(self) -> None:
+        calls["n"] += 1
+        return orig_load_history(self)
+
+    monkeypatch.setattr(Session, "load_history", _spy_load_history)
+
+    from reyn.interfaces.cli.commands import chat as chat_mod
+    chat_mod.run(args)
+
+    return calls["n"]
+
+
+def _seed_transcript(tmp_path: Path) -> Path:
+    history_path = tmp_path / ".reyn" / "agents" / "default" / "history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    seed = (
+        '{"role": "user", "content": [{"type": "text", "text": "prior attempt"}], '
+        '"seq": 1}\n'
+    )
+    history_path.write_text(seed, encoding="utf-8")
+    return history_path
+
+
+def test_no_restore_skips_transcript_load(tmp_path, monkeypatch):
+    """Tier 2: `reyn chat --no-restore` must skip loading the persisted chat
+    transcript, not just the WAL-derived agent-state restore (#3213 item 3).
+    Drives the real CLI path; `Session.load_history` must NOT be called."""
+    _seed_transcript(tmp_path)
+
+    n_calls = _run_chat_once(tmp_path, monkeypatch, no_restore=True)
+
+    assert n_calls == 0, (
+        "--no-restore must skip Session.load_history() — the chat transcript "
+        "load path — not just registry.restore_all() (#3213 item 3)"
+    )
+
+
+def test_default_run_still_loads_transcript(tmp_path, monkeypatch):
+    """Tier 2: without --no-restore, the transcript load is unaffected — the
+    skip is per-run, not sticky. Same real CLI path as the --no-restore test
+    above, flag simply omitted."""
+    _seed_transcript(tmp_path)
+
+    n_calls = _run_chat_once(tmp_path, monkeypatch, no_restore=False)
+
+    assert n_calls == 1, (
+        "a normal run (no --no-restore) must still call Session.load_history() "
+        "exactly once"
+    )
+
+
+def test_no_restore_does_not_delete_or_truncate_transcript(tmp_path, monkeypatch):
+    """Tier 2: the ★ property that must survive — `--no-restore` SKIPS loading,
+    it does NOT delete anything. This is what keeps `--no-restore`
+    non-destructive per ADR-0010 (distinct from the destructive `--reset`).
+    Asserts the transcript file is untouched on disk after a --no-restore run,
+    and that a SUBSEQUENT run without the flag loads it normally (proving the
+    skip was per-run, not a deletion)."""
+    history_path = _seed_transcript(tmp_path)
+    original_content = history_path.read_text(encoding="utf-8")
+
+    _run_chat_once(tmp_path, monkeypatch, no_restore=True)
+
+    assert history_path.exists(), (
+        "--no-restore must not delete the chat transcript file"
+    )
+    assert history_path.read_text(encoding="utf-8") == original_content, (
+        "--no-restore must not truncate/modify the chat transcript file"
+    )
+
+    # A subsequent run WITHOUT the flag loads it normally (non-sticky skip).
+    n_calls_next_run = _run_chat_once(tmp_path, monkeypatch, no_restore=False)
+    assert n_calls_next_run == 1, (
+        "a following run without --no-restore must load the still-intact "
+        "transcript normally"
+    )
