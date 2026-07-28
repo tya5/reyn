@@ -119,6 +119,23 @@ codebase now resolves through the single construction seam described above. The 
 in `tests/test_3053_budget_bus_bridge_aware.py` fails if a future limit/budget-style bus
 reintroduces a frozen self-bound `_dispatch_intervention` capture.
 
+## Where the origin-pin stall check lives (#268)
+
+`Session.handle_intervention`'s Branch 3 (`user_channel`) does not itself run the
+origin-pin stall check before calling `_dispatch_intervention`. Issue #268 Phase 2
+moved that check INTO `_dispatch_intervention` so it also covers a second delivery
+path that bypasses `handle_intervention` entirely: an op raising an intervention
+directly via `ChatInterventionBus.deliver()`. A stall check placed in
+`handle_intervention` instead would never fire for that path — only for
+interventions routed through the three `handle_intervention` branches
+(self_answer / parent_delegate / user_channel).
+
+When the check fires (a stamped iv on a listener-less registry — the fail-close
+scenario [the rule](#the-rule) above describes), it emits its own
+`user_channel_stalled` event, so the audit trail records exactly one event per
+actual outcome rather than the `intervention_routed` event from
+`handle_intervention` plus a second, redundant stall signal.
+
 ## See also
 
 - [Permission model](permission-model.md) — the gates that raise `permission.*` interventions.

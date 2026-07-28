@@ -90,6 +90,16 @@ As each delegate responds, the sender is removed from `waiting_on`. When the set
 
 This gives a "manager → delegate → synthesize" model: the user sees an interim `(working on it)` from their attached agent, then a single final answer that incorporates every delegate's input.
 
+### Reply routing across delegating sessions
+
+`Session` vs `Agent` are distinct (see [Sessions](../multi-agent/sessions.md)): a single Agent can run several Sessions in parallel. When a **non-main Session** on an Agent DELEGATES to a peer (not just spawns a sub-agent), the delegating Session's own `session_id` (`from_sid`) is threaded into the outgoing `submit_agent_request` call (`#2130`). This lets `_a2a_send_response` route the peer's reply back to `(from_agent, from_sid)` — the delegating Session specifically — instead of to the Agent's default `main` Session.
+
+`from_sid="main"` (or absent) is the default/byte-identical path: `_a2a_send_response` treats an absent or `"main"` value as the unchanged main-Session case, so ordinary (main-Session-initiated) delegation is untouched by this threading.
+
+This is in-process delegation only. A cross-process external peer that does not echo `from_sid` back degrades to `None` → `main` — a safe fallback (the reply reaches the Agent's main Session rather than being lost silently), not a routing failure.
+
+There is no dedicated reference doc for the internal `(agent, sid)` A2A routing scheme beyond this section and the code (`_a2a_send_response`) — this section is that scheme's documentation.
+
 ### chain_id
 
 Every top-level user submission mints a `chain_id` (uuid4 hex) at `submit_user_text`. It propagates verbatim through:

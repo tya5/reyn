@@ -215,6 +215,16 @@ in `session.py` itself.
 
 ---
 
+## Implementation note — Stage-1 decouple removed SkillRunner
+
+This proposal's status line and the target-state diagram above still describe
+`SkillRunner` (`services/skill_runner.py`, Wave 1, landed commit `9ae66fa`) as a
+live extracted service. A later Stage-1 decouple pass removed `SkillRunner`
+outright rather than keep it — `session.py`'s shutdown path
+(`_drain_on_shutdown`) has nothing skill-related left to drain as a result.
+This note records that removal so a reader of this proposal doesn't infer
+`SkillRunner` is still part of the current `session.py` service set.
+
 ## Priority ordering
 
 **Wave 1 → Wave 2 → Wave 3**

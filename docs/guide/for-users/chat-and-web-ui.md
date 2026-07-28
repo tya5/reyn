@@ -184,6 +184,17 @@ Press `↓` from an empty input to focus the status bar, then:
 | `Ctrl+C` | Cancel the in-flight turn (a second `Ctrl+C` quits) |
 | `Ctrl+D` / `Ctrl+Q` | Quit (also `/quit`) |
 
+### Working indicator
+
+The `turn_started` → `turn_settled` event pair (consumed by
+`ChatRenderer.on_chat_event`) is the sole signal that drives the
+turn-in-progress ("thinking…") indicator — there is no separate, manually
+managed status line. An earlier version had one, and it double-displayed
+against the event-driven indicator (both showing at once) and could leave an
+orphaned blank line behind once cleared. Relying on the single event pair
+instead of a second, hand-maintained status line is what keeps the indicator
+consistent with the renderer's own state.
+
 > Slash commands are documented in the
 > [`reyn chat` reference](../../reference/cli/chat.md#slash-commands).
 
