@@ -17,6 +17,44 @@ without declaring them in `reyn.yaml`.
 
 ## Catalog entries
 
+### `light`, `standard`, `strong`
+
+```yaml
+light:    gemini-flash-lite    # alias — extends: gemini-flash-lite
+standard: gemini-flash-lite    # alias — extends: gemini-flash-lite
+strong:   gemini-pro           # alias — extends: gemini-pro
+```
+
+The three generic tier names `ReynConfig.model` and `--model` document are
+**aliases** into the concrete catalog below, not separate model definitions —
+a project's own `reyn.yaml` normally redeclares these three under `models:`
+(see `reference/config/reyn-yaml.md`), which overrides these built-ins with
+the same override semantics as any other entry. Without a `reyn.yaml` at all
+(or one whose `models:` block omits one of these three), the class still
+resolves via this built-in alias rather than reaching LiteLLM as a bare,
+unresolved class name (#3368).
+
+#### Partially declared tiers are warned about
+
+Because an omitted tier still resolves, an *incomplete* `models:` block would
+otherwise be invisible: a project that maps `light` and `strong` but forgets
+`standard` silently routes every default-class call to reyn's built-in default
+instead of the provider it deliberately chose for the other two. So when
+`models:` declares **some but not all** of the tiers, reyn logs a warning
+naming the omitted tier, the model it fell back to, and the line to add:
+
+```
+reyn.yaml `models:` declares the light, strong tier(s) but omits standard —
+the omitted tier(s) still resolve, via reyn's built-in defaults:
+standard -> gemini/gemini-2.5-flash-lite. ... To take control, add under
+`models:` in reyn.yaml:
+  standard: gemini/gemini-2.5-flash-lite
+```
+
+Declaring **none** of the tiers is the normal zero-config case and is *not*
+warned about — that is exactly what these aliases exist to serve. Declaring
+**all** of them warns about nothing, since no tier is falling back.
+
 ### `claude-sonnet`
 
 ```yaml
