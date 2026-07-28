@@ -106,6 +106,14 @@ Time-travel rewinds the runtime substrate — the agent's conversation state. Ta
 
 **What does NOT get rewound (external master):** The task backend (sqlite by default) is the external master of task state — `status`, DAG, and content. External systems cannot be wound back, so Reyn does not attempt to. On recovery and after rewind, Reyn re-reads the backend's current task-state to re-adapt: the binding is at the past point; the task-state is the live present. This is what keeps the external world clean — Reyn's internal trajectory can branch and replay, but a Jira issue's state or a completed task's result is never silently reverted.
 
+### Chat-history visibility filter (`wal_seq` anchor)
+
+Global rewind moves the runtime substrate's active cut, but the **chat message history** (`ChatMessage` list) is a separate structure that must independently honor that cut when it is rendered back to the LLM — otherwise runtime state rewinds while the LLM still sees conversation turns from an abandoned future.
+
+**Anchoring (`#2360`).** Each `user`/`agent`-role turn is stamped with `msg.meta["wal_seq"] = state_log.current_seq` at append time (system/summary-role turns keep `seq=0` and are not part of the ordering the slicer uses). This ties the turn to the WAL seq active when it was appended, so `is_active_seq` can later classify it as active or abandoned exactly like every other WAL-derived structure. The stamp is guarded on `state_log` presence (no WAL → no rewind → always visible) and is skipped if the turn is already anchored (a re-append keeps its original anchor). `wal_seq` lives only in `meta` and is excluded from the wire dicts `build_history` emits, so it never reaches the LLM directly — it is bookkeeping for the filter, not model input.
+
+**Tool-cycle-aware filtering (`#2360`, tool-cycle-aware follow-up).** A GLOBAL rewind cut can land at a WAL seq that is a clean turn boundary for the rewound session but falls MID-tool-cycle for another session's conversation — the assistant `tool_calls` turn's anchor may be ≤ the cut while its tool-result turns' anchors are > the cut, or the reverse. A **flat per-turn filter** (apply `is_active` independently to each turn) would then emit a dangling `tool_calls`-without-results or a tool-result-without-`tool_calls` — providers reject that shape with a `BadRequest` (the `#2290`/`#2289` adjacency class). The filter therefore treats a **tool cycle** — one assistant `tool_calls` turn plus its immediately-following tool-result turns — as a single atomic visible unit, governed by the assistant turn's own anchor: the whole cycle is visible iff that governing anchor is active. This makes the emitted history well-formed by construction, with no post-hoc repair step.
+
 ### WAL vs audit-event separation
 
 The WAL (`StateLog`, `.reyn/state/wal.jsonl`) and the P6 audit event log (`EventStore`, `.reyn/events/<run_id>.jsonl`) are **separate logs with different contracts**:

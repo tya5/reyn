@@ -223,6 +223,32 @@ Edits to `.reyn/config/pipelines.yaml` (or to `pipelines.entries` in
 `"pipelines"` reload seam — no session restart needed. See
 [Concepts: Config hot-reload](config-hot-reload.md).
 
+### Spawned pipeline-driver registry — no explicit hand-off (#3097)
+
+When a hook's `pipeline_launch` action starts a pipeline run
+(`start_pipeline_run` → `_spawn_pipeline_driver_session`), the calling
+session does NOT pass its own live `PipelineRegistry` object to the spawned
+driver session.
+
+**Why this is safe.** The spawned driver session goes through
+`AgentRegistry.spawn_session_recorded`, which calls
+`refresh_config_projections` — this fires the driver session's OWN
+`_reapply_pipelines` seam (the same hot-reload seam described above) fires
+uniformly at spawn time, rebuilding the driver's `PipelineRegistry` directly
+from the current on-disk cascade.
+
+**What this replaced.** An earlier design (#3094) forwarded the CALLING
+session's live in-memory `PipelineRegistry` object to the spawned driver as
+a spawn-local override. That is redundant with the reapply-seam rebuild
+above, and worse: it hands the driver a registry snapshot that can already
+be stale relative to disk (e.g. a concurrent `pipeline_management__install_*`
+landed between the calling session's own last reload and the spawn). #3097
+folded that override out — the family gate (spawn → reapply seam → fresh
+disk read) achieves the same effect without depending on the caller having a
+fresh in-memory copy to hand off.
+
+Re-adding an explicit hand-off here would reintroduce that staleness risk.
+
 ## Security — launching a pipeline stays gated
 
 Registering a pipeline does **not** loosen the capability floor. Launching a

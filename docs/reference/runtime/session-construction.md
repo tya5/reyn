@@ -114,6 +114,10 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
   renderers' `bottom_toolbar` both surface it via this event, never by polling
   `halted_reason` on a timer. Purely observability; the raise/halt above remain the whole
   safety mechanism.
+- `_queue_seq` (`#3300` P2a) — monotonic sent-queue-mutation counter, an order-race gate for a client merging the granular `user_submitted`/`turn_started` queue deltas (see `_bump_queue_seq` for the full rationale). Deliberately NOT WAL-durable: it is a client read-model liveness aid (resolves snapshot/delta interleaving on the wire), not recovery state. A restart safely resumes from 0 because a fresh connection's `STATE_SNAPSHOT` always seeds the client's last-applied seq before any delta is merged — there is no window where a delta referencing a pre-restart seq reaches a client that hasn't first received the fresh snapshot's baseline.
+- `_cancelled_msg_ids` (`#3300` P3, Y-server) — an in-memory skip-at-consume set for `msg_id`s cancelled via `cancel_queued` while still sitting in the (durable) `asyncio.Queue`, whose entry cannot be removed in place (no such API exists). `_consume_inbox`/`_drain_to_wake` discard a dequeued item whose `msg_id` is in this set instead of dispatching it. The item's `snapshot.inbox` entry and the WAL `inbox_cancel` tombstone are recorded SYNCHRONOUSLY at cancel time, independent of this deferred physical dequeue (see `cancel_queued` / `SnapshotJournal.cancel_inbox`). This is what makes the in-memory-only set safe: a crash before the dequeue leaves no stale Queue entry to skip, because a fresh process starts with an empty `asyncio.Queue` and repopulates it from the recovered snapshot — which already excludes the cancelled item (see `restore_state`).
+- `_turn_cancel_self_initiated` (`#2242`) — `True` only for the window between `cancel_inflight()` calling `_turn_owner_task.cancel()` and `run_one_iteration` observing the resulting `CancelledError`. It distinguishes OUR OWN hard-cancel (which the run-loop swallows so the driver task survives) from an externally-cancelled driver task — e.g. an anyio scope teardown cancelling the MCP/A2A request-handler task that pumps `run_one_iteration` directly (FP-0013 §ADR-A). In the external case, `await self._turn_owner_task` ALSO raises `CancelledError` (asyncio propagates an awaiting task's cancel into whatever Task/Future it is suspended on) — but that cancellation must be RE-RAISED, not swallowed, so the driver's own cancellation completes normally instead of silently surviving a cancel that was never ours. Confusing the two makes the runtime's cancellation bookkeeping and the caller's anyio scope diverge: the scope believes its teardown cancel completed; the driver task is still alive.
+- **RE-DRAIN LOOP** (`#2115`) — `await_quiescent`'s steps 3-4 cancel the tracked fire-and-forget WAL tasks (cancel, not join-only: the intervention-dispatch task awaits the user-answer future indefinitely, and the tasks are drop-safe so cancelling is correct) and join the append-capable `_inflight_wal_tasks`, then RE-CHECK, looping to a fixpoint (bounded by `_QUIESCE_MAX_ROUNDS`) rather than a one-shot pass. A joined task can schedule a NEW tracked append (or re-spawn) DURING the `gather` — a one-shot snapshot-then-drain misses that reschedule (this was `#2115`: a straggler append landing after `await_quiescent` had already returned, i.e. after the global-rewind reset-record was appended). Looping until both sets are fully drained closes that window. On reconstruct, `restore()` re-arms timers from the recovered snapshot, so cancelling here remains reversible.
 
 ## Family 3 — Hook-event / reactivity
 
@@ -166,6 +170,49 @@ sub-components they orchestrate (`router_host` etc., built later by Family 6a) e
 each seam reapplies one IN-set component live at the turn boundary, and the Session owns +
 orchestrates them (a single multi-holder per-agent swap here, not scattered captures).
 Hooks specifically use S2b; validate-before-apply applies too.
+
+### FsWatcher hook_trigger — deferred dispatcher lambda (#2608 H4)
+
+`fs_watcher` (the session-owned filesystem watcher; see `reyn.runtime.fs_watcher`'s
+module docstring for the thread→async bridge design) is constructed
+unconditionally inside `_build_hook_event_bundle` — this is cheap: no OS
+thread is spun up at construction, only inside `FsWatcher.start()` (called
+later, from `run()`).
+
+`hook_trigger` is the same deferred-lambda-over-`self._hook_dispatcher`
+pattern this family's H1 wiring uses elsewhere in this builder: at the point
+`fs_watcher` is constructed, `hook_dispatcher` is only a LOCAL variable in
+this builder — it is unpacked onto `self._hook_dispatcher` by the caller
+only after this builder returns. The lambda is never CALLED until
+`FsWatcher.start()` is awaited from `run()`, long after `__init__` has
+finished, so the deferred read is always safe.
+
+Binding `self._hook_dispatcher` eagerly at this call site instead (e.g.
+`hook_trigger=self._hook_dispatcher.dispatch`) raises `AttributeError`
+immediately at Session construction, since the attribute does not exist on
+`self` yet — this fails loud (any test constructing a Session hits it).
+
+`paths` / `debounce_seconds` default to empty / `0.2` when no `fs_watch:`
+config block was resolved — this mirrors `hooks_config` defaulting to `[]`.
+
+### Composer registry / consumer construction vs start (#2880/#2881)
+
+`composer_registry` and `composed_consumer` (the Hook-Event Redesign Phase
+4b/5 Composer definitions + the composed:*→Sync consumer bridge) are built
+inside `_build_hook_event_bundle`, but neither is STARTED there. Starting a
+component means spawning background asyncio tasks — that requires `run()`'s
+async execution context, not `__init__`'s synchronous one.
+
+`run()` calls `self._composer_registry.start()` / `self._composed_consumer.start()`
+once, near its top; both are `stop()`ed in `run()`'s shutdown `finally` block —
+the same start/stop shape `FsWatcher` uses (constructed unconditionally,
+started/stopped only from `run()`).
+
+Calling `.start()` from inside `__init__` instead would try to schedule
+background tasks with no guaranteed running event loop bound to this
+session's lifecycle, and would race ahead of sibling components (e.g.
+`router_host`, built later by Family 6a) the composed-consumer bridge may
+need live.
 
 ## Family 4 — Cost / budget
 
@@ -225,6 +272,54 @@ existing chat behaviour is preserved when callers don't pass one. `_eager_embedd
 the first turn (Turn 1 blocks ~2-5s) so `search_actions` is visible to the LLM from the
 very first call; default `False` keeps the lazy background-build path.
 
+### Embedding off-state degrade (FP-0034 Phase 2 step 1)
+
+When `embedding.enabled` is not set (or `universal_wrappers_enabled` is
+`False`), `_build_retrieval_bundle` leaves `action_embedding_index`,
+`embedding_provider`, and `embedding_model_class` at `None` rather than
+constructing stand-in objects (FP-0066 §7 — clean-break replacement for the
+retired `action_retrieval.embedding_class` on/off gate; the model CLASS is
+`embedding.default_class`).
+
+This `None` state is a contract two OTHER call sites rely on:
+- `build_tools` reads it to HIDE the `search_actions` wrapper from the
+  LLM-visible catalog entirely when embedding is off.
+- The `search_actions` handler degrades to an empty-result response if it is
+  ever reached with a `None` index (defense in depth — `build_tools` should
+  already have hidden it).
+
+Removing the `None` guard (e.g. always constructing a stand-in
+`ActionEmbeddingIndex`) without updating both of those call sites would
+surface `search_actions` to the LLM with a `None`/inert index; invoking it
+would raise `AttributeError` inside the handler instead of returning the
+intended empty-result degrade.
+
+### Embedding event sink — deferred self._chat_events capture (FP-0043 C.3/C.4)
+
+FP-0043 Component C.3 wires the embedding provider's lazy model-load
+lifecycle (downloading / loaded / error) into the session's events bus, so
+the TUI can render a sticky status row, a green "done" frame, and a
+retry-hint error row. The sink is called from the embed worker thread;
+`events.emit` is GIL-protected + sync, so this is safe without a
+`call_soon_threadsafe` bridge.
+
+**C.4 hotfix (2026-05-27).** The sink closure (`_embedding_event_sink`) MUST
+resolve `self._chat_events` at CALL time, not at construction time — the
+`EventLog` is built later in `__init__` (Family 1, ~line 1560+, which runs
+after Family 5). The original C.3 wiring captured `self.events` instead —
+an attribute that does not exist on `Session` at all (the real attribute is
+`self._chat_events`). That typo raised `AttributeError` the moment the sink
+fired, and the surrounding `except Exception: embedding_provider = None`
+fallback SWALLOWED it silently — disabling `search_actions` for every
+operator who had `embedding_class` set, with no crash, no log line pointing
+at the cause, and no test failure. It shipped and stayed broken until
+someone diagnosed it by hand.
+
+This mirrors the `_on_hot_list_changed` closure pattern in the
+`ActionUsageTracker` setup a few lines below — same deferred-capture shape,
+same swallow-prone `try/except`, same recurrence risk if either closure is
+rewritten to capture eagerly.
+
 ## Family 6a — Router-waist (`RouterHostAdapter`)
 
 `_build_router_waist` aggregates ~40 already-constructed Session sub-components (Families
@@ -234,6 +329,27 @@ same construction order, same ~40 args, including 3 DEFERRED per-turn lambdas �
 `live_session_id_fn`/`current_task_id_fn`/`turn_origin_fn` — kept verbatim, still closing
 over `self` and resolved at call time, not eager-ized). It stays UNMOVED, invoked at its
 original position — every dependency is already set on `self` by this point.
+
+### Chat turn_budget engine — None on small context, never raise (#1092 PR-F1)
+
+`_build_router_waist` builds the chat axis's `turn_budget` engine off the
+RESOLVED model — `self._resolver.resolve(self.model).model` — mirroring how
+`CompactionEngine` resolves a model class before use (the
+[#1172](#compactionengine-model-resolved-class-not-the-cosmetic-label-1172)
+pattern: never hand the cosmetic class straight through).
+
+`try_build_default_turn_budget_engine` returns `None` — it does NOT raise —
+when the model's context window is too small to satisfy the by-construction
+force-close floor (`output_reserve + offload_cap < threshold`). A
+small-context model is a legitimate chat session that simply cannot support
+force-close; it degrades to the pre-force-close path (no cap, no handoff)
+rather than failing `__init__` outright.
+
+The engine is ADDITIVE: its sole consumer is
+`RouterHostAdapter.wrap_up_output_reserve`, inert until the F2 handoff calls
+`_force_close_call` — chat stays REACTIVE-only by deliberate per-axis
+choice. Changing the builder to raise instead of degrade would make every
+small-context-model session fail construction, not just skip one feature.
 
 ## Family 6b — History / compaction
 
@@ -247,6 +363,26 @@ passed to the builder as a callback; the session drives compaction via
 `force_compact_now()` (pre-frame guard) — background task lifecycle was removed in #1128
 PR-a, all callbacks resolve against `self` at call time. `_token_learner` (PR-N6) is the
 adaptive per-user token-estimation learner.
+
+### CompactionEngine model — resolved class, not the cosmetic label (#1172)
+
+`CompactionEngine`'s `model=` argument is
+`self._resolver.purpose_class_or("compaction", self.model)` — a resolved
+litellm model string, not the model CLASS label (e.g. `"standard"`) some
+config surfaces expose.
+
+`CompactionEngine` resolves to a litellm string BY CONSTRUCTION — passing
+the unresolved class straight through means litellm receives `"standard"`
+literally, which is not a real model identifier. `litellm.acompletion` then
+raises `BadRequestError` on the FIRST compaction trigger for that session,
+and every subsequent compaction trigger fails the same way — a
+dead-end-critical failure mode, since compaction is what keeps long-running
+sessions inside their context window.
+
+`#1679` layered a `model_class_by_purpose.compaction` override on top: when
+an operator has documented one, honor it; otherwise keep `self.model`
+(byte-identical to the former hardcode, including a per-run model
+override).
 
 ## Family 7 — Intervention
 
@@ -293,8 +429,54 @@ resolution crux (4 lambdas resolving `self._chat_events`/`self._router_host`/
 `self._hook_dispatcher`/`self._interventions` at CALL time, none of which exist yet at this
 position in `__init__`).
 
+### MCPConnectionService — four deferred lambdas over not-yet-built siblings (#2597)
+
+`_build_mcp_connection_service` (Family 8c) constructs the session-owned
+held-open MCP connection service (Option C: one persistent `MCPClient` per
+server, reused across chat turns/tasks for the session's whole lifetime).
+Construction is unconditional and cheap — an empty dict until the first
+`get()`.
+
+**Ephemeral routing.** Only the non-ephemeral MCP call sites
+(`_mcp_call_tool` / `_mcp_list_tools`) route through this held-open service.
+An ephemeral session (`self._ephemeral`, set post-construction by the
+registry once spawn mode is known) keeps using the per-call `MCPClientPool`
+instead, so a sub-second-lived spawned session never holds a server
+connection open needlessly. The service is closed at session teardown via
+`aclose_mcp_connections` (`registry.remove_session` / `archive_agent`'s
+main-session path).
+
+**Deferred lambdas.** Three of the six constructor arguments are lambdas
+that defer resolution to CALL time, because none of the attributes they
+close over exist on `self` yet at this point in `__init__`:
+- `emit_sink` / `tools_cache_invalidate` defer `self._chat_events` /
+  `self._router_host` (both assigned later in `__init__`) — mirrors the
+  `emit_event=lambda et, **d: self._chat_events.emit(et, **d)` pattern used
+  elsewhere.
+- `hook_trigger` defers `self._hook_dispatcher` (same H1 pattern
+  `_build_hook_event_bundle`'s `fs_watcher` uses).
+
+None of the three is ever CALLED until a held MCP connection actually
+receives a server-pushed notification, long after `__init__` has
+finished — but eager-binding any of them here (e.g.
+`tools_cache_invalidate=self._router_host.invalidate_mcp_tools_cache`)
+raises `AttributeError` immediately, since `self._router_host` does not
+exist yet at Family 8c's position in `__init__`.
+
+`elicitation_gate` uses the SAME `consent_bus`/`consent_gate` split #2095's
+shell-hook consent already uses: a server→client elicitation only routes
+through this session's `RequestBus` when a live intervention listener is
+attached; headless (no listener) auto-declines inside the handler
+(`reyn.mcp.elicitation`), never here. `elicitation_bus=self.as_request_bus()`
+is safe to call EAGERLY (unlike the deferred lambdas) — it only wraps
+`self` in an adapter and reads nothing constructed later.
+`agent_name=self.agent_name` is likewise eager, since `self._agent` is
+already set earlier in `__init__`.
+
 ## Capability, permission & visibility
 
+- `_available_skills` (#2548 PR-A) — enabled skill registry snapshot backing the system prompt's `## Skills` block. `None` → the block is omitted from the prompt entirely, never rendered empty.
+- `_skill_collisions` (#3100 Axis 4) — same-name-across-config-tiers collision map, consulted by `:skill` invocation (`reyn.interfaces.skill_invoke`) to fire a LOUD audit-event + warning instead of silently letting one skill definition shadow another.
 - `_exclude_tools` (#187) — tool names excluded for the MAIN chat `RouterLoop`, threaded to
   the loop construction below. General capability (mirrors the sub-loop `exclude_tools`,
   `planner.py:1136`); the faithful SWE-eval excludes `web__search`/`web__fetch` so the agent
@@ -337,6 +519,53 @@ position in `__init__`).
   trusted framing). Bounded-by-construction: evicted on result arrival; a max-size cap
   (evict-oldest) caps a never-arriving result.
 
+### sandbox_backend gate reads the injected instance, not the config string (#1417 / FP-0034)
+
+The exec D14 visibility gate — whether `exec`/`sandboxed_exec` appears as an
+available capability in the universal catalog — must gate on the INJECTED
+backend's real capability, not the `reyn.yaml` `sandbox.backend` config
+STRING.
+
+`sandbox_backend=_exec_gate_backend_name(self._sandbox_backend,
+self._sandbox_config)` reads `self._sandbox_backend` — the SAME object used
+for actual exec (`tools/exec.py`, #3226 Phase 3 renamed from
+`sandboxed_exec.py`: `ctx.sandbox_backend or get_default_backend(...)`).
+Both injected backend types (`DockerEnvironmentBackend`, `SandboxBackend`)
+expose `.name`.
+
+**The construction-forwarding-gap this closes**: without reading the
+injected instance, `sandbox.backend=noop` config plus an injected exec
+backend (e.g. `--env-backend=docker`) would HIDE exec from discovery even
+though `sandboxed_exec` is functionally available through the injected
+backend. The mismatch produces no error — the capability is simply absent
+from the catalog the LLM sees, indistinguishable from an operator who
+deliberately disabled exec. No injected instance → falls back to the config
+string (auto / host-default behaviour unchanged).
+
+### base_available_skills_fn reads the BASE set, not the UX-filtered copy (#3196)
+
+`RouterHostAdapter` receives two related-but-distinct skill sets:
+
+- `available_skills=self._available_skills` — the base registered-skill set
+  (#2548 PR-A).
+- `base_available_skills_fn=lambda: self._available_skills` — a LIVE read of
+  that SAME `Session._available_skills` field, threaded in separately.
+
+The reason for the second, seemingly-redundant parameter: `RouterHostAdapter`
+holds its OWN `_available_skills` attribute, which `reapply_skill_visibility`
+mutates into a UX-filtered COPY (skills the user toggled off via the status
+bar disappear from it, `#2285`). `make_router_op_context` uses
+`base_available_skills_fn` for the `file` op's skill-load provenance gate — a
+TRUST decision, not a UI-visibility decision.
+
+If a future edit swaps `base_available_skills_fn` to close over
+`RouterHostAdapter`'s own (filtered) `_available_skills` instead of
+`Session._available_skills`, the provenance gate would start following the
+UX visibility toggle: a skill a user merely HID from their own view (but is
+still authorized to use) could fail a trust check it should pass, or vice
+versa. Neither failure raises an exception; it only shows up as a wrong
+trust decision on a specific skill, discovered later if at all.
+
 ## Multimodal / media
 
 - `_multimodal_config` (#364) — media-size gate config plumbed through to spawned Agents
@@ -369,8 +598,12 @@ position in `__init__`).
   `#13398`). Threaded to `build_system_prompt`. Default `False` = interactive
   byte-identical.
 - `_hook_driven_turns` (#1800 slice 7) — the loop-valve counter: hook-driven (`kind="hook"`)
-  turns since the last human user turn. In-memory only (NOT snapshot-persisted); resets on
-  each user turn (re-arm). Bounds hook self-continuation.
+  turns since the last human user turn; resets on each user turn (re-arm). Bounds hook
+  self-continuation. **Snapshot-backed since #2884** (`AgentSnapshot.hook_driven_turns`;
+  `restore_state` rehydrates it, `SnapshotJournal.record_hook_driven_turns` persists it) —
+  a pure in-memory counter reset to 0 on crash+restart, handing a near-cap self-wake chain
+  a fresh budget window. (This entry previously read "in-memory only (NOT
+  snapshot-persisted)", which #2884 falsified without updating the doc.)
 - `_next_turn_context` (#1800 slice 4b) — in-memory staging buffer for `wake=false`
   ride-along (C) messages drained by `_drain_to_wake`. Entries are applied to the next
   trigger's turn as attributed system-role history entries. Persisted durably in the
@@ -402,6 +635,11 @@ position in `__init__`).
 
 ## Misc lifecycle wiring
 
+- `_STATE_CHANGE_EVENT_MAPPINGS` per-entry rationale (why each op-emitted event is worth a `state_change` line, not just that it is one):
+  - `mcp_server_installed` (`mcp_install` op) — the LLM otherwise has no way to learn a newly-installed server exists until it re-lists tools; surfacing it as `state_change` lets it use the new server within the same conversation without an explicit re-check.
+  - `mcp_server_removed` (`mcp_drop_server` op) — symmetric to `mcp_server_installed`: surfaces the 'no longer available' state-change so the LLM stops retrying calls against a removed server instead of discovering the failure only on next invocation.
+  - `index_dropped` (`index_drop` op) — recall against the dropped source will now miss; surfacing the change lets the LLM understand a source it cited earlier in the conversation no longer exists, rather than treating a later empty-recall result as a retrieval bug.
+- `_spawn_tracker` (`SpawnTracker`, `#2103`, see `#3133` P3 Extract Class) — owns the spawned-task correlation record + ephemeral auto-vanish scheduling state; Session holds one reference and delegates via thin forwarders rather than re-owning the state (see `spawn_tracker.py`). Its `session_id`/`ephemeral` inputs are threaded as LIVE providers (`lambda: self._session_id`, etc.), not snapshotted values — both are reassigned post-construction by the registry (spawn-time re-key, ephemeral-spawn flip), so a value captured at `SpawnTracker` construction time would go stale the moment the registry re-keys or flips it. `CapabilityVisibility` (constructed later in `__init__`) faces the identical hazard for its own `session_id_provider` and uses the same live-lambda fix — see that construction site for the mirrored pattern.
 - `_on_perm_persist_cb` (#398 v4 emitter wiring, permission_manager → state_change) —
   subscribes to `_persist` events on the shared `PermissionResolver` so a permission
   grant/revoke mints a `state_change` history entry in this session; the LLM sees

@@ -584,6 +584,8 @@ refused, never silently dropped.
 
 Consent is fail-closed throughout: if the sandbox backend cannot be confirmed, the hook is refused rather than run unsandboxed.
 
+**`has_active_listener` is re-checked on every dispatch, not cached (`#2095`).** Listeners attach and detach over a session's lifetime — a TUI mount, an A2A request window opening and closing — independently of when the `HookDispatcher` was constructed. Checking the listener state once at construction and caching the routing decision would let a later dispatch route a consent prompt to a listener that has since detached (a hang, or a silently dropped prompt) instead of correctly falling through to the non-interactive path (`REYN_ACCEPT_HOOKS` / fail-closed, or the `reyn run` stdin prompt on a TTY). The consent-bus wiring at this call site is byte-identical to the pre-`#2095` fallback matrix in every case EXCEPT that the routing decision (bus vs `None`) is now made per-dispatch against live listener state rather than frozen at construction — the per-dispatch check itself lives in the dispatcher, not at this construction site.
+
 See [sandbox](sandbox.md) for the full backend model and [permission model](permission-model.md) for the broader consent architecture.
 
 ### P6 event: `hook_shell_executed`
@@ -646,6 +648,8 @@ independent pub/sub broadcast of the same events, with no consume semantics
 (every subscriber observes the same broadcast simultaneously) — and, built on
 top of it, a **Composer** that correlates multiple events into one derived
 "composed" event.
+
+**Scope is per-Session by construction (Hook-Event Redesign Phase 4a, proposal `0059` §3.2/§3.3).** Each Session constructs its own `HookBus` instance, feeding its own `HookDispatcher`; a Bus is never shared across Sessions. This is a deliberate v1 scope limit, not an oversight — v1 has no cross-session event observation or correlation. Concretely, `HookBus.publish` delivers to every subscriber attached to that instance; two Sessions sharing one Bus would let a subscriber on one Session observe events published from the other. No subscriber attaches to a fresh Bus until something explicitly calls `session._hook_bus.subscribe()` — the Composer (Phase 4b) is the first consumer that does; until then `publish()` hits its zero-subscriber path and is a no-op.
 
 A **Composer** watches the Bus, buffers matching events per its configured
 op, and — once the op's condition is met — publishes ONE new event with
