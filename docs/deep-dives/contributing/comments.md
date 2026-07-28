@@ -43,6 +43,18 @@ become re-investigations.
 | **C** | A **relational invariant** (a claim about two places) | **Stays inline in full, regardless of length** |
 | **K-inline** | Why something was NOT done / a hypothesis that was measured and rejected / a measurement that justifies the current shape | **Never moves — fixed inline** |
 
+**A, B, C, and K-inline are one axis — compressibility — not four
+unrelated rules.** A is compressible to a reference + conclusion because its
+content (history, measurement) has a natural home elsewhere that still
+answers "why." C and K-inline are the two ways a comment can resist
+compression, for opposite reasons: **C spans TWO locations** (compress it
+into either one and the OTHER location loses the claim); **K-inline spans
+ZERO locations** — it is a claim about code that does **not exist** (a path
+not taken, a hypothesis already rejected), so there is no second site to
+carry the claim to and nothing to attach a reference to. A residue (Class B)
+sits on exactly one location and can compress freely because that is the
+only place the claim needs to be legible.
+
 **Do not classify by length.** A 7-line threshold was tried and rejected on
 #3404: one reviewer counted "41 blocks / 414 lines," another counted "55 /
 602" on the same file, and neither count was wrong — they used different,
@@ -71,7 +83,10 @@ because its producer (the phase engine) was deleted; both halves must be
 visible in the same view, or a future reader sees only one half of a claim
 that is false without the other.
 
-Measured on `session.py` (#3404, 453 comment units): **C = 0 in this file** —
+Measured on `session.py` (#3404, 453 comment units — one unit per docstring or
+per contiguous run of `#` lines classified as a whole, not a per-line count;
+this is an observation from a classification pass, not a gate, so §2's
+counting-disagreement problem does not apply to it): **C = 0 in this file** —
 and that zero is trustworthy for a specific reason, not a default. The class
 itself is not empty (`RETIRED_PHASE_FIELD` is a real, present member outside
 this file); a "0 found" result is only credible when you can state the
