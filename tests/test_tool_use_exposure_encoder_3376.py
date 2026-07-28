@@ -126,8 +126,16 @@ def test_an_unregistered_cell_is_still_refused_fail_closed() -> None:
 
     assert registered, "no registered cell — the complement below would be everything"
     assert unregistered, (
-        "every (scheme, transport) is registered, so this arm inspects nothing. If "
-        "that is genuinely true, the fail-closed claim needs a different witness."
+        "Every (scheme, transport) cell is registered, so this arm inspects nothing "
+        "and the fail-closed claim needs a different witness — the loop below can no "
+        "longer supply one, and passing vacuously would be worse than failing. "
+        "NOTE: tests/scaffold/test_tool_use_oracle_3376.py::"
+        "test_the_arc_completing_fires_this_scaffolds_deletion trips on this SAME "
+        "condition, because it IS the #3376 arc-complete signal. The two arms fire "
+        "together and are telling you one thing: every cell is now on the seam. That "
+        "means (1) delete the #3376 oracle scaffold, and (2) give this arm a real "
+        "witness — e.g. a transport with no encoder, or a presentation name that is "
+        "not registered. Do not 'fix' either arm in isolation."
     )
 
     for scheme, transport in sorted(unregistered, key=lambda p: (p[0], p[1].value)):
