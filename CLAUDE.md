@@ -151,6 +151,17 @@ Three rules then keep multi-session work coherent:
    asserts (same reasoning as any other doc-drift fix, not a mirror rule); do
    not invent a "keep en/ja pairs in sync" obligation when scoping a PR. Known
    ja-parity gaps are tracked in #2967 as backlog, not a per-PR gate.
+6. **Arc-closure remainder rule.** When closing an arc, settle every remainder
+   as either **filed** or **explicitly dropped** — **in the closing comment**.
+   Never leave "next arc" as the resting state: that is a third, silent state
+   (a decayed intent, not a decision), evidenced by #2597's natural experiment
+   — one remainder recorded as "server role deferred" survived because it was
+   named in the closing comment; an informally-mentioned "spec gap analysis"
+   remainder existed nowhere (not the issue, not docs, not the proposing
+   session's own memory) and rotted invisibly. A remainder belongs on the
+   surface the merge gate actually reads (an open issue, an unchecked Test
+   plan item) — not on a surface nobody re-checks (a broker message, a memory
+   pin, a comment's prose that never becomes a ticket).
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
