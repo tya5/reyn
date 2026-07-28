@@ -62,6 +62,7 @@ from reyn.interfaces.web.auth import AuthContext, ConnectionIdentity
 from reyn.interfaces.web.deps import get_registry
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.outbox_hub import DEFAULT_SURFACE_MAXSIZE
+from reyn.runtime.registry import _DEFAULT_SID
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
 from reyn.runtime.session_buses import NO_SURFACE_REFUSAL_REASON
 
@@ -415,8 +416,25 @@ async def agui_events(request: Request, agent_name: str):
     def _backlog_provider(name: str, sid: str) -> "list[Frame]":
         return session_backlog_frames(registry, name, sid)
 
+    # #3328: the INITIAL connect's `MESSAGES_SNAPSHOT` was silently empty —
+    # `backlog_provider` (above) is only ever CALLED off a mid-stream
+    # `session_attached` sentinel (#3310 N3's switch re-fire); a first-time
+    # connect never triggers that sentinel, so `AgUiEmitter._backlog`
+    # defaulted to `[]` and a `--connect` to an agent with existing
+    # conversation history (produced locally, or by an earlier remote
+    # session, before this connection attached) rendered NO scrollback at
+    # all — contradicting this endpoint's own doc
+    # (`agui-transport.md` "## Reconnect": "On connect (or reconnect) the
+    # server replays... MESSAGES_SNAPSHOT... so a reconnecting client
+    # rebuilds its scrollback"). `attach(agent_name)` always focuses
+    # `_DEFAULT_SID` (registry.py's `attach`), so the initial backlog is that
+    # session's own history through the SAME projection the switch re-fire
+    # and the local restore-on-restart path both use — one SSoT, populated
+    # at both call sites now instead of only the second.
     emitter = AgUiEmitter(
-        source.frames(), _status_provider, backlog_provider=_backlog_provider
+        source.frames(), _status_provider,
+        backlog=session_backlog_frames(registry, agent_name, _DEFAULT_SID),
+        backlog_provider=_backlog_provider,
     )
 
     async def gen():
