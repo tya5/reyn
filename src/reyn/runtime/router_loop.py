@@ -1020,6 +1020,7 @@ def _operation_alias_metadata(
     """
     # Late imports to avoid circular dependency at module load time.
     from reyn.tools import get_default_registry
+    from reyn.tools.types import parameters_for_export
     from reyn.tools.universal_dispatch import (
         KNOWN_STATIC_QUALIFIED_NAMES,
         resolve_describe_action,
@@ -1034,7 +1035,13 @@ def _operation_alias_metadata(
     tool = get_default_registry().lookup(resolved.target_tool_name)
     if tool is None:
         return None
-    return tool.description, dict(tool.parameters)
+    # #3383: ``_build_hot_list_aliases`` drops this value straight into an OpenAI
+    # ``{"type": "function", "function": {"parameters": ...}}`` entry, and
+    # ``build_tools`` appends those entries to the ``tools=`` payload VERBATIM —
+    # a LIVE LLM-payload seam on ordinary turns. Route through the one projection
+    # that owns the deep-copy obligation; a shallow ``dict()`` here let a single
+    # Gemini/Vertex turn rewrite the canonical schema for the rest of the process.
+    return tool.description, parameters_for_export(tool.parameters)
 
 
 def gate_effective_tool_name(name: str, args: "dict | None") -> "str | None":
