@@ -600,6 +600,19 @@ def agent_pane_options(
 # ── the six toggle/list categories the retired "more…" sub-bar owned (#3338) ──
 
 
+def _denied_note(reason: "str | None") -> str:
+    """The annotation for a non-flippable ``[--]`` row, by ``denied_reason`` (#3380).
+
+    ``"turn_context"`` states the CONDITION rather than the fact, because the
+    condition is also the remedy — the narrowing lifts when the untrusted entry
+    leaves the active context, and an operator told only "denied" would go looking
+    for a profile to edit that does not deny it. An unrecognised/absent reason falls
+    back to the envelope wording, which is what every pre-#3380 row meant."""
+    if reason == "turn_context":
+        return "denied while untrusted content is in context"
+    return "denied by capability profile"
+
+
 def _visibility_pane_entries(
     snap: dict, kind: str, fallback_key: "str | None"
 ) -> "list[tuple[str, str]]":
@@ -613,11 +626,23 @@ def _visibility_pane_entries(
 
     #3378 — **two axes, two markers.** ``[on]``/``[off]`` is the ``/visibility`` axis
     (user-flippable, so the row carries a slash). ``[--]`` is the ENVELOPE/CONTEXTUAL
-    axis (a topology binding / delegate floor / per-session config / the ephemeral
-    ``_untrusted`` profile), which ``/visibility on`` cannot re-grant — so the row is
-    marked distinguishably, annotated with the reason, and carries NO slash. Sharing
-    the ``off`` marker between them would tell the operator to try a toggle that
-    cannot work, which is the state the owner was in.
+    axis, which ``/visibility on`` cannot re-grant — so the row is marked
+    distinguishably, annotated with the reason, and carries NO slash. Sharing the
+    ``off`` marker between them would tell the operator to try a toggle that cannot
+    work, which is the state the owner was in.
+
+    #3380 — **the annotation names WHICH narrowing**, since the operator's next move
+    differs. ``denied_reason="envelope"`` is durable for the session (edit the
+    profile / topology binding). ``"turn_context"`` is the ephemeral ``_untrusted``
+    narrowing, live only while untrusted external content sits in the active context
+    — so the row says that condition, which is also how it clears (compaction /
+    ``/clear``), rather than a bare "denied". Both marks are ``[--]`` because neither
+    is flippable; the reason text is what distinguishes them.
+
+    The whole pane is rebuilt from a fresh snapshot on every frame while it is open
+    (#3338), and the turn-context row is derived from the LIVE conversation at read
+    time, so no row here is an "as of an earlier turn" value that could outlive its
+    cause without saying so.
 
     #3378 — **empty is two different states.** ``visibility_items is None`` means the
     frame carries no visibility seam (a remote read-model frame, or a session without
@@ -629,7 +654,7 @@ def _visibility_pane_entries(
         if it.get("kind") != kind:
             continue
         if it.get("denied"):
-            rows.append((f"[--] {it['name']}  · denied by capability profile", ""))
+            rows.append((f"[--] {it['name']}  · {_denied_note(it.get('denied_reason'))}", ""))
         else:
             rows.append((
                 f"[{'on' if it['on'] else 'off'}] {it['name']}",
