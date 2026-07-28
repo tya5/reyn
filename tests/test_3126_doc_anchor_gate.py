@@ -214,6 +214,22 @@ def test_code_comment_anchor_resolves(
         f"{py_path}:{lineno} references {doc_name!r} — no docs/**/"
         f"{Path(doc_name).name} match found"
     )
+    # A citation that carries directories (``docs/reference/cli/mcp.md``) already
+    # says WHICH same-named doc it means, so honour it before declaring ambiguity:
+    # match on the longest path SUFFIX the citation spells out. Resolving on the
+    # bare basename alone made every colliding basename uncitable — 32 of the 744
+    # docs share a name (``events.md`` x3, ``index.md`` x4, ``README.md`` x18), so
+    # a fully-qualified, correct pointer to any of them failed as "ambiguous".
+    # Falls through to the basename set when the citation is bare (one path
+    # segment), which keeps the original ambiguity error for genuinely
+    # under-specified references.
+    if len(Path(doc_name).parts) > 1:
+        suffix_matches = [
+            p for p in candidates
+            if p.as_posix().endswith("/" + Path(doc_name).as_posix())
+        ]
+        if suffix_matches:
+            candidates = suffix_matches
     resolved_doc, *ambiguous_rest = candidates
     assert not ambiguous_rest, (
         f"{py_path}:{lineno} references {doc_name!r} ambiguously — multiple "
