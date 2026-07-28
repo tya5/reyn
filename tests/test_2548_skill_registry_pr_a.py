@@ -419,10 +419,16 @@ def test_e2e_config_to_system_prompt_universal_scheme(tmp_path: Path) -> None:
 def test_e2e_retrieval_scheme_does_not_clobber_skills_block(tmp_path: Path) -> None:
     """Tier 2: under the RETRIEVAL scheme, the ## Skills block survives alongside search SP.
 
-    Regression guard for the clobber bug: retrieval overwrites slot_post_catalog
-    with its search-guidance block AFTER build_universal runs. The skills block
-    lives in the DEDICATED slot_post_skills, so both must appear in the final SP.
+    Regression guard for the clobber bug: retrieval's search-guidance block
+    overrides slot_post_catalog on top of the built slots. The skills block lives
+    in the DEDICATED slot_post_skills, so both must appear in the final SP.
+
+    Driven through the REAL ``build_presentation`` (the production path) rather
+    than a private slot helper, so the override the guard is about is the one a
+    turn actually performs.
     """
+    import asyncio
+
     from reyn.runtime.router_system_prompt import build_system_prompt
     from reyn.tools.schemes.retrieval import RetrievalScheme
 
@@ -448,8 +454,18 @@ def test_e2e_retrieval_scheme_does_not_clobber_skills_block(tmp_path: Path) -> N
         "non_interactive": False,
         "available_skills": skills,
     }
-    # Call the REAL retrieval slot builder (the one that overwrites slot_post_catalog).
-    slots = scheme._slots_for(available={}, layer_ctx=layer_ctx, terminal=True)
+    class _Ops:
+        """Protocol-conforming Fake SchemeOps — real callables, explicit returns."""
+
+        def base_tools(self, available, layer_ctx) -> list:
+            return []
+
+        async def catalog_entries(self) -> list:
+            return []
+
+    pres = asyncio.run(scheme.build_presentation({}, layer_ctx, _Ops()))
+    slots = pres.tool_use_sp
+    assert slots.get("slot_post_catalog"), "retrieval did not supply its search guidance"
     prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
 
     # Both the retrieval search-guidance (slot_post_catalog) AND the skills block

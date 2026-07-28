@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 
 from reyn.prompt.retrieval import SEARCH_SP_NON_TERMINAL, SEARCH_SP_TERMINAL
+from reyn.tools.encoders import encoder_for_transport
+from reyn.tools.exposure import Exposure, descriptors_from_entries
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -35,23 +37,22 @@ from reyn.tools.scheme import (
     register_scheme,
 )
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
-from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+from reyn.tools.transport import Transport
 
 _SEARCH_TOOL_NAME = "search_actions"
 
 
 def _search_sp(*, terminal: bool) -> str:
-    """The retrieval scheme's own tool-use instructions, supplied through the
-    ``Presentation.sp_fragment`` channel (#1601). Retrieval runs with
-    ``universal_wrappers_enabled=False`` — the OS's named-gate "## Action
-    categories" block is off — so without this fragment the LLM would see the
-    ``search_actions`` tool with no usage guidance. P7: the search paradigm is
-    the scheme's concept, so its SP text lives here, not in the OS.
+    """The retrieval scheme's own tool-use instructions, carried to the encoder
+    as an ``Exposure.sp_slot_overrides`` entry for the post-catalog slot.
+    Retrieval runs with ``universal_wrappers_enabled=False`` — the OS's
+    named-gate "## Action categories" block is off — so without this text the
+    LLM would see the ``search_actions`` tool with no usage guidance. P7: the
+    search paradigm is the scheme's concept, so its SP text lives here, not in
+    the OS.
 
     ``terminal`` (= convergence reached, the search tool was dropped) flips the
     instruction from "search first" to "call one of the presented matches"."""
-    # Content moved to reyn.prompt.retrieval (byte-identical relocation,
-    # SP Phase 1 §D).
     return SEARCH_SP_TERMINAL if terminal else SEARCH_SP_NON_TERMINAL
 
 
@@ -86,28 +87,36 @@ class RetrievalScheme:
 
     name = "retrieval"
 
-    def _slots_for(self, available, layer_ctx, terminal: bool) -> "dict[str, str]":
-        """Build the tool-use SP slot-map for a retrieval presentation.
+    def _sp_facts(self, available, layer_ctx) -> "dict[str, object]":
+        """The transport-neutral facts a transport needs to shape retrieval's
+        tool-use SP. Facts only — the rendering is the encoder's.
 
-        Mirrors the enumerate-all pattern (#1627 Stage 3): base slots via
-        ``build_universal_tool_use_slots`` (retrieval is always
-        ``universal_wrappers_enabled=False``; ``search_actions_enabled`` derived
-        from ``search_visible``) plus ``slot_post_catalog`` = ``_search_sp(terminal)``
-        — the retrieval search-guidance block injected at the post-catalog position.
-        """
-        slots = build_universal_tool_use_slots(
-            universal_wrappers_enabled=False,
-            search_actions_enabled=bool(layer_ctx.get("search_visible", False)),
-            discovery_mandate=tier_wants_discovery_mandate(layer_ctx.get("router_model")),
-            has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
-            non_interactive=bool(layer_ctx.get("non_interactive", False)),
+        Mirrors the enumerate-all pattern: retrieval is always
+        ``universal_wrappers_enabled=False``, and ``search_actions_enabled`` is
+        derived from ``search_visible``."""
+        return {
+            "universal_wrappers_enabled": False,
+            "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
+            "discovery_mandate": tier_wants_discovery_mandate(layer_ctx.get("router_model")),
+            "has_hot_list_aliases": bool((available or {}).get("hot_list_aliases")),
+            "non_interactive": bool(layer_ctx.get("non_interactive", False)),
             # #2548 PR-A: skill registry snapshot → ## Skills block (rendered into
-            # the DEDICATED slot_post_skills, so the slot_post_catalog overwrite
-            # on the next line does NOT clobber it).
-            available_skills=layer_ctx.get("available_skills"),
+            # the DEDICATED slot_post_skills, so the slot_post_catalog override
+            # does NOT clobber it).
+            "available_skills": layer_ctx.get("available_skills"),
+        }
+
+    def _encode(self, exposure: Exposure, **presentation_fields) -> Presentation:
+        """Hand one retrieval exposure to the ``tool_calls`` encoder.
+
+        Every branch below goes through here, so no branch can grow its own
+        answer to "how is this written down" — the seam's whole point."""
+        encoder = encoder_for_transport(Transport.TOOL_CALLS)
+        return Presentation(
+            llm_tools_payload=encoder.encode_tools(exposure),
+            tool_use_sp=encoder.encode_tool_use_sp(exposure),
+            **presentation_fields,
         )
-        slots["slot_post_catalog"] = _search_sp(terminal=terminal)
-        return slots
 
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
         base = list(ops.base_tools(available, layer_ctx))
@@ -136,18 +145,17 @@ class RetrievalScheme:
                 from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
 
                 catalog = await ops.catalog_entries()
-                slots = self._slots_for(available, layer_ctx, False)
-                slots["slot_post_catalog"] = _HIDDEN_STATE_HINT
-                return Presentation(
-                    llm_tools_payload=base + catalog,
-                    tool_use_sp=slots,
-                )
+                return self._encode(Exposure(
+                    descriptors=descriptors_from_entries(base + catalog),
+                    sp_facts=self._sp_facts(available, layer_ctx),
+                    sp_slot_overrides={"slot_post_catalog": _HIDDEN_STATE_HINT},
+                ))
             # Initial presentation: the base + the search tool (no catalog flood).
-            # #1627 Stage 3+4: sp_params removed; tool_use_sp carries the full SP.
-            return Presentation(
-                llm_tools_payload=base + [_search_tool_schema()],
-                tool_use_sp=self._slots_for(available, layer_ctx, False),
-            )
+            return self._encode(Exposure(
+                descriptors=descriptors_from_entries(base + [_search_tool_schema()]),
+                sp_facts=self._sp_facts(available, layer_ctx),
+                sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=False)},
+            ))
         # Refined presentation: run the search (the async, dynamic-query I/O) and
         # present the matched catalog subset (∪ everything already presented).
         query = refinement.get("query", "")
@@ -174,11 +182,13 @@ class RetrievalScheme:
         terminal = not new
         if not terminal:
             tools = tools + [_search_tool_schema()]
-        # #1627 Stage 3+4: sp_params removed; tool_use_sp carries the full SP.
-        return Presentation(
-            llm_tools_payload=tools,
+        return self._encode(
+            Exposure(
+                descriptors=descriptors_from_entries(tools),
+                sp_facts=self._sp_facts(available, layer_ctx),
+                sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=terminal)},
+            ),
             candidates=tuple(matched),
-            tool_use_sp=self._slots_for(available, layer_ctx, terminal),
         )
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
