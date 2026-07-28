@@ -102,9 +102,10 @@ def register(sub) -> None:
         action="store_true",
         default=False,
         help=(
-            "Skip restoring in-flight agent state from disk this run. "
-            "Useful for debugging or starting a clean session without "
-            "discarding the persisted state (it will be loaded on next run)."
+            "Skip restoring in-flight agent state AND skip loading the persisted "
+            "chat transcript this run. Useful for debugging or starting a clean "
+            "session without discarding anything (both will be loaded on next "
+            "run, without --no-restore)."
         ),
     )
     p.add_argument(
@@ -560,7 +561,16 @@ def run(args: argparse.Namespace) -> None:
         # hallucinated a fix based on prior session context with 0 edits). Interactive
         # chat (no `fresh`) loads history as before. Scoping (env/exclude/grant) is
         # independent of history, so it is unaffected.
-        if not getattr(args, "fresh", False):
+        # #3213 item 3: `reyn chat --no-restore` used to skip ONLY the WAL-derived
+        # agent-state restore (`restore_all()`, below) while still loading the
+        # persisted chat transcript here — a session stuck in a false-belief loop
+        # under `--no-restore` still saw "previous attempts" via the transcript.
+        # `--no-restore` now also skips this LOADING call, same non-destructive
+        # semantics as `fresh`: nothing on disk is touched, so a subsequent run
+        # without the flag still loads the transcript normally (ADR-0010: the
+        # non-destructive side of the restore/reset line — skip-loading, not
+        # delete).
+        if not (getattr(args, "fresh", False) or getattr(args, "no_restore", False)):
             s.load_history()
         return s
 
@@ -587,8 +597,10 @@ def run(args: argparse.Namespace) -> None:
     skip_restore = getattr(args, "no_restore", False)
     if skip_restore:
         print(
-            "⚠ --no-restore: agent state on disk is NOT loaded this run. "
-            "Rerun without --no-restore to resume in-flight agent sessions.",
+            "⚠ --no-restore: agent state AND the chat transcript on disk are "
+            "NOT loaded this run (neither is deleted). "
+            "Rerun without --no-restore to resume in-flight agent sessions "
+            "and the transcript.",
             file=sys.stderr,
         )
 
