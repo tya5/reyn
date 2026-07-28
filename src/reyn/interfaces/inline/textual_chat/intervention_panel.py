@@ -55,15 +55,24 @@ this priority binding whenever focus is inside this panel — a deliberate,
 uniform loss of a redundant alias, not a functional regression, since
 ``Up``/``Down`` already do the same thing).
 
-``Esc``/``Tab`` (unchanged from P1/P2): return focus to the Composer WITHOUT
-answering. Declared as widget-level (non-priority) ``BINDINGS`` so Textual's
-ordinary focused-widget-outward resolution finds them on this ancestor before
-``Screen``'s default ``tab``→``focus_next``. #3327 gave this escape hatch a
-way BACK: the Composer's own ``↑`` (see
+``Esc`` (from P1/P2; ``Tab``'s equivalent binding REMOVED, #3365): returns
+focus to the Composer WITHOUT answering. Declared as a widget-level
+(non-priority) ``BINDINGS`` entry so Textual's ordinary focused-widget-outward
+resolution finds it on this ancestor before ``Screen``'s default handling.
+#3365 (architect ruling): ``Tab`` is forward-only everywhere in the app — its
+"back to composer" binding here was redundant with ``Esc``, and having BOTH
+keys mean "back" in some places while ``Tab`` alone means "forward" elsewhere
+(the MenuBar/composer-idle case) was exactly the "same key, opposite meaning"
+inconsistency #3365 was filed to fix. Removing it was gated on
+``test_textual_chat_esc_sufficiency_3365.py`` machine-verifying ``Esc`` alone
+already reaches the Composer from every focus state this panel can hold
+(including its ``Input`` — the specific future-regression risk that gate
+exists to catch). #3327 gave this escape hatch a way BACK: the Composer's own
+``↑`` (see
 :class:`~reyn.interfaces.inline.textual_chat.chrome.Composer`'s ``_on_key``)
 focuses this panel (:meth:`focus_pending`) FIRST, ahead of the sent-queue,
-whenever :meth:`has_pending` is true — before #3327, ``Esc``/``Tab`` here was
-a ONE-WAY trip for a keyboard-only user (no binding anywhere retargeted focus
+whenever :meth:`has_pending` is true — before #3327, ``Esc`` here was a
+ONE-WAY trip for a keyboard-only user (no binding anywhere retargeted focus
 onto this panel, and the documented ``/answer`` fallback was itself queued
 behind the very intervention it targeted, a structural deadlock — see
 ``app.py``'s module docstring and :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp._submit`).
@@ -175,8 +184,13 @@ class InterventionPanel(Vertical):
     #: bindings cannot work here): they switch the active tab even while
     #: focus is inside a pane's ``RadioSet``/``Input``.
     BINDINGS = [
+        # #3365: Tab's own "back to composer" binding was removed — Esc alone
+        # now owns "back" everywhere (architect ruling: Tab is forward-only).
+        # Safe only because test_textual_chat_esc_sufficiency_3365.py
+        # machine-verifies Esc reaches the Composer from every focus state
+        # this panel can hold, INCLUDING its Input — see that file's module
+        # docstring for the #3327-shaped risk this gate specifically guards.
         Binding("escape", "dismiss_panel", "Back to composer", show=False),
-        Binding("tab", "dismiss_panel", "Back to composer", show=False),
         Binding(
             "left", "prev_tab", "Previous intervention", show=False, priority=True
         ),
