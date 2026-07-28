@@ -24,7 +24,7 @@ import pytest
 
 from reyn.core.kernel.codeact_runner import CodeActRunner
 from reyn.tools import get_default_registry
-from reyn.tools.schemes.codeact import _build_actions_map
+from reyn.tools.encoders import build_actions_map
 
 
 def _tools_declaring_a_name_param() -> list[str]:
@@ -47,7 +47,7 @@ async def test_every_registry_tool_with_a_name_param_is_callable_under_codeact()
     longer consuming the caller's same-spelled argument."""
     qualified = _tools_declaring_a_name_param()
     assert qualified, "registry declares no tool with a 'name' param — the guard would be vacuous"
-    actions = _build_actions_map(qualified)  # the REAL scheme identifier map
+    actions = build_actions_map(qualified)  # the REAL scheme identifier map
     ident_of = {q: i for i, q in actions.items()}
 
     seen: dict[str, dict] = {}

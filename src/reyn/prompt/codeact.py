@@ -1,12 +1,12 @@
 """§C / §M — CodeAct's static code-API instructional header, and (Phase 3)
 the CodeAct observation-turn's fixed labels.
 
-**§C** feeds ``reyn.tools.schemes.codeact._render_code_api``. That function
-mixes a static instructional header (this module) with a per-catalog-entry
-loop that renders LIVE catalog data (function signatures from the currently
-installed tool catalog) — the loop is NOT extractable (it varies with the
-installed catalog, it is not fixed text), so it stays in ``codeact.py`` (the
-scheme module) as assembly logic. Only the static header lines move here.
+**§C** feeds ``reyn.tools.encoders.render_code_api`` — the ``content_fence``
+transport's encoder. That function mixes a static instructional header (this
+module) with a per-catalog-entry loop that renders LIVE catalog data (function
+signatures from the currently installed tool catalog); the loop varies with the
+installed catalog and is not fixed text, so it lives with the encoder as
+assembly logic. Only the static header lines live here.
 
 **§M** feeds ``reyn.tools.schemes.codeact._format_codeact_observation`` — the
 fixed ``[codeact result]`` / ``[codeact stdout]`` / ``[codeact stderr]``
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 # WHEN: always — the sole tool-use instruction CodeAct's scheme presents (it
 #       REPLACES the universal invoke_action/list_actions SP region entirely).
-# WHERE: reyn.tools.schemes.codeact._render_code_api, prepended before the
+# WHERE: reyn.tools.encoders.render_code_api, prepended before the
 #        per-entry function-signature lines ("Available functions:" onward).
 # WHY: #1658 — direct function-call code-API (not the old `tool('name', ...)`
 #      string-proxy) so the action name can never be a hallucinated produced

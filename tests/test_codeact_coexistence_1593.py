@@ -116,8 +116,7 @@ class _FakeCodeActScheme:
     async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
         return Presentation(
             llm_tools_payload=[],
-            sp_params={"universal_wrappers_enabled": False, "search_actions_enabled": False},
-            sp_fragment="code-api",
+            tool_use_sp="code-api",
         )
 
     def interpret(self, llm_response, *, tool_catalog, ops):
