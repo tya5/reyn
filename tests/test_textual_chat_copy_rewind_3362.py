@@ -1,0 +1,513 @@
+"""#3362 gates: ``/copy`` and ``/rewind`` are real on the default Textual TUI.
+
+Both commands were silent no-ops there: ``app._SKIP_KINDS`` filtered their
+sentinels out of the conversation pane and nothing else consumed them, so
+``/copy`` never touched the clipboard and ``/rewind`` never showed a list.
+
+Graded invariants:
+
+1. **``/copy`` changes the clipboard** — witnessed by EFFECT, not by the status
+   line: the real ``copy_to_clipboard`` discovers a clipboard binary through
+   ``shutil.which`` and pipes the text to it, so these tests put a REAL
+   executable named ``pbcopy`` on ``PATH`` that records its stdin to a file. The
+   assertion is on that file's bytes — a status line saying "copied" while the
+   subprocess never ran would FAIL here. (Nothing is mocked: the production
+   discovery, argv and pipe all run; only which binary is found is arranged.)
+2. **Every reply the pane shows is copyable** — including a STREAMED reply (which
+   settles through an early return in ``_ingest_frame``) and a reply restored
+   from ``history.jsonl``, not only the plain live path.
+3. **``/rewind`` lists AND rewinds** — two separable things, gated separately:
+   the picker is populated from the command-UI request's points, and PICKING a
+   row performs the rewind through the ordinary ``/rewind <seq>`` slash seam.
+   The action gate additionally pins that the picker's submission is IDENTICAL
+   to a typed one, so the picker cannot grow a private action path beside the
+   real one.
+4. **The other two sentinels are still skipped** — ``__attach_request__`` /
+   ``__session_switch_request__`` are consumed UPSTREAM by
+   ``AgentRegistry._forwarder`` (pinned by ``test_attach_request_forwarded.py``
+   and ``test_3310_n3_remote_switch_parity.py``); the TUI must keep skipping
+   them rather than leaking a bare sentinel into the conversation.
+
+**No real state is ever rewound here.** The app's rewind action ends at the
+``ClientTransport.submit_user_text`` seam, and the transport under test is a real
+but scripted ``ClientTransport`` that records the line instead of running a
+router turn — the destructive ``AgentRegistry.checkout`` leg is pinned by its own
+existing tests (``test_slash_rewind_1f.py``), not re-driven here.
+
+All app-level tests use real instances (a concrete ``ClientTransport`` + a
+concrete ``ChatReadModel`` seam impl + the real app/pilot), per the testing
+policy — no mocks.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import stat
+from pathlib import Path
+from typing import AsyncIterator
+
+import pytest
+from textual_flowview import FlowView
+
+from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat.app import _SKIP_KINDS
+from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
+from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.frames import DisplayFrame
+from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.outbox import OutboxMessage
+
+# ── real seam impls (no mocks) ────────────────────────────────────────────────
+
+
+class _PickerReadModel(ChatReadModel):
+    """A real :class:`ChatReadModel` seam impl (the shape ``RegistryReadModel``
+    has) that hosts a command-UI region and serves one pending request plus an
+    optional persisted history — exactly the two reads the app makes here."""
+
+    def __init__(
+        self,
+        pending: "dict | None" = None,
+        messages: "list[ChatMessage] | None" = None,
+    ) -> None:
+        self._pending = pending
+        self._messages = list(messages or [])
+        #: How many times the app consumed the request — public so a test can
+        #: assert the consumption without reaching into private state.
+        self.cleared = 0
+
+    def snapshot(self, config=None):
+        return None
+
+    def intervention_head(self):
+        return None
+
+    def pending_command_ui(self):
+        return self._pending
+
+    def clear_pending_command_ui(self) -> None:
+        self._pending = None
+        self.cleared += 1
+
+    @property
+    def has_command_ui_region(self) -> bool:
+        return True
+
+    @property
+    def history_path(self) -> Path:
+        return Path("/tmp/reyn_3362_input_history")
+
+    def conversation_history(self, *, limit=None, agent=None, session_id=None):
+        return self._messages[-limit:] if limit is not None else list(self._messages)
+
+
+class _RemoteishReadModel(_PickerReadModel):
+    """The REMOTE shape: command-UI is not on the AG-UI wire, so
+    ``pending_command_ui`` is ``None`` and no region is hosted — the same
+    decision ``RemoteReadModel`` makes."""
+
+    @property
+    def has_command_ui_region(self) -> bool:
+        return False
+
+
+class ScriptedTransport(ClientTransport):
+    """A real, minimal :class:`ClientTransport`. The stream stays open after the
+    scripted frames so the app stays mounted; ``submitted`` records the lines the
+    app routes back through the send seam."""
+
+    def __init__(self, messages: "list[OutboxMessage] | None" = None) -> None:
+        self._messages = list(messages or [])
+        self.submitted: "list[str]" = []
+
+    def start(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def close(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    async def frames(self) -> "AsyncIterator[DisplayFrame]":
+        for msg in self._messages:
+            yield DisplayFrame(msg)
+        await asyncio.Event().wait()
+
+    async def submit_user_text(self, text: str) -> None:
+        self.submitted.append(text)
+
+    async def answer_intervention_text(self, text: str) -> bool:
+        return False
+
+    async def answer_intervention_choice(self, choice_id: str) -> bool:
+        return False
+
+    def has_session(self) -> bool:
+        return True
+
+    def pending_intervention_head(self) -> "object | None":
+        return None
+
+    def put_display(self, msg: "OutboxMessage") -> None:
+        self._messages.append(msg)
+
+    async def cancel_inflight(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    async def shutdown(self) -> None:  # pragma: no cover - trivial
+        pass
+
+
+# ── clipboard EFFECT witness ──────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def clipboard(tmp_path, monkeypatch):
+    """Put a REAL ``pbcopy`` executable on ``PATH`` that records its stdin.
+
+    Returns a zero-arg callable giving the recorded text, or ``None`` when the
+    binary was never invoked. This is an environment arrangement, not a mock: the
+    production ``copy_to_clipboard`` really calls ``shutil.which``, really spawns
+    the process and really pipes to its stdin, so "the clipboard changed" is
+    witnessed by a side effect outside the process under test. A hermetic stand-in
+    for the system clipboard is required because a CI host has none — the
+    real-``pbpaste`` witness is a manual Test-plan item.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    sink = tmp_path / "clipboard.txt"
+    script = bindir / "pbcopy"
+    # Written ATOMICALLY (temp + rename): a plain ``> sink`` redirect creates the
+    # file EMPTY before ``cat`` writes a byte, so a reader polling for "the sink
+    # exists" can observe a half-written clipboard and compare against "". That
+    # race made two otherwise-unrelated strips report a spurious failure before
+    # it was found — the witness itself has to be race-free for a RED to mean
+    # what it says.
+    script.write_text(
+        "#!/bin/sh\n/bin/cat > " + str(sink) + ".part\n"
+        "/bin/mv " + str(sink) + ".part " + str(sink) + "\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    # PREPENDED, not replaced: ``shutil.which`` takes the first match, so this
+    # one shadows any real ``pbcopy`` (the host's actual clipboard is never
+    # touched by these tests) while the rest of PATH stays usable.
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+
+    def read():
+        return sink.read_text() if sink.exists() else None
+
+    return read
+
+
+def _entries(app: TextualChatApp):
+    return list(app.query_one(FlowView).entries)
+
+
+def _texts(app: TextualChatApp):
+    return [e.item.text for e in _entries(app)]
+
+
+async def _settle(pilot, until=None) -> None:
+    """Let the frame pump drain the scripted frames and the UI settle.
+
+    The real sleep is required, not padding: the clipboard write is off-loaded to
+    a thread executor (``copy_to_clipboard_async``) and spawns a subprocess, so a
+    pure ``pilot.pause()`` loop can return before that thread has finished.
+
+    ``until`` is an optional zero-arg predicate to stop early on. Passing it buys
+    a GENEROUS timeout budget for a slow CI host without paying that budget on
+    every test — and it never weakens an assertion: the caller still asserts the
+    real thing afterwards, so a predicate that never becomes true fails there
+    rather than here.
+    """
+    # A waited-for condition gets a generous budget (only spent when the
+    # condition is genuinely slow or never arrives); a plain drain does not need
+    # one, since every step it waits on is synchronous.
+    for _ in range(150 if until is not None else 12):
+        await pilot.pause()
+        if until is not None and until():
+            return
+        await asyncio.sleep(0.01)
+
+
+# ── 1. /copy changes the clipboard (effect, not appearance) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_copy_sentinel_writes_the_reply_to_the_clipboard(clipboard) -> None:
+    """Tier 2: a ``__copy_last_reply__`` frame after a reply puts THAT reply's
+    text on the clipboard, and reports it in the pane.
+
+    Both halves are asserted: the clipboard sink holds the reply text (the
+    EFFECT — before #3362 the sink was never written at all), and a status row
+    appears (the REPORT). Asserting only the row is the exact insufficiency the
+    reporter called out."""
+    transport = ScriptedTransport([
+        OutboxMessage(kind="agent", text="the answer is 42"),
+        OutboxMessage(kind="__copy_last_reply__", text=""),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot, until=lambda: clipboard() is not None)
+        assert clipboard() == "the answer is 42", (
+            "the system clipboard was not written — /copy is still a no-op"
+        )
+        # The report is appended AFTER the clipboard write returns, so the
+        # write-predicate above can (and does) return before the row lands.
+        await _settle(pilot, until=lambda: any("clipboard" in t for t in _texts(app)))
+        assert any("clipboard" in t for t in _texts(app)), (
+            f"no /copy result reported in the pane: {_texts(app)}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_copy_targets_an_older_reply_by_number(clipboard) -> None:
+    """Tier 2: ``/copy 2`` copies the reply one turn back, not the newest —
+    the ring is ordered, not a single-slot latch."""
+    transport = ScriptedTransport([
+        OutboxMessage(kind="agent", text="older reply"),
+        OutboxMessage(kind="agent", text="newest reply"),
+        OutboxMessage(kind="__copy_last_reply__", text="2"),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot, until=lambda: clipboard() is not None)
+        assert clipboard() == "older reply"
+
+
+@pytest.mark.asyncio
+async def test_copy_with_nothing_buffered_reports_and_writes_nothing(
+    clipboard,
+) -> None:
+    """Tier 2: with no reply buffered, ``/copy`` explains itself AND leaves the
+    clipboard untouched — a decision-enabling message, not a spurious copy."""
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__copy_last_reply__", text=""),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        assert clipboard() is None, "clipboard written with nothing to copy"
+        assert any("no agent reply to copy" in t for t in _texts(app)), _texts(app)
+
+
+@pytest.mark.asyncio
+async def test_streamed_reply_is_copyable(clipboard) -> None:
+    """Tier 2: a reply that arrives as a STREAM (deltas + an authoritative
+    completion carrying the same ``chain_id``) is copyable.
+
+    The completion settles through an early return in ``_ingest_frame``; buffering
+    the text after that return would leave the common case — every streamed
+    reply — uncopyable while the plain path still passed."""
+    transport = ScriptedTransport([
+        OutboxMessage(
+            kind="agent", text="streamed answer", meta={"chain_id": "c1"},
+        ),
+        OutboxMessage(kind="__copy_last_reply__", text=""),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot, until=lambda: clipboard() is not None)
+        assert clipboard() == "streamed answer"
+
+
+@pytest.mark.asyncio
+async def test_restored_reply_is_copyable(clipboard) -> None:
+    """Tier 2: a reply restored from ``history.jsonl`` on startup — one the user
+    can SEE in the pane — is one ``/copy`` can reach.
+
+    The pane and the command must agree about what exists; a ring fed only by
+    live frames would show the reply and then deny it."""
+    read_model = _PickerReadModel(messages=[
+        ChatMessage(role="user", content="what is it"),
+        ChatMessage(role="assistant", content="restored answer"),
+    ])
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__copy_last_reply__", text=""),
+    ])
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test() as pilot:
+        await _settle(pilot, until=lambda: clipboard() is not None)
+        assert clipboard() == "restored answer"
+
+
+# ── 2. /rewind: the LIST ──────────────────────────────────────────────────────
+
+
+_POINTS = [
+    {"seq": 12, "ts": "2026-07-26T10:00:00", "kind": "turn"},
+    {"seq": 9, "ts": "2026-07-26T09:30:00", "kind": "plan-step"},
+    {"seq": 4, "ts": "2026-07-26T09:00:00", "kind": "turn"},
+]
+
+
+@pytest.mark.asyncio
+async def test_rewind_sentinel_opens_the_picker_with_the_checkpoints() -> None:
+    """Tier 2: a ``__rewind_list__`` frame reveals the picker, populated from the
+    command-UI request's points, and CONSUMES the request.
+
+    Before #3362 the sentinel was skipped and the request was read by nothing, so
+    bare ``/rewind`` produced no visible output at all."""
+    read_model = _PickerReadModel({"kind": "rewind", "points": _POINTS})
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__rewind_list__", text="rewind to a checkpoint…"),
+    ])
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        picker = app.query_one(RewindPicker)
+        assert picker.display, "the rewind picker never appeared"
+        assert picker.has_points()
+        rows = picker.query_one("#rewind-picker-options").option_count
+        assert rows == len(_POINTS), f"{rows} rows for {len(_POINTS)} checkpoints"
+        assert read_model.cleared == 1, (
+            "the command-UI request was not consumed — it would replay onto a "
+            "later sentinel"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rewind_without_a_command_ui_request_falls_back_to_the_text_list(
+) -> None:
+    """Tier 2: with no structured request (the REMOTE shape — command-UI is not
+    on the AG-UI wire), the sentinel's text list is RENDERED rather than
+    swallowed.
+
+    Swallowing it there would trade one silent no-op for another: the picker it
+    would be waiting for can never arrive. Same two-legged rule the plain client
+    applies."""
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__rewind_list__", text="seq 4 · turn"),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_RemoteishReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        assert not app.query_one(RewindPicker).display
+        assert any("seq 4" in t for t in _texts(app)), (
+            f"the text fallback was swallowed: {_texts(app)}"
+        )
+
+
+# ── 3. /rewind: the ACTION ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_picking_a_checkpoint_rewinds_through_the_real_slash_seam() -> None:
+    """Tier 2: picking a row performs the rewind — and does it through the SAME
+    seam a typed ``/rewind <seq>`` uses.
+
+    Two properties, both asserted: (a) picking the SECOND row submits the seq of
+    that row (``9``), so the row→action mapping is index-correct and not
+    off-by-one onto a different checkpoint; (b) the submitted line is byte-equal
+    to what typing ``/rewind 9`` into the composer submits, so the picker has no
+    private action path beside the real ``rewind_cmd`` → ``AgentRegistry.checkout``
+    one. Fixing the list while the action stayed a no-op is the failure this
+    gate exists for.
+
+    No real state is rewound: the action ends at ``submit_user_text`` here."""
+    read_model = _PickerReadModel({"kind": "rewind", "points": _POINTS})
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__rewind_list__", text="…"),
+    ])
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        assert app.query_one(RewindPicker).display
+        # ↓ moves to the second checkpoint, Enter checks it out.
+        await pilot.press("down")
+        await pilot.press("enter")
+        await _settle(pilot)
+        assert transport.submitted == ["/rewind 9"], (
+            f"picking a checkpoint did not rewind: {transport.submitted}"
+        )
+        # (b) the SAME line a typed submission produces.
+        typed = ScriptedTransport()
+        typed_app = TextualChatApp(transport=typed, read_model=_PickerReadModel())
+        async with typed_app.run_test() as typed_pilot:
+            await typed_pilot.pause()
+            await typed_app._submit("/rewind 9")
+            await typed_pilot.pause()
+        assert transport.submitted == typed.submitted, (
+            "the picker's rewind is not the typed /rewind path"
+        )
+        assert not app.query_one(RewindPicker).display, (
+            "the picker stayed open after checking out"
+        )
+
+
+@pytest.mark.asyncio
+async def test_escape_dismisses_the_picker_without_rewinding() -> None:
+    """Tier 2: Esc closes the picker and submits NOTHING — an accidental bare
+    ``/rewind`` must not be a trap in front of a destructive operation."""
+    read_model = _PickerReadModel({"kind": "rewind", "points": _POINTS})
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__rewind_list__", text="…"),
+    ])
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        assert app.query_one(RewindPicker).display
+        await pilot.press("escape")
+        await _settle(pilot)
+        assert not app.query_one(RewindPicker).display
+        assert transport.submitted == [], (
+            f"Esc rewound something: {transport.submitted}"
+        )
+
+
+# ── 4. the two sentinels that REMAIN skipped ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_upstream_consumed_sentinels_stay_out_of_the_conversation() -> None:
+    """Tier 2: ``__attach_request__`` / ``__session_switch_request__`` are still
+    skipped — neither leaks a bare sentinel row into the pane.
+
+    These two are NOT the same hole ``/copy``/``/rewind`` were. Both are consumed
+    by ``AgentRegistry._forwarder`` before they can reach a LOCAL client's frame
+    stream (pinned by ``test_attach_request_forwarded.py`` and
+    ``test_3310_n3_remote_switch_parity.py``), and their effect reaches this app
+    as the ``session_attached`` chat-event.
+
+    On the REMOTE path they differ, which is why this gate feeds them in as
+    frames (the remote shape) rather than asserting they cannot arrive:
+    ``__attach_request__`` really IS emitted as an AG-UI display frame — measured
+    in ``tests/test_agui_control_filter.py``, since the forwarder's ``continue``
+    is subscriber-local and does not gate the wire — so skipping it here is
+    load-bearing. ``__session_switch_request__`` is consumed by the AG-UI tap and
+    filtered besides, so its entry is a true fail-safe. Either way neither may
+    render, and a neighbouring ordinary frame must still render (so the
+    assertion cannot pass by the pump being dead)."""
+    assert _SKIP_KINDS == {"__attach_request__", "__session_switch_request__"}
+    transport = ScriptedTransport([
+        OutboxMessage(kind="__attach_request__", text="beta"),
+        OutboxMessage(kind="__session_switch_request__", text="sid-b"),
+        OutboxMessage(kind="agent", text="a real reply"),
+    ])
+    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        texts = _texts(app)
+        assert "a real reply" in texts, f"the pump never ran: {texts}"
+        assert "beta" not in texts and "sid-b" not in texts, (
+            f"a control sentinel leaked into the conversation: {texts}"
+        )
+
+
+# ── environment sanity ────────────────────────────────────────────────────────
+
+
+def test_clipboard_witness_actually_witnesses(clipboard) -> None:
+    """Tier 2: the clipboard fixture is a working witness — the production
+    ``copy_to_clipboard`` finds the binary and its stdin lands in the sink.
+
+    Without this, every clipboard assertion above could be passing (or failing)
+    for reasons that have nothing to do with the code under test — the
+    'is the observation infrastructure capturing what you need?' check.
+    """
+    from reyn.interfaces.repl._clipboard import copy_to_clipboard
+
+    assert clipboard() is None
+    ok, tool = copy_to_clipboard("witness marker")
+    assert ok and tool == "pbcopy", f"clipboard witness not wired: {ok!r} {tool!r}"
+    assert clipboard() == "witness marker"
+    assert os.environ["PATH"].split(os.pathsep)[0].endswith("bin")

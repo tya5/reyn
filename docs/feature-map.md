@@ -213,7 +213,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| `/rewind` picker | Interactive checkpoint timeline (seq / timestamp / kind columns); Esc-Esc double-tap shortcut | [How-to: rewind](guide/for-users/time-travel.md) |
+| `/rewind` picker | Interactive current-branch checkpoint picker (seq / timestamp / kind columns) in the Textual TUI; a plain text list over `--connect`. Selecting a row runs the same `/rewind <seq>` checkout a typed one does | [How-to: rewind](guide/for-users/time-travel.md) |
 | Per-checkpoint anchor preview | Each picker row shows a rendered scroll-hint anchor | [How-to: rewind](guide/for-users/time-travel.md) |
 | PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Time-Travel concepts](concepts/runtime/time-travel.md) · Crash Recovery |
 | Consistent-cut rewind | Both substrates (runtime state + workspace shadow-git `as-of-N`) rewound atomically | [Time-Travel concepts](concepts/runtime/time-travel.md) |

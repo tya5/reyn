@@ -112,7 +112,9 @@ def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed
       are FORWARDED (profiled CUSTOM display kinds) and round-trip losslessly.
     - ``__end__`` (terminal) and ``__session_switch_request__`` (upstream-consumed)
       are control-filtered.
-    - ``__attach_request__`` is upstream-consumed; its profile entry is a fail-safe."""
+    - ``__attach_request__`` is a LIVE wire kind (corrected #3362): the registry
+      forwarder's ``continue`` is subscriber-local, so its profile entry names an
+      event really emitted — see ``protocol.py``'s ``CONTROL_FILTER_KINDS`` note."""
     # Client-consumed → forwarded + profiled + lossless round-trip.
     for client_kind in ("__copy_last_reply__", "__rewind_list__"):
         assert client_kind in DISPLAY_KINDS, client_kind
@@ -128,7 +130,7 @@ def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed
     assert _disposition("__end__") == "control"
     assert _disposition("__session_switch_request__") == "control"
 
-    # __attach_request__ profile entry is a fail-safe (kept profiled).
+    # __attach_request__ is profiled AND unfiltered => really emitted (#3362).
     assert "__attach_request__" not in CONTROL_FILTER_KINDS
     assert _disposition("__attach_request__") == "profiled"
     assert is_profiled("reyn.display.__attach_request__")

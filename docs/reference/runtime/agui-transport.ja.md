@@ -88,7 +88,7 @@ client は 1 つの順序付き SSE ストリームを消費し、各 event を�
 | `intervention`    | `CUSTOM`           | プロンプトが表示される。reyn client はそれをネイティブに描画し、id で回答する(「Human-in-the-loop answering」参照) |
 | `presentation`    | `CUSTOM`           | `present` op の render-node モデル(*present-on-wire* 参照) |
 | `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | クライアント消費センチネル — 転送される(*control sentinels* 参照) |
-| `__attach_request__` | `CUSTOM`        | fail-safe プロファイルエントリ;upstream 消費(*control sentinels* 参照) |
+| `__attach_request__` | `CUSTOM`        | 転送される — live なワイヤー kind(*control sentinels* 参照) |
 | `__end__` / `__session_switch_request__` | *(フィルタ)* | 転送されない(*control sentinels* 参照) |
 
 これら以外の display kind もすべて損失なく round-trip する(`CUSTOM` にフォールバックし
@@ -114,12 +114,22 @@ display kind を誤って落としてしまう):
 - **フィルタ**(`CONTROL_FILTER_KINDS`、明示的 allowlist — emitter はワイヤーイベントを出さない):
   - `__end__` — ストリーム終端(emitter はこれで return する。クライアントのループもストリーム
     クローズで終わる)。
-  - `__session_switch_request__` — 既に upstream(`registry.py:3061`)で swallow されており
-    AG-UI tap に到達しない。フィルタは fail-safe。
-- **upstream 消費 → fail-safe プロファイル**: `__attach_request__` は upstream
-  (`registry.py:3052`)で swallow され tap に到達しない。そのプロファイルエントリは将来の
-  tap-point 変更に対する fail-safe であり、live なワイヤー kind ではない(リモートの
-  attach-label 同期はこのレガシーセンチネル経由ではなく別途設計される)。
+  - `__session_switch_request__` — **AG-UI tap 自身** がこのセンチネルを消費する
+    (`_SessionFrameSource._drain_one_session`: セッション switch-follow、解決できない
+    sid の場合は silent drop)ため、その source から emitter に到達しない。フィルタ
+    エントリは、消費しない frame source に対する fail-safe。
+- **転送され、実際に live**: `__attach_request__` は profiled `CUSTOM` display event
+  として **実際にワイヤーへ出る**。registry forwarder の `continue` はこれを妨げない —
+  forwarder と AG-UI tap は同一 `session.outbox_hub` の独立した 2 つの subscriber であり、
+  hub は全 subscription に全メッセージを fan-out するので、`continue` は
+  「`repl_outbox`(ローカル REPL sink)に再投函しない」だけを意味する。リモート
+  クライアントはこの kind を許容する必要があり、reyn クライアントは表示上スキップする
+  ので会話ペインに素のセンチネルは出ない(リモートの attach-label *同期* は別機構)。
+
+> #3362 で訂正。本節は以前、両センチネルとも registry forwarder が swallow するため
+> 「AG-UI tap に到達しない」と記述していたが、いずれも到達する。forwarder の
+> `continue` は subscriber-local である。実 forwarder + 実 tap で計測
+> (`tests/test_agui_control_filter.py`)。
 
 #### Text lifecycle(適合する triplet — plain と streamed)
 
@@ -390,7 +400,7 @@ display 行のテキストである。
 | `reyn.display.system`             | reyn chrome 行 — 永続化されるライフサイクル/ステータスマーカー(compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | `/copy` センチネル — 転送される(クライアント側クリップボードコピー);*control sentinels* 参照 |
 | `reyn.display.__rewind_list__`    | `/rewind` センチネル — 転送される(クライアント側 rewind ピッカー);*control sentinels* 参照 |
-| `reyn.display.__attach_request__` | attach-request センチネル — fail-safe プロファイルエントリ(upstream 消費);*control sentinels* 参照 |
+| `reyn.display.__attach_request__` | attach-request センチネル — 実際に emit される;reyn クライアントは表示上スキップ;*control sentinels* 参照 |
 | `reyn.display.tool_call_started`  | tool-call 開始のトレース行                              |
 | `reyn.display.tool_call_completed`| tool-call 完了のトレース行                              |
 | `reyn.display.tool_call_failed`   | tool-call 失敗のトレース行                              |
