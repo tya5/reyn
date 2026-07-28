@@ -37,7 +37,9 @@ JSON `tools=` payload の代わりに、 CodeAct は **code API** を作る: モ
 呼べる action の reference list を、 system prompt に `tool(...)` signature として
 render する。 permission-eligible な各 action が 1 行 — 名前・引数・短い説明 — で
 並ぶ。 この list は *提示のみ*。 モデルはそれを読んで何が callable かを知る。
-CodeAct では JSON tool payload は空 — モデルに JSON tool-calling は一切提供されない。
+CodeAct には JSON tool channel が **そもそも存在しない** — 「channel はあるが中身が
+空」とは別のことであり、何も advertise されていないのに code API からは全 action が
+呼べる理由でもある。
 
 **何が載るか**: `enumerate-all` scheme が `tool_calls` で advertise するのと同じ
 集合 — base tool（`read_file` / `delegate_to_agent` / `session_spawn` …）と
