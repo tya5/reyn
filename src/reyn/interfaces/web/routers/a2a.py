@@ -44,6 +44,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from reyn.core.events.progress_lifecycle import (
+    PROGRESS_LIFECYCLE_EVENTS,
+    format_progress_message,
+)
 from reyn.interfaces.web.a2a_task_view import to_a2a_task
 from reyn.interfaces.web.deps import (
     get_a2a_webhook_registry,
@@ -124,10 +128,10 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
             backed by ``_A2AProgressBridge`` fan-out into
             ``RunEntry.history_events`` (PR #288) +
             ``A2AInterventionBus.deliver`` appending input-required
-            events (= peers see lifecycle + ask_user inline).
-          - ``pushNotifications``: webhook fires on lifecycle events
-            (= phase_started / llm_called / act_executed via PR #286)
-            plus the original ``completed`` / ``failed`` /
+            audit-events (= peers see lifecycle + ask_user inline).
+          - ``pushNotifications``: webhook fires on each forwarded
+            lifecycle audit-event (= ``PROGRESS_LIFECYCLE_EVENTS``, via
+            PR #286) plus the original ``completed`` / ``failed`` /
             ``input-required`` triggers. The two-sink bridge means
             webhook and SSE consumers see identical payloads.
 
@@ -565,7 +569,7 @@ async def _handle_answer_injection(
 
 
 class _A2AProgressBridge:
-    """Forwards selected agent chat-events to A2A peer surfaces.
+    """Forwards selected chat audit-events of one agent to A2A peer surfaces.
 
     Two sinks, one subscriber:
 
@@ -578,13 +582,13 @@ class _A2AProgressBridge:
         #286 with webhook-only bridge; this revision adds the SSE
         sink alongside).
 
-    Mirrors ``mcp_server._MCPProgressBridge`` for the event-scope side:
-    same lifecycle kinds (``phase_started`` / ``llm_called`` /
-    ``act_executed``), same ordinal counter, same message formatting.
-    Different transports. Two instances (= MCP + A2A) is below the
-    rule-of-three threshold so the bridge logic stays per-protocol;
-    a future third instance is the trigger to lift the common
-    ``subscribe / filter / format / dispatch`` shape into a shared base.
+    Mirrors ``mcp.server._MCPProgressBridge`` for the audit-event-scope
+    side: both hold :data:`PROGRESS_LIFECYCLE_EVENTS` and both render with
+    :func:`format_progress_message`, so a peer applies one parser to either
+    transport. Ordinal counter and dispatch shape are per-protocol; two
+    instances (= MCP + A2A) is below the rule-of-three threshold, so a future
+    third instance is the trigger to lift the common ``subscribe / filter /
+    format / dispatch`` shape into a shared base.
 
     Lifecycle: subscribe via ``attach()`` once, ``detach()`` in a
     try/finally so the subscriber doesn't outlive the call. Any sink
@@ -594,11 +598,9 @@ class _A2AProgressBridge:
     ``_handle_async_mode._run``) is the authoritative outcome.
     """
 
-    TRACKED_EVENTS = frozenset({
-        "phase_started",
-        "llm_called",
-        "act_executed",
-    })
+    # The single declaration lives in reyn.core.events.progress_lifecycle so
+    # this bridge and the MCP one cannot drift apart (#3357).
+    TRACKED_EVENTS = PROGRESS_LIFECYCLE_EVENTS
 
     def __init__(
         self,
@@ -658,7 +660,7 @@ class _A2AProgressBridge:
         if event_type not in self.TRACKED_EVENTS:
             return
         data = getattr(event, "data", {}) or {}
-        message = self.format_message(event_type, data)
+        message = format_progress_message(event_type, data)
         self._ordinal += 1
         ordinal = self._ordinal
         try:
@@ -669,20 +671,6 @@ class _A2AProgressBridge:
             # No running loop (= EventLog dispatched outside async context).
             return
         self._tasks.append(task)
-
-    @staticmethod
-    def format_message(event_type: str, data: dict) -> str:
-        if event_type == "phase_started":
-            phase = data.get("phase") or "?"
-            return f"phase: {phase}"
-        if event_type == "llm_called":
-            model = data.get("model") or "?"
-            return f"llm: {model}"
-        if event_type == "act_executed":
-            op_count = data.get("op_count") or 0
-            suffix = "" if op_count == 1 else "s"
-            return f"act: {op_count} op{suffix}"
-        return event_type
 
     async def _send(
         self, ordinal: int, event_type: str, message: str,
@@ -775,9 +763,9 @@ async def _handle_async_mode(
 
     async def _run() -> None:
         # issue #267 Gap 1 + Gap 2: subscribe a progress bridge to the
-        # agent's chat_events for the lifetime of this call. The bridge
-        # fans out run lifecycle events (phase_started / llm_called /
-        # act_executed) to two sinks:
+        # agent's chat audit-event log for the lifetime of this call. The
+        # bridge fans out the lifecycle audit-events named by
+        # PROGRESS_LIFECYCLE_EVENTS to two sinks:
         #   - SSE buffer (always): append to RunEntry.history_events so
         #     GET /a2a/tasks/{run_id}/events replays progression.
         #   - Webhook POST (opt-in): when webhook_url is registered,

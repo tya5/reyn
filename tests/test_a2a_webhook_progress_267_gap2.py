@@ -1,29 +1,31 @@
 """Tier 2: A2A webhook progress trigger expansion (issue #267 Gap 2).
 
-Before this PR, the A2A webhook surface fired only on 3 events:
-``input-required`` (A2AInterventionBus.deliver), ``completed`` /
-``failed`` (_handle_async_mode._run). Mid-call lifecycle (= phase
-transition / LLM call / op batch) was invisible to the peer — peers
-received the initial Task envelope, then silence until terminal.
+Before issue #267 Gap 2, the A2A webhook surface fired only on three
+transitions: ``input-required`` (A2AInterventionBus.deliver),
+``completed`` / ``failed`` (_handle_async_mode._run). Mid-call lifecycle
+was invisible to the peer — peers received the initial Task envelope,
+then silence until terminal.
 
-This PR adds ``_A2AProgressBridge`` (= mirrors ``_MCPProgressBridge``
-shape from PR #279) that subscribes to the agent's ``chat_events``
-for the lifetime of one ``_handle_async_mode`` call and fires
-``status="in-progress"`` webhooks for ``phase_started`` /
-``llm_called`` / ``act_executed``. Two instances (MCP + A2A) is below
-the rule-of-three threshold so the bridge logic is per-protocol; a
-future third instance is the trigger to lift to a shared base.
+``_A2AProgressBridge`` (= mirrors ``_MCPProgressBridge`` shape from PR
+#279) subscribes to the agent's chat audit-event log for the lifetime of
+one ``_handle_async_mode`` call and fires ``status="in-progress"``
+webhooks for the kinds in ``PROGRESS_LIFECYCLE_EVENTS``. Two instances
+(MCP + A2A) is below the rule-of-three threshold so the dispatch logic is
+per-protocol; a future third instance is the trigger to lift to a shared
+base.
 
 Pins:
 
-  1. ``_A2AProgressBridge`` exists with ``TRACKED_EVENTS`` = the 3
-     declared kinds, matching ``_MCPProgressBridge``'s scope (= the
-     contract two bridges share).
+  1. ``_A2AProgressBridge.TRACKED_EVENTS`` IS the shared declaration and
+     matches ``_MCPProgressBridge``'s scope (= the contract two bridges
+     share). The liveness of those kinds is gated separately, in
+     ``tests/test_progress_lifecycle_fanout_3357.py`` — pinning a literal
+     set here is what let two producer-less kinds survive (#3357).
   2. ``attach()`` subscribes to ``session._chat_events``;
      ``detach()`` unsubscribes + cancels in-flight tasks; idempotent.
-  3. Untracked event types are ignored (= ``intervention_routed`` /
-     ``phase_completed`` / etc. don't fire the bridge).
-  4. ``format_message`` produces the expected text for each kind.
+  3. Untracked audit-event kinds are ignored (= ``tool_called`` /
+     ``turn_settled`` / etc. don't fire the bridge).
+  4. The shared formatter produces the expected text for each kind.
   5. ``_send`` POSTs the canonical progress payload to the configured
      webhook_url.
   6. ``ordinal`` is monotonic across multiple events on one bridge.
@@ -92,19 +94,23 @@ def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | N
 # ── 1. Tracked event scope matches MCP bridge ─────────────────────────
 
 
-def test_a2a_progress_bridge_tracks_three_lifecycle_events() -> None:
-    """Tier 2: ``_A2AProgressBridge.TRACKED_EVENTS`` matches the MCP
-    bridge's scope exactly (= same 3 lifecycle event kinds). This
-    keeps the per-protocol bridges aligned so a future third-instance
-    abstraction has a stable contract to lift.
+def test_a2a_progress_bridge_shares_the_mcp_bridge_declaration() -> None:
+    """Tier 2: ``_A2AProgressBridge.TRACKED_EVENTS`` matches the MCP bridge's
+    scope exactly, because both ARE the one shared declaration. This keeps the
+    per-protocol bridges aligned so a future third-instance abstraction has a
+    stable contract to lift.
+
+    Deliberately NOT a literal set: pinning the member names here made the two
+    bridges agree with each other while agreeing with no producer, and made the
+    correct removal of a dead kind turn this test RED (#3357). Membership is
+    gated on liveness instead, in ``test_progress_lifecycle_fanout_3357.py``.
     """
+    from reyn.core.events.progress_lifecycle import PROGRESS_LIFECYCLE_EVENTS
     from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
     from reyn.mcp.server import _MCPProgressBridge
 
-    assert _A2AProgressBridge.TRACKED_EVENTS == _MCPProgressBridge.TRACKED_EVENTS
-    assert _A2AProgressBridge.TRACKED_EVENTS == frozenset({
-        "phase_started", "llm_called", "act_executed",
-    })
+    assert _A2AProgressBridge.TRACKED_EVENTS is _MCPProgressBridge.TRACKED_EVENTS
+    assert _A2AProgressBridge.TRACKED_EVENTS is PROGRESS_LIFECYCLE_EVENTS
 
 
 # ── 2. attach / detach lifecycle ──────────────────────────────────────
@@ -152,18 +158,18 @@ def test_detach_is_idempotent() -> None:
 
 
 def test_untracked_event_kinds_are_ignored() -> None:
-    """Tier 2: events outside ``TRACKED_EVENTS`` (= e.g.
-    ``intervention_routed`` / ``phase_completed`` / ``agent_response``)
-    do NOT fire a webhook.
+    """Tier 2: audit-event kinds outside ``TRACKED_EVENTS`` (= e.g. the
+    ``tool_called`` half of the dispatch pair, ``turn_settled``,
+    ``intervention_routed``) do NOT fire a webhook.
     """
     captured: list = []
     bridge, events = _make_bridge(captured_posts=captured)
     bridge.attach()
 
     async def _drive() -> None:
-        events.emit("phase_completed", phase="planning")
+        events.emit("tool_called", tool="grep")
+        events.emit("turn_settled", kind="user")
         events.emit("intervention_routed", route="user_channel")
-        events.emit("agent_response", text="hi")
         # Let any scheduled tasks settle.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -173,7 +179,7 @@ def test_untracked_event_kinds_are_ignored() -> None:
 
 
 def test_tracked_events_each_fire_one_post() -> None:
-    """Tier 2: each tracked event kind emits exactly one progress
+    """Tier 2: each tracked audit-event kind emits exactly one progress
     webhook with an incremented ordinal.
     """
     captured: list = []
@@ -181,16 +187,16 @@ def test_tracked_events_each_fire_one_post() -> None:
     bridge.attach()
 
     async def _drive() -> None:
-        events.emit("phase_started", phase="planning")
+        events.emit("turn_started", kind="user")
         events.emit("llm_called", model="gemini-2.5-flash-lite")
-        events.emit("act_executed", op_count=3)
+        events.emit("tool_returned", tool="grep")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
     asyncio.run(_drive())
 
     assert [e for e, _ in captured] == [
-        "phase_started", "llm_called", "act_executed",
+        "turn_started", "llm_called", "tool_returned",
     ]
     assert [p["ordinal"] for _, p in captured] == [1, 2, 3]
 
@@ -199,30 +205,27 @@ def test_tracked_events_each_fire_one_post() -> None:
 
 
 def test_format_message_for_each_event_kind() -> None:
-    """Tier 2: ``format_message`` outputs the canonical human-readable
-    text per event kind. Matches the MCP bridge's format so peer
-    consumers can apply the same parser to both transports.
+    """Tier 2: the shared formatter outputs the canonical human-readable text
+    per audit-event kind. One function serves both bridges, so peer consumers
+    can apply the same parser to either transport.
     """
-    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
+    from reyn.core.events.progress_lifecycle import format_progress_message
 
-    assert _A2AProgressBridge.format_message(
-        "phase_started", {"phase": "planning"},
-    ) == "phase: planning"
-    assert _A2AProgressBridge.format_message(
+    assert format_progress_message(
+        "turn_started", {"kind": "user"},
+    ) == "turn: user"
+    assert format_progress_message(
         "llm_called", {"model": "gemini-2.5-flash-lite"},
     ) == "llm: gemini-2.5-flash-lite"
-    # Singular form for 1 op.
-    assert _A2AProgressBridge.format_message(
-        "act_executed", {"op_count": 1},
-    ) == "act: 1 op"
-    # Plural form for N>1.
-    assert _A2AProgressBridge.format_message(
-        "act_executed", {"op_count": 5},
-    ) == "act: 5 ops"
+    assert format_progress_message(
+        "tool_returned", {"tool": "grep"},
+    ) == "tool: grep"
+    # The failure leg stays distinguishable from the success leg.
+    failed = format_progress_message("tool_failed", {"tool": "grep"})
+    assert "grep" in failed
+    assert failed != "tool: grep"
     # Missing fields fall back to "?".
-    assert _A2AProgressBridge.format_message(
-        "phase_started", {},
-    ) == "phase: ?"
+    assert format_progress_message("turn_started", {}) == "turn: ?"
 
 
 # ── 5. Send payload shape ─────────────────────────────────────────────
@@ -258,15 +261,15 @@ def test_send_posts_canonical_progress_payload(monkeypatch) -> None:
         run_registry=_FakeRunRegistry(),
     )
 
-    asyncio.run(bridge._send(7, "phase_started", "phase: planning"))
+    asyncio.run(bridge._send(7, "turn_started", "turn: user"))
     url, payload = posted[0]
     assert url == "https://peer.test/hook"
     assert payload == {
         "run_id": "run-Y",
         "status": "in-progress",
         "progress": 7,
-        "event": "phase_started",
-        "message": "phase: planning",
+        "event": "turn_started",
+        "message": "turn: user",
         "agent_name": "demo",
     }
 
@@ -296,7 +299,7 @@ def test_send_swallows_transport_errors(monkeypatch) -> None:
     )
 
     # No exception raised, no return value used.
-    asyncio.run(bridge._send(1, "phase_started", "phase: planning"))
+    asyncio.run(bridge._send(1, "turn_started", "turn: user"))
 
 
 # ── 6. Post-detach: late events dropped ───────────────────────────────
@@ -319,7 +322,7 @@ def test_late_event_after_detach_is_ignored() -> None:
     bridge._detached = True
 
     async def _drive() -> None:
-        events.emit("phase_started", phase="planning")
+        events.emit("turn_started", kind="user")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 

@@ -304,7 +304,7 @@ def test_progress_bridge_send_gates_on_is_alive(monkeypatch) -> None:
         run_registry=registry,
     )
 
-    asyncio.run(bridge._send(1, "phase_started", "phase: planning"))
+    asyncio.run(bridge._send(1, "turn_started", "turn: user"))
 
     assert posted == [], (
         "bridge should skip webhook POST when shared ChannelState says dead"
@@ -351,7 +351,7 @@ def test_bus_and_bridge_share_the_same_channel_state(monkeypatch) -> None:
         iv = UserIntervention(kind="ask_user", prompt="?")
         await bus.on_dispatch(iv)
         # Bridge fires 1 failure → state.delivery_failures = 2 (shared)
-        await bridge._send(1, "phase_started", "phase: planning")
+        await bridge._send(1, "turn_started", "turn: user")
         # Bus fires 1 more → state.delivery_failures = 3 = threshold
         iv2 = UserIntervention(kind="ask_user", prompt="?")
         await bus.on_dispatch(iv2)
