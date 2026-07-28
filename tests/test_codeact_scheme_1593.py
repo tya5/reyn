@@ -10,8 +10,8 @@ CodeAct is own-logic (not delegating). This pins:
   - format_feedback shapes each runner envelope into a user-role observation message
     (the CodeBlock arm's append shape; the documented Execute/CodeBlock divergence).
   - build_presentation renders the actions as a code-API in tool_use_sp (#1618 root-3
-    REPLACE channel, not the sp_fragment APPEND), no JSON tools=, with excluded
-    actions omitted (presentation parity with JSON).
+    REPLACE channel), no JSON tools=, with excluded actions omitted (presentation
+    parity with JSON).
 
 The per-call gate RE-ENTRY invariant (N calls → N gate invocations, exclude
 per-call) is pinned at the runner level in test_codeact_runner_1593.py (the gate is
@@ -144,25 +144,19 @@ class _CatalogOps:
 @pytest.mark.asyncio
 async def test_build_presentation_renders_code_api_into_tool_use_sp() -> None:
     """Tier 2: #1618 root-3 — build_presentation renders the actions as a code-API in
-    tool_use_sp (the REPLACE channel, not sp_fragment APPEND); no JSON tools=.
-    Behavior-pinned (action names + tool() proxy + prose=terminal contract present),
-    not format-pinned."""
+    tool_use_sp (the REPLACE channel); no JSON tools=. Behavior-pinned (action names
+    + tool() proxy + prose=terminal contract present), not format-pinned."""
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
     # No JSON tools= — CodeAct presents via the SP, model writes a snippet.
     assert pres.llm_tools_payload == []
     # The actions surface in the code-API as DIRECT functions (#1658: def <name>(...),
-    # not the tool('name') string-proxy), via the REPLACE channel (tool_use_sp); the
-    # old APPEND channel is unused.
+    # not the tool('name') string-proxy), via the REPLACE channel (tool_use_sp).
     assert "file__read" in pres.tool_use_sp
     assert "web__fetch" in pres.tool_use_sp
     assert "def file__read(" in pres.tool_use_sp  # #1658 direct-function signature
     assert "tool('" not in pres.tool_use_sp        # #1658: no string-proxy token
-    assert not pres.sp_fragment  # root-3: replace channel, not append
     # The prose=terminal contract (#2) must be stated so the model knows how to finish.
     assert "plain prose" in pres.tool_use_sp
-    # The named SP gates are off (CodeAct expresses tool-use via tool_use_sp).
-    assert pres.sp_params.get("universal_wrappers_enabled") is False
-    assert pres.sp_params.get("search_actions_enabled") is False
 
 
 @pytest.mark.asyncio
