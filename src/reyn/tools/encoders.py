@@ -7,6 +7,11 @@ positional tool-use system-prompt slot-map; ``content_fence`` advertises no
 ``tools=`` at all and renders the descriptors as a Python code-API the model
 calls by identifier.
 
+``encode_tools`` therefore returns a ``ToolsChannel`` (``reyn.tools.scheme``),
+not a list: the two transports disagree about whether the channel EXISTS, which
+is a different question from how many tools are in it, and an empty list could
+only answer the second (#3421).
+
 **One encoder per transport, not one per cell.** A per-cell composer would
 rebuild ``_VALID_SCHEME_TRANSPORT_PAIRS`` implicitly, one decision point per
 cell — the thing the pair table exists to make explicit.
@@ -38,6 +43,7 @@ from reyn.tools.exposure import (
     Exposure,
     FunctionDescriptor,
 )
+from reyn.tools.scheme import AdvertisedTools, NoToolsChannel
 from reyn.tools.transport import Transport
 
 
@@ -157,9 +163,13 @@ class ToolCallsEncoder:
     )
     encodes_sp_slot_overrides = True
 
-    def encode_tools(self, exposure: Exposure) -> "list[dict]":
+    def encode_tools(self, exposure: Exposure) -> AdvertisedTools:
         _assert_encodable(self, exposure)
-        return [d.as_tool_calls_entry() for d in exposure.descriptors]
+        # Always the ``AdvertisedTools`` arm, INCLUDING when the exposure carries
+        # no descriptor: this transport does have a ``tools=`` channel, and an
+        # exposure narrowed down to nothing means the channel is empty — a state
+        # the other arm does not describe (#3421).
+        return AdvertisedTools(entries=[d.as_tool_calls_entry() for d in exposure.descriptors])
 
     def encode_tool_use_sp(self, exposure: Exposure) -> "dict[str, str]":
         _assert_encodable(self, exposure)
@@ -182,11 +192,13 @@ class ContentFenceEncoder:
     encodable_descriptor_kinds = frozenset({DESCRIPTOR_KIND_FUNCTION})
     encodes_sp_slot_overrides = False
 
-    def encode_tools(self, exposure: Exposure) -> "list[dict]":
+    def encode_tools(self, exposure: Exposure) -> NoToolsChannel:
         _assert_encodable(self, exposure)
         # Not "there are no tools" — this transport has no ``tools=`` channel.
-        # The whole tool-use surface is the code-API below.
-        return []
+        # The whole tool-use surface is the code-API below. #3421 moved that
+        # sentence out of this comment and into the return TYPE, so a consumer
+        # can act on it instead of only reading about it here.
+        return NoToolsChannel()
 
     def encode_tool_use_sp(self, exposure: Exposure) -> str:
         _assert_encodable(self, exposure)

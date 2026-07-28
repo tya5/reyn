@@ -261,7 +261,14 @@ def test_intra_turn_narrowing_re_filters_the_advertised_catalog() -> None:
     finer grain. Round 1's payload (captured below) is the falsifying control: the
     names are there until the narrowing engages.
     """
-    from reyn.tools.scheme import Execute, ExecutionResult, PlainText, Presentation, register_scheme
+    from reyn.tools.scheme import (
+        AdvertisedTools,
+        Execute,
+        ExecutionResult,
+        PlainText,
+        Presentation,
+        register_scheme,
+    )
 
     contextual = _untrusted_contextual()
     target = "multi_agent__delegate"
@@ -275,10 +282,10 @@ def test_intra_turn_narrowing_re_filters_the_advertised_catalog() -> None:
 
         async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
             return Presentation(
-                llm_tools_payload=[
+                tools_channel=AdvertisedTools(entries=[
                     {"type": "function", "function": {"name": n, "description": ""}}
                     for n in ("list_agents", target)
-                ],
+                ]),
             )
 
         def interpret(self, llm_response, *, tool_catalog, ops):
@@ -354,6 +361,7 @@ def test_represent_round_applies_the_advertisement_filter() -> None:
     payload must pass the same filter, or a re-present silently re-offers a denied
     tool the loop's own gate rejects."""
     from reyn.tools.scheme import (
+        AdvertisedTools,
         Execute,
         ExecutionResult,
         PlainText,
@@ -375,16 +383,16 @@ def test_represent_round_applies_the_advertisement_filter() -> None:
         async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
             if not layer_ctx.get("refinement"):
                 return Presentation(
-                    llm_tools_payload=[
+                    tools_channel=AdvertisedTools(entries=[
                         {"type": "function",
                          "function": {"name": "search", "description": ""}},
-                    ],
+                    ]),
                 )
             return Presentation(
-                llm_tools_payload=[
+                tools_channel=AdvertisedTools(entries=[
                     {"type": "function", "function": {"name": n, "description": ""}}
                     for n in ("list_agents", target)
-                ],
+                ]),
                 candidates=("list_agents",),
             )
 

@@ -185,16 +185,16 @@ class _OracleOps:
 
     def present(self, available, layer_ctx):
         from reyn.runtime.router_tools import build_tools
-        from reyn.tools.scheme import Presentation
+        from reyn.tools.scheme import AdvertisedTools, Presentation
 
-        return Presentation(llm_tools_payload=build_tools(
+        return Presentation(tools_channel=AdvertisedTools(entries=build_tools(
             self._host.list_available_agents(),
             file_permissions=self._host.get_file_permissions(),
             mcp_servers=self._host.get_mcp_servers(),
             web_fetch_allowed=self._host.get_web_fetch_allowed(),
             universal_wrappers_enabled=layer_ctx["univ_enabled"],
             search_actions_visible=layer_ctx.get("search_visible", False),
-        ))
+        )))
 
     def base_tools(self, available, layer_ctx):
         from reyn.runtime.router_tools import build_tools
@@ -228,7 +228,7 @@ async def _oracle_payload_names(session: Session, scheme_name: str) -> "tuple[se
     what the scheme actually puts in ``tools=`` (or ``dispatchable_catalog`` for
     CodeAct); ``catalog_names`` = the full ``universal_catalog`` action set (the
     wrapper-expansion target for universal-category)."""
-    from reyn.tools.scheme import flat_catalog_entries, get_scheme
+    from reyn.tools.scheme import advertised_entries, flat_catalog_entries, get_scheme
 
     ops = _OracleOps(session.router_host)
     scheme = get_scheme(scheme_name)
@@ -243,7 +243,7 @@ async def _oracle_payload_names(session: Session, scheme_name: str) -> "tuple[se
         "available_skills": None,
     }
     pres = await scheme.build_presentation(available, layer_ctx, ops=ops)
-    payload_names = {e["name"] for e in flat_catalog_entries(pres.llm_tools_payload)}
+    payload_names = {e["name"] for e in flat_catalog_entries(advertised_entries(pres.tools_channel))}
     if pres.dispatchable_catalog is not None:
         payload_names = {e["name"] for e in flat_catalog_entries(pres.dispatchable_catalog)}
     catalog_names = {e["name"] for e in flat_catalog_entries(await ops.catalog_entries())}

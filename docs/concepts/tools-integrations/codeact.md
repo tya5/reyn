@@ -37,10 +37,11 @@ loops, intermediate variables, conditionals — and reaches the outside world
 
 Instead of a JSON `tools=` payload, CodeAct builds a **code API**: a reference
 list of the actions the model may call, rendered into the system prompt as
-`tool(...)` signatures. Each permission-eligible action appears as one line —
+`def name(...)` signatures. Each permission-eligible action appears as one line —
 its name, parameters, and a short description. This list is *presentation only*;
-the model reads it to know what's callable. The JSON tool payload is empty under
-CodeAct — the model is not offered JSON tool-calling at all.
+the model reads it to know what's callable. CodeAct has no JSON tool channel at
+all — that is different from having one with nothing in it, and it is why every
+action stays callable from the code API even though nothing is advertised.
 
 **What is on it:** the same set the `enumerate-all` scheme advertises over
 `tool_calls` — the base tools (`read_file`, `delegate_to_agent`, `session_spawn`,

@@ -56,7 +56,7 @@ from __future__ import annotations
 from typing import Any
 
 from reyn.tools.exposure import Exposure, ExposureDeviation, descriptors_from_entries
-from reyn.tools.scheme import register_scheme
+from reyn.tools.scheme import advertised_entries, register_scheme
 from reyn.tools.schemes._content_fence_cell import ContentFenceCellScheme
 from reyn.tools.schemes._retrieval_exposure import retrieval_sp_facts
 from reyn.tools.transport import CONTENT_FENCE_RETRIEVAL_SCHEME_NAME
@@ -187,7 +187,7 @@ class RetrievalContentFenceScheme(ContentFenceCellScheme):
         with ``unknown_tool`` instead of the truthful ``tool_excluded``
         (#1618 root-1)."""
         if layer_ctx.get("search_visible", False):
-            entries = list(ops.present(available, layer_ctx).llm_tools_payload)
+            entries = advertised_entries(ops.present(available, layer_ctx).tools_channel)
             deviation = SEARCH_FIRST_EXPOSURE_DEVIATION
         else:
             entries = list(ops.base_tools(available, layer_ctx)) + await ops.catalog_entries()

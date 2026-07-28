@@ -15,8 +15,8 @@ this registry as the live parse-time validation authority for the
 ``tool_use.scheme`` x ``tool_use.transport`` 2-key config (the former
 ``tool_use.chat`` is removed, clean-break). WITHOUT physically splitting
 ``ToolUseScheme`` into two protocols (firm §2 J3 — ``Presentation`` already
-carries the transport freedom via ``llm_tools_payload`` emptiness +
-``tool_use_sp`` + the ``Interpretation`` Execute/CodeBlock branch; transport
+carries the transport freedom via its ``tools_channel`` arm (#3421 — an
+absent ``tools=`` channel is a value, not an empty list) + ``tool_use_sp`` + the ``Interpretation`` Execute/CodeBlock branch; transport
 is expressed as a construction-strategy + interpret-branch SELECTION, not a
 bundle reshuffle).
 
@@ -111,7 +111,7 @@ CONTENT_FENCE_RETRIEVAL_SCHEME_NAME = "retrieval+content_fence"
 # TODAY. The (enumerate-all, content_fence) cell is CodeAct — census-verified
 # as `enumerate-all` presentation (identical full flat catalog via
 # `dispatchable_catalog=entries` / `ops.catalog_entries()`) expressed over the
-# `content_fence` transport (`llm_tools_payload=[]` + `tool_use_sp` rendered
+# `content_fence` transport (`tools_channel=NoToolsChannel()` + `tool_use_sp` rendered
 # code-API + the CodeBlock interpret branch) — see FP-0066 issue #3247, P4
 # firm §1. P4c (#3247) removed the standalone `"codeact"` `_SCHEMES` name
 # (clean-break: codeact is reached ONLY via this (scheme, transport) pair,
