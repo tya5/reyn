@@ -16,27 +16,46 @@ const, and ``presentation_install_local``'s untyped ``blueprint`` became
 but the defect is in the product: the schema the LLM receives was a function of
 process history.
 
-These tests assert the invariant directly, at each of the three seams where a
+These tests assert the invariant directly, at each of the FOUR seams where a
 canonical schema leaves its ToolDefinition: the router payload
-(``render_for_router``), the ``build_tools`` payload (``ToolSpec``), and the
-``describe_action`` tool result. Each drives the defect by CONSTRUCTING the
-precondition — mutating the handed-out payload in place, exactly as a provider
-transform does — rather than depending on a provider being reachable or on a
-particular test order.
+(``render_for_router``), the ``build_tools`` payload (``ToolSpec``), the
+``describe_action`` tool result, and the hot-list direct aliases
+(``router_loop._operation_alias_metadata`` → ``_build_hot_list_aliases``, whose
+entries ``build_tools`` appends to ``tools=`` verbatim). Each drives the defect
+by CONSTRUCTING the precondition — mutating the handed-out payload in place,
+exactly as a provider transform does — rather than depending on a provider being
+reachable or on a particular test order.
 
-Enumerated from the live registry, not a hand-picked subset: any future tool
-whose schema has nested structure is covered on the day it is registered.
+★ Coverage has TWO axes, and enumerating the registry only closes one of them.
+The per-seam arms are total in the *tool* axis (registry-enumerated, so a future
+tool is covered the day it is registered) and were **partial in the *seam* axis**
+— the hot-list alias path renders through none of the first three, so a live
+LLM-payload seam sat outside a gate that looked exhaustive. The seam axis is
+closed from both ends here, and the two claims are NOT interchangeable:
+
+  - the four per-seam arms  = the escape points that EXIST route through the
+    projection helper (``parameters_for_export``);
+  - ``test_no_shallow_parameters_copy_outside_the_projection_helper``  = a NEW
+    escape point CANNOT avoid it. Needed because the absence of an arm is
+    silent: a shallow copy is asymptomatic until something mutates it, which is
+    how #3383 survived from a99bcf64 (2026-07-12) to 2026-07-28;
+  - ``test_parameters_for_export_shares_no_mutable_substructure`` = the helper's
+    own contract, independent of any caller.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
+from reyn.runtime.router_loop import _build_hot_list_aliases
 from reyn.runtime.router_tools import build_tools
 from reyn.tools import get_default_registry
-from reyn.tools.types import ToolContext
+from reyn.tools.types import ToolContext, parameters_for_export
 from reyn.tools.universal_catalog import _handle_describe_action
+from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
 
 _SENTINEL_KEY = "__injected_by_a_provider_transform__"
 
@@ -62,6 +81,52 @@ def _mutate_in_place(node: Any) -> int:
         for item in node:
             touched += _mutate_in_place(item)
     return touched
+
+
+def _shared_nested_objects(exported: Any, canonical: Any) -> list[str]:
+    """Paths at which ``exported`` still holds the SAME object as ``canonical``."""
+    shared: list[str] = []
+
+    def walk(a: Any, b: Any, path: str) -> None:
+        if isinstance(a, dict) and isinstance(b, dict):
+            if a is b:
+                shared.append(path or "<root>")
+                return
+            for key in a:
+                if key in b:
+                    walk(a[key], b[key], f"{path}.{key}")
+        elif isinstance(a, list) and isinstance(b, list):
+            if a is b:
+                shared.append(path or "<root>")
+                return
+            for i, (x, y) in enumerate(zip(a, b)):
+                walk(x, y, f"{path}[{i}]")
+
+    walk(exported, canonical, "")
+    return shared
+
+
+def test_parameters_for_export_shares_no_mutable_substructure() -> None:
+    """Tier 1: the projection helper's contract — nothing nested stays aliased."""
+    registry = get_default_registry()
+    nested_seen = 0
+    for tool in registry:
+        exported = parameters_for_export(tool.parameters)
+        assert exported == dict(tool.parameters), (
+            f"{tool.name}: parameters_for_export changed the schema's CONTENT; "
+            "it must copy, not normalize"
+        )
+        shared = _shared_nested_objects(exported, tool.parameters)
+        assert not shared, (
+            f"{tool.name}: parameters_for_export left substructure aliased to the "
+            f"canonical schema at {shared!r} — a consumer's in-place edit would "
+            "reach the ToolDefinition (#3383)"
+        )
+        nested_seen += len(dict(tool.parameters).get("properties") or {})
+
+    assert nested_seen > 0, (
+        "no registered tool had nested properties — this arm would prove nothing"
+    )
 
 
 def test_render_for_router_survives_in_place_mutation_of_a_handed_out_payload() -> None:
@@ -133,8 +198,168 @@ def test_describe_action_survives_in_place_mutation_of_its_input_schema() -> Non
         "describe_action's input_schema changed after an EARLIER result was "
         "mutated in place — the canonical schema escaped by reference (#3383)"
     )
-    assert get_default_registry().lookup(action) is not None
-    assert _SENTINEL_KEY not in str(get_default_registry().lookup(action).parameters), (
+    canonical = get_default_registry().lookup(action)
+    assert canonical is not None
+    assert _SENTINEL_KEY not in str(canonical.parameters), (
         "the ToolDefinition's own parameters were rewritten by a mutation of a "
         "describe_action result (#3383)"
+    )
+
+
+def test_hot_list_alias_survives_in_place_mutation_of_its_tools_entry() -> None:
+    """Tier 1: mutating a hot-list alias entry cannot alter the definition.
+
+    The seam arms 1-3 could not see: ``_build_hot_list_aliases`` takes its
+    ``parameters`` from ``_operation_alias_metadata`` — the target
+    ``ToolDefinition.parameters`` — and ``build_tools`` appends the resulting
+    entries to the ``tools=`` payload verbatim, so this reaches litellm on an
+    ordinary turn without passing through ``render_for_router``.
+    """
+    action = "plugin_management__install"
+    assert action in KNOWN_STATIC_QUALIFIED_NAMES, (
+        f"{action} is no longer an alias candidate — pick another operation "
+        "alias with a nested schema, or this arm proves nothing"
+    )
+    canonical = get_default_registry().lookup(action)
+    assert canonical is not None
+    pristine = deepcopy(canonical.parameters)
+
+    entries = _build_hot_list_aliases([action])
+    entry = next(e for e in entries if e["function"]["name"] == action)
+    handed_out = entry["function"]["parameters"]
+    touched = _mutate_in_place(handed_out)
+    assert touched > 1, f"mutation did not reach nested sub-schemas (touched={touched})"
+
+    assert canonical.parameters == pristine, (
+        "the ToolDefinition's parameters changed after a hot-list alias entry "
+        "was mutated in place — the canonical schema escaped by reference into "
+        "the tools= payload (#3383)"
+    )
+    assert _build_hot_list_aliases([action])[0]["function"]["parameters"] == pristine, (
+        "a later hot-list alias build served the corrupted schema (#3383)"
+    )
+
+
+# ── the syntactic half of the seam axis ──────────────────────────────────────
+
+
+def _repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for ancestor in here.parents:
+        if (ancestor / "pyproject.toml").is_file():
+            return ancestor
+    raise RuntimeError("repo root not found from " + str(here))
+
+
+def _is_shallow_parameters_copy(node: ast.AST) -> bool:
+    """True for a ``dict(<expr>.parameters)`` CALL — the #3383 defect's shape."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "dict"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Attribute)
+        and node.args[0].attr == "parameters"
+    )
+
+
+def _projection_helper_span(types_py: Path) -> tuple[int, int]:
+    """(start, end) line span of ``parameters_for_export`` in tools/types.py."""
+    tree = ast.parse(types_py.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "parameters_for_export":
+            return node.lineno, (node.end_lineno or node.lineno)
+    raise AssertionError(
+        "parameters_for_export not found in tools/types.py — the projection "
+        "chokepoint moved or was renamed (#3383)"
+    )
+
+
+def test_no_shallow_parameters_copy_outside_the_projection_helper() -> None:
+    """Tier 2: no new seam can shallow-copy a schema past the projection helper.
+
+    Walks ``src/reyn`` and REDs on any ``dict(<expr>.parameters)`` call outside
+    ``parameters_for_export`` itself. The per-seam arms above witness that the
+    escape points that EXIST route through the helper; this one is what stops a
+    seam written next month from re-introducing the defect, because the absence
+    of a per-seam arm is silent (a shallow copy is asymptomatic until something
+    mutates it).
+
+    **What this gate does NOT catch — and why it need not, in the same place, so
+    the reason is available exactly when someone is deciding whether the
+    exemption still holds.**
+
+    It matches one syntactic shape, ``dict(<expr>.parameters)``. It will not
+    catch a bare ``<expr>.parameters`` handed out with NO copy at all. One such
+    site exists and is deliberately not flagged: ``runtime/router_tools.py``'s
+    ``ToolSpec.to_openai_dict`` returns ``self.parameters`` uncopied.
+
+    ★ That site's safety is **derived, not intrinsic**. It is safe only because
+    every ``ToolSpec`` construction in ``build_tools`` has the shape
+    ``ToolSpec(parameters=_X_rendered["function"]["parameters"], ...)`` — i.e.
+    ``ToolSpec.parameters`` is always a ``render_for_router()`` product, and
+    therefore already a per-call deep copy produced by ``parameters_for_export``.
+    **If ``render_for_router`` is ever relaxed back toward a shallow copy, that
+    exempt site silently becomes an ungated escape point.** The exemption is
+    contingent on this PR's fix holding; it is not a standing property of
+    ``ToolSpec``.
+
+    Widening the gate to flag bare attribute reads would put a legitimate site in
+    its false-positive set, and a gate that cries wolf gets suppressed — then it
+    protects nothing. The bounded version is honest and survivable, and the
+    ``ToolSpec`` seam is covered behaviourally instead, by
+    ``test_build_tools_survives_in_place_mutation_of_a_handed_out_payload``
+    (which does go RED if ``render_for_router`` regresses — verified by
+    strip-falsify).
+    """
+    root = _repo_root()
+    src = root / "src" / "reyn"
+    types_py = (src / "tools" / "types.py").resolve()
+    start, end = _projection_helper_span(types_py)
+
+    offenders: list[str] = []
+    for py in src.rglob("*.py"):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not _is_shallow_parameters_copy(node):
+                continue
+            inside_helper = py.resolve() == types_py and start <= node.lineno <= end
+            if not inside_helper:
+                offenders.append(f"{py.relative_to(root)}:{node.lineno}")
+
+    assert not offenders, (
+        "dict(<expr>.parameters) outside parameters_for_export — a SHALLOW copy "
+        "leaves every nested sub-schema aliased to the canonical definition, and "
+        "litellm's provider transforms rewrite the payload they are handed in "
+        "place, so one Gemini/Vertex turn rewrites the schema for the rest of the "
+        "process (#3383). Call reyn.tools.types.parameters_for_export instead. "
+        f"Offending sites: {offenders}"
+    )
+
+
+def test_projection_helper_actually_performs_a_deep_copy() -> None:
+    """Tier 2: positive guard — the allow-listed helper really deep-copies.
+
+    Without this, renaming or gutting ``parameters_for_export`` would leave the
+    AST gate above scanning for offenders against a chokepoint that no longer
+    does anything — asserting-empty and vacuously green. (This arm is why the
+    gate's allow-list is anchored to a function that is checked to still exist:
+    ``_projection_helper_span`` raises rather than returning an empty span.)
+    """
+    root = _repo_root()
+    types_py = (root / "src" / "reyn" / "tools" / "types.py").resolve()
+    start, end = _projection_helper_span(types_py)
+    tree = ast.parse(types_py.read_text(encoding="utf-8"))
+    deep_copies = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "deepcopy"
+        and start <= node.lineno <= end
+    ]
+    assert deep_copies, (
+        "parameters_for_export no longer calls deepcopy — the projection that "
+        "every seam is routed through has stopped owning its one obligation, and "
+        "the AST gate above is now guarding nothing (#3383)"
     )

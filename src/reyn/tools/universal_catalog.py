@@ -75,12 +75,17 @@ verification 1-9.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Collection, Final, Mapping
 
 from reyn.tools.descriptions import catalog as _catalog_descriptions
 from reyn.tools.descriptions import discovery
-from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
+from reyn.tools.types import (
+    ToolContext,
+    ToolDefinition,
+    ToolGates,
+    ToolResult,
+    parameters_for_export,
+)
 
 # Lazy-imported at function-body level to break the circular dependency
 # with universal_dispatch.py (which imports CATEGORIES + split_qualified_name
@@ -1083,11 +1088,12 @@ def _describe_one(
 
     return {
         "description": target.description,
-        # deepcopy for the same reason render_for_router does (#3383): a shallow
-        # copy hands the caller every nested sub-schema by reference, so anything
-        # that normalizes this describe_action payload in place would rewrite the
-        # canonical tool definition for the rest of the process.
-        "input_schema": deepcopy(dict(target.parameters)),
+        # #3383: a LIVE LLM-payload seam, not just a tool-result one —
+        # ``catalog_entries`` below reuses this ``input_schema`` as an entry's
+        # ``parameters``, and the DEFAULT ``enumerate-all`` scheme concatenates
+        # ``catalog_entries()`` into ``llm_tools_payload`` → ``tools=``. Route
+        # through the one projection that owns the deep-copy obligation.
+        "input_schema": parameters_for_export(target.parameters),
     }
 
 
