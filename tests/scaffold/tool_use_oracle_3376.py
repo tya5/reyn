@@ -1,5 +1,5 @@
 # scaffold: triggered_by="#3376 P3 lands the last (scheme x transport) cell, after which no PR in the arc still has to show the 4 pre-existing cells unchanged"
-# scaffold: removed_by="The PR that closes #3376"
+# scaffold: removed_by="The final PR of the #3376 arc"
 # scaffold: note="Re-pointed by the P1 seam PR. The original trigger named P1, but the
 #   arc did not end there: P2 adds the (category x content_fence) cell and P3 the
 #   remaining ones, and each of those still has to show that the 4 cells recorded
