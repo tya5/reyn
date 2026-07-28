@@ -39,7 +39,7 @@ class _RecordingOps:
 
     def present(self, available, layer_ctx) -> Presentation:
         self.calls.append("present")
-        return Presentation(llm_tools_payload=[{"t": 1}], sp_params={"x": True})
+        return Presentation(llm_tools_payload=[{"t": 1}])
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         self.calls.append("resolve")
@@ -95,7 +95,7 @@ async def test_universal_build_presentation_delegates() -> None:
     ops = _RecordingOps()
     pres = await UniversalCategoryScheme().build_presentation({}, {}, ops)
     assert "present" in ops.calls
-    assert pres.llm_tools_payload == [{"t": 1}] and pres.sp_params == {"x": True}
+    assert pres.llm_tools_payload == [{"t": 1}]
 
 
 def test_universal_interpret_execute_with_tool_calls() -> None:

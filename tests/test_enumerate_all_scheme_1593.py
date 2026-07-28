@@ -85,8 +85,8 @@ async def test_build_presentation_is_base_plus_catalog_flat() -> None:
 
 @pytest.mark.asyncio
 async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
-    """Tier 2: #1627 Stage 4 — enumerate-all's tool_use_sp slot-map encodes the
-    no-wrapper, search-visible SP (sp_params removed from build_presentation).
+    """Tier 2: enumerate-all's tool_use_sp slot-map encodes the no-wrapper,
+    search-visible SP.
 
     The slot-map must contain slot_pre_environment (the Capabilities block) with
     NO ## Action categories (universal_wrappers_enabled=False) and — #1977 — NO
@@ -100,7 +100,6 @@ async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
         {"search_visible": True},
         _FakeOps(),
     )
-    # sp_params removed — check the slot-map instead
     assert isinstance(pres.tool_use_sp, dict), "tool_use_sp must be a dict slot-map"
     slots = pres.tool_use_sp
     # Wrappers off → no ## Action categories in slot_post_environment
