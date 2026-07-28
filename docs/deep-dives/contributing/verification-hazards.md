@@ -22,7 +22,7 @@ and a measured detection, it doesn't belong in this doc.
 | **Record is a lie** | The claim itself is false | `landlock.py` blamed network denial on "the no-network-fd / proxy gate" — a named mechanism that appears nowhere in the repo but that one comment (#3031). What actually denied `connect()` was a seccomp default-deny, itself skipped under `allow_subprocess=True` (#3030). |
 | **Environment can't witness** | A green test never ran the risky path | The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that don't exist in the pinned `landlock==1.0.0.dev5` — every call raised `AttributeError` in production for 41 days, while its own test called the shim's internals directly, bypassing the broken production entry point (#2980). |
 | **Claim has no owner** | No one on the claimed subsystem's side checks it | Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem B's behavior, with no owner on B's side to catch it wrong — "plausible and unowned" is why it survived. |
-| **Observed-target identity unverified** | Green about the wrong object | Agent worktrees share the main checkout's `.venv` (0 of 136 have their own) — in-process and subprocess-imported `reyn` are two different trees "by construction, not staleness" (#3033). Separately: the same heading anchor resolves to two different slugs on GitHub vs mkdocs — "valid" is renderer-specific (#3039). |
+| **Observed-target identity unverified** | Green about the wrong object | Agent worktrees share the main checkout's `.venv` (0 of 136 have their own) — in-process and subprocess-imported `reyn` are two different trees "by construction, not staleness" (#3033). Separately: the same heading anchor resolves to two different slugs on GitHub vs mkdocs — "valid" is renderer-specific (#3039). Separately again: a SHARED venv's editable install can be silently re-pointed to a DIFFERENT worktree by someone else's concurrent `uv pip install -e .` (`VIRTUAL_ENV` resolves to the parent venv from inside a worktree, so the parent's `.pth` re-links to that worktree) — a strip-falsify then measures a tree nobody touched (#3363/#3370, 2026-07-27). Central audit can't catch this: a session can only resolve its OWN `python`'s import, never another session's PATH. The fix is measurement-time self-check, not a periodic audit — `python -c "import reyn; assert reyn.__file__.startswith('$PWD/src')"` before trusting any local strip result, reading the RESOLVED path (`reyn.__file__`), not the DECLARED one (the `.pth` file's contents). CI is structurally exempt (`actions/checkout` + a fresh editable install every run leaves no other tree to point at) — only local strip results are at risk. |
 
 **Apply**: before trusting a green result, name what it actually observed,
 not what you're using it to conclude.
@@ -235,6 +235,141 @@ arc):
 one the mechanism, if absent, would produce) and confirm it goes RED. A
 gate that has never been seen failing on a real defect — only ever seen
 green — is unproven, no matter how plausible its assertion reads.
+
+## 11. Strip-anchor must be unique — the measuring instrument, not just the gate, needs falsifying
+
+§10 assumes the gate is sound and only its assertion scope is the problem.
+This is a different failure point: the gate IS sound, but the **strip itself
+— the instrument used to check it — hit the wrong site**, and reported
+vacuity that never existed.
+
+A reviewer stripped `self._running_tools.clear()` and `collapse_all()` to
+check whether a gate was load-bearing, got "8 passed," and reported the gate
+as vacuous. The coder re-measured and found a mismatch: both anchors were
+**non-unique** — `_running_tools.clear()` appears at two call sites (an
+orphan-sweep and a switch handler), and so does `collapse_all()` — and
+`str.replace(..., 1)` silently patched the FIRST occurrence, which was never
+the one under test. Stripping the correct line instead sent both tests RED:
+the gate had been sound the whole time (#3310 N2, 2026-07-26).
+
+This is the dangerous direction on purpose: it's a **false positive** against
+a healthy gate, not a false negative that lets a broken one through — and
+false positives here are harder to catch, because the person told "your gate
+is vacuous" usually just rewrites it, rather than pushing back. Three sound
+gates were nearly rewritten on the strength of a bad strip.
+
+**Apply**:
+
+- Before stripping, **count the anchor's occurrences**. If `count != 1`,
+  target the line number or the enclosing function instead of a bare string
+  replace (or widen the anchor until it IS unique).
+- `assert s != before` (the string changed) is **not sufficient** — it
+  proves *something* mutated, never that the *intended* site did.
+- If your strip result disagrees with a peer's, **don't average it — settle
+  it**. Strip-falsify is the foundation the rest of the session's RED/GREEN
+  reports rest on; an unresolved disagreement here erodes trust in every
+  later report.
+- If you're on the receiving end of a "your gate is vacuous" finding,
+  **re-measure yourself** before rewriting — this incident was only caught
+  because the accused party pushed back with a countermeasurement instead of
+  complying.
+
+## 12. Coverage has two axes, and enumerating a registry only closes one
+
+A registry-driven coverage gate (mandated by §5's own closed-target
+discipline) answers "did I cover everything the registry counts" — nothing
+more. A defect can live on an entirely different axis the registry has no
+concept of.
+
+`ToolDefinition.render_for_router` returned a SHALLOW copy of a tool's
+parameter schema; litellm's provider transforms mutate a handed-out
+`tools[]` payload IN PLACE, so one Gemini call permanently corrupted the
+canonical schema for every later render, on every provider, for the rest of
+the process. The defect itself dates to `edd4c1b3` (2026-05-09, ADR-0026
+M1) — roughly two and a half months before discovery on 2026-07-28, not the
+16 days a naive reading of the detecting test's own history would suggest
+(that test's baseline belonged to an unrelated 2026-07-12 refactor; the
+refactor's age is not the defect's age — precisely this doc's own root
+hazard, "since when observed" answered in place of "since when true"). The
+original coverage gate enumerated THREE seams where a schema leaves its
+`ToolDefinition` — live, registry-driven, "a future tool is covered from day
+one." **Total on the *tool* axis, partial on the *seam* axis**: a FOURTH
+seam, the hot-list direct-alias path, rendered through none of the three and
+sat outside a gate that read as exhaustive (#3383/#3385). Enumerating tool
+NAMES can never surface this, because the defect lives at the SHAPE of a
+projection (`dict(<expr>.parameters)`), not at any name — the fix found the
+missing seam only by grepping the codebase for that shape directly.
+
+The same incident sharpens §6 (the vacuity guard) one level further. The
+fix's own AST gate — REDs on any `dict(<expr>.parameters)` call outside the
+one sanctioned projection helper — is only meaningful while that helper
+still does its one job. A **positive companion** assertion (the helper
+actually calls `deepcopy`, checked by walking its own AST span) is what
+protects the allow-list from going vacuous if the helper is later renamed or
+gutted — and this companion is not a formality: it immediately caught the
+first draft's allow-list anchor not matching the helper's real call shape,
+i.e. it was guarding a chokepoint by a shape the helper didn't use. **An
+allow-list gate needs its OWN allow-listed target proven correct by a second,
+independent assertion** — "the gate's target exists" is not the same claim
+as "the gate's target still does what the gate assumes."
+
+**Apply**: before trusting a registry-enumerated coverage claim, name the
+axis the registry actually counts (usually identity/name) and ask whether
+the known defect classes live on that axis or a different one (a shape, a
+side effect, a shared-mutation seam). If it's a different axis, enumerate
+from the SIDE OF THE VALUE (grep the shape the defect takes), not from the
+registry. And whenever a gate's allow-list is anchored to a specific
+helper/chokepoint, add a companion assertion that the chokepoint still does
+its one job — the allow-list's soundness is contingent on that, not
+intrinsic to it.
+
+## 13. A gate can prove the property that's easy to state, and never touch the property that matters
+
+Three same-day instances (2026-07-26/28) share one shape: the property a
+test asserts is the one that was **convenient to write**, and it is a
+strictly NARROWER claim than the property the docstring or the design
+actually promises.
+
+- **A reserved-key gate** declared two properties — "no live binding
+  collides with a reserved key" AND "a reserved key cannot be silently
+  claimed by a new binding" — but the code only asserted the first. The
+  reserved-key table was folded into the same set as live bindings and only
+  membership-tested against two specific keys; the table itself was never
+  the SUBJECT of an assertion, only an ingredient used to fatten another
+  set. The tell: **a named set that appears only on the input side of
+  another set's construction, never asserted about directly, is a property
+  that looks wired but isn't** (#3363, the sent-queue `RESERVED_KEYS` case).
+- **A two-declaration list-match** (A2A's and MCP's progress fan-outs both
+  declare the identical three-kind `TRACKED_EVENTS`) was the easy property,
+  and it WAS gated: `test_a2a_progress_bridge_tracks_three_lifecycle_events`
+  asserted the two literals matched each other and pinned their exact
+  contents. "Every declared kind actually has a live emitter" was the
+  property that mattered, and nobody asserted it: two of the three kinds had
+  zero producers in `src/` for an unknown period, silently degrading two
+  live network protocols' progress streams to LLM-call-only (#3357). Worse,
+  the literal-pin test actively **resisted** the correct fix (removing the
+  dead entries) rather than merely failing to catch the defect — the fix
+  had to touch a test that read as unrelated, easy-to-miss friction. #3389
+  replaced the pin with a liveness gate instead
+  (`test_every_forwarded_kind_has_a_live_emit_call_site`: every declared
+  kind must have a real `emit("<kind>", …)` call site in the source) — and
+  this doc's own draft aged out in the meantime: the paragraph above was
+  accurate when written and became false by the time it landed, the exact
+  failure this doc is about. Read it as history, not current state.
+- **§12's four-seam behavioral coverage** is itself an instance of this
+  shape one level up: "the seams that exist all route through the
+  projection helper" is provable and was proven; "no NEW seam can ever
+  route around it" is a different, harder claim that needed a structurally
+  different assertion (the AST gate), not a bigger version of the same one.
+
+**Apply**: when writing or reviewing a gate, write out the FULL property the
+surrounding prose/docstring promises, then check whether the assertion
+covers all of it or only the half that was easiest to construct. A specific
+tell: if a named table/set/list is read only to feed another assertion —
+never itself the direct subject of one — it looks wired but is unverified.
+And before a gate is allowed to pin a literal collection's exact contents,
+confirm that pinning it won't fight the next correct change to that
+collection.
 
 ## See also
 
