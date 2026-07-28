@@ -25,6 +25,7 @@ from reyn.interfaces.repl.renderer import (
     _CC_DIM,
     _CC_DONE,
     _CC_ERR,
+    _CC_ERR_BG,
     _CC_TEXT,
     _CC_USER_BG,
     _KIND_LINE,
@@ -177,7 +178,8 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
     and failure vocabulary so a coalesced result reads the same as the pre-coalesce
     separate ``tool_call_completed`` / ``tool_call_failed`` row — only the nesting
     (``⎿`` under the call, in one entry) is new. A failure tints the whole row
-    coral (``_CC_ERR``), matching the standalone failure row."""
+    with the dark failure block (:data:`_CC_ERR_BG`) and keeps the coral
+    ``_CC_ERR`` text legible on top of it, matching the standalone failure row."""
     meta = msg.meta or {}
     result_meta = meta.get(_RESULT_META_KEY) or {}
     if meta.get(_RESULT_KIND_KEY) == _ORPHANED_RESULT_KIND:
@@ -192,12 +194,12 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
             or result_meta.get("text")
             or ""
         )
-        return Text(f"  ⎿ ✗ {err}", style=_CC_ERR), _CC_ERR
+        return Text(f"  ⎿ ✗ {err}", style=_CC_ERR), _CC_ERR_BG
     summary = summarize_tool_result(meta.get("tool"), result_meta.get("result"))
     failed = summary.startswith("✗")
     return (
         Text(f"  ⎿ {summary}", style=_CC_ERR if failed else _CC_DIM),
-        (_CC_ERR if failed else None),
+        (_CC_ERR_BG if failed else None),
     )
 
 
@@ -228,8 +230,24 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
     (flowview paints it edge to edge across gutter + body), matching the plain
     renderer's faint user block without a hand-rolled grid. A FAILURE row
     (``tool_call_failed`` / ``error`` / a ``tool_call_completed`` whose summary
-    is an ``✗`` failure) carries ``background=_CC_ERR`` so the whole row is
-    tinted coral edge to edge — CC's block-tint of a failed tool (Phase 2).
+    is an ``✗`` failure) carries ``background=_CC_ERR_BG`` so the whole row is
+    tinted with the dark failure block edge to edge — CC's block-tint of a failed
+    tool (Phase 2).
+
+    **Foreground and background are picked independently here, so they must
+    never resolve to the same colour** (#3367). Every row tint is a ``_CC_*_BG``
+    constant — a faint dark block — and every text/glyph colour is a ``_CC_*``
+    foreground constant; the two vocabularies do not overlap, which is what makes
+    the no-collision property hold by construction rather than per branch. Before
+    #3367 the five failure legs (two here, two in :func:`_tool_result_line`, plus
+    the ``error`` kind whose ``_KIND_LINE`` body style is already ``_CC_ERR``)
+    each paired ``style=_CC_ERR`` with ``background=_CC_ERR``, painting the text
+    in its own background colour. Because flowview paints the row background
+    across the gutter column too, the left gutter's coral ``✗``/``⎿`` glyph
+    (``ReynGutter``, ``_STATE_COLOR[EntryState.ERROR] == _CC_ERR``) vanished with
+    it — one background choice, every foreground on the row. The gate is
+    ``tests/test_textual_chat_row_contrast_3367.py``, which enumerates the
+    (kind, state) pairings from the producers rather than a hand-written list.
     """
     kind = msg.kind
     meta = msg.meta or {}
@@ -249,17 +267,17 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
         failed = summary.startswith("✗")
         style = _CC_ERR if failed else _CC_DIM
-        return Text(summary, style=style), (_CC_ERR if failed else None)
+        return Text(summary, style=style), (_CC_ERR_BG if failed else None)
     if kind == "tool_call_failed":
         err = meta.get("error_message") or meta.get("error_kind") or msg.text
-        return Text(f"✗ {err}", style=_CC_ERR), _CC_ERR
+        return Text(f"✗ {err}", style=_CC_ERR), _CC_ERR_BG
     line = _KIND_LINE.get(kind)
     body_style = line[2] if line else _CC_TEXT
     body = _body_renderable(kind, msg.text or " ", body_style)
     if kind == "user":
         background = _CC_USER_BG
     elif kind == "error":
-        background = _CC_ERR
+        background = _CC_ERR_BG
     else:
         background = None
     return body, background

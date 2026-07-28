@@ -17,8 +17,9 @@ clock. These pin the architect-specified Phase-2 gates against that mechanism:
   proving the animation is ADDITIVE, not load-bearing. The positive check pairs
   with the strip so the gate is not vacuous.
 - **state transition** (Tier 2b): a tool-call row goes RUNNING (amber) →
-  SUCCESS (green) / ERROR (coral), and a failed row is tinted ``_CC_ERR``
-  edge-to-edge.
+  SUCCESS (green) / ERROR (coral), and a failed row is tinted ``_CC_ERR_BG``
+  edge-to-edge (#3367: the dark failure block, not the coral foreground colour
+  reused as a background).
 
 All use real instances (a concrete :class:`ScriptedTransport`, a real mounted
 :class:`TextualChatApp`, real :class:`OutboxMessage`, a real list-backed clock
@@ -48,7 +49,13 @@ from reyn.interfaces.inline.textual_chat.gutter import (
     _cell_pad_right,
     _gutter_glyph_color,
 )
-from reyn.interfaces.repl.renderer import _CC_DONE, _CC_ERR, _CC_WARN, _KIND_LINE
+from reyn.interfaces.repl.renderer import (
+    _CC_DONE,
+    _CC_ERR,
+    _CC_ERR_BG,
+    _CC_WARN,
+    _KIND_LINE,
+)
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -359,7 +366,7 @@ async def test_running_to_error_turns_gutter_coral_and_tints_failure_row() -> No
     """Tier 2b: RUNNING → ERROR — a failed tool call transitions the started
     entry to ERROR (gutter ``_CC_ERR`` coral) AND, under the #3283 ② coalesce,
     the failure is folded into that SAME started entry (no separate row) whose
-    presentation is tinted ``_CC_ERR`` edge-to-edge (CC block-tint). Feeds the
+    presentation is tinted ``_CC_ERR_BG`` edge-to-edge (CC block-tint). Feeds the
     correlated started+failed pair and inspects the coalesced entry's gutter and
     presentation background."""
     transport = ScriptedTransport([_started("op-err"), _failed("op-err")], end=False)
@@ -377,20 +384,24 @@ async def test_running_to_error_turns_gutter_coral_and_tints_failure_row() -> No
         gutter = ReynGutter()
         assert gutter.decorate(started, 2, 1).style == _CC_ERR
 
-        # The coalesced failure entry is tinted coral edge-to-edge.
+        # The coalesced failure entry is tinted edge-to-edge with the dark
+        # failure block — NOT with the coral foreground colour (#3367).
         pres = await ReynPresenter().present(started.item, 80)
-        assert pres.background == _CC_ERR
+        assert pres.background == _CC_ERR_BG
 
 
 def test_failure_rows_carry_coral_background_tint() -> None:
     """Tier 1: the failure-row tint is a pure function of the frame — a
-    ``tool_call_failed`` and an ``error`` frame both carry a ``_CC_ERR``
+    ``tool_call_failed`` and an ``error`` frame both carry a ``_CC_ERR_BG``
     whole-row background, while a non-error row carries none. Pins the
-    ``_body_and_background`` contract directly."""
+    ``_body_and_background`` contract directly. The tint is the dark failure
+    BLOCK, distinct from the coral ``_CC_ERR`` text drawn on top of it — see
+    ``tests/test_textual_chat_row_contrast_3367.py`` for the legibility gate
+    over every (kind, state) pairing."""
     _, bg_failed = _body_and_background(_failed("z"))
-    assert bg_failed == _CC_ERR
+    assert bg_failed == _CC_ERR_BG
     _, bg_error = _body_and_background(OutboxMessage(kind="error", text="boom"))
-    assert bg_error == _CC_ERR
+    assert bg_error == _CC_ERR_BG
     _, bg_agent = _body_and_background(OutboxMessage(kind="agent", text="hi"))
     assert bg_agent is None
 

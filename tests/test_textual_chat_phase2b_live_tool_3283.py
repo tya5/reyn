@@ -357,9 +357,13 @@ async def test_app_coalesces_a_failure_and_tints_it() -> None:
         assert started.state is EntryState.ERROR
         assert (started.item.meta or {}).get(_RUNNING_SINCE_KEY) is None
         pres = await ReynPresenter().present(started.item, 80)
-        from reyn.interfaces.repl.renderer import _CC_ERR
+        from reyn.interfaces.repl.renderer import _CC_ERR, _CC_ERR_BG
 
-        assert pres.background == _CC_ERR
+        # #3367: the failure tint is the dark failure BLOCK, never the coral
+        # foreground colour reused as a background (that painted the row's text
+        # in its own background and made it illegible).
+        assert pres.background == _CC_ERR_BG
+        assert pres.background != _CC_ERR
         assert "⎿" in _render(pres.renderable)
 
 
