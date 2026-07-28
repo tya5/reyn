@@ -423,10 +423,19 @@ async def test_pending_intervention_flow_entry_has_no_chip_options_rendered() ->
 
 
 @pytest.mark.asyncio
-async def test_escape_and_tab_from_panel_return_focus_to_composer() -> None:
-    """Tier 2b: focus-return — Esc/Tab inside the panel return focus to the
+async def test_escape_from_panel_returns_focus_to_composer_tab_moves_forward() -> None:
+    """Tier 2b: focus-return — Esc inside the panel returns focus to the
     Composer WITHOUT answering; the intervention stays pending (the panel
-    stays open)."""
+    stays open).
+
+    #3365: the panel's own explicit "Tab -> back to composer" binding was
+    REMOVED (architect ruling: Tab is forward-only everywhere in the app,
+    Esc alone owns "back" — gated on
+    test_textual_chat_esc_sufficiency_3365.py). Tab from the panel's RadioSet
+    still happens to land on the Composer below via Textual's default
+    forward focus-cycling (the Composer is simply next in the focus chain
+    here) — asserted as a non-vacuity check that removing the binding didn't
+    strand focus, NOT as evidence of an intentional "back" contract for Tab."""
     transport = RecordingTransport([_choice_intervention()], end=False)
     app = TextualChatApp(transport=transport)
 
@@ -445,13 +454,16 @@ async def test_escape_and_tab_from_panel_return_focus_to_composer() -> None:
         assert transport.answered_choice == []
         assert transport.answered_text == []
 
-        # Re-focus the panel to exercise Tab too.
+        # Re-focus the panel and confirm Tab's default forward-cycling still
+        # lands somewhere sane (not stuck) — not asserting a "back" contract.
         _active_pane(panel).query_one(RadioSet).focus()
         await pilot.pause()
         await pilot.press("tab")
         await pilot.pause()
 
-        assert app.query_one(Composer).has_focus, "Tab did not return focus to the Composer"
+        assert not pane.query_one(RadioSet).has_focus, (
+            "Tab did not move focus forward at all — focus is stuck on the panel"
+        )
         assert panel.display is True
         assert transport.answered_choice == []
 

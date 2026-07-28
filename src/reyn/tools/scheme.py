@@ -39,25 +39,18 @@ class ToolUseLayer(str, Enum):
 
 @dataclass
 class Presentation:
-    """What a scheme shows the LLM: the ``tools=`` payload + SP-shaping inputs.
+    """What a scheme shows the LLM: the ``tools=`` payload + the tool-use SP.
 
-    Two channels shape the system prompt, deliberately separated:
-
-    - ``sp_params`` — **named gates** the OS-owned ``build_system_prompt`` already
-      understands (``universal_wrappers_enabled`` / ``search_actions_enabled`` …).
-      universal-category and enumerate-all express their whole SP shape through
-      these → their build is byte-identical (default ``sp_fragment=""``).
-    - ``sp_fragment`` — **free-form, scheme-owned** SP text the OS appends verbatim
-      without interpreting it (P7: the OS must not know "code-API" or "search-SP").
-      A scheme reaches for this only when its tool-use instructions are genuinely
-      new content that no named gate can express — CodeAct (rendered fn-signature
-      code-API) is the first consumer; retrieval's search-tool SP shares the same
-      single channel. Empty by default ⇒ the named-gate path is untouched.
+    A scheme builds this by handing an ``Exposure`` (``reyn.tools.exposure`` —
+    what is shown, transport-neutrally) to the encoder for its transport
+    (``reyn.tools.encoders`` — how that transport writes it down). Both fields
+    below are therefore encoder output, and the two channels differ by transport
+    rather than by scheme: ``tool_calls`` fills ``llm_tools_payload`` and a
+    positional slot-map; ``content_fence`` has no ``tools=`` channel at all and
+    puts its whole surface in ``tool_use_sp``.
     """
 
     llm_tools_payload: list[dict]
-    sp_params: dict[str, Any] = field(default_factory=dict)
-    sp_fragment: str = ""
     # #1593 PR-4: the scheme's current candidate set (hashable ids) — the OS reads
     # this on the RePresent loop to detect convergence (``new = candidates - seen``;
     # empty ⇒ stop). Default empty: schemes that never RePresent (universal /

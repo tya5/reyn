@@ -44,12 +44,9 @@ from reyn.prompt.loop_control import tool_call_cap_notice
 from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.services.turn_budget.engine import wrap_up_system_prompt
+from reyn.tools.encoders import build_actions_map, render_code_api
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
-from reyn.tools.schemes.codeact import (
-    _build_actions_map,
-    _format_codeact_observation,
-    _render_code_api,
-)
+from reyn.tools.schemes.codeact import _format_codeact_observation
 from reyn.tools.schemes.retrieval import _search_sp
 
 _PROMPT_MODULES = [
@@ -146,8 +143,8 @@ def _assembled_output_corpus() -> str:
         {"qualified_name": "file__read", "name": "file__read", "description": "Read a file",
          "parameters": {"properties": {"path": {}}}},
     ]
-    ident_by_qn = _build_actions_map([e["qualified_name"] for e in sample_entries])
-    chunks.append(_render_code_api(sample_entries, ident_by_qn))
+    ident_by_qn = build_actions_map([e["qualified_name"] for e in sample_entries])
+    chunks.append(render_code_api(sample_entries, ident_by_qn))
 
     chunks.append(_search_sp(terminal=True))
     chunks.append(_search_sp(terminal=False))

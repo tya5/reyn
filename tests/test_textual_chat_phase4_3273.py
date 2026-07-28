@@ -87,6 +87,29 @@ def test_model_pane_enumerates_full_class_set_no_subset() -> None:
     assert rows[classes.index("opus")] == "opus  · active", "active class not marked"
 
 
+def test_model_pane_marks_raw_passthrough_model_when_no_class_matches() -> None:
+    """Tier 1: #3324 — when ``--model <raw-id>`` bypasses the class system
+    (``active`` is a raw LiteLLM model string matching no configured class,
+    the shape ``Session.active_model_class() is None`` falls back to), the
+    Model pane surfaces it as its own informational row rather than
+    silently marking nothing.
+
+    Falsification: pre-fix, none of the rendered rows contained the raw
+    model string or any active marker at all."""
+    classes = ["light", "standard", "strong"]
+    raw_model = "gemini-2.5-flash-lite"  # not declared as a class name above
+    rows = model_pane_options(classes, active=raw_model)
+    assert any(raw_model in row for row in rows), (
+        f"raw passthrough model {raw_model!r} does not appear anywhere in the pane: {rows}"
+    )
+    # No configured class is spuriously marked active.
+    assert not any("· active" in row for row in rows), (
+        f"a configured class was marked active for a raw passthrough model: {rows}"
+    )
+    # Every configured class is still present, unmodified.
+    assert {row for row in rows if row in classes} == set(classes)
+
+
 def test_agent_pane_enumerates_full_agent_set_no_subset() -> None:
     """Tier 1: the Agent pane renders EVERY loaded agent (the attached one marked),
     never a curated subset — a fake agent added to the input appears, so a freshly

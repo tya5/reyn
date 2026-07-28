@@ -177,3 +177,15 @@ json-mode today) = much larger. Staging:
 - Tier 3: phase RouterLoop replay fixtures (reuse chat machinery, FD6); compaction-on-message-history behavior.
 - Wire-full-frontmatter: load-from-disk path for any new config; full-rootdir suite for prompt/config changes.
 - Falsification: enforcement/permission tests use a real (non-None) PermissionResolver (#1214/#1215 lesson).
+
+## Implementation note: PR-F2b force-close handoff cap
+
+`_MAX_FORCE_CLOSE_HANDOFFS = 1` (`session.py`) bounds how many times a single user turn may force-close (consolidate) and re-enter before the runtime gives up and raises.
+
+**Why 1 is enough by construction.** After a force-close handoff, the F2a reset slices the turn into `[consolidation (≤ output_reserve < threshold)] + new turn`. This fits any turn whose NEW message fits the post-consolidation budget — the normal case. The only input a 2nd handoff could not help is a single new message that is, on its own, too large to ever fit inside the post-consolidation budget. In that case a 2nd handoff repeats the exact same consolidation step and hits the exact same wall — it does not create more room. The cap is therefore not an arbitrary throttle; it is a tight re-entry bound derived directly from the F2a reset's own floor.
+
+**What raising the cap would buy**: nothing for the case above — a bigger cap just delays the same genuine dead-end (an oversized single message) by one more no-op round-trip. At the cap, the runtime raises the dead-end explicitly instead of looping silently.
+
+**Falsifiable claim**: if a message class is ever found where a 2nd force-close handoff succeeds after the 1st failed, that is direct evidence this bound is wrong — it would mean the F2a reset's post-consolidation floor is not actually the limiting factor, and the cap should be revisited.
+
+**See also**: FD5 above (compaction + force-close mechanism); `#1092` (umbrella issue).

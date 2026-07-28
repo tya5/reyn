@@ -17,17 +17,20 @@ basic tool_result messages (the op-specific plan / invoke_skill handling stays i
 the OS loop, around it). Universal emits only ``Execute`` — never ``RePresent`` /
 ``CodeBlock`` — so the loop's other tag paths are unreached in PR-1.
 
-#1627 Stage 1: ``build_presentation`` now owns its tool-use SP via the slot-map.
-It calls ``build_universal_tool_use_slots`` with the 5 inputs derived from
-``layer_ctx`` (the OS-supplied raw FACTS), and attaches the resulting slot-map to
-the returned ``Presentation`` as ``tool_use_sp``. This relocates the tier→discovery-
-mandate POLICY out of the OS and into the scheme layer (CHAR-IDENTICAL: Stage 0
-proved the two paths produce the same SP bytes).
+#1627 Stage 1: ``build_presentation`` owns its tool-use SP rather than leaving it
+to the OS — the tier→discovery-mandate POLICY is derived here, in the scheme
+layer, from the raw FACTS the OS supplies in ``layer_ctx`` (CHAR-IDENTICAL:
+Stage 0 proved the two paths produce the same SP bytes).
+
+This is the ``(category, tool_calls)`` **cell**: those facts and the descriptors
+the router's universal presentation produced become an ``Exposure``, and the
+``tool_calls`` encoder (``reyn.tools.encoders``) turns it into both channels of
+the ``Presentation``.
 """
 from __future__ import annotations
 
-import dataclasses
-
+from reyn.tools.encoders import encoder_for_transport
+from reyn.tools.exposure import Exposure, descriptors_from_entries
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -39,7 +42,7 @@ from reyn.tools.scheme import (
     register_scheme,
 )
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
-from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+from reyn.tools.transport import Transport
 
 
 class UniversalCategoryScheme:
@@ -53,13 +56,16 @@ class UniversalCategoryScheme:
     name = "universal-category"
 
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
-        # ops.present → today's build_tools + SP params.
+        # ops.present → today's build_tools payload.
         # #1593 PR-2 seam: build_presentation is async (enumerate-all/PR-4 do I/O),
         # but universal's body is unchanged — ops.present stays sync and is NOT
-        # awaited, so the tools=/sp_params bytes are byte-identical to PR-1.
+        # awaited, so the tools= bytes are byte-identical to PR-1.
         pres = ops.present(available, layer_ctx)
 
-        # #1627 Stage 1: own the tool-use SP via the slot-map.
+        # #1627 Stage 1: own the tool-use SP via the slot-map, now through the
+        # seam: the exposure carries what is shown (the descriptors the router's
+        # universal presentation produced) plus the raw facts, and the
+        # tool_calls encoder writes both down.
         # Derive the 5 builder inputs from the raw FACTS in layer_ctx (the OS
         # supplies facts; the scheme computes policy). The EXACT formulas below
         # must match what the OS computed for the None-path (router_loop.py):
@@ -71,7 +77,7 @@ class UniversalCategoryScheme:
         #   non_interactive            = layer_ctx["non_interactive"]
         univ: bool = bool(layer_ctx.get("univ_enabled", False))
         sv: bool = bool(layer_ctx.get("search_visible", True))
-        sa: bool = sv if univ else True  # same formula as the prior sp_params["search_actions_enabled"]
+        sa: bool = sv if univ else True  # the search_actions_enabled formula, unchanged
         dm: bool = tier_wants_discovery_mandate(layer_ctx.get("router_model"))
         hl: bool = bool((available or {}).get("hot_list_aliases"))
         ni: bool = bool(layer_ctx.get("non_interactive", False))
@@ -79,20 +85,25 @@ class UniversalCategoryScheme:
         # (Claude excluded — it doesn't need the hygiene reminders).
         nc: bool = layer_ctx.get("router_model_family") != "claude"
 
-        slots = build_universal_tool_use_slots(
-            universal_wrappers_enabled=univ,
-            search_actions_enabled=sa,
-            discovery_mandate=dm,
-            has_hot_list_aliases=hl,
-            non_interactive=ni,
-            non_claude=nc,
-            # #2548 PR-A: skill registry snapshot from the OS layer_ctx →
-            # rendered into the ## Skills block (slot_post_skills).
-            available_skills=layer_ctx.get("available_skills"),
+        exposure = Exposure(
+            descriptors=descriptors_from_entries(pres.llm_tools_payload),
+            sp_facts={
+                "universal_wrappers_enabled": univ,
+                "search_actions_enabled": sa,
+                "discovery_mandate": dm,
+                "has_hot_list_aliases": hl,
+                "non_interactive": ni,
+                "non_claude": nc,
+                # #2548 PR-A: skill registry snapshot from the OS layer_ctx →
+                # rendered into the ## Skills block (slot_post_skills).
+                "available_skills": layer_ctx.get("available_skills"),
+            },
         )
-        # #1627 Stage 4: sp_params removed from build_presentation (build_system_prompt
-        # no longer reads it). tool_use_sp is now the sole SP channel.
-        return dataclasses.replace(pres, tool_use_sp=slots)
+        encoder = encoder_for_transport(Transport.TOOL_CALLS)
+        return Presentation(
+            llm_tools_payload=encoder.encode_tools(exposure),
+            tool_use_sp=encoder.encode_tool_use_sp(exposure),
+        )
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # ops.resolve = dedupe + salvage/unwrap → actions with effective names; the
