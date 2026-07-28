@@ -108,8 +108,8 @@ def option_content_rows(rows: "Sequence[str]") -> "list[Content]":
 
     Lives in this module (the display-boundary leaf that also owns
     :func:`_neutralized_label`) rather than in ``chrome`` because it now has
-    two independent consumers — the History drawer pane
-    (``chrome._history_option_content``) and the ``/``-``:`` completion popup
+    two independent consumers — the drawer panes that need literal rows
+    (``chrome._literal_option_content``) and the ``/``-``:`` completion popup
     (``completion.CompletionPopup``, whose ``/image`` candidates are FILESYSTEM
     names) — and ``chrome`` imports ``completion``, so the shared idiom cannot
     live there without a cycle. Re-deriving it per consumer is exactly how one

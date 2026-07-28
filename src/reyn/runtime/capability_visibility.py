@@ -479,7 +479,9 @@ class CapabilityVisibility:
             names = (names - wrapper_plumbing) | catalog_names
         return names
 
-    def capability_visibility_state(self) -> dict:
+    def capability_visibility_state(
+        self, *, ephemeral_contextual: "object | None" = None,
+    ) -> dict:
         """#2285: the status-bar's read model.
 
         ``authorized`` = every capability the AGENT ENVELOPE permits for this session (topology ∩
@@ -495,15 +497,28 @@ class CapabilityVisibility:
         Kind ∈ tool / mcp / category / skill.
 
         #3378 — ``denied_by_envelope``: reachable capabilities the ENVELOPE contextual
-        denies (topology binding / delegate floor / per-session config / ⊆-parent cap /
-        the ephemeral ``_untrusted`` profile). These used to be silently dropped from
-        the census, so the Tool tab could not distinguish "this tool does not exist
-        here" from "this tool exists but your profile denies it" — the owner's "I look
-        at the tab and cannot tell". They are a DIFFERENT AXIS from
-        ``hidden_by_session``: the session override is user-flippable via
-        ``/visibility``, whereas an envelope denial is not (toggling ON re-resolves from
-        base, which still denies) — so a renderer must keep the two distinguishable and
-        must not offer a toggle for a ``denied_by_envelope`` row."""
+        denies (topology binding / delegate floor / per-session config / ⊆-parent cap).
+        These used to be silently dropped from the census, so the Tool tab could not
+        distinguish "this tool does not exist here" from "this tool exists but your
+        profile denies it" — the owner's "I look at the tab and cannot tell". They are
+        a DIFFERENT AXIS from ``hidden_by_session``: the session override is
+        user-flippable via ``/visibility``, whereas an envelope denial is not (toggling
+        ON re-resolves from base, which still denies) — so a renderer must keep the two
+        distinguishable and must not offer a toggle for a ``denied_by_envelope`` row.
+
+        #3380 — ``denied_by_turn_context``: a THIRD list, for what the ``ephemeral_contextual``
+        argument denies while the envelope allows it. That argument is
+        ``Session._ephemeral_contextual_for_turn()`` — the same ``_untrusted`` term
+        ``_effective_contextual_for_turn`` composes for the live gate, passed in rather
+        than re-derived here (this class holds the envelope and the override, not the
+        conversation whose taint produces it). Kept OUT of ``denied_by_envelope``
+        because the two answer different operator questions: an envelope denial is
+        durable and un-liftable from the session, while this one lifts itself once the
+        untrusted entry compacts out of the active context. A renderer that merged them
+        would state a lasting fact about a transient one.
+
+        ``ephemeral_contextual=None`` (the default, and every non-``Session`` caller) →
+        ``denied_by_turn_context`` is empty and the other three keys are unchanged."""
         from typing import cast
 
         from reyn.security.permissions.effective import (
@@ -523,17 +538,32 @@ class CapabilityVisibility:
             )
             base_ctx = cast("ContextualPermission | None", raw_ctx)
         ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
+        # #3380: the ephemeral gate, asked ONLY for what the envelope already allows —
+        # so a capability the envelope denies keeps its durable reason even while the
+        # context happens to be tainted (both deny it; the un-liftable one is the
+        # actionable answer).
+        eph = ContextualLayer(
+            cast("ContextualPermission | None", ephemeral_contextual)
+        )
 
         authorized: "list[dict]" = []
         denied: "list[dict]" = []
+        denied_turn: "list[dict]" = []
+
+        def _place(axis: "CapabilityAxis", row: dict) -> None:
+            if not ctx.allows(axis, row["name"]):
+                denied.append(row)
+            elif not eph.allows(axis, row["name"]):
+                denied_turn.append(row)
+            else:
+                authorized.append(row)
+
         for name in sorted(self._reachable_tool_names(base_excl)):
-            row = {"kind": "tool", "name": name}
-            (authorized if ctx.allows(CapabilityAxis.TOOL, name) else denied).append(row)
+            _place(CapabilityAxis.TOOL, {"kind": "tool", "name": name})
         for server in self._router_host.get_mcp_servers():
             n = server.get("name")
             if n:
-                row = {"kind": "mcp", "name": n}
-                (authorized if ctx.allows(CapabilityAxis.MCP, n) else denied).append(row)
+                _place(CapabilityAxis.MCP, {"kind": "mcp", "name": n})
         for category in CATEGORIES:
             if category not in base_excl:
                 authorized.append({"kind": "category", "name": category})
@@ -550,6 +580,7 @@ class CapabilityVisibility:
             "authorized": authorized,
             "hidden_by_session": hidden,
             "denied_by_envelope": denied,
+            "denied_by_turn_context": denied_turn,
         }
 
     def persist_visibility_override(self, toggle_store_dir: "Path") -> None:

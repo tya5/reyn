@@ -371,10 +371,11 @@ _MENU_TABS: "list[tuple[str, str]]" = [
 #: selection); every other tab renders as a read-only Rich :class:`Static`.
 #:
 #: **Known display limitation (Model/Agent/Menu, NOT a security gap):**
-#: ``OptionList`` markup-parses a bare ``str`` option — only the "history"
-#: tab's rows get the :func:`_history_option_content` ``Content``-literal
-#: wrap, because only History carries LLM-/user-derived conversation text
-#: (#3302 fix-class). Model/Agent/Menu rows are operator/config-derived
+#: ``OptionList`` markup-parses a bare ``str`` option — the panes in
+#: :data:`_LITERAL_ROW_PANES` get the :func:`_literal_option_content`
+#: ``Content``-literal wrap (History because it carries LLM-/user-derived
+#: conversation text — #3302 fix-class; Tool/MCP/Skill/Hook because their rows
+#: carry reyn's own bracket markers — #3380). Model/Agent/Menu rows are operator/config-derived
 #: identifiers (configured model classes, loaded agent names, the
 #: ``@slash``-registered command table) — not live conversation content, so
 #: they are NOT neutralize-relevant and are left unwrapped. If an operator
@@ -478,25 +479,52 @@ def pane_is_list(tab_id: str) -> bool:
 
 #: The ONE list pane whose rows are LLM-/user-derived content (recent
 #: conversation turns) rather than operator/config-derived identifiers —
-#: see :func:`_history_option_content`'s docstring for why only this tab
-#: needs the fidelity wrap.
+#: see :func:`_literal_option_content`'s docstring for why this tab needs the
+#: fidelity wrap for a REASON the marker panes below do not share.
 _USER_CONTENT_LIST_PANE = "history"
 
+#: List panes whose rows must reach :class:`~textual.widgets.OptionList` as
+#: ``Content`` literals. Two independent reasons, one mechanism:
+#:
+#: - ``history`` — the row text is conversation content (fidelity/#3302).
+#: - ``tool`` / ``mcp`` / ``skill`` / ``hook`` — the row text is OURS and
+#:   contains bracket markers (``[on]`` / ``[off]`` / ``[--]``) that the markup
+#:   parser eats. Witnessed in a real TTY on #3380: every ``[on]``/``[off]``
+#:   marker was invisible, so a ``/visibility``-hidden capability rendered
+#:   identically to an available one and #3379's "two axes, two markers" reduced
+#:   to one visible axis. ``[--]`` survived only because it is not valid markup —
+#:   which is luck, not a design.
+#:
+#: Model/Agent/Menu stay unwrapped: their rows are config-derived identifiers
+#: that carry no marker of ours, so the quirk only reaches them if an operator
+#: names something with a ``[...]``-shaped substring (the accepted limitation
+#: documented at ``_LIST_PANES``).
+_LITERAL_ROW_PANES = frozenset({_USER_CONTENT_LIST_PANE, "tool", "mcp", "skill", "hook"})
 
-def _history_option_content(rows: "Sequence[str]") -> list[Content]:
-    """Wrap each History-pane row in a literal :class:`~textual.content.Content`
+
+def pane_needs_literal_rows(tab_id: str) -> bool:
+    """Whether ``tab_id``'s rows must be wrapped by :func:`_literal_option_content`
+    before reaching :class:`~textual.widgets.OptionList` (see
+    :data:`_LITERAL_ROW_PANES`). Both call sites — the initial build and the
+    refresh — ask this ONE predicate, so a pane cannot be wrapped on one path and
+    bare on the other."""
+    return tab_id in _LITERAL_ROW_PANES
+
+
+def _literal_option_content(rows: "Sequence[str]") -> list[Content]:
+    """Wrap each row in a literal :class:`~textual.content.Content`
     — never a bare ``str`` handed to :class:`~textual.widgets.OptionList`.
 
     ``OptionList`` markup-parses a bare ``str`` option exactly like
     ``Static``/``RadioButton`` do (``Option.prompt`` → ``textual.visual.
     visualize(..., markup=True)`` by default, unset here) — the SAME
     ``#3302`` bracket-eating class, just reached through a different widget.
-    History rows are the one drawer pane whose text is conversation content
+    Which panes need it, and why, is :data:`_LITERAL_ROW_PANES` — History
+    because its text is conversation content
     (:func:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
-    _history_turns`, already neutralized — ESC/control strip — at that
-    source), so ONLY this pane needs the wrap; Model/Agent/Menu rows are
-    operator/config-derived identifiers (see the module docstring), not
-    live conversation text.
+    _history_turns`, already neutralized — ESC/control strip — at that source),
+    the visibility panes because reyn's OWN ``[on]``/``[off]``/``[--]`` markers
+    are bracket-shaped and were being eaten (#3380, witnessed in a real TTY).
 
     Two call sites need this identically — the initial build
     (:func:`build_drawer_pane`, at ``compose`` time) and the refresh
@@ -507,8 +535,8 @@ def _history_option_content(rows: "Sequence[str]") -> list[Content]:
     The wrap itself now lives in
     :func:`~reyn.interfaces.inline.textual_chat.presenter.option_content_rows`
     (#3354 gave it a second consumer — the completion popup, whose ``/image``
-    candidates are filesystem names). This function stays as the History-pane
-    NAME for it, carrying the "why only this pane" reasoning above; the
+    candidates are filesystem names). This function stays as the drawer-pane
+    NAME for it, carrying the "which panes, and why" reasoning above; the
     mechanism is shared so the two consumers cannot drift into one being safe
     and the other not."""
     return option_content_rows(rows)
@@ -600,6 +628,19 @@ def agent_pane_options(
 # ── the six toggle/list categories the retired "more…" sub-bar owned (#3338) ──
 
 
+def _denied_note(reason: "str | None") -> str:
+    """The annotation for a non-flippable ``[--]`` row, by ``denied_reason`` (#3380).
+
+    ``"turn_context"`` states the CONDITION rather than the fact, because the
+    condition is also the remedy — the narrowing lifts when the untrusted entry
+    leaves the active context, and an operator told only "denied" would go looking
+    for a profile to edit that does not deny it. An unrecognised/absent reason falls
+    back to the envelope wording, which is what every pre-#3380 row meant."""
+    if reason == "turn_context":
+        return "denied while untrusted content is in context"
+    return "denied by capability profile"
+
+
 def _visibility_pane_entries(
     snap: dict, kind: str, fallback_key: "str | None"
 ) -> "list[tuple[str, str]]":
@@ -613,11 +654,23 @@ def _visibility_pane_entries(
 
     #3378 — **two axes, two markers.** ``[on]``/``[off]`` is the ``/visibility`` axis
     (user-flippable, so the row carries a slash). ``[--]`` is the ENVELOPE/CONTEXTUAL
-    axis (a topology binding / delegate floor / per-session config / the ephemeral
-    ``_untrusted`` profile), which ``/visibility on`` cannot re-grant — so the row is
-    marked distinguishably, annotated with the reason, and carries NO slash. Sharing
-    the ``off`` marker between them would tell the operator to try a toggle that
-    cannot work, which is the state the owner was in.
+    axis, which ``/visibility on`` cannot re-grant — so the row is marked
+    distinguishably, annotated with the reason, and carries NO slash. Sharing the
+    ``off`` marker between them would tell the operator to try a toggle that cannot
+    work, which is the state the owner was in.
+
+    #3380 — **the annotation names WHICH narrowing**, since the operator's next move
+    differs. ``denied_reason="envelope"`` is durable for the session (edit the
+    profile / topology binding). ``"turn_context"`` is the ephemeral ``_untrusted``
+    narrowing, live only while untrusted external content sits in the active context
+    — so the row says that condition, which is also how it clears (compaction /
+    ``/clear``), rather than a bare "denied". Both marks are ``[--]`` because neither
+    is flippable; the reason text is what distinguishes them.
+
+    The whole pane is rebuilt from a fresh snapshot on every frame while it is open
+    (#3338), and the turn-context row is derived from the LIVE conversation at read
+    time, so no row here is an "as of an earlier turn" value that could outlive its
+    cause without saying so.
 
     #3378 — **empty is two different states.** ``visibility_items is None`` means the
     frame carries no visibility seam (a remote read-model frame, or a session without
@@ -629,7 +682,7 @@ def _visibility_pane_entries(
         if it.get("kind") != kind:
             continue
         if it.get("denied"):
-            rows.append((f"[--] {it['name']}  · denied by capability profile", ""))
+            rows.append((f"[--] {it['name']}  · {_denied_note(it.get('denied_reason'))}", ""))
         else:
             rows.append((
                 f"[{'on' if it['on'] else 'off'}] {it['name']}",
@@ -1072,16 +1125,16 @@ def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
     Two rendering idioms co-exist here, deliberately NOT interchangeable:
     the readout branch wraps in a Rich :class:`~rich.text.Text` LITERAL
     (never markup-parsed regardless of content — Cost/Ctx/Help are always
-    internal-only figures, so this is fidelity-safe as-is); the History
-    OptionList branch wraps in :class:`~textual.content.Content`
-    (:func:`_history_option_content`) because ``OptionList`` DOES
+    internal-only figures, so this is fidelity-safe as-is); the OptionList
+    branch wraps the :data:`_LITERAL_ROW_PANES` in :class:`~textual.content.Content`
+    (:func:`_literal_option_content`) because ``OptionList`` DOES
     markup-parse a bare ``str`` option — do not "simplify" one branch to
     match the other, they guard against different widgets' different
     default behaviors."""
     if pane_is_list(tab_id):
         options = (
-            _history_option_content(rows)
-            if tab_id == _USER_CONTENT_LIST_PANE
+            _literal_option_content(rows)
+            if pane_needs_literal_rows(tab_id)
             else rows
         )
         return OptionList(*options, id=tab_id)

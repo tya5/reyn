@@ -62,9 +62,10 @@ from .chrome import (
     _MENU_TABS,
     Composer,
     MenuBar,
-    _history_option_content,
+    _literal_option_content,
     build_drawer_pane,
     pane_commands,
+    pane_needs_literal_rows,
     pane_payload,
     status_line_text,
 )
@@ -1118,14 +1119,16 @@ class TextualChatApp(App):
         slash commands, so an ``OptionSelected`` maps back to the right command.
         Pass ``snap`` to reuse an already-read snapshot.
 
-        The History tab's rows get the SAME ``Content``-literal fidelity wrap
+        The panes listed in ``chrome._LITERAL_ROW_PANES`` get the SAME
+        ``Content``-literal wrap
         :func:`~reyn.interfaces.inline.textual_chat.chrome.build_drawer_pane`
         applies at initial ``compose`` time (:func:`~reyn.interfaces.inline.
-        textual_chat.chrome._history_option_content`) — this refresh path is a
+        textual_chat.chrome._literal_option_content`) — this refresh path is a
         SEPARATE call site from that initial build (``OptionList.add_options``
         vs the constructor), so it needs its own, independently-verified wrap;
-        the row TEXT itself is already neutralized upstream, in
-        :meth:`_history_turns`."""
+        both ask the one ``pane_needs_literal_rows`` predicate rather than
+        re-deciding. For History the row TEXT is additionally neutralized
+        upstream, in :meth:`_history_turns`."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         rows = self._pane_rows(tab_id, snapshot)
         self._pane_commands[tab_id] = pane_commands(tab_id, snapshot)  # type: ignore[arg-type]
@@ -1133,7 +1136,11 @@ class TextualChatApp(App):
         if isinstance(child, OptionList):
             child.clear_options()
             if rows:
-                options = _history_option_content(rows) if tab_id == "history" else rows
+                options = (
+                    _literal_option_content(rows)
+                    if pane_needs_literal_rows(tab_id)
+                    else rows
+                )
                 child.add_options(options)
         elif isinstance(child, Static):
             child.update("\n".join(rows))

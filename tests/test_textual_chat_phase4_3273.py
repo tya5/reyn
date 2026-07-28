@@ -506,6 +506,67 @@ async def test_history_pane_refresh_preserves_bracket_labels() -> None:
     )
 
 
+# ── #3380: the SAME markup-parse eats reyn's OWN row markers ─────────────────
+# The comment above scoped the wrap to History on the premise that every other
+# pane's rows are identifiers carrying no brackets. That premise was false for the
+# visibility panes, whose rows reyn itself decorates with ``[on]``/``[off]``/``[--]``
+# — witnessed in a real TTY on #3380: an operator-hidden tool rendered identically
+# to an available one, so #3379's "two axes, two markers" had one visible axis.
+# Both widget-construction call sites get their own witness, for the same reason
+# the History pair does.
+
+_VIS_ROW = "[off] file__read"
+
+
+@pytest.mark.asyncio
+async def test_tool_pane_initial_build_preserves_the_state_marker() -> None:
+    """Tier 1: the Tool pane's INITIAL build keeps the ``[off]`` marker the
+    formatter emitted — the marker IS the state readout, so eating it makes a
+    hidden capability indistinguishable from an available one."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import OptionList
+
+    from reyn.interfaces.inline.textual_chat.chrome import build_drawer_pane
+
+    class _PaneHost(App):
+        def compose(self) -> ComposeResult:
+            yield build_drawer_pane("tool", [_VIS_ROW])
+
+    app = _PaneHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        rendered = _history_option_plain(app.query_one(OptionList), 0)
+    assert rendered == _VIS_ROW, (
+        f"the Tool pane's state marker was eaten at initial build: {rendered!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_pane_refresh_preserves_the_state_marker() -> None:
+    """Tier 2: the Tool pane's REFRESH path keeps the marker too — a separate
+    call site, and the one every real drawer open goes through."""
+    from textual.widgets import OptionList
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    snap = dict(_SNAP)
+    snap["visibility_items"] = [
+        {"kind": "tool", "name": "file__read", "on": False, "denied": False,
+         "denied_reason": None},
+    ]
+    app = TextualChatApp(
+        transport=ScriptedTransport(), read_model=_SnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._open_drawer("tool")
+        await pilot.pause()
+        rendered = _history_option_plain(app.query_one("#tool", OptionList), 0)
+    assert rendered == _VIS_ROW, (
+        f"the Tool pane's state marker was eaten on refresh: {rendered!r}"
+    )
+
+
 def test_history_turns_neutralizes_raw_esc_osc() -> None:
     """Tier 1: a conversation turn carrying raw terminal control sequences
     must not leak into the History pane's row text — the SAME
