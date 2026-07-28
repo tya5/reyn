@@ -1,11 +1,20 @@
-"""RetrievalScheme — RAG-over-tools, the scheme that exercises ``RePresent`` (#1593 PR-4).
+"""RetrievalScheme — the (retrieval, tool_calls) cell, and the only user of
+``RePresent`` (#1593 PR-4).
 
 Instead of presenting the whole catalog, retrieval presents a **search tool** (+ the
 prior-shape base); the LLM searches, the OS re-presents the matched actions as
 callable tools, the LLM calls one. This is the namespace/retrieval paradigm for huge
-tool sets (no full-catalog token cost; the search narrows before the call), and it is
-the **only** scheme that uses the ``interpret → RePresent`` loop-back — proving the
+tool sets (no full-catalog token cost; the search narrows before the call), and this
+cell is the only place the ``interpret → RePresent`` loop-back is used — proving the
 last unreached path of the PR-1 abstraction.
+
+#3376 P3: ``retrieval`` now also has a ``content_fence`` cell
+(``retrieval_content_fence.py``). It reaches the same paradigm WITHOUT
+``RePresent`` — a system prompt cannot be swapped mid-turn the way a ``tools=``
+payload can, so it dispatches the real ``search_actions`` wrapper from inside the
+snippet instead. The two cells therefore share retrieval's ``sp_facts``
+(``_retrieval_exposure``) but not an exposure builder; see that module for why
+merging them would smuggle in a per-cell composer.
 
 Split (lead-approved design): ``interpret`` is a **pure classifier** (a ``search_actions``
 call → ``RePresent({query})`` with NO search I/O; any other call → ``Execute``).
@@ -36,7 +45,7 @@ from reyn.tools.scheme import (
     SchemeOps,
     register_scheme,
 )
-from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+from reyn.tools.schemes._retrieval_exposure import retrieval_sp_facts
 from reyn.tools.transport import Transport
 
 _SEARCH_TOOL_NAME = "search_actions"
@@ -88,23 +97,14 @@ class RetrievalScheme:
     name = "retrieval"
 
     def _sp_facts(self, available, layer_ctx) -> "dict[str, object]":
-        """The transport-neutral facts a transport needs to shape retrieval's
-        tool-use SP. Facts only — the rendering is the encoder's.
+        """This cell's ``sp_facts``, from the presentation's shared source.
 
-        Mirrors the enumerate-all pattern: retrieval is always
-        ``universal_wrappers_enabled=False``, and ``search_actions_enabled`` is
-        derived from ``search_visible``."""
-        return {
-            "universal_wrappers_enabled": False,
-            "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
-            "discovery_mandate": tier_wants_discovery_mandate(layer_ctx.get("router_model")),
-            "has_hot_list_aliases": bool((available or {}).get("hot_list_aliases")),
-            "non_interactive": bool(layer_ctx.get("non_interactive", False)),
-            # #2548 PR-A: skill registry snapshot → ## Skills block (rendered into
-            # the DEDICATED slot_post_skills, so the slot_post_catalog override
-            # does NOT clobber it).
-            "available_skills": layer_ctx.get("available_skills"),
-        }
+        #3376 P3: the formula moved to ``_retrieval_exposure.retrieval_sp_facts``
+        when the ``content_fence`` cell arrived — the facts are a property of the
+        *presentation*, so two cells computing them separately could drift on a
+        value neither test would notice (the ``content_fence`` encoder does not
+        read ``sp_facts`` at all, so its copy would rot silently)."""
+        return retrieval_sp_facts(available, layer_ctx)
 
     def _encode(self, exposure: Exposure, **presentation_fields) -> Presentation:
         """Hand one retrieval exposure to the ``tool_calls`` encoder.

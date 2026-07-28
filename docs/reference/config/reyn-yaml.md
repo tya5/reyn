@@ -538,20 +538,21 @@ tool_use:
 | `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
 | `transport` | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
 
-Not every `(scheme, transport)` combination is implemented. The valid pairs today are:
+Every combination of the axis values above is implemented today:
 
 | `scheme` \ `transport` | `tool_calls` | `content_fence` |
 |---|---|---|
 | `category` | `universal-category` | code-API over the wrappers |
 | `enumerate-all` | `enumerate-all` (default) | CodeAct |
-| `retrieval` | `retrieval` | *(unimplemented)* |
+| `retrieval` | `retrieval` | search-first code-API |
 
-An unregistered pair (e.g. `scheme: retrieval` + `transport: content_fence`) raises
-a legible error at config-parse time rather than silently falling back or being
-accepted. CodeAct is reached via `scheme: enumerate-all` + `transport:
-content_fence` — it is the same full flat catalog as `enumerate-all`, expressed
-as fenced code instead of native tool calls, not a `scheme` name of its own.
-`retrieval` additionally requires `embedding.enabled: true` (FP-0066 §7).
+A pair that is not in this table — a `scheme` or `transport` name reyn does not
+have — raises a legible error at config-parse time rather than silently falling
+back or being accepted. CodeAct is reached via `scheme: enumerate-all` +
+`transport: content_fence` — it is the same full flat catalog as
+`enumerate-all`, expressed as fenced code instead of native tool calls, not a
+`scheme` name of its own. `retrieval` additionally requires `embedding.enabled:
+true` (FP-0066 §7).
 
 `scheme: category` + `transport: content_fence` gives the small-surface
 counterpart of CodeAct: the model writes fenced Python, but the functions it is
@@ -571,6 +572,33 @@ JSON tool calls **and** the catalog is large enough that listing every action up
 front costs too much — CodeAct (`enumerate-all` + `content_fence`) gives up the
 second. Every in-code call still passes the same exclude + permission gate as the
 equivalent JSON call, plus sandbox containment.
+
+`scheme: retrieval` + `transport: content_fence` is the search-first code-API:
+the functions the model is shown are `search_actions` / `describe_action` /
+`invoke_action` plus the base tools, with **no** `list_actions` — discovery here
+is a search, not a listing. A turn reads
+
+```python
+hits = search_actions(query="read a file")
+result = invoke_action(action_name="file__read", args={"path": "README.md"})
+```
+
+```yaml
+tool_use:
+  scheme: retrieval
+  transport: content_fence
+  # requires embedding.enabled: true
+```
+
+It differs from the `tool_calls` retrieval cell in cost, not in paradigm: there,
+narrowing takes a round trip (the OS re-presents the matched actions as a new
+`tools=` payload, because a payload can only change between calls); here the
+search result is an ordinary value inside the snippet, so the search and the call
+can happen in one turn. Choose it over `category` + `content_fence` when the
+catalog is large enough that browsing it by category is the wrong entry point and
+you would rather the model describe what it wants. If the embedding index is not
+ready yet, this cell falls back to listing the flat catalog rather than showing a
+search that would return nothing.
 
 The old single `tool_use.chat` key is **removed** (clean-break, no compat
 alias). A reyn.yaml still carrying `tool_use.chat` fails loud at config-load
