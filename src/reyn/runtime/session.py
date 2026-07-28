@@ -2080,9 +2080,31 @@ class Session:
         path is unchanged; the one live user is ``run_pipeline_attached``, which
         registers the spawned pipeline driver-session's ``request_cancel`` for the
         duration of a sync attached run so a Ctrl-C here reaches the driver.
+
+        **Re-entrancy guard (self-cancel)**: the hard ``Task.cancel()`` is
+        skipped when the CALLER IS the turn-owner task — the mirror of the
+        guard ``await_quiescent`` already carries for the same call shape (a
+        slash handler invoking ``AgentRegistry.checkout`` mid-turn, which
+        all-cancels every loaded session *including its own*). Without it the
+        turn cancels itself: ``_must_cancel`` is armed and ``CancelledError``
+        lands at checkout's first real suspension — the reset-record's
+        durability await — so the ``rewind`` WAL record is written but step 5
+        (``_materialize_rewind``) never runs. The WAL then claims the world was
+        reset while every live session keeps running the pre-rewind lineage,
+        and the user gets neither the ``⏪ checked out`` reply nor an error
+        (``CancelledError`` is a ``BaseException``, so ``rewind_cmd``'s
+        ``except Exception`` does not see it). "Cancel all in-flight work" can
+        only ever mean "everything except the caller asking for it": a caller
+        cannot want the request it is currently making to be destroyed. Every
+        other caller (Ctrl-C via the transport, the AG-UI endpoint,
+        ``remove_session``) runs on a different task and is unaffected.
         """
         self._loop_driver.request_cancel()
-        if self._turn_owner_task is not None and self._turn_owner_task.cancel():
+        if (
+            self._turn_owner_task is not None
+            and asyncio.current_task() is not self._turn_owner_task
+            and self._turn_owner_task.cancel()
+        ):
             self._turn_cancel_self_initiated = True
         for forward in list(self._cancel_forward_targets):
             forward()
