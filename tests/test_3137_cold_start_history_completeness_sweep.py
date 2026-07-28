@@ -52,6 +52,20 @@ with no further ``load_history()`` call needed. Real ``AgentRegistry`` +
 mirrors the production shape (constructs, then calls ``load_history()``,
 exactly like every real factory above) so a future factory that DROPS the
 call — the actual regression this guards against — goes RED here.
+
+**★ Scope of what the strip-falsify above actually witnesses.** The strip
+removed ``load_history()`` from THIS TEST's OWN factory closure, not from any
+of the five real production factories enumerated above. That proves "IF the
+factory loads, a ``restore_all()``-constructed session sees a complete
+history" — a real, load-bearing property, and what makes this test
+non-vacuous. It does NOT prove "the five real factories actually call
+``load_history()`` today" — deleting the ``s.load_history()`` call at
+``interfaces/web/deps.py:359`` (or any of the other four) would leave this
+test green, because this test never imports or exercises those call sites.
+That second claim is established by manual/AST inspection in this PR's
+enumeration, not gated by any test — a real, named gap, not a silent one.
+"The mechanism is correct" and "production reaches the mechanism" are
+separate claims; this test gates only the first.
 """
 from __future__ import annotations
 
