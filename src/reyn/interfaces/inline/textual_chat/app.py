@@ -39,6 +39,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
+from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import ContentSwitcher, OptionList, Static
@@ -61,7 +62,6 @@ from .chrome import (
     _MENU_TABS,
     Composer,
     MenuBar,
-    StatusLine,
     _history_option_content,
     build_drawer_pane,
     pane_commands,
@@ -261,8 +261,10 @@ class TextualChatApp(App):
     elapsed is computed from the app-side arrival time (``self._clock``); the
     indicator is a spinner (indeterminate), NOT a progress bar.
 
-    Phase 3 adds the bottom-chrome tab-drawer: below the composer, a
-    :class:`StatusLine` + a focusable :class:`MenuBar`, and a
+    Phase 3 adds the bottom-chrome tab-drawer: below the composer, a focusable
+    :class:`MenuBar` (which also carries the :class:`StatusLine` status-values
+    segment — #3326 collapsed the two into one shared row whenever the
+    terminal is wide enough for both, see :meth:`MenuBar._repack`), and a
     :class:`~textual.widgets.ContentSwitcher` drawer that is collapsed by default
     and expands DOWNWARD when a menu item is opened (see :meth:`_open_drawer`).
 
@@ -480,6 +482,19 @@ class TextualChatApp(App):
         color: $text-muted;
         padding: 0 1;
     }
+    /* #3326: when StatusLine SHARES a row with Tab widgets (MenuBar._repack's
+       merge case), width: auto keeps it sized to its own text instead of
+       stretching to consume the row's remaining space (which would push the
+       tabs before it out of a natural left-packed layout). This is scoped to
+       the ``-shared`` class ONLY — when StatusLine has a row to itself (no
+       room to merge), it keeps the base rule's width (100% of its row),
+       which is load-bearing: an unconstrained auto-width single-line Static
+       renders at its full natural width regardless of the terminal, so an
+       over-long status string (e.g. a long model id) would overflow off the
+       right edge instead of being contained/clipped by its row. */
+    StatusLine.-shared {
+        width: auto;
+    }
     /* height: auto — the menu row WRAPS to as many lines as the terminal width
        needs (chrome.pack_menu_rows), so no tab is ever laid out past the right
        edge. A fixed height:1 here would clip the wrapped rows straight back
@@ -494,6 +509,17 @@ class TextualChatApp(App):
     }
     MenuBar:focus-within { color: $text; }
     MenuBar Tab { padding: 0 1; }
+    /* #3326: tone down. Tab's own DEFAULT_CSS gives ``.-active`` full-brightness
+       ``$foreground`` against every other tab's muted 50%-opacity foreground —
+       a stark contrast jump that reads as loud emphasis (no literal underline
+       is drawn anywhere; MenuBar doesn't use Textual's Tabs/Underline widget).
+       Matched to the status line's own quiet ``$text-muted`` tone instead,
+       kept bold so the active tab stays identifiable without the brightness
+       jump. */
+    MenuBar Tab.-active {
+        color: $text-muted;
+        text-style: bold;
+    }
     /* No separator rule between the menu row and its drawer — they read as one
        continuous, edge-to-edge block (the $panel background is the only cue). */
     #drawer {
@@ -773,12 +799,14 @@ class TextualChatApp(App):
             yield Composer(
                 placeholder="Type a message — Enter to send, Shift+Enter for a newline…"
             )
-        # Bottom chrome: a slim status-values line + a focusable menu row, then a
-        # drawer (ContentSwitcher) that stays collapsed until a menu item opens it
+        # Bottom chrome: a focusable menu row that also carries the slim
+        # status-values segment (#3326: MenuBar owns placing StatusLine on
+        # whichever row has room, collapsing the two previously-separate rows
+        # into one whenever the terminal is wide enough), then a drawer
+        # (ContentSwitcher) that stays collapsed until a menu item opens it
         # downward. Phase 4 fills each pane from its canonical reyn source; each
         # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
-        yield StatusLine(self._status_text())
-        yield MenuBar(_MENU_TABS, id="menubar")
+        yield MenuBar(_MENU_TABS, id="menubar", status_text=self._status_text())
         with ContentSwitcher(initial=None, id="drawer"):
             for tid, _label in _MENU_TABS:
                 yield build_drawer_pane(tid, self._pane_rows(tid))
@@ -934,6 +962,17 @@ class TextualChatApp(App):
         return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
+        # #3326: tone down rich.Markdown's default inline-code style ("bold
+        # cyan on black" — rich.default_styles.DEFAULT_STYLES["markdown.code"]
+        # — measured far too loud against the rest of a reply's body). Pushed
+        # once here onto the app's own Rich console, which Textual's
+        # compositor uses to resolve every ``__rich_console__`` render
+        # (verified: this is the actual seam, not merely a plausible one) —
+        # so every agent reply's inline code gets the muted style app-wide,
+        # not just newly-composed widgets. No bold, no forced background box:
+        # a plain cyan tint distinguishes it from body text without the
+        # heavy box the default theme draws.
+        self.console.push_theme(Theme({"markdown.code": "cyan"}))
         # Phase 5 (#3273): hydrate the retained model from the PERSISTED
         # conversation log BEFORE the live frame pump starts, so a restart shows
         # the previous conversation (CC ``--resume`` parity) instead of a blank
@@ -946,9 +985,10 @@ class TextualChatApp(App):
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
         # clock leaves a static, correct amber gutter (see the Phase-2 strip gate).
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
-        # Drawer starts collapsed — the default chrome is just the two slim rows
-        # (status-values line + menu row). It only becomes visible when a menu
-        # item is opened (:meth:`_open_drawer`).
+        # Drawer starts collapsed — the default chrome is just the focusable
+        # menu row (#3326: which also carries the status-values segment when
+        # there's room — see MenuBar._repack). It only becomes visible when a
+        # menu item is opened (:meth:`_open_drawer`).
         self.query_one("#drawer", ContentSwitcher).display = False
         self.query_one(Composer).focus()
 
@@ -2313,12 +2353,13 @@ class TextualChatApp(App):
 
     def _refresh_status(self, snap: "dict | None | object" = _UNSET) -> None:
         """Re-render the bottom status-values line from a fresh snapshot (or the
-        already-read ``snap``)."""
+        already-read ``snap``). #3326: routed through MenuBar (which owns
+        placing StatusLine on whichever row has room), not StatusLine directly."""
         try:
-            line = self.query_one(StatusLine)
+            menubar = self.query_one(MenuBar)
         except Exception:
             return  # not yet mounted
-        line.update(self._status_text(snap))
+        menubar.update_status(self._status_text(snap))
 
     async def on_composer_submitted(self, event: "Composer.Submitted") -> None:
         text = event.value.strip()
