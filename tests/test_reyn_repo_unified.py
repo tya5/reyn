@@ -58,36 +58,25 @@ def test_reyn_repo_list_router_render_exact_parameters():
 # ── 2. REYN_REPO_READ render_for_router byte-identity ────────────────────────
 
 def test_reyn_repo_read_router_render_exact_description():
-    """Tier 2: REYN_REPO_READ description is byte-identical to the canonical text.
+    """Tier 2: render_for_router() passes the ToolDefinition's own description
+    through unchanged (no router-side transformation/truncation).
 
-    Originally pinned the legacy text against ADR-0026 migration drift.
-    Updated in B22 (= 2026-05-10 schema-layer fix for affordance-bias
-    attractor observed in batch 21). The previous claim "Use this for
-    any 'how does Reyn / how does Reyn's X work?' question" pulled the
-    LLM to file_read with hallucinated paths even when an indexed
-    source covered the topic. New text follows the practitioner 4-part
-    template (= what / when / when NOT / cross-reference to recall),
-    preserves the README curated-navigation fallback (= constraint C2
-    from the description history audit), and preserves the no-web-
-    search directive (= original HN first-touch motivation).
-
-    FP-0066 P1b: the cross-reference to `semantic_search` (retired — the
-    agent-facing layer-1 in-core RAG tool) is removed from the canonical
-    text; the description now stands on its own as the repo-navigation
-    fallback entry point.
+    Was pinned against a second, independently-typed literal copy of the
+    canonical text (the same anti-pattern ``test_reyn_repo_list_router_render_
+    exact_description`` above already avoids) — every intentional LLM-facing
+    text change to ``reyn_repo_read`` (most recently #3213 item 4: an explicit
+    path-scope disclaimer, since the model was observed defaulting to this
+    tool for `~/.reyn/...` paths and fabricating content once it failed) then
+    had to update BOTH the single source of truth in ``reyn_repo.py`` and this
+    duplicated literal, and a #3213-shaped fix that touched only the former
+    went red here for a reason unrelated to the fix's own correctness.
+    Asserting against the imported ``_REYN_REPO_READ_DESCRIPTION`` constant
+    instead makes this test agnostic to what the text says — a real
+    behavioural regression (rendering diverging from the definition) is
+    still caught; a deliberate content change to the ONE source is not.
     """
     rendered = REYN_REPO_READ.render_for_router()
-    canonical_description = (
-        "Read a text file from Reyn's own repository by an exact "
-        "repo-root-relative path. Use for: (a) reading a specific file the "
-        "user named (e.g. README.md), or (b) navigating "
-        "Reyn's source / docs to find the relevant file. Prefer this over "
-        "guessing a file path from memory — start from a curated entry "
-        "point. Fallback "
-        "entry point: reyn_repo_read(\"README.md\") for the overview + "
-        "curated map of deep-dive paths."
-    )
-    assert rendered["function"]["description"] == canonical_description
+    assert rendered["function"]["description"] == _REYN_REPO_READ_DESCRIPTION
 
 
 def test_reyn_repo_read_router_render_exact_parameters():
