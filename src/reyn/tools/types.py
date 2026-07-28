@@ -12,6 +12,7 @@ ToolContext.router_state.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Protocol
 
@@ -337,6 +338,40 @@ class ToolContext:
     agent_name: Any | None = None                    # str | None
 
 
+def parameters_for_export(parameters: Mapping[str, Any]) -> dict[str, Any]:
+    """The ONE way a canonical tool schema is handed outside its definition.
+
+    Every seam that projects a ``ToolDefinition.parameters`` into something a
+    caller keeps — the router ``tools=`` payload, a ``describe_action`` result,
+    a hot-list alias entry — MUST route through here. The obligation this owns
+    is the DEEP copy.
+
+    A shallow ``dict(parameters)`` is wrong, and wrong in a way that is invisible
+    at the call site: it copies only the top level, leaving every nested
+    sub-schema (``properties``, each ``oneOf`` variant, each variant's own
+    property schemas) ALIASED to the module-level constant the ToolDefinition was
+    built from. litellm's provider transforms then rewrite the payload they are
+    handed IN PLACE — ``_build_vertex_schema`` documents itself as returning
+    "the input parameters, modified in place"; within it ``add_object_type``
+    injects ``type: object`` into any node that has none and
+    ``_remove_additional_properties`` deletes ``additionalProperties: false``.
+    So one Gemini/Vertex turn used to permanently rewrite reyn's canonical
+    schema, and every later render — for ANY provider — served the corrupted
+    shape (#3383). The schema the LLM receives must never be a function of
+    process history.
+
+    Centralised deliberately: the four known seams were four copies of the same
+    ``dict(x.parameters)`` expression, so seam five would have been written the
+    same way. Owning the responsibility on the projection, not at each source,
+    is what makes the next seam correct by default. The behavioural gates in
+    ``tests/test_tool_schema_3383_process_history_independence.py`` still assert
+    it PER SEAM — "a helper with the right contract exists" and "every escape
+    point goes through the helper" are different claims, and only the second is
+    the invariant.
+    """
+    return deepcopy(dict(parameters))
+
+
 # ToolHandler: async callable signature.
 # Returns canonical ToolResult; raises on error (dispatcher wraps).
 class ToolHandler(Protocol):
@@ -457,7 +492,10 @@ class ToolDefinition:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": dict(self.parameters),
+                # #3383: the ONE projection that owns the deep-copy obligation.
+                # Never inline a shallow ``dict(self.parameters)`` here — see
+                # parameters_for_export.
+                "parameters": parameters_for_export(self.parameters),
             },
         }
         if self.schema_enricher is not None and state is not None:

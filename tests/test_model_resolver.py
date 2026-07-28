@@ -16,7 +16,12 @@ Reference: PR-MODEL-SPEC Task 2 (Tier 2) + PR-MODEL-SPEC-EXTENDS Task 3 (Tier 2)
 """
 from __future__ import annotations
 
-from reyn.llm.model_resolver import ModelResolver, ModelSpec
+import logging
+
+import pytest
+
+from reyn.llm.builtin_models import BUILTIN_TIER_ALIASES
+from reyn.llm.model_resolver import STANDARD_CLASSES, ModelResolver, ModelSpec
 
 # ---------------------------------------------------------------------------
 # resolve() returns ModelSpec — API change pin
@@ -56,6 +61,40 @@ def test_resolve_unknown_name_logs_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
         r.resolve("stnadard")
     assert any("stnadard" in rec.message for rec in caplog.records)
+
+
+def test_resolve_unknown_name_warns_once_per_distinct_name(caplog):
+    """Tier 2: repeated resolve() calls for the same unresolved name warn once (#3368).
+
+    resolve() is on the per-LLM-call hot path (called once per request for
+    the session's configured model class) — an unresolved name persists for
+    the session's lifetime, so an unconditional per-call warning would log
+    on every single turn. Falsification: pre-dedup, N calls with the same
+    unresolved name produced N warning records; this asserts exactly 1.
+    A distinct name still gets its own warning (no cross-name suppression).
+    """
+    import logging
+
+    r = ModelResolver({"standard": "openai/model-b"})
+
+    def _matching(caplog, needle):
+        return [rec for rec in caplog.records if needle in rec.message]
+
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        r.resolve("stnadard")
+        count_after_first_call = len(_matching(caplog, "stnadard"))
+        r.resolve("stnadard")
+        r.resolve("stnadard")
+        count_after_repeat_calls = len(_matching(caplog, "stnadard"))
+        r.resolve("another_typo")
+        another_typo_hits = _matching(caplog, "another_typo")
+
+    # Repeating the SAME unresolved name must not grow the warning count
+    # beyond what the first call already produced.
+    assert count_after_repeat_calls == count_after_first_call
+    # A genuinely NEW unresolved name is not suppressed by the first name's
+    # dedup — each distinct name gets its own warning.
+    assert another_typo_hits
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +178,10 @@ def test_is_known_class_str_form():
     """Tier 2: is_known_class True for str-form class, False for unknown."""
     r = ModelResolver({"light": "openai/model-a"})
     assert r.is_known_class("light") is True
-    assert r.is_known_class("strong") is False
+    # #3368: light/standard/strong are now built-in aliases (resolvable with
+    # no user mapping at all), so "strong" is a poor unknown-class example —
+    # use a name that is neither user-declared nor a built-in.
+    assert r.is_known_class("totally-unknown-class") is False
 
 
 def test_is_known_class_dict_form_same_as_str_form():
@@ -163,7 +205,9 @@ def test_is_known_class_mixed_mapping():
     })
     assert r.is_known_class("light") is True
     assert r.is_known_class("strong") is True
-    assert r.is_known_class("standard") is False
+    # #3368: "standard" is now a built-in alias, so it is known even though
+    # this mapping doesn't declare it — use a genuinely unrelated name.
+    assert r.is_known_class("totally-unknown-class") is False
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +267,157 @@ def test_extends_backward_compat_slash_str_with_builtin_loaded():
     assert r.resolve("light").model == "openai/gemini-2.5-flash-lite"
     assert r.resolve("light").kwargs == {}
     assert r.resolve("standard").model == "openai/gpt-4o"
+
+
+def test_light_standard_strong_resolve_with_no_reyn_yaml_at_all():
+    """Tier 2: light/standard/strong resolve to real models with an empty user mapping (#3368).
+
+    Found via bug-mining (2026-07-28): `ReynConfig.model` defaults to
+    "standard" even with zero config files, but BUILTIN_MODELS previously had
+    no "light"/"standard"/"strong" entries — so a project with no reyn.yaml
+    (or one without a `models:` block) resolved "standard" via the unknown-
+    name passthrough, sending the literal string "standard" to litellm
+    (`litellm.BadRequestError: ... You passed model=standard`, reproduced via
+    `litellm.utils.get_llm_provider("standard")`). Falsification: pre-fix,
+    `r.resolve("standard").model == "standard"` (the bare class name, not a
+    real model string).
+    """
+    r = ModelResolver({})
+    for class_name in ("light", "standard", "strong"):
+        spec = r.resolve(class_name)
+        assert "/" in spec.model, f"{class_name} resolved to a bare, unresolved name: {spec.model!r}"
+
+
+# ── #3374: partial generic-tier declaration warning ─────────────────────────
+#
+# The built-in tier aliases (#3368) make an undeclared tier resolve silently to
+# reyn's default instead of the project's. These tests witness the warning's
+# CONTENT (a test that only counts warnings passes on a useless message) and its
+# non-vacuity (zero-config and fully-declared must stay silent).
+
+#: Substring that identifies the partial-tier warning specifically, so a count
+#: anchor cannot accidentally match the `/`-prefix or #3372 passthrough warning
+#: (neither says "tier"). Content is asserted separately and substantively.
+_TIER_WARN_MARKER = "tier(s) but omits"
+
+
+def _tier_warnings(caplog) -> list[str]:
+    return [m for m in caplog.messages if _TIER_WARN_MARKER in m]
+
+
+@pytest.mark.parametrize("omitted", sorted(BUILTIN_TIER_ALIASES))
+def test_partial_tier_declaration_warns_naming_tier_and_its_fallback_model(
+    omitted, caplog,
+):
+    """Tier 2: omitting one tier while declaring the others warns actionably (#3374).
+
+    Parametrized over ``BUILTIN_TIER_ALIASES`` (the single producer) rather than
+    a hand-written name list, so a fourth tier added there automatically gains a
+    case instead of silently escaping this gate (the #3363 drift shape).
+
+    Witnesses the three things the operator needs to act without opening source
+    or docs: WHICH tier is missing, WHAT it now resolves to, and WHAT to write
+    in reyn.yaml.
+    """
+    declared = {
+        t: f"openai/my-{t}" for t in BUILTIN_TIER_ALIASES if t != omitted
+    }
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        r = ModelResolver(declared)
+
+    # Anchor: exactly one partial-tier warning — the tuple unpack fails loudly
+    # on zero (mechanism dead) and on duplicates (warned twice per resolver).
+    warnings = _tier_warnings(caplog)
+    assert warnings, f"expected a partial-tier warning, got: {caplog.messages}"
+    (msg,) = warnings
+
+    # (a) reports EXACTLY the omitted tier — asserting on the extracted value,
+    #     which also catches a declared tier being misreported as missing.
+    reported_omitted = msg.split("but omits ", 1)[1].split(" —", 1)[0]
+    assert {t.strip() for t in reported_omitted.split(",")} == {omitted}
+
+    # (b) names the model it actually fell back to — "falls back to the
+    #     built-in" is useless without the resolved name.
+    fallback_model = r.resolve(omitted).model
+    assert "/" in fallback_model  # sanity: a real model string, not a bare name
+    assert fallback_model in msg, (
+        f"warning must name the resolved fallback model {fallback_model!r}: {msg}"
+    )
+
+    # (c) tells the operator what to write to take control.
+    assert "reyn.yaml" in msg and "models:" in msg
+    assert f"{omitted}: {fallback_model}" in msg, (
+        f"warning must include a copy-pasteable `{omitted}: <model>` line: {msg}"
+    )
+
+
+def test_zero_config_does_not_warn_about_partial_tiers(caplog):
+    """Tier 2: declaring NO tiers is the zero-config case, not a partial one (#3374).
+
+    Non-vacuity guard: this is precisely the case the built-in aliases exist to
+    serve, so warning here would fire for every new user with no reyn.yaml.
+    """
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({})
+    assert _tier_warnings(caplog) == []
+
+
+def test_fully_declared_tiers_do_not_warn(caplog):
+    """Tier 2: declaring every tier warns about nothing — no tier is falling back (#3374)."""
+    full = {t: f"openai/my-{t}" for t in BUILTIN_TIER_ALIASES}
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver(full)
+    assert _tier_warnings(caplog) == []
+
+
+def test_non_tier_models_only_is_not_partial(caplog):
+    """Tier 2: a `models:` block with only non-tier entries declares zero tiers (#3374).
+
+    Deliberate decision: "partial" is measured over the TIER set, so a project
+    that maps only its own custom classes is the zero-declared case (silent),
+    not a partial one.
+    """
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({"my-custom": "openai/custom"})
+    assert _tier_warnings(caplog) == []
+
+
+def test_partial_tier_warning_does_not_double_warn_with_3372_passthrough(caplog):
+    """Tier 2: the omitted tier does not ALSO trip #3372's unknown-class warning (#3374).
+
+    A tier present in the built-in catalog is by definition in the resolved
+    namespace, so ``resolve()`` never takes its unknown-name branch for one —
+    the two warnings cover disjoint inputs rather than stacking on this one.
+    """
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        r = ModelResolver({"light": "openai/my-light"})
+        caplog.clear()
+        r.resolve("standard")  # an omitted-but-built-in tier
+    assert caplog.messages == [], (
+        f"resolving an omitted tier should emit nothing: {caplog.messages}"
+    )
+
+
+def test_builtin_disabled_has_no_fallback_to_warn_about(caplog):
+    """Tier 2: with ``builtin={}`` there is no alias to fall back to (#3374).
+
+    The warning's whole claim is "it resolves via reyn's built-in default" — a
+    caller that disabled built-ins has no such default, so the warning would be
+    false. Guards against pointing at a fallback that does not exist.
+    """
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({"light": "openai/a"}, builtin={})
+    assert _tier_warnings(caplog) == []
+
+
+def test_standard_classes_is_derived_from_the_tier_alias_producer():
+    """Tier 2: STANDARD_CLASSES derives from BUILTIN_TIER_ALIASES, not a copy (#3374).
+
+    Two hand-written lists of the tier names would drift the moment a tier is
+    added to one of them. Falsification: pre-fix, STANDARD_CLASSES was an
+    independent literal tuple that a new alias would not have reached.
+    """
+    assert STANDARD_CLASSES == tuple(BUILTIN_TIER_ALIASES)
 
 
 # ── #1454 PR-B: resolve_class_or_fallback (the closed-world class gate) ──────
