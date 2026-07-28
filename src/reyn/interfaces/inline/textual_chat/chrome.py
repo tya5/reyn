@@ -515,10 +515,22 @@ def _history_option_content(rows: "Sequence[str]") -> list[Content]:
 def _model_pane_entries(
     classes: "Sequence[str]", active: "str | None"
 ) -> "list[tuple[str, str]]":
-    """``(row, slash)`` per operator-configured model class, active class marked."""
-    return [
+    """``(row, slash)`` per operator-configured model class, active class marked.
+
+    #3324: ``active`` can be a raw LiteLLM model string rather than a
+    configured class name — when ``--model <raw-id>`` bypasses the class
+    system entirely (``Session.active_model_class()`` returns ``None`` for a
+    passthrough model, so the caller falls back to the raw model string).
+    That string never equals any class name, so the ``· active`` marker
+    silently appeared nowhere. Prepended here as its own informational row
+    (empty command = inert, the same convention read-only panes use) rather
+    than left unmarked."""
+    entries = [
         (f"{c}  · active" if c == active else c, f"/model {c}") for c in classes
     ]
+    if active is not None and active not in classes:
+        entries.insert(0, (f"(current, not a configured class)  {active}", ""))
+    return entries
 
 
 def model_pane_options(classes: "Sequence[str]", active: "str | None") -> list[str]:
