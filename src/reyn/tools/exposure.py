@@ -141,17 +141,20 @@ def descriptors_from_entries(entries: "list[dict]") -> "tuple[ToolDescriptor, ..
 class ExposureDeviation:
     """How one cell's exposed set differs from its scheme's other cells.
 
-    The ``enumerate-all`` scheme spans two cells that do **not** share an
-    exposure set: over ``tool_calls`` it composes the base tools with the
-    catalog minus ``mcp__call_tool``; over ``content_fence`` it renders the
-    catalog alone, so base tools such as ``delegate_to_agent`` are not callable
-    from the code-API. Whether that is intended has never been written down
-    anywhere, and it is tracked as #3381.
+    Every difference between the cells of one scheme is **declared** here rather
+    than being an unexplained divergence between two code paths, which is what
+    makes a difference reviewable: a cell that deviates has to say so and say
+    why, and a cell that does not deviate cannot drift into deviating quietly.
 
-    This type is the receptacle: the difference is **declared** at each cell
-    rather than being an unexplained divergence between two code paths, and the
-    values stay exactly what they are today. Settling #3381 becomes a change of
-    a value here, not a change of a code path."""
+    It earned that job on #3381. The ``enumerate-all`` scheme's two cells did not
+    share an exposure set — ``tool_calls`` composed the base tools with the
+    catalog, ``content_fence`` rendered the catalog alone — and no line anywhere
+    stated it as a decision. Declaring it here (#3376 P1) turned the question
+    into "is this value right?", and settling it was then a change of these
+    values, not of a code path. Today both cells declare
+    ``includes_base_tools=True`` with the same exclusion, and differ only in
+    ``applies_contextual_narrowing``, whose reason is a property of the
+    transport (see ``schemes._enumerate_exposure``)."""
 
     includes_base_tools: bool
     excluded_names: frozenset = frozenset()

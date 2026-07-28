@@ -39,6 +39,13 @@ render する。 permission-eligible な各 action が 1 行 — 名前・引数
 並ぶ。 この list は *提示のみ*。 モデルはそれを読んで何が callable かを知る。
 CodeAct では JSON tool payload は空 — モデルに JSON tool-calling は一切提供されない。
 
+**何が載るか**: `enumerate-all` scheme が `tool_calls` で advertise するのと同じ
+集合 — base tool（`read_file` / `delegate_to_agent` / `session_spawn` …）と
+[universal catalog](universal-catalog.md) の全 action（`file__read` /
+`multi_agent__delegate` …）。 一部の capability は非修飾名と修飾名の 2 つの名前で
+現れるが、 どちらも同じ handler へ同じ gate を通って dispatch されるので、
+いずれの呼び方も正しい。
+
 ### sandboxed subprocess
 
 snippet は agent のプロセス内では走らない。 platform sandbox backend（macOS は

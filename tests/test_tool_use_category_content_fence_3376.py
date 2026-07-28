@@ -149,7 +149,10 @@ async def test_the_code_api_does_not_grow_with_the_catalog() -> None:
     enumerating = await CodeActScheme().build_presentation(
         {}, {}, _Ops(wrappers=_WRAPPERS, catalog=_catalog(300)),
     )
-    assert len(_declared(enumerating.tool_use_sp)) == 300, (
+    # A superset, not an equality: the enumerate-all cell also exposes the base
+    # tools (#3381), which this Fake supplies as ``_WRAPPERS``. What has to hold
+    # for the contrast to mean anything is that all 300 catalog actions arrived.
+    assert _declared(enumerating.tool_use_sp) >= {e["function"]["name"] for e in _catalog(300)}, (
         "the enumerate-all cell over the same Ops did NOT grow with the catalog, "
         "so 'category does not grow' distinguishes nothing here"
     )
