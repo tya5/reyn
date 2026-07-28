@@ -294,6 +294,25 @@ class ModelResolver:
         if name in self._resolved:
             return self._resolved[name]
         # Unknown name: passthrough — the name IS the LiteLLM model string.
+        # This is the sanctioned raw-model-string path (e.g. `--model
+        # gemini-2.5-flash-lite` bypassing the class system) — but it is
+        # ALSO what a mistyped or unregistered CLASS name silently falls
+        # into: nothing here can tell the two apart, so a typo or a config
+        # that failed to load its `models:` section (see `_load_yaml`) never
+        # surfaces as an error here — only much later, as a confusing raw
+        # provider-side rejection once litellm itself receives the
+        # unresolved name (#3368). Logged (not raised) so the passthrough
+        # behavior is unchanged, but the case is no longer fully silent.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "model class %r not found among known classes (%s) — passing it "
+            "through unchanged as a literal LiteLLM model string. If this "
+            "was meant to be a configured class, check reyn.yaml/"
+            "reyn.local.yaml's `models:` section for a typo or a load "
+            "failure.",
+            name, ", ".join(sorted(self._resolved)) or "none",
+        )
         return ModelSpec(model=name, kwargs={})
 
     def class_for_purpose(self, purpose: str) -> str:

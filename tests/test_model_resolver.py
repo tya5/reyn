@@ -39,6 +39,25 @@ def test_resolve_unknown_name_returns_model_spec_passthrough():
     assert spec.kwargs == {}
 
 
+def test_resolve_unknown_name_logs_warning(caplog):
+    """Tier 2: resolve(unknown) logs a warning naming the unresolved value (#3368).
+
+    Found via bug-mining (2026-07-26): an unregistered/mistyped model CLASS
+    name (e.g. a config load failure dropping `models: {standard: ...}`)
+    falls into the same silent passthrough as a legitimate raw LiteLLM model
+    string — the two are indistinguishable until litellm itself rejects the
+    unresolved name much later. Falsification: pre-fix, no log record was
+    emitted here. Passthrough behavior itself (assertions above) is
+    unchanged by this test — only that it is no longer fully silent.
+    """
+    import logging
+
+    r = ModelResolver({"standard": "openai/model-b"})
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        r.resolve("stnadard")
+    assert any("stnadard" in rec.message for rec in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # Backward compat: str form
 # ---------------------------------------------------------------------------
