@@ -401,6 +401,24 @@ class RouterHistoryBuffer:
         # Serialising once here and reusing the result for both the
         # total-check AND the final return also avoids a double
         # ``_serialise_turn`` call on the surviving subset.
+        #
+        # #3185 (MEASURED, closed won't-fix — do NOT "optimise" this back into
+        # a lazy/partial serialise): serialising every CANDIDATE (not just the
+        # survivors) means an image-bearing turn is base64-materialised even
+        # when it is about to be elided away. Re-measured against the six
+        # largest real ``history.jsonl`` conversations available (up to 2969
+        # turns): whole-``build_history`` CPU is 0.11-4.2 ms, of which
+        # ``_serialise_turn`` over ALL turns is 2-35% (0.005-0.72 ms) — the
+        # rest is ``estimate_tokens_for_any_turn`` + trim, which a serialise
+        # cache cannot remove. A text turn serialises in ~0.24 us because
+        # ``_materialise_path_ref_content`` returns ``str`` content untouched,
+        # so the up-front cost is materially nonzero ONLY for inline images
+        # (synthetic 60 turns / 15x200KB elide: 5.2 ms; 15x1MB: 27 ms). Every
+        # such call precedes or accompanies a provider round-trip that is
+        # orders of magnitude slower and, in exactly the image-heavy case,
+        # uploads that same base64 payload. The saving does not justify a
+        # cross-call cache whose staleness would reintroduce the elide/advisor
+        # divergence PR-B closed.
         wire_turns = [self._serialise_turn(m) for m in turns]
 
         total = sum(
