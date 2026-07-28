@@ -285,15 +285,20 @@ concept of.
 parameter schema; litellm's provider transforms mutate a handed-out
 `tools[]` payload IN PLACE, so one Gemini call permanently corrupted the
 canonical schema for every later render, on every provider, for the rest of
-the process (#3383, alive since 2026-07-12, found 2026-07-28). The fix's own
-coverage gate enumerated all FOUR seams where a schema leaves its
+the process. The defect itself dates to `edd4c1b3` (2026-05-09, ADR-0026
+M1) — roughly two and a half months before discovery on 2026-07-28, not the
+16 days a naive reading of the detecting test's own history would suggest
+(that test's baseline belonged to an unrelated 2026-07-12 refactor; the
+refactor's age is not the defect's age — precisely this doc's own root
+hazard, "since when observed" answered in place of "since when true"). The
+original coverage gate enumerated THREE seams where a schema leaves its
 `ToolDefinition` — live, registry-driven, "a future tool is covered from day
-one." **Total on the *tool* axis, partial on the *seam* axis**: a fifth
-seam, the hot-list direct-alias path, rendered through none of the first
-four and sat outside a gate that read as exhaustive. Enumerating tool NAMES
-can never surface this, because the defect lives at the SHAPE of a
+one." **Total on the *tool* axis, partial on the *seam* axis**: a FOURTH
+seam, the hot-list direct-alias path, rendered through none of the three and
+sat outside a gate that read as exhaustive (#3383/#3385). Enumerating tool
+NAMES can never surface this, because the defect lives at the SHAPE of a
 projection (`dict(<expr>.parameters)`), not at any name — the fix found the
-remaining seam only by grepping the codebase for that shape directly.
+missing seam only by grepping the codebase for that shape directly.
 
 The same incident sharpens §6 (the vacuity guard) one level further. The
 fix's own AST gate — REDs on any `dict(<expr>.parameters)` call outside the
@@ -333,17 +338,19 @@ actually promises.
   the SUBJECT of an assertion, only an ingredient used to fatten another
   set. The tell: **a named set that appears only on the input side of
   another set's construction, never asserted about directly, is a property
-  that looks wired but isn't** (#3310, the sent-queue `RESERVED_KEYS` case).
+  that looks wired but isn't** (#3363, the sent-queue `RESERVED_KEYS` case).
 - **A two-declaration list-match** (A2A's and MCP's progress fan-outs both
-  declare the identical three-kind `TRACKED_EVENTS`) is the easy property —
-  and possibly already gated by construction, since the two literals match.
+  declare the identical three-kind `TRACKED_EVENTS`) is the easy property,
+  and it IS already gated: `test_a2a_progress_bridge_tracks_three_lifecycle_events`
+  asserts the two literals match each other and pins their exact contents.
   "Every declared kind actually has a live emitter" is the property that
   matters, and nobody asserted it: two of the three kinds have had zero
   producers in `src/` for an unknown period, silently degrading two live
-  network protocols' progress streams to LLM-call-only (#3357). Worse, if a
-  gate ever comes to PIN the literal set's exact contents, that pin will
-  actively **resist** the correct fix (removing the dead entries) rather
-  than merely fail to catch the defect.
+  network protocols' progress streams to LLM-call-only (#3357). Worse, the
+  EXISTING literal-pin test actively **resists** the correct fix (removing
+  the dead entries) rather than merely failing to catch the defect — fixing
+  the real property requires touching a test that currently reads as
+  unrelated, easy-to-miss friction.
 - **§12's four-seam behavioral coverage** is itself an instance of this
   shape one level up: "the seams that exist all route through the
   projection helper" is provable and was proven; "no NEW seam can ever
