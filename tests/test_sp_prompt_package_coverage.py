@@ -45,8 +45,8 @@ from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.services.turn_budget.engine import wrap_up_system_prompt
 from reyn.tools.encoders import build_actions_map, render_code_api
+from reyn.tools.schemes._content_fence_cell import _format_codeact_observation
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
-from reyn.tools.schemes.codeact import _format_codeact_observation
 from reyn.tools.schemes.retrieval import _search_sp
 
 _PROMPT_MODULES = [

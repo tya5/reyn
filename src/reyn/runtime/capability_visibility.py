@@ -219,7 +219,8 @@ class CapabilityVisibility:
         self._excluded_categories = frozenset(excluded_categories or ())
         # #3220: the chat-layer ``ToolUseScheme`` name (``reyn.tools.scheme.get_scheme``
         # registry key — "enumerate-all" / "universal-category" / "retrieval" / the
-        # (enumerate-all, content_fence) CodeAct cell's resolved name, FP-0066 P4c #3247).
+        # two content_fence cells' resolved names: (enumerate-all, content_fence) =
+        # CodeAct, FP-0066 P4c #3247, and (category, content_fence), #3376 P2).
         # Immutable for the session's lifetime (Session never reassigns
         # ``self._chat_tool_use_scheme`` post-construction — same stability class as
         # ``agent_name``), so a plain field is correct here, not a live provider.

@@ -348,14 +348,14 @@ async def _handle_mcp_install_local(
     so the MCPClient launcher can spawn the process without further
     metadata.
     """
-    from pathlib import Path
-
     from reyn.core.op_runtime.mcp_install import (
         _read_yaml_config,
+        _resolve_write_root,
         _scope_to_path,
         _write_yaml_config,
     )
     from reyn.security.permissions.permissions import PermissionDecl
+    from reyn.tools.op_context_bridge import build_legacy_op_context
 
     name = str(args.get("name") or "").strip()
     command = str(args.get("command") or "").strip()
@@ -377,22 +377,26 @@ async def _handle_mcp_install_local(
             "data": {"error": "env_overrides must be an object"},
         }
 
-    project_root = Path.cwd()
-    rs = getattr(ctx, "router_state", None)
-    workspace = getattr(ctx, "workspace", None)
-    if workspace is not None and hasattr(workspace, "root"):
-        project_root = Path(workspace.root)
+    # The OpContext is built HERE — before the gate AND before project_root — via
+    # the SAME single-source bridge `_handle_mcp_install_registry` /
+    # `_handle_mcp_install_package` use (`build_legacy_op_context`, #1442). The
+    # gate needs the operator's real PermissionDecl + intervention bus off it.
+    #
+    # project_root MUST be resolved from THIS op_ctx's Workspace via
+    # `_resolve_write_root`, not from `ctx.workspace.root` / cwd (the pre-fix
+    # code here): on the chat-router path `ctx.workspace` is None — the real
+    # Workspace (rooted at the agent's `workspace_base_dir`) lives only on the
+    # op_context_factory's OpContext. Hand-building project_root from
+    # `ctx.workspace` silently fell back to `Path.cwd()`, which can differ from
+    # the project root the registry/package install verbs write to — so an
+    # install via THIS verb read/wrote a DIFFERENT `.reyn/config/mcp.yaml` than
+    # the one earlier registry/package installs used, and the merge-read
+    # (`_read_yaml_config`) saw an empty/stale file, silently dropping every
+    # previously-registered server (#3213 item 2: "mcp__install_local clobbers
+    # mcp.yaml" — root cause was a wrong-file read, not a merge bug).
+    _op_ctx = build_legacy_op_context(ctx)
+    project_root = _resolve_write_root(getattr(_op_ctx, "workspace", None))
     config_path = _scope_to_path("local", project_root)
-
-    # The OpContext is built HERE — before the gate — because the gate needs the
-    # operator's real PermissionDecl + the intervention bus off it. It used to be
-    # constructed further down (for the hot-reload probe only), which is why the
-    # gate below had nothing real to gate WITH.
-    _op_ctx = (
-        rs.op_context_factory()
-        if rs is not None and getattr(rs, "op_context_factory", None) is not None
-        else None
-    )
 
     # ``.reyn/config/`` is a RECOVERY-CORE write-gate prefix (#2248 PR-C):
     # deliberately carved OUT of the broad ``.reyn/`` default write zone, so a
