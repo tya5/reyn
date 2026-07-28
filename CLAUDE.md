@@ -141,6 +141,14 @@ Three rules then keep multi-session work coherent:
    "this PR partially closes #X". For sub-PRs in a multi-PR arc, use `part of
    #X` or `toward #X`. Only the final PR that actually completes the umbrella
    issue should use `Closes #X`.
+   **Determining "final" is not a guess**: before writing `Closes #X` into a
+   brief or PR body, enumerate every PR/issue whose body contains `part of
+   #X` (`gh pr list --state all --search "#X in:body"`) and confirm none are
+   still open. "Probably the last one" is not sufficient — a close closes
+   the umbrella issue's visibility along with it, so a wrong guess hides the
+   remaining work rather than merely failing to finish it (#3368: a `Closes`
+   fired 40 minutes before the arc's actual last PR merged, because the
+   enumeration step was skipped).
    **Reviewer recovery angle:** an unexpected issue auto-close triggered by a
    sub-PR merge is almost always a closing-keyword false positive. Reopen the
    issue and verify the arc is not half-done before assuming completion.
