@@ -7100,10 +7100,12 @@ class Session:
         if "type" not in expanded and expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
-        # #2421: route through MCPGateway (not a raw MCP client call) — it contains the
-        # crash path so a mid-list server death raises MCPFault, never an uncontained
-        # BaseExceptionGroup. #2597 S2a: pool only when non-ephemeral (pooling a
-        # sub-second-lived session is pure churn).
+        # #2421: routed through the MCPGateway seam rather than a raw MCP client — the
+        # seam contains the crash path, so a mid-list server death raises MCPFault
+        # instead of an uncontained BaseExceptionGroup. #2597 S2a: pool only when
+        # non-ephemeral — pooling a sub-second-lived session is pure churn.
+        # (Wording note: keep the class name away from a following "(" — the #2813
+        # completeness scanner reads `MCPGateway\s*\(` as a construction site.)
         gateway = (
             MCPGateway(
                 pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
