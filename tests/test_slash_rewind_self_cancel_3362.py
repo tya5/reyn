@@ -17,9 +17,15 @@ suspension (the reset-record's durability await). The observable damage:
 
 ``await_quiescent`` already carried the matching re-entrancy guard for exactly
 this call shape; ``cancel_inflight`` did not. These tests drive the real slash
-seam through a real ``Session`` run loop on a real ``StateLog`` and pin the
-two halves of the contract: the operator-visible confirmation, and the durable
-evidence that the reconstruction half actually ran.
+seam through a real ``Session`` run loop on a real ``StateLog``.
+
+``test_a_persisted_rewind_record_implies_the_reset_was_materialised`` is the
+**divergence-falsify** gate — the permanent one, kept for the failure class
+rather than for this instance. It compares the WAL's claim against what the
+runtime substrate actually did, and it is the DUAL of the recovery-PR
+truncate-falsify rule (which asks whether derived state survives the loss of
+its source WAL-events): truncating cannot reproduce an over-claim, so a repair
+to a reconstruction path needs this direction falsified too. See its docstring.
 
 Destructive-path safety: every path — project root, WAL, agent dirs, workspace
 — is under ``tmp_path``, and the test ``chdir``s there, so no real state can be
@@ -140,6 +146,13 @@ async def _run_turns(registry: AgentRegistry, session, count: int) -> None:
             raise AssertionError(f"turn {i} never reached a WAL generation boundary")
 
 
+def _snapshot_applied_seq(snapshot_path: Path) -> "int | None":
+    """The runtime substrate's own cut — the half a WAL read cannot see."""
+    if not snapshot_path.exists():
+        return None
+    return json.loads(snapshot_path.read_text(encoding="utf-8")).get("applied_seq")
+
+
 def _wal_seqs(tmp_path: Path) -> "list[tuple[int, str]]":
     wal = tmp_path / ".reyn" / "state" / "wal.jsonl"
     return [
@@ -179,15 +192,33 @@ async def test_rewind_from_a_turn_confirms_to_the_operator(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_rewind_from_a_turn_materialises_the_reset(tmp_path, monkeypatch):
-    """Tier 2: the reconstruction half of checkout runs, not just the WAL record.
+async def test_a_persisted_rewind_record_implies_the_reset_was_materialised(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: DIVERGENCE-falsify — the WAL may not claim a rewind that never ran.
 
-    The durable witness is the self-contained snapshot ``checkout`` step 5
-    persists at ``applied_seq = R`` (the reset record's own seq). A
-    self-cancelled checkout still lands the ``rewind`` record — the write is
-    enqueued before the await the cancel hits — so asserting on the WAL record
-    alone cannot tell the two apart. The snapshot can: without the guard it
-    stays behind at a pre-rewind seq.
+    The permanent gate for the failure class this defect belongs to. Note it is
+    **not** a truncate-falsify, and the recovery-PR gate's truncate rule cannot
+    substitute for it: truncate-falsify asks whether derived state survives the
+    LOSS of its source WAL-events; this defect is the exact dual — the WAL
+    ASSERTS something the runtime never did. Removing WAL-events cannot
+    reproduce an over-claim, so the two gates falsify opposite directions and a
+    repair to a reconstruction path needs this one.
+
+    The two altitudes it compares, which must never disagree:
+
+      * **the WAL's claim** — a ``rewind`` reset-record at seq ``R``;
+      * **what the runtime actually did** — the self-contained snapshot
+        ``checkout`` step 5 persists at ``applied_seq = R`` (so ``restore_all``
+        replays only ``> R``).
+
+    Asserting on the WAL record alone would be VACUOUS here: a self-cancelled
+    checkout still lands it, because the write is enqueued (``put_nowait``)
+    before the await the cancel arrives at. The snapshot is the discriminator —
+    without the guard it stays behind at a pre-rewind seq while the record says
+    the world moved. The before/after comparison is what makes it a divergence
+    assertion rather than a coincidence: the snapshot must be observed to
+    ADVANCE to ``R``, not merely to be found sitting there.
     """
     monkeypatch.chdir(tmp_path)
     _install_provider(monkeypatch)
@@ -196,20 +227,29 @@ async def test_rewind_from_a_turn_materialises_the_reset(tmp_path, monkeypatch):
     session = registry.get_session("default")
     await _run_turns(registry, session, 3)
 
+    snapshot_path = tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json"
+    applied_before = _snapshot_applied_seq(snapshot_path)
+
     target = registry.list_rewind_points()[0]["seq"]
     await session.submit_user_text(f"/rewind {target}")
     await _await_reply(registry, contains="⏪")
 
-    seqs = _wal_seqs(tmp_path)
-    reset_seq, reset_kind = seqs[-1]
-    assert reset_kind == "rewind", "the reset record must be the WAL head"
+    reset_seq, reset_kind = _wal_seqs(tmp_path)[-1]
+    assert reset_kind == "rewind", (
+        "the WAL must carry the claim this gate falsifies against — no reset "
+        "record means the test never reached the divergence it exists to catch"
+    )
+    assert applied_before is not None and applied_before < reset_seq, (
+        "the snapshot must start BEHIND the reset record, or advancing to it "
+        "would prove nothing"
+    )
 
-    snapshot_path = tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json"
-    assert snapshot_path.exists(), "checkout step 5 must persist a snapshot"
-    applied = json.loads(snapshot_path.read_text(encoding="utf-8")).get("applied_seq")
-    assert applied == reset_seq, (
-        "the snapshot must be persisted AT the reset record — a snapshot left "
-        "at a pre-rewind seq means _materialize_rewind never ran"
+    applied_after = _snapshot_applied_seq(snapshot_path)
+    assert applied_after == reset_seq, (
+        f"WAL/runtime divergence: the WAL claims a rewind at seq {reset_seq}, "
+        f"but the runtime substrate is still at applied_seq {applied_after} — "
+        "_materialize_rewind never ran, so every live session keeps the "
+        "pre-rewind lineage the record says was abandoned"
     )
 
 
