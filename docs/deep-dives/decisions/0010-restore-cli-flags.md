@@ -39,11 +39,11 @@ state".
 
 **Adopt C: two distinct flags.**
 
-| Flag | snapshot/WAL on disk | next run |
-|---|---|---|
-| (none, default) | restore_all + bulk-prompt at startup | normal restore |
-| `--no-restore` | preserved + warning banner | normal restore |
-| `--reset` | **deleted** (with confirm) | empty state |
+| Flag | snapshot/WAL on disk | chat transcript on disk | next run |
+|---|---|---|---|
+| (none, default) | restore_all + bulk-prompt at startup | loaded (`load_history()`) | normal restore |
+| `--no-restore` | preserved + warning banner | preserved, NOT loaded this run | normal restore |
+| `--reset` | **deleted** (with confirm) | preserved | empty state |
 
 `--reset` semantics:
 
@@ -59,10 +59,19 @@ state".
 
 `--no-restore` semantics:
 
-- Skip the `restore_all()` call this run.
-- Print banner to stderr: "⚠ skill state on disk is NOT loaded".
-- State files unchanged on disk.
-- Next run (without the flag) loads them normally.
+- Skip the `restore_all()` call this run (the WAL-derived agent-state
+  restore).
+- Skip the `Session.load_history()` call this run (the persisted chat
+  transcript). #3213: a session stuck in a false-belief loop still saw
+  "previous attempts" under `--no-restore` because only the agent-state
+  axis was skipped — the transcript load is a separate path, gated by
+  the same `fresh`-style flag `run-once` already used internally. One
+  flag now covers both loading axes.
+- Print banner to stderr: "⚠ --no-restore: agent state AND the chat
+  transcript on disk are NOT loaded this run (neither is deleted)."
+- State files (snapshot/WAL) AND the transcript file are unchanged on
+  disk — `--no-restore` only skips *loading*, it never deletes.
+- Next run (without the flag) loads both normally.
 
 Implementation lives in `_reset_project_state(project_root, *,
 confirm=True)` for testability + the run() function's flag handling.
