@@ -94,9 +94,11 @@ class DurablePendingStore:
     """A crash-durable :class:`~reyn.hooks.composer.PendingStore` — the whole
     pending set as one atomically-rewritten JSON file.
 
-    Every mutation rewrites the file (tmp + ``fsync`` + ``os.replace``), so the
-    file on disk is always a complete, self-consistent pending set: there is no
-    partial-apply window and no replay step. That write amplification is why
+    Every mutation rewrites the file (tmp + ``fsync`` + ``os.replace`` + a
+    parent-directory ``fsync`` — see :meth:`_fsync_parent_dir` for why the last
+    one is required rather than optional), so the file on disk is always a
+    complete, self-consistent pending set: there is no partial-apply window and
+    no replay step. That write amplification is why
     ``ComposerDef.durable`` defaults to True only for ``deadline`` — arm/disarm
     edges are rare, whereas a ``debounce`` composer's per-event churn would pay
     an fsync per bus event for a guarantee that op does not need.
@@ -171,6 +173,57 @@ class DurablePendingStore:
                 "is no longer crash-durable and will be lost if this process dies.",
                 self._path, exc,
             )
+            return
+        self._fsync_parent_dir()
+
+    def _fsync_parent_dir(self) -> None:
+        """Persist the ``os.replace`` rename itself, not just the file contents.
+
+        This is a deliberate durability-level decision, not boilerplate. Paying
+        ``fsync`` on the tmp file above already commits this store to a threat
+        model STRONGER than a process crash — a process crash cannot lose the
+        page cache, so against that threat alone no fsync would be needed at
+        all. Under the stronger threat (power loss / kernel panic) a directory
+        entry created by ``rename`` is not durable until the PARENT DIRECTORY
+        is fsync'd, so without this the contents would survive while the rename
+        that makes them visible is lost — leaving the PREVIOUS generation of
+        the file in place.
+
+        The loss is asymmetric, which is what makes it worth the syscall:
+        losing the last **arm** means a dead-man monitor that silently never
+        fires — precisely the failure this module exists to remove — whereas
+        losing the last **disarm** only costs a spurious missed-deadline fire
+        (noisy, but the safe direction).
+
+        **This guarantee is not provable by a test in this suite.** A
+        process-crash test cannot distinguish a dir-fsync'd rename from a
+        non-fsync'd one (both survive), so there is deliberately no gate
+        asserting it — inventing one would manufacture a green result for a
+        property the test never exercised. It is argued from the write path,
+        not witnessed.
+
+        Failure here is logged at DEBUG, not ERROR, and never re-reports the
+        write as failed: the data IS in the page cache and correct for this
+        process, and on platforms where opening a directory is not permitted
+        (Windows) this would otherwise fire a false alarm on every arm."""
+        try:
+            fd = os.open(self._path.parent, os.O_RDONLY)
+        except OSError as exc:
+            _log.debug(
+                "Composer pending store %s: parent-directory fsync unavailable (%s) — the "
+                "rename's durability against power loss is unconfirmed on this platform.",
+                self._path, exc,
+            )
+            return
+        try:
+            os.fsync(fd)
+        except OSError as exc:
+            _log.debug(
+                "Composer pending store %s: parent-directory fsync failed (%s) — the "
+                "rename's durability against power loss is unconfirmed.", self._path, exc,
+            )
+        finally:
+            os.close(fd)
 
     # -- PendingStore protocol ------------------------------------------
 
