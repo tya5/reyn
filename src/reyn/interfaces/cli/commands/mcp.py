@@ -318,26 +318,31 @@ def register(sub) -> None:
     refresh.set_defaults(func=run_refresh)
 
 
-def run_serve(args: argparse.Namespace) -> None:
-    from reyn.config import _find_project_root, load_project_context
-    from reyn.core.events.state_log import StateLog
-    from reyn.llm.llm import run_async
-    from reyn.mcp.server import serve_stdio
-    from reyn.runtime.budget.budget import BudgetTracker
-    from reyn.runtime.factory_config import SessionFactoryConfig
-    from reyn.runtime.presentation_consumer import NullPresentationConsumer
-    from reyn.runtime.profile import AgentProfile
-    from reyn.runtime.registry import AgentRegistry
-    from reyn.runtime.scoped_session_factory import build_scoped_chat_session
-    from reyn.security.permissions.permissions import PermissionResolver
+def _anchor_project_root(args: argparse.Namespace) -> Path:
+    """Resolve `reyn mcp serve`'s project root and anchor the process in it.
 
-    session_cfg = InvocationContext.from_args(args)
-    # #2708 P3.2b: missing-cred pre-check moved onto the single LLM funnel
-    # (``recorded_acompletion``) — no per-surface startup gate. It surfaces as a
-    # typed ``MissingCredentialsError`` through this command's error boundary.
-    model, _ = session_cfg.model_for(args)
-    output_language = session_cfg.output_language_for(args)
-    safety = session_cfg.safety_for(args)
+    MUST run BEFORE the config is loaded (#3368). MCP clients (Claude Desktop,
+    Cursor, …) typically ignore the ``cwd`` field in their server config, so the
+    spawned server process lands in ``/`` — and ``load_config()`` resolves its
+    3-layer cascade from ``Path.cwd()``. Loading the config first therefore read
+    NO ``reyn.yaml`` at all and silently produced the built-in defaults
+    (``models: {}`` + ``model: "standard"``, ``permissions: {}``, default safety
+    / cost / mcp): the unmapped class ``"standard"`` then travelled through
+    ``ModelResolver.resolve``'s sanctioned raw-string passthrough all the way to
+    litellm, which rejected it with ``You passed model=standard`` — the
+    owner-reported symptom, with no ``--model`` flag and no ``/model`` command
+    anywhere in the picture. The ``os.chdir`` below already existed for exactly
+    this reason (relative ``.reyn/...`` paths), but it ran 44 lines AFTER the
+    config load, so it fixed the paths and not the config.
+
+    Extracted as a function so the ordering is structural: the caller cannot
+    obtain a project root without the chdir having happened, and every
+    cwd-derived read after it (config cascade included) sees the project.
+
+    Exits the process with a decision-enabling message when no project root can
+    be determined, or when the resolved root has no ``reyn.yaml``.
+    """
+    from reyn.config import _find_project_root
 
     if args.project:
         project_root = Path(args.project).resolve()
@@ -370,12 +375,39 @@ def run_serve(args: argparse.Namespace) -> None:
     # MCP clients (Claude Desktop, Cursor, …) spawn the server with cwd=`/`,
     # which causes any code that uses relative `.reyn/...` paths to try to
     # write under the filesystem root and crash with a read-only-fs error.
-    # `--project` only fixes the explicit StateLog/budget paths in this
-    # function; deeper code paths (Session, Workspace, AgentRegistry)
-    # also use relative paths internally. Anchor the whole process at the
-    # project root so the same code that works under `reyn chat` works
-    # here unchanged.
+    # `--project` only fixes the explicit StateLog/budget paths in
+    # ``run_serve``; deeper code paths (Session, Workspace, AgentRegistry)
+    # also use relative paths internally — and the config cascade itself
+    # (#3368). Anchor the whole process at the project root so the same code
+    # that works under `reyn chat` works here unchanged.
     os.chdir(project_root)
+    return project_root
+
+
+def run_serve(args: argparse.Namespace) -> None:
+    from reyn.config import load_project_context
+    from reyn.core.events.state_log import StateLog
+    from reyn.llm.llm import run_async
+    from reyn.mcp.server import serve_stdio
+    from reyn.runtime.budget.budget import BudgetTracker
+    from reyn.runtime.factory_config import SessionFactoryConfig
+    from reyn.runtime.presentation_consumer import NullPresentationConsumer
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.scoped_session_factory import build_scoped_chat_session
+    from reyn.security.permissions.permissions import PermissionResolver
+
+    # #3368: anchor FIRST — the config cascade below is cwd-derived, so it must
+    # not run until the process sits in the project root (see the helper).
+    project_root = _anchor_project_root(args)
+
+    session_cfg = InvocationContext.from_args(args)
+    # #2708 P3.2b: missing-cred pre-check moved onto the single LLM funnel
+    # (``recorded_acompletion``) — no per-surface startup gate. It surfaces as a
+    # typed ``MissingCredentialsError`` through this command's error boundary.
+    model, _ = session_cfg.model_for(args)
+    output_language = session_cfg.output_language_for(args)
+    safety = session_cfg.safety_for(args)
 
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     budget_tracker = BudgetTracker(session_cfg.config.cost)
