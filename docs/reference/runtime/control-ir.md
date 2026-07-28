@@ -509,6 +509,53 @@ The OS resolves the server's transport, dispatches via `MCPClient.get_prompt` (g
 
 **Prompts have no subscribe concept.** Unlike resources (`mcp_subscribe_resource`/`mcp_unsubscribe_resource`), MCP's `prompts` capability has no server-push notification for a specific prompt's content changing — only the coarser `notifications/prompts/list_changed` (bridged to an EventLog event by `reyn.mcp.message_handler.ReynMCPMessageHandler.on_prompt_list_changed`, independent of this op kind). There is no `mcp_subscribe_prompt` to build.
 
+## Two dispatch paths reach MCP capability, and why they stay separate (#3409)
+
+Tool handlers in `src/reyn/tools/*.py` reach MCP capability by two different routes:
+
+- **Path A** — a handler calls `host.<named method>` (a callback injected into `RouterHostAdapter`). The four discovery methods above — `list_mcp_tools`, `list_mcp_resources`, `list_mcp_resource_templates`, `list_mcp_prompts` — route straight through `MCPGateway` from `RouterHostAdapter`, bypassing `execute_op` entirely.
+- **Path B** — a handler calls `execute_op(TypedIROp, ctx)` directly. The five content/action op kinds documented above — `mcp` (call_tool), `mcp_read_resource`, `mcp_subscribe_resource`, `mcp_unsubscribe_resource`, `mcp_get_prompt` — all go through this path already.
+
+Typed op kinds for the Path-A methods already exist in `OP_KIND_MODEL_MAP` (see the op-kind table at the top of this doc), and `tools/mcp.py`'s own docstring names `execute_op` as the eventual destination for MCP dispatch. So today's route to the four list methods takes three hops that do not pass through the abstraction (`ToolDefinition.handler` -> `host.list_mcp_*` -> the injected `RouterHostAdapter` callback -> `Session._mcp_list_*`) before reaching the same op layer the other five methods reach directly.
+
+### The measurement
+
+Per-method correspondence table (#3409, AST-verified — not re-derived here, see the issue for the full audit trail):
+
+| method | routes via | permission gate | audit emit | error format | `_ephemeral`/pool routing |
+|---|---|---|---|---|---|
+| `_mcp_list_servers` | neither (returns the static configured-server roster) | — | — | — | — |
+| `_mcp_list_tools` | `MCPGateway` direct | none | suppressed (`MCPListingSuppression.LIST_TOOLS`) | `{"error": ...}` dict, 5 call sites | Y |
+| `_mcp_list_resources` | `MCPGateway` direct | none | `mcp_resources_listed` | same 5 sites | Y |
+| `_mcp_list_resource_templates` | `MCPGateway` direct | none | suppressed (`MCPListingSuppression.LIST_RESOURCE_TEMPLATES`) | same 5 sites | Y |
+| `_mcp_list_prompts` | `MCPGateway` direct | none | `mcp_prompts_listed` | same 5 sites | Y |
+| `_mcp_call_tool` | `execute_op(MCPIROp)` | `PermissionDecl(mcp=[server])` | — (op layer's own concern) | none — raises into the op layer | Y (+ pool context manager) |
+| `_mcp_read_resource` | `execute_op` | same | — | none | Y (+ pool context manager) |
+| `_mcp_subscribe_resource` | `execute_op` | same | — | none | Y |
+| `_mcp_unsubscribe_resource` | `execute_op` | same | — | none | Y |
+| `_mcp_get_prompt` | `execute_op` | same | — | none | Y (+ pool context manager) |
+
+The four listing methods now share one seam, `Session._mcp_list_via_gateway` — the "error format" and "audit emit" columns above are its behavior, not four independent implementations.
+
+Two of the five columns are **not** blockers, despite looking like gaps:
+
+- **Missing permission gate** — by design. `list_tools`/`list_resources`/`list_resource_templates`/`list_prompts` are declared "no permission gate, no op-kind" in `schemas/models.py` itself (the same file `OP_KIND_MODEL_MAP` lives in): discovering *what's available* is not gated, only reading/calling content is (see "Discovery is NOT gated" above and at `mcp_read_resource`).
+- **Audit-emit split** (`list_tools`/`list_resource_templates` suppressed, `list_resources`/`list_prompts` emitting) — a real asymmetry, but a *declared* one: `MCPListingSuppression` in `session.py` makes it an enumerable, reasoned opt-out rather than a silent gap. Whether all four should emit is tracked separately in #3410 (open) and does not block collapsing the two paths.
+
+### The actual blocker: the error contract, not permission
+
+Path A's four listing methods return `[{"error": ...}]` at five call sites inside `_mcp_list_via_gateway`: no MCP servers configured, the named server not configured, its config not a dict, a `Cancelled` cancellation folded to `{"error": "cancelled"}`, and an `MCPFault` folded to `{"error": str(exc)}`. That dict is the value the tool handler returns to the LLM — it is caller-visible, and **LLM-visible**: a model reading `{"error": "cancelled"}` is reading response text, not observing a raised exception.
+
+Path B's five `execute_op`-routed methods have none of that. `Cancelled`, `MCPFault`, and everything else propagate as exceptions into the op layer; there is no `{"error": ...}` dict anywhere on that path.
+
+Folding the four listing methods into `execute_op` is therefore not a structural move by itself — it requires first deciding what the *unified* error contract is: the op layer starts returning `list_*`-shaped error dicts, the listing call sites start accepting exceptions, or `execute_op` grows a dual contract. Any of those changes what the LLM receives on a listing failure, which is a **behaviour change**, not a refactor — and behaviour changes are not folded into structural changes (a regression on either axis then has no attribution). That decision is tracked separately as **#3411** and is deliberately out of scope here.
+
+🔴 **This document is accurate only while #3411 is open.** Once #3411 settles which error contract Path A and Path B share, the one blocking asymmetry in the table above closes and folding the four listing methods into `execute_op` becomes a plain structural move — subject to the usual `OP_KIND_MODEL_MAP` <-> `control-ir.md` same-PR sync rule, since the typed op kinds already exist. Re-derive the table above before acting on it once #3411 closes; do not assume the reasoning here still applies unchanged.
+
+### `RouterHostAdapter`'s parameter count is a shadow of this split, not a Parameter-Object problem
+
+This is why `RouterHostAdapter.__init__` carries 10 `mcp_*` callback parameters (out of its ~80 total) instead of one facade: each of the ten methods above needs its own injected callable because none of them is a thin delegate — the table's "error format" and "`_ephemeral`/pool routing" columns are real logic living on the `Session` side of each callback, not a 2-4 line pass-through. Grouping the 80 parameters into a Parameter Object was already measured as a near-no-op on #3121 (54 -> 45 params, 41 left flat) — the width tracks the tools-handler -> host hop counted in this section, not a missing grouping. The falsifiable form of this claim is recorded as a K-inline directly on `RouterHostAdapter.__init__` in `src/reyn/runtime/services/router_host_adapter.py`.
+
 ## `mcp_install`
 
 Installs an MCP server from `registry.modelcontextprotocol.io` into the project's config.
