@@ -8,8 +8,8 @@ infrastructure.
 
 This PR makes two callers feed ``history_events``:
 
-  1. ``_A2AProgressBridge._send`` — phase_started / llm_called /
-     act_executed events fan out to BOTH the SSE buffer + (optionally)
+  1. ``_A2AProgressBridge._send`` — the ``PROGRESS_LIFECYCLE_EVENTS``
+     audit-event kinds fan out to BOTH the SSE buffer + (optionally)
      the webhook POST. Bridge is now constructed unconditionally in
      ``_handle_async_mode._run`` (= the webhook_url gate moved INTO
      the bridge's per-sink dispatch).
@@ -95,7 +95,7 @@ def test_send_appends_payload_to_history_events() -> None:
         run_registry=registry,
     )
 
-    asyncio.run(bridge._send(3, "phase_started", "phase: planning"))
+    asyncio.run(bridge._send(3, "turn_started", "turn: user"))
 
     refreshed = registry.get(entry.run_id)
     (appended,) = refreshed.history_events
@@ -103,8 +103,8 @@ def test_send_appends_payload_to_history_events() -> None:
         "run_id": entry.run_id,
         "status": "in-progress",
         "progress": 3,
-        "event": "phase_started",
-        "message": "phase: planning",
+        "event": "turn_started",
+        "message": "turn: user",
         "agent_name": "demo",
     }
 
@@ -137,7 +137,7 @@ def test_send_skips_webhook_when_webhook_url_is_none(monkeypatch) -> None:
         run_registry=RunRegistry(),
     )
 
-    asyncio.run(bridge._send(1, "phase_started", "phase: planning"))
+    asyncio.run(bridge._send(1, "turn_started", "turn: user"))
     assert posted == []
 
 
@@ -216,7 +216,7 @@ def test_sse_sink_failure_does_not_block_webhook(monkeypatch) -> None:
         run_registry=_RaisingRegistry(),
     )
 
-    asyncio.run(bridge._send(1, "phase_started", "phase: planning"))
+    asyncio.run(bridge._send(1, "turn_started", "turn: user"))
     # webhook still ran despite SSE failure
     (only,) = posted
 
@@ -248,7 +248,7 @@ def test_webhook_sink_failure_does_not_block_sse(monkeypatch) -> None:
         run_registry=registry,
     )
 
-    asyncio.run(bridge._send(1, "act_executed", "act: 2 ops"))
+    asyncio.run(bridge._send(1, "tool_returned", "tool: grep"))
 
     # SSE append succeeded despite webhook failure
     assert len(registry.get(entry.run_id).history_events) == 1
@@ -338,9 +338,9 @@ def test_sse_endpoint_replays_appended_events_via_history() -> None:
     )
 
     async def _drive() -> None:
-        await bridge._send(1, "phase_started", "phase: planning")
+        await bridge._send(1, "turn_started", "turn: user")
         await bridge._send(2, "llm_called", "llm: m")
-        await bridge._send(3, "act_executed", "act: 2 ops")
+        await bridge._send(3, "tool_returned", "tool: grep")
 
     asyncio.run(_drive())
 
@@ -348,6 +348,6 @@ def test_sse_endpoint_replays_appended_events_via_history() -> None:
     # The endpoint code at line 921 reads `entry.history_events[seen:]`
     # — confirm the slice the endpoint will replay has 3 ordered events.
     assert [e["event"] for e in refreshed.history_events] == [
-        "phase_started", "llm_called", "act_executed",
+        "turn_started", "llm_called", "tool_returned",
     ]
     assert [e["progress"] for e in refreshed.history_events] == [1, 2, 3]

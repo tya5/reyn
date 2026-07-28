@@ -5523,24 +5523,54 @@ class Session:
                 try:
                     await self._turn_owner_task
                 except asyncio.CancelledError:
-                    if self._turn_cancel_self_initiated:
-                        # #2242 WAL-invariant 1: CancelledError unwound the
-                        # turn-body task straight out of whatever await it was
-                        # suspended on (mid-generation: the LLM await) — every
-                        # statement AFTER that await (parsing the response,
-                        # appending it to history, any further tool iteration)
-                        # never executes, so the cancelled turn's result is
-                        # never appended. Swallow here (do NOT re-raise) so the
-                        # driver task — and thus the agent — survives to serve
-                        # the next turn; only the per-turn sub-task was cancelled.
-                        _cancelled = True
-                    else:
-                        # Not our own cancel_inflight() call — this driver task
-                        # itself was cancelled from outside (e.g. an anyio scope
-                        # teardown for the MCP/A2A request-handler task pumping
-                        # run_one_iteration directly, FP-0013 §ADR-A). Preserve
-                        # the pre-#2242 behaviour: let it propagate.
+                    # #3377: the question here is WHOSE cancellation this is,
+                    # and the authoritative answer is not a flag — it is
+                    # whether THIS (the driver) task is itself being
+                    # cancelled. ``Task.cancelling() > 0`` is true only when
+                    # ``cancel()`` was called on the current task, which is
+                    # exactly the FP-0013 §ADR-A case (an anyio scope teardown
+                    # cancelling the MCP/A2A request-handler task that pumps
+                    # ``run_one_iteration``). The same discriminator is already
+                    # used by ``reyn.mcp.pool.is_real_control_flow`` and
+                    # ``reyn.core.cancellable.race_cancellable``.
+                    #
+                    # Before #3377 this branched on ``_turn_cancel_self_initiated``
+                    # alone, which conflates two very different things: a
+                    # cancel aimed at THIS task, and a cancel aimed at the
+                    # per-turn SUB-task by anyone who did not go through
+                    # ``cancel_inflight()`` (Ctrl-C plumbed to the turn, a
+                    # timeout, a stop-world operation, whatever is added
+                    # next — #3369 fixed one such source, not the class).
+                    # The second re-raised, which ended the while-loop in
+                    # ``run()``: the inbox kept being PUT to and was never
+                    # CONSUMED again, with no error log, indistinguishable
+                    # from a permanent hang.
+                    _driver = asyncio.current_task()
+                    if _driver is not None and _driver.cancelling() > 0:
+                        # A cancel genuinely directed at this task = a real
+                        # shutdown. It must still stop the loop; structured
+                        # concurrency requires the cancelled task to end.
                         raise
+                    # Only the per-turn sub-task was cancelled. #2242
+                    # WAL-invariant 1 holds either way: CancelledError unwound
+                    # the turn-body task straight out of whatever await it was
+                    # suspended on (mid-generation: the LLM await), so every
+                    # statement after that await never executes and the
+                    # cancelled turn's result is never appended. Swallow (do
+                    # NOT re-raise) so the driver task — and thus the agent —
+                    # survives to serve the next turn.
+                    if not self._turn_cancel_self_initiated:
+                        # #3377: a turn-scoped cancel we did not initiate is
+                        # survivable but NOT expected — record it, so this
+                        # never again presents as an unexplained silent stall.
+                        logger.warning(
+                            "turn sub-task for kind=%s chain_id=%s was cancelled by "
+                            "something other than cancel_inflight(); the turn is "
+                            "abandoned but the run-loop survives to serve the next "
+                            "message.",
+                            kind, payload.get("chain_id"),
+                        )
+                    _cancelled = True
             finally:
                 # #2242 Finding 1: reset the self-initiated flag UNCONDITIONALLY
                 # here (not only on the swallow branch). If cancel_inflight() set
@@ -5714,6 +5744,29 @@ class Session:
         try:
             while await self.run_one_iteration():
                 pass
+        except asyncio.CancelledError:
+            # #3377: the run-loop may legitimately be stopped by a cancel
+            # (a real shutdown), but it must never stop SILENTLY. Without
+            # this, a cancelled loop emitted exactly the same
+            # ``chat_stopped`` / ``session_completed`` pair as a clean
+            # shutdown, so "the agent stopped consuming its inbox" was
+            # indistinguishable from "the agent finished" — while the
+            # inbox kept accepting puts nobody would ever read. Reuses the
+            # #2280 ``session_halted`` surface (already on the transport
+            # forward-allowlist and rendered by both the TUI status line
+            # and the plain-CUI bottom toolbar) rather than inventing a
+            # parallel signal. Guarded on ``_halted_reason is None`` for
+            # the same reason #2280's own emits are: at most one halt
+            # notice per session.
+            if self._halted_reason is None:
+                self._halted_reason = "cancelled"
+                self._chat_events.emit("session_halted", reason=self._halted_reason)
+            logger.warning(
+                "Session.run() for agent '%s' is ending because it was cancelled — "
+                "the run-loop stops here and its inbox will not be consumed again.",
+                self.agent_name,
+            )
+            raise
         finally:
             try:
                 await self._drain_on_shutdown()
@@ -6064,6 +6117,22 @@ class Session:
         router_cap fires BEFORE run_loop starts). Falls back to the
         original canned error + hardcoded reply if wrap-up fails or
         produces no text.
+
+        #3382: falling back used to be *silent* — a single
+        ``except Exception: pass`` collapsed "the wrap-up call failed",
+        "no LLM is configured / reachable" and "the LLM returned no text"
+        into one indistinguishable outcome. The reason is now named
+        (``wrap_up_failed: <ExcType>: <msg>`` — which is also how the
+        no-LLM-configured case identifies itself, via the provider's own
+        exception type — or ``wrap_up_empty``) and logged at WARNING
+        before the canned reply is emitted.
+
+        The ``try`` is also narrowed: it no longer wraps the success-path
+        emission, so an outbox/history failure *after* a successful
+        wrap-up surfaces instead of silently producing a second, canned
+        reply. ``BaseException`` (``asyncio.CancelledError`` — see #3377)
+        is deliberately not caught: a cancel must propagate, not be
+        degraded into a user-visible "budget exhausted" message.
         """
         # #1496: emit audit event + attempt LLM wrap-up
         self._chat_events.emit(
@@ -6073,46 +6142,62 @@ class Session:
             cap=exc.cap,
             chain_id=chain_id,
         )
+        from reyn.runtime.router_loop import RouterLoop
+
+        _wrapup_text: str | None = None
+        _reason_unavailable = ""
+        history = self._history_buffer.build_history()
+        messages: list[dict] = [
+            *history,
+            *(
+                [{"role": "user", "content": user_text}]
+                if user_text else []
+            ),
+        ]
+        _temp_loop = RouterLoop(
+            host=self._router_host, chain_id=chain_id, llm_caller=_llm_caller,
+        )
+        _reason = (
+            f"router cap exhausted ({exc.count}/{exc.cap})"
+            f"{'; last reason: ' + exc.last_reason if exc.last_reason else ''}"
+        )
         try:
-            from reyn.runtime.router_loop import RouterLoop
-            history = self._history_buffer.build_history()
-            messages: list[dict] = [
-                *history,
-                *(
-                    [{"role": "user", "content": user_text}]
-                    if user_text else []
-                ),
-            ]
-            _temp_loop = RouterLoop(
-                host=self._router_host, chain_id=chain_id, llm_caller=_llm_caller,
-            )
             _resolved = self._router_host.resolve_model(self.model)
-            _reason = (
-                f"router cap exhausted ({exc.count}/{exc.cap})"
-                f"{'; last reason: ' + exc.last_reason if exc.last_reason else ''}"
-            )
             _wrapup = await _temp_loop._force_close_call_with_retry(
                 messages, resolved_model=_resolved, reason=_reason,
             )
-            if _wrapup.content:
-                await self._put_outbox(OutboxMessage(
-                    kind="agent",
-                    text=_wrapup.content,
-                    meta={
-                        "chain_id": chain_id,
-                        "limit_stopped": True,
-                        "limit_kind": "router_cap",
-                    },
-                ))
-                self._append_history(ChatMessage(
-                    role="assistant",
-                    content=_wrapup.content,
-                    ts=_now_iso(),
-                    meta={"chain_id": chain_id, "source": "router_cap_exhausted_wrap_up"},
-                ))
-                return
-        except Exception:  # noqa: BLE001 — wrap-up failed; degrade to canned reply
-            pass
+        except Exception as _err:  # noqa: BLE001 — named below, then degraded
+            _reason_unavailable = f"wrap_up_failed: {type(_err).__name__}: {_err}"
+        else:
+            _wrapup_text = _wrapup.content or None
+            if _wrapup_text is None:
+                _reason_unavailable = "wrap_up_empty: the LLM returned no text"
+
+        if _wrapup_text is not None:
+            await self._put_outbox(OutboxMessage(
+                kind="agent",
+                text=_wrapup_text,
+                meta={
+                    "chain_id": chain_id,
+                    "limit_stopped": True,
+                    "limit_kind": "router_cap",
+                },
+            ))
+            self._append_history(ChatMessage(
+                role="assistant",
+                content=_wrapup_text,
+                ts=_now_iso(),
+                meta={"chain_id": chain_id, "source": "router_cap_exhausted_wrap_up"},
+            ))
+            return
+
+        logger.warning(
+            "router_cap force-close wrap-up unavailable (%s) — chain_id=%s; "
+            "falling back to the canned retry-exhausted reply, so this turn's "
+            "closing message is generic rather than a summary of what was done.",
+            _reason_unavailable,
+            chain_id,
+        )
 
         # Fallback: original canned error + hardcoded reply
         await self._put_outbox(OutboxMessage(

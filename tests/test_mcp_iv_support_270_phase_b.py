@@ -304,17 +304,20 @@ def test_answer_intervention_tool_is_declared() -> None:
 
 
 def test_serve_stdio_declares_iv_input_required_capability() -> None:
-    """Tier 2: ``serve_stdio`` declares ``reyn.iv.input_required`` in
-    the experimental capabilities of the ``initialize`` response (=
+    """Tier 2: the advertised ``initialize`` response declares
+    ``reyn.iv.input_required`` in its experimental capabilities (=
     PR #284's claim/wire calibration pattern: pin both sides of the
     contract so future refactors that drop one without the other
     fail first).
     """
-    from reyn.mcp import server as mcp_server
+    from mcp.server import Server
 
-    src = inspect.getsource(mcp_server.serve_stdio)
-    assert '"reyn.iv.input_required"' in src
-    assert '"answer_tool": "answer_intervention"' in src
+    from reyn.mcp.server import build_init_options
+
+    experimental = build_init_options(Server("reyn")).capabilities.experimental
+    assert experimental is not None
+    iv = experimental["reyn.iv.input_required"]
+    assert iv["answer_tool"] == "answer_intervention"
 
 
 def test_iv_input_required_capability_backed_by_in_source_wire() -> None:
