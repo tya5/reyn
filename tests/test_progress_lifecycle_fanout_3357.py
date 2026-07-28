@@ -22,8 +22,8 @@ Real instances throughout: a real ``EventLog``, the real bridges, the real
 """
 from __future__ import annotations
 
+import ast
 import asyncio
-import re
 from pathlib import Path
 
 import pytest
@@ -35,36 +35,70 @@ from reyn.core.events.progress_lifecycle import (
 )
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
-# The declaration module itself names every kind; scanning it would make the
-# liveness gate self-satisfying.
+# The declaration module names every kind in prose. An AST walk already ignores
+# prose, so this exclusion is belt-and-braces: it also rules out a future
+# illustrative ``emit(...)`` inside the declaration vouching for its own member.
 _DECLARATION = _SRC / "core" / "events" / "progress_lifecycle.py"
 
 
-def _emitter_sources() -> str:
-    """Concatenated ``src/reyn`` python, minus the declaration module."""
-    return "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in sorted(_SRC.rglob("*.py"))
-        if "__pycache__" not in p.parts and p != _DECLARATION
+def _emitted_kind(node: ast.AST) -> str | None:
+    """The kind string of an ``<x>.emit("<kind>", …)`` / ``emit("<kind>", …)`` CALL.
+
+    ``None`` for anything that is not such a call. Only an ``ast.Call`` whose
+    callee is named ``emit`` and whose first positional argument is a string
+    constant counts — which is what makes this an *emitter* census rather than a
+    text census (see the gate's docstring).
+    """
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    func = node.func
+    name = (
+        func.attr if isinstance(func, ast.Attribute)
+        else func.id if isinstance(func, ast.Name)
+        else None
     )
+    if name != "emit":
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
+def _kinds_emitted_in_src() -> set[str]:
+    """Every string literal passed as the first positional arg of an ``emit`` call."""
+    emitted: set[str] = set()
+    for py in sorted(_SRC.rglob("*.py")):
+        if "__pycache__" in py.parts or py == _DECLARATION:
+            continue
+        for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+            kind = _emitted_kind(node)
+            if kind is not None:
+                emitted.add(kind)
+    return emitted
 
 
 # ── 1. The mechanism: every forwarded kind has a live producer ─────────────
 
 
 def test_every_forwarded_kind_has_a_live_emit_call_site() -> None:
-    """Tier 2: each kind in ``PROGRESS_LIFECYCLE_EVENTS`` is emitted by some
-    producer in ``src/reyn`` — matched as an ``emit("<kind>"`` call, not a bare
-    mention, so a docstring or a formatter arm cannot vouch for a dead kind.
+    """Tier 2: each kind in ``PROGRESS_LIFECYCLE_EVENTS`` is emitted by a real
+    producer in ``src/reyn``.
+
+    ★ The census is an **AST walk**, not a text scan, and the distinction is
+    load-bearing rather than stylistic. A ``re.search`` for ``emit("<kind>"``
+    matches that literal wherever it appears — including inside a docstring or a
+    comment. This module, and the modules it guards, discuss these kinds in
+    prose extensively; under a text scan, someone adding a fifth kind who writes
+    the docstring before the emitter would get a green gate over a dead kind,
+    i.e. #3357 recurring through its own guard. Counting only ``ast.Call`` nodes
+    whose callee is ``emit`` and whose first argument is a string constant means
+    *only an actual call* can vouch for a member.
 
     Add a kind no producer emits → RED (that is the #3357 defect reproduced).
     """
-    blob = _emitter_sources()
-    dead = {
-        kind
-        for kind in PROGRESS_LIFECYCLE_EVENTS
-        if not re.search(rf'emit\(\s*"{re.escape(kind)}"', blob)
-    }
+    emitted = _kinds_emitted_in_src()
+    dead = PROGRESS_LIFECYCLE_EVENTS - emitted
     assert not dead, (
         "progress fan-out declares audit-event kinds with no emit call-site in "
         f"src/reyn (nothing produces them; peers see a silently degraded "
@@ -91,7 +125,23 @@ def test_formatter_labels_every_forwarded_kind_distinctly() -> None:
 def test_formatter_reads_the_identifying_field_of_each_kind() -> None:
     """Tier 2: each arm reads the field the real emitter carries — ``kind`` on
     ``turn_started``, ``model`` on ``llm_called``, ``tool`` on the tool-dispatch
-    pair — so the progress line names what happened."""
+    pair — so the progress line names what happened.
+
+    ★ What this arm does NOT cover, written here so the next reader sees it
+    without re-deriving it. Two gaps, both from the expectations being
+    hand-written rather than enumerated from ``PROGRESS_LIFECYCLE_EVENTS``:
+
+      - **A fifth member sits outside this arm silently.** Enumerating is not
+        available: the assertion IS the expected string, so there is nothing to
+        generate it from. The two arms above are the total ones (every member
+        has a live emitter; every member has a distinct message arm) — this one
+        adds "and reads the right field", for the kinds it names.
+      - **``tool_failed`` is asserted more weakly than the other three.** All
+        four kinds ARE exercised below, but its check is substring + inequality
+        rather than an exact string, so a reworded failure suffix stays green
+        here. Deliberate: the exact suffix is presentation, and the property
+        that matters — the failure leg is distinguishable from the success leg —
+        is what is asserted."""
     assert format_progress_message("turn_started", {"kind": "user"}) == "turn: user"
     assert format_progress_message("llm_called", {"model": "sonnet"}) == "llm: sonnet"
     assert format_progress_message("tool_returned", {"tool": "grep"}) == "tool: grep"
