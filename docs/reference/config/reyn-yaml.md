@@ -542,16 +542,35 @@ Not every `(scheme, transport)` combination is implemented. The valid pairs toda
 
 | `scheme` \ `transport` | `tool_calls` | `content_fence` |
 |---|---|---|
-| `category` | `universal-category` | *(unimplemented)* |
+| `category` | `universal-category` | code-API over the wrappers |
 | `enumerate-all` | `enumerate-all` (default) | CodeAct |
 | `retrieval` | `retrieval` | *(unimplemented)* |
 
-An unregistered pair (e.g. `scheme: category` + `transport: content_fence`) raises
+An unregistered pair (e.g. `scheme: retrieval` + `transport: content_fence`) raises
 a legible error at config-parse time rather than silently falling back or being
 accepted. CodeAct is reached via `scheme: enumerate-all` + `transport:
 content_fence` — it is the same full flat catalog as `enumerate-all`, expressed
 as fenced code instead of native tool calls, not a `scheme` name of its own.
 `retrieval` additionally requires `embedding.enabled: true` (FP-0066 §7).
+
+`scheme: category` + `transport: content_fence` gives the small-surface
+counterpart of CodeAct: the model writes fenced Python, but the functions it is
+shown are the catalog **wrappers** (`list_actions` / `describe_action` /
+`invoke_action`) plus the base tools — so the system prompt does not grow with
+the catalog the way CodeAct's does. A call reads
+`result = invoke_action(action_name="file__read", args={"path": "README.md"})`.
+
+```yaml
+tool_use:
+  scheme: category
+  transport: content_fence
+```
+
+Choose it when a weak / low-cost model does better writing code than emitting
+JSON tool calls **and** the catalog is large enough that listing every action up
+front costs too much — CodeAct (`enumerate-all` + `content_fence`) gives up the
+second. Every in-code call still passes the same exclude + permission gate as the
+equivalent JSON call, plus sandbox containment.
 
 The old single `tool_use.chat` key is **removed** (clean-break, no compat
 alias). A reyn.yaml still carrying `tool_use.chat` fails loud at config-load

@@ -118,6 +118,13 @@ tool_use:
   transport: content_fence   # top-level chat router
 ```
 
+**Large catalog?** `scheme: category` + `transport: content_fence` is the same
+code-as-tools transport over the `universal-category` surface: the model still
+writes fenced Python, but the functions it is shown are the catalog wrappers
+(`invoke_action` and friends) rather than every action, so the system prompt
+does not grow with the catalog. Take it when CodeAct's reason applies but its
+full enumeration costs too much.
+
 See [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
 ## Security note

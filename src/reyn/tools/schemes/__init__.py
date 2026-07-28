@@ -12,6 +12,7 @@ package, with NO prior explicit scheme import by the caller (pinned by a
 fresh-interpreter registry self-test).
 """
 from . import (  # noqa: F401 — imported for the register_scheme import-time side effect
+    category_content_fence,
     codeact,
     enumerate_all,
     retrieval,
