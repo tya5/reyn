@@ -53,6 +53,16 @@ subsumes the other:
   above would compare corrupted against corrupted and pass. The fingerprint arm
   is the one that still fails in that world.
 
+**Acceptance scope.** Every cell entry carries an explicit ``status``. P1's
+byte-identical guarantee covers ``CAPTURED`` entries **only**; an ``UNCAPTURED``
+entry records a branch that exists in the code but cannot be captured offline,
+with its reason, *in the data*. Prose alone would not do: in a data file
+"omitted" and "excluded" are indistinguishable, and a silently absent branch
+reads as "this cell has no such branch" — the empty-vs-absent ambiguity this arc
+keeps closing elsewhere. ``capture`` refuses to write an artifact with zero
+``UNCAPTURED`` entries, so the day a branch becomes capturable the RED is the
+signal to capture it and update this scope, not a nuisance to delete.
+
 **Worktree identity (#3024/#3231).** Multiple agents share one venv here and its
 editable install points at a different checkout, so ``assert_worktree_import``
 verifies ``reyn`` resolved under *this* repo's ``src/`` before anything is
@@ -134,6 +144,32 @@ _LAYER_CTX_VARIANTS: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
     },
 }
 
+# Branches that exist in the code but CANNOT be captured offline, declared so the
+# artifact says so in DATA rather than only in prose.
+#
+# ★ The reason this is not a prose footnote: in a data file, "omitted" and
+# "excluded" are indistinguishable. A branch that is simply absent reads as "that
+# cell has no such branch" — the same empty-vs-absent ambiguity this arc has been
+# closing everywhere else (``llm_tools_payload=[]``, ``permissions:{}``,
+# ``turn_tokens=0``). The artifact whose whole job is to be unambiguous must not
+# reintroduce it. Every cell entry therefore carries an explicit ``status``, and
+# P1's byte-identical guarantee covers ``CAPTURED`` entries only.
+_STATUS_CAPTURED = "CAPTURED"
+_STATUS_UNCAPTURED = "UNCAPTURED"
+
+_UNCAPTURED_BRANCHES: dict[tuple[str, str], dict[str, str]] = {
+    ("retrieval", "tool_calls"): {
+        "refinement": (
+            "requires a live embedding index + provider — build_presentation with a "
+            "non-empty layer_ctx['refinement'] calls ops.search_actions(query), whose "
+            "result depends on an ActionEmbeddingIndex and an embedding provider. "
+            "Neither offline nor deterministic, so it is EXCLUDED, not omitted: "
+            "approximating it would burn a false oracle in, and an oracle records "
+            "what IS, not what ought to be."
+        ),
+    },
+}
+
 
 def assert_worktree_import() -> str:
     """Fail unless ``reyn`` resolved under THIS checkout's ``src/`` (#3024/#3231).
@@ -202,11 +238,23 @@ def assert_schemas_pristine(payloads: dict[str, Any]) -> dict[str, int]:
     return {"const_nodes": const_nodes, "oneof_variants": oneof_variants}
 
 
-# The retrieval scheme advertises its OWN ``search_actions`` schema
-# (``retrieval._search_tool_schema`` — a scheme-owned literal whose call is
-# intercepted into ``RePresent`` and never dispatched), so it deliberately does
-# not equal the registered ``search_actions`` ToolDefinition. Excluded from the
-# canonical-equality check by NAME and by reason, not by tolerance.
+# ``search_actions`` is PRESENTATION-ONLY and is not a defect — known design,
+# recorded here so the next reader does not re-run the investigation.
+#
+# ``retrieval._search_tool_schema`` (retrieval.py:58-61) builds this schema itself:
+# the tool is advertised so the model can express the affordance, but the call is
+# intercepted by ``interpret`` -> ``RePresent`` and NEVER REACHES DISPATCH. A thing
+# that never reaches dispatch correctly has no ``ToolDefinition``, so #3383's
+# "the canonical definition is the only source" is an invariant over tools ON THE
+# DISPATCH PATH; an intercepted affordance is a different category. 145-vs-1 is a
+# classification difference, not a violation.
+#
+# ★ It is also independently safe from #3383, FOR A DIFFERENT REASON than
+# everything else in the payload: ``_search_tool_schema()`` constructs a FRESH dict
+# from a literal on every call, sharing nothing with any module-level constant. An
+# in-place provider rewrite dies with that dict and the next turn builds a new one.
+# It is not safe because it routes through ``parameters_for_export``; it is safe
+# because it is rebuilt each time.
 _NOT_REGISTRY_BACKED = frozenset({"search_actions"})
 
 
@@ -302,11 +350,35 @@ async def _capture_cells(workspace: Path) -> dict[str, Any]:
                 "scheme": scheme,
                 "transport": transport.value,
                 "resolved_scheme_name": resolved_name,
+                "status": _STATUS_CAPTURED,
                 "layer_ctx": layer_ctx,
                 "llm_tools_payload": presentation.llm_tools_payload,
                 "tool_use_sp": presentation.tool_use_sp,
             }
+
+        for branch, reason in _UNCAPTURED_BRANCHES.get(
+            (scheme, transport.value), {}
+        ).items():
+            cells[f"{scheme}|{transport.value}|{branch}"] = {
+                "scheme": scheme,
+                "transport": transport.value,
+                "resolved_scheme_name": resolved_name,
+                "status": _STATUS_UNCAPTURED,
+                "reason": reason,
+            }
     return cells
+
+
+def captured_cells(cells: dict[str, Any]) -> dict[str, Any]:
+    """The subset P1's byte-identical guarantee covers — ``CAPTURED`` entries only.
+
+    Every consumer of the payloads goes through here, so an ``UNCAPTURED`` entry
+    can never be mistaken for a capture with an empty payload."""
+    return {k: v for k, v in cells.items() if v["status"] == _STATUS_CAPTURED}
+
+
+def uncaptured_cells(cells: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in cells.items() if v["status"] == _STATUS_UNCAPTURED}
 
 
 def capture() -> dict[str, Any]:
@@ -326,7 +398,13 @@ def capture() -> dict[str, Any]:
         finally:
             os.chdir(previous_cwd)
 
-    payloads = {k: v["llm_tools_payload"] for k, v in cells.items()}
+    payloads = {k: v["llm_tools_payload"] for k, v in captured_cells(cells).items()}
+    if not uncaptured_cells(cells):
+        raise AssertionError(
+            "no cell entry is marked UNCAPTURED. Either a declared exclusion was "
+            "dropped, or a branch became capturable — in the latter case capture it "
+            "and update the acceptance condition rather than deleting the marker."
+        )
     pristine_counts = assert_schemas_pristine(payloads)
     if not pristine_counts["const_nodes"] or not pristine_counts["oneof_variants"]:
         raise AssertionError(
@@ -390,10 +468,19 @@ _NOTES = [
     "the host OS or the developer's sandbox availability.",
     "retrieval x tool_calls is captured in both branches of its no-refinement fork "
     "(search_visible false -> the #2895 runtime auto-fallback presenting the flat "
-    "catalog + hidden-state hint; true -> base + the search tool). The refinement "
-    "branch is NOT captured: it calls ops.search_actions, which needs a live "
-    "embedding index and a provider, so it is not deterministically capturable "
-    "offline. Stated as a gap rather than approximated.",
+    "catalog + hidden-state hint; true -> base + the search tool). Its refinement "
+    "branch carries status=UNCAPTURED with a reason, IN THE DATA — because in a data "
+    "file 'omitted' and 'excluded' are indistinguishable, and a silently absent "
+    "branch would read as 'this cell has no such branch'. ACCEPTANCE SCOPE: P1's "
+    "byte-identical guarantee covers status=CAPTURED entries ONLY.",
+    "search_actions is presentation-only and is NOT a defect — known design, not a "
+    "gap. retrieval._search_tool_schema builds it as a scheme-owned literal; the "
+    "call is intercepted by interpret -> RePresent and never reaches dispatch, and "
+    "something that never dispatches correctly has no ToolDefinition. It is also "
+    "independently safe from #3383 for a DIFFERENT reason than everything else here: "
+    "the schema is freshly constructed from a literal on every call, so it shares "
+    "nothing with a canonical constant and an in-place rewrite dies with that dict. "
+    "Safe because it is rebuilt each time, not because it routes through the helper.",
 ]
 
 

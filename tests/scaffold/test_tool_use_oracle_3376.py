@@ -62,14 +62,50 @@ def test_oracle_covers_every_registered_cell() -> None:
 
     A cell added to ``_VALID_SCHEME_TRANSPORT_PAIRS`` without a recorded oracle
     entry would otherwise sail past the gate above (which only compares what was
-    captured). Vacuity guard: the registry must be non-empty."""
+    captured). Coverage counts ``CAPTURED`` entries only — a cell present solely as
+    an ``UNCAPTURED`` declaration is not covered. Vacuity guard: the registry must
+    be non-empty."""
     pairs = valid_scheme_transport_pairs()
     assert pairs, "the (scheme, transport) registry is empty — this gate would be vacuous"
 
-    recorded_cells = _recorded()["cells"].values()
+    recorded_cells = oracle.captured_cells(_recorded()["cells"]).values()
     covered = {(c["scheme"], c["transport"]) for c in recorded_cells}
     missing = {(s, t.value) for s, t in pairs} - covered
     assert not missing, f"registered cells with no recorded oracle entry: {sorted(missing)}"
+
+
+def test_an_uncaptured_branch_is_declared_in_the_data() -> None:
+    """Tier 1: at least one branch is marked ``UNCAPTURED``, in the artifact itself.
+
+    The witness is on the *count*, not on a named branch, so it survives the branch
+    being renamed and still fires the day someone starts claiming full capture.
+    When the excluded branch genuinely becomes capturable and the count reaches
+    zero, this RED is the signal to capture it and update the acceptance condition
+    below — not a nuisance to delete (same shape as #3347: put the witness on the
+    size rather than trusting the removal).
+
+    Why in the data and not in prose: "omitted" and "excluded" are
+    indistinguishable in a data file, so a silently absent branch reads as "this
+    cell has no such branch" — the empty-vs-absent ambiguity this arc has been
+    closing. Each ``UNCAPTURED`` entry must therefore also carry a reason and must
+    NOT carry a payload, so it can never be mistaken for a capture that came back
+    empty."""
+    cells = _recorded()["cells"]
+    uncaptured = oracle.uncaptured_cells(cells)
+    assert uncaptured, (
+        "no UNCAPTURED entry: either a declared exclusion was dropped, or a branch "
+        "became capturable — capture it and widen the acceptance scope."
+    )
+    for key, entry in uncaptured.items():
+        assert entry.get("reason"), f"{key}: UNCAPTURED without a reason"
+        assert "llm_tools_payload" not in entry, f"{key}: UNCAPTURED must carry no payload"
+        assert "tool_use_sp" not in entry, f"{key}: UNCAPTURED must carry no payload"
+
+    # Acceptance scope, pinned: the byte-identical guarantee covers CAPTURED only.
+    assert oracle.captured_cells(cells), "no CAPTURED entry — the oracle is empty"
+    assert set(cells) == set(oracle.captured_cells(cells)) | set(uncaptured), (
+        "a cell entry carries neither CAPTURED nor UNCAPTURED status"
+    )
 
 
 def test_recorded_payloads_match_the_canonical_definitions() -> None:
@@ -78,7 +114,8 @@ def test_recorded_payloads_match_the_canonical_definitions() -> None:
     Leans on the landed ``parameters_for_export`` projection rather than
     re-deriving one. Anti-vacuity: the comparison count must be non-zero, so an
     artifact whose names all failed to resolve cannot pass silently."""
-    payloads = {k: v["llm_tools_payload"] for k, v in _recorded()["cells"].items()}
+    captured = oracle.captured_cells(_recorded()["cells"])
+    payloads = {k: v["llm_tools_payload"] for k, v in captured.items()}
     counts = oracle.assert_schemas_match_canonical(payloads)
     assert counts["compared"] > 0, counts
 
@@ -91,7 +128,8 @@ def test_recorded_payloads_carry_no_3383_transform_damage() -> None:
     corrupted and pass. Anti-vacuity: an artifact containing no ``const`` node
     and no ``oneOf`` variant would make both fingerprint arms pass without
     inspecting anything."""
-    payloads = {k: v["llm_tools_payload"] for k, v in _recorded()["cells"].items()}
+    captured = oracle.captured_cells(_recorded()["cells"])
+    payloads = {k: v["llm_tools_payload"] for k, v in captured.items()}
     counts = oracle.assert_schemas_pristine(payloads)
     assert counts["const_nodes"] > 0 and counts["oneof_variants"] > 0, counts
 
