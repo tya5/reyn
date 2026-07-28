@@ -58,6 +58,40 @@ def test_resolve_unknown_name_logs_warning(caplog):
     assert any("stnadard" in rec.message for rec in caplog.records)
 
 
+def test_resolve_unknown_name_warns_once_per_distinct_name(caplog):
+    """Tier 2: repeated resolve() calls for the same unresolved name warn once (#3368).
+
+    resolve() is on the per-LLM-call hot path (called once per request for
+    the session's configured model class) — an unresolved name persists for
+    the session's lifetime, so an unconditional per-call warning would log
+    on every single turn. Falsification: pre-dedup, N calls with the same
+    unresolved name produced N warning records; this asserts exactly 1.
+    A distinct name still gets its own warning (no cross-name suppression).
+    """
+    import logging
+
+    r = ModelResolver({"standard": "openai/model-b"})
+
+    def _matching(caplog, needle):
+        return [rec for rec in caplog.records if needle in rec.message]
+
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        r.resolve("stnadard")
+        count_after_first_call = len(_matching(caplog, "stnadard"))
+        r.resolve("stnadard")
+        r.resolve("stnadard")
+        count_after_repeat_calls = len(_matching(caplog, "stnadard"))
+        r.resolve("another_typo")
+        another_typo_hits = _matching(caplog, "another_typo")
+
+    # Repeating the SAME unresolved name must not grow the warning count
+    # beyond what the first call already produced.
+    assert count_after_repeat_calls == count_after_first_call
+    # A genuinely NEW unresolved name is not suppressed by the first name's
+    # dedup — each distinct name gets its own warning.
+    assert another_typo_hits
+
+
 # ---------------------------------------------------------------------------
 # Backward compat: str form
 # ---------------------------------------------------------------------------
