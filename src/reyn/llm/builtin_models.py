@@ -22,7 +22,20 @@ Note on Gemini thinking syntax:
 """
 from __future__ import annotations
 
-BUILTIN_MODELS: dict[str, dict] = {
+BUILTIN_MODELS: dict[str, str | dict] = {
+    # -------------------------------------------------------------------------
+    # Generic tiers — ReynConfig.model defaults to "standard" and the CLI's
+    # --model flag documents light/standard/strong, but neither is otherwise
+    # guaranteed to exist: a project normally declares these three under its
+    # own reyn.yaml `models:` block (which overrides these), but with no
+    # reyn.yaml at all the class name had nothing to resolve to and reached
+    # litellm as a literal, unresolved string (#3368: "You passed
+    # model=standard"). These aliases match the project template's own
+    # defaults, so light/standard/strong resolve even with zero config files.
+    # -------------------------------------------------------------------------
+    "light": "gemini-flash-lite",
+    "standard": "gemini-flash-lite",
+    "strong": "gemini-pro",
     # -------------------------------------------------------------------------
     # Anthropic
     # -------------------------------------------------------------------------

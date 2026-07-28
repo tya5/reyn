@@ -233,7 +233,7 @@ class ModelResolver:
         self,
         mapping: dict[str, Any],
         *,
-        builtin: dict[str, dict] | None = None,
+        builtin: dict[str, str | dict] | None = None,
         default_class: str = "standard",
         purpose_classes: dict[str, str] | None = None,
     ) -> None:

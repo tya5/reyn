@@ -120,7 +120,10 @@ def test_is_known_class_str_form():
     """Tier 2: is_known_class True for str-form class, False for unknown."""
     r = ModelResolver({"light": "openai/model-a"})
     assert r.is_known_class("light") is True
-    assert r.is_known_class("strong") is False
+    # #3368: light/standard/strong are now built-in aliases (resolvable with
+    # no user mapping at all), so "strong" is a poor unknown-class example —
+    # use a name that is neither user-declared nor a built-in.
+    assert r.is_known_class("totally-unknown-class") is False
 
 
 def test_is_known_class_dict_form_same_as_str_form():
@@ -144,7 +147,9 @@ def test_is_known_class_mixed_mapping():
     })
     assert r.is_known_class("light") is True
     assert r.is_known_class("strong") is True
-    assert r.is_known_class("standard") is False
+    # #3368: "standard" is now a built-in alias, so it is known even though
+    # this mapping doesn't declare it — use a genuinely unrelated name.
+    assert r.is_known_class("totally-unknown-class") is False
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +209,25 @@ def test_extends_backward_compat_slash_str_with_builtin_loaded():
     assert r.resolve("light").model == "openai/gemini-2.5-flash-lite"
     assert r.resolve("light").kwargs == {}
     assert r.resolve("standard").model == "openai/gpt-4o"
+
+
+def test_light_standard_strong_resolve_with_no_reyn_yaml_at_all():
+    """Tier 2: light/standard/strong resolve to real models with an empty user mapping (#3368).
+
+    Found via bug-mining (2026-07-28): `ReynConfig.model` defaults to
+    "standard" even with zero config files, but BUILTIN_MODELS previously had
+    no "light"/"standard"/"strong" entries — so a project with no reyn.yaml
+    (or one without a `models:` block) resolved "standard" via the unknown-
+    name passthrough, sending the literal string "standard" to litellm
+    (`litellm.BadRequestError: ... You passed model=standard`, reproduced via
+    `litellm.utils.get_llm_provider("standard")`). Falsification: pre-fix,
+    `r.resolve("standard").model == "standard"` (the bare class name, not a
+    real model string).
+    """
+    r = ModelResolver({})
+    for class_name in ("light", "standard", "strong"):
+        spec = r.resolve(class_name)
+        assert "/" in spec.model, f"{class_name} resolved to a bare, unresolved name: {spec.model!r}"
 
 
 # ── #1454 PR-B: resolve_class_or_fallback (the closed-world class gate) ──────

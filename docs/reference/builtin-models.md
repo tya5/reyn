@@ -17,6 +17,23 @@ without declaring them in `reyn.yaml`.
 
 ## Catalog entries
 
+### `light`, `standard`, `strong`
+
+```yaml
+light:    gemini-flash-lite    # alias — extends: gemini-flash-lite
+standard: gemini-flash-lite    # alias — extends: gemini-flash-lite
+strong:   gemini-pro           # alias — extends: gemini-pro
+```
+
+The three generic tier names `ReynConfig.model` and `--model` document are
+**aliases** into the concrete catalog below, not separate model definitions —
+a project's own `reyn.yaml` normally redeclares these three under `models:`
+(see `reference/config/reyn-yaml.md`), which overrides these built-ins with
+the same override semantics as any other entry. Without a `reyn.yaml` at all
+(or one whose `models:` block omits one of these three), the class still
+resolves via this built-in alias rather than reaching LiteLLM as a bare,
+unresolved class name (#3368).
+
 ### `claude-sonnet`
 
 ```yaml
