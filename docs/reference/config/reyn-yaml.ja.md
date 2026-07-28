@@ -298,15 +298,15 @@ tool_use:
 | `scheme` | 文字列 | `enumerate-all` | トップレベル chat レイヤーの presentation: `category` / `enumerate-all` / `retrieval`。**デフォルト `enumerate-all`** — アクションをフラットに列挙し LLM が直接呼び出せるようにする（`invoke_action` 名のハルシネーションを防ぎ、非ホットリストの tool-use が ~30%→100% に改善）。少数サーフェス / 多数ツールのカタログには `category` を設定（discover-then-call）。 |
 | `transport` | 文字列 | `tool_calls` | モデルが選択したアクションをどう表現するか: `tool_calls`（ネイティブ tool-calling）または `content_fence`（応答テキスト内のフェンス付きコードとしてアクションを表現 — CodeAct）。 |
 
-すべての `(scheme, transport)` の組み合わせが実装されているわけではありません。現時点で有効な組は:
+上記の軸の値の組み合わせは、現時点ですべて実装済みです:
 
 | `scheme` \ `transport` | `tool_calls` | `content_fence` |
 |---|---|---|
 | `category` | `universal-category` | ラッパーの code-API |
 | `enumerate-all` | `enumerate-all`（デフォルト） | CodeAct |
-| `retrieval` | `retrieval` | *(未実装)* |
+| `retrieval` | `retrieval` | 検索起点の code-API |
 
-未登録の組み合わせ（例: `scheme: retrieval` + `transport: content_fence`）は、
+この表に無い組み合わせ — reyn に存在しない `scheme` / `transport` 名 — は、
 黙って default にフォールバックしたり受理されたりせず、**config-parse 時に**
 分かりやすいエラーを送出します。CodeAct は `scheme: enumerate-all` +
 `transport: content_fence` で到達します — `enumerate-all` と同じ全件フラット
@@ -333,6 +333,32 @@ tool_use:
 CodeAct（`enumerate-all` + `content_fence`）は後者を捨てています。コード内の
 呼び出しは同等の JSON 呼び出しと同じ exclude + permission ゲートを通り、さらに
 サンドボックスで封じ込められます。
+
+`scheme: retrieval` + `transport: content_fence` は**検索起点の code-API** です。
+見せられる関数は `search_actions` / `describe_action` / `invoke_action` と base
+tools で、`list_actions` は**含まれません** — この presentation における discovery
+は列挙ではなく検索だからです。1 ターンはこうなります:
+
+```python
+hits = search_actions(query="read a file")
+result = invoke_action(action_name="file__read", args={"path": "README.md"})
+```
+
+```yaml
+tool_use:
+  scheme: retrieval
+  transport: content_fence
+  # embedding.enabled: true が必要
+```
+
+`tool_calls` 側の retrieval セルとはパラダイムではなく**コスト**が違います。
+あちらでは絞り込みに 1 往復かかります（`tools=` ペイロードは LLM 呼び出しの
+*間* にしか変えられないので、OS が一致アクションを再提示する）。こちらでは
+検索結果はスニペット内の単なる値なので、検索と呼び出しが同一ターンで済みます。
+`category` + `content_fence` より優先するのは、カタログが大きくカテゴリからの
+ブラウズが入口として適切でなく、モデルに「やりたいこと」を記述させたい場合です。
+埋め込みインデックスが未準備のときは、空を返す検索を見せる代わりにフラット
+カタログの列挙へフォールバックします。
 
 旧来の単一 `tool_use.chat` key は**削除済み**です（clean-break、compat
 alias 無し）。`tool_use.chat` を残したままの `reyn.yaml` は、config-load

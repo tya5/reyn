@@ -12,10 +12,10 @@ Two claims are kept apart throughout, as in the P1 sibling
 **production reaches the mechanism**. A fold that holds in a helper nobody calls
 protects nothing.
 
-Byte-identity of the pre-existing cells is not asserted here — that is the
-scaffolded oracle's job (``tests/scaffold/test_tool_use_oracle_3376.py``), which
-compares a fresh-process capture from a real ``SchemeOps`` against the recorded
-artifact.
+Byte-identity of the pre-existing cells was never asserted here — that was the
+scaffolded oracle's job, and it was deleted when #3376 P3 registered the last
+cell. What remains is what should: the invariants this cell has to keep, which
+are not a snapshot of what it happened to render on the day it landed.
 
 The Fake ``SchemeOps`` below is the idiom the existing scheme tests use (real
 callables, explicit returns, never a mock) and appears only where the input under

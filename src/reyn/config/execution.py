@@ -50,10 +50,12 @@ def _build_tool_use_config(raw: object) -> ToolUseConfig:
     error rather than being silently ignored (P4 firm §2 J2: a silently
     dropped old key is a "config that doesn't take effect" trap). The
     resulting (scheme, transport) pair is validated through P4a's
-    ``resolve_scheme_for_transport`` — an unregistered cell (e.g.
-    ``retrieval`` x ``content_fence``) raises at parse time, not deep in a
-    running session. ``category`` x ``content_fence`` was such a cell until
-    #3376 P2 implemented it, and is now accepted."""
+    ``resolve_scheme_for_transport`` — an unregistered cell raises at parse
+    time, not deep in a running session. Since #3376 P3 every cell of the
+    current presentation x transport product is registered, so what this
+    rejects today is a name that is not on either axis at all (a typo, or a
+    presentation reyn does not have); it starts rejecting real combinations
+    again the moment either axis gains a value."""
     if raw is None:
         return ToolUseConfig()
     if not isinstance(raw, dict):
@@ -96,7 +98,10 @@ def _build_tool_use_config(raw: object) -> ToolUseConfig:
 
     # P4a's valid-pair registry is the live parse-time validation authority
     # (firm §2 J1): raises ValueError on an unregistered (scheme, transport)
-    # cell, e.g. ('category', 'content_fence').
+    # cell, e.g. ('no-such-presentation', 'tool_calls'). The example is taken
+    # from OUTSIDE the presentation axis on purpose — every example drawn from
+    # inside it has gone false as the arc registered that cell (#3376 P2 and P3
+    # each falsified the previous one).
     resolve_scheme_for_transport(scheme, transport)
 
     return ToolUseConfig(scheme=scheme, transport=transport_name)

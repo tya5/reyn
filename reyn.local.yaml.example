@@ -520,8 +520,14 @@
 # transport=content_fence combines the two: actions expressed as code over the
 # minimal wrapper surface, so the code-API does not grow with the catalog —
 # for a weak model on a large catalog, where CodeAct's full enumeration costs
-# too much. Not every (scheme, transport) pair is implemented — an invalid pair
-# fails loud at config-parse time.
+# too much. scheme=retrieval + transport=content_fence is the search-first
+# code-API: search_actions / describe_action / invoke_action and NO
+# list_actions, so the model describes what it wants instead of browsing; it
+# needs embedding.enabled: true, and it does the narrowing inside one snippet
+# rather than paying the re-present round trip the tool_calls retrieval cell
+# pays. Every combination of the axis values above is implemented — a pair
+# naming a scheme or transport reyn does not have fails loud at config-parse
+# time.
 # -----------------------------------------------------------------------------
 # tool_use:
 #   scheme: universal-category
