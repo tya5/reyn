@@ -5,11 +5,12 @@ Pins the server-side outbound notification mechanism that #271 added:
 
   - M1 progress emit: when the MCP client sets ``_meta.progressToken``
     on a ``send_to_agent`` call, the server's ``_call_tool`` handler
-    subscribes a bridge to the agent's chat_events EventLog and
-    forwards M1-b lifecycle events as ``notifications/progress``:
-      * ``phase_started`` → message="phase: <name>"
+    subscribes a bridge to the agent's chat audit-event log and
+    forwards the ``PROGRESS_LIFECYCLE_EVENTS`` kinds as
+    ``notifications/progress``:
+      * ``turn_started`` → message="turn: <inbox trigger kind>"
       * ``llm_called`` → message="llm: <model>"
-      * ``act_executed`` → message="act: <N> op(s)"
+      * ``tool_returned`` / ``tool_failed`` → message="tool: <name>[ (failed)]"
     Each notification carries a monotonic ordinal ``progress`` (=
     no meaningful ``total``, indeterminate) so the client renders
     as a counter or spinner.
@@ -25,11 +26,11 @@ Pins (mostly via the ``_MCPProgressBridge`` unit + the
 ``send_to_agent_impl`` is too heavy for Tier 2 — we verify the
 bridge's contract directly):
 
-  1. Bridge filter: only the 3 tracked event types translate; other
-     events are ignored.
+  1. Bridge filter: only the tracked audit-event kinds translate;
+     other kinds are ignored.
   2. Bridge ordinal: monotonic, starts at 1.
   3. Bridge message format: matches the documented shape for each
-     tracked event type.
+     tracked audit-event kind.
   4. Bridge detach: removes the subscriber so no leak across calls.
   5. Bridge detach is idempotent (= multiple calls safe).
   6. Bridge tolerates send_progress_notification raising (= best-effort).
@@ -107,13 +108,13 @@ def _make_bridge(
 
 
 @pytest.mark.asyncio
-async def test_bridge_forwards_phase_started_as_progress_notification() -> None:
-    """Tier 2: ``phase_started`` event becomes a progress notification
-    with message ``phase: <name>``.
+async def test_bridge_forwards_turn_started_as_progress_notification() -> None:
+    """Tier 2: a ``turn_started`` audit-event becomes a progress notification
+    with message ``turn: <inbox trigger kind>``.
     """
     bridge, event_log, fake_mcp = _make_bridge()
     try:
-        event_log.emit("phase_started", phase="greet")
+        event_log.emit("turn_started", kind="user")
         # Yield to let the spawned task run.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -122,7 +123,7 @@ async def test_bridge_forwards_phase_started_as_progress_notification() -> None:
         assert call["progress_token"] == "tok-1"
         assert call["progress"] == 1.0
         assert call["total"] is None
-        assert call["message"] == "phase: greet"
+        assert call["message"] == "turn: user"
         assert call["related_request_id"] == "req-1"
     finally:
         bridge.detach()
@@ -142,21 +143,23 @@ async def test_bridge_forwards_llm_called_with_model_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bridge_forwards_act_executed_with_op_count() -> None:
-    """Tier 2: ``act_executed`` event becomes ``act: <N> op(s)`` with
-    correct singular / plural.
+async def test_bridge_forwards_tool_dispatch_outcome_with_tool_name() -> None:
+    """Tier 2: the tool-dispatch completion pair becomes ``tool: <name>``, with
+    the failure leg distinguishable from the success leg.
     """
     bridge, event_log, fake_mcp = _make_bridge()
     try:
-        event_log.emit("act_executed", op_count=1)
+        event_log.emit("tool_returned", tool="grep", chain_id="c1")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        assert fake_mcp.calls[-1]["message"] == "act: 1 op"
+        assert fake_mcp.calls[-1]["message"] == "tool: grep"
 
-        event_log.emit("act_executed", op_count=3)
+        event_log.emit("tool_failed", tool="grep", error_kind="exception")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        assert fake_mcp.calls[-1]["message"] == "act: 3 ops"
+        failed = fake_mcp.calls[-1]["message"]
+        assert "grep" in failed
+        assert failed != "tool: grep"
     finally:
         bridge.detach()
 
@@ -169,9 +172,9 @@ async def test_bridge_ignores_non_tracked_events() -> None:
     """
     bridge, event_log, fake_mcp = _make_bridge()
     try:
-        event_log.emit("llm_response_received", model="x")
-        event_log.emit("phase_completed", phase="greet")
-        event_log.emit("workflow_finished")
+        event_log.emit("llm_response_received", cost_usd=0.1)
+        event_log.emit("turn_settled", kind="user")
+        event_log.emit("tool_called", tool="grep")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert fake_mcp.calls == []
@@ -189,9 +192,9 @@ async def test_bridge_ordinal_increases_monotonically() -> None:
     """
     bridge, event_log, fake_mcp = _make_bridge()
     try:
-        event_log.emit("phase_started", phase="a")
+        event_log.emit("turn_started", kind="user")
         event_log.emit("llm_called", model="m")
-        event_log.emit("act_executed", op_count=2)
+        event_log.emit("tool_returned", tool="grep")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         progressions = [c["progress"] for c in fake_mcp.calls]
@@ -215,7 +218,7 @@ async def test_bridge_detach_removes_event_subscriber() -> None:
     """
     bridge, event_log, fake_mcp = _make_bridge()
     bridge.detach()
-    event_log.emit("phase_started", phase="greet")
+    event_log.emit("turn_started", kind="user")
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert fake_mcp.calls == []
@@ -247,7 +250,7 @@ async def test_bridge_swallows_send_progress_notification_errors() -> None:
     bridge, event_log, fake_mcp = _make_bridge()
     fake_mcp.raise_on_call = RuntimeError("transport gone")
     try:
-        event_log.emit("phase_started", phase="x")
+        event_log.emit("turn_started", kind="user")
         # No exception should propagate to the test.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -255,11 +258,13 @@ async def test_bridge_swallows_send_progress_notification_errors() -> None:
         # Bridge is still attached + functional for next event (= no
         # poisoning from earlier failure).
         fake_mcp.raise_on_call = None
-        event_log.emit("phase_started", phase="y")
+        event_log.emit("turn_started", kind="agent_response")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         # The second event was successfully forwarded.
-        success_calls = [c for c in fake_mcp.calls if c["message"] == "phase: y"]
+        success_calls = [
+            c for c in fake_mcp.calls if c["message"] == "turn: agent_response"
+        ]
         assert success_calls, "expected the second event to be forwarded"
     finally:
         bridge.detach()
@@ -325,7 +330,7 @@ async def test_bridge_detach_cancels_inflight_notification_tasks() -> None:
 
     bridge._send = _slow_send  # type: ignore[method-assign]
 
-    event_log.emit("phase_started", phase="x")
+    event_log.emit("turn_started", kind="user")
     # Let the slow send start.
     await asyncio.sleep(0)
     await asyncio.sleep(0)
