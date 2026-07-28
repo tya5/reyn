@@ -6117,6 +6117,22 @@ class Session:
         router_cap fires BEFORE run_loop starts). Falls back to the
         original canned error + hardcoded reply if wrap-up fails or
         produces no text.
+
+        #3382: falling back used to be *silent* — a single
+        ``except Exception: pass`` collapsed "the wrap-up call failed",
+        "no LLM is configured / reachable" and "the LLM returned no text"
+        into one indistinguishable outcome. The reason is now named
+        (``wrap_up_failed: <ExcType>: <msg>`` — which is also how the
+        no-LLM-configured case identifies itself, via the provider's own
+        exception type — or ``wrap_up_empty``) and logged at WARNING
+        before the canned reply is emitted.
+
+        The ``try`` is also narrowed: it no longer wraps the success-path
+        emission, so an outbox/history failure *after* a successful
+        wrap-up surfaces instead of silently producing a second, canned
+        reply. ``BaseException`` (``asyncio.CancelledError`` — see #3377)
+        is deliberately not caught: a cancel must propagate, not be
+        degraded into a user-visible "budget exhausted" message.
         """
         # #1496: emit audit event + attempt LLM wrap-up
         self._chat_events.emit(
@@ -6126,46 +6142,62 @@ class Session:
             cap=exc.cap,
             chain_id=chain_id,
         )
+        from reyn.runtime.router_loop import RouterLoop
+
+        _wrapup_text: str | None = None
+        _reason_unavailable = ""
+        history = self._history_buffer.build_history()
+        messages: list[dict] = [
+            *history,
+            *(
+                [{"role": "user", "content": user_text}]
+                if user_text else []
+            ),
+        ]
+        _temp_loop = RouterLoop(
+            host=self._router_host, chain_id=chain_id, llm_caller=_llm_caller,
+        )
+        _reason = (
+            f"router cap exhausted ({exc.count}/{exc.cap})"
+            f"{'; last reason: ' + exc.last_reason if exc.last_reason else ''}"
+        )
         try:
-            from reyn.runtime.router_loop import RouterLoop
-            history = self._history_buffer.build_history()
-            messages: list[dict] = [
-                *history,
-                *(
-                    [{"role": "user", "content": user_text}]
-                    if user_text else []
-                ),
-            ]
-            _temp_loop = RouterLoop(
-                host=self._router_host, chain_id=chain_id, llm_caller=_llm_caller,
-            )
             _resolved = self._router_host.resolve_model(self.model)
-            _reason = (
-                f"router cap exhausted ({exc.count}/{exc.cap})"
-                f"{'; last reason: ' + exc.last_reason if exc.last_reason else ''}"
-            )
             _wrapup = await _temp_loop._force_close_call_with_retry(
                 messages, resolved_model=_resolved, reason=_reason,
             )
-            if _wrapup.content:
-                await self._put_outbox(OutboxMessage(
-                    kind="agent",
-                    text=_wrapup.content,
-                    meta={
-                        "chain_id": chain_id,
-                        "limit_stopped": True,
-                        "limit_kind": "router_cap",
-                    },
-                ))
-                self._append_history(ChatMessage(
-                    role="assistant",
-                    content=_wrapup.content,
-                    ts=_now_iso(),
-                    meta={"chain_id": chain_id, "source": "router_cap_exhausted_wrap_up"},
-                ))
-                return
-        except Exception:  # noqa: BLE001 — wrap-up failed; degrade to canned reply
-            pass
+        except Exception as _err:  # noqa: BLE001 — named below, then degraded
+            _reason_unavailable = f"wrap_up_failed: {type(_err).__name__}: {_err}"
+        else:
+            _wrapup_text = _wrapup.content or None
+            if _wrapup_text is None:
+                _reason_unavailable = "wrap_up_empty: the LLM returned no text"
+
+        if _wrapup_text is not None:
+            await self._put_outbox(OutboxMessage(
+                kind="agent",
+                text=_wrapup_text,
+                meta={
+                    "chain_id": chain_id,
+                    "limit_stopped": True,
+                    "limit_kind": "router_cap",
+                },
+            ))
+            self._append_history(ChatMessage(
+                role="assistant",
+                content=_wrapup_text,
+                ts=_now_iso(),
+                meta={"chain_id": chain_id, "source": "router_cap_exhausted_wrap_up"},
+            ))
+            return
+
+        logger.warning(
+            "router_cap force-close wrap-up unavailable (%s) — chain_id=%s; "
+            "falling back to the canned retry-exhausted reply, so this turn's "
+            "closing message is generic rather than a summary of what was done.",
+            _reason_unavailable,
+            chain_id,
+        )
 
         # Fallback: original canned error + hardcoded reply
         await self._put_outbox(OutboxMessage(
