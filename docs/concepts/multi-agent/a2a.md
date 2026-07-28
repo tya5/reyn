@@ -157,15 +157,38 @@ the next `input-required`, until terminal.
 ### SSE streaming
 
 `GET /a2a/tasks/{run_id}/events` returns a `text/event-stream` of the
-task's emitted events. Closes when the task reaches a terminal status.
+task's emitted payloads. Closes when the task reaches a terminal status.
+
+### Progress payloads
+
+While the task runs, both the SSE stream and the webhook (below) carry an
+`status: "in-progress"` payload for each of these audit-events:
+
+| Audit-event | `message` |
+|-------------|-----------|
+| `turn_started` | `turn: <inbox trigger kind>` — e.g. `turn: user` |
+| `llm_called` | `llm: <model>` |
+| `tool_returned` | `tool: <name>` |
+| `tool_failed` | `tool: <name> (failed)` |
+
+```json
+{"run_id": "...", "status": "in-progress", "progress": 3,
+ "event": "tool_returned", "message": "tool: grep", "agent_name": "..."}
+```
+
+`progress` is a monotonic ordinal, not a fraction — the turn's length is not
+known in advance. Only the audit-event kind and the line above are sent; a
+tool's arguments and its result body never leave the process on this channel.
+The same selection and wording reach an MCP client's `notifications/progress`,
+so one parser serves both transports.
 
 ### Push notifications
 
 If `params.webhook_url` is set on the initial `message/send`, Reyn POSTs
 JSON payloads to the URL on each status transition (`running` →
-`input-required` → `running` → `completed`/`failed`/`cancelled`).
-Errors talking to the webhook are logged, not raised — the task
-progresses regardless.
+`input-required` → `running` → `completed`/`failed`/`cancelled`) and on each
+progress payload above. Errors talking to the webhook are logged, not raised —
+the task progresses regardless.
 
 ### Cancellation
 

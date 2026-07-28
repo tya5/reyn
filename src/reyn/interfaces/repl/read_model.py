@@ -278,7 +278,10 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "mcp_servers": [],
         "hooks": [],
         "skills": [],
-        "visibility_items": [],
+        # #3378: None (not []) — a remote frame carries no visibility seam at all, and
+        # the renderer must say "not wired" rather than "(none)" (which would claim
+        # "nothing is narrowed", a statement this frame cannot support).
+        "visibility_items": None,
         "hook_items": [],
         "pipelines": [],
         # #3300 P2b: the server-authoritative sent-queue state IS on the wire

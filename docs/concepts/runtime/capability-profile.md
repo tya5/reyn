@@ -88,6 +88,31 @@ them **most-restrictive-wins**:
 
 An empty profile list → inert result, byte-identical to no profile.
 
+## Advertisement and enforcement read one source
+
+A narrowed tool is **both** withheld from the LLM's tool catalog **and** rejected
+if called anyway. Both halves key on the same resolved `ContextualPermission`:
+
+| Half | What it does | Why it exists |
+|------|--------------|---------------|
+| Advertisement | The tool is absent from the `tools=` payload the model receives | The model never spends a turn on a capability it cannot have |
+| Enforcement | A call to it returns `tool_excluded` | The model can name an unadvertised tool anyway — directly, or wrapped in `invoke_action` |
+
+**Hiding is not denying.** The two are not redundant and neither substitutes for
+the other: a model that names a tool absent from its catalog still reaches
+dispatch, which is how an excluded web tool once executed. Enforcement is the
+boundary; advertisement is the presentation that keeps the two agreeing.
+
+The agreement is re-established whenever the narrowing changes mid-turn — the
+untrusted auto-narrowing below can engage between rounds, and the round after it
+engages is advertised against the new narrowing, not the turn's opening one.
+
+`invoke_action` is the one deliberate exception on the advertisement side: it
+carries its real target in `action_name`, so what it resolves to is knowable only
+at call time. The wrapper is therefore always advertised and always unwrapped
+before the gate decides — withholding the wrapper under a `tool_allow` list would
+remove the only route to every *allowed* action.
+
 ## Context-auto untrusted narrowing
 
 One profile is auto-applied while untrusted external content is live in the

@@ -295,14 +295,20 @@ position in `__init__`).
 
 ## Capability, permission & visibility
 
-- `_exclude_tools` (#187) — tool names excluded from the MAIN chat `RouterLoop`'s
-  LLM-visible catalog, threaded to the loop construction below. General capability (mirrors
-  the sub-loop `exclude_tools`, `planner.py:1136`); the faithful SWE-eval excludes
-  `web__search`/`web__fetch` so the agent solves from the repo + issue, not a web lookup of
-  the gold solution.
+- `_exclude_tools` (#187) — tool names excluded for the MAIN chat `RouterLoop`, threaded to
+  the loop construction below. General capability (mirrors the sub-loop `exclude_tools`,
+  `planner.py:1136`); the faithful SWE-eval excludes `web__search`/`web__fetch` so the agent
+  solves from the repo + issue, not a web lookup of the gold solution. #3378: this is **not**
+  a separate advertisement axis — `RouterLoop` composes it into `_contextual_permission` as
+  one more restrict-only ∩ term, so it reaches the LLM-visible catalog and the live
+  `tool_excluded` gate through the same field (before, an explicit contextual discarded it
+  from enforcement while it still filtered the catalog).
 - `_contextual_permission` (#1827 S3) — per-session `capability_profile` narrowing
   (`ContextualPermission`) resolved from the agent's topology role. Threaded to the live
   tool gate (`RouterLoop`) + control-IR `OpContext`. `None` = no narrowing (byte-identical).
+  #3378: it is also the source the LLM-visible catalog is filtered by, so a tool this
+  narrowing denies is never advertised in the first place — see
+  [Capability profile § Advertisement and enforcement read one source](../../concepts/runtime/capability-profile.md#advertisement-and-enforcement-read-one-source).
   `_untrusted_contextual_cache` (#1827 S4b, context-auto) is a lazily-resolved minimal
   `_untrusted` profile `ContextualPermission`, composed into the per-turn narrowing while
   untrusted external content is live in context; `None` until first needed.

@@ -433,7 +433,11 @@ class CapabilityVisibility:
         scheme = get_scheme(self._chat_tool_use_scheme) or get_scheme(DEFAULT_SCHEME_NAME)
         ops = _VisibilityProbeOps(self._router_host, excluded_categories)
         univ_enabled = bool(self._router_host.get_universal_wrappers_enabled())
-        available = {"hot_list_aliases": [], "exclude_tools": frozenset()}
+        # #3378: the census is the UN-narrowed reachable set — the contextual is applied
+        # by ``capability_visibility_state`` below, which needs the denied rows to
+        # RENDER them as denied. Passing the narrowing here instead would delete them
+        # from the census and the Tool tab could not say why they are unavailable.
+        available = {"hot_list_aliases": [], "contextual_permission": None}
         layer_ctx = {
             "univ_enabled": univ_enabled,
             # search_actions is wrapper plumbing (excluded below regardless of
@@ -487,7 +491,18 @@ class CapabilityVisibility:
         ``tools=`` payload for the active scheme (expanded through any wrapper) — not a raw global
         registry census, so a capability absent from every scheme's composed payload (e.g. a
         ``gates.router="deny"`` phase-only tool) is never shown as visible.
-        Kind ∈ tool / mcp / category / skill."""
+        Kind ∈ tool / mcp / category / skill.
+
+        #3378 — ``denied_by_envelope``: reachable capabilities the ENVELOPE contextual
+        denies (topology binding / delegate floor / per-session config / ⊆-parent cap /
+        the ephemeral ``_untrusted`` profile). These used to be silently dropped from
+        the census, so the Tool tab could not distinguish "this tool does not exist
+        here" from "this tool exists but your profile denies it" — the owner's "I look
+        at the tab and cannot tell". They are a DIFFERENT AXIS from
+        ``hidden_by_session``: the session override is user-flippable via
+        ``/visibility``, whereas an envelope denial is not (toggling ON re-resolves from
+        base, which still denies) — so a renderer must keep the two distinguishable and
+        must not offer a toggle for a ``denied_by_envelope`` row."""
         from typing import cast
 
         from reyn.security.permissions.effective import (
@@ -509,13 +524,15 @@ class CapabilityVisibility:
         ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
 
         authorized: "list[dict]" = []
+        denied: "list[dict]" = []
         for name in sorted(self._reachable_tool_names(base_excl)):
-            if ctx.allows(CapabilityAxis.TOOL, name):
-                authorized.append({"kind": "tool", "name": name})
+            row = {"kind": "tool", "name": name}
+            (authorized if ctx.allows(CapabilityAxis.TOOL, name) else denied).append(row)
         for server in self._router_host.get_mcp_servers():
             n = server.get("name")
-            if n and ctx.allows(CapabilityAxis.MCP, n):
-                authorized.append({"kind": "mcp", "name": n})
+            if n:
+                row = {"kind": "mcp", "name": n}
+                (authorized if ctx.allows(CapabilityAxis.MCP, n) else denied).append(row)
         for category in CATEGORIES:
             if category not in base_excl:
                 authorized.append({"kind": "category", "name": category})
@@ -528,7 +545,11 @@ class CapabilityVisibility:
             for kind, names in self._visibility_override.items()
             for name in sorted(names)
         ]
-        return {"authorized": authorized, "hidden_by_session": hidden}
+        return {
+            "authorized": authorized,
+            "hidden_by_session": hidden,
+            "denied_by_envelope": denied,
+        }
 
     def persist_visibility_override(self, toggle_store_dir: "Path") -> None:
         """#2285 step2: persist the visibility override to ``<state dir>/visibility.yaml`` — a store

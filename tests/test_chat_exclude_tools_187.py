@@ -36,13 +36,17 @@ def _tool(name: str) -> dict:
 def test_catalog_filter_hides_web_keeps_others() -> None:
     """Tier 2: the catalog filter drops excluded (web) tools, keeps the rest.
 
-    `_apply_tool_exclusions` is the exact post-build filter that produces the
-    RouterLoop's LLM-visible catalog (`self._catalog`, router_loop.py:~1791).
+    `apply_contextual_visibility` is the exact post-build filter that produces the
+    RouterLoop's LLM-visible catalog (`self._catalog`). #3378 re-keyed it from the
+    raw `exclude_tools` name set onto the session's EFFECTIVE contextual narrowing —
+    which `exclude_tools` composes into (`RouterLoop._with_exclude_tools`), so the
+    #187 exclusion is expressed here as the ContextualPermission it becomes.
     Exercising it directly proves the web-exclusion *behavior* (refactor-robust,
     no source-string): with web excluded, the catalog the LLM sees no longer
     contains web__search/web__fetch but still offers the repo-editing tools.
     """
-    from reyn.runtime.router_loop import _apply_tool_exclusions
+    from reyn.runtime.router_loop import apply_contextual_visibility
+    from reyn.security.permissions.effective import ContextualPermission
 
     catalog = [
         _tool("web__search"),
@@ -51,7 +55,8 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
         _tool("file__write"),
         _tool("exec__run"),
     ]
-    filtered = _apply_tool_exclusions(catalog, frozenset({"web__search", "web__fetch"}))
+    excluded = ContextualPermission(tool_deny=frozenset({"web__search", "web__fetch"}))
+    filtered = apply_contextual_visibility(catalog, excluded)
     names = {t["function"]["name"] for t in filtered}
     assert "web__search" not in names and "web__fetch" not in names, (
         "the faithful SWE catalog must hide web tools so the agent cannot "
@@ -59,8 +64,11 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
     )
     # the repo-editing tools the agent actually needs survive the exclusion
     assert {"file__read", "file__write", "exec__run"} <= names
-    # empty exclusion = no filtering (the default, non-faithful path)
-    assert len(_apply_tool_exclusions(catalog, frozenset())) == len(catalog)
+    # no narrowing at all = no filtering (the default, non-faithful path)
+    unfiltered = apply_contextual_visibility(catalog, None)
+    assert {t["function"]["name"] for t in unfiltered} == {
+        t["function"]["name"] for t in catalog
+    }
 
 
 def test_chat_parser_exposes_exclude_tools_flag() -> None:

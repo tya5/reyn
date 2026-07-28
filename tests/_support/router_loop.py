@@ -247,3 +247,22 @@ class ScriptedLLM:
         result = self._script[self.call_count]
         self.call_count += 1
         return result
+
+
+class RaisingLLM:
+    """Real callable replacing call_llm_tools that always raises.
+
+    Same policy standing as :class:`ScriptedLLM` (a real ``__call__``, so
+    signature drift still raises ``TypeError``); this one lets a test pin
+    the *failure* leg of a path that degrades when the LLM is unavailable
+    — without depending on the ambient environment lacking credentials
+    (#3382: four tests were green only because CI has no API key).
+    """
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.error = error or RuntimeError("scripted LLM failure")
+        self.call_count: int = 0
+
+    async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
+        self.call_count += 1
+        raise self.error

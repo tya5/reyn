@@ -579,20 +579,38 @@ def _visibility_pane_entries(
     current state (``/visibility off …`` for an on item and vice versa). Until the
     session wires that state, fall back to the config-declared names as a read-only
     listing (empty command = the row dispatches nothing). ``fallback_key`` is
-    ``None`` for tool, which has no config-declared name source."""
-    items = [
-        it for it in (snap.get("visibility_items") or []) if it.get("kind") == kind
-    ]
-    if items:
-        return [
-            (
+    ``None`` for tool, which has no config-declared name source.
+
+    #3378 — **two axes, two markers.** ``[on]``/``[off]`` is the ``/visibility`` axis
+    (user-flippable, so the row carries a slash). ``[--]`` is the ENVELOPE/CONTEXTUAL
+    axis (a topology binding / delegate floor / per-session config / the ephemeral
+    ``_untrusted`` profile), which ``/visibility on`` cannot re-grant — so the row is
+    marked distinguishably, annotated with the reason, and carries NO slash. Sharing
+    the ``off`` marker between them would tell the operator to try a toggle that
+    cannot work, which is the state the owner was in.
+
+    #3378 — **empty is two different states.** ``visibility_items is None`` means the
+    frame carries no visibility seam (a remote read-model frame, or a session without
+    the accessor) → "not wired". A present-but-empty list means the seam answered and
+    nothing is narrowed → "(none)". These rendered identically before."""
+    raw = snap.get("visibility_items")
+    rows: "list[tuple[str, str]]" = []
+    for it in (raw or []):
+        if it.get("kind") != kind:
+            continue
+        if it.get("denied"):
+            rows.append((f"[--] {it['name']}  · denied by capability profile", ""))
+        else:
+            rows.append((
                 f"[{'on' if it['on'] else 'off'}] {it['name']}",
                 f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}",
-            )
-            for it in items
-        ]
+            ))
+    if rows:
+        return rows
     names = [d["name"] for d in (snap.get(fallback_key) or [])] if fallback_key else []
-    return [(n, "") for n in names] or [("(none)", "")]
+    if names:
+        return [(n, "") for n in names]
+    return [("(none)", "") if raw is not None else ("(not wired)", "")]
 
 
 def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
