@@ -654,6 +654,22 @@ second hand-rolled column:
   (`int(clock() / frame_period)`) that flowview's own
   `FlowView(animation_fps=N)` re-invokes on each animation tick — no
   app-side timer (#3283 ①, native-blink equivalence).
+- **ROW TINT — `Presentation.background`** (`presenter.py`): a user row and a
+  FAILURE row (a `tool_call_failed` / `error` frame, or a `tool_call_completed`
+  whose summary is a `✗`) carry a whole-row background that flowview paints
+  edge to edge across gutter + body + padding (`_view._compose_line`). Every
+  tint is a `_CC_*_BG` constant — a faint DARK block (`_CC_USER_BG`,
+  `_CC_ERR_BG`) that the row's normal foreground stays legible against; a
+  saturated `_CC_*` foreground colour is never reused as a background. The two
+  vocabularies are kept disjoint deliberately: foreground and background are
+  chosen on independent code paths, so overlapping them is how they collide.
+  #3367 was exactly that collision — every failure leg paired `style=_CC_ERR`
+  with `background=_CC_ERR`, painting the row's text (and, because the tint
+  spans the gutter column, the gutter's coral `⎿`/`✗` glyph) in its own
+  background colour, so a failed tool call rendered as an unreadable solid
+  band. `tests/test_textual_chat_row_contrast_3367.py` gates the invariant over
+  the (kind, state) cross-product enumerated from `DISPLAY_KINDS` +
+  `EntryState`.
 - **RIGHT gutter — `ReynRightGutter`** (`gutter.py`, #3283 ④): one column, two
   label families, wired via flowview's additive
   `right_decorator`/`right_gutter_width` params. flowview takes a single right
