@@ -28,7 +28,7 @@ Chat-specific flags:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--cui` | off | Use plain console output (no TUI). Useful for piping output, debugging, or headless environments. |
-| `--no-restore` | off | Skip restoring in-flight skill state from disk this run. Useful for debugging or starting a clean session. |
+| `--no-restore` | off | Skip restoring in-flight skill state AND skip loading the persisted chat transcript this run (neither is deleted — both load normally on the next run without this flag). Useful for debugging or starting a clean session. |
 | `--reset` | off | Wipe in-flight skill state (snapshots + WAL) before starting. Audit logs in `.reyn/events/` are preserved. |
 | `--banner` | off | Show the ASCII-art startup banner (gradient REYN logo + agent / model info). |
 | `--eager-embedding-build` | off | Await action embedding index build synchronously on the first turn (pays ~2–5 s once so `search_actions` is immediately available). |
