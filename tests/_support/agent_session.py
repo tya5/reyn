@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 from reyn.runtime.agent import Agent
+from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session
 
 # Identity fields owned by Agent (see reyn.runtime.agent.Agent). Extracted
@@ -77,4 +78,20 @@ def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
         if kwarg_name in kwargs
     }
     agent = Agent(**agent_field_kwargs)
-    return Session(agent=agent, **kwargs)
+    # Session no longer builds its own recovery pair (generation_store ->
+    # journal) — build it here from the same inputs the pre-refactor
+    # Session.__init__ read internally (recovery-bundle-out-of-Session).
+    # ``snapshot_path`` / ``state_log`` / ``session_id`` are PEEKED, not
+    # popped: Session's own signature still accepts them (it keeps needing
+    # ``self._snapshot_path`` / ``self._state_log`` for its own logic), so
+    # they must still flow through ``**kwargs`` below unchanged.
+    snapshot_path = kwargs.get("snapshot_path") or default_snapshot_path(agent.agent_name)
+    generation_store, journal = build_recovery(
+        agent.agent_name,
+        snapshot_path,
+        kwargs.get("state_log"),
+        kwargs.get("session_id", "main"),
+    )
+    return Session(
+        agent=agent, generation_store=generation_store, journal=journal, **kwargs,
+    )

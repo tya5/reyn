@@ -16,6 +16,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.agent import Agent
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.services.recovery import build_recovery
 from reyn.runtime.session import Session
 
 
@@ -59,15 +60,24 @@ def make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
     # Agent is the sole identity SSoT (#3133 Priority-0 step-2 removed the
     # flat identity kwargs Session used to also accept alongside ``agent=``).
     agent = Agent(agent_name="default", role="")
+    snapshot_path = tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json"
+    # Session no longer builds its own recovery pair (generation_store ->
+    # journal) — build it here from the same inputs the pre-refactor
+    # Session.__init__ read internally (recovery-bundle-out-of-Session).
+    generation_store, journal = build_recovery(
+        agent.agent_name, snapshot_path, state_log, "main",
+    )
     # Monkeypatch covers the engine's compute_budgets() call at Session init.
     with synthetic_t_max(t_max):
         return Session(
             agent=agent,
+            generation_store=generation_store,
+            journal=journal,
             output_language="en",
             budget_tracker=bt,
             state_log=state_log,
             compaction_config=cfg,
-            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+            snapshot_path=snapshot_path,
         )
 
 

@@ -9,6 +9,7 @@ from reyn.runtime.services.intervention_coordinator import InterventionCoordinat
 from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.runtime.services.intervention_registry import InterventionRegistry
 from reyn.runtime.services.memory_service import MemoryService
+from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
@@ -37,5 +38,7 @@ __all__ = [
     "RouterLoopDriver",
     "ChainTimeoutGlue",
     "SnapshotJournal",
+    "build_recovery",
+    "default_snapshot_path",
     "_PendingChain",
 ]
