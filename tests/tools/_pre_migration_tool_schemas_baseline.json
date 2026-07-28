@@ -1522,7 +1522,7 @@
   },
   "reyn_repo_read": {
     "function": {
-      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs to find the relevant file. Prefer this over guessing a file path from memory — start from a curated entry point. Fallback entry point: reyn_repo_read(\"README.md\") for the overview + curated map of deep-dive paths.",
+      "description": "Read a text file from Reyn's own repository by an exact repo-root-relative path. Use for: (a) reading a specific file the user named (e.g. README.md), or (b) navigating Reyn's source / docs to find the relevant file. Prefer this over guessing a file path from memory — start from a curated entry point. Fallback entry point: reyn_repo_read(\"README.md\") for the overview + curated map of deep-dive paths. Scope: ONLY the reyn repository checkout itself — paths are resolved relative to that repo root, never absolute and never outside it. For anything else — a path under the user's home directory (e.g. ~/.reyn/...), the current project/workspace, or any other absolute path — use read_file instead; it will fail here with an out-of-scope error.",
       "name": "reyn_repo_read",
       "parameters": {
         "properties": {

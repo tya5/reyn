@@ -53,13 +53,23 @@ reyn_repo_read = ToolDescription(
         "guessing a file path from memory — start from a curated entry "
         "point. Fallback "
         "entry point: reyn_repo_read(\"README.md\") for the overview + "
-        "curated map of deep-dive paths."
+        "curated map of deep-dive paths. "
+        "Scope: ONLY the reyn repository checkout itself — paths are "
+        "resolved relative to that repo root, never absolute and never "
+        "outside it. For anything else — a path under the user's home "
+        "directory (e.g. ~/.reyn/...), the current project/workspace, or "
+        "any other absolute path — use read_file instead; it will fail "
+        "here with an out-of-scope error."
     ),
     ja=(
         "Reyn 自身のリポジトリ内のテキストファイルを、リポジトリルート"
         "からの正確な相対パスで読む。ユーザーが名指ししたファイル（例: "
         "README.md）を読む場合、または Reyn のソース／ドキュメントを"
         "ナビゲートして目的のファイルを探す場合に使う。"
+        "適用範囲: Reyn リポジトリ自体のみ（相対パスのみ、絶対パス不可、"
+        "リポジトリ外不可）。ホームディレクトリ配下（例: ~/.reyn/...）や"
+        "現在のプロジェクト／ワークスペース、その他の絶対パスには"
+        "read_file を使うこと。ここではスコープ外エラーになる。"
     ),
 )
 

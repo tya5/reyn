@@ -29,8 +29,10 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
+from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.registry import AgentRegistry
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.tools.mcp_verbs import MCP_INSTALL_LOCAL
@@ -69,8 +71,16 @@ def _make_ctx(tmp_path, *, bus=None, resolver=None, events=None, state_log=None)
     """Build a production-shaped router ToolContext.
 
     The op-context factory mirrors what ``RouterHostAdapter.make_router_op_context``
-    wires (permission_decl / intervention_bus / sandbox_policy), which is where the
-    handler reads the operator's real declaration + bus from.
+    wires (permission_decl / intervention_bus / sandbox_policy / a REAL Workspace
+    rooted at the agent's ``workspace_base_dir``), which is where the handler reads
+    the operator's real declaration + bus + project root from.
+
+    ``ctx.workspace`` is deliberately left ``None`` (the chat-router reality — the
+    host adapter exposes no ``.workspace`` there) so a project-root resolution that
+    reads ``ctx.workspace`` instead of the factory's ``op_ctx.workspace`` would
+    silently fall back to ``Path.cwd()`` and be caught by
+    ``test_install_local_writes_under_the_factory_workspace_not_cwd`` below (#3213
+    item 2's root-cause fix).
     """
     op_ctx = SimpleNamespace(
         permission_decl=PermissionDecl(),
@@ -80,11 +90,12 @@ def _make_ctx(tmp_path, *, bus=None, resolver=None, events=None, state_log=None)
         events=events,
         cancel_event=None,
         agent_id=None,
+        workspace=Workspace(events=EventLog(), base_dir=tmp_path),
     )
     return ToolContext(
         events=events if events is not None else _RecordingEvents(),
         permission_resolver=resolver,
-        workspace=SimpleNamespace(root=str(tmp_path)),
+        workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(op_context_factory=lambda: op_ctx),
         state_log=state_log,
@@ -203,4 +214,44 @@ async def test_install_local_server_survives_wal_truncation(tmp_path):
         "the mcp__install_local-installed server was ERASED by config reconstruction — it "
         "recorded no truncation-surviving generation, so the reconstruct rewrote the file "
         "from the op-path generation that predates it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_install_local_writes_under_the_factory_workspace_not_cwd(tmp_path, monkeypatch):
+    """Tier 2: #3213 item 2 — project root resolves from the factory's real
+    Workspace, not ``Path.cwd()``.
+
+    ``mcp__install_local`` previously resolved its project root from
+    ``ctx.workspace.root`` (an attribute the real ``Workspace`` never exposes —
+    only ``.base_dir``, per #1442) with a silent ``Path.cwd()`` fallback. On the
+    chat-router path ``ctx.workspace`` is ``None``, so every install silently fell
+    back to cwd — a DIFFERENT file than the one ``mcp__install_registry`` /
+    ``mcp__install_package`` write via the ``build_legacy_op_context`` bridge (which
+    resolve the factory's real Workspace). Two install verbs racing different files
+    for the same logical ``.reyn/config/mcp.yaml`` is exactly the observed
+    "install_local clobbers mcp.yaml" symptom: a later ``install_local`` read an
+    empty file (wrong path) and its merge silently dropped every server the other
+    verbs had written to the real path.
+
+    Falsifiable: chdir the test process somewhere OTHER than the workspace root,
+    then assert the write landed under the workspace root, not cwd.
+    """
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    cwd_dir = tmp_path / "unrelated-cwd"
+    cwd_dir.mkdir()
+    monkeypatch.chdir(cwd_dir)
+
+    ctx = _make_ctx(workspace_root)
+    result = await MCP_INSTALL_LOCAL.handler(
+        {"name": "planted", "command": "/bin/cat", "args": []}, ctx,
+    )
+
+    assert result["status"] == "ok"
+    assert (workspace_root / ".reyn" / "config" / "mcp.yaml").is_file(), (
+        "install_local wrote under cwd instead of the factory's real Workspace root"
+    )
+    assert not (cwd_dir / ".reyn").exists(), (
+        "install_local ALSO wrote a stray config under cwd — the wrong-path write"
     )
