@@ -1,5 +1,14 @@
-# scaffold: triggered_by="#3376 P1 lands the Exposure/Encoder seam under the 4 existing (scheme x transport) cells"
-# scaffold: removed_by="The same PR that lands the P1 seam, once the 4 cells are shown byte-identical against this oracle"
+# scaffold: triggered_by="valid_scheme_transport_pairs() covers the full (registered scheme names x Transport) product — i.e. no unregistered cell is left, so no PR in the #3376 arc still has to show the 4 pre-existing cells unchanged"
+# scaffold: removed_by="The PR that registers the last (scheme x transport) cell. That PR CANNOT merge without deleting this file: test_the_arc_completing_fires_this_scaffolds_deletion below goes RED on exactly the trigger condition above."
+# scaffold: note="Re-pointed by the P1 seam PR. The original trigger named P1, but the
+#   arc did not end there: P2 adds the (category x content_fence) cell and P3 the
+#   remaining ones, and each of those still has to show that the 4 cells recorded
+#   here did not move — the risk of collateral change is HIGHER in P2/P3 than in P1,
+#   because they touch the shared Exposure/Encoder the cells now run on. Deleting the
+#   artifact at P1 would remove the instrument mid-operation.
+#   The trigger is stated as a machine-checkable CONDITION, not a PR number, and is
+#   enforced by an arm in this file rather than by prose: a removed_by nobody executes
+#   is how #3383's baseline outlived its phase by 16 days."
 """Tier 1: the #3376 P1 byte-identical gate — the 4 registered ``(scheme x
 transport)`` cells still produce exactly the ``(llm_tools_payload,
 tool_use_sp)`` recorded in ``tool_use_oracle_3376.json``.
@@ -7,8 +16,17 @@ tool_use_sp)`` recorded in ``tool_use_oracle_3376.json``.
 This is the characterization half of the harness in ``tool_use_oracle_3376.py``
 (read its module docstring for how the real ``SchemeOps`` object graph is built
 and what is pinned). It is the snapshot-test exception the testing policy grants
-scaffolding for legacy-refactor characterization: it exists only to make "P1
-changed nothing" a measured claim, and dies with P1.
+scaffolding for legacy-refactor characterization: it exists only to make "this
+arc's refactor changed nothing" a measured claim, and it is **self-terminating** —
+``test_the_arc_completing_fires_this_scaffolds_deletion`` turns RED the moment the
+last cell is registered, so the PR that completes the arc cannot merge while this
+file still exists.
+
+That arm is the point, not a nicety. Once every cell is on the seam this artifact
+stops being a refactor instrument and becomes a frozen golden snapshot of current
+behaviour — the shape #3383 exposed, which then *resists correct changes* the way
+a literal pin does. The danger is not carrying it through the arc; it is leaving
+it here afterwards.
 
 The comparison runs the capture in a **fresh subprocess** rather than in-process:
 the failure class this oracle guards against (#3385 — litellm's provider
@@ -30,11 +48,64 @@ if str(_SCAFFOLD_DIR) not in sys.path:
 
 import tool_use_oracle_3376 as oracle  # noqa: E402
 
-from reyn.tools.transport import valid_scheme_transport_pairs  # noqa: E402
+from reyn.tools.transport import Transport, valid_scheme_transport_pairs  # noqa: E402
+
+_SIBLING_ARM = (
+    "tests/test_tool_use_exposure_encoder_3376.py::"
+    "test_an_unregistered_cell_is_still_refused_fail_closed"
+)
 
 
 def _recorded() -> dict:
     return json.loads(oracle.ORACLE_PATH.read_text(encoding="utf-8"))
+
+
+def _unregistered_cells() -> "set[tuple[str, Transport]]":
+    """Cells in the (registered scheme names x Transport) product that are not
+    registered. Empty ⇒ the #3376 arc is complete."""
+    registered = set(valid_scheme_transport_pairs())
+    schemes = {scheme for scheme, _ in registered}
+    return {(scheme, transport) for scheme in schemes for transport in Transport} - registered
+
+
+def test_the_arc_completing_fires_this_scaffolds_deletion() -> None:
+    """Tier 1: RED the moment the last (scheme x transport) cell is registered —
+    the signal that this oracle must now be DELETED, not carried further.
+
+    A ``removed_by`` written in prose is a promise nobody executes: #3383's
+    baseline outlived its phase by 16 days that way. This arm converts the
+    retirement condition into something the merge gate enforces — the PR that
+    registers the last cell cannot go green while this file is still here.
+
+    Why retirement is mandatory rather than tidy: while cells are still moving,
+    the artifact is a refactor instrument and its protective value is highest in
+    the PRs that touch the shared seam. Once every cell is on that seam it stops
+    measuring a migration and becomes a frozen golden snapshot of current
+    behaviour, sitting in the one directory where golden files are allowed —
+    which then resists correct changes instead of catching wrong ones.
+
+    Vacuity guard: the registered set must be non-empty, otherwise the product
+    below is empty too and this arm would fire for the wrong reason (an empty
+    registry, not a complete arc)."""
+    registered = set(valid_scheme_transport_pairs())
+    assert registered, (
+        "the (scheme, transport) registry is empty — this arm would fire on an "
+        "empty registry rather than on a completed arc, which is not the condition "
+        "it is about. Fix the registry, do not delete the oracle."
+    )
+
+    assert _unregistered_cells(), (
+        "Every (scheme, transport) cell is now registered: the #3376 arc is "
+        "COMPLETE and this oracle has to go. From here it is no longer a refactor "
+        "instrument but a frozen golden snapshot of current behaviour — the shape "
+        "#3383 exposed, which resists correct changes rather than catching wrong "
+        "ones. DELETE tests/scaffold/tool_use_oracle_3376.py, "
+        "tests/scaffold/tool_use_oracle_3376.json and this file in the PR that "
+        "registered the last cell, and tick the deletion item on #3376. "
+        f"NOTE: {_SIBLING_ARM} trips on this SAME condition (its vacuity guard has "
+        "no unregistered cell left to witness). The two arms fire together and are "
+        "telling you one thing — the arc ended. Do not 'fix' either in isolation."
+    )
 
 
 def test_live_capture_matches_the_recorded_oracle(out_of_process_reyn) -> None:

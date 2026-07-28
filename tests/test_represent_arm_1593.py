@@ -60,10 +60,9 @@ class _FakeRepresentScheme:
         self.represent_calls: list[Any] = []
 
     async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
-        sp_params = {"universal_wrappers_enabled": False, "search_actions_enabled": False}
         refinement = layer_ctx.get("refinement")
         if not refinement:
-            return Presentation(llm_tools_payload=[_search_tool()], sp_params=sp_params)
+            return Presentation(llm_tools_payload=[_search_tool()])
         self.represent_calls.append({
             "refinement": refinement, "presented": layer_ctx.get("presented"),
         })
@@ -73,10 +72,10 @@ class _FakeRepresentScheme:
             tag = f"action_{len(self.represent_calls)}"
             return Presentation(
                 llm_tools_payload=[_matched_tool(), _search_tool()],
-                sp_params=sp_params, candidates=(tag,),
+                candidates=(tag,),
             )
         return Presentation(
-            llm_tools_payload=[_matched_tool()], sp_params=sp_params,
+            llm_tools_payload=[_matched_tool()],
             candidates=("matched_action",),
         )
 
@@ -165,8 +164,7 @@ class _TextRepresentScheme:
         self.represented = False
 
     async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
-        sp_params = {"universal_wrappers_enabled": False, "search_actions_enabled": False}
-        return Presentation(llm_tools_payload=[_matched_tool()], sp_params=sp_params,
+        return Presentation(llm_tools_payload=[_matched_tool()],
                             candidates=("matched_action",))
 
     def interpret(self, llm_response, *, tool_catalog, ops):
