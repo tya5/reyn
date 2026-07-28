@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from reyn.runtime.agent import Agent
 from reyn.runtime.factory_config import SessionFactoryConfig
+from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import (
     CapabilityScope,
@@ -121,8 +122,23 @@ def build_scoped_chat_session(
         composers_config=base.pop("composers_config", None),
         fs_watch_config=base.pop("fs_watch_config", None),
     )
+    # recovery-bundle-out-of-Session refactor: Session no longer builds its
+    # own generation_store/journal, so this chokepoint builds them from the
+    # same inputs Session used to read internally — ``base`` still carries
+    # ``snapshot_path`` / ``state_log`` / ``session_id`` straight through to
+    # Session below (peeked, not popped), so those Session params are
+    # unchanged; only the recovery-pair CONSTRUCTION moved here.
+    _snapshot_path = base.get("snapshot_path") or default_snapshot_path(agent.agent_name)
+    _generation_store, _journal = build_recovery(
+        agent.agent_name,
+        _snapshot_path,
+        base.get("state_log"),
+        base.get("session_id", "main"),
+    )
     return Session(
         agent=agent,
+        generation_store=_generation_store,
+        journal=_journal,
         router_max_iterations=router_max_iterations,
         non_interactive=non_interactive,
         eager_embedding_build=eager_embedding_build,

@@ -79,11 +79,17 @@ emits an observable `llm_request` event without threading events through the cal
 
 ## Family 2 — Recovery (WAL / journal)
 
-`_build_recovery_bundle` constructs `generation_store` → `journal` (`SnapshotJournal`,
-extracted in PR-refactor-session-1 wave 2 — the session keeps `_snapshot_path` only for
-diagnostic logging; the journal owns the actual I/O). The builder reads the *local*
-`state_log` parameter, not `self._state_log`. `state_log` is process-shared (owned by
-`AgentRegistry`); `None` disables persistence (tests / non-chat invocation). `_session_id`
+`reyn.runtime.services.recovery.build_recovery` constructs `generation_store` → `journal`
+(`SnapshotJournal`, extracted in PR-refactor-session-1 wave 2 — the session keeps
+`_snapshot_path` only for diagnostic logging; the journal owns the actual I/O). Session no
+longer builds this pair itself: every construction site (the scoped session factory, the
+test helpers) calls `build_recovery` and passes `generation_store=` / `journal=` in as
+required `Session.__init__` params (recovery-bundle-out-of-Session refactor). The default
+`.reyn/agents/<agent_name>/state/snapshot.json` path convention lives in
+`reyn.runtime.services.recovery.default_snapshot_path`, the single source both `Session`
+and its callers derive from. `build_recovery` reads the *caller's local* `state_log` value,
+not `self._state_log` off an already-constructed Session. `state_log` is process-shared
+(owned by `AgentRegistry`); `None` disables persistence (tests / non-chat invocation). `_session_id`
 (FP-0043 Stage 5, default `"main"`) threads to the journal so every WAL append carries it;
 a spawned session's real sid is set post-construction (`spawn_session` → `set_session_id`)
 before its run-loop goes live, so every append carries the right `session_id` for

@@ -29,10 +29,24 @@ from pathlib import Path
 import pytest
 
 from reyn.runtime.agent import Agent
+from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import AgentRequestBus
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 from tests._support.agent_session import make_session
+
+
+def _recovery_kwargs(agent_name: str) -> dict:
+    """Build the ``generation_store`` / ``journal`` kwargs Session now
+    requires — the direct-subclass constructions below bypass
+    ``make_session`` (they instantiate ``Session`` subclasses, not
+    ``Session`` itself), so they build the recovery pair the same way
+    ``Session.__init__`` used to internally, matching its prior defaults
+    (``state_log=None``, ``session_id="main"``)."""
+    generation_store, journal = build_recovery(
+        agent_name, default_snapshot_path(agent_name), None, "main",
+    )
+    return {"generation_store": generation_store, "journal": journal}
 
 # ── 1. Hook methods exist with the canonical signatures ────────────────
 
@@ -131,7 +145,7 @@ def test_self_answer_branch_returns_directly_without_dispatch() -> None:
     handler returns it immediately without invoking
     ``_dispatch_intervention`` — the user surface is never touched.
     """
-    session = _SelfAnsweringSession(agent=Agent(agent_name="t"))
+    session = _SelfAnsweringSession(agent=Agent(agent_name="t"), **_recovery_kwargs("t"))
     iv = UserIntervention(kind="permission.shell", prompt="Run ls?")
 
     answer = asyncio.run(session.handle_intervention(iv))
@@ -146,7 +160,7 @@ def test_self_answer_branch_emits_self_answer_event() -> None:
     """Tier 2: the self_answer branch emits ``intervention_routed`` with
     ``route="self_answer"``.
     """
-    session = _SelfAnsweringSession(agent=Agent(agent_name="t"))
+    session = _SelfAnsweringSession(agent=Agent(agent_name="t"), **_recovery_kwargs("t"))
     iv = UserIntervention(kind="permission.shell", prompt="Run ls?")
 
     asyncio.run(session.handle_intervention(iv))
@@ -186,8 +200,8 @@ def test_parent_delegate_branch_forwards_to_parent() -> None:
     child.handle_intervention → parent.handle_intervention →
     parent._try_self_answer.
     """
-    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"))
-    child = _DelegatingSession(agent=Agent(agent_name="child"))
+    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"), **_recovery_kwargs("parent"))
+    child = _DelegatingSession(agent=Agent(agent_name="child"), **_recovery_kwargs("child"))
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
@@ -204,8 +218,8 @@ def test_parent_delegate_branch_emits_parent_delegate_event() -> None:
     forwarding. The parent's own routing decision generates a separate
     event on the parent's chat_events log.
     """
-    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"))
-    child = _DelegatingSession(agent=Agent(agent_name="child"))
+    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"), **_recovery_kwargs("parent"))
+    child = _DelegatingSession(agent=Agent(agent_name="child"), **_recovery_kwargs("child"))
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
@@ -246,8 +260,8 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
     This encodes "the agent has its own will" per the Reyn peer-to-peer
     design (issue #254 design discussion log).
     """
-    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"))
-    child = _SelfAndParentSession(agent=Agent(agent_name="child"))
+    parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"), **_recovery_kwargs("parent"))
+    child = _SelfAndParentSession(agent=Agent(agent_name="child"), **_recovery_kwargs("child"))
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
@@ -274,7 +288,7 @@ def test_self_answer_visible_through_request_bus_adapter() -> None:
     the self_answer policy fire — the adapter is fully transparent to
     the routing decision happening behind it.
     """
-    session = _SelfAnsweringSession(agent=Agent(agent_name="t"))
+    session = _SelfAnsweringSession(agent=Agent(agent_name="t"), **_recovery_kwargs("t"))
     bus = session.as_request_bus()
     assert isinstance(bus, AgentRequestBus)
 
