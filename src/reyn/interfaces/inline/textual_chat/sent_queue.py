@@ -45,9 +45,14 @@ new one:
 - ``Enter`` cancels the highlighted row — the SAME "Enter acts on the
   highlighted item" idiom those same pickers use (there, Enter *selects*; a
   cancel affordance's "select" action IS "cancel this one").
-- ``Escape``/``Tab`` return focus to the composer — copied VERBATIM from
+- ``Escape`` returns focus to the composer — copied VERBATIM from
   :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`'s
-  identical two bindings for the identical purpose.
+  identical binding for the identical purpose. ``Tab``'s equivalent binding
+  was REMOVED (#3365, architect ruling): ``Tab`` is forward-only everywhere
+  in the app, ``Esc`` alone owns "back" — gated on
+  ``test_textual_chat_esc_sufficiency_3365.py`` machine-verifying ``Esc``
+  already reaches the Composer from every focus state this widget (and its
+  siblings) can hold.
 - The composer's own ``↑`` (on its first line) focuses this widget when it
   is non-empty — the mirror image of the composer's existing ``↓``-on-last-
   line-focuses-the-menubar rule (``chrome.py``'s ``Composer._on_key``), so
@@ -107,8 +112,10 @@ class SentQueue(Vertical):
         Binding("up", "select_prev", "Previous queued", show=False),
         Binding("down", "select_next", "Next queued", show=False),
         Binding("enter", "cancel_selected", "Cancel selected", show=False),
+        # #3365: Tab's own "back to composer" binding was removed — Esc alone
+        # owns "back" everywhere now (see the module docstring and
+        # test_textual_chat_esc_sufficiency_3365.py).
         Binding("escape", "focus_composer", "Back to composer", show=False),
-        Binding("tab", "focus_composer", "Back to composer", show=False),
     ]
 
     class Cancelled(Message):
