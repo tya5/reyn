@@ -6,6 +6,7 @@ rationale (Family decomposition).
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 import re
@@ -928,6 +929,51 @@ def _forward_file_signal_fields(dest: dict, result: dict, *, outcome: str) -> No
             "reyn.core.op_runtime.status_classify (#3193)",
             status, result.get("kind"), result.get("op"),
         )
+
+
+# #3082: closed registry of MCP-listing seam call sites that opt OUT of the
+# default audit emission (``Session._mcp_list_via_gateway``, below). A
+# suppression is a member of ``MCPListingSuppression`` — there is no string
+# opt-out — so every non-emitting call site is enumerated here, next to a
+# reason, and grepping this dict is a complete census of "why doesn't X
+# audit-log".
+#
+# The two reasons below are NOT measurements. There is no record in this
+# repo (issue, PR description, commit) of why ``list_tools`` /
+# ``list_resource_templates`` were built without an emit while
+# ``list_resources`` / ``list_prompts`` were built with one — the #2605 PR
+# that added ``list_resources`` says only "mirrors list_tools ... discovery-
+# only, NOT permission-gated" and separately "emits mcp_resources_listed for
+# observability (list_tools has no analogous event; this ask is explicit
+# per the #2597 (2)a slice spec)" — i.e. a spec asked for the event on the
+# resources path and not on the tools path, with no rationale for the
+# asymmetry recorded anywhere. This registry preserves the existing
+# behavior deliberately (not silently, and not re-affirmed as correct);
+# #3410 is where the asymmetry itself gets settled.
+class MCPListingSuppression(enum.Enum):
+    """Closed set of MCP-listing call sites suppressing the default
+    ``mcp_<noun>_listed`` audit emission. Adding a new suppression means
+    adding a member here with a reason in
+    ``MCP_LISTING_SUPPRESSION_REASONS`` — there is no other way to opt out."""
+
+    LIST_TOOLS = "list_tools"
+    LIST_RESOURCE_TEMPLATES = "list_resource_templates"
+
+
+MCP_LISTING_SUPPRESSION_REASONS: dict[MCPListingSuppression, str] = {
+    MCPListingSuppression.LIST_TOOLS: (
+        "No record exists of why this path does not emit an audit event "
+        "(the #2605 PR that added the emitting siblings only says the "
+        "event was 'explicit per the #2597 (2)a slice spec' for resources/"
+        "prompts, not why tools was left out). Preserved as-is rather than "
+        "re-affirmed as correct; #3410 tracks settling it."
+    ),
+    MCPListingSuppression.LIST_RESOURCE_TEMPLATES: (
+        "Same as LIST_TOOLS: no record of why this path was built without "
+        "an emit. Preserved as-is rather than re-affirmed as correct; "
+        "#3410 tracks settling it."
+    ),
+}
 
 
 class Session:
@@ -7081,24 +7127,31 @@ class Session:
         """Returns the configured MCP server list with descriptions."""
         return self._get_mcp_servers_for_router()
 
-    async def _mcp_list_tools(self, server: str) -> list[dict]:
-        """Query the MCP server for its tools list."""
+    async def _mcp_list_via_gateway(
+        self,
+        server: str,
+        expanded: dict,
+        *,
+        gateway_call: Callable[[Any], Awaitable[list[dict]]],
+        noun: str,
+        suppress: "MCPListingSuppression | None" = None,
+    ) -> list[dict]:
+        """Shared MCP-listing seam (#3082): owns gateway construction, the
+        ``Cancelled``/``MCPFault`` error contract, and the audit-emit
+        decision for all four ``_mcp_list_*`` methods (tools / resources /
+        resource_templates / prompts). Each caller has already resolved its
+        own *server* config into *expanded* and passes a *gateway_call*
+        closure naming which ``MCPGateway`` listing method to invoke; *noun*
+        names the emitted event kind (``mcp_<noun>_listed``) when emission
+        is not suppressed.
+        """
+        # #3082: emitting is the default because erring toward audit coverage is
+        # the recoverable direction — a missed event is invisible after the fact,
+        # a spurious one is not. A call site that does not emit names a member of
+        # ``MCPListingSuppression``; there is no string opt-out, so every
+        # non-emitting listing path is enumerated in one place with its reason.
         from reyn.core.cancellable import Cancelled
-        from reyn.mcp.client import expand_env
         from reyn.mcp.gateway import MCPFault, MCPGateway
-
-        servers = self._mcp_servers_flat()
-        if not servers:
-            return [{"error": "no MCP servers configured"}]
-        server_cfg = servers.get(server)
-        if not server_cfg:
-            return [{"error": f"MCP server {server!r} not configured"}]
-
-        expanded = expand_env(server_cfg)
-        if not isinstance(expanded, dict):
-            return [{"error": f"MCP server {server!r} config must be a dict"}]
-        if "type" not in expanded and expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
 
         # #2421: routed through the MCPGateway seam rather than a raw MCP client — the
         # seam contains the crash path, so a mid-list server death raises MCPFault
@@ -7115,11 +7168,49 @@ class Session:
             else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
         )
         try:
-            return await gateway.list_tools(server, expanded)
+            result = await gateway_call(gateway)
         except Cancelled:
             return [{"error": "cancelled"}]
         except MCPFault as exc:
             return [{"error": str(exc)}]
+        if suppress is None:
+            self._chat_events.emit(f"mcp_{noun}_listed", server=server, count=len(result))
+        return result
+
+    def _mcp_resolve_server_config(self, server: str) -> "list[dict] | dict":
+        """Shared config-resolution step for all four ``_mcp_list_*``
+        methods: look up *server* in the flattened MCP server map and
+        ``expand_env`` it. Returns the expanded config dict on success, or a
+        single-error ``[{"error": ...}]`` list (the four methods' existing
+        early-return shape) when the server isn't configured / doesn't
+        resolve to a dict."""
+        servers = self._mcp_servers_flat()
+        if not servers:
+            return [{"error": "no MCP servers configured"}]
+        server_cfg = servers.get(server)
+        if not server_cfg:
+            return [{"error": f"MCP server {server!r} not configured"}]
+
+        from reyn.mcp.client import expand_env
+
+        expanded = expand_env(server_cfg)
+        if not isinstance(expanded, dict):
+            return [{"error": f"MCP server {server!r} config must be a dict"}]
+        if "type" not in expanded and expanded.get("url"):
+            expanded = {**expanded, "type": "http"}
+        return expanded
+
+    async def _mcp_list_tools(self, server: str) -> list[dict]:
+        """Query the MCP server for its tools list."""
+        expanded = self._mcp_resolve_server_config(server)
+        if isinstance(expanded, list):
+            return expanded
+        return await self._mcp_list_via_gateway(
+            server, expanded,
+            gateway_call=lambda gw: gw.list_tools(server, expanded),
+            noun="tools",
+            suppress=MCPListingSuppression.LIST_TOOLS,
+        )
 
     async def _mcp_list_resources(self, server: str) -> list[dict]:
         """Query the MCP server for its resources list.
@@ -7131,41 +7222,14 @@ class Session:
         observability (list_tools has no analogous event; this ask is
         explicit per the #2597 ②a slice spec).
         """
-        from reyn.core.cancellable import Cancelled
-        from reyn.mcp.client import expand_env
-        from reyn.mcp.gateway import MCPFault, MCPGateway
-
-        servers = self._mcp_servers_flat()
-        if not servers:
-            return [{"error": "no MCP servers configured"}]
-        server_cfg = servers.get(server)
-        if not server_cfg:
-            return [{"error": f"MCP server {server!r} not configured"}]
-
-        expanded = expand_env(server_cfg)
-        if not isinstance(expanded, dict):
-            return [{"error": f"MCP server {server!r} config must be a dict"}]
-        if "type" not in expanded and expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
-
-        gateway = (
-            MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
-                cancel_event=self._loop_driver.cancel_event,
-            )
-            if not self._ephemeral
-            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
+        expanded = self._mcp_resolve_server_config(server)
+        if isinstance(expanded, list):
+            return expanded
+        return await self._mcp_list_via_gateway(
+            server, expanded,
+            gateway_call=lambda gw: gw.list_resources(server, expanded),
+            noun="resources",
         )
-        try:
-            resources = await gateway.list_resources(server, expanded)
-        except Cancelled:
-            return [{"error": "cancelled"}]
-        except MCPFault as exc:
-            return [{"error": str(exc)}]
-        self._chat_events.emit(
-            "mcp_resources_listed", server=server, count=len(resources),
-        )
-        return resources
 
     async def _mcp_list_resource_templates(self, server: str) -> list[dict]:
         """Query the MCP server for its resource templates list.
@@ -7174,37 +7238,15 @@ class Session:
         permission-gated). Empty list is a normal result for a server that
         registers no templates.
         """
-        from reyn.core.cancellable import Cancelled
-        from reyn.mcp.client import expand_env
-        from reyn.mcp.gateway import MCPFault, MCPGateway
-
-        servers = self._mcp_servers_flat()
-        if not servers:
-            return [{"error": "no MCP servers configured"}]
-        server_cfg = servers.get(server)
-        if not server_cfg:
-            return [{"error": f"MCP server {server!r} not configured"}]
-
-        expanded = expand_env(server_cfg)
-        if not isinstance(expanded, dict):
-            return [{"error": f"MCP server {server!r} config must be a dict"}]
-        if "type" not in expanded and expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
-
-        gateway = (
-            MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
-                cancel_event=self._loop_driver.cancel_event,
-            )
-            if not self._ephemeral
-            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
+        expanded = self._mcp_resolve_server_config(server)
+        if isinstance(expanded, list):
+            return expanded
+        return await self._mcp_list_via_gateway(
+            server, expanded,
+            gateway_call=lambda gw: gw.list_resource_templates(server, expanded),
+            noun="resource_templates",
+            suppress=MCPListingSuppression.LIST_RESOURCE_TEMPLATES,
         )
-        try:
-            return await gateway.list_resource_templates(server, expanded)
-        except Cancelled:
-            return [{"error": "cancelled"}]
-        except MCPFault as exc:
-            return [{"error": str(exc)}]
 
     async def _mcp_read_resource(self, server: str, uri: str) -> dict:
         """Read one MCP resource by URI and return its contents.
@@ -7313,41 +7355,14 @@ class Session:
         session, one-shot pool otherwise). Emits ``mcp_prompts_listed`` for
         observability, same rationale as ``mcp_resources_listed``.
         """
-        from reyn.core.cancellable import Cancelled
-        from reyn.mcp.client import expand_env
-        from reyn.mcp.gateway import MCPFault, MCPGateway
-
-        servers = self._mcp_servers_flat()
-        if not servers:
-            return [{"error": "no MCP servers configured"}]
-        server_cfg = servers.get(server)
-        if not server_cfg:
-            return [{"error": f"MCP server {server!r} not configured"}]
-
-        expanded = expand_env(server_cfg)
-        if not isinstance(expanded, dict):
-            return [{"error": f"MCP server {server!r} config must be a dict"}]
-        if "type" not in expanded and expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
-
-        gateway = (
-            MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
-                cancel_event=self._loop_driver.cancel_event,
-            )
-            if not self._ephemeral
-            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
+        expanded = self._mcp_resolve_server_config(server)
+        if isinstance(expanded, list):
+            return expanded
+        return await self._mcp_list_via_gateway(
+            server, expanded,
+            gateway_call=lambda gw: gw.list_prompts(server, expanded),
+            noun="prompts",
         )
-        try:
-            prompts = await gateway.list_prompts(server, expanded)
-        except Cancelled:
-            return [{"error": "cancelled"}]
-        except MCPFault as exc:
-            return [{"error": str(exc)}]
-        self._chat_events.emit(
-            "mcp_prompts_listed", server=server, count=len(prompts),
-        )
-        return prompts
 
     async def _mcp_get_prompt(self, server: str, name: str, arguments: "dict | None" = None) -> dict:
         """Fetch one rendered MCP prompt by name and return its messages.
