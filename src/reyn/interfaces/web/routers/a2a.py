@@ -618,7 +618,7 @@ class _A2AProgressBridge:
         self._run_registry = run_registry
         self._ordinal = 0
         self._detached = False
-        self._tasks: list[asyncio.Task[None]] = []
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def webhook_url(self) -> str:
@@ -635,6 +635,18 @@ class _A2AProgressBridge:
         """
         return self._detached
 
+    @property
+    def tracked_task_count(self) -> int:
+        """Read-only accessor for the number of in-flight notification tasks.
+
+        Each scheduled task discards itself from ``_tasks`` on completion
+        (#3390), so this stays bounded by concurrency, not by how many
+        audit-events the bridge has ever forwarded. Tests assert this
+        directly rather than reaching into ``_tasks``, following the
+        ``detached`` precedent above.
+        """
+        return len(self._tasks)
+
     def attach(self) -> None:
         events = getattr(self._session, "_chat_events", None)
         if events is not None:
@@ -647,7 +659,13 @@ class _A2AProgressBridge:
         events = getattr(self._session, "_chat_events", None)
         if events is not None:
             events.remove_subscriber(self.on_event)
-        for task in self._tasks:
+        # Snapshot before cancelling: a done callback discards its task
+        # from ``_tasks`` (#3390), and that discard is delivered via
+        # call_soon — never synchronously inside this loop — so iterating
+        # the live set would already be safe, but iterating a copy keeps
+        # this loop correct even if a future change made completion
+        # synchronous.
+        for task in list(self._tasks):
             if not task.done():
                 task.cancel()
 
@@ -670,7 +688,8 @@ class _A2AProgressBridge:
         except RuntimeError:
             # No running loop (= EventLog dispatched outside async context).
             return
-        self._tasks.append(task)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _send(
         self, ordinal: int, event_type: str, message: str,

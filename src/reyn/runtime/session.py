@@ -81,6 +81,7 @@ from reyn.runtime.services import (
 from reyn.runtime.services.chain_manager import _PendingChain
 from reyn.runtime.services.execution_driver import ExecutionDriver
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
+from reyn.runtime.services.recovery import default_snapshot_path
 from reyn.runtime.session_buses import (
     AgentRequestBus,
     AuditOnlyInterventionBridge,
@@ -623,24 +624,6 @@ class _AuditEventBundle:
 
 
 @dataclass(frozen=True)
-class _RecoveryBundle:
-    """#3082 Family 2: the WAL-event/recovery pair — ``generation_store``
-    (ADR-0038 Stage 1a PITR generation store) → ``journal`` (``SnapshotJournal``,
-    the WAL append + snapshot-restore seam nearly every recovery path goes
-    through), constructed in that order because the journal is wired to this
-    same generation_store instance. Pure output→input value object:
-    :meth:`Session._build_recovery_bundle` is a byte-identical extraction of
-    the construction sequence that used to run inline in ``Session.__init__``
-    — same objects, same order, same args (including reading the LOCAL
-    ``state_log`` __init__ parameter, not ``self._state_log``, which is a
-    separate tracking assignment made later and is untouched by this
-    extraction). Same shape as ``_AuditEventBundle`` (#3082 Family 1)."""
-
-    generation_store: SnapshotGenerationStore
-    journal: SnapshotJournal
-
-
-@dataclass(frozen=True)
 class _HookEventBundle:
     """#3082 Family 3: the hook-event / reactivity spine — ``hook_bus``
     (the per-Session HookBus, Phase 4a) → ``hook_dispatcher`` (the awaited
@@ -982,6 +965,14 @@ class Session:
         # Identity value object (single source of truth) — see
         # docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2
         agent: "Agent",
+        # WAL-event/recovery pair (generation_store -> journal), built by the
+        # caller via ``reyn.runtime.services.recovery.build_recovery`` instead
+        # of by Session itself (recovery-bundle-out-of-Session refactor,
+        # follow-up to #3082 Family 2's inline extraction). REQUIRED: no
+        # default construction happens here.
+        # See docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
+        generation_store: "SnapshotGenerationStore",
+        journal: "SnapshotJournal",
         resolver: ModelResolver | None = None,
         safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
@@ -1187,15 +1178,15 @@ class Session:
 
         # WAL + per-agent snapshot for crash recovery via SnapshotJournal; snapshot_path kept only for diagnostics (PR21 / PR-refactor-session-1, see session-construction.md#family-2-recovery-wal-journal)
         self._session_id = session_id
-        self._snapshot_path = snapshot_path or (
-            Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
-        )
-        # generation_store -> journal, byte-identical extraction (#3082 Family 2, see session-construction.md#family-2-recovery-wal-journal)
-        _recovery_bundle = self._build_recovery_bundle(
-            self.agent_name, self._snapshot_path, state_log, session_id,
-        )
-        self._generation_store = _recovery_bundle.generation_store
-        self._journal = _recovery_bundle.journal
+        self._snapshot_path = snapshot_path or default_snapshot_path(self.agent_name)
+        # generation_store / journal are now built by the CALLER (see
+        # reyn.runtime.services.recovery.build_recovery) and received as
+        # required params — Session no longer constructs its own recovery
+        # pair (recovery-bundle-out-of-Session refactor, follow-up to #3082
+        # Family 2's inline extraction; see
+        # session-construction.md#family-2-recovery-wal-journal).
+        self._generation_store = generation_store
+        self._journal = journal
         # Turn-idle event for quiescence; lets a global rewind await_quiescent before the reset-record append (ADR-0038 Stage 1c, see session-construction.md#family-2-recovery-wal-journal)
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
@@ -3363,57 +3354,6 @@ class Session:
             chat_events=chat_events,
             outbox_hub=outbox_hub,
             otel_exporter=otel_exporter,
-        )
-
-    # ── #3082 Family 2: WAL-event/recovery bundle builder. See session-construction.md. ──
-
-    def _build_recovery_bundle(
-        self,
-        agent_name: str,
-        snapshot_path: Path,
-        state_log: "StateLog | None",
-        session_id: str,
-    ) -> "_RecoveryBundle":
-        """#3082 Family 2: build the WAL-event/recovery pair —
-        ``generation_store`` (ADR-0038 Stage 1a PITR generation store, kept
-        beside snapshot.json) -> ``journal`` (``SnapshotJournal``, wired to
-        this same generation_store instance).
-
-        Byte-identical extraction of the sequence that used to run inline in
-        ``__init__`` — same objects, same construction order, same args.
-        Takes ``agent_name`` / ``snapshot_path`` / ``state_log`` / ``session_id``
-        explicitly rather than reaching into ``self`` mid-construction:
-        ``agent_name`` is the property value already resolvable at the
-        original call site, ``snapshot_path`` is ``self._snapshot_path``
-        (constructed immediately before this builder ran), and — critically —
-        ``state_log`` is the LOCAL ``__init__`` parameter, NOT
-        ``self._state_log``. ``self._state_log = state_log`` is a separate
-        tracking assignment made later in ``__init__`` (for ops that need
-        direct WAL access outside the journal) and is out of scope for this
-        extraction; it keeps reading the same local parameter untouched.
-
-        ADR-0038 Stage 1a: PITR generation store, kept beside snapshot.json.
-
-        PR21: WAL + per-agent snapshot for crash recovery. state_log is
-        process-shared (owned by AgentRegistry); when None, persistence is
-        disabled (tests / non-chat invocation). PR-refactor-session-1 wave 2:
-        persistence now flows through SnapshotJournal (extracted service).
-
-        FP-0043 Stage 5: session_id is the conversation session id, threaded
-        to the journal so every WAL append carries it."""
-        generation_store = SnapshotGenerationStore(
-            agent_name, snapshot_path.parent / "generations",
-        )
-        journal = SnapshotJournal(
-            agent_name=agent_name,
-            snapshot_path=snapshot_path,
-            state_log=state_log,
-            generation_store=generation_store,
-            session_id=session_id,  # FP-0043 S5: per-session WAL routing
-        )
-        return _RecoveryBundle(
-            generation_store=generation_store,
-            journal=journal,
         )
 
     # ── #3082 Family 3: hook-event/reactivity bundle builder. See session-construction.md. ──
