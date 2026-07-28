@@ -22,10 +22,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from reyn.llm.builtin_models import BUILTIN_MODELS
+from reyn.llm.builtin_models import BUILTIN_MODELS, BUILTIN_TIER_ALIASES
 
-#: The three standard model tiers. Users should map these in reyn.yaml.
-STANDARD_CLASSES = ("light", "standard", "strong")
+#: The standard model tiers. Users should map these in reyn.yaml. DERIVED from
+#: ``BUILTIN_TIER_ALIASES`` (the single producer of the tier set) rather than
+#: hand-listed, so a tier added there cannot silently escape this tuple — the
+#: drift shape that bit #3363's key sweep.
+STANDARD_CLASSES = tuple(BUILTIN_TIER_ALIASES)
 
 #: #1650: valid values for the per-model ``reasoning_effort`` field. These are
 #: litellm's accepted reasoning-effort levels for the gemini provider, each of
@@ -288,6 +291,58 @@ class ModelResolver:
                     "resolution misroutes.",
                     _name, _spec.model,
                 )
+
+        self._warn_on_partial_tier_declaration(mapping, builtin)
+
+    def _warn_on_partial_tier_declaration(
+        self, mapping: dict[str, Any], builtin: dict[str, str | dict],
+    ) -> None:
+        """#3374: warn when ``models:`` declares SOME but not ALL generic tiers.
+
+        The built-in tier aliases (#3368) mean an undeclared tier still resolves,
+        which is the point — but it resolves to *reyn's* default rather than the
+        project's, so a project that mapped `light` and `strong` and forgot
+        `standard` silently routes every default-class call to a different
+        provider than the two it deliberately chose. That is an oversight, not a
+        choice, and the aliases now hide it. Warn so it is visible.
+
+        Deliberately NOT warned:
+          - **Zero tiers declared** — the normal zero-config case the aliases
+            exist to serve. Warning there would fire for every new user.
+          - **All tiers declared** — nothing is falling back.
+          - **A tier declared as something unresolvable** — that is a hard
+            ``ValueError`` from the resolution loop above (fail-fast), or, for a
+            name that reaches ``resolve()`` unresolved, #3372's passthrough
+            warning. This check runs AFTER resolution so it never pre-empts
+            either, and it cannot double-warn with #3372's: a tier present in
+            *builtin* is by definition in ``self._resolved``, so ``resolve()``
+            never takes its unknown-name branch for one.
+
+        Tier names are enumerated from ``BUILTIN_TIER_ALIASES`` (the single
+        producer), intersected with the *effective* ``builtin`` catalog — a
+        caller that passed ``builtin={}`` to disable built-ins has no fallback
+        to point at, so there is nothing to warn about.
+        """
+        available_tiers = [t for t in BUILTIN_TIER_ALIASES if t in builtin]
+        declared = [t for t in available_tiers if t in mapping]
+        missing = [t for t in available_tiers if t not in mapping]
+        if not declared or not missing:
+            return
+
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "reyn.yaml `models:` declares the %s tier(s) but omits %s — the "
+            "omitted tier(s) still resolve, via reyn's built-in defaults: %s. "
+            "A project that maps some tiers usually means to map all of them, "
+            "so an omitted tier is typically an oversight: those calls silently "
+            "use a different model than the tiers you declared. To take "
+            "control, add under `models:` in reyn.yaml:\n%s",
+            ", ".join(declared),
+            ", ".join(missing),
+            "; ".join(f"{t} -> {self._resolved[t].model}" for t in missing),
+            "\n".join(f"  {t}: {self._resolved[t].model}" for t in missing),
+        )
 
     def resolve(self, name: str) -> ModelSpec:
         """Return the ModelSpec for name. Pass through as a no-kwargs ModelSpec if not in namespace."""

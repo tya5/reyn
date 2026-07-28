@@ -22,20 +22,31 @@ Note on Gemini thinking syntax:
 """
 from __future__ import annotations
 
-BUILTIN_MODELS: dict[str, str | dict] = {
-    # -------------------------------------------------------------------------
-    # Generic tiers — ReynConfig.model defaults to "standard" and the CLI's
-    # --model flag documents light/standard/strong, but neither is otherwise
-    # guaranteed to exist: a project normally declares these three under its
-    # own reyn.yaml `models:` block (which overrides these), but with no
-    # reyn.yaml at all the class name had nothing to resolve to and reached
-    # litellm as a literal, unresolved string (#3368: "You passed
-    # model=standard"). These aliases match the project template's own
-    # defaults, so light/standard/strong resolve even with zero config files.
-    # -------------------------------------------------------------------------
+#: Generic tiers — ReynConfig.model defaults to "standard" and the CLI's
+#: --model flag documents light/standard/strong, but neither is otherwise
+#: guaranteed to exist: a project normally declares these three under its
+#: own reyn.yaml `models:` block (which overrides these), but with no
+#: reyn.yaml at all the class name had nothing to resolve to and reached
+#: litellm as a literal, unresolved string (#3368: "You passed
+#: model=standard"). These aliases match the project template's own
+#: defaults, so light/standard/strong resolve even with zero config files.
+#:
+#: This dict is the SINGLE PRODUCER of the tier set — it carries both the tier
+#: NAMES and each tier's fallback TARGET. Consumers derive from it rather than
+#: hand-listing the three names: ``BUILTIN_MODELS`` (below) splices it in,
+#: ``model_resolver.STANDARD_CLASSES`` is ``tuple()`` of its keys, and the
+#: partial-declaration warning in ``ModelResolver.__init__`` enumerates it. A
+#: fourth tier added here is therefore picked up by every consumer by
+#: construction — a hand-written name list would silently omit it (#3374).
+BUILTIN_TIER_ALIASES: dict[str, str] = {
     "light": "gemini-flash-lite",
     "standard": "gemini-flash-lite",
     "strong": "gemini-pro",
+}
+
+BUILTIN_MODELS: dict[str, str | dict] = {
+    # Generic tier aliases (see BUILTIN_TIER_ALIASES — the single producer).
+    **BUILTIN_TIER_ALIASES,
     # -------------------------------------------------------------------------
     # Anthropic
     # -------------------------------------------------------------------------
