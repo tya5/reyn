@@ -103,6 +103,18 @@ class RouterHostAdapter:
     # RouterLoopHost Protocol attributes (non-property)
     output_language: str | None
 
+    # 80 flat params is not a Parameter-Object problem — grouping them was
+    # measured as a near-no-op (#3121 took Session 54 -> 45 by adding 4 objects
+    # while leaving 41 flat params in place). Nor is it a Move-Construction one:
+    # only 2 of the 80 are forward-only (stored, never read outside __init__),
+    # so this class genuinely uses 74 of them. What the width tracks instead is
+    # the tools-handler -> host hop: 14 distinct `host.<method>` names are called
+    # from `src/reyn/tools/*.py` (10 of them `mcp_*`), and each needs its own
+    # injected callable here. Collapsing the 10 MCP ones into one facade fails
+    # because the Session methods they reach are 27-48 lines each with their own
+    # ephemeral/pool routing and error contract, not thin delegates (#3409 has
+    # the per-method table). Falsifiable claim: if that hop ever goes away, this
+    # constructor loses ~14 params without anyone touching a Parameter Object.
     def __init__(
         self,
         *,
