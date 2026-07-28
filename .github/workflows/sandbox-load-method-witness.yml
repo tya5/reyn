@@ -1,0 +1,41 @@
+name: sandbox load-method witness
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  load-method-witness:
+    # #3229 (derived from #3227's ld-linux/mmap-load competitive research):
+    # the sandbox syscall/LSM boundary must hold regardless of HOW code
+    # reaches the process — direct ld-linux interpreter invocation, or
+    # mmap(PROT_EXEC) + a raw function-pointer call with no exec*() at all.
+    # Linux-only + x86_64-only (the shellcode is hand-assembled for that
+    # ISA) — see the script docstring for why this has no skip path.
+    name: sandbox boundary is load-method independent (ld-linux + mmap-load, #3229)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # Same reasoning as sandbox-landlock-deny-gate.yml: `sandbox-linux` is
+      # deliberately omitted from test.yml's shared pytest session (loading a
+      # real default-deny filter is irrevocable for the process that does
+      # it), so this dedicated job is the only place this witness can run.
+      - name: Install sandbox-linux extra
+        run: pip install -e ".[dev,sandbox-linux]"
+
+      # The gate. No skip path: every precondition (Linux, x86_64, Landlock
+      # present, seccomp present, a glibc ld-linux interpreter on disk) is a
+      # FATAL if unmet, because each is a condition under which the checks
+      # below would report nothing while the job stayed green.
+      - name: Load-method independence witness (ld-linux + mmap-load, must still deny)
+        run: python scripts/sandbox_load_method_witness_3229.py
