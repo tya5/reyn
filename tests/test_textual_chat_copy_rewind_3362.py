@@ -463,14 +463,20 @@ async def test_upstream_consumed_sentinels_stay_out_of_the_conversation() -> Non
     skipped — neither leaks a bare sentinel row into the pane.
 
     These two are NOT the same hole ``/copy``/``/rewind`` were. Both are consumed
-    upstream by ``AgentRegistry._forwarder`` before they can reach a local
-    client's frame stream (pinned by ``test_attach_request_forwarded.py`` and
+    by ``AgentRegistry._forwarder`` before they can reach a LOCAL client's frame
+    stream (pinned by ``test_attach_request_forwarded.py`` and
     ``test_3310_n3_remote_switch_parity.py``), and their effect reaches this app
-    as the ``session_attached`` chat-event. Their entry in ``_SKIP_KINDS`` is a
-    fail-safe for the remote path, where ``__attach_request__`` IS a forwarded
-    AG-UI display frame — so this gate feeds them in as frames (the remote shape)
-    and pins that they render nothing, while a neighbouring ordinary frame still
-    does (so the assertion cannot pass by the pump being dead)."""
+    as the ``session_attached`` chat-event.
+
+    On the REMOTE path they differ, which is why this gate feeds them in as
+    frames (the remote shape) rather than asserting they cannot arrive:
+    ``__attach_request__`` really IS emitted as an AG-UI display frame — measured
+    in ``tests/test_agui_control_filter.py``, since the forwarder's ``continue``
+    is subscriber-local and does not gate the wire — so skipping it here is
+    load-bearing. ``__session_switch_request__`` is consumed by the AG-UI tap and
+    filtered besides, so its entry is a true fail-safe. Either way neither may
+    render, and a neighbouring ordinary frame must still render (so the
+    assertion cannot pass by the pump being dead)."""
     assert _SKIP_KINDS == {"__attach_request__", "__session_switch_request__"}
     transport = ScriptedTransport([
         OutboxMessage(kind="__attach_request__", text="beta"),

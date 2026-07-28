@@ -109,17 +109,27 @@ logger = logging.getLogger(__name__)
 # the :class:`~reyn.interfaces.inline.textual_chat.rewind_picker.RewindPicker`
 # region + a text fallback) and are gone from this set.
 #
-# The two that REMAIN are a different thing entirely, and are not a deferral:
-# both are consumed UPSTREAM by ``AgentRegistry._forwarder`` (registry.py — the
+# The two that REMAIN are a different thing entirely, and are not a deferral.
+# Both are consumed by ``AgentRegistry._forwarder`` (registry.py — the
 # ``__attach_request__`` / ``__session_switch_request__`` branches ``continue``
-# without ever putting the message on ``repl_outbox``), so they cannot reach a
-# LOCAL client's frame stream at all, and their effect arrives instead as the
+# without ever putting the message on ``repl_outbox``), so neither reaches a
+# LOCAL client's frame stream; their effect arrives instead as the
 # ``session_attached`` chat-event (#3310 N2,
-# :meth:`TextualChatApp._handle_session_attached_event`). They are kept here as
-# a fail-safe for the REMOTE path, where ``__attach_request__`` is a profiled,
-# forwarded AG-UI display frame (see ``transport/agui/protocol.py``) — skipping
-# it keeps a bare sentinel text out of the conversation pane. Nothing about
+# :meth:`TextualChatApp._handle_session_attached_event`). Nothing about
 # ``/attach`` or ``/session switch`` is implemented by this set.
+#
+# ★They are NOT symmetric on the REMOTE path, and the difference is measured
+# (#3362, ``tests/test_agui_control_filter.py``) — the forwarder's ``continue``
+# is subscriber-local and gates only ``repl_outbox``, so it says nothing about
+# the wire (canonical reasoning: ``transport/agui/protocol.py`` beside
+# ``CONTROL_FILTER_KINDS``):
+#
+# - ``__attach_request__`` — LOAD-BEARING here. It really is emitted as a
+#   profiled AG-UI display frame, so a remote client genuinely receives it;
+#   skipping it is what keeps a bare sentinel text out of the conversation pane.
+# - ``__session_switch_request__`` — a true fail-safe. The AG-UI tap consumes it
+#   before the emitter, and ``CONTROL_FILTER_KINDS`` filters it besides, so it
+#   should never arrive by either route.
 _SKIP_KINDS = frozenset(
     {
         "__attach_request__",
