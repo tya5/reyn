@@ -36,6 +36,7 @@ models:
 | `voice` | マップ | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
 | `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
 | `observability` | マップ | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
+| `tool_use` | マップ | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
 | `mcp` | マップ | MCP サーバー定義。以下参照。 |
 | `python` | マップ | Python preprocessor の追加許可モジュール。以下参照。 |
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
@@ -276,6 +277,60 @@ safety:
 | `safety.on_limit.auto_extend_times` | int | `1` | abort フォールスルーまでの自動延長回数。`mode: auto_extend` 時のみ使用。 |
 | `safety.on_limit.ask_timeout_seconds` | float（秒） | `0` | `interactive` モードでユーザー返答を待機する時間。`0`（デフォルト） = 無制限待機、正の値 = ウィンドウ経過で partial data として abort。 |
 
+## `tool_use` ブロック {#tool_use-block}
+
+chat レイヤーの tool-use **scheme x transport** セレクタ（FP-0066 P4b, #3247）。
+tool-use は直交する 2 つの軸に分解されます: `scheme` は **presentation** —
+能力が LLM にどう提示・発見されるか（`category` / `enumerate-all` /
+`retrieval`）— であり、`transport` はモデルが選択したアクションをどう
+表現するか（`tool_calls` / `content_fence`）です。解決された
+`(scheme, transport)` の組が、登録済みの `ToolUseScheme`（tool の提示・
+ディスパッチ方法を差し替え可能にする機構）を選択します。
+
+```yaml
+tool_use:
+  scheme: enumerate-all       # デフォルト
+  transport: tool_calls       # デフォルト
+```
+
+| キー | 型 | デフォルト | 説明 |
+|-----|------|---------|-------------|
+| `scheme` | 文字列 | `enumerate-all` | トップレベル chat レイヤーの presentation: `category` / `enumerate-all` / `retrieval`。**デフォルト `enumerate-all`** — アクションをフラットに列挙し LLM が直接呼び出せるようにする（`invoke_action` 名のハルシネーションを防ぎ、非ホットリストの tool-use が ~30%→100% に改善）。少数サーフェス / 多数ツールのカタログには `category` を設定（discover-then-call）。 |
+| `transport` | 文字列 | `tool_calls` | モデルが選択したアクションをどう表現するか: `tool_calls`（ネイティブ tool-calling）または `content_fence`（応答テキスト内のフェンス付きコードとしてアクションを表現 — CodeAct）。 |
+
+すべての `(scheme, transport)` の組み合わせが実装されているわけではありません。現時点で有効な組は:
+
+| `scheme` \ `transport` | `tool_calls` | `content_fence` |
+|---|---|---|
+| `category` | `universal-category` | *(未実装)* |
+| `enumerate-all` | `enumerate-all`（デフォルト） | CodeAct |
+| `retrieval` | `retrieval` | *(未実装)* |
+
+未登録の組み合わせ（例: `scheme: category` + `transport: content_fence`）は、
+黙って default にフォールバックしたり受理されたりせず、**config-parse 時に**
+分かりやすいエラーを送出します。CodeAct は `scheme: enumerate-all` +
+`transport: content_fence` で到達します — `enumerate-all` と同じ全件フラット
+カタログを、ネイティブ tool call の代わりにフェンス付きコードとして表現した
+ものであり、独立した `scheme` 名ではありません。`retrieval` はさらに
+`embedding.enabled: true` を要求します（FP-0066 §7）。
+
+旧来の単一 `tool_use.chat` key は**削除済み**です（clean-break、compat
+alias 無し）。`tool_use.chat` を残したままの `reyn.yaml` は、config-load
+時に `scheme` / `transport` への移行を名指すエラーで**大きく失敗**します
+— 黙って無視されることはありません。旧 `chat: codeact` は `scheme:
+enumerate-all` + `transport: content_fence` に、旧 `chat:
+universal-category` は `scheme: category`（`transport` はデフォルトの
+`tool_calls` のまま）になります — `category` は presentation 軸の名前で、
+登録済みの `universal-category` scheme に解決されます。
+
+scheme は `tools=` payload の構築方法、SP の tool-use 指示、LLM 応答の解釈方法、
+ディスパッチ方法のすべてを所有します — そのため `scheme` / `transport` を
+入れ替えると、OS 側の変更なしに chat レイヤーの tool-use ループ全体が変わります。
+
+各 scheme が何をするか、**どれをいつ選ぶか**（`enumerate-all` / `retrieval` /
+CodeAct vs デフォルト）については
+[Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.ja.md) を参照してください。
+
 ## `web` ブロック
 
 `web_fetch` と MCP パッケージレジストリの SSL 設定。
@@ -358,7 +413,7 @@ sandbox:
 
 ## `action_retrieval` ブロック
 
-ユニバーサルカタログの可視化 + 検索設定。 scheme *選択* は `tool_use` ブロック(EN 版 `reyn-yaml.md#tool_use-block` を参照。ja 版はまだこのブロックの翻訳が無い)に generalize されています — `tool_use.scheme` はデフォルトで `enumerate-all`(この wrapper path ではない)です。 `tool_use.scheme: category` を設定するとこのフラグが設定する wrapper scheme を選択できます(FP-0066 P4b, #3247 — 旧 `tool_use.chat` key は削除され、`scheme` x `transport` の 2-key に分割されました。presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。 chat レイヤーの scheme が `universal-category` に解決される時、 このフラグがその presentation を制御します。 **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) による、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供します。`universal_wrappers_enabled` は legacy フラグパスの直接呼び出し元に対してデフォルト ON — その呼び出し元について既存の flat `tools=` shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
+ユニバーサルカタログの可視化 + 検索設定。 scheme *選択* は [`tool_use` ブロック](#tool_use-block)（下記参照）に generalize されています — `tool_use.scheme` はデフォルトで `enumerate-all`(この wrapper path ではない)です。 `tool_use.scheme: category` を設定するとこのフラグが設定する wrapper scheme を選択できます(FP-0066 P4b, #3247 — 旧 `tool_use.chat` key は削除され、`scheme` x `transport` の 2-key に分割されました。presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。 chat レイヤーの scheme が `universal-category` に解決される時、 このフラグがその presentation を制御します。 **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) による、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供します。`universal_wrappers_enabled` は legacy フラグパスの直接呼び出し元に対してデフォルト ON — その呼び出し元について既存の flat `tools=` shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
 
 ```yaml
 action_retrieval:

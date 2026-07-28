@@ -98,17 +98,22 @@ CodeAct は opt-in。 選ぶ価値があるのは:
 
 ## 有効化 (How to enable)
 
-CodeAct は他の scheme 同様 `reyn.yaml` で chat レイヤーに選ぶ。 chat default は
-`enumerate-all` ゆえ CodeAct は opt-in:
+CodeAct は `reyn.yaml` の `tool_use.scheme` x `tool_use.transport` の 2-key
+config で chat レイヤーに選ぶ（FP-0066 P4, #3247）。CodeAct は
+`enumerate-all` presentation を `content_fence` transport 上で表現したもので、
+独立した scheme 名を持たない。 chat レイヤーの default は
+`scheme=enumerate-all` / `transport=tool_calls` ゆえ CodeAct は opt-in:
 
 ```yaml
 # reyn.yaml
 tool_use:
-  chat: codeact     # top-level chat router
+  scheme: enumerate-all
+  transport: content_fence   # top-level chat router
 ```
 
-`chat` レイヤーを `codeact` にできる。
-[`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block) 参照。
+旧 `tool_use.chat` key は #3247 で削除済み（clean-break、compat alias 無し）
+— これを書いた `reyn.yaml` は parse 時に失敗する。
+[`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.ja.md#tool_use-block) 参照。
 
 ## security note（セキュリティ注記）
 

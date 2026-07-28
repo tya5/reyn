@@ -40,17 +40,40 @@ agent のツールを LLM にどのように見せるか、そして LLM の呼�
 
 **使いどころ：** **弱い / 低コストモデル**を実行する場合。ツール使用をコードとして表現することが JSON ツール呼び出しを有意に上回るモデルに対して。
 
+CodeAct は `enumerate-all` presentation を **`content_fence` transport**
+上で表現したもの（FP-0066 P4, #3247）— `enumerate-all` と同じ全件フラット
+カタログですが、モデルはネイティブ tool call の代わりにフェンス付きコードとして
+呼び出しを表現します。`tool_use.scheme: enumerate-all` + `tool_use.transport:
+content_fence`（後述）で選択します。独立した `codeact` scheme 名はありません。
+
 ## chat レイヤーの選択
 
-スキームは chat レイヤーに対して選択されます：
+tool-use は 2 つの config key に分解されます: `tool_use.scheme`（**presentation**
+軸 — `category` / `enumerate-all` / `retrieval`）と `tool_use.transport`
+（モデルが選択したアクションをどう表現するか — `tool_calls` / `content_fence`）。
+すべての (scheme, transport) の組み合わせが実装されているわけではなく、
+未登録の組み合わせは config-parse 時に大きく失敗します。
 
 ```yaml
 # reyn.yaml
 tool_use:
-  chat: enumerate-all         # トップレベル chat ルーター（デフォルト）
+  scheme: enumerate-all       # トップレベル chat ルーター（デフォルト）
+  transport: tool_calls       # デフォルト
 ```
 
-chat レイヤーは登録済みの任意のスキームを使えます。完全なキーリファレンス：[`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block)。
+CodeAct を選択するには:
+
+```yaml
+# reyn.yaml
+tool_use:
+  scheme: enumerate-all
+  transport: content_fence
+```
+
+旧 `tool_use.chat` の単一 key は #3247 で削除済み（clean-break、compat alias
+無し）— これを書いた `reyn.yaml` は config-load 時に `scheme` / `transport`
+への移行を名指すエラーで失敗します（黙って無視されることはありません）。
+完全なキーリファレンス：[`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.ja.md#tool_use-block)。
 
 ## スワップが安全な理由
 
@@ -65,5 +88,5 @@ chat レイヤーは登録済みの任意のスキームを使えます。完全
 ## 参照
 
 - [Universal Action Catalog](universal-catalog.md) — `universal-category` スキームの内部（step/phase のデフォルト、chat の代替）
-- [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block) — 設定リファレンス
+- [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.ja.md#tool_use-block) — 設定リファレンス
 - [Permission model](../runtime/permission-model.md) — すべてのスキームがディスパッチするゲート
