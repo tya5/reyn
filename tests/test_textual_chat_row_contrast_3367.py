@@ -70,6 +70,11 @@ from reyn.runtime.outbox import DISPLAY_KINDS, OutboxMessage
 #: produces. The gate asserts strict inequality alongside it, so the invariant
 #: named in the issue is pinned literally as well as by proxy. No hex value is
 #: pinned anywhere in this file.
+#:
+#: Raising this to ``3.0`` is the start condition of **#3371**: the user row
+#: (``_CC_DIM`` on ``_CC_USER_BG``, ratio 2.78) goes RED at that threshold. That
+#: is a palette DESIGN decision, tracked separately — do not raise it here as a
+#: drive-by.
 MIN_CONTRAST = 2.0
 
 #: A tool result that ``summarize_tool_result`` renders as a ``✗`` failure (the
