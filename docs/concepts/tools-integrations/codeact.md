@@ -132,6 +132,12 @@ writes fenced Python, but the functions it is shown are the catalog wrappers
 does not grow with the catalog. Take it when CodeAct's reason applies but its
 full enumeration costs too much.
 
+**Very large catalog, and browsing it is the wrong entry point?** `scheme:
+retrieval` + `transport: content_fence` shows `search_actions` instead of
+`list_actions`, so the model describes what it wants and calls what the search
+returned — in the same snippet, without the re-present round trip the
+`tool_calls` retrieval cell pays. Requires `embedding.enabled: true`.
+
 See [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
 ## Security note

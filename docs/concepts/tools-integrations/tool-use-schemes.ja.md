@@ -66,13 +66,43 @@ result = invoke_action(action_name="file__read", args={"path": "README.md"})
 を見せます）。`tool_use.scheme: category` + `tool_use.transport: content_fence`
 で選択します。
 
+### `retrieval` を `content_fence` で
+
+3 つ目の組み合わせ: 検索起点の presentation を code-API として表現します。
+モデルに見せる関数は `search_actions` / `describe_action` / `invoke_action` と
+base tools で、**`list_actions` は含みません** — この presentation の discovery は
+列挙ではなく検索であり、そこが上の `category` セルとの違いです:
+
+```python
+hits = search_actions(query="read a file")
+result = invoke_action(action_name="file__read", args={"path": "README.md"})
+```
+
+★ **`tool_calls` 側の兄弟セルより 1 往復安い**というのが、この組を対称性のため
+ではなく実利のために埋めた理由です。`tool_calls` では絞り込みに OS の再提示が
+必要です（`tools=` ペイロードは LLM 呼び出しの *間* にしか変えられない — それが
+`RePresent` の役割）。`content_fence` では検索結果はスニペット内の単なる値なので、
+検索と呼び出しが同一ターンで完結します。そして `RePresent` は**使えません**:
+この transport の tool-use サーフェスはシステムプロンプトそのもので、プロンプトは
+1 ターンに 1 度だけ構築されるため、再提示された code-API には行き場がありません。
+
+**使いどころ:** カタログが大きくカテゴリからのブラウズが入口として適切でなく、
+かつ弱い / 低コストモデルで JSON tool call よりコードを書かせた方が良い場合。
+他の `retrieval` セルと同様 `embedding.enabled: true` が必要です。埋め込み
+インデックスが未準備のときは、空を返す検索を見せる代わりにフラットカタログの
+列挙へフォールバックします（`tool_calls` 側と同じ degrade・同じ理由 — インデックス
+の無い検索はモデルを空結果でスタックさせます）。
+
+`tool_use.scheme: retrieval` + `tool_use.transport: content_fence` で選択します。
+
 ## chat レイヤーの選択
 
 tool-use は 2 つの config key に分解されます: `tool_use.scheme`（**presentation**
 軸 — `category` / `enumerate-all` / `retrieval`）と `tool_use.transport`
 （モデルが選択したアクションをどう表現するか — `tool_calls` / `content_fence`）。
-すべての (scheme, transport) の組み合わせが実装されているわけではなく、
-未登録の組み合わせは config-parse 時に大きく失敗します。
+これらの値の組み合わせはすべて実装済みです。reyn に存在しない `scheme` /
+`transport` 名を指す組は、default にフォールバックせず config-parse 時に
+大きく失敗します。
 
 ```yaml
 # reyn.yaml
@@ -97,6 +127,16 @@ tool_use:
 tool_use:
   scheme: category
   transport: content_fence
+```
+
+検索起点の code-API（`retrieval` × `content_fence`）を選択するには:
+
+```yaml
+# reyn.yaml
+tool_use:
+  scheme: retrieval
+  transport: content_fence
+  # embedding.enabled: true が必要
 ```
 
 旧 `tool_use.chat` の単一 key は #3247 で削除済み（clean-break、compat alias

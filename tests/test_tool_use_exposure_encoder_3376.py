@@ -5,10 +5,12 @@ Two claims are kept apart everywhere below, because they are different claims:
 that is right but unwired passes the first and fails the second, and only the
 second is what protects a running session.
 
-Byte-identity of the four cells is not asserted here — it is the scaffolded
-oracle's job (``tests/scaffold/test_tool_use_oracle_3376.py``), which compares a
-fresh-process capture from a real ``SchemeOps`` against a recorded artifact.
-This file pins the invariants the seam adds on top of that.
+Byte-identity of the pre-existing cells was never asserted here — it was the
+scaffolded oracle's job, and that oracle was **deleted** when #3376 P3 registered
+the last cell (a golden snapshot of current behaviour outlives its usefulness the
+moment there is no migration left to measure, and then resists correct changes
+instead of catching wrong ones). This file pins the invariants the seam adds,
+which are the ones that outlive the arc.
 
 ``SchemeOps`` is a Protocol the ``RouterLoop`` implements over a live host; the
 per-cell Fakes below are the idiom the existing scheme tests already use, and
@@ -54,6 +56,7 @@ from reyn.tools.transport import (
     resolve_scheme_for_transport,
     valid_scheme_transport_pairs,
 )
+from tests._support.tool_use_negative_examples import NOT_A_PRESENTATION
 
 
 def _nested(name: str, *, description: str = "", properties: dict | None = None) -> dict:
@@ -123,39 +126,44 @@ def test_an_unregistered_cell_is_still_refused_fail_closed() -> None:
     every cell mechanically encodable, so the table could survive while meaning
     nothing.
 
-    The unregistered set is DERIVED — the full product of the registered scheme
-    names and every ``Transport``, minus the registered cells — so a cell added
-    to the table moves itself out of this arm rather than leaving a hand-written
-    list stale. Vacuity guard: both the registered and the unregistered set must
-    be non-empty, otherwise the loop below asserts nothing."""
+    ★ The witness comes from OUTSIDE the presentation axis, not from a gap
+    inside it. Until #3376 P3 this arm derived its witness as the complement of
+    the registered set, which read as drift-proof and was not: the arc's whole
+    purpose was to register cells, so the complement was guaranteed to empty
+    itself, and it did — P2 and P3 each falsified the witness the previous phase
+    had chosen. A negative example must be something that cannot ENTER the set,
+    not something that merely is not in it yet: ``NOT_A_PRESENTATION`` is not a
+    name on the axis at all, so no future cell can register it.
+
+    Vacuity guards, both needed: the witness must really be outside the
+    namespace (otherwise this asserts that a registered cell is refused, which
+    would be a bug in the assertion, not in the code), and ``Transport`` must be
+    non-empty (otherwise the loop runs zero times). The derived complement is
+    still exercised when it is non-empty — a new presentation name repopulates
+    it — but nothing here depends on it any more."""
     registered = set(valid_scheme_transport_pairs())
+    assert registered, "no registered cell — the pair table is empty"
+
     schemes = {scheme for scheme, _ in registered}
-    product = {(scheme, transport) for scheme in schemes for transport in Transport}
-    unregistered = product - registered
-
-    assert registered, "no registered cell — the complement below would be everything"
-    assert unregistered, (
-        "Every (scheme, transport) cell is registered, so this arm inspects nothing "
-        "and the fail-closed claim needs a different witness — the loop below can no "
-        "longer supply one, and passing vacuously would be worse than failing. "
-        "NOTE: tests/scaffold/test_tool_use_oracle_3376.py::"
-        "test_the_arc_completing_fires_this_scaffolds_deletion trips on this SAME "
-        "condition, because it IS the #3376 arc-complete signal. The two arms fire "
-        "together and are telling you one thing: every cell is now on the seam. That "
-        "means (1) delete the #3376 oracle scaffold, and (2) give this arm a real "
-        "witness — e.g. a transport with no encoder, or a presentation name that is "
-        "not registered. Do not 'fix' either arm in isolation."
+    assert NOT_A_PRESENTATION not in schemes, (
+        f"{NOT_A_PRESENTATION!r} became a real presentation name, so it is no "
+        "longer outside the namespace and cannot witness fail-closedness. Pick "
+        "another name that is not on the axis — do not switch to an unregistered "
+        "cell of a real presentation, which is what expired twice already."
     )
+    assert list(Transport), "Transport is empty — the loop below would assert nothing"
 
-    for scheme, transport in sorted(unregistered, key=lambda p: (p[0], p[1].value)):
+    for transport in Transport:
+        with pytest.raises(ValueError, match=r"no \(scheme, transport\) registration"):
+            resolve_scheme_for_transport(NOT_A_PRESENTATION, transport)
+
+    # Opportunistic, not load-bearing: today the presentation x transport product
+    # is fully registered so this set is empty, and it refills the day either axis
+    # grows. Deriving it keeps a new cell from having to be added by hand here.
+    product = {(scheme, transport) for scheme in schemes for transport in Transport}
+    for scheme, transport in sorted(product - registered, key=lambda p: (p[0], p[1].value)):
         with pytest.raises(ValueError, match=r"no \(scheme, transport\) registration"):
             resolve_scheme_for_transport(scheme, transport)
-
-    # An entirely unknown presentation name is refused for EVERY transport, not
-    # only for the ones that happen to have no encoder.
-    for transport in Transport:
-        with pytest.raises(ValueError):
-            resolve_scheme_for_transport("no-such-presentation", transport)
 
 
 # ── the descriptor union ─────────────────────────────────────────────────────
