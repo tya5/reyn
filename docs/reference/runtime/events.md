@@ -117,6 +117,43 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 | `chat_started`, `chat_stopped` | Chat session lifecycle |
 | `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). Payload: `chain_id`. |
 
+## Session and turn lifecycle
+
+The boundary events every trigger passes through, whatever surface submitted it.
+Required fields are declared in `src/reyn/core/events/event_schema.py`.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `session_started`, `session_completed` | The session's resource scope opens / closes (alongside `chat_started` / `chat_stopped`). | `agent_name` |
+| `turn_started` | A trigger has been consumed from the inbox and is about to be dispatched. | `kind` — the inbox message kind that triggered this turn (`"user"`, `"agent_response"`, `"task_ready"`, `"hook"`, …), so a subscriber can tell human triggers from automated ones without parsing the payload; `chain_id`; `seq` |
+| `turn_completed` | The router loop reached a terminal condition — router path only. | `chain_id` |
+| `turn_settled` | The turn is done, for EVERY turn kind including slash / intervention short-circuits that return before the router. The reliable clear signal for a working indicator started on `turn_started`. | `kind`; `chain_id` (may be absent for non-user triggers) |
+
+## Tool dispatch
+
+Emitted by `dispatch_tool` (`src/reyn/core/dispatch/dispatcher.py`) around every
+router-dispatched tool call. `tool_returned` and `tool_failed` are mutually
+exclusive per call.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `tool_called` | Before invocation, after argument validation. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args`, `args_hash` |
+| `tool_returned` | The invocation returned. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args_hash`, `result` |
+| `tool_failed` | The invocation was refused or raised. | same, plus `error_kind` (`permission_denied` \| `exception` \| a validation reason) and `message` |
+
+`args_hash` is a stable SHA-256 prefix over the canonical-JSON arguments — the
+correlation id that pairs a `tool_called` with its outcome across the log.
+
+**Remote fan-out.** `turn_started` / `llm_called` / `tool_returned` / `tool_failed`
+are the kinds the A2A and MCP progress surfaces forward to a remote peer
+(`src/reyn/core/events/progress_lifecycle.py`); see
+[Concepts: A2A § Progress payloads](../../concepts/multi-agent/a2a.md#progress-payloads)
+and [Concepts: MCP § Progress notifications](../../concepts/tools-integrations/mcp.md#progress-notifications).
+Three of the four (`turn_started`, `tool_returned`, `tool_failed`) are also what
+the AG-UI transport maps to `RUN_STARTED` / `TOOL_CALL_END` — see
+[agui-transport.md](agui-transport.md) § "Working-indicator path". Cost events
+(`llm_called`) ride the progress fan-out but not the AG-UI working-indicator set.
+
 ## Task management
 
 Events emitted by the task Control IR ops (`task.py`).

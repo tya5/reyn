@@ -16,8 +16,10 @@ Pins:
      expected ``NotificationOptions`` (tools/prompts/resources NOT
      advertised as list-changed — they are static in production).
   2. ``experimental_capabilities`` declares ``reyn.progress.skill_lifecycle``
-     with the exact event names that ``_MCPProgressBridge`` subscribes
-     to (= phase_started / llm_called / act_executed).
+     with the exact audit-event kinds ``_MCPProgressBridge`` subscribes to
+     — asserted on the built ``InitializationOptions``, in
+     ``tests/test_progress_lifecycle_fanout_3357.py``, since the list is now
+     DERIVED from the shared constant rather than restated in source.
   3. ``experimental_capabilities`` declares
      ``reyn.cancellation.cooperative`` (= matches the PR #279 cancel
      wire).
@@ -27,7 +29,6 @@ Pins:
 from __future__ import annotations
 
 import ast
-import inspect
 from pathlib import Path
 
 import pytest
@@ -38,19 +39,28 @@ pytest.importorskip("mcp", reason="MCP SDK not installed")
 # ── 1. NotificationOptions: lists are static ──────────────────────────
 
 
-def test_serve_stdio_declares_static_tool_list() -> None:
-    """Tier 2: ``serve_mcp_stdio_async`` source carries the explicit
-    ``tools_changed=False`` declaration (= the tool list returned by
-    ``_list_tools`` is static in production). Declaring True without
-    a corresponding ``notify_tools_changed`` call would be the
-    inverse #267 Z-b mismatch.
+def test_serve_stdio_declares_static_tool_list(tmp_path: Path) -> None:
+    """Tier 2: the ``InitializationOptions`` the production pair
+    (``build_server`` + ``build_init_options``) advertises declare the tool
+    list as STATIC (= what ``_list_tools`` returns never changes at runtime).
+    Declaring list-changed without a corresponding ``notify_tools_changed``
+    call would be the inverse #267 Z-b mismatch.
     """
-    from reyn.mcp import server as mcp_server
+    from reyn.core.events.state_log import StateLog
+    from reyn.mcp.server import build_init_options, build_server
+    from reyn.runtime.registry import AgentRegistry
 
-    src = inspect.getsource(mcp_server.serve_stdio)
-    assert "tools_changed=False" in src
-    assert "prompts_changed=False" in src
-    assert "resources_changed=False" in src
+    def _no_session_expected(profile):  # noqa: ANN001, ANN202
+        raise AssertionError("advertising must not construct a Session")
+
+    registry = AgentRegistry(
+        project_root=tmp_path,
+        session_factory=_no_session_expected,
+        state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
+    )
+    capabilities = build_init_options(build_server(registry)).capabilities
+    assert capabilities.tools is not None
+    assert capabilities.tools.listChanged is False
 
 
 def test_no_notify_changed_calls_in_mcp_server_source() -> None:
@@ -80,37 +90,40 @@ def test_no_notify_changed_calls_in_mcp_server_source() -> None:
 
 def test_experimental_capability_declares_skill_lifecycle_progress() -> None:
     """Tier 2: the experimental capability key
-    ``reyn.progress.skill_lifecycle`` is declared with the exact event
-    names that ``_MCPProgressBridge`` subscribes to (= the contract
-    between declaration and PR #279 wire).
-    """
-    from reyn.mcp import server as mcp_server
+    ``reyn.progress.skill_lifecycle`` is declared on the real
+    ``InitializationOptions`` this server advertises (= the contract between
+    declaration and the PR #279 wire).
 
-    src = inspect.getsource(mcp_server.serve_stdio)
-    assert '"reyn.progress.skill_lifecycle"' in src
-    # The event list shape is part of the contract — clients negotiate
-    # by reading this field.
-    assert '"phase_started"' in src
-    assert '"llm_called"' in src
-    assert '"act_executed"' in src
+    The advertised ``events`` list is NOT re-listed here: it is derived from
+    ``PROGRESS_LIFECYCLE_EVENTS``, and restating it in a test is what froze two
+    producer-less kinds into the wire contract (#3357). The derivation and the
+    liveness of its members are asserted in
+    ``tests/test_progress_lifecycle_fanout_3357.py``.
+    """
+    from mcp.server import Server
+
+    from reyn.mcp.server import build_init_options
+
+    experimental = build_init_options(Server("reyn")).capabilities.experimental
+    assert experimental is not None
+    assert "reyn.progress.skill_lifecycle" in experimental
 
 
 def test_progress_bridge_subscribes_to_declared_event_names() -> None:
-    """Tier 2: the events advertised in the experimental capability
-    MUST match what ``_MCPProgressBridge.__call__`` actually filters
-    on. Pin the mapping so a future bridge edit (= e.g. adding /
-    removing an event kind) is forced to update the declaration.
+    """Tier 2: the kinds advertised in the experimental capability MUST be the
+    kinds ``_MCPProgressBridge`` actually filters on — the same object, so the
+    declaration cannot drift from the wire.
     """
-    from reyn.mcp import server as mcp_server
+    from mcp.server import Server
 
-    bridge_src = inspect.getsource(mcp_server._MCPProgressBridge)
-    for declared_event in ("phase_started", "llm_called", "act_executed"):
-        assert f'"{declared_event}"' in bridge_src, (
-            f"event {declared_event!r} is declared in the "
-            f"experimental capability but _MCPProgressBridge does "
-            f"NOT filter on it (= claim/reality mismatch). Either "
-            f"add the event filter or drop the declaration."
-        )
+    from reyn.mcp.server import _MCPProgressBridge, build_init_options
+
+    experimental = build_init_options(Server("reyn")).capabilities.experimental
+    advertised = experimental["reyn.progress.skill_lifecycle"]["events"]
+    assert advertised == sorted(_MCPProgressBridge.TRACKED_EVENTS), (
+        "the advertised progress kinds and the bridge's filter disagree "
+        "(= #267 Z-b style claim/reality mismatch)."
+    )
 
 
 # ── 3. Experimental: reyn.cancellation.cooperative ───────────────────
@@ -121,10 +134,13 @@ def test_experimental_capability_declares_cooperative_cancellation() -> None:
     ``reyn.cancellation.cooperative`` is declared (= matches PR #279's
     CancelledError propagation wire).
     """
-    from reyn.mcp import server as mcp_server
+    from mcp.server import Server
 
-    src = inspect.getsource(mcp_server.serve_stdio)
-    assert '"reyn.cancellation.cooperative"' in src
+    from reyn.mcp.server import build_init_options
+
+    experimental = build_init_options(Server("reyn")).capabilities.experimental
+    assert experimental is not None
+    assert "reyn.cancellation.cooperative" in experimental
 
 
 def test_cancellation_wire_exists_in_call_tool_handler() -> None:

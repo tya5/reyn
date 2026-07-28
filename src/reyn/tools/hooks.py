@@ -41,13 +41,18 @@ _HOOK_POINTS = [
     "turn_start", "turn_end", "session_start", "session_end",
 ]
 # Isolation note (#2898): the schema below embeds ``list(_HOOK_POINTS)`` — a
-# defensive copy — NOT the module list by reference. ``render_for_router`` only
-# shallow-copies ``parameters``, so a by-reference embed would alias the module
-# list into every rendered schema; any later mutation of ``_HOOK_POINTS`` would
-# then silently corrupt every ``hooks_add`` render for the rest of the process
-# (a shared-mutable-state × test-order flake vector). The copy decouples the
-# rendered enum from the module list (same convention as
+# defensive copy — NOT the module list by reference. A by-reference embed would
+# alias the module list into the schema, so any later mutation of
+# ``_HOOK_POINTS`` would corrupt every ``hooks_add`` render for the rest of the
+# process (a shared-mutable-state × test-order flake vector). The copy decouples
+# the rendered enum from the module list (same convention as
 # ``universal_catalog.py``'s ``"enum": list(CATEGORIES)``).
+#
+# #3383 closed the OTHER direction of the same hazard: ``render_for_router``
+# used to only SHALLOW-copy ``parameters``, so a mutation of the rendered
+# payload flowed BACK into the module-level schema. It now deep-copies, which is
+# what makes this list() the only remaining care point here (the module list
+# would still be aliased into the definition itself, upstream of any render).
 
 # Relocated to reyn.tools.descriptions.hooks (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
