@@ -13,14 +13,22 @@ gate is what lets a later PR remove Tab's "back" binding with a real, not
 merely assumed, safety net; and what would immediately catch that future
 Input-vs-Esc regression by going RED.
 
-Five focus states, each independently reachable and each asserted to return
-to the Composer on ``Esc``:
+Five HAND-ENUMERATED focus states, each independently reachable and each
+asserted to return to the Composer on ``Esc``:
   1. MenuBar (tab-bar row, not yet opened)
   2. Drawer content (an OptionList pane)
   3. SentQueue
   4. InterventionPanel — closed-set (RadioSet)
   5. InterventionPanel — free-text (Input) — the specific widget architect
      flagged as the future risk
+
+This list is NOT derived from an exhaustive enumeration of every focusable
+widget the app can mount (co-vet note, #3365 review) — it is the set of
+regions this issue's own investigation reached. A 6th focusable region added
+later (a new drawer pane type, a new panel) is NOT automatically covered by
+this file; extending the list here is the maintainer's job when one is
+added, the same way a new call site needs its own invariant check elsewhere
+in this codebase.
 
 Real ``TextualChatApp`` + a real minimal ``ClientTransport`` — no mocks, per
 the testing policy.
