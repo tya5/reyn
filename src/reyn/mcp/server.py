@@ -868,7 +868,7 @@ class _MCPProgressBridge:
         self._related_request_id = related_request_id
         self._ordinal = 0
         self._detached = False
-        self._tasks: list[asyncio.Task[None]] = []
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def detached(self) -> bool:
@@ -878,6 +878,17 @@ class _MCPProgressBridge:
         attach / detach lifecycle via this surface.
         """
         return self._detached
+
+    @property
+    def tracked_task_count(self) -> int:
+        """Read-only accessor for the number of in-flight notification tasks.
+
+        Symmetric with ``_A2AProgressBridge.tracked_task_count``. Each
+        scheduled task discards itself from ``_tasks`` on completion
+        (#3390), so this stays bounded by concurrency, not by how many
+        audit-events the bridge has ever forwarded.
+        """
+        return len(self._tasks)
 
     def attach(self) -> None:
         events = getattr(self._session, "_chat_events", None)
@@ -892,8 +903,12 @@ class _MCPProgressBridge:
         if events is not None:
             events.remove_subscriber(self._on_event)
         # Best-effort: cancel in-flight notification tasks so they don't
-        # outlive the request.
-        for task in self._tasks:
+        # outlive the request. Snapshot before cancelling: a done callback
+        # discards its task from ``_tasks`` (#3390) via call_soon — never
+        # synchronously inside this loop — so iterating the live set would
+        # already be safe, but iterating a copy keeps this loop correct
+        # even if a future change made completion synchronous.
+        for task in list(self._tasks):
             if not task.done():
                 task.cancel()
 
@@ -916,7 +931,8 @@ class _MCPProgressBridge:
             # Skip — caller will see this event later if/when an async
             # context picks up the next event.
             return
-        self._tasks.append(task)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _send(self, ordinal: float, message: str) -> None:
         send_fn = getattr(self._mcp_session, "send_progress_notification", None)
