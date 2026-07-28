@@ -340,17 +340,22 @@ actually promises.
   another set's construction, never asserted about directly, is a property
   that looks wired but isn't** (#3363, the sent-queue `RESERVED_KEYS` case).
 - **A two-declaration list-match** (A2A's and MCP's progress fan-outs both
-  declare the identical three-kind `TRACKED_EVENTS`) is the easy property,
-  and it IS already gated: `test_a2a_progress_bridge_tracks_three_lifecycle_events`
-  asserts the two literals match each other and pins their exact contents.
-  "Every declared kind actually has a live emitter" is the property that
-  matters, and nobody asserted it: two of the three kinds have had zero
-  producers in `src/` for an unknown period, silently degrading two live
-  network protocols' progress streams to LLM-call-only (#3357). Worse, the
-  EXISTING literal-pin test actively **resists** the correct fix (removing
-  the dead entries) rather than merely failing to catch the defect — fixing
-  the real property requires touching a test that currently reads as
-  unrelated, easy-to-miss friction.
+  declare the identical three-kind `TRACKED_EVENTS`) was the easy property,
+  and it WAS gated: `test_a2a_progress_bridge_tracks_three_lifecycle_events`
+  asserted the two literals matched each other and pinned their exact
+  contents. "Every declared kind actually has a live emitter" was the
+  property that mattered, and nobody asserted it: two of the three kinds had
+  zero producers in `src/` for an unknown period, silently degrading two
+  live network protocols' progress streams to LLM-call-only (#3357). Worse,
+  the literal-pin test actively **resisted** the correct fix (removing the
+  dead entries) rather than merely failing to catch the defect — the fix
+  had to touch a test that read as unrelated, easy-to-miss friction. #3389
+  replaced the pin with a liveness gate instead
+  (`test_every_forwarded_kind_has_a_live_emit_call_site`: every declared
+  kind must have a real `emit("<kind>", …)` call site in the source) — and
+  this doc's own draft aged out in the meantime: the paragraph above was
+  accurate when written and became false by the time it landed, the exact
+  failure this doc is about. Read it as history, not current state.
 - **§12's four-seam behavioral coverage** is itself an instance of this
   shape one level up: "the seams that exist all route through the
   projection helper" is provable and was proven; "no NEW seam can ever
