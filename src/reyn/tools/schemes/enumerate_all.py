@@ -66,7 +66,12 @@ class EnumerateAllScheme:
         # router holds host context + catalog, so the scheme stays P7-clean.
         # catalog_entries is async (the live-catalog enumeration awaits the
         # router caller-state / rag manifest); base_tools stays sync.
-        exposure = build_enumerate_all_exposure(
+        # The builder's second return value is the composed dispatchable catalog,
+        # which this cell does not need: on ``tool_calls`` the advertised payload
+        # IS the dispatch gate's membership, so ``Presentation.dispatchable_catalog``
+        # stays None and the OS keys the gate on ``tools=`` (router_loop's
+        # "None ⇒ dispatch gate keys on self._catalog").
+        exposure, _dispatchable = build_enumerate_all_exposure(
             catalog_entries=await ops.catalog_entries(),
             available=available,
             layer_ctx=layer_ctx,
