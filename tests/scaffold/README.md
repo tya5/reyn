@@ -1,8 +1,8 @@
 # Scaffolding tests (bounded-life)
 
 This directory holds tests with explicit retirement triggers per the
-testing policy (docs/deep-dives/contributing/testing.md, Annex). Currently empty:
-no scaffolding tests are needed.
+testing policy (docs/deep-dives/contributing/testing.md, Annex). Each file names
+the refactor it guards and dies with it.
 
 # To add one:
 # - Place a test file here
