@@ -28,7 +28,7 @@ def _fresh_interpreter(src_root: str, code: str) -> subprocess.CompletedProcess:
 
 def test_all_builtins_resolve_in_fresh_interpreter(out_of_process_reyn) -> None:
     """Tier 2: #1608 ④ — a fresh interpreter that imports ONLY the schemes package
-    (no explicit scheme-class import) finds all 4 built-ins registered + resolvable,
+    (no explicit scheme-class import) finds every built-in registered + resolvable,
     and the default is unchanged. This is the completeness gate."""
     result = _fresh_interpreter(
         out_of_process_reyn,
@@ -43,15 +43,17 @@ def test_all_builtins_resolve_in_fresh_interpreter(out_of_process_reyn) -> None:
         from reyn.tools.transport import (
             CONTENT_FENCE_CATEGORY_SCHEME_NAME,
             CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+            CONTENT_FENCE_RETRIEVAL_SCHEME_NAME,
         )
         expected = {
             "universal-category", "enumerate-all", "retrieval",
             CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
-            # #3376 P2 — the (category, content_fence) cell registers the same way.
-            # It is listed because a built-in that stopped self-registering would
-            # otherwise be invisible here: the assertion below is a SUBSET check,
-            # so an omitted name is not a failure, it is a hole.
+            # #3376 P2 / P3 — the other two content_fence cells register the same
+            # way. They are listed because a built-in that stopped self-registering
+            # would otherwise be invisible here: the assertion below is a SUBSET
+            # check, so an omitted name is not a failure, it is a hole.
             CONTENT_FENCE_CATEGORY_SCHEME_NAME,
+            CONTENT_FENCE_RETRIEVAL_SCHEME_NAME,
         }
         names = set(registered_scheme_names())
         assert "codeact" not in names

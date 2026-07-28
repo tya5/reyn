@@ -130,7 +130,15 @@ def test_format_feedback_shapes_observation_message() -> None:
 
 
 class _CatalogOps:
-    """A real Fake SchemeOps exposing the async ``catalog_entries`` adapter (#1599)."""
+    """A real Fake SchemeOps exposing the two composition ingredients this cell
+    reads: the async ``catalog_entries`` adapter (#1599) and ``base_tools``,
+    which the cell has composed alongside the catalog since #3381."""
+
+    def base_tools(self, available, layer_ctx) -> list[dict]:
+        return [
+            {"name": "delegate_to_agent", "description": "Delegate to a peer.",
+             "parameters": {"type": "object", "properties": {"to": {"type": "string"}}}},
+        ]
 
     async def catalog_entries(self) -> list[dict]:
         return [

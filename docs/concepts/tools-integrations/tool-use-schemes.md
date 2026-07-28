@@ -59,7 +59,9 @@ LLM-facing tool list constant.
 
 RAG-over-tools. Instead of presenting the whole catalogue, it presents a **search
 tool**; the LLM searches, the OS re-presents only the matched actions as callable
-tools, and the LLM calls one. A **supported opt-in** alternative to the chat
+tools, and the LLM calls one. (That round trip is how the `tool_calls` cell
+narrows; the `content_fence` cell below reaches the same paradigm without one.)
+A **supported opt-in** alternative to the chat
 default — it requires `embedding.enabled: true` (FP-0066 §7) with a configured
 embedding provider (the search is semantic). Because matching is semantic, its
 quality depends on the embedding index, so it suits stable, well-indexed
@@ -116,13 +118,47 @@ that listing every action up front is the wrong trade (the `category` reason).
 CodeAct gives up the second: it shows every action. Select it with
 `tool_use.scheme: category` + `tool_use.transport: content_fence`.
 
+### `retrieval` over `content_fence`
+
+The third composition: the search-first presentation as a code-API. The model is
+shown `search_actions` / `describe_action` / `invoke_action` plus the base tools
+and **no `list_actions`** — discovery here is a search, not a listing, which is
+what separates it from the `category` cell above:
+
+```python
+hits = search_actions(query="read a file")
+result = invoke_action(action_name="file__read", args={"path": "README.md"})
+```
+
+**It costs one round trip less than its `tool_calls` sibling**, and this is the
+reason the pair is interesting rather than merely symmetrical. Over `tool_calls`,
+narrowing requires the OS to re-present the matched actions as a new `tools=`
+payload, because a payload can only change *between* LLM calls — that is what
+`RePresent` is for. Over `content_fence` the search result is an ordinary value
+inside the snippet, so the search and the call happen in the same turn. It also
+*cannot* use `RePresent`: this transport's whole tool-use surface is the system
+prompt, which is built once per turn, so a re-presented code-API would have
+nowhere to land.
+
+**Use when:** the catalog is large enough that browsing it by category is the
+wrong entry point *and* a weak / low-cost model does better writing code than
+emitting JSON tool calls. Requires `embedding.enabled: true`, like every
+`retrieval` cell. When the embedding index is not ready, the cell falls back to
+listing the flat catalog rather than showing a search that would return nothing —
+the same degrade its `tool_calls` sibling performs, and for the same reason (a
+search backed by no index strands the model on empty results).
+
+Select it with `tool_use.scheme: retrieval` + `tool_use.transport:
+content_fence`.
+
 ## Chat-layer selection
 
 Tool-use decomposes into two config keys: `tool_use.scheme` (the
 **presentation** — `category` / `enumerate-all` / `retrieval`) and
 `tool_use.transport` (how the model expresses a chosen action — `tool_calls`
-/ `content_fence`). Not every (scheme, transport) pair is implemented; an
-unregistered pair fails loud at config-parse time.
+/ `content_fence`). Every combination of those values is implemented; a pair
+naming a `scheme` or `transport` reyn does not have fails loud at config-parse
+time rather than falling back to a default.
 
 ```yaml
 # reyn.yaml
@@ -147,6 +183,16 @@ To select the small-surface code-API (`category` over `content_fence`):
 tool_use:
   scheme: category
   transport: content_fence
+```
+
+To select the search-first code-API (`retrieval` over `content_fence`):
+
+```yaml
+# reyn.yaml
+tool_use:
+  scheme: retrieval
+  transport: content_fence
+  # requires embedding.enabled: true
 ```
 
 Full per-key reference: [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).

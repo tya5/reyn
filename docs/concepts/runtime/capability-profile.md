@@ -135,6 +135,20 @@ execution, MCP install. Untrusted content can be read and reasoned about, but
 cannot drive irreversible actions. Override is a deliberate loosening — a
 malformed `_untrusted.yaml` falls back to the built-in (surfaced on stderr).
 
+**Where you see it:** the Tool tab of the CUI's bottom drawer marks such a tool
+`[--] <name>  · denied while untrusted content is in context` — the *condition*,
+because the condition is also the remedy (it lifts when that entry compacts out;
+there is no profile to edit). That is a different row from a durable envelope
+denial, which reads `· denied by capability profile`, and different again from a
+`/visibility`-off row, which is user-flippable and carries a toggle. Three states,
+three renderings.
+
+The tab derives the row from the live conversation at read time — the same
+`metas_have_untrusted` scan the gate runs, never a value latched at turn start —
+and the open pane is rebuilt on every frame, so a row disappears as soon as its
+cause does. That liveness is what makes showing a per-turn narrowing in a status
+surface honest rather than a stale claim wearing an authoritative face.
+
 ## Default-deny delegation narrowing
 
 A second built-in profile is auto-applied to a **delegated** agent when the

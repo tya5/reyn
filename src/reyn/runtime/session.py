@@ -2254,8 +2254,16 @@ class Session:
     def capability_visibility_state(self) -> dict:
         """#2285: the status-bar's read model. Thin forwarder — see
         ``CapabilityVisibility.capability_visibility_state`` for the full
-        rationale (#3121 step3 Extract Class)."""
-        return self._capability_visibility.capability_visibility_state()
+        rationale (#3121 step3 Extract Class).
+
+        #3380: the ephemeral per-turn narrowing is passed IN rather than resolved
+        there — its input is the live conversation (``self.history``), which
+        ``CapabilityVisibility`` deliberately does not hold (it owns the envelope +
+        the ``/visibility`` override, not the context). ``Session`` is the only
+        object that can see both, so the composition happens at this seam."""
+        return self._capability_visibility.capability_visibility_state(
+            ephemeral_contextual=self._ephemeral_contextual_for_turn(),
+        )
 
     # ── #2285: session-scoped hook APPLICABILITY toggle (the status-bar seam) ──────────────
 
@@ -2528,24 +2536,48 @@ class Session:
         (until-compaction scope). Untrusted absent → the static contextual
         (byte-identical to pre-S4b).
         """
-        from reyn.security.permissions.capability_profile import metas_have_untrusted
+        from reyn.security.permissions.capability_profile import compose_resolved
 
-        if not metas_have_untrusted(m.meta for m in self.history):
+        ephemeral = self._ephemeral_contextual_for_turn()
+        if ephemeral is None:
             return self._capability_visibility.contextual_permission
+        resolved = [(ephemeral, frozenset())]
+        if self._capability_visibility.contextual_permission is not None:
+            resolved.insert(0, (self._capability_visibility.contextual_permission, frozenset()))
+        return compose_resolved(resolved)[0]
+
+    def _ephemeral_contextual_for_turn(self) -> "object | None":
+        """#3380: the EPHEMERAL half of the per-turn narrowing on its own — the
+        resolved ``_untrusted`` profile while the live active context is tainted,
+        ``None`` otherwise.
+
+        Split out of :meth:`_effective_contextual_for_turn` (which composes it with
+        the static envelope) because the Tool tab has to tell the two apart: an
+        envelope denial is durable and the operator cannot lift it, whereas this one
+        lifts itself when the untrusted entry compacts out. Rendering both under one
+        reason would answer a different question than the operator's ("why can I not
+        use this, and what would change it") — the #3378 failure mode.
+
+        NOT a second notion of "what is narrowed": this IS the term
+        ``_effective_contextual_for_turn`` composes, so the tab and the live gate
+        cannot drift. The taint is re-derived from ``self.history`` on every call
+        (never latched at turn start), so a status-bar read is as of NOW; only the
+        loaded profile is cached, and a profile file does not change mid-session.
+        """
         from reyn.security.permissions.capability_profile import (
-            compose_resolved,
             load_untrusted_profile,
+            metas_have_untrusted,
             resolve_profile,
         )
+
+        if not metas_have_untrusted(m.meta for m in self.history):
+            return None
         if self._untrusted_contextual_cache is None:
             root = self._perm.project_root if self._perm is not None else Path.cwd()
             self._untrusted_contextual_cache = resolve_profile(
                 load_untrusted_profile(root)
             )[0]
-        resolved = [(self._untrusted_contextual_cache, frozenset())]
-        if self._capability_visibility.contextual_permission is not None:
-            resolved.insert(0, (self._capability_visibility.contextual_permission, frozenset()))
-        return compose_resolved(resolved)[0]
+        return self._untrusted_contextual_cache
 
     # ── persistence ─────────────────────────────────────────────────────────────
 

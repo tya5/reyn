@@ -12,10 +12,10 @@ Two claims are kept apart throughout, as in the P1 sibling
 **production reaches the mechanism**. A fold that holds in a helper nobody calls
 protects nothing.
 
-Byte-identity of the pre-existing cells is not asserted here — that is the
-scaffolded oracle's job (``tests/scaffold/test_tool_use_oracle_3376.py``), which
-compares a fresh-process capture from a real ``SchemeOps`` against the recorded
-artifact.
+Byte-identity of the pre-existing cells was never asserted here — that was the
+scaffolded oracle's job, and it was deleted when #3376 P3 registered the last
+cell. What remains is what should: the invariants this cell has to keep, which
+are not a snapshot of what it happened to render on the day it landed.
 
 The Fake ``SchemeOps`` below is the idiom the existing scheme tests use (real
 callables, explicit returns, never a mock) and appears only where the input under
@@ -149,7 +149,10 @@ async def test_the_code_api_does_not_grow_with_the_catalog() -> None:
     enumerating = await CodeActScheme().build_presentation(
         {}, {}, _Ops(wrappers=_WRAPPERS, catalog=_catalog(300)),
     )
-    assert len(_declared(enumerating.tool_use_sp)) == 300, (
+    # A superset, not an equality: the enumerate-all cell also exposes the base
+    # tools (#3381), which this Fake supplies as ``_WRAPPERS``. What has to hold
+    # for the contrast to mean anything is that all 300 catalog actions arrived.
+    assert _declared(enumerating.tool_use_sp) >= {e["function"]["name"] for e in _catalog(300)}, (
         "the enumerate-all cell over the same Ops did NOT grow with the catalog, "
         "so 'category does not grow' distinguishes nothing here"
     )

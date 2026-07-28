@@ -42,6 +42,13 @@ its name, parameters, and a short description. This list is *presentation only*;
 the model reads it to know what's callable. The JSON tool payload is empty under
 CodeAct — the model is not offered JSON tool-calling at all.
 
+**What is on it:** the same set the `enumerate-all` scheme advertises over
+`tool_calls` — the base tools (`read_file`, `delegate_to_agent`, `session_spawn`,
+…) plus every action of the [universal catalog](universal-catalog.md)
+(`file__read`, `multi_agent__delegate`, …). Some capabilities therefore appear
+under two names, one unqualified and one qualified; both dispatch to the same
+handler through the same gate, so either call is correct.
+
 ### Sandboxed subprocess
 
 The snippet does not run in the agent's process. It executes in a **sandboxed
@@ -124,6 +131,12 @@ writes fenced Python, but the functions it is shown are the catalog wrappers
 (`invoke_action` and friends) rather than every action, so the system prompt
 does not grow with the catalog. Take it when CodeAct's reason applies but its
 full enumeration costs too much.
+
+**Very large catalog, and browsing it is the wrong entry point?** `scheme:
+retrieval` + `transport: content_fence` shows `search_actions` instead of
+`list_actions`, so the model describes what it wants and calls what the search
+returned — in the same snippet, without the re-present round trip the
+`tool_calls` retrieval cell pays. Requires `embedding.enabled: true`.
 
 See [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 
