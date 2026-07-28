@@ -516,9 +516,12 @@
 # — flat-listing actions stops invoke_action name-hallucination). Set
 # scheme=universal-category for a minimal-surface / many-tool catalog
 # (discover-then-call), or scheme=enumerate-all + transport=content_fence for
-# CodeAct (actions expressed as code, not native tool calls). Not every
-# (scheme, transport) pair is implemented — an invalid pair fails loud at
-# config-parse time.
+# CodeAct (actions expressed as code, not native tool calls). scheme=category +
+# transport=content_fence combines the two: actions expressed as code over the
+# minimal wrapper surface, so the code-API does not grow with the catalog —
+# for a weak model on a large catalog, where CodeAct's full enumeration costs
+# too much. Not every (scheme, transport) pair is implemented — an invalid pair
+# fails loud at config-parse time.
 # -----------------------------------------------------------------------------
 # tool_use:
 #   scheme: universal-category

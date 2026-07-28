@@ -296,6 +296,7 @@ def _session_with_skills(tmp_path: Path, entries: list[SkillEntry], collisions: 
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.agent import Agent
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
+    from reyn.runtime.services.recovery import build_recovery
     from reyn.runtime.session import Session
     from tests._support.session import synthetic_t_max
 
@@ -305,14 +306,23 @@ def _session_with_skills(tmp_path: Path, entries: list[SkillEntry], collisions: 
         body_token_cap=1500, use_chars4_estimate=True, section_caps_spec_tokens=0,
     )
     agent = Agent(agent_name="default", role="")
+    snapshot_path = tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json"
+    # Session no longer builds its own recovery pair (generation_store ->
+    # journal) — build it here from the same inputs the pre-refactor
+    # Session.__init__ read internally (recovery-bundle-out-of-Session).
+    generation_store, journal = build_recovery(
+        agent.agent_name, snapshot_path, state_log, "main",
+    )
     with synthetic_t_max(1_000_000):
         return Session(
             agent=agent,
+            generation_store=generation_store,
+            journal=journal,
             output_language="en",
             budget_tracker=bt,
             state_log=state_log,
             compaction_config=cfg,
-            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+            snapshot_path=snapshot_path,
             capability_scope=CapabilityScope(
                 available_skills=entries, skill_collisions=collisions or {},
             ),

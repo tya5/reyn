@@ -95,6 +95,27 @@ CodeAct is the `enumerate-all` presentation expressed over the `content_fence`
 native tool calls. Select it via `tool_use.scheme: enumerate-all` +
 `tool_use.transport: content_fence` (see below), not a `codeact` scheme name.
 
+### `universal-category` over `content_fence`
+
+The two axes compose: the `category` presentation can also be expressed over
+the `content_fence` transport. The model writes fenced Python exactly as CodeAct
+does, but the functions it is shown are the catalog **wrappers**
+(`list_actions` / `describe_action` / `invoke_action`) plus the base tools —
+so a call reads
+
+```python
+result = invoke_action(action_name="file__read", args={"path": "README.md"})
+```
+
+and the code-API **does not grow with the catalog**, which is the whole point of
+the `category` presentation and is preserved unchanged by the transport swap.
+
+**Use when:** a weak / low-cost model does better writing code than emitting
+JSON tool calls (the `content_fence` reason) **and** the catalog is large enough
+that listing every action up front is the wrong trade (the `category` reason).
+CodeAct gives up the second: it shows every action. Select it with
+`tool_use.scheme: category` + `tool_use.transport: content_fence`.
+
 ## Chat-layer selection
 
 Tool-use decomposes into two config keys: `tool_use.scheme` (the
@@ -116,6 +137,15 @@ To select CodeAct:
 # reyn.yaml
 tool_use:
   scheme: enumerate-all
+  transport: content_fence
+```
+
+To select the small-surface code-API (`category` over `content_fence`):
+
+```yaml
+# reyn.yaml
+tool_use:
+  scheme: category
   transport: content_fence
 ```
 

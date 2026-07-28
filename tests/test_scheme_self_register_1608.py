@@ -40,10 +40,18 @@ def test_all_builtins_resolve_in_fresh_interpreter(out_of_process_reyn) -> None:
         )
         # FP-0066 P4c (#3247): the CodeAct implementation self-registers under the
         # (enumerate-all, content_fence) cell's resolved name, not the bare "codeact".
-        from reyn.tools.transport import CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME
+        from reyn.tools.transport import (
+            CONTENT_FENCE_CATEGORY_SCHEME_NAME,
+            CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+        )
         expected = {
             "universal-category", "enumerate-all", "retrieval",
             CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
+            # #3376 P2 — the (category, content_fence) cell registers the same way.
+            # It is listed because a built-in that stopped self-registering would
+            # otherwise be invisible here: the assertion below is a SUBSET check,
+            # so an omitted name is not a failure, it is a hole.
+            CONTENT_FENCE_CATEGORY_SCHEME_NAME,
         }
         names = set(registered_scheme_names())
         assert "codeact" not in names

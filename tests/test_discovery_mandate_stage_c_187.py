@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import reyn.tools.schemes._category_exposure as ce_mod
 import reyn.tools.schemes.universal_category as uc_mod
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
@@ -184,27 +185,42 @@ def test_reinforcements_in_static_cacheable_prefix() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _calls(module, func_name: str) -> bool:
+    """AST, not regex: does ``module``'s source contain a call to ``func_name``?
+
+    A textual search matches the import line, a docstring mention, and a
+    same-named attribute on something else — three false positives that would
+    each make this gate pass while the call site was gone."""
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == func_name
+        for node in ast.walk(tree)
+    )
+
+
 def test_scheme_layer_wires_discovery_mandate_gate() -> None:
     """Tier 2: #187 Stage C / #1627 Stage 4 — ``tier_wants_discovery_mandate`` is
-    called in the scheme layer (universal_category.py's build_presentation), NOT in
-    router_loop.py's build_system_prompt call. Falsifiable: remove the call from
-    universal_category → this fails, naming the construction-wiring gap.
+    called in the SCHEME layer, NOT in router_loop.py's build_system_prompt call.
 
     #1627 Stage 4 migration: the mandate computation moved out of router_loop (OS)
-    into the scheme layer (P7). The AST check now targets universal_category.py."""
-    tree = ast.parse(Path(uc_mod.__file__).read_text(encoding="utf-8"))
-    wired = False
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "tier_wants_discovery_mandate"
-        ):
-            continue
-        wired = True
-        break
-    assert wired, (
-        "universal_category.build_presentation must call tier_wants_discovery_mandate "
-        "to derive the discovery_mandate for build_universal_tool_use_slots "
-        "(#1627 Stage 4: mandate computation relocated to scheme layer)"
+    into the scheme layer (P7). #3376 P2 then moved it one file further within
+    that same layer — into the ``category`` presentation's shared exposure builder,
+    so both of the scheme's cells derive the mandate from one place instead of the
+    ``content_fence`` cell growing a second copy. The claim under test is
+    unchanged; only which scheme-layer file holds the call moved.
+
+    Two arms, because they are two claims: the computation happens in the
+    exposure builder, AND ``universal_category`` still reaches it. Dropping the
+    second would let the scheme stop calling the builder entirely while the first
+    arm stayed green."""
+    assert _calls(ce_mod, "tier_wants_discovery_mandate"), (
+        "the category exposure builder must call tier_wants_discovery_mandate to "
+        "derive the discovery_mandate for build_universal_tool_use_slots "
+        "(#1627 Stage 4: mandate computation relocated to the scheme layer)"
+    )
+    assert _calls(uc_mod, "build_category_exposure"), (
+        "universal_category.build_presentation no longer reaches the exposure "
+        "builder, so the mandate above is computed for nobody"
     )

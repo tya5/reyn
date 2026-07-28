@@ -302,17 +302,37 @@ tool_use:
 
 | `scheme` \ `transport` | `tool_calls` | `content_fence` |
 |---|---|---|
-| `category` | `universal-category` | *(未実装)* |
+| `category` | `universal-category` | ラッパーの code-API |
 | `enumerate-all` | `enumerate-all`（デフォルト） | CodeAct |
 | `retrieval` | `retrieval` | *(未実装)* |
 
-未登録の組み合わせ（例: `scheme: category` + `transport: content_fence`）は、
+未登録の組み合わせ（例: `scheme: retrieval` + `transport: content_fence`）は、
 黙って default にフォールバックしたり受理されたりせず、**config-parse 時に**
 分かりやすいエラーを送出します。CodeAct は `scheme: enumerate-all` +
 `transport: content_fence` で到達します — `enumerate-all` と同じ全件フラット
 カタログを、ネイティブ tool call の代わりにフェンス付きコードとして表現した
 ものであり、独立した `scheme` 名ではありません。`retrieval` はさらに
 `embedding.enabled: true` を要求します（FP-0066 §7）。
+
+`scheme: category` + `transport: content_fence` は CodeAct の小サーフェス版
+です。モデルはフェンス付き Python を書きますが、見せられる関数はカタログの
+**ラッパー**（`list_actions` / `describe_action` / `invoke_action`）と base
+tools だけなので、CodeAct と違ってシステムプロンプトがカタログと共に増えません。
+呼び出しは
+`result = invoke_action(action_name="file__read", args={"path": "README.md"})`
+の形になります。
+
+```yaml
+tool_use:
+  scheme: category
+  transport: content_fence
+```
+
+**使いどころ**: 弱い / 低コストモデルで JSON tool call よりコードを書かせた方が
+良く、**かつ**カタログが大きく全アクションの列挙がトークン的に高すぎる場合。
+CodeAct（`enumerate-all` + `content_fence`）は後者を捨てています。コード内の
+呼び出しは同等の JSON 呼び出しと同じ exclude + permission ゲートを通り、さらに
+サンドボックスで封じ込められます。
 
 旧来の単一 `tool_use.chat` key は**削除済み**です（clean-break、compat
 alias 無し）。`tool_use.chat` を残したままの `reyn.yaml` は、config-load

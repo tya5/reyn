@@ -8,7 +8,7 @@ signatures from the currently installed tool catalog); the loop varies with the
 installed catalog and is not fixed text, so it lives with the encoder as
 assembly logic. Only the static header lines live here.
 
-**§M** feeds ``reyn.tools.schemes.codeact._format_codeact_observation`` — the
+**§M** feeds ``reyn.tools.schemes._content_fence_cell._format_codeact_observation`` — the
 fixed ``[codeact result]`` / ``[codeact stdout]`` / ``[codeact stderr]``
 labels that prefix the observation-turn message appended to ``messages``
 after a code-block execution (mid-request-stream, like §I-L, NOT part of the
@@ -60,7 +60,7 @@ CODEACT_STATIC_HEADER: list[str] = [
 # WHEN: always — every CodeAct observation turn (the user-role message
 #       appended after a code-block execution) is prefixed with exactly one
 #       of these three labels, depending on the execution outcome shape.
-# WHERE: reyn.tools.schemes.codeact._format_codeact_observation.
+# WHERE: reyn.tools.schemes._content_fence_cell._format_codeact_observation.
 # WHY: lets the model visually distinguish a bound `result` value from
 #      captured stdout output from stderr output within the same observation
 #      turn, without a schema (CodeAct's turns are plain-text, not JSON).

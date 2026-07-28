@@ -37,11 +37,19 @@ a third (``structured_output``, ``response_format``/json_schema) is deferred to
 #3249 — no reserved slot is added here (YAGNI, firm §3 P4d).
 
 Splitting scheme x transport into two axes does not make the full 3x2 cartesian
-product resolvable: ``category`` x ``content_fence`` and everything x a future
+product resolvable: ``retrieval`` x ``content_fence`` and everything x a future
 ``structured_output`` are UNIMPLEMENTED cells. ``resolve_scheme_for_transport``
 is fail-closed on an unregistered cell — mirrors the #3026 "enumeration is not
 resolution" pin (``reyn.tools.universal_catalog``): splitting an axis / set does
 not silently widen what is actually resolvable.
+
+#3376 P2 added ``category`` x ``content_fence``. It is the first cell that was
+*composed* rather than adopted from a pre-existing implementation, which the
+Exposure/Encoder seam (P1) is what made possible: the ``category`` scheme's fold
+— a small surface that does not grow with the catalog — happens in the exposure,
+so the ``content_fence`` encoder renders the folded wrappers and the invariant
+survives the transport change. Adding a cell here is therefore a registration
+plus an exposure, not a new transport implementation.
 """
 from __future__ import annotations
 
@@ -69,6 +77,13 @@ class Transport(str, Enum):
 # no duplicated literal between the registry and the registrant.
 CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME = "enumerate-all+content_fence"
 
+# #3376 P2: the ``_SCHEMES`` name for the (category, content_fence) cell — the
+# ``category`` presentation's folded wrapper surface expressed as a code-API.
+# Same construction as the constant above: not a ``tool_use.scheme`` value an
+# operator can type, reachable ONLY via
+# ``resolve_scheme_for_transport("category", Transport.CONTENT_FENCE)``.
+CONTENT_FENCE_CATEGORY_SCHEME_NAME = "category+content_fence"
+
 
 # The valid-(scheme, transport) registry (firm §2 J1) — the ONLY resolvable
 # cells, explicitly enumerated from the FP-0066 §1 census of the current
@@ -76,7 +91,7 @@ CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME = "enumerate-all+content_fence"
 #
 #   presentation \ transport | tool_calls | content_fence
 #   -------------------------|------------|---------------
-#   category                 | universal-category | (unimplemented)
+#   category                 | universal-category | category+content_fence (#3376 P2)
 #   enumerate-all             | enumerate-all      | enumerate-all+content_fence (CodeAct)
 #   retrieval                 | retrieval          | (unimplemented)
 #
@@ -94,6 +109,7 @@ CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME = "enumerate-all+content_fence"
 # self-registers under `CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME`.
 _VALID_SCHEME_TRANSPORT_PAIRS: "dict[tuple[str, Transport], str]" = {
     ("category", Transport.TOOL_CALLS): "universal-category",
+    ("category", Transport.CONTENT_FENCE): CONTENT_FENCE_CATEGORY_SCHEME_NAME,
     ("enumerate-all", Transport.TOOL_CALLS): "enumerate-all",
     ("enumerate-all", Transport.CONTENT_FENCE): CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME,
     ("retrieval", Transport.TOOL_CALLS): "retrieval",
@@ -103,7 +119,7 @@ _VALID_SCHEME_TRANSPORT_PAIRS: "dict[tuple[str, Transport], str]" = {
 def resolve_scheme_for_transport(scheme: str, transport: Transport) -> str:
     """Resolve a (presentation-scheme, transport) pair to the ``_SCHEMES`` name
     that implements it today — fail-closed (firm §2 J1): an unregistered cell
-    (e.g. ``category`` x ``content_fence``, anything x a future
+    (e.g. ``retrieval`` x ``content_fence``, anything x a future
     ``structured_output``) raises a legible ``ValueError`` rather than being
     silently allowed or silently falling back to a default. A silently-accepted
     unregistered cell is exactly the "configuration doesn't do what it says"
@@ -130,6 +146,7 @@ def valid_scheme_transport_pairs() -> "list[tuple[str, Transport]]":
 
 __all__ = [
     "Transport",
+    "CONTENT_FENCE_CATEGORY_SCHEME_NAME",
     "CONTENT_FENCE_ENUMERATE_ALL_SCHEME_NAME",
     "resolve_scheme_for_transport",
     "valid_scheme_transport_pairs",

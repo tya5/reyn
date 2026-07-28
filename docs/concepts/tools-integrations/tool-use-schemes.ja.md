@@ -46,6 +46,26 @@ CodeAct は `enumerate-all` presentation を **`content_fence` transport**
 呼び出しを表現します。`tool_use.scheme: enumerate-all` + `tool_use.transport:
 content_fence`（後述）で選択します。独立した `codeact` scheme 名はありません。
 
+### `universal-category` を `content_fence` で
+
+2 つの軸は組み合わせられます: `category` presentation を `content_fence`
+transport 上で表現することもできます。モデルは CodeAct と同じくフェンス付き
+Python を書きますが、見せられる関数はカタログの**ラッパー**（`list_actions` /
+`describe_action` / `invoke_action`）と base tools だけです。呼び出しは
+
+```python
+result = invoke_action(action_name="file__read", args={"path": "README.md"})
+```
+
+の形になり、code-API は**カタログと共に増えません** — `category` presentation
+の存在理由そのものであり、transport を変えても保たれます。
+
+**使いどころ:** 弱い / 低コストモデルで JSON tool call よりコードを書かせた方が
+良く（`content_fence` の理由）、**かつ**カタログが大きく全アクションの列挙が
+割に合わない場合（`category` の理由）。CodeAct は後者を捨てています（全アクション
+を見せます）。`tool_use.scheme: category` + `tool_use.transport: content_fence`
+で選択します。
+
 ## chat レイヤーの選択
 
 tool-use は 2 つの config key に分解されます: `tool_use.scheme`（**presentation**
@@ -67,6 +87,15 @@ CodeAct を選択するには:
 # reyn.yaml
 tool_use:
   scheme: enumerate-all
+  transport: content_fence
+```
+
+小サーフェスの code-API（`category` × `content_fence`）を選択するには:
+
+```yaml
+# reyn.yaml
+tool_use:
+  scheme: category
   transport: content_fence
 ```
 
