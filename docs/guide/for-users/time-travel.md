@@ -17,17 +17,17 @@ For how it works under the hood, see [Time-Travel concepts](../../concepts/runti
 /rewind
 ```
 
-This opens an interactive checkpoint timeline in the TUI. Each row shows:
+This opens an interactive checkpoint picker in the TUI, listing the checkpoints on the current branch. Each row shows:
 
 | Column | Description |
 |--------|-------------|
 | seq | Global sequence number of the checkpoint |
 | time | Timestamp when the checkpoint was created |
-| kind | Boundary type: `turn` / `plan-step` / `phase` |
+| kind | Boundary type: `turn` / `plan-step` |
 
-Navigate with **↑ / ↓**, select with **Enter**. Press **Esc** to close without rewinding.
+Navigate with **↑ / ↓**, select with **Enter** — selecting a row does exactly what typing `/rewind <seq>` for that row does. Press **Esc** to close without rewinding.
 
-**Shortcut**: double-tap **Esc Esc** from anywhere in the TUI to open the picker directly.
+Over `--connect` (the remote client), the same checkpoints are printed as a plain text list instead: the picker is a local region and is not carried on the wire. Rewind from there with `/rewind <seq>`.
 
 ## Rewind to a specific seq
 
@@ -37,12 +37,14 @@ Navigate with **↑ / ↓**, select with **Enter**. Press **Esc** to close witho
 
 Rewinds directly to seq N without opening the picker. The agent's conversation state is restored to seq N. User workspace files remain at HEAD — Reyn time-travels its own `.reyn/` state only.
 
-## Navigate the branch tree
+## Rewind vs fork-switch
 
-After any rewind or fork, the picker switches to a **tree view** showing all branches. Each branch is labeled with its anchor checkpoint. Use ↑ / ↓ + Enter to select a checkpoint on any branch — active or abandoned.
+`/rewind <N>` is a unified *checkout*, so the same command covers both directions:
 
-- Selecting a seq on the **current branch**: undo (rewinds the current branch).
-- Selecting a seq on an **inactive branch**: fork-switch (activates that branch).
+- A seq on the **current branch**: undo (rewinds the current branch).
+- A seq on an **inactive branch**: fork-switch (activates that branch).
+
+The picker itself lists **current-branch** checkpoints only, so reaching a seq on an abandoned branch means passing it to `/rewind <N>` directly.
 
 ## Web edit (Phase 2d)
 
@@ -54,6 +56,8 @@ When using Reyn through the web interface (AG-UI SSE / A2A), `/rewind` opens the
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
 | Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ designed, not yet wired |
+| Branch **tree view** in the picker (checkpoints on abandoned branches, not just the current one) | ⏳ not yet wired — `/rewind <N>` already fork-switches to an inactive branch's seq |
+| `Esc Esc` double-tap shortcut to open the picker | ⏳ not yet wired — open it with `/rewind` |
 | `/rewind` picker over AG-UI SSE / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed |
 
 ## See also

@@ -131,22 +131,52 @@ _REYN = "_reyn"
 #
 # - ``__end__``                    — the stream terminator; the emitter returns on
 #                                    it (the client's loop also ends on stream close).
-# - ``__session_switch_request__`` — upstream-consumed at ``registry.py:3061`` (the
-#                                    registry swallows it with ``continue``), so it
-#                                    never reaches the AG-UI tap; filtering it is a
-#                                    fail-safe for a future tap-point change.
+# - ``__session_switch_request__`` — produces ZERO wire events, but NOT because of
+#                                    this set: the AG-UI tap itself consumes the
+#                                    sentinel first (``_SessionFrameSource._
+#                                    drain_one_session`` — switch-follow for a
+#                                    resolvable sid, ``continue`` for an
+#                                    unresolvable one, #3310 N3), so it never
+#                                    becomes a DisplayFrame from that source. This
+#                                    entry is a genuine FAIL-SAFE, covering a frame
+#                                    source that does NOT consume it (the pre-N3
+#                                    degrade path, and any future tap).
+#
+# ★What the registry forwarder's ``continue`` does NOT do (corrected #3362 — this
+# comment previously gave the wrong REASON in three places, and a first attempt at
+# the correction got the ``__session_switch_request__`` leg wrong in the other
+# direction before a strip caught it): it does not keep anything off this wire.
+# ``registry._forwarder`` and ``endpoint._SessionFrameSource`` are two INDEPENDENT
+# subscribers of the same ``session.outbox_hub``, and the hub "fans every message
+# out to every subscription, so each surface receives the FULL stream in order"
+# (``runtime/outbox_hub.py``). A ``continue`` in the forwarder is SUBSCRIBER-LOCAL:
+# it means "not re-posted to ``repl_outbox``" (the LOCAL REPL sink) and nothing
+# more. BOTH sentinels therefore reach the AG-UI tap; what happens next is decided
+# per-kind by the tap and by this set, never by the forwarder.
+#
+# Measured with the real registry forwarder + real tap, not reasoned
+# (``tests/test_agui_control_filter.py``'s reachability gate):
+#   - ``__attach_request__``          → lands on the wire.
+#   - ``__session_switch_request__``  → does not. Removing it from this set alone
+#     changes nothing (the tap already consumed it); removing it from this set AND
+#     removing the tap's consumption puts it on the wire — which is what makes
+#     "tap = the active mechanism, this set = the backstop" a measurement rather
+#     than a reading of the code.
 #
 # NOT here (deliberately forwarded — profiled CUSTOM display names):
 # - ``__copy_last_reply__`` / ``__rewind_list__`` are consumed by the CLIENT over
 #   the transport stream — ``/copy`` does a real client-side clipboard copy
-#   (``stream_client._handle_copy_sentinel``) and ``/rewind`` renders a client-side
+#   (``_copy_sentinel.handle_copy_sentinel``) and ``/rewind`` renders a client-side
 #   picker. In the thin-client model transport IS the AG-UI wire, so filtering them
 #   would make remote ``/copy`` / ``/rewind`` silent no-ops. They MUST reach the
 #   wire (``_reyn``-lossless; generic clients ignore-unknown safely).
-# - ``__attach_request__`` is upstream-consumed at ``registry.py:3052`` (also
-#   swallowed with ``continue``); its profile entry is a fail-safe for a tap-point
-#   change, NOT a live wire kind. (Remote attach-label sync is designed in P6b, not
-#   via this legacy sentinel.)
+# - ``__attach_request__`` is a LIVE WIRE KIND: it is not in this set, so it is
+#   emitted as a profiled CUSTOM display event on every remote connection. Its
+#   profile entry is what that emission uses — not a dormant fail-safe. A remote
+#   client must tolerate it; the reyn client skips it for display
+#   (``textual_chat/app.py``'s ``_SKIP_KINDS``) so a bare sentinel never lands in
+#   the conversation pane. (Remote attach-label SYNC is still designed in P6b —
+#   that is a separate mechanism from this sentinel merely being on the wire.)
 CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
     "__end__",
     "__session_switch_request__",

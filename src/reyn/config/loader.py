@@ -52,7 +52,20 @@ def _load_yaml(path: Path) -> dict:
         with path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        # A parse failure here is otherwise indistinguishable from "the file
+        # doesn't exist" — every section the file would have contributed
+        # (models, permissions, ...) silently falls back to built-in/other-tier
+        # defaults with no signal the operator's own file was ever read. Log
+        # so a malformed reyn.yaml/reyn.local.yaml is at least observable
+        # (#3368) — the fallback-to-{} behavior itself is unchanged.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "failed to parse %s — ignoring this file's config (falling back "
+            "to other config tiers/defaults): %s",
+            path, exc,
+        )
         return {}
 
 

@@ -61,9 +61,9 @@ _PROFILED_DISPLAY_KINDS: "frozenset[str]" = frozenset({
     "tool_call_started",    # tool-call start trace line
     "tool_call_completed",  # tool-call completion trace line
     "tool_call_failed",     # tool-call failure trace line
-    "__copy_last_reply__",  # /copy sentinel — client-side clipboard copy (stream_client._handle_copy_sentinel)
+    "__copy_last_reply__",  # /copy sentinel — client-side clipboard copy (repl._copy_sentinel.handle_copy_sentinel)
     "__rewind_list__",      # /rewind sentinel — client renders the rewind list / region picker
-    "__attach_request__",   # /attach sentinel — upstream-consumed at registry._forwarder (agent swap); profile entry is a fail-safe
+    "__attach_request__",   # /attach sentinel — consumed by registry._forwarder for the agent swap, but ALSO emitted on the AG-UI wire (the forwarder's `continue` is subscriber-local — see protocol.py CONTROL_FILTER_KINDS)
 })
 
 # Every kind FORWARDED to the AG-UI wire as a display frame (standard or CUSTOM).

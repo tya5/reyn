@@ -4,7 +4,7 @@ Renders the client-side view of the server-authoritative sent queue (the
 undispatched inbox items, published by P2a) between the
 :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
 and the input row (region order: conversation / intervention panel /
-sent-queue / input — shared with the sibling #3299 arc, see
+rewind picker / sent-queue / input — shared with the sibling #3299 arc, see
 ``app.py``'s :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.compose`).
 
 The "upward conveyor" lifecycle (the owner-ratified sent-queue exit contract,

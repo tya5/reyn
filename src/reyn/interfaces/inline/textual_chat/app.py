@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
@@ -49,6 +50,7 @@ from textual_flowview import (
     FlowView,
 )
 
+from reyn.interfaces.repl._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
 from reyn.interfaces.repl.renderer import summarize_tool_result
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
@@ -82,6 +84,7 @@ from .presenter import (
     _neutralized_label,
 )
 from .restore import project_restored_frames
+from .rewind_picker import RewindPicker
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
@@ -93,14 +96,42 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Display kinds that are command-UI / control sentinels, not conversation
-# content. The plain output loop consumes them as signals; the Phase-1
-# conversation pane simply skips them (their surfaces land in later phases).
-# ``__end__`` is handled by the pump loop (it stops the app), so it is not here.
+# Display kinds that are control sentinels, not conversation content — skipped
+# by the conversation pane. ``__end__`` is handled by the pump loop (it stops
+# the app), so it is not here.
+#
+# #3362 corrected this set AND this comment. It used to also hold
+# ``__copy_last_reply__`` / ``__rewind_list__`` under the note "their surfaces
+# land in later phases" — a deferral, not a decision, and the later phase never
+# came: skipping them made ``/copy`` and ``/rewind`` silent no-ops on the DEFAULT
+# TUI (no status line, no clipboard write, no list). Both are now genuinely
+# HANDLED in :meth:`TextualChatApp._pump_frames` (clipboard copy + status frame;
+# the :class:`~reyn.interfaces.inline.textual_chat.rewind_picker.RewindPicker`
+# region + a text fallback) and are gone from this set.
+#
+# The two that REMAIN are a different thing entirely, and are not a deferral.
+# Both are consumed by ``AgentRegistry._forwarder`` (registry.py — the
+# ``__attach_request__`` / ``__session_switch_request__`` branches ``continue``
+# without ever putting the message on ``repl_outbox``), so neither reaches a
+# LOCAL client's frame stream; their effect arrives instead as the
+# ``session_attached`` chat-event (#3310 N2,
+# :meth:`TextualChatApp._handle_session_attached_event`). Nothing about
+# ``/attach`` or ``/session switch`` is implemented by this set.
+#
+# ★They are NOT symmetric on the REMOTE path, and the difference is measured
+# (#3362, ``tests/test_agui_control_filter.py``) — the forwarder's ``continue``
+# is subscriber-local and gates only ``repl_outbox``, so it says nothing about
+# the wire (canonical reasoning: ``transport/agui/protocol.py`` beside
+# ``CONTROL_FILTER_KINDS``):
+#
+# - ``__attach_request__`` — LOAD-BEARING here. It really is emitted as a
+#   profiled AG-UI display frame, so a remote client genuinely receives it;
+#   skipping it is what keeps a bare sentinel text out of the conversation pane.
+# - ``__session_switch_request__`` — a true fail-safe. The AG-UI tap consumes it
+#   before the emitter, and ``CONTROL_FILTER_KINDS`` filters it besides, so it
+#   should never arrive by either route.
 _SKIP_KINDS = frozenset(
     {
-        "__copy_last_reply__",
-        "__rewind_list__",
         "__attach_request__",
         "__session_switch_request__",
     }
@@ -361,7 +392,8 @@ class TextualChatApp(App):
     **#3354 — ``/`` and ``:`` completion.** A
     :class:`~reyn.interfaces.inline.textual_chat.completion.CompletionPopup`
     sits directly above the input row (region order: conversation /
-    intervention panel / sent-queue / COMPLETION / input) and is driven by the
+    intervention panel / rewind picker / sent-queue / COMPLETION / input) and is
+    driven by the
     Composer, which stays focused throughout. :meth:`completion_state` is the
     app's contribution: it resolves the live session + skill list off the
     ``ChatReadModel`` seam and hands them to the pure ``compute_completion``.
@@ -656,6 +688,19 @@ class TextualChatApp(App):
         # the single source of truth for the live state, so there is no second
         # copy to drift.
         self._gutter_start = _configured_gutter_visibility(config)
+        # #3362: the newest-first ring of agent reply TEXTS that ``/copy [N]``
+        # targets — the same ring, sized by the same shared
+        # :data:`~reyn.interfaces.repl._copy_sentinel.COPY_BUFFER_MAX`, that the
+        # plain client keeps in ``run_output_loop``. Fed from BOTH sources a
+        # reply can reach this pane through: live ``kind="agent"`` frames
+        # (:meth:`_ingest_frame`, including a streamed reply's authoritative
+        # completion) and the durable ``history.jsonl`` projection
+        # (:meth:`_hydrate_from_history`) — so a reply the user can SEE after a
+        # restart or a session switch is a reply ``/copy`` can reach, rather
+        # than the pane and the command disagreeing about what exists. Not a
+        # dict, so it is reset explicitly on a session switch rather than by
+        # :attr:`_PER_SESSION_DICT_STATE`'s uniform ``.clear()`` loop.
+        self._recent_replies: "deque[str]" = deque(maxlen=COPY_BUFFER_MAX)
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -692,17 +737,26 @@ class TextualChatApp(App):
         self._flow.set_gutter_visible("right", right_start)
         yield self._flow
         # #3299 P1: the grouped intervention panel sits BETWEEN the flow and
-        # the input row (region order shared with the sibling #3300 queue arc:
-        # conversation / intervention panel / sent-queue / input).
+        # the input row (region order shared with the sibling #3300 queue arc,
+        # plus #3362's rewind picker: conversation / intervention panel /
+        # rewind picker / sent-queue / input).
         # Collapsed by default (``display=False`` — see
         # ``InterventionPanel.on_mount``); shown + auto-focused only while an
         # intervention is pending (:meth:`_present_intervention`).
         self._iv_panel = InterventionPanel(id="intervention-panel")
         yield self._iv_panel
+        # #3362: the /rewind checkpoint picker sits between the intervention
+        # panel and the sent-queue — same collapsed-by-default region shape
+        # (``display=False`` in its ``on_mount``), shown only while a bare
+        # ``/rewind`` is offering checkpoints.
+        self._rewind_picker = RewindPicker(id="rewind-picker")
+        yield self._rewind_picker
         # #3300 P2b: the sent-queue region sits BETWEEN the intervention
         # panel and the input row (region order: conversation / intervention
-        # panel / sent-queue / input — pinned by the architect design pass so
-        # the sibling #3299/#3300 P1 coders never collide on this zone).
+        # panel / rewind picker / sent-queue / input — the intervention/queue/
+        # input ordering was pinned by the architect design pass so the sibling
+        # #3299/#3300 P1 coders never collide on this zone; #3362 added the
+        # rewind picker above the queue, inside the same zone).
         # Collapsed by default (``display=False`` — see ``SentQueue.on_mount``);
         # shown while at least one message is queued, undispatched.
         self._sent_queue = SentQueue(id="sent-queue")
@@ -985,6 +1039,16 @@ class TextualChatApp(App):
                 )
             elif msg.kind == "tool_call_failed":
                 entry.set_state(EntryState.ERROR)
+        # #3362: seed the ``/copy`` ring from the SAME restored frames, so a
+        # reply visible in the pane after a restart / session switch is one
+        # ``/copy`` can reach. ``frames`` is oldest-first (as rendered), the ring
+        # is newest-first, hence the reversal; the ring's own ``maxlen`` bounds
+        # it, so a long history cannot grow this past ``COPY_BUFFER_MAX``. The
+        # caller clears the ring alongside ``conversation.clear()``, exactly as
+        # it does for the model this loop re-appends to.
+        for msg in reversed(frames):
+            if msg.kind == "agent":
+                self._recent_replies.append(msg.text)
 
     def _open_drawer(self, tab_id: "str | None") -> None:
         """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``
@@ -1190,6 +1254,87 @@ class TextualChatApp(App):
         one-way trip."""
         self.query_one(Composer).focus()
 
+    async def _handle_copy_request(self, arg: str) -> None:
+        """Consume a ``__copy_last_reply__`` sentinel: copy, then report (#3362).
+
+        Delegates the whole resolution + clipboard write to the SHARED
+        :func:`~reyn.interfaces.repl._copy_sentinel.handle_copy_sentinel` the
+        plain client uses — the arg grammar (``N`` / ``list``) and every
+        empty/out-of-range message are therefore identical on both surfaces by
+        construction, not by two implementations agreeing today.
+
+        The clipboard write is the EFFECT; the returned ``status`` frame is only
+        its report, and is folded into the conversation through the ordinary
+        :meth:`_ingest_frame` path so it reads like any other status row. Before
+        #3362 this sentinel was in :data:`_SKIP_KINDS`, so BOTH halves were
+        missing — the pane showed nothing and the system clipboard was genuinely
+        untouched."""
+        status = await handle_copy_sentinel(self._recent_replies, arg)
+        self._ingest_frame(status)
+
+    def _handle_rewind_request(self, msg: "OutboxMessage") -> None:
+        """Consume a ``__rewind_list__`` sentinel: show the picker, or the text
+        fallback (#3362).
+
+        The SAME two-legged rule
+        :func:`~reyn.interfaces.repl.stream_client.run_output_loop` applies, for
+        the same reason:
+
+        - This client HOSTS a command-UI region (the
+          :class:`~reyn.interfaces.inline.textual_chat.rewind_picker.RewindPicker`),
+          so when the read model carries the structured request
+          (``{"kind": "rewind", "points": [...]}``) the picker is populated from
+          the POINTS and the sentinel's pre-rendered text is dropped — one list,
+          not a list plus a duplicate transcript row. The request is consumed
+          (``clear_pending_command_ui``) so it can never be replayed onto a later
+          sentinel.
+        - No structured request available — the REMOTE case, where command-UI is
+          not on the AG-UI wire and ``pending_command_ui()`` is ``None`` by
+          design (``read_model.py``) — falls back to appending the sentinel's
+          text list. Swallowing it there would trade one silent no-op for
+          another, waiting on a picker that can never arrive.
+
+        A ``kind`` other than ``"rewind"`` takes the text fallback too, rather
+        than being force-fitted into a rewind picker: command-UI is a typed
+        request and this region answers exactly one of its kinds."""
+        request = None
+        if self._read_model is not None:
+            try:
+                request = self._read_model.pending_command_ui()
+            except Exception:
+                logger.exception("textual chat: command-UI read failed")
+        points = (request or {}).get("points") if request else None
+        if request and request.get("kind") == "rewind" and points:
+            self._rewind_picker.show_points(list(points))
+            try:
+                self._read_model.clear_pending_command_ui()
+            except Exception:
+                logger.exception("textual chat: command-UI clear failed")
+            return
+        # persistent kind (not transient "status") so the list stays readable —
+        # the same choice the plain client's fallback leg makes.
+        self._ingest_frame(replace(msg, kind="intervention"))
+
+    async def on_rewind_picker_point_selected(
+        self, event: "RewindPicker.PointSelected"
+    ) -> None:
+        """A checkpoint was picked: perform the rewind through the ORDINARY
+        ``/rewind <seq>`` slash path (#3362).
+
+        Routed via :meth:`_submit`, i.e. the same transport send seam a typed
+        ``/rewind <seq>`` uses, which reaches ``rewind_cmd`` → the unified
+        ``AgentRegistry.checkout``. This picker therefore has NO private action
+        path — the destructive contract (in-flight cancellation, the ``⏪ checked
+        out to seq N`` reply, the branch/fork semantics of ``checkout``) is
+        defined in exactly one place, and a rewind triggered from here is
+        indistinguishable from a typed one."""
+        await self._submit(f"/rewind {event.seq}")
+        self.query_one(Composer).focus()
+
+    def on_rewind_picker_dismissed(self, event: "RewindPicker.Dismissed") -> None:
+        """Esc in the picker: no rewind, focus back to the composer."""
+        self.query_one(Composer).focus()
+
     def _ingest_frame(self, msg: "OutboxMessage") -> None:
         """Fold one display frame into the retained model — appending a new entry,
         or COALESCING a correlated tool result into its RUNNING started entry.
@@ -1222,6 +1367,12 @@ class TextualChatApp(App):
                 self._coalesce_tool_result(started, msg)
                 return
         if kind == "agent":
+            # #3362: buffer the reply text for ``/copy`` BEFORE the streaming
+            # branch below returns early — a streamed reply settles through that
+            # return, so appending after it would leave every streamed reply
+            # (i.e. the common case) uncopyable. Mirrors the plain client's
+            # ``recent_replies.appendleft(msg.text)`` on the same kind.
+            self._recent_replies.appendleft(msg.text)
             chain_id = meta.get("chain_id")
             streaming = self._streaming_replies.pop(chain_id, None) if chain_id else None
             if streaming is not None:
@@ -1581,6 +1732,15 @@ class TextualChatApp(App):
         for attr_name in self._PER_SESSION_DICT_STATE:
             getattr(self, attr_name).clear()
         self._iv_panel.collapse_all()
+        # #3362, both non-``.clear()``-shaped per-session states this PR adds:
+        # the ``/copy`` ring is emptied HERE (next to ``conversation.clear()``,
+        # which it shadows) and re-seeded by the hydrate call at the end of this
+        # method — an OLD session's replies must not be copyable from the NEW
+        # one. The rewind picker is collapsed because its offered checkpoints
+        # were listed for the OLD attached session; leaving it up would let a
+        # user check out a seq chosen against a conversation no longer on screen.
+        self._recent_replies.clear()
+        self._rewind_picker.hide()
         self._queue_view = RemoteQueueView()
         self._sent_queue.clear_all()
         if agent:
@@ -2079,7 +2239,24 @@ class TextualChatApp(App):
                     msg = frame.message
                     if msg.kind == "__end__":
                         break
-                    if msg.kind not in _SKIP_KINDS:
+                    # #3362: the two CLIENT-consumed sentinels are handled here,
+                    # not skipped. Deliberately NOT written as an early
+                    # ``continue`` — the live-chrome refresh at the foot of this
+                    # loop must still run for these frames, and a ``continue``
+                    # past it is precisely the defect the F5b/#3338 note below
+                    # records (an EVENT-leg ``continue`` once starved the whole
+                    # status line).
+                    elif msg.kind == "__copy_last_reply__":
+                        try:
+                            await self._handle_copy_request(msg.text)
+                        except Exception:
+                            logger.exception("textual chat: /copy sentinel failed")
+                    elif msg.kind == "__rewind_list__":
+                        try:
+                            self._handle_rewind_request(msg)
+                        except Exception:
+                            logger.exception("textual chat: /rewind sentinel failed")
+                    elif msg.kind not in _SKIP_KINDS:
                         try:
                             self._ingest_frame(msg)
                         except Exception:

@@ -346,9 +346,24 @@ _CC_ERR = "#f97066"     # red — failure
 _CC_WARN = "#e3b341"    # amber — an intervention that needs the user to act
 _CC_ACCENT = "#d97757"  # terracotta — spinner / accents
 _CC_COOL = "#6cb6ff"    # cool blue — a secondary accent (status-bar agent value)
+# Row-TINT backgrounds. The convention (established by _CC_USER_BG, extended to
+# _CC_ERR_BG by #3367): a row tint is a FAINT DARK block that the row's normal
+# foreground colour stays legible against — never a saturated foreground colour
+# reused as a background. A _CC_*_BG constant is only ever a background, and a
+# _CC_* foreground constant is never used as one; that separation is what keeps
+# "pick a foreground" and "pick a background" from colliding on the same hue.
+#
 # Subtle background block behind the user's own submitted line (CC styles the
 # user input differently from agent output — a faint highlighted block).
 _CC_USER_BG = "#2b2f37"
+# Failure block-tint behind a failed tool call / error row. A desaturated dark
+# coral: it reads unmistakably as "the red row" edge to edge (CC's block-tint of
+# a failed tool) while _CC_ERR text on top of it stays high-contrast. #3367:
+# every failure row previously carried background=_CC_ERR — the SAME value as
+# its own foreground — so the text was painted in its background colour and the
+# row rendered as a solid illegible coral band, exactly when the user most needs
+# to read why something failed.
+_CC_ERR_BG = "#3a1c1a"
 
 # Braille spinner frames for the working indicator (bottom toolbar).
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"

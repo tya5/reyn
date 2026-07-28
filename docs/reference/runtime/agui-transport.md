@@ -88,7 +88,7 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
 | `presentation`    | `CUSTOM`           | a `present` op's render-node model (see *present-on-wire*) |
 | `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | client-consumed sentinels — forwarded (see *control sentinels*) |
-| `__attach_request__` | `CUSTOM`        | fail-safe profile entry; upstream-consumed (see *control sentinels*) |
+| `__attach_request__` | `CUSTOM`        | forwarded — a live wire kind (see *control sentinels*) |
 | `__end__` / `__session_switch_request__` | *(filtered)* | NOT forwarded (see *control sentinels*) |
 
 Any other display kind still round-trips losslessly (it falls back to `CUSTOM` and
@@ -116,12 +116,24 @@ renderable display kinds):
   no wire event):
   - `__end__` — the stream terminator (the emitter returns on it; the client's
     loop also ends when the stream closes).
-  - `__session_switch_request__` — already swallowed upstream (`registry.py:3061`),
-    so it never reaches the AG-UI tap; filtering is a fail-safe.
-- **Upstream-consumed → fail-safe profile**: `__attach_request__` is swallowed
-  upstream (`registry.py:3052`) and never reaches the tap; its profile entry is a
-  fail-safe for a future tap-point change, not a live wire kind. (Remote
-  attach-label sync is designed separately, not via this legacy sentinel.)
+  - `__session_switch_request__` — the **AG-UI tap itself** consumes this one
+    (`_SessionFrameSource._drain_one_session`: session switch-follow, or a silent
+    drop for an unresolvable sid), so it never reaches the emitter from that
+    source; the filter entry is a fail-safe covering a frame source that does not
+    consume it.
+- **Forwarded, and genuinely live**: `__attach_request__` **is** emitted on the
+  wire as a profiled `CUSTOM` display event. The registry forwarder's `continue`
+  does not prevent this: the forwarder and the AG-UI tap are two independent
+  subscribers of the same `session.outbox_hub`, which fans every message out to
+  every subscription, so the `continue` only means "not re-posted to
+  `repl_outbox`" (the local REPL sink). A remote client must tolerate the kind;
+  the reyn client skips it for display so no bare sentinel lands in the
+  conversation pane. (Remote attach-label *sync* is a separate mechanism.)
+
+> Corrected in #3362. This section previously stated that both sentinels "never
+> reach the AG-UI tap" because the registry forwarder swallows them. Both do
+> reach it; the forwarder's `continue` is subscriber-local. Measured with the
+> real forwarder + real tap in `tests/test_agui_control_filter.py`.
 
 #### The session-switch barrier (`reyn.event.session_attached`, #3310 N1/N2)
 
@@ -539,7 +551,7 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 | `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | the `/copy` sentinel — forwarded (client-side clipboard copy); see *control sentinels* |
 | `reyn.display.__rewind_list__`    | the `/rewind` sentinel — forwarded (client-side rewind picker); see *control sentinels* |
-| `reyn.display.__attach_request__` | the attach-request sentinel — a fail-safe profile entry (upstream-consumed); see *control sentinels* |
+| `reyn.display.__attach_request__` | the attach-request sentinel — really emitted; the reyn client skips it for display; see *control sentinels* |
 | `reyn.display.tool_call_started`  | a tool-call start trace line                           |
 | `reyn.display.tool_call_completed`| a tool-call completion trace line                     |
 | `reyn.display.tool_call_failed`   | a tool-call failure trace line                        |
@@ -642,6 +654,22 @@ second hand-rolled column:
   (`int(clock() / frame_period)`) that flowview's own
   `FlowView(animation_fps=N)` re-invokes on each animation tick — no
   app-side timer (#3283 ①, native-blink equivalence).
+- **ROW TINT — `Presentation.background`** (`presenter.py`): a user row and a
+  FAILURE row (a `tool_call_failed` / `error` frame, or a `tool_call_completed`
+  whose summary is a `✗`) carry a whole-row background that flowview paints
+  edge to edge across gutter + body + padding (`_view._compose_line`). Every
+  tint is a `_CC_*_BG` constant — a faint DARK block (`_CC_USER_BG`,
+  `_CC_ERR_BG`) that the row's normal foreground stays legible against; a
+  saturated `_CC_*` foreground colour is never reused as a background. The two
+  vocabularies are kept disjoint deliberately: foreground and background are
+  chosen on independent code paths, so overlapping them is how they collide.
+  #3367 was exactly that collision — every failure leg paired `style=_CC_ERR`
+  with `background=_CC_ERR`, painting the row's text (and, because the tint
+  spans the gutter column, the gutter's coral `⎿`/`✗` glyph) in its own
+  background colour, so a failed tool call rendered as an unreadable solid
+  band. `tests/test_textual_chat_row_contrast_3367.py` gates the invariant over
+  the (kind, state) cross-product enumerated from `DISPLAY_KINDS` +
+  `EntryState`.
 - **RIGHT gutter — `ReynRightGutter`** (`gutter.py`, #3283 ④): one column, two
   label families, wired via flowview's additive
   `right_decorator`/`right_gutter_width` params. flowview takes a single right

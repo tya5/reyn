@@ -31,58 +31,10 @@ from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import FrameTag
 from reyn.runtime.outbox import OutboxMessage
 
-from ._clipboard import copy_to_clipboard_async
+from ._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
 from .renderer import ChatRenderer
 
 logger = logging.getLogger(__name__)
-
-# How many recent agent replies `/copy` can target (1 = newest).
-_COPY_BUFFER_MAX = 20
-
-
-def _copy_target(recent_replies, arg: str) -> tuple[str | None, str]:
-    """Pure: resolve a ``/copy`` arg against the newest-first reply buffer.
-
-    Returns ``(text_to_copy, status)``. ``text_to_copy`` is None when there is
-    nothing to copy — ``status`` then explains why (list view / empty buffer /
-    bad arg / out of range). ``recent_replies[0]`` is the newest reply.
-    """
-    arg = (arg or "").strip()
-    n_buf = len(recent_replies)
-
-    def _plural(n: int) -> str:
-        return "reply" if n == 1 else "replies"
-
-    if arg == "list":
-        if not n_buf:
-            return None, "no replies buffered yet"
-        return None, f"{n_buf} {_plural(n_buf)} buffered (/copy N — 1 = newest)"
-    n = 1
-    if arg:
-        if not arg.isdigit() or int(arg) < 1:
-            return None, f"bad /copy arg {arg!r}; use a number (1 = newest) or 'list'"
-        n = int(arg)
-    if not n_buf:
-        return None, "no agent reply to copy yet"
-    if n > n_buf:
-        return None, f"only {n_buf} {_plural(n_buf)} buffered"
-    return recent_replies[n - 1], ""
-
-
-async def _handle_copy_sentinel(recent_replies, arg: str):
-    """Resolve a ``/copy`` request and return a status OutboxMessage to render.
-
-    Replaces the unhandled ``__copy_last_reply__`` sentinel (a silent no-op
-    before this) with a real clipboard copy + a visible result line.
-    """
-    text, status = _copy_target(recent_replies, arg)
-    if text is not None:
-        ok, tool = await copy_to_clipboard_async(text)
-        status = (
-            f"copied reply to clipboard ({tool})" if ok
-            else "no clipboard tool found — install pbcopy / xclip / wl-copy / xsel"
-        )
-    return _simple_status(status)
 
 
 def _simple_status(text: str) -> OutboxMessage:
@@ -294,7 +246,7 @@ async def run_output_loop(
     is_tty = sys.stdout.isatty()
     # Newest-first ring of recent agent replies so `/copy [N]` can grab the
     # latest (or an older) reply and pipe it to the system clipboard.
-    recent_replies: deque[str] = deque(maxlen=_COPY_BUFFER_MAX)
+    recent_replies: deque[str] = deque(maxlen=COPY_BUFFER_MAX)
     async for frame in transport.frames():
         # Event frame → the renderer's working-indicator entry point. The dual
         # stream is dispatched by tag at the CONSUMING end so the renderer keeps
@@ -332,7 +284,7 @@ async def run_output_loop(
         elif msg.kind == "__copy_last_reply__":
             # /copy sentinel: resolve + copy, then render the result as a status
             # line instead of the (unhandled) sentinel — no more silent no-op.
-            msg = await _handle_copy_sentinel(recent_replies, msg.text)
+            msg = await handle_copy_sentinel(recent_replies, msg.text)
         elif msg.kind == "__rewind_list__":
             # /rewind picker (F4): the LOCAL inline path shows a ↑↓ region selector
             # (driven by session.pending_command_ui), so skip the text list there;

@@ -107,7 +107,7 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
     ),
     CustomName(
         "reyn.display.__attach_request__", DISPLAY_NS, "{text: str}",
-        "the attach-request sentinel — upstream-consumed at registry.py:3052 (swallowed with continue), so it never reaches the AG-UI tap; this profile entry is a fail-safe for a tap-point change, not a live wire kind (remote attach-label sync is designed in P6b, not via this legacy sentinel)",
+        "the attach-request sentinel — a LIVE WIRE KIND (corrected #3362): the registry forwarder's `continue` is subscriber-local and does not keep it off the tap, and it is not in CONTROL_FILTER_KINDS, so this entry names an event that really is emitted (see protocol.py CONTROL_FILTER_KINDS for the fan-out reasoning). The reyn client skips it for display; remote attach-label sync is a separate P6b mechanism",
     ),
     CustomName(
         "reyn.display.trace", DISPLAY_NS, "{text: str}",
