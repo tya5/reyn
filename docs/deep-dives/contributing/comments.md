@@ -135,6 +135,20 @@ A comment may move to a doc only if BOTH hold:
 (compressed inline) or K-inline instead. When genuinely unsure, leave it
 inline.
 
+**A comment-only change is not gate-neutral.** Structural gates scan source
+TEXT and do not distinguish a comment from code — a compressed comment that
+happens to place a class name next to `(` can be misread as a construction
+site. On #3404, rewording `#2421: route through the single MCPGateway seam`
+to `route through MCPGateway (not a raw MCP client call)` tripped #2813's
+completeness gate (`\bMCPGateway\s*\(` scanned for a nearby `cancel_event=`)
+purely because of where the parenthesis landed — the original wording had
+no `(` following the class name at all. When rewording a comment that names
+a symbol, grep `tests/` for that symbol's regex first, or keep the symbol
+away from the punctuation a gate keys on. (Swept for this specific risk on
+#3404: only two such scanners exist repo-wide, `\bMCPClient\s*\(` and
+`\bMCPGateway\s*\(` — a future sweep can start from that count rather than
+re-deriving it.)
+
 ## 6. Do not set a numeric target
 
 **Never set "reduce N lines" as a goal.** A line-count target creates
