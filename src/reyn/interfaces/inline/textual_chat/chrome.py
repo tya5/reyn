@@ -68,6 +68,7 @@ from rich.text import Text
 from textual import events
 from textual.containers import Horizontal
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import (
@@ -338,10 +339,17 @@ class Composer(TextArea):
 # — the "Textual only where there is a selection" split. Phase 4 fills each pane
 # from its canonical reyn source (see :func:`pane_payload`).
 
+#: Tab labels, abbreviated where needed to leave room for the status-values
+#: line to co-reside on the menu row (#3326). Each abbreviation stays uniquely
+#: identifiable on its own (an accepted condition, not just a nice-to-have —
+#: e.g. ``History`` -> ``Hist`` reads unambiguously; ``Ctx``/``Cost`` are left
+#: alone precisely because shortening either risks the two becoming
+#: indistinguishable at a glance). Most labels were already <= 4 chars and are
+#: untouched.
 _MENU_TABS: "list[tuple[str, str]]" = [
     ("model", "Model"),
     ("agent", "Agent"),
-    ("history", "History"),
+    ("history", "Hist"),
     ("cost", "Cost"),
     ("ctx", "Ctx"),
     # The six categories the retired chip bar kept behind its level-2 "more…"
@@ -351,7 +359,7 @@ _MENU_TABS: "list[tuple[str, str]]" = [
     # ``/visibility`` or ``/hook`` that flips it); Pipe/Cron are read-only.
     ("tool", "Tool"),
     ("mcp", "MCP"),
-    ("skill", "Skill"),
+    ("skill", "Skil"),
     ("pipe", "Pipe"),
     ("hook", "Hook"),
     ("cron", "Cron"),
@@ -403,10 +411,17 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
 ]
 
 #: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides).
+#:
+#: #3365: ``↑`` and ``esc`` used to share one row worded "close" — read as
+#: "closes the drawer, landing on the tab-bar" (one level up), but the ACTUAL
+#: destination (measured, both keys) is the Composer directly, regardless of
+#: navigation depth. Split into two rows with accurate wording instead of one
+#: combined row that invited a "one step back" misreading.
 MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("← →", "move"),
     ("enter", "open"),
-    ("↑ / esc", "close"),
+    ("↑", "back to composer"),
+    ("esc", "back to composer"),
 ]
 
 #: Keys RESERVED by an approved-but-unimplemented feature — claimed, but bound
@@ -445,10 +460,13 @@ RESERVED_KEYS: "dict[str, str]" = {
 #: ``SentQueue.BINDINGS`` — declarative, but the Help pane still sources them
 #: from HERE, the same single-source-of-truth convention ``MENUBAR_KEYS``
 #: uses, rather than re-deriving prose from the ``Binding`` objects).
+#:
+#: #3365: ``tab`` dropped — its "back to composer" binding was removed
+#: (``Tab`` is forward-only everywhere in the app; ``Esc`` alone owns "back").
 SENTQUEUE_KEYS: "list[tuple[str, str]]" = [
     ("↑ / ↓", "select queued message"),
     ("enter", "cancel selected"),
-    ("esc / tab", "back to composer"),
+    ("esc", "back to composer"),
 ]
 
 
@@ -507,10 +525,22 @@ def _history_option_content(rows: "Sequence[str]") -> list[Content]:
 def _model_pane_entries(
     classes: "Sequence[str]", active: "str | None"
 ) -> "list[tuple[str, str]]":
-    """``(row, slash)`` per operator-configured model class, active class marked."""
-    return [
+    """``(row, slash)`` per operator-configured model class, active class marked.
+
+    #3324: ``active`` can be a raw LiteLLM model string rather than a
+    configured class name — when ``--model <raw-id>`` bypasses the class
+    system entirely (``Session.active_model_class()`` returns ``None`` for a
+    passthrough model, so the caller falls back to the raw model string).
+    That string never equals any class name, so the ``· active`` marker
+    silently appeared nowhere. Prepended here as its own informational row
+    (empty command = inert, the same convention read-only panes use) rather
+    than left unmarked."""
+    entries = [
         (f"{c}  · active" if c == active else c, f"/model {c}") for c in classes
     ]
+    if active is not None and active not in classes:
+        entries.insert(0, (f"(current, not a configured class)  {active}", ""))
+    return entries
 
 
 def model_pane_options(classes: "Sequence[str]", active: "str | None") -> list[str]:
@@ -1059,10 +1089,17 @@ def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
 
 
 class StatusLine(Static):
-    """Slim bottom status-values line — plain, not rich. Mirrors reyn's inline
-    REPL bottom toolbar (``model │ agent │ cost │ ctx``), which sits BELOW the
-    input — matching Claude Code and reyn (not a top-docked line). The menu
-    *items* live in the focusable :class:`MenuBar` row just below it."""
+    """Slim status-values line — plain, not rich. Mirrors reyn's inline REPL
+    bottom toolbar (``model │ agent │ cost │ ctx``). #2280: this is the ONE
+    always-visible (never-collapsed) chrome region — the halt banner rides on
+    it — so wherever :class:`MenuBar` mounts this widget, it must stay on a
+    row that is always on screen, never scrolled or wrapped away.
+
+    #3326: owned and positioned by :class:`MenuBar`, not a standalone
+    top-level row — it is appended as a trailing widget to whichever wrapped
+    menu row has room for it (usually the last), or given its own extra row
+    when none does. Never yielded directly by the app; see
+    :meth:`MenuBar._repack`."""
 
 
 #: Horizontal cells a :class:`Tab` adds around its label (``Tab``'s own
@@ -1070,6 +1107,12 @@ class StatusLine(Static):
 #: rendered width when packing rows — kept as one named fact so the packer and
 #: the stylesheet cannot silently disagree.
 _TAB_H_PADDING = 2
+
+#: Horizontal cells :class:`StatusLine` adds around its text (its own
+#: ``padding: 0 1`` in the app stylesheet) — the status-segment analog of
+#: ``_TAB_H_PADDING``, used to predict whether it fits alongside tabs on a
+#: packed row (#3326).
+_STATUS_H_PADDING = 2
 
 
 def pack_menu_rows(
@@ -1106,6 +1149,23 @@ def pack_menu_rows(
     return rows
 
 
+def status_fits_last_row(
+    rows: "Sequence[Sequence[tuple[str, str]]]", width: int, status_text_len: int
+) -> bool:
+    """True if the status-values segment fits alongside the last packed tab row.
+
+    Pure, mirroring :func:`pack_menu_rows`'s testability-without-mounting
+    convention (#3326). ``rows`` is the output of :func:`pack_menu_rows`; an
+    empty ``rows`` (no tabs at all) trivially fits if the text alone fits
+    ``width``. Never truncates or squeezes — the caller falls back to giving
+    the status segment its own row when this returns ``False``."""
+    status_cell = status_text_len + _STATUS_H_PADDING
+    if not rows:
+        return status_cell <= width
+    used = sum(len(label) + _TAB_H_PADDING for _tab_id, label in rows[-1])
+    return used + status_cell <= width
+
+
 class MenuBar(Widget, can_focus=True):
     """Focusable menu row (the collapsed bottom chrome). ``← →`` move the
     highlight, ``Enter`` opens the highlighted item's drawer, and ``↑``/``Esc``
@@ -1123,7 +1183,15 @@ class MenuBar(Widget, can_focus=True):
     layout differs.
 
     ``active`` is the highlighted tab id, the same public read the drawer control
-    and the Phase-3 keyboard gates use."""
+    and the Phase-3 keyboard gates use.
+
+    #3326: also owns the :class:`StatusLine` status-values segment — appended
+    as a trailing widget on whichever packed row has room for it (see
+    :func:`status_fits_last_row`), or given its own extra row when none does.
+    This is what collapses the bottom chrome toward one line: the two
+    previously-separate always-visible rows (status line above, menu row
+    below) become one shared row whenever the terminal is wide enough, and
+    fall back to their previous two-row shape (no regression) otherwise."""
 
     # NOTE: the row's HEIGHT is not declared here. The app stylesheet
     # (``TextualChatApp.CSS``'s ``MenuBar`` rule) overrides a widget's
@@ -1152,10 +1220,18 @@ class MenuBar(Widget, can_focus=True):
             self.tab_id = tab_id
             super().__init__()
 
-    def __init__(self, items: "Sequence[tuple[str, str]]", **kwargs) -> None:
+    def __init__(
+        self,
+        items: "Sequence[tuple[str, str]]",
+        *,
+        status_text: str = "",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._items = list(items)
         self._packed_width = -1
+        self._last_seen_width = -1
+        self._status_text = status_text
         #: The highlighted tab id. Seeded to the first item so the row has a
         #: highlight from the very first frame (before any resize has landed).
         self.active = self._items[0][0] if self._items else ""
@@ -1163,19 +1239,55 @@ class MenuBar(Widget, can_focus=True):
     def _repack(self, width: int) -> None:
         """Rebuild the child rows for ``width``. A no-op when the width has not
         changed, so an ordinary resize storm does not remount 13 widgets a frame."""
-        if width <= 0 or width == self._packed_width:
+        if width <= 0:
+            return
+        self._last_seen_width = width
+        if width == self._packed_width:
             return
         self._packed_width = width
         rows = pack_menu_rows(self._items, width)
+        merge_status = status_fits_last_row(rows, width, len(self._status_text))
         self.remove_children()
-        self.mount_all([
+        menu_rows = [
             Horizontal(
                 *(Tab(label, id=tab_id) for tab_id, label in row),
+                *(
+                    [StatusLine(self._status_text, classes="-shared")]
+                    if merge_status and i == len(rows) - 1
+                    else []
+                ),
                 classes="menubar-row",
             )
-            for row in rows
-        ])
+            for i, row in enumerate(rows)
+        ]
+        if not merge_status:
+            menu_rows.append(
+                Horizontal(StatusLine(self._status_text), classes="menubar-row")
+            )
+        self.mount_all(menu_rows)
         self.call_after_refresh(self._sync_active_class)
+
+    def update_status(self, text: str) -> None:
+        """Update the merged status-values text (#3326).
+
+        A length change can flip the merge decision (:func:`status_fits_last_row`)
+        — most sharply for the #2280 halt banner, prepended ahead of the usual
+        values and far longer than the steady-state text — so a length change
+        forces a fresh repack rather than an in-place ``Static.update``. An
+        unchanged length (the common case: cost/ctx ticking within the same
+        format) updates the mounted widget directly, no remount."""
+        changed_len = len(text) != len(self._status_text)
+        self._status_text = text
+        if not self.is_mounted:
+            return
+        if changed_len:
+            self._packed_width = -1  # force status_fits_last_row to be re-evaluated
+            self._repack(self._last_seen_width)
+        else:
+            try:
+                self.query_one(StatusLine).update(text)
+            except NoMatches:
+                pass
 
     def _sync_active_class(self) -> None:
         for tab in self.query(Tab):
