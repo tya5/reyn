@@ -42,13 +42,16 @@ Ops (§5's seven, plus ``deadline`` — issue #3166)
                    the same per-key pending + TTL sweep with the discard
                    branch replaced by a fire. It reuses ``PendingStore``,
                    ``QueuePolicy`` (arm-storm bound), and ``correlate_by`` key
-                   extraction unchanged — no new machinery. **Crash-non-
-                   durable in v1** (:class:`InMemoryPendingStore`, see
-                   invariant #1): armed state is lost on a process crash,
-                   which for a dead-man monitor also means the thing it was
-                   watching may be gone too. :func:`load_composers` emits a
-                   ``UserWarning`` at load time for every ``deadline``
-                   composer so this is never a silent posture.
+                   extraction unchanged — no new machinery. **Crash-durable by
+                   default** (issue #3180): ``ComposerDef.durable`` defaults to
+                   True for this op alone, routing its pending state to
+                   :class:`~reyn.hooks.durable_pending_store.DurablePendingStore`
+                   so an armed monitor survives a restart with its original arm
+                   instant. Setting ``durable: false`` is allowed (a deadline
+                   used as a soft in-process nudge does not need the fsync per
+                   arm) but re-arms :func:`load_composers`' ``UserWarning`` —
+                   a dead-man switch that dies with the process is never a
+                   silent posture.
 
 Source-seam degeneracy (architect-ratified, proposal §5/§3.2)
 ----------------------------------------------------------------
@@ -71,15 +74,17 @@ The five §5 invariants (architect-ratified review gate for this phase)
 --------------------------------------------------------------------------
 1. **PendingStore seam**: :class:`PendingRecord` is a plain dataclass of
    primitives + a list of (immutable, dict-payload) ``HookEvent`` — JSON-
-   serializable, so a future ``WalBackedPendingStore`` is a drop-in swap of
-   the :class:`PendingStore` protocol, not a rewrite. The moment a
-   WAL-backed store lands, CLAUDE.md's recovery-feature PR gate fires (a
-   truncate-falsify test: set pending X -> truncate the WAL below X's
-   events -> reconstruct -> assert X survives). :class:`InMemoryPendingStore`
-   (this phase's only implementation) is explicitly **best-effort /
-   crash-non-durable** — a process crash silently drops every in-flight
-   correlation, by design, not as an oversight (proposal §5 Q-reyn-1,
-   owner-ratified: "best-effort now, WAL-backed later").
+   serializable, which is what let the durable store land (#3180) as a
+   drop-in swap of the :class:`PendingStore` protocol rather than a rewrite.
+   TWO implementations ship: :class:`InMemoryPendingStore`, still explicitly
+   **best-effort / crash-non-durable** (a process crash silently drops every
+   in-flight correlation — by design for the seven ops whose loss costs one
+   buffered notification), and
+   :class:`~reyn.hooks.durable_pending_store.DurablePendingStore`, a
+   full-state snapshot file that is NOT WAL-derived and therefore survives
+   WAL truncation (CLAUDE.md's recovery-feature PR gate: ``tests/
+   test_3180_composer_pending_truncate_falsify.py``). ``ComposerDef.durable``
+   picks between them per composer — see that field.
 2. **QueuePolicy excludes Backpressure** (``DropOldest`` / ``DropNewest`` /
    ``Reject`` only — proposal §5 review-pass): the Bus's OWN input is
    already drop-oldest-lossy (``HookBus.publish``), so a Composer — built
@@ -245,6 +250,14 @@ class ComposerDef:
     threshold: "int | None" = None
     until_input: "ComposerInput | None" = None
     """``deadline`` only — the disarm pattern (issue #3166's ``until``)."""
+    durable: bool = False
+    """Whether this composer's pending state must survive a process crash
+    (issue #3180). ``_parse_one`` defaults it to True for ``op=deadline`` and
+    False for every other op: losing a ``debounce``/``window`` buffer costs one
+    notification, whereas losing an armed ``deadline`` costs the monitoring
+    itself. True routes the composer to the shared
+    :class:`~reyn.hooks.durable_pending_store.DurablePendingStore` (an fsync per
+    pending mutation); False keeps the free in-process dict."""
 
 
 # ---------------------------------------------------------------------------
@@ -281,14 +294,15 @@ class PendingStore(Protocol):
 
 
 class InMemoryPendingStore:
-    """v1 ``PendingStore`` — a plain in-process dict. **Crash-non-durable by
-    design** (proposal §5 Q-reyn-1, owner-ratified best-effort-now posture):
-    a process crash silently discards every in-flight correlation with no
-    reconstruction. This is NOT a recovery feature (CLAUDE.md's
-    recovery-feature PR gate does not apply to this class) — the day a
-    ``WalBackedPendingStore`` implementing the same :class:`PendingStore`
-    protocol lands, THAT class is subject to the gate (truncate-falsify
-    test: pending X survives truncation below X's events)."""
+    """The best-effort ``PendingStore`` — a plain in-process dict.
+    **Crash-non-durable by design** (proposal §5 Q-reyn-1, owner-ratified
+    best-effort posture): a process crash silently discards every in-flight
+    correlation with no reconstruction. This is NOT a recovery feature
+    (CLAUDE.md's recovery-feature PR gate does not apply to this class) —
+    that gate applies to
+    :class:`~reyn.hooks.durable_pending_store.DurablePendingStore`, the
+    ``durable: true`` counterpart (default for ``op=deadline``, #3180), which
+    carries the truncate-falsify witness."""
 
     def __init__(self) -> None:
         self._data: "dict[tuple[str, str], PendingRecord]" = {}
@@ -598,23 +612,55 @@ class ComposerRegistry:
         self._tasks = []
 
 
+def build_composers(
+    definitions: "list[ComposerDef]",
+    *,
+    bus: HookBus,
+    durable_store: "PendingStore | None" = None,
+    emit_event: "EmitEvent | None" = None,
+) -> "list[Composer]":
+    """Construct one :class:`Composer` per definition, routing each to the
+    store its ``durable`` flag asks for (#3180): a ``durable`` composer shares
+    ``durable_store``, every other composer gets its own free
+    :class:`InMemoryPendingStore`.
+
+    A ``durable`` definition with no ``durable_store`` supplied — a Session
+    with no per-session state dir, or a direct construction in a test — warns
+    rather than silently downgrading, because the downgrade's whole visible
+    symptom is a dead-man monitor that never fires."""
+    undurable = [d.name for d in definitions if d.durable and durable_store is None]
+    if undurable:
+        warnings.warn(
+            f"composers {undurable}: durable pending state was requested but no durable "
+            "store is available in this context — their armed state falls back to "
+            "InMemoryPendingStore and will be silently lost on a process crash "
+            "(a deadline composer configured this way will not fire after a restart).",
+            UserWarning,
+            stacklevel=2,
+        )
+    return [
+        Composer(
+            d, bus=bus,
+            pending_store=durable_store if d.durable else None,
+            emit_event=emit_event,
+        )
+        for d in definitions
+    ]
+
+
 def start_composers(
     definitions: "list[ComposerDef]",
     *,
     bus: HookBus,
-    pending_store: "PendingStore | None" = None,
+    durable_store: "PendingStore | None" = None,
     emit_event: "EmitEvent | None" = None,
 ) -> ComposerRegistry:
     """Construct + start a :class:`ComposerRegistry` for every ``ComposerDef``
-    against the same per-Session ``bus`` — the intended production entry
-    point once a Session wires ``composers:`` config (config-wiring itself,
-    e.g. threading this into ``runtime/session.py``, is a follow-up; this
-    function is the seam that follow-up calls)."""
+    against the same per-Session ``bus``, via :func:`build_composers`."""
     registry = ComposerRegistry(
-        composers=[
-            Composer(d, bus=bus, pending_store=pending_store, emit_event=emit_event)
-            for d in definitions
-        ],
+        composers=build_composers(
+            definitions, bus=bus, durable_store=durable_store, emit_event=emit_event,
+        ),
     )
     registry.start()
     return registry
@@ -773,21 +819,27 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
             f"composers[{name}].count={threshold} exceeds policy.max_events_per_key="
             f"{policy.max_events_per_key} — count could never reach its threshold."
         )
-    if op is ComposerOp.DEADLINE:
-        # CLAUDE.md's recovery discipline: never ship a silent dead-man
-        # switch. InMemoryPendingStore (v1's only PendingStore) is crash-
-        # non-durable by design (module docstring invariant #1) — for a
-        # deadline composer that means the monitor itself vanishes on a
-        # crash, possibly alongside the thing it was watching. Warn loudly
-        # at load time, every time (existing `warnings.warn` mechanism —
-        # see reyn.security.secrets.loader/interpolation for the same
-        # UserWarning idiom elsewhere in the codebase; no new mechanism).
+    durable_raw = raw.get("durable")
+    if durable_raw is not None and not isinstance(durable_raw, bool):
+        raise ComposerConfigError(
+            f"composers[{name}].durable must be a boolean (got {type(durable_raw).__name__!r})."
+        )
+    # #3180: deadline is the one op whose pending state IS the feature, so it
+    # opts into durability by default; every other op keeps the free in-process
+    # dict. Explicit config always wins in both directions.
+    durable = (op is ComposerOp.DEADLINE) if durable_raw is None else durable_raw
+    if op is ComposerOp.DEADLINE and not durable:
+        # CLAUDE.md's recovery discipline: never ship a SILENT dead-man switch.
+        # Since #3180 the default is durable, so reaching here means the
+        # operator explicitly opted out — warn loudly at load time (existing
+        # `warnings.warn` mechanism — see reyn.security.secrets.loader/
+        # interpolation for the same UserWarning idiom; no new mechanism).
         warnings.warn(
-            f"composers[{name}]: op=deadline uses InMemoryPendingStore, which is "
-            "crash-non-durable by design — a process crash silently drops this dead-man "
-            "monitor's armed state with no reconstruction (proposal §5 Q-reyn-1, "
-            "owner-ratified best-effort-now posture). Do not rely on this composer to "
-            "survive a crash until a WAL-backed PendingStore lands (follow-on to #3166).",
+            f"composers[{name}]: op=deadline with durable=false uses InMemoryPendingStore, "
+            "which is crash-non-durable by design — a process crash silently drops this "
+            "dead-man monitor's armed state with no reconstruction, and whatever it was "
+            "watching is likely inside the same crash. Remove `durable: false` to get the "
+            "crash-durable store (the default for this op since #3180).",
             UserWarning,
             stacklevel=3,
         )
@@ -795,7 +847,7 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
         name=name, op=op, inputs=inputs, emit_kind=emit_kind,
         policy=policy,
         correlate_by=correlate_by, threshold=threshold,
-        until_input=until_input,
+        until_input=until_input, durable=durable,
     )
 
 
@@ -871,6 +923,7 @@ __all__ = [
     "PendingRecord",
     "PendingStore",
     "QueuePolicy",
+    "build_composers",
     "check_no_cycles",
     "load_composers",
     "start_composers",

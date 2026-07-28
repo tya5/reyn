@@ -167,8 +167,8 @@ composers:
   `deadline` (issue #3166 — fire when its `until` pattern does NOT arrive
   within `ttl` of its `on` pattern, per key; see [reyn-yaml § `composers`
   block](../../reference/config/reyn-yaml.md#composers-block) for its
-  distinct `on`/`matcher`/`until` shape and its stricter — load-time-warned,
-  crash-non-durable — reliability posture). Unlike the other 7 ops, which all
+  distinct `on`/`matcher`/`until` shape and its stricter — **crash-durable by
+  default** — reliability posture). Unlike the other 7 ops, which all
   compose things that DID happen, `deadline` is the only one that fires on
   absence — read a `deadline` fire as "X was expected but never arrived",
   never as an error in itself.
@@ -742,6 +742,37 @@ config change takes effect on the next session start, not via the hooks
 hot-reload seam (a live Composer's in-flight `PendingStore` correlation
 state has no reload-time reconciliation yet).
 
+### Crash durability of pending state
+
+A Composer's per-key pending state lives behind the `PendingStore` seam, and
+which implementation a composer gets is a per-composer decision (`durable:`,
+defaulting to **true for `op: deadline` and false for every other op**):
+
+| | Store | On a process crash |
+|---|---|---|
+| `durable: false` (default for 7 ops) | `InMemoryPendingStore` | in-flight correlations are dropped — costs at most one buffered notification |
+| `durable: true` (default for `deadline`) | `DurablePendingStore` | the armed set is restored **with its original arm instants**, so a missed deadline still fires at `armed_at + ttl` |
+
+`deadline` is the asymmetric case, which is why it alone defaults to durable:
+losing a `debounce` buffer costs one notification, but losing an armed
+`deadline` costs the *monitoring itself* — and whatever the dead-man switch was
+watching is very likely inside the same crash. Restoring the arm **instant** is
+the load-bearing half: a monitor re-armed with a fresh clock reports healthy
+while silently sliding its deadline forward by the entire downtime.
+
+`DurablePendingStore` is a full-state JSON snapshot at
+`<per-session state dir>/composer_pending.json`, rewritten atomically on every
+arm/disarm — deliberately **not** WAL-events. WAL-derived state that is not
+snapshot-backed is silently lost when the WAL is truncated below its source
+events (the [#2259 config-recovery class](../../reference/runtime/reyn-dir-layout.md#recovery-core)),
+and a dead-man switch that silently fails to re-arm is the worst instance of
+that. Because the store never reads the WAL, it survives truncation
+structurally rather than by argument.
+
+Setting `durable: false` on a `deadline` composer is allowed — an in-process
+nudge does not need an fsync per arm — but emits a load-time `UserWarning`, so
+a dead-man switch that dies with its process is never a silent posture.
+
 **The composed→wake loop-valve bound.** A `composed:<name>` hook's
 wake=true push lands in the inbox via the exact same `kind="hook"` E-path
 every other hook-driven wake uses, so a self-stimulating composed→wake
@@ -871,11 +902,6 @@ The following capabilities are designed but not yet implemented:
 
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn covers the common ones).
-- **`WalBackedPendingStore`** — a crash-durable swap for a Composer's
-  `PendingStore` seam (recovery-feature-gated: the moment it lands, CLAUDE.md's
-  truncate-falsify PR gate applies). Composer pending state stays
-  best-effort/crash-non-durable until then (by design, not an oversight —
-  see the reliability posture above).
 - **valve-persist** — `_hook_driven_turns` (the loop-valve counter) is
   in-memory-only (resets on crash); a separate, recovery-gated follow-up
   would make it snapshot-backed. Flagged as more load-bearing now that the

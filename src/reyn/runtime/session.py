@@ -3410,7 +3410,7 @@ class Session:
         former, earlier positions) re-times no side effect."""
         from reyn.hooks.bus import HookBus
         from reyn.hooks.composed_consumer import ComposedEventConsumer
-        from reyn.hooks.composer import Composer, ComposerRegistry
+        from reyn.hooks.composer import ComposerRegistry, build_composers
         from reyn.hooks.dispatcher import HookDispatcher
         from reyn.runtime.fs_watcher import FsWatcher
         from reyn.runtime.hot_reload import HotReloader
@@ -3492,13 +3492,12 @@ class Session:
         # async context to run in; run() starts/stops them (#2880/#2881;
         # session-construction.md#composer-registry-consumer-construction-vs-start-28802881).
         composer_registry = ComposerRegistry(
-            composers=[
-                Composer(
-                    d, bus=hook_bus,
-                    emit_event=lambda et, **kw: self._chat_events.emit(et, **kw),
-                )
-                for d in composer_defs
-            ],
+            composers=build_composers(
+                composer_defs,
+                bus=hook_bus,
+                durable_store=self._build_composer_pending_store(composer_defs),
+                emit_event=lambda et, **kw: self._chat_events.emit(et, **kw),
+            ),
         )
         composed_consumer = ComposedEventConsumer(
             bus=hook_bus, dispatcher=hook_dispatcher,
@@ -4442,6 +4441,27 @@ class Session:
                     "the valid composer layers: %s", label, exc,
                 )
         return definitions
+
+    def _build_composer_pending_store(self, composer_defs: list):
+        """#3180: the crash-durable ``PendingStore`` shared by every ``durable``
+        composer of this session (``op=deadline`` by default) — ``None`` when no
+        definition asks for durability, so a durability-free session pays no
+        file at all.
+
+        It lives in the PER-SESSION state dir (the same dir
+        :meth:`_toggle_store_dir` / ``_read_per_session_hooks`` use), not the
+        shared ``.reyn/state/``: composers are per-session, and two sessions of
+        the same agent arming the same composer name would otherwise overwrite
+        each other's armed set. ``retain_composers`` drops restored records
+        whose composer no longer exists in config, so a renamed deadline cannot
+        leave an arm nothing will ever disarm."""
+        from reyn.hooks.durable_pending_store import STORE_FILENAME, DurablePendingStore
+        durable_names = {d.name for d in composer_defs if d.durable}
+        if not durable_names:
+            return None
+        store = DurablePendingStore(Path(self._snapshot_path).parent / STORE_FILENAME)
+        store.retain_composers(durable_names)
+        return store
 
     def _read_per_agent_composers(self) -> list:
         """Read the per-agent COMPOSER layer (Hook-Event Redesign Phase 4b/5,
