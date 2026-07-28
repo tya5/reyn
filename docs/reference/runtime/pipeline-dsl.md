@@ -428,6 +428,43 @@ Every `agent` step, wherever it is reached (top-level or fanned out inside a
 `for_each`), charges the run's shared spawn budget — see
 [Safety caps](#safety-caps).
 
+#### Agent-step exception surfacing (#187 / #2732)
+
+An `agent` step's leaf session (`spawn_ephemeral_session`, always
+`mode="ephemeral"`) drives its router loop inside `Session._handle_user_message`.
+Two hardening passes changed how a mid-work failure there reaches the pipeline
+executor:
+
+**#187 B1 — full exception surfaced, not just classified.** Earlier, a
+router-loop exception (e.g. the LLM call raising after litellm exhausts its own
+retries) was caught, classified into a short outbox summary string, and
+otherwise silently swallowed. For interactive chat this is fine — the summary
+IS the reply. For an autonomous run-once agent step, it meant the step ended
+mid-edit with no diagnosable trace: no logged LLM response, `req=resp+1`,
+nothing to point a fix at. The fix logs the full traceback (`logger.exception`)
+AND emits a `router_loop_terminated_by_exception` audit event (`chain_id`,
+`error_type`, `repr(exc)[:500]`) — both kept unconditionally, on top of the
+(unchanged) classified outbox summary.
+
+**#2732 — the classified-summary path silently produced a successful-looking
+empty answer for agent steps.** The catch-all `except Exception` in
+`_handle_user_message` is intentionally broad (any LLM-call or router-loop
+exception, not only credential errors) — that breadth predates #2732. What
+#2732 fixed is what happens *after* classification for an ephemeral session:
+`spawn_ephemeral_session` hardcodes `mode="ephemeral"`, and `run_agent_step`'s
+join only reads `kind="agent"` outbox messages — so a `kind="error"` classified
+message was silently dropped, `run_agent_step` returned `""` with no exception,
+and `executor.py`'s `except AgentStepError` never fired. The pipeline step
+looked like it had succeeded with an empty answer.
+
+The fix re-raises the classified error as `AgentStepError`, but **only when
+`self._ephemeral` is true** — an unconditional re-raise would break the
+interactive chat loop, which relies on this method returning normally after
+queuing the error reply to the outbox. It re-raises the base `AgentStepError`
+(not an LLM-specific subclass) because this catch-all also covers non-LLM
+exceptions; `from exc` preserves the chain (already retained by the traceback
+log + audit event above, for both branches).
+
 ## Compositional primitives
 
 Five primitives compose steps into non-linear control flow — the full

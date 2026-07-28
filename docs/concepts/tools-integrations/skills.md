@@ -157,6 +157,35 @@ collision-lookup helpers, pure functions) and
 `Session._maybe_handle_skill_invoke` (the dispatch point in
 `_handle_user_message`, mirroring `_maybe_handle_slash`'s shape).
 
+**Audit trail.** The `:` invoke path emits its own `skill_invoke_body_loaded`
+audit-event for each loaded skill body (name, path), scoped separately from
+the ordinary `file.read`/`load_skill` op's `skill_body_loaded` event (see
+[Skill-load variable expansion](#skill-load-variable-expansion)). This lets a
+replay distinguish "the model read this skill on its own" from "the operator
+explicitly invoked it via `:name`".
+
+### Call-site mechanics (`_handle_user_message`)
+
+`Session._maybe_handle_skill_invoke` returns a `(consumed, text)` tri-state read by
+`_handle_user_message` right after the `/`-slash short-circuit:
+
+- `consumed is True` — the invocation was fully handled here (e.g. `:list`, an
+  unknown-name error, a `skill_invoke_collision` warning); `_handle_user_message`
+  returns immediately, no router turn happens.
+- `consumed is False` — either `text` wasn't `:`-shaped after all, or it was and
+  resolved successfully; `text` is REPLACED with the composed skill body(ies) +
+  trailing args (or left unchanged), and execution falls through into the ordinary
+  router turn below. One turn, one LLM wake, regardless of how many `:name`s were
+  stacked (see "Stacking" above).
+
+This fallthrough is why `:` dispatch cannot be folded into the `/` slash lookup's
+precedence chain: a `/` handler returns-and-stops by construction, while a
+successful `:` handler must hand a *rewritten* `text` onward into the very turn
+machinery `/` short-circuits. Collapsing the two into one precedence-ordered
+lookup reintroduces the shadow-name ambiguity class described in Claude Code
+issue #13586 — a name that could be read as either a skill or a built-in resolves
+by lookup order instead of by an unambiguous prefix.
+
 ## Skill-load variable expansion
 
 Loading a `SKILL.md` body is not a byte-identical file read: the dedicated

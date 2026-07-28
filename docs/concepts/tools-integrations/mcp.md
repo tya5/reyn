@@ -240,6 +240,14 @@ mcp:
   `headers: {Authorization: "Bearer ${TOKEN}"}` keeps working exactly as
   before — `auth` is only for the OAuth 2.1 flow.
 
+### Mid-session server refresh (`refresh_mcp_servers`)
+
+`Session.refresh_mcp_servers` (`FP-0037 #164`) lets a running chat session pick up an MCP server that was installed (`mcp_install`) or reconfigured *during* the session, without waiting for `reyn mcp refresh` or a config-file mtime advance to be noticed passively. Use cases: chat turns that install a new MCP server and want it usable within the same session, and tests that change MCP config mid-test.
+
+**Roster re-read is required, not optional (`#2372`).** The LLM-facing tool enumeration (`_get_mcp_servers_for_router` → `_mcp_servers_flat`) gates on the server **roster**, which is otherwise frozen at Session construction (`self._mcp_servers` → the router adapter's copy). Refreshing only the tools *cache* is insufficient: a server installed mid-session writes the IN-set `.reyn/config/mcp.yaml`, but without a roster re-read there is no roster entry for that server's tools to attach to, so they are never enumerated to the LLM — no matter how many times the tool-probe chain below runs. `refresh_mcp_servers` therefore re-reads the config cascade via `load_config` FIRST (which merges the IN-set `dynamic_mcp` layer), and performs a multi-holder swap: both the Session's own `self._mcp_servers` field and the router adapter's roster are updated (mirrors `_reapply_per_agent_capability`), since the LLM-facing enumeration reads the adapter's copy. The re-read is best-effort — a failure logs a warning and keeps the old roster rather than breaking the refresh chain.
+
+**Cache-swap detection compares content, not identity.** After the roster re-read, the method chains yaml-mtime re-probe → disk-reload → lazy first-call probe, then compares a snapshot of the tools cache taken before the chain against one taken after to compute the returned `"refreshed"` flag. It compares the two snapshots' **content** (`snapshot_before != snapshot_after`), not `id()`. The underlying adapter replaces `_mcp_tools_cache` with a new dict object on every reload/probe, and `mcp_tools_cache_snapshot` returns a fresh copy each time it is read — so `id(snapshot_before) != id(snapshot_after)` is true on literally every call, refresh or not. An identity comparison would therefore report `refreshed=True` unconditionally, making the flag meaningless; the content comparison is what makes it actually reflect whether the visible cache changed.
+
 ## Security model
 
 MCP operations are gated at two points:

@@ -106,8 +106,8 @@ from reyn.user_intervention import (
 # (logged, never silently looped).
 _QUIESCE_MAX_ROUNDS = 50
 
-# #2103 S1bc-exec: cap on the in-flight spawned-task correlation record (sid → task) —
-# moved to spawn_tracker.py's _MAX_SPAWNED_TASKS (#3133 P3 Extract Class).
+# #2103 S1bc-exec: spawned-task correlation cap now lives in spawn_tracker.py's
+# _MAX_SPAWNED_TASKS — see docs/reference/runtime/session-construction.md#capability-permission-visibility
 
 # Localized user-facing messages for the router retry-exhausted fallback (F8).
 # Keys are BCP-47-style language codes matching config `output_language`.
@@ -216,22 +216,14 @@ def _exec_gate_backend_name(sandbox_backend: Any, sandbox_config: Any) -> str | 
     return None
 
 
-# issue #268 Phase 2 continuation: canonical channel identifier for
-# chat-side interventions (= matches the listener_id that
-# ``ChatTUIApp.on_mount`` registers in src/reyn/interfaces/tui/app.py).
-# Production ChatInterventionBus instances stamp ivs with this id so
-# the agent layer's origin-pin check + cross-channel observe / claim
-# routing work end-to-end for TUI-initiated tasks. Module-level so
-# tests can import + assert against a single source of truth.
+# #268: canonical chat-channel id every interactive front-end registers on —
+# see docs/concepts/runtime/intervention-delivery.md#the-single-construction-seam
 DEFAULT_CHAT_CHANNEL_ID = "tui"
 
 
-# B43-NF-W6-1 / #187: the chat router's empty-stop continuation directive is
-# now the SHARED uniform ``EMPTY_STOP_RETRY_DIRECTIVE`` ("resume") from
-# router_loop.py — see its definition for the owner decision (no per-site
-# differentiation). Imported function-locally at the construction site below
-# (session→router_loop is a function-local import to avoid the module-level
-# cycle: router_loop imports from session).
+# EMPTY_STOP_RETRY_DIRECTIVE (router_loop.py) is imported function-locally at the
+# construction site below: router_loop imports from session, so a module-level
+# import here would create a circular import (#187 B43-NF-W6-1).
 
 
 def _ts_iso_to_epoch(ts: str | None) -> float | None:
@@ -347,11 +339,9 @@ def _format_sender_label(sender: str | None) -> str:
     if transport_label is None:
         return sender
     if transport == "user":
-        # ``user:tui`` / ``user:web`` / ``user:cli`` → "user (TUI)" etc.
         surface = rest[0].upper() if rest else ""
         return f"user ({surface})" if surface else "user"
     if transport == "slack" or transport == "line":
-        # Prefer display name when present, fall back to id.
         if len(rest) >= 2 and rest[1]:
             return f"{rest[1]} ({transport_label})"
         if len(rest) >= 1 and rest[0]:
@@ -372,26 +362,9 @@ def _format_sender_label(sender: str | None) -> str:
     return sender
 
 
-# #398 v4 emitter family — events-log subscriber dispatch table.
-#
-# Maps known emitter event types to (source, template) tuples used by
-# ``Session._on_chat_event_for_state_change`` to convert events
-# into ``notify_state_change`` calls. Adding a new emitter is one
-# entry here + the emitter emitting its event on the session's
-# events log (= OpContext.events, bound to ``_chat_events`` for
-# chat router-initiated ops).
-#
-# ``template`` is a ``str.format``-compatible string; the event's
-# ``data`` dict is passed as kwargs. Missing keys (= malformed event
-# payload) are silently skipped — observability must not crash the
-# events bus.
-#
-# Sister mechanism: PermissionResolver._on_persist_callbacks (= the
-# permission_manager emitter wiring landed in PR #456). The two
-# mechanisms coexist because their natural integration points differ:
-# permission_manager is a singleton service across sessions and
-# benefits from a direct subscriber list; op_runtime ops already emit
-# session-scoped events so the events log is the natural seam.
+# #398 v4 emitter family: op-emitted-event → state_change dispatch table.
+# See docs/reference/runtime/session-construction.md#misc-lifecycle-wiring
+# (mechanism + sister-mechanism note); per-entry rationale below.
 _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
     # MCP server install success (= ``reyn.core.op_runtime.mcp_install``
     # emits this on the events log after writing the config).
@@ -416,9 +389,7 @@ _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
         "index_drop",
         "Indexed source '{source}' was removed.",
     ),
-    # Config hot-reload (#2073): the HotReloader emits this at the turn boundary
-    # after re-reading the IN-set (.reyn/*.yaml) + reapplying components, so the LLM
-    # sees that its runtime config changed (e.g. a newly-reloaded MCP server / hook).
+    # Config hot-reload (#2073) — see docs/concepts/runtime/config-hot-reload.md#p6-event
     "config_reloaded": (
         "config_watcher",
         "Reyn configuration was hot-reloaded (source: {source}).",
@@ -533,7 +504,6 @@ def _strip_index_header(content: str) -> str:
     merging. Anything else is returned verbatim."""
     lines = content.splitlines()
     if lines and lines[0].lstrip().startswith("# Memory Index"):
-        # Skip the heading and any immediately-following blank lines.
         i = 1
         while i < len(lines) and not lines[i].strip():
             i += 1
@@ -963,14 +933,8 @@ def _forward_file_signal_fields(dest: dict, result: dict, *, outcome: str) -> No
 class Session:
     def __init__(
         self,
-        # Identity value object (single source of truth; FP-0043, see
-        # session-construction.md#identity-the-agent-value-object-fp-0043-stage-2).
-        # Required — #3133 Priority-0 step-2 removed the 9 flat identity params
-        # (agent_name / agent_role / model / permission_resolver /
-        # workspace_base_dir / workspace_state_dir / sandbox_config /
-        # sandbox_backend / environment_backend) and the fallback construction
-        # path they fed, so agent_name != agent.agent_name is no longer
-        # constructible.
+        # Identity value object (single source of truth) — see
+        # docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2
         agent: "Agent",
         resolver: ModelResolver | None = None,
         safety: "SafetyConfig | None" = None,
@@ -983,11 +947,11 @@ class Session:
         registry: "AgentRegistry | None" = None,
         allowed_mcp: list[str] | None = None,
         events_config: EventsConfig | None = None,
-        # Resolved cost_warn: config for the high-cost-model gate (#2230)
+        # cost_warn config (#2230) — see docs/reference/runtime/session-construction.md#family-4-cost-budget
         cost_warn_config: CostWarnConfig | None = None,
         # Debug lever disabling tool-result size gates (see session-construction.md#family-4-cost-budget)
         offload_config: OffloadConfig | None = None,
-        # Operator render_template output bounds (FP-0055 / #2679)
+        # render_template output bounds (FP-0055 / #2679) — see docs/reference/runtime/session-construction.md#family-4-cost-budget
         render_template_config: RenderTemplateConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
@@ -998,7 +962,7 @@ class Session:
         chat_tool_use_scheme: str = "enumerate-all",
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
-        # Resolved observability: block; opt-in OTLP export on chat_events (P5 ADR-0039)
+        # Resolved observability config -> opt-in OTLP export gate (P5 ADR-0039, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         observability_config: "object | None" = None,
         # reyn.yaml llm.router.* ambient ContextVar (#1829 S3b)
         router_config: "RouterConfig | None" = None,
@@ -1041,8 +1005,7 @@ class Session:
         presentation_consumer = presentation_wiring.presentation_consumer
         intervention_bridge = presentation_wiring.intervention_bridge
         # Identity cluster owned by Agent — single source of truth, no fallback
-        # construction (#3133 Priority-0 step-2; the 9 flat identity params +
-        # the None-fallback Agent(...) build were removed here).
+        # construction (#3133 Priority-0 step-2, see docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2).
         self._agent = agent
         self._resolver = resolver or ModelResolver({})
         # Per-session runtime model override set by /model <class>; None -> Agent identity default, in-memory only
@@ -1074,7 +1037,7 @@ class Session:
         # The vanish-scheduling state (_vanish_scheduled / _vanish_task) is owned by
         # SpawnTracker, constructed below (see #3133 P3 Extract Class, spawn_tracker.py).
         self._ephemeral: bool = False
-        # Lazily-resolved minimal _untrusted ContextualPermission cache (#1827 S4b context-auto)
+        # Lazily-resolved minimal _untrusted profile cache (#1827 S4b, see docs/reference/runtime/session-construction.md#capability-permission-visibility)
         self._untrusted_contextual_cache = None
         # excluded_categories (#1667) + the visibility override (#2285) are owned by
         # CapabilityVisibility, constructed below (see #3121 step3 Extract Class).
@@ -1095,9 +1058,9 @@ class Session:
                     tool_results_dir=multimodal_config.tool_results_dir,
                 ),
                 project_root=Path.cwd(),
-                # path-refs carry resource_uri/source_agent for cross-host dispatch (#385 β sub-task 1)
+                # path-refs carry resource_uri/source_agent for cross-host dispatch (#385, see docs/reference/runtime/session-construction.md#multimodal-media)
                 agent_name=self.agent_name,
-                # path-refs carry a url when this instance is HTTP-reachable (#385 β sub-task 3b)
+                # path-refs carry a url when this instance is HTTP-reachable (#385, see docs/reference/runtime/session-construction.md#multimodal-media)
                 base_url=multimodal_config.base_url,
             )
         else:
@@ -1115,10 +1078,8 @@ class Session:
         self._chat_tool_use_scheme = chat_tool_use_scheme  # #1593 PR-2, passed to RouterLoopDriver below
         # RouterLoop awaits the embedding index build synchronously on turn 1 when True (B25-S5-1 fix, see session-construction.md#family-5-retrieval)
         self._eager_embedding_build = eager_embedding_build
-        # agent_id is now owned by Agent (identity SSoT) — see the `agent_id`
-        # property below. FP-0016 Component E's gap (Agent lacked the field,
-        # so Session carried a separate param + `_default_agent_id()`
-        # fallback) is closed (#3133 P0-follow-up).
+        # agent_id is owned by Agent (identity SSoT); the field + its prior
+        # None-fallback default were removed (#3133 P0-follow-up, see docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2).
         # Sender of the most-recently-dispatched inbox item, for sender-transition state_change entries (FP-0041 #489 PR-A)
         self._last_sender: str | None = None
         # Reply-to attribution captured from an inbound payload's reply_to (FP-0041 #489 PR-D2)
@@ -1157,19 +1118,19 @@ class Session:
             presentation_registry if presentation_registry is not None
             else PresentationRegistry()
         )
-        self._max_hop_depth = _safety.loop.max_agent_hops  # PR11: max delegation hop depth, refuse send beyond limit
-        self._chain_timeout_seconds = _safety.timeout.chain_seconds  # PR18: per-chain wall-clock budget, non-positive disables
-        self._on_limit = _safety.on_limit  # FP-0005: per-session safety-limit checkpoint policy
-        self._safety_extensions: dict[str, float] = {}  # FP-0005: per-(turn or chain) extension counters, cleared at boundary
-        self._hook_driven_turns: int = 0  # #1800 slice 7: loop-valve counter, in-memory, resets each user turn
-        # Optional MCP server allowlist from agent profile; None = inherits project config (PR37)
+        self._max_hop_depth = _safety.loop.max_agent_hops  # PR11, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
+        self._chain_timeout_seconds = _safety.timeout.chain_seconds  # PR18, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
+        self._on_limit = _safety.on_limit  # FP-0005, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
+        self._safety_extensions: dict[str, float] = {}  # FP-0005, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
+        self._hook_driven_turns: int = 0  # #1800 slice 7, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
+        # Optional MCP server allowlist from agent profile (PR37, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         self._allowed_mcp: list[str] | None = (
             list(allowed_mcp) if allowed_mcp is not None else None
         )
 
         self._events_config = events_config or EventsConfig()  # PR20: per-chat rotation policy
         self._cost_warn_config = cost_warn_config or CostWarnConfig()  # #2230, see session-construction.md#family-4-cost-budget
-        self._offload_config = offload_config or OffloadConfig()  # tool-result-schema-redesign §5 debug lever
+        self._offload_config = offload_config or OffloadConfig()  # see docs/reference/runtime/session-construction.md#family-4-cost-budget
         # Resolve operator render_template bounds once, threaded to every router OpContext builder (FP-0055 / #2679, see session-construction.md#family-4-cost-budget)
         _rt_cfg = render_template_config or RenderTemplateConfig()
         from reyn.core.op_runtime.render_template import RenderTemplateBounds
@@ -1229,10 +1190,10 @@ class Session:
         self._turn_cancel_self_initiated: bool = False
         # Joinable handle for fire-and-forget WAL-append tasks so await_quiescent can join them too (ADR-0038 Stage 1c coverage, see session-construction.md#family-2-recovery-wal-journal)
         self._inflight_wal_tasks: set[asyncio.Task] = set()
-        # Kept directly (not only via journal) so ops launched from this session can emit step events into the same WAL
+        # Kept directly (not only via journal), see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
         self._state_log = state_log
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
-        # In-memory buffer of restored-then-resolved intervention answers, keyed by run_id (PR-intervention-link L6)
+        # In-memory buffer of restored-then-resolved intervention answers (PR-intervention-link L6, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode)
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
         # In-memory staging for wake=false ride-along messages, durably persisted in the snapshot (#1800 slice 4b, see session-construction.md#safety-limits-interactive-mode)
         self._next_turn_context: list[dict] = []
@@ -1311,14 +1272,14 @@ class Session:
         # Detached by default; AgentRegistry.attach() flips this on to stop background display noise
         self.is_attached: bool = False
 
-        # Publish this session's EventLog as the ambient LLM-chokepoint sink for observable llm_request events (#1669)
+        # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._chat_events)
-        # Publish reyn.yaml llm.router.* as the ambient router config; guarded so nested construction never clobbers an inherited ContextVar (#1829 S3b)
+        # Publish reyn.yaml llm.router.* as the ambient router config (#1829 S3b, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         if router_config is not None:
             from reyn.llm.llm import set_router_config
             set_router_config(router_config)
-        if retry_config is not None:  # #1835: same guard, ambient retry timing config
+        if retry_config is not None:  # #1835, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring
             from reyn.llm.llm import set_retry_config
             set_retry_config(retry_config)
         # Publish the budget-exceed policy for the chat path's per-LLM-call cost gate, bridge-aware so an attached driver's prompt reaches the parent's operator (#1868 / #3053, see session-construction.md#family-4-cost-budget)
@@ -1355,7 +1316,7 @@ class Session:
         # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b-memory)
         self._memory = self._build_memory()
 
-        # One-shot command-UI request (e.g. /rewind checkpoint picker); None = nothing pending, dict carries {"kind", ...} (F4)
+        # One-shot command-UI request, see docs/reference/runtime/session-construction.md#family-7-intervention
         self._pending_command_ui: dict | None = None
 
         # chains / interventions / intervention_handler / intervention_coordinator / chain_timeout_glue, byte-identical extraction; chain_timeout_glue UP-moved ahead of Family 8 (#3082 Family 7, see session-construction.md#family-7-intervention)
@@ -1413,7 +1374,7 @@ class Session:
         # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3-hook-event-reactivity)
         self._register_hot_reload_seams()
 
-        # Synchronous head/body/tail compaction callback; session drives compaction via force_compact_now() (FP-0019 Wave 1 / #1128 PR-a)
+        # Synchronous head/body/tail compaction callback (FP-0019 Wave 1 / #1128 PR-a, see docs/reference/runtime/session-construction.md#family-6b-history-compaction)
         def _merge_action_usage_from_candidates(
             candidates: "list[ChatMessage]",
         ) -> None:
@@ -1426,7 +1387,7 @@ class Session:
             except Exception:
                 pass
 
-        # Adaptive per-user token-estimation learner (PR-N6)
+        # Adaptive per-user token-estimation learner (PR-N6, see docs/reference/runtime/session-construction.md#family-6b-history-compaction)
         from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
         self._token_learner: TokenMultiplierLearner = TokenMultiplierLearner(
             chars4_mode=self._compaction.use_chars4_estimate,
@@ -1440,10 +1401,10 @@ class Session:
         self._compaction_controller = _history_compaction_bundle.compaction_controller
         self._budget_advisor = _history_compaction_bundle.budget_advisor
 
-        # InterAgentMessaging: agent-to-agent messaging service, hybrid design (FP-0019 Wave 2 part 2); byte-identical extraction, post-waist (#3082 Family 8a, see session-construction.md#family-8a-inter-agent-messaging)
+        # InterAgentMessaging: agent-to-agent messaging service (FP-0019 Wave 2 part 2, #3082 Family 8a, see docs/reference/runtime/session-construction.md#family-8a-inter-agent-messaging)
         self._inter_agent_messaging = self._build_inter_agent_messaging()
 
-        # RouterLoopDriver owns the per-turn loop orchestration (session.py refactor PR-3, see session-construction.md#misc-lifecycle-wiring)
+        # RouterLoopDriver owns the per-turn loop orchestration (PR-3, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         from reyn.runtime.services.router_loop_driver import RouterLoopDriver
         self._loop_driver: ExecutionDriver = (
             loop_driver if loop_driver is not None else RouterLoopDriver(
@@ -1646,13 +1607,8 @@ class Session:
         ``cache_hit_rate`` / ``cache_savings``."""
         return self._budget.embedding_cost
 
-    # ── FP-0043 Stage 2: identity-field delegations to the Agent value object ──
-    # Read-only by construction (identity is immutable for the session lifetime;
-    # no field is reassigned post-__init__, verified). Every former direct
-    # attribute (public agent_name/model/workspace_dir + the "private" _perm /
-    # _workspace_* / _environment_backend / _sandbox_* read internally AND by
-    # external consumers) keeps the SAME name + value via these properties →
-    # byte-identical surface; the single source of truth is self._agent.
+    # FP-0043 Stage 2: identity-field delegations to self._agent, read-only
+    # (identity is immutable for the session lifetime). See docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2.
     @property
     def agent_name(self) -> str:
         return self._agent.agent_name
@@ -1757,9 +1713,7 @@ class Session:
 
     @property
     def _agent_role(self) -> str:
-        # Internal backing-name for agent_role, kept as a delegating property so
-        # existing internal read-sites (agent_role= passthrough to the router host,
-        # etc.) keep working over the Agent identity object.
+        # Internal backing-name for agent_role; delegating property, see docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2
         return self._agent.role
 
     @property
@@ -2150,12 +2104,9 @@ class Session:
         WAL-append tasks — intervention dispatch + intervention_answer_consumed
         (``_inflight_wal_tasks``).
         """
-        # 1. wait for the current turn (if any) to finish its WAL appends.
-        # Re-entrancy guard: if the caller IS the current turn task (e.g. a slash
-        # handler calling registry.checkout while the turn is still in progress),
-        # skip the wait — awaiting _turn_idle from the same task that cleared it
-        # would deadlock (single-task asyncio: nobody else can set it).  The slash
-        # handler makes no WAL appends before calling checkout, so skipping is safe.
+        # 1. wait for the current turn to go idle -- re-entrancy-safe (see
+        # docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
+        # for the _turn_idle / _turn_owner_task rationale).
         if asyncio.current_task() is not self._turn_owner_task:
             await self._turn_idle.wait()
         # 2. cancel + join chain-timeout watchdogs. A cancelled timer cannot fire
@@ -2353,7 +2304,7 @@ class Session:
         except Exception as exc:  # noqa: BLE001
             logger.warning("#2285: load hook disabled-set failed: %r", exc)
         if loaded_visibility:
-            self._capability_visibility.reapply_visibility_override()  # only re-resolve when something was actually loaded
+            self._capability_visibility.reapply_visibility_override()
         if loaded_skill_visibility:
             self._capability_visibility.reapply_skill_visibility()  # #2548 PR-B: restore skill filter on the host
 
@@ -2454,15 +2405,12 @@ class Session:
         await_quiescent; this drops the (now-done) handles so the rewound
         session starts clean.
         """
-        # inbox (AgentSnapshot.inbox)
         while True:
             try:
                 self.inbox.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        # pending_chains
         await self._chains.reset()
-        # outstanding_interventions + restore watcher tasks
         self._interventions.clear()
         restore_tasks = getattr(self, "_restore_intervention_tasks", None)
         if restore_tasks:
@@ -2470,7 +2418,6 @@ class Session:
                 if not t.done():
                     t.cancel()
             self._restore_intervention_tasks = []
-        # buffered_intervention_answers
         self._buffered_intervention_answers.clear()
         # next_turn_context (#1800-4b)
         self._next_turn_context.clear()
@@ -2889,11 +2836,8 @@ class Session:
                 meta={"chain_id": chain_id},
             ))
             return
-        # #2081: the A2A REQUEST path is a delegation by definition → mark the
-        # target a delegate (recorded on first construction; recursive — a
-        # sub-delegate's own delegations pass is_delegate=True too). The response
-        # path (_a2a_send_response) does NOT — the delegator's own delegate-ness was
-        # decided when it was constructed.
+        # #2081: every A2A REQUEST-path load marks the target is_delegate=True
+        # (recursive, response path does not) — see delegation-policy.md.
         target = self._registry.get_or_load(to, is_delegate=True)
         await self._registry.ensure_running(to)
         await target.submit_agent_request(
@@ -2995,53 +2939,17 @@ class Session:
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
         chain_id = _new_chain_id()
-        # #3300 P2b co-vet fix: computed ONCE and stored on the inbox payload
-        # too (additively — router/history readers only ever read
-        # payload["text"]/["chain_id"], never assert an exact key set), not
-        # just emitted on the event below. Without this, `meta` only ever
-        # reaches a LIVE delta subscriber — a client that instead seeds its
-        # queue view from the connect STATE_SNAPSHOT (`queued_user_messages()`
-        # below, #3300 P2a/P2b) would see attribution silently dropped for
-        # any item that was already queued at connect time (a remote peer's
-        # submit rendering as a plain, unattributed operator line once
-        # promoted — an ADR-0039 regression for the late-joiner path).
+        # #3300 P2b: meta computed once, stored additively on the inbox payload too
+        # (not just emitted on the event below) — a late-joiner seeding from
+        # STATE_SNAPSHOT/queued_user_messages() needs it too. See agui-transport.md.
         meta = _user_frame_meta(attribution)
         msg_id = await self._put_inbox(
             "user", {"text": text, "chain_id": chain_id, "meta": meta},
         )
-        # #3300 P1 (C): the user-line echo is DRIVEN BY a `user_submitted`
-        # chat-event, not a parallel `_put_outbox` write (removed — was a
-        # category error: a user INPUT written into the display/OUTPUT
-        # channel, plus a double-write of the same text). Single source of
-        # truth = the inbox above; the echo every attached client (including
-        # THIS submitting one, ADR-0039 multi-client) renders is a DERIVED
-        # notification off this event — `_TURN_AND_ANSWER_EVENTS`
-        # (transport/frames.py) lists "user_submitted" so
-        # `renderer_chat_events()` auto-forwards it over BOTH the in-process
-        # and the AG-UI/SSE transport (generic EventFrame encode/decode,
-        # transport/agui/protocol.py — no per-surface wiring needed there).
-        #
-        # The payload carries the RAW text (neutralization moves to the
-        # DISPLAY boundary — each surface's event→display handler calls the
-        # same `core/present/guard.get_neutralizer("terminal")` seam #2770
-        # uses for intervention content, via
-        # `renderer.user_submitted_display_message`) — the inbox copy above
-        # (what the agent/router actually reads) is unaffected either way,
-        # display neutralization never touches conversation content. `msg_id`
-        # (the id `_put_inbox` stamps) rides along — load-bearing for a later
-        # phase (client learns its own message id, for cancel-by-id).
-        #
-        # #3300 P2a design-pass pin (E): the field is named `msg_id` (not
-        # `_msg_id`) HERE, at the wire/event boundary — this event reaches a
-        # remote agui client via the generic EventFrame encode (no per-field
-        # allowlist), so its key names are a PUBLIC wire contract the moment
-        # they're emitted. The leading underscore stays on the INTERNAL inbox
-        # payload key (`_put_inbox`/`_consume_inbox`/snapshot_journal.py —
-        # never wire-facing) — this emit call is the one boundary that maps
-        # between the two. `seq` is the sent-queue mutation counter
-        # (`_bump_queue_seq`) — the order-race gate a client merging this
-        # event with `turn_started` and a `STATE_SNAPSHOT` queue baseline
-        # uses to resolve any interleaving (see `_bump_queue_seq` docstring).
+        # #3300 P1(C)/P2a(E): user_submitted is the single source of truth for the
+        # echo (no parallel outbox write); msg_id is a PUBLIC wire key (unlike the
+        # internal `_put_inbox` key); display neutralization happens downstream.
+        # See agui-transport.md.
         self._chat_events.emit(
             "user_submitted",
             text=text,
@@ -3050,12 +2958,8 @@ class Session:
             seq=self._bump_queue_seq(),
             meta=meta,
         )
-        # #3287: return the assigned msg_id — the SAME correlation id the
-        # emitted event above carries — so a submitting client can recognise
-        # its own broadcast echo (vs. another attached client's) by id rather
-        # than by text match (a same-text collision between two clients'
-        # submissions would otherwise misfire — see `stream_client.py`'s
-        # `own_submissions` set).
+        # #3287: return msg_id so a submitting client can recognise its own echo by
+        # id, not text (avoids same-text collision). See agui-transport.md.
         return msg_id
 
     async def maybe_deliver_answer_command(self, text: str) -> bool:
@@ -3123,9 +3027,8 @@ class Session:
         await self._put_inbox("agent_response", {
             "from_agent": from_agent, "response": response, "depth": depth,
             "chain_id": chain_id,
-            # #2103 S1bc-exec: the responder's own session id when it is a SPAWNED
-            # (non-main) session — the correlation key the receiver matches against its
-            # _spawned_tasks record to render the trusted "task=" header.
+            # #2103 S1bc-exec: responder_sid correlates to the spawner's _spawned_tasks
+            # record. See session-construction.md.
             "responder_sid": responder_sid,
         })
 
@@ -3150,8 +3053,8 @@ class Session:
             "sender": "pipeline:os",
         })
 
-    # ── #2103 S1bc-exec: spawned-task correlation record (bounded) ──────────────
-    # Owned by SpawnTracker (#3133 P3 Extract Class); Session forwards.
+    # ── #2103 S1bc-exec: spawned-task correlation (SpawnTracker). See
+    # session-construction.md. ──
 
     def record_spawned_task(self, sid: str, task: str) -> None:
         """Record a session-I-spawned's ``sid → task`` BEFORE submitting it. Thin
@@ -3165,11 +3068,9 @@ class Session:
 
     async def shutdown(self) -> None:
         # `shutdown` is a control signal, not recovery state — skip WAL/snapshot.
-        # #398 v4 emitter wiring cleanup: unregister the
-        # permission-persist subscriber so dead-session references
-        # don't accumulate in the shared PermissionResolver. Defensive
-        # — the resolver may have been replaced or never have had the
-        # method; in either case unregister is a no-op.
+        # #398 v4 emitter wiring: unregister the permission-persist subscriber so
+        # dead-session refs don't accumulate on the shared PermissionResolver.
+        # See session-construction.md.
         if self._on_perm_persist_cb is not None and self._perm is not None:
             try:
                 self._perm.unregister_on_persist(self._on_perm_persist_cb)
@@ -3207,7 +3108,6 @@ class Session:
         On failure a defensive ``"error"`` key is added and ``"refreshed"``
         is False — the method never raises.
         """
-        # Snapshot the cache before the chain so we can detect a swap.
         snapshot_before = self._router_host.mcp_tools_cache_snapshot
 
         # #2372: re-read the server ROSTER from the config cascade BEFORE the tool-probe
@@ -3229,11 +3129,8 @@ class Session:
             logger.warning("refresh_mcp_servers: roster re-read failed: %r", exc)
 
         try:
-            # Step 1 (S2): yaml mtime watch — re-probes when any yaml changed.
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
-            # Step 2 (S1): disk-reload — picks up CLI refresh written between turns.
             self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-            # Step 3 (#160): lazy probe — fills cache on first call.
             await self._router_host.ensure_mcp_tools_cached()
         except Exception as exc:  # noqa: BLE001
             logger.warning("refresh_mcp_servers: turn-boundary chain raised: %r", exc)
@@ -3249,13 +3146,10 @@ class Session:
 
         snapshot_after = self._router_host.mcp_tools_cache_snapshot or {}
 
-        # Detect cache swap: compare id() of the snapshot objects.
-        # snapshot_before is a *copy* taken before the chain (or None when no
-        # cache existed yet). snapshot_after is a fresh copy taken after.
-        # The underlying adapter replaces _mcp_tools_cache with a new dict
-        # whenever a reload/probe fires. Because both snapshots are independent
-        # copies, we compare their content rather than identity to decide
-        # whether the visible cache actually changed.
+        # Compare content, not id() — the adapter always returns a FRESH copy on
+        # every read regardless of whether the cache changed, so id() would report
+        # a swap on every call and `refreshed` would be meaningless (rejected: id()
+        # comparison; #2372 area).
         refreshed = snapshot_before != snapshot_after
 
         return {
@@ -3334,7 +3228,7 @@ class Session:
         registry-derived-enumeration discipline the family gate itself uses."""
         return self._hot_reloader.seam_names()
 
-    # ── #3082 Family 1: audit-event spine builder ──
+    # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
 
     def _build_audit_event_bundle(
         self, observability_config: "object | None"
@@ -3393,7 +3287,7 @@ class Session:
             otel_exporter=otel_exporter,
         )
 
-    # ── #3082 Family 2: WAL-event/recovery bundle builder ──
+    # ── #3082 Family 2: WAL-event/recovery bundle builder. See session-construction.md. ──
 
     def _build_recovery_bundle(
         self,
@@ -3444,7 +3338,7 @@ class Session:
             journal=journal,
         )
 
-    # ── #3082 Family 3: hook-event / reactivity bundle builder ──
+    # ── #3082 Family 3: hook-event/reactivity bundle builder. See session-construction.md. ──
 
     def _build_hook_event_bundle(
         self,
@@ -3576,14 +3470,9 @@ class Session:
             debounce_seconds=fs_watch_cfg.debounce_seconds,
             hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
         )
-        # Hook-Event Redesign Phase 4b/5 (#2880/#2881): the Composer definitions
-        # (``composer_defs``, built above — ahead of the hook registry, #2889) +
-        # the composed:*->Sync consumer bridge. Neither is STARTED here (starting
-        # means spawning background asyncio tasks, which belongs in ``run()``,
-        # this session's async entry point — construction here is synchronous);
-        # `run()` calls `self._composer_registry.start()` / `self.
-        # _composed_consumer.start()` once. `stop()`ed in `run()`'s shutdown
-        # `finally` (mirrors the FsWatcher start/stop shape).
+        # Composer/consumer registry: build != start — starting here has no
+        # async context to run in; run() starts/stops them (#2880/#2881;
+        # session-construction.md#composer-registry-consumer-construction-vs-start-28802881).
         composer_registry = ComposerRegistry(
             composers=[
                 Composer(
@@ -3596,11 +3485,9 @@ class Session:
         composed_consumer = ComposedEventConsumer(
             bus=hook_bus, dispatcher=hook_dispatcher,
         )
-        # #2073 S1: the config hot-reloader. Reads ONLY the IN-set (.reyn/*.yaml);
-        # the OUT-set (reyn.yaml) is restart-only. Applies at the turn_end safe-point
-        # (apply_pending below). Per-component reapply seams are registered in S2.
-        # Reads ``chat_events`` EAGERLY (this is why the family is built after the
-        # Family 1 bundle) and ``registry`` for its project_root.
+# #2073 S1: the config hot-reloader reads ONLY the IN-set (.reyn/*.yaml); the
+# OUT-set (reyn.yaml) is restart-only and never picked up here. Applies at the
+# turn_end safe-point (apply_pending below); reads chat_events eagerly.
         hot_reloader = HotReloader(
             project_root=getattr(registry, "_project_root", None) or Path.cwd(),
             events=chat_events,
@@ -3731,26 +3618,9 @@ class Session:
                 from reyn.data.embedding import get_provider as _get_provider
                 from reyn.tools.action_index import ActionEmbeddingIndex
 
-                # FP-0043 Component C.3: surface the embedding provider's
-                # lazy model-load lifecycle (= downloading / loaded /
-                # error) via the session's events bus so the TUI
-                # surface can render a sticky status row + a
-                # green "done" frame + a retry-hint error row. The sink
-                # is called from the embed worker thread; events.emit is
-                # GIL-protected + sync so this is safe without a
-                # call_soon_threadsafe bridge.
-                #
-                # C.4 hotfix (2026-05-27): the sink closure resolves
-                # ``self._chat_events`` at *call* time, not at
-                # construction time — the EventLog is built later in
-                # __init__ (= line ~1482). The previous C.3 wiring
-                # captured ``self.events`` (= attribute that does NOT
-                # exist on Session), which silently raised
-                # AttributeError at this point and the outer ``except``
-                # swallowed it, disabling search_actions for every
-                # operator who had ``embedding_class`` set. Mirrors the
-                # ``_on_hot_list_changed`` closure pattern in the
-                # ActionUsageTracker setup below.
+                # Sink closure resolves self._chat_events at CALL time —
+                # eager self.events capture once silently disabled
+                # search_actions for every operator (FP-0043 C.3/C.4 #2856; session-construction.md#embedding-event-sink-deferred-self_chat_events-capture-fp-0043-c3c4).
                 def _embedding_event_sink(
                     kind: str, text: str, meta: dict,
                 ) -> None:
@@ -3775,10 +3645,7 @@ class Session:
                 # legacy callers until they migrate).
                 embedding_event_sink = _embedding_event_sink
                 embedding_model_class = embedding_config.default_class
-                # FP-0057 Phase 0: unified onto IndexBackend's cache
-                # convention (.reyn/cache/index/<source>/); the old
-                # .reyn/cache/action_index/ path is no longer read or
-                # written (clean-break — cache is regenerable).
+                # FP-0057 Phase 0: unified onto IndexBackend's cache convention — clean-break, no migration. docs/reference/runtime/reyn-dir-layout.md#canonical-layout
                 action_embedding_index = ActionEmbeddingIndex(
                     workspace_root=Path.cwd(),
                 )
@@ -3882,18 +3749,9 @@ class Session:
         RouterLoopHost implementation extracted from Session. Constructed
         last in __init__ because it receives callbacks that reference self
         (all of which are bound methods, resolved at call time not here)."""
-        # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
-        # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
-        # CompactionEngine does; never hand the cosmetic class to the budget).
-        # try_build_* returns None (NOT raise) when the model's context is too
-        # small to satisfy the by-construction force-close floor (output_reserve +
-        # offload_cap < threshold) — a small-context model is a legitimate chat
-        # session that simply cannot support force-close, so it degrades to the
-        # pre-force-close path (no cap, no handoff) rather than failing __init__.
-        # ADDITIVE: the engine's sole consumer is
-        # RouterHostAdapter.wrap_up_output_reserve, inert until the F2 handoff
-        # calls _force_close_call — chat stays REACTIVE-only (see the property's
-        # docstring for the deliberate per-axis choice).
+        # #1092 PR-F1: turn_budget engine off the RESOLVED model. Making
+        # try_build_* raise instead of return None crashes __init__ for
+        # small-context models instead of degrading (session-construction.md#chat-turn_budget-engine-none-on-small-context-never-raise-1092-pr-f1).
         from reyn.services.turn_budget import try_build_default_turn_budget_engine
         _chat_turn_budget_engine = try_build_default_turn_budget_engine(
             self._resolver.resolve(self.model).model,
@@ -3989,29 +3847,13 @@ class Session:
             ),
             action_retrieval_config=self._action_retrieval,
             available_skills=self._available_skills,  # #2548 PR-A
-            # #3196 co-vet round 2: a LIVE read of the BASE registered-skill
-            # set (this same field, `Session._available_skills` — never
-            # mutated by visibility toggling, unlike the copy
-            # RouterHostAdapter's own `_available_skills` becomes once
-            # `reapply_skill_visibility` filters it). `make_router_op_context`
-            # uses this for the `file` op's skill-load provenance gate — a
-            # trust decision that must not depend on the UX visibility
-            # filter.
+            # #3196: read the BASE skill set here, not RouterHostAdapter's
+            # UX-filtered copy — swapping silently weakens the file-op
+            # skill-provenance trust gate (session-construction.md#base_available_skills_fn-reads-the-base-set-not-the-ux-filtered-copy-3196).
             base_available_skills_fn=lambda: self._available_skills,
-            # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
-            # #1417: gate on the INJECTED backend's real capability, not the
-            # reyn.yaml config STRING. The exec capability comes from the
-            # injected ``self._sandbox_backend`` instance (the SAME object used
-            # for actual exec at line 1847 / tools/exec.py (#3226 Phase 3
-            # renamed from sandboxed_exec.py): ``ctx.sandbox_
-            # backend or get_default_backend(...)``); both injected types expose
-            # ``.name`` (DockerEnvironmentBackend.name="docker" / SandboxBackend
-            # .name). Without this, ``sandbox.backend=noop`` config + an injected
-            # exec backend (``--env-backend=docker``) would HIDE exec from
-            # discovery even though sandboxed_exec is functionally available
-            # (the construction-forwarding-gap: config string ≠ live instance).
-            # No injected instance → fall back to the config string (auto /
-            # host-default behaviour unchanged).
+            # Read the injected sandbox_backend INSTANCE's .name, not the
+            # config string — a mismatch silently HIDES a working exec
+            # capability from discovery (#1417/FP-0034; session-construction.md#sandbox_backend-gate-reads-the-injected-instance-not-the-config-string-1417-fp-0034).
             sandbox_backend=_exec_gate_backend_name(
                 self._sandbox_backend, self._sandbox_config
             ),
@@ -4069,24 +3911,9 @@ class Session:
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
-            # FP-0022 fix (#53): give the router OpContext a real
-            # InterventionBus so web_fetch / mcp install / mcp drop
-            # handlers can run their interactive (Layer 4) approval
-            # flow. The bus is built per make_router_op_context() call
-            # — short-lived, scoped to the chat_router turn, identical
-            # to what session._mcp_call_tool wires manually today.
-            # #2708 P3.2a: when this session is an ATTACHED pipeline driver (it carries a
-            # SpawnBridgeInterventionListener), the router intervention bus dispatches on the
-            # PARENT session's live-operator listener instead of the driver's own
-            # listener-less registry — so a pipeline-step ``ask_user`` reaches the operator
-            # blocked on the parent by construction (#2721), instead of silently auto-
-            # refusing. Non-driver / detached / ephemeral sessions (bridge is None) keep the
-            # self-bound bus, byte-identical. Mirror of the presentation_renderer_factory
-            # spawn-bridge below.
-            # #3049: single-sourced with the MCP op callers via
-            # ``_make_router_intervention_bus`` (bridge-aware — driver → parent, else
-            # self-bound) so router-op interventions resolve to the SAME surface
-            # regardless of which seam builds the OpContext.
+            # #3049/#2708 P3.2a: bridge-aware intervention bus (attached driver ->
+            # parent's operator; root/detached -> self-bound), single-sourced via
+            # _make_router_intervention_bus. docs/concepts/runtime/intervention-delivery.md#the-single-construction-seam
             intervention_bus_factory=self._make_router_intervention_bus,
             # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
             # so a `present` op reaches the surface's sink instead of PR-A's null surface.
@@ -4170,14 +3997,9 @@ class Session:
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
             compaction_engine=CompactionEngine(
-                # #1172: pass a model CLASS (like "standard") plus the resolver —
-                # CompactionEngine resolves to a litellm string by construction.
-                # Without resolution the engine would hand "standard" straight to
-                # litellm (BadRequestError) and every compaction trigger would
-                # fail (dead-end-critical).
-                # #1679: honor a documented model_class_by_purpose.compaction
-                # override when set; otherwise keep self.model (byte-identical to
-                # the former hardcode, incl. a per-run model override).
+                # #1172: pass a resolved model CLASS, not the raw string —
+                # unresolved, litellm raises BadRequestError and every
+                # compaction trigger fails (session-construction.md#compactionengine-model-resolved-class-not-the-cosmetic-label-1172).
                 model=self._resolver.purpose_class_or("compaction", self.model),
                 events=self._chat_events,
                 system_prompt_provider=history_buffer.build_system_prompt,
@@ -4300,8 +4122,6 @@ class Session:
             # bound for conversation context (history sink only).
             threat_scan=self._safety.threat_scan,
         )
-        # Owns the chain-override state + the per-intervention dispatch
-        # orchestration.
         intervention_coordinator = InterventionCoordinator(
             registry=interventions,
             handler=intervention_handler,
@@ -4445,40 +4265,9 @@ class Session:
         original construction). Returns the ``MCPConnectionService``
         instance directly (#3121 step4 removed the prior single-field
         wrapper dataclass)."""
-        # #2597 S2a: the session-owned held-open MCP connection service (Option C —
-        # one persistent MCPClient per server, reused across chat turns/tasks for
-        # this session's whole lifetime). Constructed unconditionally (cheap — an
-        # empty dict until first ``get()``); ONLY the non-ephemeral MCP call sites
-        # (_mcp_call_tool / _mcp_list_tools) route through it — an ephemeral session
-        # (``self._ephemeral`` set post-construction by the registry) keeps using the
-        # per-call MCPClientPool so a sub-second-lived session never holds a
-        # connection open. Closed at session teardown via aclose_mcp_connections
-        # (registry.remove_session / archive_agent's main-session path).
-        # #2597 S2b: emit_sink / tools_cache_invalidate are lambdas that defer
-        # resolution of ``self._chat_events`` / ``self._router_host`` to CALL time
-        # (mirrors the ``emit_event=lambda et, **d: self._chat_events.emit(et, **d)``
-        # pattern used a few lines below) — both attributes are assigned LATER in this
-        # __init__ (``_chat_events`` at construction of the EventLog; ``_router_host``
-        # when the RouterHostAdapter is built), but neither lambda is ever CALLED until
-        # a held MCP connection actually receives a server-pushed notification, long
-        # after __init__ has finished.
-        # #2608 H1: ``hook_trigger`` is the SAME deferred-lambda pattern, over
-        # ``self._hook_dispatcher`` — constructed further below in this __init__ (the
-        # HookDispatcher itself needs ``self._put_inbox`` / ``self._stage_next_turn_context``
-        # / etc, already bound methods, so it's built after this point) — but, like
-        # ``emit_sink``/``tools_cache_invalidate`` above, never CALLED until a held MCP
-        # connection's receive loop enqueues an external event, long after __init__ has
-        # finished. ``self.agent_name`` IS already resolvable here (``self._agent`` is
-        # set earlier in this __init__), so it's passed eagerly (not deferred).
-        # #2597 slice ③ (elicitation): SAME consent_bus/consent_gate split
-        # #2095's shell-hook consent already uses (see the HookDispatcher
-        # construction above) — a server->client elicitation is routed
-        # through THIS session's RequestBus ONLY when a live intervention
-        # listener is attached; headless (no listener) auto-declines inside
-        # the handler (reyn.mcp.elicitation), never here. ``as_request_bus()``
-        # is safe to call eagerly here (unlike the deferred lambdas above) —
-        # it just wraps ``self`` in an adapter, no attribute it reads is
-        # constructed later in this __init__.
+        # #2597 S2a/S2b/H1: held-open MCP connection; emit_sink /
+        # tools_cache_invalidate / hook_trigger stay deferred lambdas — eager
+        # binding raises AttributeError here (session-construction.md#mcpconnectionservice-four-deferred-lambdas-over-not-yet-built-siblings-2597).
         from reyn.mcp.connection_service import MCPConnectionService
         mcp_connection_service = MCPConnectionService(
             emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
@@ -4560,7 +4349,7 @@ class Session:
             if not layer:
                 continue
             try:
-                registry = load_hooks(combined + layer, composed_schemas)  # validate the cumulative add
+                registry = load_hooks(combined + layer, composed_schemas)
                 combined = combined + layer
             except HookConfigError as exc:
                 logger.warning(
@@ -4705,11 +4494,9 @@ class Session:
         ]
         new_names = {j["name"] for j in jobs}
         changed = False
-        # S4 removal-diff: unschedule runtime jobs deleted from .reyn/cron.yaml.
         for removed in self._runtime_cron_names - new_names:
             if await sched.remove_job(removed):
                 changed = True
-        # Add / replace the present runtime jobs (idempotent).
         for jd in jobs:
             await sched.add_job(CronJob(
                 name=jd["name"], schedule=jd["schedule"], to=jd.get("to"),
@@ -4750,7 +4537,6 @@ class Session:
         old_names = {s.name for s in (self._available_skills or [])}
         new_names = {s.name for s in new_skills}
         if old_names == new_names:
-            # Check if any entry fields changed (description / path / enabled / visibility).
             old_map = {s.name: s for s in (self._available_skills or [])}
             if all(
                 new_s.description == old_map[new_s.name].description
@@ -4759,10 +4545,9 @@ class Session:
                 and new_s.visibility == old_map[new_s.name].visibility
                 for new_s in new_skills
             ):
-                return False  # no change
-        # Update the base registered set (Session) + the filtered view (router_host).
+                return False
         self._available_skills = new_skills or None
-        self._capability_visibility.reapply_skill_visibility()  # re-derives router_host._available_skills from new base
+        self._capability_visibility.reapply_skill_visibility()
         return True
 
     async def _reapply_pipelines(self, in_set: dict) -> bool:
@@ -4872,8 +4657,7 @@ class Session:
         except (FileNotFoundError, OSError):
             return False  # single-agent / no profile → nothing per-agent to reapply
         if prof.allowed_mcp == self._allowed_mcp:
-            return False  # unchanged
-        # Session orchestrates the multi-holder swap (the holders it owns).
+            return False
         self._allowed_mcp = prof.allowed_mcp
         self._router_host._allowed_mcp = prof.allowed_mcp          # MCP gate (decl source)
         return True
@@ -4962,9 +4746,7 @@ class Session:
         this directly because they manage their own additional state
         machines (= chain_id / request_id / etc.) on top.
         """
-        # #2259 PR-3: fail-stop ACCEPT-edge. If durability has failed persistently, REJECT the op
-        # rather than accept one whose durable record will never land — the raise is the operator's
-        # synchronous signal (more than the CRITICAL log). Pairs with the run-loop process-edge halt.
+        # #2259 PR-3: fail-stop ACCEPT-edge — see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal (`_halted_reason`).
         self._fail_stop_if_durability_dead()
         msg_id = await self._journal.append_inbox(kind=kind, payload=payload)
         full_payload = {**payload, "_msg_id": msg_id}
@@ -5158,14 +4940,9 @@ class Session:
             return
 
         from reyn.runtime.session_api import start_pipeline_run
-        # #3097: no explicit pipeline_registry hand-off needed — the spawned
-        # driver-session's own _reapply_pipelines seam fires uniformly at ITS
-        # spawn (AgentRegistry.spawn_session_recorded -> refresh_config_projections,
-        # inside start_pipeline_run -> _spawn_pipeline_driver_session), rebuilding
-        # from the current on-disk cascade directly. Folds out #3094's spawn-local
-        # override (which forwarded THIS session's live registry object) — the
-        # family gate achieves the same effect without depending on the caller
-        # having a fresh in-memory copy to hand off.
+        # #3097: no explicit pipeline_registry hand-off — the spawned
+        # driver rebuilds via its own _reapply_pipelines seam; re-adding a
+        # hand-off reintroduces the #3094 stale-copy risk (pipeline-registration.md#spawned-pipeline-driver-registry-no-explicit-hand-off-3097).
         await start_pipeline_run(
             self._registry,
             pipeline=pipeline,
@@ -5267,7 +5044,6 @@ class Session:
                     # wait (Decision A).
                     break
 
-                # Record inbox_consume for each non-blocking dequeue.
                 msg_id_nb = (
                     p_nb.get("_msg_id") if isinstance(p_nb, dict) else None
                 )
@@ -5318,10 +5094,7 @@ class Session:
                 text=ans.get("text", ""),
                 choice_id=ans.get("choice_id"),
             )
-        # #1800 slice 4b: restore the staged next-turn-context buffer. If the
-        # session crashed while holding staged C messages (waiting for a trigger),
-        # they are recovered from the snapshot so the trigger's next turn
-        # still sees the accumulated context.
+        # #1800 slice 4b: restore the staged next-turn-context buffer — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_next_turn_context`).
         self._next_turn_context = [
             entry for entry in snapshot.next_turn_context
             if isinstance(entry, dict)
@@ -5338,17 +5111,9 @@ class Session:
             ]
 
             async def _on_restored_resolved(iv: UserIntervention) -> None:
-                # Restored interventions DON'T re-emit ``intervention_dispatched``
-                # (that event is already in the WAL from the original run).
-                # We do TWO things here:
-                #   1. Buffer the user's answer keyed by run_id so the
-                #      resuming run's first ask_user picks it up (L6).
-                #      R-D12: buffer is also durably persisted via
-                #      ``record_intervention_answer_buffered`` so the
-                #      answer survives a second crash before the run
-                #      resumes.
-                #   2. Emit ``intervention_resolved`` to prune the snapshot's
-                #      outstanding_interventions entry.
+                # Restored interventions do NOT re-emit intervention_dispatched —
+                # re-adding it duplicates the WAL record from the original run
+                # (R-D12; 0016-durable-answer-buffer.md#restore-path-re-enqueue-does-not-re-emit-intervention_dispatched-r-d12).
                 if iv.future.done() and iv.run_id:
                     try:
                         answer = iv.future.result()
@@ -5405,13 +5170,7 @@ class Session:
         ``run_one_iteration`` receives ``ride_alongs`` for 4a contract
         compatibility but no longer re-stages them.
         """
-        # #2259 PR-3: fail-stop PROCESS-edge. If durability has failed persistently, HALT before
-        # processing the next op — in-memory state must not advance into a dead disk (the owner's
-        # "no silent unbounded loss"). Returns False = run()'s while-loop exits. Pairs with the
-        # _put_inbox accept-edge raise (both read the latched health-signal).
-        # #2280: this is the edge an IDLE operator's halt is discovered on — no exception reaches
-        # anyone here, so emit the same `session_halted` chat-event as the accept-edge (guarded so
-        # it fires once) for the proactive TUI/plain-CUI surface, see `_fail_stop_if_durability_dead`.
+        # #2259 PR-3 / #2280: fail-stop PROCESS-edge — see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal (`_halted_reason`).
         if self._state_log is not None and self._state_log.durability_failed:
             if self._halted_reason is None:
                 self._halted_reason = "durability_failure"
@@ -5426,19 +5185,9 @@ class Session:
             # shutdown sentinel
             return False
         kind, payload = trigger
-        # proposal 0060 Phase 1 (A7): stamp this session's per-turn provenance
-        # classification from the trigger (the SOURCE of OpContext.turn_origin).
+        # proposal 0060 Phase 1 (A7): stamp per-turn provenance — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_current_turn_origin`).
         self._stamp_execution_context(kind, payload)
-        # #1800 slice 7: the loop valve. Bound hook self-continuation at the
-        # SINGLE seam — before any per-turn work (sender attribution / turn_started
-        # emit / turn_start dispatch / kind dispatch). A human user turn re-arms
-        # the budget; each hook-originated (kind="hook") turn increments it. When
-        # the count exceeds the effective cap, the on_limit checkpoint fires
-        # (warn → ask_user → abort); if it does not extend, the over-limit hook
-        # turn is SUPPRESSED ENTIRELY (no turn_started, no turn_start E-hook
-        # re-trigger that would circumvent the bound, no _handle_hook_message) and
-        # the run-loop returns — the session stays alive + idle for the next real
-        # trigger. Monotonic counter + finite cap + reset-on-user-turn ⇒ finite.
+        # #1800 slice 7: the loop valve (bound hook self-continuation) — see docs/concepts/runtime/hooks.md#loop-valve.
         if kind == "user":
             self._hook_driven_turns = 0
             # #2884: snapshot-back the counter so a crash+restart does not hand a
@@ -5468,28 +5217,15 @@ class Session:
                     # self._safety_extensions["hook_driven_turns"], raising the
                     # effective cap so this + subsequent turns proceed until the
                     # new bound (no re-prompt every turn).
-        # FP-0041 (#489) PR-A: humanic dispatch attribution.
-        # If this inbox item carries a ``sender`` (= new envelope
-        # convention: who/what produced this message — e.g.
-        # ``user:tui`` / ``slack:U456:bob`` / ``cron:morning_news`` /
-        # ``a2a:peer_agent``) and it differs from the prior turn's
-        # sender, surface the transition to the LLM as a state_change
-        # history entry. Makes the multi-consumer (humanic) model
-        # explicit: the agent knows "I was just talking to Alice via
-        # cron, now Bob from Slack just said something" instead of
-        # seeing a confused linear feed.
+        # FP-0041 (#489) PR-A: surface a sender change as a state_change
+        # entry — removing this call collapses multi-consumer attribution
+        # into one undifferentiated feed (authoring-guide.md#sender-attribution-as-state_change-fp-0041-489).
         self._handle_sender_attribution(payload)
         # #1800 slice 5a: turn lifecycle audit event (P6). Emitted after the
         # trigger is consumed and before dispatch, so slice 5b can attach the
         # turn_start hook here. chain_id from the payload (may be absent for
         # non-user triggers — that is fine, kind alone identifies the turn type).
-        # #3300 P2a: `seq` is the sent-queue mutation counter
-        # (`_bump_queue_seq`) — for a `kind=="user"` turn this is the
-        # DISPATCH mutation (the item leaves the undispatched queue), the
-        # order-race-gate counterpart to `user_submitted`'s enqueue `seq`
-        # (see that emit's comment + `_bump_queue_seq` docstring). Bumped
-        # for every turn kind (not only "user") to keep the counter a
-        # single strictly-monotonic sequence; harmless for non-queue turns.
+        # #3300 P2a: `seq` is the sent-queue mutation/order-race-gate token — see docs/reference/runtime/agui-transport.md#reynevent (`turn_started` / `user_submitted`).
         self._chat_events.emit(
             "turn_started",
             kind=kind,
@@ -5504,18 +5240,12 @@ class Session:
                 kind=kind, chain_id=payload.get("chain_id"),
             ),
         )
-        # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
+        # ADR-0038 Stage 1c: busy until this turn settles — see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal (`_turn_idle`).
         self._turn_idle.clear()
-        # #2242: the turn body now runs as its OWN per-turn sub-task (not inline
-        # on this driver task) — this is what makes hard-cancel possible.
-        # cancel_inflight() can call `_turn_owner_task.cancel()` directly, which
-        # injects CancelledError at whatever await point the sub-task is
-        # currently suspended on (mid-generation: the litellm.acompletion await
-        # inside RouterLoop), aborting the in-flight HTTP request immediately —
-        # unlike the pre-#2242 inline design, where the turn body ran on THIS
-        # (the driver's own) task and only the cooperative flag (checked at the
-        # top of each router-loop iteration, never during an LLM call) could ask
-        # it to stop.
+        # #2242: turn body runs as its OWN sub-task so cancel_inflight() can
+        # abort a mid-generation await — confusing a self-issued hard-cancel
+        # with an external one makes the WAL and the runtime diverge
+        # (0038-user-facing-time-travel-rewind.md#turn-body-sub-task-enables-hard-cancel-2242).
         self._turn_owner_task = asyncio.create_task(self._run_turn_body(kind, payload))
         _cancelled = False
         try:
@@ -5572,18 +5302,10 @@ class Session:
                         )
                     _cancelled = True
             finally:
-                # #2242 Finding 1: reset the self-initiated flag UNCONDITIONALLY
-                # here (not only on the swallow branch). If cancel_inflight() set
-                # it True but the CancelledError was never actually delivered to
-                # this turn — e.g. the turn body completed (or caught+suppressed
-                # the cancel) in the same tick before it landed, so `await
-                # self._turn_owner_task` returned normally and the `except` above
-                # never ran — a per-branch reset would leave the flag stuck True.
-                # It would then mis-classify the NEXT turn's EXTERNAL cancel as
-                # self-initiated and wrongly swallow it, violating the FP-0013
-                # external-cancel-re-raise contract. A finally clears it on every
-                # path (normal return, swallowed cancel, re-raised external
-                # cancel) so the flag never outlives the turn that set it.
+                # #2242 Finding 1: reset UNCONDITIONALLY here, not per-branch above — if the
+                # CancelledError never actually landed this tick, a per-branch reset leaves the
+                # flag stuck True, so the NEXT turn's real external cancel gets misclassified as
+                # self-initiated and silently swallowed instead of re-raised.
                 self._turn_cancel_self_initiated = False
                 self._turn_owner_task = None
                 self._turn_idle.set()
@@ -5596,31 +5318,15 @@ class Session:
                     "turn_settled", kind=kind, chain_id=payload.get("chain_id"),
                 )
             if _cancelled:
-                # #2242 WAL-invariant 2: a hard-cancel does not touch any
-                # ALREADY-SPAWNED fire-and-forget WAL-append task (e.g. an
-                # intervention-dispatch task tracked via `_track_wal_task` before
-                # the cancelled turn's LLM await was reached) — cancelling
-                # `_turn_owner_task` cancels only that one sub-task, never a
-                # sibling task. `_turn_idle` is already `.set()` above (this turn
-                # is done), so `await_quiescent()`'s re-entrancy check
-                # (`current_task() is not self._turn_owner_task`, and
-                # `_turn_owner_task` is already None) takes the `_turn_idle.wait()`
-                # branch and returns immediately (already set) — it does not
-                # self-deadlock; it exists here purely to JOIN any such stragglers
-                # before this method returns, so they cannot land after the
-                # session is reported idle.
+                # #2242 WAL-invariant 2: joins sibling fire-and-forget WAL-append tasks before
+                # returning idle — safe here (no self-deadlock) because `_turn_idle` is already
+                # `.set()` and `current_task()` isn't `_turn_owner_task`, so `await_quiescent()`
+                # takes the already-set branch and returns immediately.
                 await self.await_quiescent()
         finally:
-            # 0062: an outer finally so an ephemeral agent-step session still gets
-            # scheduled to vanish even when the turn body raises past the inner
-            # finally (e.g. a StructuredOutputError re-raised by
-            # ``_handle_user_message`` — see session.py's ``except
-            # StructuredOutputError: raise``). Previously ``_maybe_schedule_
-            # ephemeral_vanish()`` sat AFTER this whole try block and was skipped
-            # on any propagating exception, leaking the ephemeral session; this
-            # feature is the first production path that raises a typed exception
-            # out of a NORMAL (non-cap) turn, so the pre-existing gap is closed
-            # here rather than shipped as a new leak.
+            # 0062: outer `finally` (not after the try block) — a StructuredOutputError
+            # re-raised past the inner finally used to skip this and leak the ephemeral
+            # session forever; must run on every exit path, not only the normal return.
             self._maybe_schedule_ephemeral_vanish()
         return True
 
@@ -5678,7 +5384,6 @@ class Session:
         turns are deliberately `"auto_improvement"` (lead-adjudicated, Addendum
         B A7): a human directed the PARENT task, not necessarily this install
         action."""
-        # A7: fail-safe if/else — "user" is the ONLY kind granting user_directed.
         self._current_turn_origin = "user_directed" if kind == "user" else "auto_improvement"
 
     async def _handle_pipeline_result(self, payload: dict) -> None:
@@ -5833,9 +5538,8 @@ class Session:
         # PR-refactor-session-1 wave 2: cancellation delegated to ChainManager.
         await self._chains.shutdown()
 
-        # #1128 PR-a: the background compaction task was removed; compaction
-        # now runs synchronously inside the router handler, so there is no
-        # in-flight task to drain at shutdown.
+        # #1128 PR-a: compaction runs synchronously now, not as a background
+        # task — see docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
         # Slash commands (`/list`, `/tasks kill <id>`, `/answer <id> <text>`)
@@ -5882,23 +5586,16 @@ class Session:
             self._next_turn_context.clear()
             await self._journal.record_next_turn_context_cleared()
 
-        # R-D4: chat turn boundary — opportunistically check WAL size and
-        # truncate if it has grown past the safety-net threshold. Long-idle
-        # multi-agent / multi-chain idle sessions don't fire completion events,
-        # so without this
-        # the WAL would grow unboundedly between turns. The check is cheap
-        # (one stat() call); the rewrite only fires on bloat. Fire-and-
-        # forget so a slow rewrite doesn't block the user's turn.
+        # R-D4: WAL size safety-net check at the chat turn boundary — see
+        # docs/deep-dives/decisions/0014-wal-size-safety-net.md#decision
         if self._registry is not None:
             asyncio.create_task(
                 self._registry.maybe_truncate_for_size(),
                 name="wal-size-safety-net",
             )
 
-        # Issue #366 → #383: drain any /image-queued media blocks onto
-        # this turn. Each block is a content-part dict (= image_url or
-        # image path-ref shape); when present, the user message becomes
-        # list-content shape mirroring the LLM wire format.
+        # Issue #366 → #383: drain queued /image media blocks onto this turn —
+        # see docs/reference/runtime/session-construction.md#multimodal-media
         attached_media = self._pending_user_images
         self._pending_user_images = []
 
@@ -5930,20 +5627,12 @@ class Session:
         # budget without resetting.
         self._reset_router_turn_counter()
 
-        # FP-0037 S2: check whether any of the 3 yaml scope tier files changed
-        # since the last turn. If so, re-probes MCP servers + writes the cache
-        # file so the disk-reload step below picks it up. No-op on first call
-        # (seeds mtime table without probing). Called BEFORE
-        # maybe_reload_mcp_tools_cache_from_disk so yaml-triggered cache writes
-        # are already on disk when the disk-reload step runs.
+        # FP-0037 S2: yaml-triggered MCP tools cache refresh, run BEFORE the
+        # S1 disk-reload step — see docs/reference/cli/mcp.md#refresh-quick-reference
         await self._router_host.maybe_refresh_mcp_tools_from_yaml()
 
-        # FP-0037 S1: check whether the operator ran `reyn mcp refresh`
-        # since the last turn. Reloads the in-memory tools cache from disk
-        # when the cache file mtime has advanced. No-op on first turn (file
-        # absent or mtime unchanged). Called BEFORE ensure_mcp_tools_cached
-        # so a refresh written between session start and first turn is still
-        # visible on turn 1.
+        # FP-0037 S1: pick up an operator-run `reyn mcp refresh` from disk —
+        # see docs/reference/cli/mcp.md#refresh-quick-reference
         self._router_host.maybe_reload_mcp_tools_cache_from_disk()
 
         # FP-0037 issue #160: lazy MCP tool discovery cache. First user
@@ -5956,14 +5645,9 @@ class Session:
         try:
             await self._run_router_loop(text, chain_id)
         except StructuredOutputError:
-            # 0062: a schema-bearing agent-step turn's typed structured-output
-            # failure (unsupported model / provider-rejected schema / exhausted
-            # re-prompt budget) must reach the programmatic driver
-            # (``run_agent_step`` via ``MessageBus.request``) as the ORIGINAL
-            # typed exception — re-raise instead of falling through to the
-            # generic handler below, which would collapse it into an opaque
-            # classified "error" outbox string and lose the failure-mode
-            # distinction the caller needs (§2.1's 3 distinct modes).
+            # 0062: re-raise, don't fall through — the generic handler below collapses
+            # this into an opaque "error" outbox string, losing the 3 distinct failure
+            # modes (0062 proposal §2.1) the caller needs to tell apart.
             raise
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id, user_text=text)
@@ -6018,12 +5702,9 @@ class Session:
             ))
             return
 
-        # #1128 PR-a: the post-reply fire-and-forget compaction check
-        # (spawn_maybe → _maybe_compact, 30K-absolute trigger) was removed.
-        # Auto-compaction is driven synchronously by the pre-frame guard
-        # (ContextBudgetAdvisor.maybe_force_compact → force_compact_now, window-relative
-        # effective_trigger) before each router call, plus on-demand (/compact,
-        # compact op) and the retry_loop overflow backstop.
+        # #1128 PR-a: post-reply fire-and-forget compaction was removed; the 3
+        # compaction paths (pre-frame guard / voluntary op / retry backstop) are
+        # documented at docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         """Drop transient kinds while detached; durable kinds are queued.
@@ -6199,7 +5880,6 @@ class Session:
             chain_id,
         )
 
-        # Fallback: original canned error + hardcoded reply
         await self._put_outbox(OutboxMessage(
             kind="error",
             text=(
@@ -6694,7 +6374,6 @@ class Session:
         ``Session.as_request_bus()`` (which returns an
         ``AgentRequestBus`` adapter forwarding ``request(iv)`` here).
         """
-        # Branch 1: self_answer policy.
         self_ans = await self.try_self_answer(iv)
         if self_ans is not None:
             self._chat_events.emit(
@@ -6705,7 +6384,6 @@ class Session:
             )
             return self_ans
 
-        # Branch 2: parent-agent delegation.
         parent = self.resolve_parent_agent(iv)
         if parent is not None:
             self._chat_events.emit(
@@ -6714,13 +6392,9 @@ class Session:
                 iv_kind=iv.kind,
                 iv_id=iv.id,
             )
-            # Issue #261 — stamp this agent as the source of the
-            # delegation so the parent's downstream ``user_channel``
-            # path can surface it on the outbox meta. Token-based
-            # set/reset preserves any outer-scope value (= multi-hop
-            # chains overwrite the immediate parent on each hop, then
-            # restore on return so the original caller's view is
-            # unchanged).
+            # Issue #261: token-based set/reset (not a plain assignment) — a multi-hop
+            # delegation chain overwrites `source_agent_var` on each hop and must restore the
+            # OUTER caller's value on return, or the chain's own attribution corrupts silently.
             from reyn.runtime.services.intervention_handler import (
                 source_agent_var,
             )
@@ -6836,11 +6510,9 @@ class Session:
                 )
         return answer
 
-    # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
-    # FP-0019 Wave 2 part 2: business logic extracted to InterAgentMessaging service.
-    # Session keeps thin delegators here so existing internal call sites
-    # (_on_chain_timeout_fire, _on_chain_peer_discarded, RouterHostAdapter
-    # send_to_agent callback) continue to resolve without changes.
+    # ── agent-to-agent messaging (PR11 / PR14) ──
+    # FP-0019 Wave 2 part 2 extraction to InterAgentMessaging; Session keeps thin
+    # delegators so existing call sites resolve unchanged: docs/reference/runtime/session-construction.md#family-8a-inter-agent-messaging
 
     async def _send_to_agent(
         self, *, to: str, request: str, depth: int, chain_id: str,
@@ -6947,8 +6619,6 @@ class Session:
         """
         from reyn.interfaces.slash import REGISTRY
 
-        # Multi-line guard — keep only the first line for dispatch, warn if
-        # any non-whitespace content exists on later lines.
         first_line, sep, rest = text.partition("\n")
         if sep and rest.strip():
             await self._put_outbox(OutboxMessage(
@@ -6973,12 +6643,10 @@ class Session:
         args = parts[1] if len(parts) > 1 else ""
         slash_cmd = REGISTRY.get(cmd)
         if slash_cmd is None:
-            # Suggest the 3 closest matches rather than dumping the full
-            # 20+ command catalog into the error line (the previous list
-            # truncated mid-name at ``try: /agent, /agents, /answer, /attach,``
-            # hiding the actionable tail). ``suggest_for_unknown`` is a pure
-            # helper in ``reyn.interfaces.slash`` so the suggestion contract is
-            # directly testable without the surrounding session machinery.
+            # Suggest the 3 closest matches rather than dumping the full 20+ command catalog
+            # into the error line — the full list previously truncated mid-name, hiding the
+            # actionable suggestions. ``suggest_for_unknown`` is a pure helper in
+            # ``reyn.interfaces.slash`` so the suggestion contract is testable standalone.
             from reyn.interfaces.slash import suggest_for_unknown
             suggestions = suggest_for_unknown(cmd)
             known = ", ".join(f"/{n}" for n in suggestions)
@@ -6991,13 +6659,9 @@ class Session:
                 text=f"unknown command /{cmd}; try: {known}",
             ))
             return True
-        # Wave-13 T2-3: recall hint — detect if the handler emitted an error
-        # and surface a one-shot "↑ to recall" sticky so the user can
-        # re-edit instead of retyping from scratch.  We snapshot the queue
-        # size before the call and inspect only the new items afterwards via
-        # ``outbox._queue[pre_size:]`` (= asyncio.Queue internal deque slice;
-        # read-only, best-effort — the try/except ensures a CPython internals
-        # change never breaks slash dispatch).
+        # Wave-13 T2-3: recall hint. Reads `outbox._queue` (asyncio.Queue's PRIVATE
+        # deque) read-only, best-effort — keep the surrounding try/except, or a
+        # CPython internals change breaks slash dispatch, not just the hint.
         pre_size = self.outbox.qsize()
         try:
             await slash_cmd.handler(self, args)
@@ -7088,7 +6752,7 @@ class Session:
         for name in parsed.names:
             entry = entries_by_name.get(name)
             if entry is None:
-                # Axis 5: explicit, actionable error — never a silent no-op.
+                # Axis 5 (explicit, actionable error): docs/concepts/tools-integrations/skills.md#operator-explicit-invocation-the-skill-namespace-3100
                 suggestions = suggest_unknown_skill(name, known_names=known_names)
                 hint = ", ".join(f":{n}" for n in suggestions) if suggestions else "(no skills registered)"
                 await self._put_outbox(OutboxMessage(
@@ -7096,13 +6760,7 @@ class Session:
                     text=f"no skill ':{name}' — try: {hint} / :list for every invocable skill",
                 ))
                 return True, None
-            # Axis 4: same-name-across-config-tiers collision — LOUD, never a
-            # silent shadow. `self._skill_collisions` is built at config-merge
-            # time (config.loader._merge's skills branch, #3100) while tiers
-            # are still separate; by the time `entry` is resolved above, the
-            # merge has already picked the winner (last tier wins) — this is
-            # the audit trail + operator-visible warning that a losing
-            # declaration existed at all.
+            # Axis 4 (config-tier collision, LOUD not silent): docs/concepts/tools-integrations/skills.md#operator-explicit-invocation-the-skill-namespace-3100
             tiers = self._skill_collisions.get(name)
             if tiers:
                 self._chat_events.emit(
@@ -7119,13 +6777,10 @@ class Session:
             resolved.append(entry)
 
         project_dir = self._hot_reload_project_root()
-        # #3198: the `:` invoke path's own PermissionDecl for the
-        # ``${env:VAR}`` allowlist gate — built straight from the operator's
-        # raw `config.permissions` dict (self._perm._config, the SAME source
-        # `_get_file_permissions_for_router` reads elsewhere on Session),
-        # NOT the wildcarded router-op-context decl (that decl's
-        # http_get/secret_write wildcards rely on a separate runtime prompt
-        # env_expand does not have — see router_op_context.py's comment).
+        # #3198: build the `${env:VAR}` allowlist decl from `self._perm._config` directly,
+        # NOT the wildcarded router-op-context decl — that decl's http_get/secret_write
+        # wildcards rely on a runtime prompt `env_expand` lacks; reusing it here silently
+        # widens which env vars a `:` invocation can leak into the LLM's context.
         from reyn.security.permissions.permissions import PermissionDecl
         skill_env_decl = PermissionDecl.from_dict(
             self._perm._config if self._perm is not None else None,
@@ -7179,7 +6834,6 @@ class Session:
         read_val = config.get("file.read") or (config.get("file") or {}).get("read")
         write_val = config.get("file.write") or (config.get("file") or {}).get("write")
 
-        # "allow" string → treat as project-wide wildcard
         read_paths: list[str] = []
         write_paths: list[str] = []
 
@@ -7291,14 +6945,9 @@ class Session:
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
             embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
             budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
-            # #3196 co-vet round 2: this IS the BASE registered set already
-            # (never mutated by visibility filtering — that only ever
-            # touches `self._router_host._available_skills`, RouterHostAdapter's
-            # OWN copy). Deliberately NOT run through any visibility filter
-            # here either — the config-registered-entry provenance class is
-            # a TRUST decision, and visibility is a UX menu concern that
-            # must never gate it (see RouterHostAdapter.make_router_op_context's
-            # matching comment for the other builder).
+            # #3196 co-vet round 2: pass the BASE registered set — deliberately NOT run through
+            # the visibility filter (that's RouterHostAdapter's own copy, a UX/menu concern).
+            # Filtering here would conflate a trust/provenance decision with a display decision.
             available_skills=self._available_skills,
         )
 
@@ -7347,7 +6996,6 @@ class Session:
                 self, run_id=None, actor="chat_router",
                 channel_id=DEFAULT_CHAT_CHANNEL_ID,
             )
-        # No bridge AND no live listener → no reachable operator → fail-close.
         return AuditOnlyInterventionBridge().bus(run_id=None, actor="chat_router")
 
     async def _file_op(self, op_dict: dict) -> dict:
@@ -7452,15 +7100,10 @@ class Session:
         if "type" not in expanded and expanded.get("url"):
             expanded = {**expanded, "type": "http"}
 
-        # #2421: route through the single MCPGateway seam — it owns the whole crash-safe lifecycle
-        # (open + list + teardown inside the contain-all boundary, a task-affine pool, a per-call
-        # timeout) and raises ONLY MCPFault, never a bare BaseExceptionGroup. This is the owner's
-        # Windows crash path: a server that dies mid-list can no longer escape as an uncontained
-        # group.
-        # #2597 S2a: a non-ephemeral session routes through its held-open connection service (Option
-        # C — no re-handshake on every list call); an ephemeral session keeps the pre-existing
-        # one-shot pool (no injected pool — list is not batched across ops), since holding a
-        # connection open for a sub-second-lived session is pure churn.
+        # #2421: route through MCPGateway (not a raw MCP client call) — it contains the
+        # crash path so a mid-list server death raises MCPFault, never an uncontained
+        # BaseExceptionGroup. #2597 S2a: pool only when non-ephemeral (pooling a
+        # sub-second-lived session is pure churn).
         gateway = (
             MCPGateway(
                 pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
@@ -7984,18 +7627,12 @@ class Session:
         self._last_turn_chain_id = chain_id
         with active_turn(chain_id):
             await self._loop_driver.run_turn(user_text, chain_id)
-        # #1800 slice 5a: turn lifecycle audit event (P6). Emitted immediately
-        # after RouterLoopDriver.run_turn() returns — the router loop has
-        # reached a terminal stop_reason and the turn's response is complete.
-        # This is the hook point for the turn_end lifecycle hook (slice 5b).
-        # Emitted here (not inside RouterLoop) so it fires exactly once per
-        # turn independent of which terminal path the loop took, and so the
-        # chain_id (known to _run_router_loop) is in scope.
+        # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the
+        # only placement that fires exactly once per turn regardless of which terminal path the
+        # loop took; moving it into RouterLoop risks double-emission or a missed terminal path.
         self._chat_events.emit("turn_completed", chain_id=chain_id)
-        # #1800 slice 5b: turn_end lifecycle hooks. E (wake=true) self-continuation
-        # fires here — the hook pushes a wake=true trigger that the next
-        # run_one_iteration drains as a new turn (bounded by the slice-7 valve).
-        # C (stage) / F (shell) also fire.
+        # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
+        # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
         await self._hook_dispatcher.dispatch(
             "turn_end",
             build_hook_payload(
@@ -8003,11 +7640,8 @@ class Session:
                 chain_id=chain_id, user_text=user_text,
             ),
         )
-        # #2073 S1: config hot-reload safe-point (Timing-B). A reload scheduled
-        # during/before this turn applies HERE — at the turn boundary
-        # (finish-reason=stop), never mid-turn — so the next turn runs under the new
-        # IN-set config (1 turn = 1 config snapshot). No-op (returns None) when no
-        # reload is pending → zero overhead on the happy path.
+        # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
+        # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
         await self._hot_reloader.apply_pending()
         # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
         # user message is this checkpoint's anchor for the rewind-timeline preview.
