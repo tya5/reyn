@@ -19,6 +19,7 @@ producing. The scheme, exposure, encoder and identifier map are all real.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 import pytest
 
@@ -34,12 +35,13 @@ from reyn.tools.exposure import (
     DESCRIPTOR_KIND_FUNCTION,
     DESCRIPTOR_KIND_PROVIDER_NATIVE,
     Exposure,
+    ExposureDeviation,
     FunctionDescriptor,
     ProviderNativeDescriptor,
     descriptor_from_entry,
     descriptors_from_entries,
 )
-from reyn.tools.scheme import Presentation
+from reyn.tools.scheme import Presentation, get_scheme
 from reyn.tools.schemes._enumerate_exposure import (
     CONTENT_FENCE_EXPOSURE_DEVIATION,
     TOOL_CALLS_EXPOSURE_DEVIATION,
@@ -68,7 +70,7 @@ def _nested(name: str, *, description: str = "", properties: dict | None = None)
 class _Ops:
     """A protocol-conforming ``SchemeOps`` Fake with real callables and explicit
     returns (the idiom ``test_enumerate_all_scheme_1593`` / ``test_codeact_scheme_1593``
-    already use) — never a mock. Only ``base_tools`` / ``catalog_entries`` are
+    already use) — never a mock. Only the three composition ingredients are
     exercised; presentation is the whole subject here."""
 
     def __init__(self, *, base: list[dict] | None = None, catalog: list[dict] | None = None):
@@ -80,6 +82,13 @@ class _Ops:
 
     async def catalog_entries(self) -> list[dict]:
         return list(self._catalog)
+
+    def present(self, available, layer_ctx) -> Presentation:
+        # The router's already-folded composition, which the ``category`` cells
+        # build their exposure from. Its *content* is irrelevant to the arms that
+        # use it here (they assert a relation between two derived sets, not the
+        # set itself); what matters is that it is one list, composed once.
+        return Presentation(llm_tools_payload=list(self._base) + list(self._catalog))
 
 
 # ── the pair table: still a capability declaration, still fail-closed ─────────
@@ -268,50 +277,72 @@ async def test_the_content_fence_cell_reaches_that_refusal() -> None:
         await CodeActScheme().build_presentation({}, {}, ops)
 
 
-# ── the declared deviation (#3381's receptacle) ──────────────────────────────
+# ── the declared deviation (where #3381 was settled) ─────────────────────────
 
 
-def test_the_two_enumerate_all_cells_declare_different_exposure_sets() -> None:
-    """Tier 2: mechanism — the deviation parameter is what decides whether base
-    tools are exposed and which names are dropped, so #3381 is settled by a value.
+def test_the_two_enumerate_all_cells_expose_the_same_set() -> None:
+    """Tier 2: mechanism — both ``enumerate-all`` cells resolve to one exposed
+    set, and the deviation parameter is what decides it.
 
-    The two constants keep today's values; this arm proves the values are load
-    bearing by building the same catalog under each of them and comparing the
-    exposed sets. Vacuity guard: the base tool and the excluded name must both be
-    present in the source, otherwise "absent from the result" means nothing."""
+    #3381: the ``content_fence`` cell used to render the catalog alone, so no
+    base tool was callable from the code-API while the same-named ``tool_calls``
+    cell advertised them. The two deviations now agree on every field that
+    selects the set. This arm proves the values are load bearing by building the
+    same source under each of them and comparing. Vacuity guard: the base tool
+    and the excluded name must both be present in the source, otherwise
+    "absent from the result" means nothing."""
     base = [_nested("delegate_to_agent")]
     catalog = [_nested("git__commit"), _nested("mcp__call_tool")]
     ops = _Ops(base=base, catalog=catalog)
 
     def names(deviation) -> set[str]:
-        exposure = build_enumerate_all_exposure(
+        exposure, _dispatchable = build_enumerate_all_exposure(
             catalog_entries=catalog, available={}, layer_ctx={}, ops=ops, deviation=deviation,
         )
         return {d.name for d in exposure.descriptors}
 
-    tool_calls = names(TOOL_CALLS_EXPOSURE_DEVIATION)
-    content_fence = names(CONTENT_FENCE_EXPOSURE_DEVIATION)
-
     assert "delegate_to_agent" in {e["function"]["name"] for e in base}
     assert "mcp__call_tool" in {e["function"]["name"] for e in catalog}
 
-    assert "delegate_to_agent" in tool_calls and "delegate_to_agent" not in content_fence
-    assert "mcp__call_tool" not in tool_calls and "mcp__call_tool" in content_fence
-    assert "git__commit" in tool_calls and "git__commit" in content_fence
+    tool_calls = names(TOOL_CALLS_EXPOSURE_DEVIATION)
+    content_fence = names(CONTENT_FENCE_EXPOSURE_DEVIATION)
+
+    assert tool_calls == content_fence == {"delegate_to_agent", "git__commit"}
+
+
+def test_the_only_declared_difference_left_is_the_narrowing() -> None:
+    """Tier 2: mechanism — the two deviations differ in exactly one field, and it
+    is the one whose reason is a property of the transport.
+
+    ``applies_contextual_narrowing`` is True only for ``content_fence`` because
+    the OS's post-presentation ``apply_contextual_visibility`` acts on a
+    ``tools=`` payload that transport does not have. Compared field by field over
+    the real dataclass rather than by naming the two fields expected to match, so
+    a *new* field that silently diverges is caught too; ``rationale`` is prose and
+    is excluded by name."""
+    differing = {
+        f.name
+        for f in dataclasses.fields(ExposureDeviation)
+        if f.name != "rationale"
+        and getattr(TOOL_CALLS_EXPOSURE_DEVIATION, f.name)
+        != getattr(CONTENT_FENCE_EXPOSURE_DEVIATION, f.name)
+    }
+    assert differing == {"applies_contextual_narrowing"}
+    assert CONTENT_FENCE_EXPOSURE_DEVIATION.applies_contextual_narrowing is True
 
 
 @pytest.mark.asyncio
-async def test_the_production_cells_carry_those_declarations_unchanged() -> None:
+async def test_the_production_cells_carry_those_declarations() -> None:
     """Tier 2: production-reaches — the values above are the ones today's cells
     run on, and their effect shows in what the two real schemes present.
 
-    Keeping today's values is deliberate: the ``content_fence`` cell gaining base
-    tools would add callables to CodeAct's system prompt, which is a behaviour
-    change #3376 P1 excludes and #3381 owns."""
+    The ``content_fence`` assertions are the #3381 fix on its production path: a
+    base tool is a declared function in the rendered code-API, and the excluded
+    catalog wrapper is not."""
     assert TOOL_CALLS_EXPOSURE_DEVIATION.includes_base_tools is True
     assert TOOL_CALLS_EXPOSURE_DEVIATION.excluded_names == frozenset({"mcp__call_tool"})
-    assert CONTENT_FENCE_EXPOSURE_DEVIATION.includes_base_tools is False
-    assert CONTENT_FENCE_EXPOSURE_DEVIATION.excluded_names == frozenset()
+    assert CONTENT_FENCE_EXPOSURE_DEVIATION.includes_base_tools is True
+    assert CONTENT_FENCE_EXPOSURE_DEVIATION.excluded_names == frozenset({"mcp__call_tool"})
 
     base = [_nested("delegate_to_agent")]
     catalog = [_nested("git__commit"), _nested("mcp__call_tool")]
@@ -325,8 +356,55 @@ async def test_the_production_cells_carry_those_declarations_unchanged() -> None
     advertised = {e["function"]["name"] for e in flat_cell.llm_tools_payload}
     assert "delegate_to_agent" in advertised
     assert "mcp__call_tool" not in advertised
-    assert "def delegate_to_agent(" not in fence_cell.tool_use_sp
+    assert "def delegate_to_agent(" in fence_cell.tool_use_sp
     assert "def git__commit(" in fence_cell.tool_use_sp
+    assert "def mcp__call_tool(" not in fence_cell.tool_use_sp
+
+
+@pytest.mark.asyncio
+async def test_every_code_api_function_has_a_sandbox_stub_to_answer_it() -> None:
+    """Tier 2: production-reaches — every function the code-API declares is a name
+    ``execute`` builds a stub for, over the real registered ``content_fence`` cells.
+
+    This is the invariant #3381's fix could most easily have broken: the encoder
+    names the code-API's functions from ``Exposure.dispatchable_names`` while
+    ``execute`` names the sandbox stubs from ``Presentation.dispatchable_catalog``,
+    and the fix made the first of those wider than the cell's catalog. If the two
+    were composed at two places, the model would read ``def delegate_to_agent(...)``
+    and the OS gate would answer ``unknown_tool``. Driven per registered cell so a
+    new ``content_fence`` cell is covered without being listed here; the excluded
+    wrapper is asserted to be dispatchable-but-unrendered, which is the #1618
+    root-1 contract (``tool_excluded``, not ``unknown_tool``)."""
+    base = [_nested("delegate_to_agent")]
+    catalog = [_nested("git__commit"), _nested("mcp__call_tool")]
+    cells = [
+        get_scheme(resolve_scheme_for_transport(scheme, transport))
+        for scheme, transport in valid_scheme_transport_pairs()
+        if transport is Transport.CONTENT_FENCE
+    ]
+    assert cells, "no content_fence cell is registered — this arm would be vacuous"
+
+    for cell in cells:
+        ops = _Ops(base=base, catalog=catalog)
+        pres = await cell.build_presentation({"hot_list_aliases": []}, {}, ops)
+        stub_names = set(
+            build_actions_map(
+                [e["function"]["name"] for e in pres.dispatchable_catalog],
+            ).keys()
+        )
+        declared = set(re.findall(r"`def (\w+)\(", pres.tool_use_sp))
+        assert declared, f"{type(cell).__name__} declared no callable — arm is vacuous"
+        assert declared <= stub_names, (
+            f"{type(cell).__name__} renders {sorted(declared - stub_names)} in its "
+            "code-API, but execute() builds no sandbox stub of that name — the "
+            "exposed set and the dispatchable set were composed separately"
+        )
+
+    fence_cell = await CodeActScheme().build_presentation(
+        {"hot_list_aliases": []}, {}, _Ops(base=base, catalog=catalog),
+    )
+    dispatchable = {e["function"]["name"] for e in fence_cell.dispatchable_catalog}
+    assert "mcp__call_tool" in dispatchable and "delegate_to_agent" in dispatchable
 
 
 # ── the identifier map is the executor's map ─────────────────────────────────
