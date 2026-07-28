@@ -46,6 +46,16 @@ or modifying tests. For co-vet review and gate-design specifically, also read
 green result can mean less than it looks like it means, each with a real instance
 and a detection technique that closed it.
 
+## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
+
+The comment policy is at **`docs/deep-dives/contributing/comments.md`** — normative,
+read it before deleting, compressing, or relocating a code comment. It classifies
+comments by content (never by length), gives the one-question test for the class
+that must stay inline regardless of size, and states why a residue should read
+"X breaks" rather than "do not change this." This is a code-authoring policy, not
+a verification one — do not conflate it with `verification-hazards.md` above,
+which is about misreading a green test/gate result, a different axis entirely.
+
 Key constraints (full rationale in the doc):
 
 - Each test belongs to exactly one Tier (1: Contract / 2: OS invariant /
