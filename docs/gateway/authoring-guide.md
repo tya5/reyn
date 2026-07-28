@@ -182,6 +182,26 @@ The gateway API receives an optional ``registry`` kwarg for tests
 (= inject an ``AgentRegistry`` stub). Production code omits it
 and uses the process-shared registry.
 
+### Sender attribution as state_change (FP-0041 #489)
+
+`push_to_agent`'s `sender` argument (e.g. `"slack:U456:bob"`,
+`"cron:morning_news"`, `"a2a:peer_agent"`) is more than a routing label —
+Reyn's session dispatch (`Session._handle_sender_attribution`, called from
+`run_one_iteration` before turn dispatch) compares each inbox item's
+`sender` against the PRIOR turn's sender. When they differ, it surfaces the
+transition to the LLM as a `state_change` history entry.
+
+This makes the multi-consumer ("humanic") model explicit in the agent's own
+context: without it, the agent sees one continuous, undifferentiated
+transcript regardless of who or what is actually driving each turn — it
+cannot tell "I was just talking to Alice via cron, now Bob from Slack just
+said something" from an ordinary multi-turn conversation with a single
+counterpart. A gateway author who calls `push_to_agent` without ever
+changing `sender` across calls will never see this marker fire, which is
+the correct behavior for a single-counterpart integration — the marker
+exists specifically for gateways/transports that multiplex several external
+senders onto one agent inbox.
+
 ## Outbound replies via MCP
 
 The Reyn-side outbox interceptor (= ``reyn.runtime.external_routing``)

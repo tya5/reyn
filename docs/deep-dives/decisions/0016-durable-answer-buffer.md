@@ -93,6 +93,34 @@ State analysis:
   trail value of the `_buffered` / `_consumed` pair plus state 3
   correctness outweigh the (negligible) WAL append cost.
 
+## Restore-path re-enqueue does not re-emit intervention_dispatched (R-D12)
+
+*(Implementation note — addendum to the ratified decision above, not a revision of it.)*
+
+When a session restores from a snapshot with outstanding interventions
+(`snapshot.outstanding_interventions`), `Session.restore_state` re-enqueues
+each one via `UserIntervention.from_dict` and `self._interventions.restore(...)`,
+giving each restored intervention a fresh `Future` and a watcher task
+(`_on_restored_resolved`).
+
+This watcher deliberately does **not** re-emit `intervention_dispatched` —
+that event is already in the WAL from the ORIGINAL run that first asked the
+question. Re-emitting it here would write a second `intervention_dispatched`
+record for the same logical intervention, corrupting the audit trail with a
+duplicate that has no corresponding real dispatch.
+
+Instead, when a restored intervention resolves, the watcher does two
+things:
+1. Buffers the user's answer keyed by `run_id` (`self._buffered_intervention_answers`)
+   so the resuming run's first `ask_user` picks it up (PR-intervention-link
+   L6). Also durably persists the buffer via
+   `record_intervention_answer_buffered` (R-D12, this ADR) so the answer
+   survives a SECOND crash before the run resumes and consumes it.
+2. Emits `intervention_resolved` to prune the snapshot's
+   `outstanding_interventions` entry — this event IS new (the original run
+   never saw a resolution before the crash), so it is the correct one to
+   emit.
+
 ## References
 
 - Commit `01c29b7` — implementation + Tier 2 tests

@@ -110,6 +110,38 @@ just state restore). Cascade: background task → current act-turn → in-flight
 (LLM / tool / subprocess via `#1470 cancel_inflight`). A global rewind cancels all
 in-flight.
 
+### Turn-body sub-task enables hard-cancel (#2242)
+
+*(Implementation note — addendum to D4 above, not a revision of it.)*
+
+Before #2242, the turn body ran inline on the driver task itself (the same
+task that owns `run_one_iteration`'s loop), and could only be interrupted by
+a COOPERATIVE flag checked at the top of each router-loop iteration — never
+mid-generation. A user hitting Ctrl-C while the agent was mid-LLM-call had
+to wait for that call to return before the flag was even checked.
+
+#2242 changed the turn body to run as its OWN per-turn sub-task
+(`self._turn_owner_task = asyncio.create_task(self._run_turn_body(kind,
+payload))`). This is what makes HARD cancel possible:
+`cancel_inflight()` can call `_turn_owner_task.cancel()` directly, which
+injects `CancelledError` at whatever await point the sub-task is currently
+suspended on — including mid-generation, inside the `litellm.acompletion`
+await in `RouterLoop` — aborting the in-flight HTTP request immediately.
+
+**Self vs. external cancel.** The driver task distinguishes a cancel IT
+issued (via `cancel_inflight()`, tracked through
+`self._turn_cancel_self_initiated`) from an EXTERNAL cancellation of the
+driver task itself (e.g. an anyio scope teardown for an MCP/A2A
+request-handler task pumping `run_one_iteration` directly, FP-0013 §ADR-A).
+Confusing the two directions is exactly the failure this mechanism guards
+against: treating a self-issued hard-cancel as if it were external (or vice
+versa) makes the WAL and the runtime diverge — either a turn the operator
+explicitly cancelled gets propagated as if the whole session died, or a
+genuine external teardown gets silently swallowed as if it were an ordinary
+user cancel, leaving the driver task running when its owning scope believes
+it has exited. This is the swallow/re-raise split D4's cancel-cascade
+depends on for correctness.
+
 ### D5. retention = 2 windows, config-driven
 Two retention windows: **WAL (fine)** + **snapshot generations (coarse)**.
 Default = current behaviour (live floor = `min(applied_seq)+1`); **opt-in deeper**
@@ -128,6 +160,7 @@ Resolution: within the retention window the abandoned branch is **retained
 branch survives in the EventStore regardless (independent rotation). The blob store
 (D9) GCs unreferenced workspace blobs on the same window boundary.
 
+<a id="d6-granularity-phased"></a>
 ### D6. granularity — phased
 - User-facing = **chat-turn / plan-step / phase** boundaries (snapshot generations).
 - **act-turn** is not a durable checkpoint (ADR-0002 rejected mid-act-turn state on
