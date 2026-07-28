@@ -506,8 +506,9 @@ async def test_sent_queue_does_not_shadow_domnode_is_empty_property() -> None:
 
 def test_help_pane_lists_composer_up_arrow_and_sentqueue_keys() -> None:
     """Tier 2b: the new composer ``↑`` binding and the sent-queue's own keys
-    (↑/↓ move, Enter cancel, Esc/Tab back to composer) must be DISCOVERABLE
-    through the Help pane — ``chrome.py``'s own module docstring states the
+    (↑/↓ move, Enter cancel, Esc back to composer — #3365 dropped Tab from
+    this row, see ``SENTQUEUE_KEYS``) must be DISCOVERABLE through the Help
+    pane — ``chrome.py``'s own module docstring states the
     Help pane sources composer/menu keys from ``COMPOSER_KEYS``/
     ``MENUBAR_KEYS`` "rather than re-hardcoding a second copy"; the new
     sent-queue keys must follow the SAME single-source-of-truth convention

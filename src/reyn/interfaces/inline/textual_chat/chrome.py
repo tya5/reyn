@@ -411,10 +411,17 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
 ]
 
 #: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides).
+#:
+#: #3365: ``↑`` and ``esc`` used to share one row worded "close" — read as
+#: "closes the drawer, landing on the tab-bar" (one level up), but the ACTUAL
+#: destination (measured, both keys) is the Composer directly, regardless of
+#: navigation depth. Split into two rows with accurate wording instead of one
+#: combined row that invited a "one step back" misreading.
 MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("← →", "move"),
     ("enter", "open"),
-    ("↑ / esc", "close"),
+    ("↑", "back to composer"),
+    ("esc", "back to composer"),
 ]
 
 #: Keys RESERVED by an approved-but-unimplemented feature — claimed, but bound
@@ -453,10 +460,13 @@ RESERVED_KEYS: "dict[str, str]" = {
 #: ``SentQueue.BINDINGS`` — declarative, but the Help pane still sources them
 #: from HERE, the same single-source-of-truth convention ``MENUBAR_KEYS``
 #: uses, rather than re-deriving prose from the ``Binding`` objects).
+#:
+#: #3365: ``tab`` dropped — its "back to composer" binding was removed
+#: (``Tab`` is forward-only everywhere in the app; ``Esc`` alone owns "back").
 SENTQUEUE_KEYS: "list[tuple[str, str]]" = [
     ("↑ / ↓", "select queued message"),
     ("enter", "cancel selected"),
-    ("esc / tab", "back to composer"),
+    ("esc", "back to composer"),
 ]
 
 
