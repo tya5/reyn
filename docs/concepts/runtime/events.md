@@ -24,7 +24,7 @@ If the OS is the only mutator (P3) and every mutation emits an audit-event, the 
 A few of the larger buckets:
 
 - **LLM and context** — `llm_called`.
-- **Control IR** — one audit-event per op kind (`read_file`, `sandboxed_exec_started`, `mcp_called`, `web_search_started`, `recall_embed_failed`, etc.) plus `permission_denied`.
+- **Control IR** — one audit-event per op kind (`sandboxed_exec_started`, `mcp_called`, `web_search_started`, `semantic_search_embed_failed` — a `file` op like a read instead rides the shared `tool_executed` kind, with the specific op named in its `op` field, not as its own kind). This list is illustrative, not exhaustive — the full, closed kind vocabulary is being derived from a single source of truth in #3410; until that lands, treat any list of kind names here as examples only, plus `permission_denied`.
 - **User interaction** — `user_message_received`, `user_intervention_received`, `chat_started`, `chat_stopped`, `turn_cancelled`.
 - **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`, `chain_timeout`. Each carries `chain_id` so a single user request can be traced across hops.
 - **Task management** — `task_op`, `task_readiness`, `task_disposition`, `task_dependency_aborted`.
@@ -52,8 +52,9 @@ run_id    — uuid for the run (present on most run-scoped audit-events)
 ```
 
 Note: `run_id` is present on most run-scoped audit-events (`llm_called`,
-`permission_denied`, etc.) but absent from some audit-events emitted outside
-a run context (e.g. `chat_started`).
+`permission_denied`, for example — not an exhaustive list; see #3410) but
+absent from some audit-events emitted outside a run context (e.g.
+`chat_started`).
 
 ### Audit-events with required fields (FP-0021)
 
