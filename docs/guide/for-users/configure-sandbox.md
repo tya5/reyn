@@ -96,7 +96,7 @@ restriction: op-level fields govern, and the SandboxLayer is unrestricted.
 | `env_passthrough` | list of strings | `[]` | Env vars passed through to the process. `PATH` is always passed. |
 | `timeout_seconds` | int | `60` | Wall-clock limit; process is killed on expiry. |
 
-**`allow_subprocess: false` is the cheapest, most predictable hardening available for a workload that never needs to spawn anything.** It is a single boolean, and its effect is total and immediate: child-process spawning is denied outright, with no partial states to reason about later. If your workload genuinely needs to exec (a build step, a CLI wrapper), this setting isn't for you — you're bound instead by the sandbox boundary plus the audit trail every exec leaves (`sandboxed_exec_started`/`_completed` record the `argv` — see [Reference: events](../../reference/runtime/events.md)).
+**`allow_subprocess: false` is the cheapest, most predictable hardening available for a workload that never needs to spawn anything.** It is a single boolean, and its effect is total and immediate: child-process spawning is denied outright, with no partial states to reason about later. If your workload genuinely needs to exec (a build step, a CLI wrapper), this setting isn't for you — you're bound instead by the sandbox boundary plus the audit trail every exec leaves (`sandboxed_exec_started`/`_completed`/`_cancelled` record the `argv` — see [Reference: events](../../reference/runtime/events.md)).
 
 ### Scoping model
 

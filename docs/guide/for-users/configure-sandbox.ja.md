@@ -84,7 +84,7 @@ sandbox:
 | `env_passthrough` | 文字列のリスト | `[]` | プロセスに引き渡す環境変数名。`PATH` は常に引き渡されます。 |
 | `timeout_seconds` | int | `60` | ウォールクロック制限。期限超過でプロセスを終了。 |
 
-**`allow_subprocess: false` は、exec を一切必要としない workload にとって最も安価で最も予測可能な hardening です。** 設定は単一の boolean で、その効果は全面的かつ即時です — 子プロセス生成が完全に拒否され、後から状態がずれて驚くことはありません。exec が本当に必要な workload（ビルドステップ、CLI ラッパー等）にはこの設定は向きません — その場合はサンドボックス境界と、exec のたびに残る監査証跡（`sandboxed_exec_started`/`_completed` が `argv` を記録します — [Reference: events](../../reference/runtime/events.md) 参照）で bound されます。
+**`allow_subprocess: false` は、exec を一切必要としない workload にとって最も安価で最も予測可能な hardening です。** 設定は単一の boolean で、その効果は全面的かつ即時です — 子プロセス生成が完全に拒否され、後から状態がずれて驚くことはありません。exec が本当に必要な workload（ビルドステップ、CLI ラッパー等）にはこの設定は向きません — その場合はサンドボックス境界と、exec のたびに残る監査証跡（`sandboxed_exec_started`/`_completed`/`_cancelled` が `argv` を記録します — [Reference: events](../../reference/runtime/events.md) 参照）で bound されます。
 
 ### スコーピングモデル
 
