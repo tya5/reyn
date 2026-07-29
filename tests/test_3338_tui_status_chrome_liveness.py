@@ -893,6 +893,14 @@ async def test_menubar_active_tab_toned_down_to_status_line_muted_tone(
         transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
     )
     async with app.run_test(size=(80, 24)) as pilot:
+        # #3434: Textual applies the initial "-active" CSS class to a Tab
+        # reactively (mount -> compose -> a Message that sets it), which is
+        # not guaranteed to have settled after a single pump of the message
+        # loop under load (observed: passes under a quiet `pytest`, fails
+        # under `-n auto`'s worker-count CPU contention). The neighboring
+        # test in this file (`test_status_line_long_raw_model_id_stays_
+        # onscreen`) already double-pumps for the same reason; match it here.
+        await pilot.pause()
         await pilot.pause()
         line = app.query_one(StatusLine)
         active_tab = next(tab for tab in app.query(Tab) if tab.has_class("-active"))
