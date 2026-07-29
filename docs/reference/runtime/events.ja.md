@@ -8,6 +8,19 @@ audience: [human, agent]
 
 Reyn はすべての状態変化に対して構造化イベントを発行します。完全なイベントログは JSONL で、`.reyn/events/<run_id>.jsonl` に書き込まれ、`reyn events <log_file>` でリプレイ可能です。
 
+## Kind vocabulary
+
+`type` フィールドは**閉じた集合**から取られます。reyn が発行する kind はすべて列挙されており、それ以外は発行しません。したがって購読側は受け取りうる type の全体を列挙でき、リストに無い kind 向けに書いたハンドラは決して発火しません。
+
+SSoT は `src/reyn/core/events/event_schema.py` の `AUDIT_EVENT_KINDS` で、発行側コードと英語版ページの双方に対して CI が双方向に一致を検査します。
+
+**完全な列挙は [英語版 events リファレンス](events.md#kind-vocabulary) にあります。** 列挙をこのページに複製すると二重管理になり、CI が検査するのは英語版だけなので、この日本語ページの複製だけが静かに古くなります（本 issue #3410 が扱った欠陥そのもの）。列挙は 1 箇所だけに置きます。
+
+この集合が**表さない**ものが 2 つあります:
+
+- **`op` の値ではありません。** `read_file` / `write_file` / `grep` などは、共有 kind `tool_executed` の中の `op` フィールドの値であって、独立した kind ではありません。別の軸であり、この語彙には含まれません。
+- **フィールド契約ではありません。** ある kind がどのペイロードフィールドを必須で持つかは別のレジストリ（同モジュールの `EVENT_AUDIT_REQUIREMENTS`、この語彙の部分集合を対象）で、以下の節が散文で説明しています。
+
 ## イベントエンベロープ
 
 すべてのイベントは以下を持ちます:
@@ -95,17 +108,6 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `user_message_received` | 新しいユーザーターンがランタイムに入ったとき。`chain_id`（`submit_user_text` がミントし、このターンが生成するすべての agent 間メッセージに伝播される uuid）を持つ |
 | `user_intervention_received` | `ask_user` op が回答を受け取ったとき |
 | `chat_started`、`chat_stopped` | chat セッションのライフサイクル |
-
-## タスク管理
-
-タスク Control IR op（`task.py`）が発行するイベントです。
-
-| 種類 | タイミング | 主要なペイロード |
-|------|------|-------------|
-| `task_op` | 任意のタスク変更操作が完了したとき（create / update-status / complete / abort） | `op`（op 種類文字列）、`task_id`、op 固有フィールド |
-| `task_readiness` | タスクが `ready` または `blocked` に遷移したとき（OS の再導出で readiness が変化） | `task_id`、`to`（`"ready"` または `"blocked"`）、`trigger`（変化を引き起こした op の task_id） |
-| `task_disposition` | 中断されたサブツリー内の各タスクが終端状態に達したとき | `task_id`、`disposition`（`"aborted"`）、`requester`、`origin`、`root`（ルート abort op の task_id） |
-| `task_dependency_aborted` | タスクの依存先が非完了終端に達し、リクエスターが復旧を決定する必要があるとき（§16） | `task_id`（終端タスク）、`disposition`、`requester`（セッション or タスク id — §16 通知ターゲット）、`dependents`（stuck 状態の task_id リスト） |
 
 ## agent 間メッセージング
 

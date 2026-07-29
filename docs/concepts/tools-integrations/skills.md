@@ -58,6 +58,8 @@ never consulted. The two fields therefore describe **four** states, not six —
 
 The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is loaded by the model at L2, on demand, via the dedicated `load_skill` op (`skill_management__load`, FP-0066 P0/#3247) — which additionally expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens in the body before returning it (see [Skill-load variable expansion](#skill-load-variable-expansion) below). The ordinary file-read op does NOT special-case `SKILL.md` — reading one with `file__read` returns its bytes byte-identical, same as any other file.
 
+> **On the name `file__read`, used throughout this page.** The file-read op has two spellings — the qualified catalog name `file__read` and the unqualified `read_file` — and **both always dispatch**. Which one the model is *shown* depends on the [tool-use cell](tool-use-schemes.md) and on the operator's file-permission scope: a cell that composes the base tools with the flat catalog advertises each operation once, under the unqualified spelling where the base tools supply one, so a session with a configured read scope sees `read_file` and one without sees `file__read`. This page names the op, not the advertised row.
+
 ## Discovering and using a skill
 
 There is no `run_skill` tool, by design. A skill body is *instructions for the

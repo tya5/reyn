@@ -35,7 +35,16 @@ from tests._support.agent_session import make_session
 # In the census this host composes: denied by the built-in ``_untrusted`` profile
 # (a re-delegation surface), and present in the un-narrowed catalog — the control
 # arm below asserts that second half rather than assuming it.
-_UNTRUSTED_DENIED_TOOL = "multi_agent__delegate"
+#
+# The BARE spelling, though the profile's ``_FLOORED_QUALIFIED`` declares the
+# qualified ``multi_agent__delegate``: #3428 stopped advertising the qualified
+# spelling of an operation the base tools already name, so the qualified one is no
+# longer in the census this reads. The deny still covers both forms — the profile
+# derives every invocable spelling from ``unwrapped_tool_name`` (#2111) — which is
+# what ``test_both_spellings_of_a_floored_tool_stay_denied`` below keeps true, so
+# this constant naming one of them is a choice of witness and not a narrowing of
+# the claim.
+_UNTRUSTED_DENIED_TOOL = "delegate_to_agent"
 
 
 def _session(tmp_path: Path) -> Session:
@@ -117,6 +126,34 @@ def test_turn_context_denial_self_clears_when_the_taint_leaves_the_context(
         "presented as current"
     )
     assert _UNTRUSTED_DENIED_TOOL in _tools(cleared, "authorized")
+
+
+def test_both_spellings_of_a_floored_tool_stay_denied(tmp_path) -> None:
+    """Tier 2: the ephemeral floor rejects the qualified spelling as well as the bare
+    one, whichever the census happens to advertise.
+
+    The constant above names the bare spelling because #3428 stopped advertising the
+    qualified one; a witness chosen from the census must not quietly become the only
+    spelling anything checks. What the profile actually promises is that EVERY
+    invocable form is denied (#2111, derived from ``unwrapped_tool_name`` rather than
+    hand-listed), so both are asserted against the live gate here — the seam every
+    dispatch path calls, not the advertisement."""
+    from reyn.security.permissions.effective import tool_contextually_denied
+    from reyn.tools.universal_dispatch import all_invocable_forms
+
+    s = _session(tmp_path)
+    _mark_untrusted(s)
+    effective = s._effective_contextual_for_turn()
+
+    forms = all_invocable_forms(_UNTRUSTED_DENIED_TOOL)
+    assert "multi_agent__delegate" in forms, (
+        "the qualified spelling is no longer derived from the bare one, so this arm "
+        "would only re-check the spelling the constant already names"
+    )
+    for spelling in forms:
+        assert tool_contextually_denied(effective, spelling), (
+            f"{spelling} reaches the live gate while untrusted content is in context"
+        )
 
 
 def test_the_tab_reads_the_same_ephemeral_term_the_live_gate_composes(tmp_path) -> None:
