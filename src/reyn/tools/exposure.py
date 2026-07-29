@@ -137,6 +137,78 @@ def descriptors_from_entries(entries: "list[dict]") -> "tuple[ToolDescriptor, ..
     return tuple(descriptor_from_entry(entry) for entry in entries)
 
 
+def _exposed_entry_name(entry: dict) -> str:
+    body = entry.get("function")
+    return str((body if isinstance(body, dict) else entry).get("name", ""))
+
+
+def without_duplicate_alias_spellings(entries: "list[dict]") -> "list[dict]":
+    """Drop each qualified ``<category>__<verb>`` entry whose bare alias — the
+    SAME operation, reached through ``invoke_action``'s own alias table — is
+    already in ``entries``. Order preserved; nothing else is touched.
+
+    A cell that composes ``base_tools`` with the flat catalog gets both spellings
+    of the same operation (``read_file`` and ``file__read``,
+    ``delegate_to_agent`` and ``multi_agent__delegate``, …). Measured on #3428:
+    12 such pairs under a default host config, 18 under a maximal one — i.e. up
+    to 18 declarations the model is shown twice on **every** turn.
+
+    **The bare spelling is the one kept**, and that is a measured choice, not a
+    style preference. For all 18 pairs the two spellings are *not*
+    interchangeable at dispatch (#3429), and on every axis where they differ the
+    bare one is the better-behaved:
+
+    - ``delegate_to_agent``'s advertised schema carries the live ``enum`` of peer
+      names (``tools/delegate_to_agent.py``'s schema enricher); the catalog
+      projection of ``multi_agent__delegate`` does not, so the qualified spelling
+      is the one that lets a model name a peer that does not exist.
+    - a bare call's result is tagged with the target's own identity, so
+      canonicalization resolves through the target's mapper; the qualified call
+      is tagged with the wrapper's name and falls back to a generic renderer
+      whenever the target returns a non-dict (``canonical.py``'s
+      ``invoke_action_to_canonical`` docstring names this).
+    - ``read_file`` / ``list_directory`` are flattened to their content by
+      ``RouterLoop._normalise_router_tool_result``, which keys on the DISPATCHED
+      name — ``invoke_action`` for the qualified spelling, so the qualified call
+      returns the raw op envelope instead.
+
+    Nothing advertised is lost: the two spellings' advertised ``parameters`` are
+    equal for 17 of the 18 pairs and the 18th (``delegate_to_agent``) differs
+    only by the enum above, so the kept spelling is a superset of what the
+    dropped one offered the model.
+
+    ★ **This narrows the ADVERTISEMENT, not the executor's universe.** Callers
+    apply it to the exposed list only — ``Exposure.dispatchable_names`` is
+    composed before it — so on a cell that carries an explicit
+    ``dispatchable_catalog`` an in-code call to the dropped spelling is still
+    answered by the per-call gate rather than by ``unknown_tool`` (#1618 root-1,
+    the contract ``mcp__call_tool`` already has). On a ``tool_calls`` cell whose
+    ``dispatchable_catalog`` is ``None`` the dispatch gate keys on the
+    advertisement, so the dropped spelling leaves that gate too — again exactly
+    as ``mcp__call_tool``'s exclusion already does there.
+
+    Aliases whose two spellings resolve to two DIFFERENT registered definitions
+    are invisible here and must stay hand-declared: ``mcp__call_tool`` unwraps to
+    ``mcp_call_tool``, while the base tool offering the same capability is a
+    separate definition named ``call_mcp_tool``, so no name resolution can pair
+    them (that pair is the ``excluded_names`` entry in
+    ``schemes._enumerate_exposure``)."""
+    from reyn.tools.universal_dispatch import unwrapped_tool_name
+
+    present = {n for n in (_exposed_entry_name(e) for e in entries) if n}
+    kept: "list[dict]" = []
+    for entry in entries:
+        name = _exposed_entry_name(entry)
+        bare = unwrapped_tool_name(name) if name else None
+        # ``bare == name`` is the self-alias case (``plugin_management__install``
+        # is registered under its own qualified name), which is one spelling, not
+        # two — dropping it would delete the operation outright.
+        if bare and bare != name and bare in present:
+            continue
+        kept.append(entry)
+    return kept
+
+
 @dataclass(frozen=True)
 class ExposureDeviation:
     """How one cell's exposed set differs from its scheme's other cells.
@@ -198,4 +270,5 @@ __all__ = [
     "descriptor_from_entry",
     "descriptor_name",
     "descriptors_from_entries",
+    "without_duplicate_alias_spellings",
 ]
