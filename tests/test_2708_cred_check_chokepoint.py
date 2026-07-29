@@ -138,6 +138,12 @@ async def test_funnel_raises_missing_credentials_before_litellm(_keys_unset) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group B: routing.api_base is 127.0.0.1:9 (an unused "
+    "loopback port, refused connection) — the point of the test is that the "
+    "funnel reaches the provider layer instead of raising MissingCredentialsError; "
+    "@replay would bypass the funnel-then-provider-layer distinction entirely.",
+)
 async def test_funnel_does_not_raise_missing_creds_under_routing_proxy(_keys_unset) -> None:
     """Tier 2: when per-class routing supplies a proxy ``api_base``, the funnel
     does NOT raise ``MissingCredentialsError`` even with the key unset (the proxy

@@ -182,6 +182,14 @@ async def _wait_for(pred, timeout: float = 15.0) -> bool:
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_async_detached_run_resolves_sibling_via_family_gate(
     tmp_path: Path, monkeypatch,
 ) -> None:

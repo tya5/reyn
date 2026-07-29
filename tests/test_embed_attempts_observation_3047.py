@@ -118,6 +118,13 @@ def _ctx_with_gateway() -> tuple[OpContext, EventLog, BudgetGateway]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL local HTTP server "
+    "(fail_then_succeed_server, 127.0.0.1) to observe attempt-count/cost "
+    "behaviour on genuine retries — @replay would return one canned response "
+    "with no retry ever happening.",
+)
 async def test_real_retry_populates_attempts_and_op_emits_embed_attempts(
     fail_then_succeed_server, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -161,6 +168,11 @@ async def test_real_retry_populates_attempts_and_op_emits_embed_attempts(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: same real local fail_then_succeed_server as "
+    "the sibling test above — @replay would delete the real-retry cost "
+    "accounting under test.",
+)
 async def test_embed_attempts_does_not_double_count_cost(
     fail_then_succeed_server, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

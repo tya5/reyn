@@ -118,6 +118,14 @@ def test_on_dispatch_respects_preexisting_origin_channel_id() -> None:
 # ── 3. send_to_agent_impl listener lifecycle ──────────────────────────
 
 
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     tmp_path: Path,
 ) -> None:
@@ -209,6 +217,14 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     )
 
 
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
     tmp_path: Path,
 ) -> None:
@@ -277,6 +293,14 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
 # ── 4. Backwards-compat: no override = no listener change ─────────────
 
 
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 def test_send_to_agent_impl_without_override_does_not_register_listener(
     tmp_path: Path,
 ) -> None:

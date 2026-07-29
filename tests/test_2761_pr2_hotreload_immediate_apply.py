@@ -463,8 +463,9 @@ async def test_pipeline_install_same_name_overwrite_defers_but_lands(
 
 
 @pytest.mark.asyncio
+@pytest.mark.replay("fixtures/llm/skill_install/hotreload_no_per_session_reloader.jsonl")
 async def test_skill_install_no_per_session_reloader_defers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _llm_replay,
 ) -> None:
     """Tier 2: with no per-session reloader (ctx.hot_reloader=None — the CLI
     separate-process install), a NEW skill install does NOT apply mid-turn; it takes the
