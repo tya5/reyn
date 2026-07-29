@@ -268,14 +268,14 @@ Two other cost-adjacent construction points stay inline:
 
 ## Family 5 — Retrieval
 
-`_build_retrieval_bundle` constructs the embedding block (four attrs:
-`action_embedding_index`/`embedding_provider`/`embedding_model_class`/
-`embedding_event_sink`) plus `action_usage_tracker` — a byte-identical extraction (same
+`_build_retrieval_bundle` constructs the embedding block (three attrs:
+`action_embedding_index`/`embedding_provider`/`embedding_model_class`) plus
+`action_usage_tracker` — a byte-identical extraction (same
 objects, same conditionals, same try/except None-fallbacks, same args as the inline
 sequence it replaced). It stays UNMOVED, invoked at its original position, BEFORE Family 1
 (`_build_audit_event_bundle`) runs — this family has no eager dependency on `chat_events`,
-only the two closures' DEFERRED `self._chat_events` resolution (kept verbatim since this is
-an instance method).
+only the `_on_hot_list_changed` closure's DEFERRED `self._chat_events` resolution (kept
+verbatim since this is an instance method).
 
 `_action_retrieval` (FP-0034 PR-3b-iii) drives whether the universal catalog wrappers
 appear in the router `tools=`. Default constructs an off-flag `ActionRetrievalConfig` so
@@ -306,31 +306,37 @@ surface `search_actions` to the LLM with a `None`/inert index; invoking it
 would raise `AttributeError` inside the handler instead of returning the
 intended empty-result degrade.
 
-### Embedding event sink — deferred self._chat_events capture (FP-0043 C.3/C.4)
+### Embedding event sink — removed (#3438)
 
-FP-0043 Component C.3 wires the embedding provider's lazy model-load
-lifecycle (downloading / loaded / error) into the session's events bus, so
-the TUI can render a sticky status row, a green "done" frame, and a
-retry-hint error row. The sink is called from the embed worker thread;
-`events.emit` is GIL-protected + sync, so this is safe without a
-`call_soon_threadsafe` bridge.
+FP-0043 Component C.3 originally wired the embedding provider's lazy
+model-load lifecycle (downloading / loaded / error) into the session's
+events bus via an `_embedding_event_sink` closure (`f"embedding_{kind}"`),
+threaded through `Session` -> `OpContext` -> the `embed` op -> the provider
+(FP-0057 #2856 Part A) so the TUI could render a sticky status row. #3128
+later removed the in-process embedding-model backend that had a lazy-load
+lifecycle to report on — reyn depends on litellm exclusively for
+embeddings now, and local/offline models are reached (if wanted) via an
+operator-run litellm proxy, which reyn does not manage a download
+lifecycle for (see
+[rag.md § Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models)).
+That left the sink with no producer: `get_provider` only forwards an
+`event_sink` kwarg to a provider class whose signature accepts it, and the
+sole implementation (`LiteLLMEmbeddingProvider`) never did — so no
+`embedding_*` audit-event kind was ever emitted. #3438 (independent
+re-verification confirmed the zero-producer finding, and found no
+comment/ADR/issue recording an intent to keep the wire for a future
+provider) deleted the sink, `OpContext.embedding_event_sink`, and every hop
+of the threading, along with the `KIND_FAMILY` registry entry it used to
+justify in `event_schema.py`'s `DYNAMIC_KIND_EMIT_SITES`.
 
-**C.4 hotfix (2026-05-27).** The sink closure (`_embedding_event_sink`) MUST
-resolve `self._chat_events` at CALL time, not at construction time — the
-`EventLog` is built later in `__init__` (Family 1, ~line 1560+, which runs
-after Family 5). The original C.3 wiring captured `self.events` instead —
-an attribute that does not exist on `Session` at all (the real attribute is
-`self._chat_events`). That typo raised `AttributeError` the moment the sink
-fired, and the surrounding `except Exception: embedding_provider = None`
-fallback SWALLOWED it silently — disabling `search_actions` for every
-operator who had `embedding_class` set, with no crash, no log line pointing
-at the cause, and no test failure. It shipped and stayed broken until
-someone diagnosed it by hand.
-
-This mirrors the `_on_hot_list_changed` closure pattern in the
-`ActionUsageTracker` setup a few lines below — same deferred-capture shape,
-same swallow-prone `try/except`, same recurrence risk if either closure is
-rewritten to capture eagerly.
+The `_on_hot_list_changed` closure in the `ActionUsageTracker` setup a few
+lines below still uses the same deferred-`self._chat_events`-capture
+pattern the removed sink used to mirror (C.4 hotfix, 2026-05-27: capturing
+`self.events` instead of `self._chat_events` at construction time raised
+`AttributeError` the moment the sink fired, silently swallowed by the
+surrounding `try/except` — see git history for the original incident
+writeup). That recurrence risk is still live for `_on_hot_list_changed`,
+so it is called out here for future edits of that closure.
 
 ## Family 6a — Router-waist (`RouterHostAdapter`)
 
