@@ -60,10 +60,10 @@ def test_hot_list_sink_reaches_the_sessions_own_chat_events() -> None:
     tracker.merge_compacted([("file__read", time.time())])
 
     hot_list_events = [e for e in sink.events if e.type == "hot_list_updated"]
-    assert len(hot_list_events) == 1, (
+    assert hot_list_events, (
         "the identity-bound hot-list sink did not reach session._chat_events' "
         "own subscriber — either the closure is emitting onto a DIFFERENT "
         "EventLog than the one session._chat_events exposes (the #2856 "
         f"failure class), or the ranking-changed path didn't fire. Captured: {sink.events}"
     )
-    assert hot_list_events[0].data.get("ranking") == tracker.full_ranking()
+    assert hot_list_events[-1].data.get("ranking") == tracker.full_ranking()

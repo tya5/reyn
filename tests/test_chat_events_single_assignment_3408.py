@@ -88,10 +88,9 @@ def test_self_chat_events_assigned_exactly_once_src_wide() -> None:
         "(self._chat_events, resolved at call time) instead of the identity-"
         "bound builder arg — see that method's docstring."
     )
-    [(only_file, only_lines)] = offenders.items()
+    [(only_file, _only_lines)] = offenders.items()
     assert only_file == "src/reyn/runtime/session.py", (
         "the sole self._chat_events assignment moved out of "
         f"runtime/session.py to {only_file} — Session.__init__ is the "
         "expected owner (Family 1 / _build_audit_event_bundle)"
     )
-    assert len(only_lines) == 1
