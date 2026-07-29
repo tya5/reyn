@@ -17,7 +17,8 @@ they are not interchangeable and one is not derived from the other:
    its payload must carry (FP-0021). It covers a SUBSET of the vocabulary and
    says nothing about which kinds exist — the distinction that let
    ``mcp_search_invoked`` / ``mcp_tool_loaded`` sit here with required fields
-   long after their emitters were gone, and let ``mcp_resources_listed`` /
+   while reyn had no point at which it could ever emit them (see the decision
+   record next to their former entries), and let ``mcp_resources_listed`` /
    ``mcp_prompts_listed`` ship without appearing here at all.
 
 ``KIND_EMIT_SEAMS`` and ``DYNAMIC_KIND_EMIT_SITES`` support (1): they declare
@@ -80,11 +81,32 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "user_intervention_requested": frozenset({"run_id", "actor", "intervention_id"}),
     "user_intervention_received": frozenset({"run_id", "actor", "intervention_id"}),
     # (#3410) ``mcp_search_invoked`` / ``mcp_tool_loaded`` were declared here for
-    # the FP-0024 tool_search meta-tool and REMOVED: an AST census of every emit
-    # seam in ``src/reyn`` found no producer for either, and the only other
-    # mention of them anywhere in the repo was a test asserting that this map
-    # declared them. Required fields for a kind nobody emits constrain nothing.
-    # Reinstating them means adding the emitter first.
+    # the FP-0024 tool_search meta-tool and REMOVED — not because nobody got
+    # around to writing the emitter, but because **reyn has no point at which it
+    # could observe either event**. Both were measured before removing:
+    #
+    #   - ``tool_search`` is Anthropic's SERVER-SIDE meta-tool
+    #     (``tool_search_tool_20251101``). reyn hands the provider a catalog;
+    #     the provider matches the query and loads the subset itself. The search
+    #     call never returns to reyn as a tool call — the literal
+    #     ``"tool_search"`` appears in ``src/reyn`` exactly twice, in
+    #     ``router_tools.build_mcp_search_tool``'s descriptor and the comment
+    #     above it. There is no dispatch arm to emit from, for either the search
+    #     ("mcp_search_invoked") or the per-tool load ("mcp_tool_loaded").
+    #   - Nor is the arm reachable today: it needs ``mcp_search_threshold > 0``,
+    #     ``MCP_SEARCH_THRESHOLD`` is 0, the ``ReynConfig`` field was
+    #     fold-removed (#3218), and neither production ``build_tools()`` caller
+    #     (``router_loop`` / ``capability_visibility``) passes the parameter.
+    #
+    # ★ Contrast with the ``_mcp_list_*`` decision this same change made in the
+    # other direction (session.py, #3410): there, reyn ITSELF performs the
+    # listing, so an observation point exists and "emitting is the recoverable
+    # direction" applies. Here it does not — the event happens inside the
+    # provider. A declared kind reyn cannot produce is the #3357 defect, so the
+    # honest move is to drop the declaration, not to invent an emit site.
+    #
+    # Reinstating them requires an observation point first (e.g. a provider
+    # response field naming which tools a search loaded), not just an emitter.
     # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
     # Emitted by RouterLoop when invoke_action or a hot list alias is executed.
     # action_name: the resolved qualified_name (e.g. "agent.peer__alice")
@@ -551,7 +573,11 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
             "(``LiteLLMEmbeddingProvider``) documents that it does not. So no "
             "``embedding_*`` kind is emitted today, and none is declared in "
             "AUDIT_EVENT_KINDS. Wiring a provider that DOES report lifecycle "
-            "means deciding the kind names first — pass them as literals then."
+            "means deciding the kind names first — pass them as literals then. "
+            "Tracked in #3438: the threading is either removed, or made real "
+            "with literal kind names. This registry entry should not outlive "
+            "that decision — a permanently-registered hole in a closed "
+            "vocabulary is a contradiction."
         ),
     ),
     # Two entries for one helper: the recursion inside it, and the call that

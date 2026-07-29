@@ -180,9 +180,11 @@ def test_search_tool_structure():
 
     # (#3410) This test used to also assert that ``mcp_search_invoked`` /
     # ``mcp_tool_loaded`` were declared in ``EVENT_AUDIT_REQUIREMENTS``. Both
-    # declarations were removed: an AST census of every audit-emit seam in
-    # ``src/reyn`` found no producer for either kind, so the assertion pinned a
-    # declaration whose only remaining reader was this assertion. Liveness of
-    # the kind vocabulary is now a repo-wide gate
+    # declarations were removed because reyn has no point at which it could
+    # observe either event: ``tool_search`` is resolved SERVER-SIDE by the
+    # provider, so neither the search nor the per-tool load ever comes back to
+    # reyn as something it dispatches. See the decision record next to their
+    # former entries in ``reyn.core.events.event_schema`` — it is a "cannot",
+    # not a "not yet". Liveness of the kind vocabulary is now a repo-wide gate
     # (``tests/test_audit_event_kind_vocabulary_3410.py``) rather than a
     # per-feature spot check that could only ever see the declaration side.

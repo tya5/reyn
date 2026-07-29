@@ -260,8 +260,9 @@ def test_field_requirements_only_constrain_kinds_in_the_vocabulary() -> None:
     *what fields a given kind must carry* — and the field map is a refinement of
     the vocabulary, never a second source of it. Before #3410 nothing said so,
     which is how ``mcp_search_invoked`` / ``mcp_tool_loaded`` sat in the field
-    map for a year after their emitters were gone: the only registry that
-    mentioned them was the one that never claimed to say what exists.
+    map while reyn had no point at which it could ever emit them: the only
+    registry that mentioned them was the one that never claimed to say what
+    exists.
     """
     orphans = sorted(set(EVENT_AUDIT_REQUIREMENTS) - AUDIT_EVENT_KINDS)
     assert not orphans, (
