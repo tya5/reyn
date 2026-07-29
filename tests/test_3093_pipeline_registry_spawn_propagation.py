@@ -73,12 +73,27 @@ import yaml
 
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.work_order import pipeline_run_dir, read_result
+from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import _handle_run_pipeline, _handle_run_pipeline_async
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
+
+
+def _scripted_llm():
+    # The DETACHED driver's completion posts a ``pipeline_result`` inbox
+    # message to the reply-to (caller) session, whose next router turn reaches
+    # real litellm.acompletion with no stub wired — same shape as the sibling
+    # stub in tests/test_2103_s1bc_exec_result_routing.py.
+    async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            content="ack", tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1),
+        )
+    return _fake_llm
 
 
 def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
@@ -182,14 +197,6 @@ async def _wait_for(pred, timeout: float = 15.0) -> bool:
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
 async def test_async_detached_run_resolves_sibling_via_family_gate(
     tmp_path: Path, monkeypatch,
 ) -> None:
@@ -201,6 +208,7 @@ async def test_async_detached_run_resolves_sibling_via_family_gate(
     the on-disk cascade BEFORE the run's first nudge. RED before #3097 (and
     before #3094): the driver would inherit the caller's FROZEN factory-time
     registry and fail "target pipeline 'ns.sibling' is not registered"."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"

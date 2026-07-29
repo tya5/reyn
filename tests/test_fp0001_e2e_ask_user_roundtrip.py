@@ -230,14 +230,6 @@ def _build_registry_for_test(tmp_path: Path):
 
 
 @pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
 def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     """Tier 2c: POST /a2a/agents/{name} with async_mode=true returns a task
     envelope {kind: 'task', id: run_id, status: 'running'}.
@@ -246,6 +238,7 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
+    import reyn.interfaces.web.routers.a2a as a2a_mod
     from reyn.interfaces.web.a2a_webhook_registry import A2AWebhookRegistry
     from reyn.interfaces.web.deps import (
         get_a2a_webhook_registry,
@@ -255,6 +248,20 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     from reyn.interfaces.web.run_registry import RunRegistry
     from reyn.interfaces.web.server import app
     from tests._support.web_auth import local_operator_client
+
+    # The create path kicks off a real background agent-send turn that
+    # reaches litellm.acompletion with no stub wired — same real-injected-stub
+    # shape as this file's sibling
+    # test_e2e_create_with_webhook_then_cancel_fires_disposition, which stubs
+    # send_to_agent_impl directly rather than the deeper router_loop call.
+    async def _stub_send(*_args, **_kwargs):
+        return {"reply": "ok", "partial": False, "running_run_ids": []}
+
+    monkeypatch.setattr(a2a_mod, "send_to_agent_impl", _stub_send)
+    monkeypatch.setattr(
+        a2a_mod, "resolve_a2a_session",
+        lambda registry, agent_name, context_id=None: None,
+    )
 
     registry = _build_registry_for_test(tmp_path)
     # FP-0009 B: RunRegistry now lives in the FastAPI lifespan startup.

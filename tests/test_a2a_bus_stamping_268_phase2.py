@@ -40,12 +40,27 @@ pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missin
 
 from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
 from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
+from reyn.llm.llm import LLMToolCallResult  # noqa: E402
+from reyn.llm.pricing import TokenUsage  # noqa: E402
 from reyn.runtime.session import Session  # noqa: E402
 from reyn.user_intervention import (  # noqa: E402
     InterventionAnswer,
     UserIntervention,
 )
 from tests._support.agent_session import make_session
+
+
+def _scripted_llm():
+    # send_to_agent_impl drives the session's real router turn — with
+    # no stub wired, that turn reaches real litellm.acompletion (the short
+    # timeout= just raced it, it did not prevent the reach). Same stub shape
+    # as tests/test_2103_s1bc_exec_result_routing.py.
+    async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            content="ack", tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1),
+        )
+    return _fake_llm
 
 # ── 1. A2AInterventionBus.channel_id ──────────────────────────────────
 
@@ -118,16 +133,8 @@ def test_on_dispatch_respects_preexisting_origin_channel_id() -> None:
 # ── 3. send_to_agent_impl listener lifecycle ──────────────────────────
 
 
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
 def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: when ``send_to_agent_impl`` is called with an
     A2AInterventionBus override, the bus's ``channel_id`` is
@@ -137,6 +144,7 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     Verifies the agent layer's origin-pin check (= Phase 1 design)
     treats the A2A channel as alive while the task runs.
     """
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -217,16 +225,8 @@ def test_send_to_agent_impl_registers_a2a_channel_id_as_listener(
     )
 
 
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
 def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: defensive — when an override doesn't expose
     ``channel_id`` (= future bus impls might not), the listener
@@ -235,6 +235,7 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
     Uses a minimal stub bus to verify the defensive
     ``getattr(intervention_override, "channel_id", None)`` path.
     """
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -293,21 +294,14 @@ def test_send_to_agent_impl_skips_listener_when_override_has_no_channel_id(
 # ── 4. Backwards-compat: no override = no listener change ─────────────
 
 
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
 def test_send_to_agent_impl_without_override_does_not_register_listener(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: when ``intervention_override`` is None (= the legacy
     path), no listener registration happens. Pre-#268 callers see
     unchanged behaviour.
     """
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.server import send_to_agent_impl
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig

@@ -132,18 +132,11 @@ async def test_unrecorded_sid_falls_back_to_kind_agent(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_response_routes_to_non_main_spawner_sid_not_main(tmp_path):
+async def test_response_routes_to_non_main_spawner_sid_not_main(tmp_path, monkeypatch):
     """Tier 2: (LOAD-BEARING, #2130) a response addressed to a NON-MAIN (spawner) sid
     routes to THAT specific session, NOT the agent's main. RED on the name-only delivery
     (get_or_load(to) → main): main would get it + the spawner would not."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")  # the agent's main (must NOT receive a non-main reply)
     x_sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
@@ -209,20 +202,13 @@ async def test_non_main_delegation_reply_routes_to_delegating_sid_not_main(tmp_p
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_default_path_loads_cold_main_and_starts_forwarder(tmp_path):
+async def test_default_path_loads_cold_main_and_starts_forwarder(tmp_path, monkeypatch):
     """Tier 2: (LOAD-BEARING byte-identical leg, #2130) a reply with NO to_sid (the
     default/main case) keeps the existing get_or_load + ensure_running semantics — it
     LOADS a COLD/unloaded main from disk and starts its forwarder. RED if the default path
     were switched to the get-only get_session (a cold/unloaded main would be silently
     DROPPED, never loaded — a warm-main test would not catch this)."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     reg = _registry(tmp_path)
     reg.create("sender")
     sender = reg.get_or_load("sender")
