@@ -353,7 +353,7 @@ def _documented_kinds() -> list[str]:
     text = _EVENTS_REFERENCE.read_text(encoding="utf-8")
     start = text.index(_DOC_BEGIN) + len(_DOC_BEGIN)
     end = text.index(_DOC_END)
-    return re.findall(r"^`([a-z0-9_]+)`", text[start:end], flags=re.MULTILINE)
+    return re.findall(r"^([a-z0-9_]+)$", text[start:end], flags=re.MULTILINE)
 
 
 def test_events_reference_enumerates_exactly_the_declared_vocabulary() -> None:

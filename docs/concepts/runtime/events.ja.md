@@ -24,11 +24,11 @@ OS が唯一のミューテーターであり（P3）、すべてのミューテ
 主なバケットのいくつか：
 
 - **LLM とコンテキスト** — `llm_called`。
-- **Control IR** — op の種類ごとに 1 つの audit-event(`sandboxed_exec_started`、`mcp_called`、`web_search_started`、`semantic_search_embed_failed` — read などの `file` op は個別の kind ではなく、共有の `tool_executed` kind に乗り、具体的な op 名は `op` フィールドに入る)と `permission_denied`。この列挙は例示であり網羅的ではない — 閉じた完全な kind 語彙は単一の source of truth から導出される予定(#3410)。それまではここに載る kind 名の列挙を例としてのみ扱うこと。
+- **Control IR** — op の種類ごとに 1 つの audit-event（`sandboxed_exec_started`、`mcp_called`、`web_search_started`、`semantic_search_embed_failed`）と `permission_denied`。read のような `file` op は独立した kind ではなく、共有の `tool_executed` kind に乗り、具体的な操作は `op` フィールドで名指しされます。
 - **ユーザーとのやり取り** — `user_message_received`、`user_intervention_received`、`chat_started`、`chat_stopped`、`turn_cancelled`。
 - **Agent 間メッセージング** — `agent_message_sent`、`agent_request_received`、`agent_response_received`、`agent_message_refused`、`chain_timeout`。各 audit-event は `chain_id` を持つため、1 つのユーザーリクエストを複数のホップにまたがって追跡できます。
 
-完全な分類は [events リファレンス](../../reference/runtime/events.md) にあります。
+上記のバケットは例です。`type` フィールドは**閉じた語彙**であり、reyn が発行する kind の全体（それ以外は発行しません）は [events リファレンス](../../reference/runtime/events.md#kind-vocabulary) に列挙されています。列挙は `src/reyn/core/events/event_schema.py` の単一の SSoT から導出され、発行側コードとページの双方に対して CI で検査されます。したがって reyn の外にいる消費者も、受け取りうる type の全体を列挙できます。
 
 ### Task subscription event — WAL であって audit-event ログではない
 
