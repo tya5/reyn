@@ -153,7 +153,7 @@ Two products from the 2025-2026 HN AI-agent landscape illustrate the pattern:
 
 **Conversation-analytics platforms (Lenzy AI as one example)**
 
-Lenzy AI offers "product analytics for AI agents" — analyzing user-agent conversations to extract product insights. The Reyn primitive it would consume is the events log: `workflow_started`, `phase_completed`, `llm_called`, and per-workflow aggregations already carry everything needed to reconstruct a conversation arc and derive analytics.
+Lenzy AI offers "product analytics for AI agents" — analyzing user-agent conversations to extract product insights. The Reyn primitive it would consume is the events log: `turn_started`, `turn_settled`, `llm_called`, and per-turn aggregations already carry everything needed to reconstruct a conversation arc and derive analytics.
 
 What Reyn does: emit structured, per-run events with stable envelopes. What is deliberately out of scope: aggregating those events across users, runs, or workflows into dashboards, trend lines, or product-insight reports. That layer requires product-specific schema knowledge (what does "a successful conversation" mean for *this* workflow?) that the OS must not encode.
 

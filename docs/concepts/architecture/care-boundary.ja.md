@@ -153,7 +153,7 @@ P7 は OS コードがドメイン固有の文字列を含んではならない�
 
 **Conversation analytics platform (Lenzy AI を一例として)**
 
-Lenzy AI は「product analytics for AI agents」— agent とユーザーの会話を分析して product insight を抽出する。Reyn の primitive として消費するのは events log だ: `workflow_started`、`phase_completed`、`llm_called`、および per-ワークフロー集計は、会話の弧を再構成して analytics を導出するために必要なものをすべて持っている。
+Lenzy AI は「product analytics for AI agents」— agent とユーザーの会話を分析して product insight を抽出する。Reyn の primitive として消費するのは events log だ: `turn_started`、`turn_settled`、`llm_called`、および per-turn 集計は、会話の弧を再構成して analytics を導出するために必要なものをすべて持っている。
 
 Reyn が行うこと: 安定した envelope を持つ、run 単位の構造化 event を emit すること。意図的にスコープ外とすること: それらの event をユーザー・run・ワークフローをまたいで集計し、dashboard、トレンドライン、product insight レポートを生成すること。そのレイヤーには product 固有の schema 知識が必要だ (このワークフローにとって「成功した会話」とは何か?) — OS が encode してはならないもの。
 
