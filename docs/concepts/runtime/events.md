@@ -30,9 +30,9 @@ A few of the larger buckets:
 
 The buckets above are examples. The `type` field is a **closed vocabulary** — every kind reyn emits, and nothing else, is enumerated in the [events reference](../../reference/runtime/events.md#kind-vocabulary), derived from one source of truth in `src/reyn/core/events/event_schema.py` and CI-checked against both the emitting code and the page. A consumer outside reyn can therefore enumerate the complete set of types it may receive.
 
-### Task subscription events — WAL, not audit-event log
+### Task subscription events — historical WAL design, now removed
 
-Task↔session binding changes are declared as **WAL** kinds (`task_subscribed`, `task_rebound` — StateLog, `.reyn/state/wal.jsonl`), not the P6 audit-event log, so if this mechanism is live you should look for them there, not here. Currently, however, neither kind has a writer anywhere in the codebase — the WAL vocabulary declares them but nothing appends one, so no task↔session binding change is actually recorded today. The WAL is generally the crash-recovery and time-travel substrate; the audit-event log is the per-run trace — they are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*).
+Task↔session binding changes (assignee/requester) were *designed* (#2187) to be recorded as **WAL** kinds (`task_subscribed`, `task_rebound` — StateLog, `.reyn/state/wal.jsonl`), not the P6 audit-event log — so if this mechanism were live, you would look for it there, not here. It never got a writer, and #3436 removed the two kinds from the WAL vocabulary entirely (dead declaration, no producer). Task↔session binding changes are not recorded anywhere today. The WAL is generally the crash-recovery and time-travel substrate; the audit-event log is the per-run trace — they are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*).
 
 ## What an audit-event is
 

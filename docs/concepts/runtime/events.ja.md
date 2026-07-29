@@ -30,9 +30,9 @@ OS が唯一のミューテーターであり（P3）、すべてのミューテ
 
 上記のバケットは例です。`type` フィールドは**閉じた語彙**であり、reyn が発行する kind の全体（それ以外は発行しません）は [events リファレンス](../../reference/runtime/events.md#kind-vocabulary) に列挙されています。列挙は `src/reyn/core/events/event_schema.py` の単一の SSoT から導出され、発行側コードとページの双方に対して CI で検査されます。したがって reyn の外にいる消費者も、受け取りうる type の全体を列挙できます。
 
-### Task subscription event — WAL であって audit-event ログではない
+### Task subscription event — 過去に設計され、現在は削除済みの WAL 機構
 
-Task↔session の紐付け変更は **WAL** kind（`task_subscribed`、`task_rebound` — StateLog、`.reyn/state/wal.jsonl`）として宣言されており、P6 audit-event ログにはありません — この機構が生きているなら探す先は audit-event ログではなくこちらです。ただし現状、この2つの kind にはコードベースのどこにも書き込み箇所がありません — WAL の語彙としては宣言されているものの、実際に append する処理が無いため、Task↔session の紐付け変更は現在まったく記録されていません。WAL は一般にクラッシュリカバリと time-travel の基盤であり、audit-event ログは実行ごとのトレースです。両者は耐久性契約の異なる別々のログです（[Time-travel](time-travel.ja.md) の「WAL vs audit-event 分離」を参照）。
+Task↔session の紐付け変更（assignee/requester）は、P6 audit-event ログではなく **WAL** kind（`task_subscribed`、`task_rebound` — StateLog、`.reyn/state/wal.jsonl`）として記録する*設計*でした（#2187）——この機構が生きているなら探す先は audit-event ログではなくこちらだったはずです。しかし書き込み箇所は一度も実装されず、#3436 でこの2つの kind は WAL の語彙から削除されました（書き手のいない死んだ宣言）。Task↔session の紐付け変更は現在どこにも記録されていません。WAL は一般にクラッシュリカバリと time-travel の基盤であり、audit-event ログは実行ごとのトレースです。両者は耐久性契約の異なる別々のログです（[Time-travel](time-travel.ja.md) の「WAL vs audit-event 分離」を参照）。
 
 ## audit-event とは何か
 
