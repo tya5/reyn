@@ -18,10 +18,11 @@ Pins:
   5. Session constructs the registry in enforced mode and exposes
      ``register_intervention_listener`` / ``unregister_intervention_listener``
      wrappers.
-  6. End-to-end: a Session that hits a safety limit under
-     ``interactive`` + ``ask_timeout_seconds=0`` with no listener returns
-     immediately (no hang) and lets the caller fall through to its
-     legacy abort path.
+  6. End-to-end: a Session built with ``interactive`` +
+     ``ask_timeout_seconds=0`` + no listener registered runs a normal
+     (under-cap) turn to completion without hanging (see #3440 for why
+     this test does not itself drive the cap-exceeded path — that
+     mechanism is covered directly by pin 2, above).
 
 No mocks. Real registry, real Session.
 """
@@ -242,24 +243,62 @@ def test_chat_session_register_intervention_listener_round_trip() -> None:
     assert session.interventions.has_active_listener() is False
 
 
-# ── 6. End-to-end: limit hit under interactive + timeout=0 + no listener ──
+# ── 6. Session end-to-end: interactive + timeout=0 + no listener, normal turn ──
 
 
 @pytest.mark.replay("fixtures/llm/intervention_guard/safety_limit_no_listener.jsonl")
-def test_safety_limit_under_interactive_no_timeout_no_listener_no_hang(
+def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
     tmp_path: Path, _llm_replay,
 ) -> None:
-    """Tier 2: the exact scenario that motivated issue #254 — a chat
-    session hits a safety limit while running ``mode=interactive`` +
-    ``ask_timeout_seconds=0``, with no UI listener attached. Pre-Phase 1
-    this hung indefinitely awaiting the future. Phase 1: dispatch
-    short-circuits, ``handle_limit_exceeded`` sees an empty answer,
-    treats it as refusal, the caller raises ``RouterCapExceeded``, and
-    ``_handle_user_message`` emits its fallback message and returns.
+    """Tier 2: a Session built with the issue #254 combo — ``mode=interactive``
+    + ``ask_timeout_seconds=0`` + no UI listener registered — runs a normal
+    (under-cap) turn to completion without hanging.
+
+    #3440: this test used to *also* claim to drive the router cap to
+    exhaustion first (via ``session._router_invocations_this_turn = 3``,
+    "pre-spend the router budget so the next call hits the cap") so the turn
+    would exercise ``InterventionRegistry.dispatch``'s no-listener
+    short-circuit end-to-end. That preset was dead on arrival, for two
+    independently fatal reasons (see #3440's investigation for the full
+    measurement):
+
+    1. ``Session`` has no ``_router_invocations_this_turn`` attribute (leading
+       underscore). The real counter lives behind the property
+       ``Session.router_invocations_this_turn`` (no leading underscore,
+       forwarding to ``BudgetGateway``). The old assignment landed on a new,
+       orphaned instance attribute that nothing reads — a #3037-class
+       invented field.
+    2. Even the correctly-named property would not have survived: the very
+       ``_handle_user_message`` call this test drives *unconditionally*
+       resets the per-turn router counter to 0 at its top (see
+       ``Session._reset_router_turn_counter`` / the comment at its call
+       site), before ``RouterLoopDriver._check_cap`` ever runs — and
+       ``_check_cap`` runs exactly once per ``_handle_user_message`` call.
+       So no preset shape driven through a *single* ``_handle_user_message``
+       call can ever observe "cap already exhausted" — that state is only
+       reachable by accumulating real router invocations across in-chain
+       continuations (``_handle_agent_response`` / ``_resolve_pending_chain``,
+       which intentionally do NOT reset) within one chain, which needs a
+       real multi-turn drive this test does not set up (tracked as a
+       follow-up — see #3440).
+
+    Consequently this test never reached the cap-exceeded / dispatch
+    short-circuit path even before this fix — with or without the preset,
+    the turn completes as a plain, un-capped router turn (independently
+    measured: identical real-``litellm.acompletion`` hit count with the
+    preset present vs. removed). That specific mechanism —
+    ``InterventionRegistry.dispatch`` short-circuiting to an empty answer
+    under ``enforce_listener_presence`` with zero listeners — has direct
+    coverage elsewhere in this file
+    (``test_enforced_mode_with_no_listener_short_circuits_with_empty_answer``).
+    What THIS test still legitimately covers: constructing a Session with
+    this exact safety config and driving one real turn through it does not
+    itself hang or misbehave — a regression guard on the wiring, not on the
+    cap-exceeded mechanism.
 
     The test asserts the run completes within a small wall-clock budget
-    — a 5s ceiling is generous; pre-fix the same path waited the entire
-    pytest-timeout window.
+    — a 5s ceiling is generous; pre-fix (#254) the same path waited the
+    entire pytest-timeout window.
 
     #3435: this turn's router call reaches ``litellm.acompletion`` for
     real (``make_session`` gives it no LLM stand-in), so on an unauthenticated
@@ -283,10 +322,6 @@ def test_safety_limit_under_interactive_no_timeout_no_listener_no_hang(
         safety=safety,
     )
     # DELIBERATELY do not register a listener — that is the test condition.
-
-    # Pre-spend the router budget so the next call hits the cap.
-    session._router_invocations_this_turn = 3
-    session._router_last_reason = "out_of_scope"
 
     async def _drive() -> None:
         # Must complete promptly — pre-Phase 1 this awaited forever.
