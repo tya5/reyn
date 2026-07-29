@@ -171,6 +171,14 @@ async def test_ask_user_op_via_audit_only_bridge_returns_typed_refusal() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_detached_present_is_audit_only_no_orphan_outbox(tmp_path: Path) -> None:
     """Tier 2: a DETACHED pipeline's ``present`` no longer orphans a ``"presentation"`` message on
     the driver's own undrained outbox (the pre-fix #2710 silent-loss); it is audit-only — the
@@ -220,6 +228,14 @@ async def test_detached_present_is_audit_only_no_orphan_outbox(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_detached_ask_user_refuses_deliberately_no_hang(tmp_path: Path) -> None:
     """Tier 2: step-1 resolution pinned. A DETACHED pipeline's ``ask_user`` now RESOLVES (terminal
     reached quickly — NOT the pre-fix origin-pin park/hang that never reached terminal in >6s) via
@@ -268,6 +284,14 @@ async def test_detached_ask_user_refuses_deliberately_no_hang(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_agent_step_worker_spawned_audit_only(tmp_path: Path) -> None:
     """Tier 2: #2706 root-cause-i — ``run_agent_step`` spawns its ephemeral leaf worker with an
     AuditOnly routing (present audit-only, ask_user typed-refusal), NOT the pre-fix self-bound
@@ -310,6 +334,14 @@ async def test_agent_step_worker_spawned_audit_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(tmp_path: Path) -> None:
     """Tier 2: co-vet must-fix — the LLM ``session_spawn`` tool's BACKGROUND child routes
     ``BridgeToParent`` (not self-bound ReviewedNA), so its ``ask_user`` reaches the spawning
@@ -375,6 +407,14 @@ async def _spawn_from(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitively(
     tmp_path: Path,
 ) -> None:
@@ -416,6 +456,14 @@ async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitiv
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_fully_headless_spawn_chain_ask_user_refuses_not_hang(tmp_path: Path) -> None:
     """Tier 2: co-vet recursive-edge terminal — a FULLY-headless spawn chain (no operator listener
     anywhere in the ancestry) resolves ask_user with a typed refusal, NEVER an unbounded park. This

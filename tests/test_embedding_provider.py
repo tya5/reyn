@@ -11,9 +11,10 @@ Pinned invariants (Tier 2b — subsystem invariants):
   - Public __init__.py __all__ exports complete
 
 LiteLLM API calls are NOT made in these tests (= embed() covered via empty-list
-path + FakeEmbeddingProvider for logic tests). Tier 3 replay for embed() is
-deferred to a follow-up: LLMReplay only patches litellm.acompletion; extending
-it to litellm.aembedding is a non-trivial change (separate PR).
+path + FakeEmbeddingProvider for logic tests). LLMReplay now also patches
+litellm.aembedding (#3451) via the same `@pytest.mark.replay` marker used for
+acompletion — a Tier 3 replay test for embed() can use it directly; none of
+THESE tests need it (protocol/estimator invariants, not a real call).
 """
 from __future__ import annotations
 

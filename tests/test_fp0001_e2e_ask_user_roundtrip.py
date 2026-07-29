@@ -230,6 +230,14 @@ def _build_registry_for_test(tmp_path: Path):
 
 
 @pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     """Tier 2c: POST /a2a/agents/{name} with async_mode=true returns a task
     envelope {kind: 'task', id: run_id, status: 'running'}.

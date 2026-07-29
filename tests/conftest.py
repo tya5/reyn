@@ -44,6 +44,31 @@ from pathlib import Path
 
 import pytest
 
+# `pytester` — a core pytest plugin, not auto-loaded by default — is declared
+# here because tests/test_network_gate_3451.py drives a real, isolated inner
+# pytest session against `reyn.dev.testing.network_gate` to exercise its
+# hooks end to end.
+#
+# `reyn.dev.testing.network_gate` is itself a full pytest plugin (its own
+# `pytest_configure`/`pytest_runtest_setup`/`pytest_runtest_teardown`/
+# `pytest_sessionfinish`) so an ISOLATED inner pytester session can load just
+# the gate (via `pytest_plugins = ["reyn.dev.testing.network_gate"]` in that
+# inner session's OWN throwaway conftest) without dragging in this file's
+# other, repo-layout-dependent fixtures. It is deliberately NOT declared in
+# THIS file's own `pytest_plugins` list, even though this conftest also wires
+# it in (see the hook functions below) — a `pytest_plugins` string entry is
+# resolved (imported) during pytest's plugin-discovery phase, which runs
+# BEFORE the root `conftest.py`'s `pytest_configure` (the #3233 in-process
+# `import reyn` guard) ever gets a chance to fire. `import reyn.dev...` failing
+# at that earlier phase (e.g. a decoy `reyn` cached by a stray sitecustomize/
+# .pth, the exact #3233 shape) would raise its OWN raw ImportError and abort
+# before the guard's friendlier "env-identity (in-process, #3233)" message —
+# regression caught by tests/test_3233_inprocess_env_identity.py's decoy
+# witness. So THIS conftest imports and calls it lazily, function-body-local,
+# from within its own hooks below (same lazy-import style `_llm_replay`
+# already uses for `LLMReplay`) — strictly after the root guard has run.
+pytest_plugins = ["pytester"]
+
 # ── Repo-root on sys.path (stable ``tests`` package imports) ───────────────────
 #
 # ``tests/`` has no ``__init__.py`` (it is collected from the rootdir as an
@@ -261,11 +286,23 @@ def _isolate_budget_limit_context():
 # ── Marker registration ────────────────────────────────────────────────────────
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_configure(config: pytest.Config) -> None:
+    """``trylast=True``: pluggy calls unmarked ``pytest_configure``
+    implementations in REVERSE registration order (a deeper conftest, loaded
+    after the root one, would otherwise run FIRST) — this file's `import
+    reyn.dev...` (inside, for the #3451 network gate) must run strictly AFTER
+    the root ``conftest.py``'s own ``pytest_configure`` (the #3233 in-process
+    import-identity guard), which has no such marker and therefore keeps its
+    normal place. Without ``trylast`` here, a decoy `reyn` (#3233's exact
+    scenario) makes THIS file's import raise a raw ``ModuleNotFoundError``
+    before the guard's friendlier diagnostic ever runs — regression caught by
+    ``tests/test_3233_inprocess_env_identity.py``'s decoy witness."""
     config.addinivalue_line(
         "markers",
-        "replay(fixture): monkeypatch litellm.acompletion with a JSONL fixture. "
-        "Pass the fixture path relative to the tests/ directory.",
+        "replay(fixture): monkeypatch litellm.acompletion AND litellm.aembedding "
+        "with a JSONL fixture. Pass the fixture path relative to the tests/ "
+        "directory.",
     )
     config.addinivalue_line(
         "markers",
@@ -273,6 +310,35 @@ def pytest_configure(config: pytest.Config) -> None:
         "reachable; runs against a real container. Select with `-m docker` / "
         "deselect with `-m 'not docker'`.",
     )
+
+    # #3451 network gate — imported lazily, HERE, inside the hook body (not at
+    # module top-level / not a `pytest_plugins` string): see the long comment
+    # by this file's `pytest_plugins` declaration above for why an eager
+    # `import reyn.dev...` at plugin-discovery time regresses the #3233 decoy
+    # witness. By the time this function body runs, the root conftest.py's own
+    # `pytest_configure` (the in-process import-identity guard) has already
+    # had its turn.
+    from reyn.dev.testing import network_gate
+
+    network_gate.pytest_configure(config)
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    from reyn.dev.testing import network_gate
+
+    network_gate.pytest_runtest_setup(item)
+
+
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
+    from reyn.dev.testing import network_gate
+
+    network_gate.pytest_runtest_teardown(item, nextitem)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    from reyn.dev.testing import network_gate
+
+    network_gate.pytest_sessionfinish(session, exitstatus)
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────

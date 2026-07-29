@@ -2,29 +2,40 @@
 
 Design
 ------
-Monkeypatches ``litellm.acompletion`` (the *async* boundary used by the
-LLM call path) so that all LLM calls in a test are intercepted at a single,
-stable point.
+Monkeypatches ``litellm.acompletion`` AND ``litellm.aembedding`` (#3451 part
+1 — the two async boundaries reyn's own source code calls; see
+``reyn.dev.testing.network_gate`` for how that pair is kept honest against a
+FUTURE litellm surface reyn starts calling) so that all LLM/embedding calls
+in a test are intercepted at a single, stable point each.
 
 Fixture format (JSONL, one call per line)
 -----------------------------------------
-::
+Two shapes share one file, distinguished by ``"kind"`` (absent/``"completion"``
+= legacy acompletion entries predating #3451; ``"embedding"`` = aembedding)::
 
-    {"key": "<sha256>", "model": "openai/gemini-2.5-flash-lite",
+    {"key": "<sha256>", "kind": "completion", "model": "openai/gemini-2.5-flash-lite",
      "prompt_preview": "...", "response": {...}}
 
-- ``key``   SHA-256 hex of ``model + canonical_json(messages)`` (legacy, no tools)
-  or ``model + canonical_json(messages) + canonical_json(tools) + tool_choice``
-  when tools/tool_choice are present (PR35+).
+    {"key": "<sha256>", "kind": "embedding", "model": "openai/text-embedding-3-small",
+     "prompt_preview": "...", "response": {...}}
+
+- ``key`` (completion) SHA-256 hex of ``model + canonical_json(messages)``
+  (legacy, no tools) or ``model + canonical_json(messages) +
+  canonical_json(tools) + tool_choice`` when tools/tool_choice are present
+  (PR35+).
+- ``key`` (embedding) SHA-256 hex of ``"embed|" + model + canonical_json(input)``
+  — a distinct namespace (the ``"embed|"`` prefix) from the completion key so
+  the two kinds can never collide even though they share one fixture file.
 - ``model`` / ``prompt_preview``  human-readable grep aids; not used for lookup.
-- ``response``  ``litellm.ModelResponse.model_dump()`` serialised to dict.
-  On replay the dict is reconstructed as a ``litellm.ModelResponse``.
+- ``response``  ``litellm.ModelResponse.model_dump()`` (completion) or
+  ``litellm.EmbeddingResponse.model_dump()`` (embedding), serialised to dict.
+  On replay the dict is reconstructed as the matching litellm response type.
 
 Record mode
 -----------
-Set ``REYN_LLM_RECORD=1`` before running pytest to call the real LLM and
-write fixtures. If a fixture file is absent, record mode is activated
-automatically (first-run fixture generation).
+Set ``REYN_LLM_RECORD=1`` before running pytest to call the real LLM/embedding
+provider and write fixtures. If a fixture file is absent, record mode is
+activated automatically (first-run fixture generation).
 
 Sensitive data note
 -------------------
@@ -48,7 +59,7 @@ class MissingFixture(Exception):
 
 
 class LLMReplay:
-    """Record or replay ``litellm.acompletion`` calls.
+    """Record or replay ``litellm.acompletion`` AND ``litellm.aembedding`` calls.
 
     Usage (via conftest)::
 
@@ -67,17 +78,22 @@ class LLMReplay:
     mode:
         ``"replay"`` — look up saved responses; raise ``MissingFixture`` on
         a cache miss.
-        ``"record"`` — call the real LLM and append to the fixture file.
+        ``"record"`` — call the real LLM/embedding provider and append to
+        the fixture file.
     """
 
     def __init__(self, fixture_path: Path, mode: Literal["replay", "record"]) -> None:
         self.fixture_path = fixture_path
         self.mode = mode
-        # key → serialised ModelResponse dict
+        # key → serialised ModelResponse dict (kind="completion")
         self._records: dict[str, dict] = {}
-        # pending writes (record mode only)
+        # key → serialised EmbeddingResponse dict (kind="embedding")
+        self._embed_records: dict[str, dict] = {}
+        # pending writes (record mode only) — completion and embedding entries
+        # share one pending list; each entry carries its own "kind".
         self._pending: list[dict] = []
         self._original_acompletion: Any = None
+        self._original_aembedding: Any = None
         self._load()
 
     # ── Key computation ────────────────────────────────────────────────────────
@@ -118,6 +134,22 @@ class LLMReplay:
         return h.hexdigest()
 
     @staticmethod
+    def embed_key(model: str, input_texts: list[str]) -> str:
+        """Return the SHA-256 cache key for an ``aembedding`` call.
+
+        A distinct ``"embed|"``-prefixed namespace from :meth:`key` — the two
+        kinds share one fixture *file* (so a test's replay fixture stays a
+        single artifact regardless of which litellm boundary it exercises),
+        but must never collide in the lookup dict even for a pathological
+        ``model``+``messages`` string that happens to equal some ``model``+
+        ``input`` string.
+        """
+        input_json = json.dumps(input_texts, sort_keys=True, ensure_ascii=False)
+        h = hashlib.sha256()
+        h.update(f"embed|{model}|{input_json}".encode())
+        return h.hexdigest()
+
+    @staticmethod
     def _prompt_preview(messages: list[dict]) -> str:
         """First 200 chars of the last message's content (human aid only)."""
         if not messages:
@@ -136,7 +168,10 @@ class LLMReplay:
     # ── Fixture I/O ────────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        """Load existing fixture into ``self._records`` (no-op if absent)."""
+        """Load existing fixture into ``self._records``/``self._embed_records``
+        (no-op if absent). ``entry["kind"]`` routes each line; entries predating
+        #3451 have no ``"kind"`` key and default to ``"completion"`` (the only
+        kind that existed before aembedding coverage was added)."""
         if not self.fixture_path.exists():
             return
         for raw_line in self.fixture_path.read_text(encoding="utf-8").splitlines():
@@ -145,7 +180,10 @@ class LLMReplay:
                 continue
             try:
                 entry = json.loads(raw_line)
-                self._records[entry["key"]] = entry["response"]
+                if entry.get("kind", "completion") == "embedding":
+                    self._embed_records[entry["key"]] = entry["response"]
+                else:
+                    self._records[entry["key"]] = entry["response"]
             except Exception:
                 # Skip corrupt lines — fixture is a test artifact; silent skip
                 # is acceptable (same policy as BudgetLedger).
@@ -168,19 +206,25 @@ class LLMReplay:
     # ── Monkeypatch lifecycle ──────────────────────────────────────────────────
 
     def install(self) -> None:
-        """Replace ``litellm.acompletion`` with this instance's handler."""
+        """Replace ``litellm.acompletion`` AND ``litellm.aembedding`` with this
+        instance's handlers (#3451 — both boundaries, one Fake)."""
         import litellm
 
         self._original_acompletion = litellm.acompletion
         litellm.acompletion = self._handle  # type: ignore[attr-defined]
+        self._original_aembedding = litellm.aembedding
+        litellm.aembedding = self._handle_embedding  # type: ignore[attr-defined]
 
     def restore(self) -> None:
-        """Restore the original ``litellm.acompletion``."""
-        if self._original_acompletion is not None:
-            import litellm
+        """Restore the original ``litellm.acompletion`` / ``litellm.aembedding``."""
+        import litellm
 
+        if self._original_acompletion is not None:
             litellm.acompletion = self._original_acompletion  # type: ignore[attr-defined]
             self._original_acompletion = None
+        if self._original_aembedding is not None:
+            litellm.aembedding = self._original_aembedding  # type: ignore[attr-defined]
+            self._original_aembedding = None
 
     # ── Request handler ────────────────────────────────────────────────────────
 
@@ -313,6 +357,58 @@ class LLMReplay:
 
         return _gen()
 
+    async def _handle_embedding(self, model: str, input: Any, **kwargs: Any) -> Any:  # noqa: A002
+        """Intercept an ``aembedding`` call (#3451 — the ``_handle`` sibling for
+        the embedding boundary; same record/replay semantics, separate key
+        namespace, separate response type).
+
+        ``input`` is litellm's own parameter name for the embedding boundary
+        (a str or list[str]) — shadowing the builtin is what the real
+        ``litellm.aembedding`` signature does too, so this keeps kwarg
+        pass-through byte-identical for callers that pass it positionally
+        via ``**kwargs``.
+        """
+        input_texts = input if isinstance(input, list) else [input]
+        key = self.embed_key(model, input_texts)
+
+        if self.mode == "replay":
+            return self._replay_embedding(key, model, input_texts)
+        return await self._record_embedding(key, model, input_texts, kwargs)
+
+    def _replay_embedding(self, key: str, model: str, input_texts: list[str]) -> Any:
+        """Return a reconstructed ``EmbeddingResponse`` from the fixture."""
+        if key not in self._embed_records:
+            preview = ", ".join(input_texts)[:200]
+            raise MissingFixture(
+                f"No embedding fixture entry for model={model!r}.\n"
+                f"Input preview: {preview!r}\n"
+                f"Fixture: {self.fixture_path}\n"
+                f"Re-run with REYN_LLM_RECORD=1 to record new fixtures."
+            )
+        import litellm
+
+        return litellm.EmbeddingResponse(**self._embed_records[key])
+
+    async def _record_embedding(
+        self, key: str, model: str, input_texts: list[str], extra_kwargs: dict
+    ) -> Any:
+        """Call the real embedding provider, save the response, and return it."""
+        response = await self._original_aembedding(
+            model=model, input=input_texts, **extra_kwargs
+        )
+        response_dict = response.model_dump()
+        preview = ", ".join(input_texts)[:200]
+        entry = {
+            "key": key,
+            "kind": "embedding",
+            "model": model,
+            "prompt_preview": preview,
+            "response": response_dict,
+        }
+        self._embed_records[key] = response_dict
+        self._pending.append(entry)
+        return response
+
     def _replay(self, key: str, model: str, messages: list[dict]) -> Any:
         """Return a reconstructed ``ModelResponse`` from the fixture."""
         if key not in self._records:
@@ -339,6 +435,7 @@ class LLMReplay:
         preview = self._prompt_preview(messages)
         entry = {
             "key": key,
+            "kind": "completion",
             "model": model,
             "prompt_preview": preview,
             "response": response_dict,
