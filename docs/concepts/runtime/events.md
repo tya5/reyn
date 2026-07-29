@@ -27,7 +27,6 @@ A few of the larger buckets:
 - **Control IR** — one audit-event per op kind (`read_file`, `sandboxed_exec_started`, `mcp_called`, `web_search_started`, `recall_embed_failed`, etc.) plus `permission_denied`.
 - **User interaction** — `user_message_received`, `user_intervention_received`, `chat_started`, `chat_stopped`, `turn_cancelled`.
 - **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`, `chain_timeout`. Each carries `chain_id` so a single user request can be traced across hops.
-- **Task management** — `task_op`, `task_readiness`, `task_disposition`, `task_dependency_aborted`.
 
 The full taxonomy lives in the [events reference](../../reference/runtime/events.md).
 
