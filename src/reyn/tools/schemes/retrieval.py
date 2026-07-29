@@ -33,7 +33,11 @@ import json
 
 from reyn.prompt.retrieval import SEARCH_SP_NON_TERMINAL, SEARCH_SP_TERMINAL
 from reyn.tools.encoders import encoder_for_transport
-from reyn.tools.exposure import Exposure, descriptors_from_entries
+from reyn.tools.exposure import (
+    Exposure,
+    descriptors_from_entries,
+    without_duplicate_alias_spellings,
+)
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -146,12 +150,19 @@ class RetrievalScheme:
 
                 catalog = await ops.catalog_entries()
                 return self._encode(Exposure(
-                    descriptors=descriptors_from_entries(base + catalog),
+                    descriptors=descriptors_from_entries(
+                        without_duplicate_alias_spellings(base + catalog)
+                    ),
                     sp_facts=self._sp_facts(available, layer_ctx),
                     sp_slot_overrides={"slot_post_catalog": _HIDDEN_STATE_HINT},
                 ))
             # Initial presentation: the base + the search tool (no catalog flood).
             return self._encode(Exposure(
+                # No dedup pass here, and that is a decision rather than an
+                # omission: this branch adds ONE entry, ``search_actions``, which
+                # is not a qualified ``<category>__<verb>`` spelling of anything,
+                # so no pair can arise. It becomes wrong the day this branch
+                # composes a catalog subset (#3428).
                 descriptors=descriptors_from_entries(base + [_search_tool_schema()]),
                 sp_facts=self._sp_facts(available, layer_ctx),
                 sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=False)},
@@ -184,7 +195,16 @@ class RetrievalScheme:
             tools = tools + [_search_tool_schema()]
         return self._encode(
             Exposure(
-                descriptors=descriptors_from_entries(tools),
+                # The searched subset can name a qualified spelling whose bare
+                # twin is already among ``base`` (a hit on ``file__read`` next to
+                # ``read_file``). Deduplicating here does not touch ``matched`` /
+                # ``candidates``, so the OS's convergence accumulator sees the
+                # same candidate set it would have seen; only the duplicate row
+                # is withheld, and the capability stays visible under the bare
+                # spelling that ``base`` already carries.
+                descriptors=descriptors_from_entries(
+                    without_duplicate_alias_spellings(tools)
+                ),
                 sp_facts=self._sp_facts(available, layer_ctx),
                 sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=terminal)},
             ),

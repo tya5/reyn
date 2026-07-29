@@ -482,11 +482,48 @@ async def shutdown_logging() -> None:
         pass
 
 
-async def _close_litellm_async_clients() -> None:
-    """Close LiteLLM's cached aiohttp-backed async HTTP clients before the
-    event loop closes (issue #2787).
+def _snapshot_litellm_client_cache_keys() -> frozenset:
+    """Return the current key set of litellm's process-wide async-client
+    cache (#3434), for use as the "pre-existing" baseline `run_async` diffs
+    against before closing anything.
 
-    Background:
+    Best-effort: an empty frozenset (rather than raising) if litellm hasn't
+    lazily initialized the cache yet, matching `_close_litellm_async_clients`'s
+    own best-effort posture.
+    """
+    try:
+        import litellm
+
+        cache = getattr(litellm, "in_memory_llm_clients_cache", None)
+        cache_dict = getattr(cache, "cache_dict", None)
+        if cache_dict is None:
+            return frozenset()
+        return frozenset(cache_dict.keys())
+    except Exception:
+        return frozenset()
+
+
+async def _close_litellm_async_clients(pre_existing_keys: frozenset = frozenset()) -> None:
+    """Close LiteLLM's cached aiohttp-backed async HTTP clients before the
+    event loop closes (issue #2787), scoped to clients created during THIS
+    `run_async` call (#3434).
+
+    #3434 root cause: litellm's own `close_litellm_async_clients()` iterates
+    *every* entry in the process-wide `litellm.in_memory_llm_clients_cache`
+    unconditionally — not just entries this call created. The cache is never
+    evicted on close (see `LLMClientCache`'s own docstring: eviction
+    intentionally never closes, because an in-flight request may still hold
+    the client), so a prior test's still-open, still-cached client for e.g.
+    `vertex_ai` gets closed-but-left-cached the moment *any* `run_async` call
+    runs anywhere later in the same worker process — even an LLM-free one.
+    `get_cache` then hands that closed client to the next real call with a
+    matching provider/params key, which fails with "Cannot send a request,
+    as the client has been closed." This is exactly why the failing test
+    varies run to run under `-n auto`: it depends on xdist worker
+    assignment and intra-worker test order, not on any one test's own
+    defect.
+
+    Background (why closing is needed at all — issue #2787):
       LiteLLM's default async transport (`litellm/llms/custom_httpx/
       aiohttp_transport.py`) is a real `aiohttp.ClientSession` cached in
       the process-wide `litellm.in_memory_llm_clients_cache`.
@@ -495,43 +532,54 @@ async def _close_litellm_async_clients() -> None:
       context plus a `ResourceWarning` when a session/connector is
       garbage-collected still open -- this is exactly the "Unhandled
       exception in event loop: / Exception None" noise reported in #2787.
-
-      LiteLLM ships the fix as an explicit opt-in util rather than an
-      automatic close, because its cache intentionally does NOT close
-      evicted/cached clients itself (an in-flight request may still be
-      using one) — see `litellm.caching.llm_caching_handler.
-      LLMClientCache`'s docstring: "For explicit shutdown cleanup, use
-      close_litellm_async_clients()". LiteLLM also self-registers an
-      atexit hook for this (`register_async_client_cleanup`, lazy-loaded
-      on first `litellm.<attr>` access) but that hook recreates a brand
-      new event loop *after* ours has already closed — fragile,
-      especially cross-platform (matches the "recurs on both Mac and
-      Windows" note in #2787). Calling the same util explicitly here,
-      on the still-alive loop, is the deterministic version of that same
-      cleanup, and it is where `shutdown_logging` already lives (same
-      finally, same choke point for `reyn chat` / `--once` / the mcp.py
-      CLI commands that route through `run_async`).
-
-      Must run *after* `shutdown_logging`: `clear_queue()` awaits
-      queued LiteLLM `async_success_handler` coroutines, which may still
-      need the cached async client to complete (e.g. a logging
-      integration's own HTTP call) -- closing the client first could
+      Must run *after* `shutdown_logging`: `clear_queue()` awaits queued
+      LiteLLM `async_success_handler` coroutines, which may still need the
+      cached async client to complete -- closing the client first could
       break that drain.
 
-      Idempotent / safe to call when no client was ever created: the
-      function iterates `litellm.in_memory_llm_clients_cache.cache_dict`
-      (empty cache → no-op) and each handler's own `close()` checks
-      `.closed` before acting, so calling it twice (or on a fully cold
-      cache) never raises or double-closes.
+    Fix: diff the cache's key set against `pre_existing_keys` (captured by
+    `run_async` before awaiting the wrapped coroutine) and temporarily hide
+    the pre-existing entries from litellm's own cache dict while invoking
+    its official close routine — so only clients newly cached during this
+    call get closed, and clients other in-flight callers still own are left
+    alone. Restoring afterwards is unconditional (`finally`) so a raise from
+    litellm's close routine can never permanently evict them. Idempotent /
+    safe to call when no client was ever created during this call: the diff
+    is then empty (no-op).
+
+    Considered and accepted, not overlooked: the hidden window spans an
+    `await` (litellm's close routine), so in principle another task on the
+    SAME event loop could `get_cache`/`set_cache` a preserved key while it's
+    hidden, miss, create a replacement, and then have this function's final
+    `cache_dict.update(preserved)` clobber that replacement with the
+    preserved (older) entry. Accepted for this call site specifically: this
+    window only exists on `run_async`'s own shutdown path, after `await
+    coro` has already returned/raised — by that point nothing on this loop
+    is meant to still be issuing LLM calls that would touch the cache. The
+    alternative (not hiding at all) reintroduces the #3434 defect this
+    function exists to fix, which is the worse failure mode.
     """
+    import litellm
+
+    cache = getattr(litellm, "in_memory_llm_clients_cache", None)
+    cache_dict = getattr(cache, "cache_dict", None)
+    if cache_dict is None:
+        return
+
+    preserved = {k: v for k, v in cache_dict.items() if k in pre_existing_keys}
+    for key in preserved:
+        del cache_dict[key]
     try:
-        from litellm.llms.custom_httpx.async_client_cleanup import (
-            close_litellm_async_clients,
-        )
-        await close_litellm_async_clients()
-    except Exception:
-        # Best-effort: never raise from shutdown.
-        pass
+        try:
+            from litellm.llms.custom_httpx.async_client_cleanup import (
+                close_litellm_async_clients,
+            )
+            await close_litellm_async_clients()
+        except Exception:
+            # Best-effort: never raise from shutdown.
+            pass
+    finally:
+        cache_dict.update(preserved)
 
 
 def run_async(coro: Coroutine[object, object, T]) -> T:
@@ -544,6 +592,11 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
     covers all of them from one place. See
     ``reyn.core.events.asyncio_diagnostics`` for why.
     """
+    # #3434: snapshot BEFORE the coroutine runs, so the finally below closes
+    # only litellm async clients this call creates — not every client any
+    # other test/call in this worker process has cached and is still using.
+    pre_existing_keys = _snapshot_litellm_client_cache_keys()
+
     async def _wrapped() -> T:
         from reyn.core.events.asyncio_diagnostics import (
             install_asyncio_exception_handler,
@@ -553,7 +606,7 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
             return await coro
         finally:
             await shutdown_logging()
-            await _close_litellm_async_clients()
+            await _close_litellm_async_clients(pre_existing_keys)
 
     return asyncio.run(_wrapped())
 

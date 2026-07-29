@@ -245,6 +245,15 @@ tool_deny:
   - multi_agent__delegate
 ```
 
+**Either spelling of a tool works, and denies both.** `multi_agent__delegate` and
+`delegate_to_agent` are two names for one operation, and which of them the model
+is currently *shown* varies by [tool-use cell](../tools-integrations/tool-use-schemes.md)
+and host config. A `tool_deny` entry is therefore expanded to **every invocable
+form** of the name before it becomes a gate (`_expand_tool_forms`, deriving from
+the `invoke_action` alias table rather than a hand-kept list), so writing the one
+spelling you happen to see denies the other too. Copying a name out of the
+model's current tool list is safe; it is not a way to deny only one route.
+
 ## See also
 
 - [Permission model § conjunctive restrict + one spec two binding adapters](permission-model.md#effective-permission-conjunctive-restrict-model) — the ∩ formula, ProfileLayer vs ContextualLayer, adapter design

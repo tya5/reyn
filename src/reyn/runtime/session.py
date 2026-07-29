@@ -6,7 +6,6 @@ rationale (Family decomposition).
 from __future__ import annotations
 
 import asyncio
-import enum
 import json
 import logging
 import re
@@ -914,49 +913,27 @@ def _forward_file_signal_fields(dest: dict, result: dict, *, outcome: str) -> No
         )
 
 
-# #3082: closed registry of MCP-listing seam call sites that opt OUT of the
-# default audit emission (``Session._mcp_list_via_gateway``, below). A
-# suppression is a member of ``MCPListingSuppression`` — there is no string
-# opt-out — so every non-emitting call site is enumerated here, next to a
-# reason, and grepping this dict is a complete census of "why doesn't X
-# audit-log".
+# #3410: the four ``_mcp_list_*`` discovery methods all emit. The asymmetry
+# #3082 recorded here — ``list_tools`` / ``list_resource_templates``
+# suppressed, ``list_resources`` / ``list_prompts`` emitting — was settled by
+# removing it, not by writing down a reason for it:
 #
-# The two reasons below are NOT measurements. There is no record in this
-# repo (issue, PR description, commit) of why ``list_tools`` /
-# ``list_resource_templates`` were built without an emit while
-# ``list_resources`` / ``list_prompts`` were built with one — the #2605 PR
-# that added ``list_resources`` says only "mirrors list_tools ... discovery-
-# only, NOT permission-gated" and separately "emits mcp_resources_listed for
-# observability (list_tools has no analogous event; this ask is explicit
-# per the #2597 (2)a slice spec)" — i.e. a spec asked for the event on the
-# resources path and not on the tools path, with no rationale for the
-# asymmetry recorded anywhere. This registry preserves the existing
-# behavior deliberately (not silently, and not re-affirmed as correct);
-# #3410 is where the asymmetry itself gets settled.
-class MCPListingSuppression(enum.Enum):
-    """Closed set of MCP-listing call sites suppressing the default
-    ``mcp_<noun>_listed`` audit emission. Adding a new suppression means
-    adding a member here with a reason in
-    ``MCP_LISTING_SUPPRESSION_REASONS`` — there is no other way to opt out."""
-
-    LIST_TOOLS = "list_tools"
-    LIST_RESOURCE_TEMPLATES = "list_resource_templates"
-
-
-MCP_LISTING_SUPPRESSION_REASONS: dict[MCPListingSuppression, str] = {
-    MCPListingSuppression.LIST_TOOLS: (
-        "No record exists of why this path does not emit an audit event "
-        "(the #2605 PR that added the emitting siblings only says the "
-        "event was 'explicit per the #2597 (2)a slice spec' for resources/"
-        "prompts, not why tools was left out). Preserved as-is rather than "
-        "re-affirmed as correct; #3410 tracks settling it."
-    ),
-    MCPListingSuppression.LIST_RESOURCE_TEMPLATES: (
-        "Same as LIST_TOOLS: no record of why this path was built without "
-        "an emit. Preserved as-is rather than re-affirmed as correct; "
-        "#3410 tracks settling it."
-    ),
-}
+#   - The #3082 registry it replaces stated plainly that NO record existed of
+#     why the two silent paths were built silent. Code cannot tell "forgotten"
+#     from "decided"; the registry made the absence enumerable but could not
+#     turn it into a decision. #3410 closes the audit-event kind vocabulary,
+#     which makes every kind a public-API member — and "two of four sibling
+#     discovery calls are invisible to an external consumer, for no recorded
+#     reason" is not a vocabulary a consumer can reason about.
+#   - The seam's own rule already argued this way: emitting is the recoverable
+#     direction, because a missed event is invisible after the fact and a
+#     spurious one is not.
+#
+# The event kind is now passed as a LITERAL by each of the four call sites
+# rather than built as ``f"mcp_{noun}_listed"``. That is not cosmetic: an
+# f-string kind is invisible to the #3410 vocabulary gate (which censuses
+# string-constant emit arguments by AST), so the seam was the one production
+# site that could mint an undeclared kind without any gate seeing it.
 
 
 class Session:
@@ -7125,23 +7102,22 @@ class Session:
         expanded: dict,
         *,
         gateway_call: Callable[[Any], Awaitable[list[dict]]],
-        noun: str,
-        suppress: "MCPListingSuppression | None" = None,
+        event_kind: str,
     ) -> list[dict]:
         """Shared MCP-listing seam (#3082): owns gateway construction, the
-        ``Cancelled``/``MCPFault`` error contract, and the audit-emit
-        decision for all four ``_mcp_list_*`` methods (tools / resources /
-        resource_templates / prompts). Each caller has already resolved its
-        own *server* config into *expanded* and passes a *gateway_call*
-        closure naming which ``MCPGateway`` listing method to invoke; *noun*
-        names the emitted event kind (``mcp_<noun>_listed``) when emission
-        is not suppressed.
+        ``Cancelled``/``MCPFault`` error contract, and the audit emit for all
+        four ``_mcp_list_*`` methods (tools / resources / resource_templates /
+        prompts). Each caller has already resolved its own *server* config into
+        *expanded* and passes a *gateway_call* closure naming which
+        ``MCPGateway`` listing method to invoke, plus *event_kind* — the
+        audit-event kind this listing emits.
+
+        ``event_kind`` is passed as a string LITERAL by every call site and is
+        never assembled here (#3410 — see the module-level note above
+        ``Session``): a kind the vocabulary gate cannot read as a constant is a
+        kind it cannot check against the closed vocabulary.
         """
-        # #3082: emitting is the default because erring toward audit coverage is
-        # the recoverable direction — a missed event is invisible after the fact,
-        # a spurious one is not. A call site that does not emit names a member of
-        # ``MCPListingSuppression``; there is no string opt-out, so every
-        # non-emitting listing path is enumerated in one place with its reason.
+        # All four listing paths emit — see the #3410 note above the class.
         from reyn.core.cancellable import Cancelled
         from reyn.mcp.gateway import MCPFault, MCPGateway
 
@@ -7165,8 +7141,7 @@ class Session:
             return [{"error": "cancelled"}]
         except MCPFault as exc:
             return [{"error": str(exc)}]
-        if suppress is None:
-            self._chat_events.emit(f"mcp_{noun}_listed", server=server, count=len(result))
+        self._chat_events.emit(event_kind, server=server, count=len(result))
         return result
 
     def _mcp_resolve_server_config(self, server: str) -> "list[dict] | dict":
@@ -7193,15 +7168,19 @@ class Session:
         return expanded
 
     async def _mcp_list_tools(self, server: str) -> list[dict]:
-        """Query the MCP server for its tools list."""
+        """Query the MCP server for its tools list.
+
+        Discovery-only, NOT permission-gated (no op-kind), routed through the
+        shared ``_mcp_list_via_gateway`` seam. Emits ``mcp_tools_listed``
+        (#3410 — all four listing paths emit; see the note above ``Session``).
+        """
         expanded = self._mcp_resolve_server_config(server)
         if isinstance(expanded, list):
             return expanded
         return await self._mcp_list_via_gateway(
             server, expanded,
             gateway_call=lambda gw: gw.list_tools(server, expanded),
-            noun="tools",
-            suppress=MCPListingSuppression.LIST_TOOLS,
+            event_kind="mcp_tools_listed",
         )
 
     async def _mcp_list_resources(self, server: str) -> list[dict]:
@@ -7211,8 +7190,8 @@ class Session:
         NOT permission-gated (no op-kind), routed through the same
         ``MCPGateway`` seam (held connection service on a non-ephemeral
         session, one-shot pool otherwise). Emits ``mcp_resources_listed`` for
-        observability (list_tools has no analogous event; this ask is
-        explicit per the #2597 ②a slice spec).
+        observability (#3410 — all four listing paths emit; see the note
+        above ``Session``).
         """
         expanded = self._mcp_resolve_server_config(server)
         if isinstance(expanded, list):
@@ -7220,7 +7199,7 @@ class Session:
         return await self._mcp_list_via_gateway(
             server, expanded,
             gateway_call=lambda gw: gw.list_resources(server, expanded),
-            noun="resources",
+            event_kind="mcp_resources_listed",
         )
 
     async def _mcp_list_resource_templates(self, server: str) -> list[dict]:
@@ -7228,7 +7207,8 @@ class Session:
 
         #2597 slice ②a: mirrors ``_mcp_list_resources`` (discovery-only, not
         permission-gated). Empty list is a normal result for a server that
-        registers no templates.
+        registers no templates. Emits ``mcp_resource_templates_listed``
+        (#3410 — all four listing paths emit; see the note above ``Session``).
         """
         expanded = self._mcp_resolve_server_config(server)
         if isinstance(expanded, list):
@@ -7236,8 +7216,7 @@ class Session:
         return await self._mcp_list_via_gateway(
             server, expanded,
             gateway_call=lambda gw: gw.list_resource_templates(server, expanded),
-            noun="resource_templates",
-            suppress=MCPListingSuppression.LIST_RESOURCE_TEMPLATES,
+            event_kind="mcp_resource_templates_listed",
         )
 
     async def _mcp_read_resource(self, server: str, uri: str) -> dict:
@@ -7353,7 +7332,7 @@ class Session:
         return await self._mcp_list_via_gateway(
             server, expanded,
             gateway_call=lambda gw: gw.list_prompts(server, expanded),
-            noun="prompts",
+            event_kind="mcp_prompts_listed",
         )
 
     async def _mcp_get_prompt(self, server: str, name: str, arguments: "dict | None" = None) -> dict:

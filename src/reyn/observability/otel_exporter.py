@@ -93,13 +93,34 @@ METRIC_TOKEN_USAGE = "gen_ai.client.token.usage"
 METRIC_COST_USAGE = "gen_ai.client.cost.usd"
 
 # Non-span audit-events that map to OTLP log records rather than spans.
+#
+# (#3410) ``safety_triggered`` / ``safety_limit_reached`` were removed from this
+# set and from the WARN severity check below. Neither is an audit-event kind
+# reyn emits — the two names appeared nowhere in the repo except these two
+# selectors, so the OTel bridge was routing on types that could never arrive,
+# and an operator reading this set would expect safety-limit records in their
+# OTLP backend that never show up. The audit-event kind vocabulary is closed
+# and enumerated in ``reyn.core.events.event_schema.AUDIT_EVENT_KINDS``; a
+# selector naming something outside it is dead by construction.
+#
+# ★ The harm pointed the worst direction, which is why the removal is right on
+# its own: an operator watching safety signals over OTLP got NOTHING, forever,
+# and "nothing arrived" reads as "no safety limits were hit". Silence was
+# indistinguishable from health.
+#
+# ★ The live safety kinds are ``limit_denied`` and ``safety_limit_checkpoint``,
+# and NEITHER was substituted in here — routing them is an observability
+# decision, not a rename, and making it silently under cover of a cleanup would
+# be the same class of mistake in the other direction. So safety limits are
+# currently NOT exported at all. Whether they should be is #3439; record the
+# answer HERE, next to this set, when it is decided. A selector set is a promise
+# to an operator about what will arrive and, by omission, about what will not —
+# both halves should be deliberate.
 _LOG_EVENT_TYPES: frozenset[str] = frozenset({
     "permission_granted",
     "permission_denied",
     "user_intervention_requested",
     "user_intervention_received",
-    "safety_triggered",
-    "safety_limit_reached",
 })
 
 # Tool-family events that open+close a child span at the event (post-hoc audit
@@ -399,7 +420,7 @@ class OtelExporter:
                 attrs[field] = str(data[field])
         severity = (
             SeverityNumber.WARN
-            if etype in ("permission_denied", "safety_triggered", "safety_limit_reached")
+            if etype == "permission_denied"  # the only WARN-worthy live kind here (#3410)
             else SeverityNumber.INFO
         )
         self._logger.emit(

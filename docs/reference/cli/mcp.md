@@ -213,7 +213,7 @@ slack        stdio      missing-cred   SLACK_BOT_TOKEN ✗ (not set)
 
 | Flag | Description |
 |------|-------------|
-| `--probe` | Handshake with each server to verify liveness. Slow — triggers actual subprocess launches and network calls. Adds `mcp_probe_called` audit events. |
+| `--probe` | Handshake with each server to verify liveness. Slow — triggers actual subprocess launches and network calls. Does not emit an audit-event (`MCPGateway.probe()` calls the client directly, outside the audited op-dispatch path). |
 
 ---
 

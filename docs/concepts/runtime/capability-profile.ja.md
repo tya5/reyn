@@ -136,6 +136,14 @@ tool_deny:
   - multi_agent__delegate
 ```
 
+**どちらの綴りで書いても、両方が deny されます。** `multi_agent__delegate` と
+`delegate_to_agent` は 1 つの操作の 2 つの名前で、モデルに現在 *見えている* のがどちらかは
+[tool-use のセル](../tools-integrations/tool-use-schemes.md)とホスト設定で変わります。
+`tool_deny` のエントリは gate になる前に **invocable な全形**へ展開されるため
+(`_expand_tool_forms` — 手書きリストではなく `invoke_action` の alias テーブルから導出)、
+たまたま目にした方の綴りを書けばもう一方も deny されます。モデルの現在のツール一覧から
+名前を写して構いません。逆に、片方の経路だけを deny する手段ではありません。
+
 ## 参照
 
 - [パーミッションモデル § 論理積制限 + 1 仕様 2 バインディングアダプター](permission-model.md#effective-permission-conjunctive-restrict-model) — ∩ 式、ProfileLayer vs ContextualLayer、アダプター設計

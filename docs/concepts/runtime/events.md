@@ -24,16 +24,15 @@ If the OS is the only mutator (P3) and every mutation emits an audit-event, the 
 A few of the larger buckets:
 
 - **LLM and context** — `llm_called`.
-- **Control IR** — one audit-event per op kind (`read_file`, `sandboxed_exec_started`, `mcp_called`, `web_search_started`, `recall_embed_failed`, etc.) plus `permission_denied`.
+- **Control IR** — one audit-event per op kind (`sandboxed_exec_started`, `mcp_called`, `web_search_started`, `semantic_search_embed_failed`) plus `permission_denied`. A `file` op like a read instead rides the shared `tool_executed` kind, naming the specific operation in its `op` field rather than as a kind of its own.
 - **User interaction** — `user_message_received`, `user_intervention_received`, `chat_started`, `chat_stopped`, `turn_cancelled`.
 - **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`, `chain_timeout`. Each carries `chain_id` so a single user request can be traced across hops.
-- **Task management** — `task_op`, `task_readiness`, `task_disposition`, `task_dependency_aborted`.
 
-The full taxonomy lives in the [events reference](../../reference/runtime/events.md).
+The buckets above are examples. The `type` field is a **closed vocabulary** — every kind reyn emits, and nothing else, is enumerated in the [events reference](../../reference/runtime/events.md#kind-vocabulary), derived from one source of truth in `src/reyn/core/events/event_schema.py` and CI-checked against both the emitting code and the page. A consumer outside reyn can therefore enumerate the complete set of types it may receive.
 
 ### Task subscription events — WAL, not audit-event log
 
-Task↔session binding changes (`task_subscribed`, `task_rebound`) are recorded in the **WAL** (StateLog, `.reyn/state/wal.jsonl`) — not in the P6 audit-event log. The WAL is the crash-recovery and time-travel substrate; the audit-event log is the per-run trace. They are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*). Do not look for `task_subscribed` in the audit-event log; it is not there.
+Task↔session binding changes are declared as **WAL** kinds (`task_subscribed`, `task_rebound` — StateLog, `.reyn/state/wal.jsonl`), not the P6 audit-event log, so if this mechanism is live you should look for them there, not here. Currently, however, neither kind has a writer anywhere in the codebase — the WAL vocabulary declares them but nothing appends one, so no task↔session binding change is actually recorded today. The WAL is generally the crash-recovery and time-travel substrate; the audit-event log is the per-run trace — they are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*).
 
 ## What an audit-event is
 
@@ -52,8 +51,11 @@ run_id    — uuid for the run (present on most run-scoped audit-events)
 ```
 
 Note: `run_id` is present on most run-scoped audit-events (`llm_called`,
-`permission_denied`, etc.) but absent from some audit-events emitted outside
-a run context (e.g. `chat_started`).
+`permission_denied`) but absent from some audit-events emitted outside a run
+context (e.g. `chat_started`). Which kinds carry `run_id` is a payload question,
+not a vocabulary one — the closed set above says which kinds exist, and does not
+partition them by field. There is no enumeration of the `run_id`-carrying subset;
+read the per-kind payloads in the reference.
 
 ### Audit-events with required fields (FP-0021)
 
