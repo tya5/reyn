@@ -52,9 +52,13 @@ from reyn.core.events.event_schema import (
 _REPO = Path(__file__).resolve().parents[1]
 _SRC = _REPO / "src" / "reyn"
 _EVENTS_REFERENCE = _REPO / "docs" / "reference" / "runtime" / "events.md"
+_EVENTS_CONCEPT = _REPO / "docs" / "concepts" / "runtime" / "events.md"
 
 _DOC_BEGIN = "<!-- BEGIN audit-event-kinds -->"
 _DOC_END = "<!-- END audit-event-kinds -->"
+
+_CONCEPT_DOC_BEGIN = "<!-- BEGIN control-ir-bucket-example-kinds -->"
+_CONCEPT_DOC_END = "<!-- END control-ir-bucket-example-kinds -->"
 
 
 # ── The census ────────────────────────────────────────────────────────────
@@ -456,6 +460,51 @@ def test_events_reference_enumerates_exactly_the_declared_vocabulary() -> None:
         "AUDIT_EVENT_KINDS — it is what an external consumer enumerates, so a "
         f"stale entry is a handler that never fires. missing={missing} "
         f"extra={extra}"
+    )
+
+
+def _concept_bucket_kinds() -> list[str]:
+    text = _EVENTS_CONCEPT.read_text(encoding="utf-8")
+    start = text.index(_CONCEPT_DOC_BEGIN) + len(_CONCEPT_DOC_BEGIN)
+    end = text.index(_CONCEPT_DOC_END)
+    return re.findall(r"^\s*([a-z0-9_]+)\s*$", text[start:end], flags=re.MULTILINE)
+
+
+def test_concepts_events_control_ir_bucket_cites_only_real_kinds() -> None:
+    """Tier 2: the illustrative Control IR kind list in
+    ``docs/concepts/runtime/events.md`` names only kinds that actually exist.
+
+    Deliberately narrower than the reference-doc gate above: this bucket is a
+    hand-picked EXAMPLE subset, not the closed vocabulary, so the assertion is
+    membership (each cited kind ∈ ``AUDIT_EVENT_KINDS``), not exact equality.
+
+    Why this one bucket gets a delimited, machine-checked block and free doc
+    prose elsewhere does not: a general scan of every doc's backtick-quoted
+    snake_case token against the kind vocabulary was prototyped and rejected
+    (measured, not assumed) — snake_case identifiers for payload fields,
+    config keys, Control IR op kinds, and WAL event kinds are indistinguishable
+    from audit-event kind names by shape alone, so an unscoped scan produces
+    far more false positives than real findings. A structural gate needs a
+    CLOSED target; free prose citing a kind name is not one. This block closes
+    the target by construction (a delimited, single-purpose enumeration) for
+    the one spot that has actually drifted twice in one session (a renamed
+    kind, then a non-kind cited as if it were one) — see the module docstring
+    of ``core/events/event_schema.py`` and #3410's history for both.
+    """
+    cited = _concept_bucket_kinds()
+    assert cited, (
+        "the control-ir-bucket-example-kinds block in "
+        "docs/concepts/runtime/events.md is empty — either the markers moved "
+        "or the block lost its content; a block with nothing in it makes "
+        "this gate vacuously pass"
+    )
+    unknown = sorted(set(cited) - AUDIT_EVENT_KINDS)
+    assert not unknown, (
+        "docs/concepts/runtime/events.md cites kind name(s) not in "
+        f"AUDIT_EVENT_KINDS: {unknown} — either the kind was renamed/removed "
+        "in src/reyn, or the doc named something that was never a kind at "
+        "all (e.g. a Control IR op's own name, or an `op` field value on the "
+        "shared `tool_executed` kind rather than a kind of its own)"
     )
 
 
