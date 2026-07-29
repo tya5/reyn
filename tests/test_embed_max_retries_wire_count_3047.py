@@ -107,6 +107,13 @@ def counting_server(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL local HTTP server (127.0.0.1, "
+    "the counting_server fixture) to count wire-level requests — @replay "
+    "would return a canned response with no request ever reaching the wire, "
+    "deleting the exact thing under test.",
+)
 async def test_one_embed_call_delivers_exactly_reyn_max_retries_requests(
     counting_server,
 ) -> None:
@@ -135,6 +142,11 @@ async def test_one_embed_call_delivers_exactly_reyn_max_retries_requests(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: same real local counting_server as the "
+    "sibling test above — @replay would delete the wire-level request count "
+    "under test.",
+)
 async def test_single_attempt_no_reyn_retry_delivers_exactly_one_request(
     counting_server,
 ) -> None:
@@ -156,6 +168,12 @@ async def test_single_attempt_no_reyn_retry_delivers_exactly_one_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group B/D: drives ONE real litellm.acompletion call "
+    "against the same real local counting_server, deliberately shaped like "
+    "reyn's real chat call site, to prove a wire-count invariant — @replay "
+    "would return a canned response with no request ever reaching the wire.",
+)
 async def test_chat_acompletion_wire_count_unaffected_by_embed_global_mutation(
     counting_server, monkeypatch: pytest.MonkeyPatch
 ) -> None:

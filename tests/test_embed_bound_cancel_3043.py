@@ -6,16 +6,22 @@ gateway's bound + `race_cancellable`; the chat LLM path has
 `timeout=` and no cancel seam, so its only ceiling was litellm's own
 `request_timeout` default (6000s/attempt) and a Ctrl-C could not interrupt it.
 
-**Why these tests need a TCP blackhole.** The defect is un-witnessable in the
-environment the old tests ran in. `tests/test_embedding_provider.py` states that
-`LLMReplay` only patches `litellm.acompletion`, never `aembedding` — so no test
-ever drove this path; and a path that answers promptly (a real API returning a
-200, or a 429) cannot tell a bounded call from an unbounded one, because
-*nothing is waiting*. A bound is only observable where the call would otherwise
-NOT return. So each test below points a REAL `LiteLLMEmbeddingProvider` at a
-REAL localhost socket that completes the TCP handshake and then never writes a
-byte — the stall the bound exists for. No fakes, no monkeypatched provider: the
-production provider, the production litellm, a hostile socket.
+**Why these tests need a TCP blackhole.** The defect was originally
+un-witnessable in the environment the old tests ran in: at the time this file
+was written, `LLMReplay` patched only `litellm.acompletion`, never
+`aembedding`, so no `@replay`-pinned test ever drove this path (#3451
+extended `LLMReplay` to `aembedding` too — see `reyn.dev.testing.replay` — but
+that does not help HERE). A path that answers promptly (a real API returning
+a 200, a 429, or a replayed fixture response) cannot tell a bounded call from
+an unbounded one, because *nothing is waiting*. A bound is only observable
+where the call would otherwise NOT return. So each test below points a REAL
+`LiteLLMEmbeddingProvider` at a REAL localhost socket that completes the TCP
+handshake and then never writes a byte — the stall the bound exists for. No
+fakes, no monkeypatched provider, no `@replay`: the production provider, the
+production litellm, a hostile socket. (These are `@pytest.mark.allow_real_network`
+— see `reyn.dev.testing.network_gate` — the loopback-only exception class
+#3451 registers for exactly this reason: pinning them would delete the very
+behaviour under test.)
 
 Each test carries its own `asyncio.wait_for` ceiling well below the behaviour it
 falsifies, so a regression FAILS (TimeoutError) instead of hanging the suite —
@@ -103,6 +109,13 @@ def _make_ctx(cancel_event: "asyncio.Event | None" = None) -> tuple[OpContext, E
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL localhost socket that stalls/"
+    "refuses on purpose (see module docstring) to test retry/timeout/cancel "
+    "bounds against the production client — @replay would return a canned "
+    "response instantly, deleting the exact stall under test.",
+)
 async def test_stalled_embedding_call_is_bounded_not_left_to_litellm_default(
     stalled_endpoint: str,
 ) -> None:
@@ -121,6 +134,13 @@ async def test_stalled_embedding_call_is_bounded_not_left_to_litellm_default(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL localhost socket that stalls/"
+    "refuses on purpose (see module docstring) to test retry/timeout/cancel "
+    "bounds against the production client — @replay would return a canned "
+    "response instantly, deleting the exact stall under test.",
+)
 async def test_bound_applies_to_every_attempt_not_only_the_first(
     stalled_endpoint: str,
 ) -> None:
@@ -140,6 +160,13 @@ async def test_bound_applies_to_every_attempt_not_only_the_first(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL localhost socket that stalls/"
+    "refuses on purpose (see module docstring) to test retry/timeout/cancel "
+    "bounds against the production client — @replay would return a canned "
+    "response instantly, deleting the exact stall under test.",
+)
 async def test_batches_are_bounded_independently_of_batch_count(
     stalled_endpoint: str,
 ) -> None:
@@ -211,6 +238,13 @@ def test_malformed_timeout_falls_back_to_the_bound_not_to_no_bound() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL localhost socket that stalls/"
+    "refuses on purpose (see module docstring) to test retry/timeout/cancel "
+    "bounds against the production client — @replay would return a canned "
+    "response instantly, deleting the exact stall under test.",
+)
 async def test_cancel_event_interrupts_a_stalled_embed_op_immediately(
     stalled_endpoint: str,
 ) -> None:
@@ -239,6 +273,13 @@ async def test_cancel_event_interrupts_a_stalled_embed_op_immediately(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445/#3451 group D: drives the real litellm client + real "
+    "LiteLLMEmbeddingProvider against a REAL localhost socket that stalls/"
+    "refuses on purpose (see module docstring) to test retry/timeout/cancel "
+    "bounds against the production client — @replay would return a canned "
+    "response instantly, deleting the exact stall under test.",
+)
 async def test_uncancelled_embed_keeps_its_normal_failure_shape(
     refused_endpoint: str,
 ) -> None:

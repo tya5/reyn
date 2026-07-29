@@ -162,7 +162,8 @@ async def test_skill_install_config_write_bus_none_denies(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_skill_install_config_write_bus_approves(tmp_path):
+@pytest.mark.replay("fixtures/llm/skill_install/config_write_bus_approves.jsonl")
+async def test_skill_install_config_write_bus_approves(tmp_path, _llm_replay):
     """Tier 2: #3086 fix — a real bus threaded through the gate lets the
     operator interactively approve the narrowed write; install succeeds and
     the JIT prompt fired exactly once. RED if bus= is not passed through to
