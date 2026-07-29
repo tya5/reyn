@@ -108,14 +108,12 @@ WAL_EVENT_KINDS = (
     "topology_created",
     "topology_updated",
     "topology_removed",
-    # #2187 backend-master: the Task SUBSCRIPTION (the Reyn-internal task↔session
-    # binding — assignee + requester). The backend is the external MASTER of task-STATE
-    # (status/content/DAG, NOT in the WAL); the WAL holds only what Reyn owns + rewinds:
-    # session + subscription. ``task_subscribed`` = a task's initial binding;
-    # ``task_rebound`` = the assignee binding changed (reassign / unbind). Applied to the
-    # live SubscriptionRegistry (subscription.py) — as-of-cut reconstruction by replay.
-    "task_subscribed",
-    "task_rebound",
+    # (#2187 backend-master originally added `task_subscribed`/`task_rebound` here for the
+    # Task SUBSCRIPTION (Reyn-internal task↔session binding); #3214 removed the only writer
+    # (SubscriptionRegistry) with no append site ever wired, and #3436 removed the dead
+    # declaration itself — see #3436 for the reader-tolerance measurement that made this
+    # removal safe. If task↔session binding rewind is wanted again, it needs a real writer
+    # AND a route_key so recovery can dispatch it, not just a re-added tuple entry.)
     # (#2248 PR-A added `config_changed` here; #2259 PR-1 removed it — config recovery is now
     # a truncation-surviving GENERATION, not a truncatable WAL event. See config_generations.py.)
     # NEW (#2884) — the hook-driven-turns loop-valve counter's FULL current value (not a
