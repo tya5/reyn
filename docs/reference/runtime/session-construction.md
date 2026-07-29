@@ -148,6 +148,12 @@ call:
   4-layer additive shape as `_build_hook_registry`). Composers are v1-startup-only — no
   hot-reload/reapply seam, unlike hooks (restarting a live Composer's `PendingStore`
   mid-session is a separate, not-yet-designed concern).
+- `_build_composer_pending_store` (#3180) runs inside the Family 3 builder and returns the
+  `DurablePendingStore` shared by every `durable` composer (`op: deadline` by default), or
+  `None` when no definition asks for durability — so a durability-free session writes no
+  file. It reads/writes `<per-session state dir>/composer_pending.json` (the same dir
+  `_toggle_store_dir` uses), and prunes restored records whose composer no longer exists in
+  the combined config, so a renamed deadline cannot leave an arm nothing will ever disarm.
 - `_build_composer_defs` is deliberately run BEFORE `_build_hook_registry`: it is a
   pure/side-effect-free parse (confirmed — no hook-registry interaction), so knowing the
   full set of configured composers (all 4 layers) BEFORE hooks are validated lets a

@@ -808,6 +808,7 @@ composers:
 | `correlate_by` | string | _none_ | The payload field read as the correlation key (instead of one global bucket). Required when `op: correlate_by`; optional but typical for `op: deadline` (e.g. keying a dead-man monitor by `job_id` so N jobs are watched independently). |
 | `count` | integer | _none_ | Required when `op: count` — the threshold of matching events before firing. |
 | `emit.kind` | string | _required_ (defaults to `composed:<name>` for `op: deadline` if omitted) | The composed event's kind — MUST start with `composed:` (namespace-enforced at load time; collides otherwise with the P6 audit-event surface). |
+| `durable` | boolean | `true` for `op: deadline`, `false` otherwise | Whether this composer's pending state must survive a process crash. `true` routes it to a full-state snapshot file (`<per-session state dir>/composer_pending.json`, one atomic rewrite + fsync per pending change) and an armed key comes back with its ORIGINAL arm instant; `false` keeps the free in-process dict. Setting `durable: false` on a `deadline` composer is allowed but emits a load-time `UserWarning` — a dead-man switch that dies with its process is never a silent posture. |
 
 **`deadline` — the dead-man op.** Every other op fires because something
 *happened*; `deadline` is the only one that fires because something did
@@ -822,28 +823,28 @@ Internally `deadline` is not new machinery: it reuses the exact same per-key
 uses — the only change is that the sweep FIRES an expired pending record
 instead of silently discarding it.
 
-**`deadline`'s reliability posture is stricter than every other op's.** The
-"best-effort, not a recovery feature" paragraph below still applies (v1's
-`PendingStore` is in-memory and crash-non-durable), but for `deadline` a
-crash does not just drop one buffered notification — it drops the dead-man
-monitor itself, at the same time as (and likely for the same reason as)
-whatever it was watching. `load_composers` therefore emits a `UserWarning`
-for every `deadline` composer at load time, unconditionally: **do not treat
-a v1 `deadline` composer as a durable dead-man switch.** A `WalBackedPendingStore`
-implementing the same `PendingStore` protocol (subject to CLAUDE.md's
-recovery-feature PR gate — a truncate-falsify test — the day it lands) is
-the tracked follow-on; a cheaper intermediate step is re-arming `deadline`
-composers at session boot from a durable source of truth (e.g. a job
-registry) rather than WAL-backing the whole Composer pending state.
+**`deadline`'s reliability posture is stricter than every other op's**, which
+is why it is the one op that defaults to `durable: true`. For the other seven
+ops a crash drops one buffered notification; for `deadline` it drops the
+dead-man monitor itself, at the same time as (and likely for the same reason
+as) whatever it was watching. With the default in place, an armed `deadline`
+is restored after a restart **with its original arm instant**, so a deadline
+missed during the downtime fires on the first sweep rather than silently
+restarting its clock.
 
-**Reliability posture: best-effort, not a recovery feature.** A Composer's
-in-flight correlation state is held in memory only and is lost on a process
-crash (a partially-matched `all`/`seq`/`correlate_by` simply never fires) —
-a deliberate v1 scope decision (the Bus itself is already lossy under
-backpressure, so a Composer built on it cannot promise more). Every fire
-emits `composer_fired`; every drop (overflow or `ttl`-eviction) emits
-`composer_dropped` — both metadata-only (composer name + correlation key +
-reason, never the buffered payload content).
+**Reliability posture: best-effort by default, durable where it matters.** A
+Composer's in-flight correlation state is held in memory unless `durable:
+true` (see the key table above), so a partially-matched
+`all`/`seq`/`correlate_by` simply never fires after a crash — a deliberate
+scope decision (the Bus itself is already lossy under backpressure, so a
+Composer built on it cannot promise more). A `durable` composer instead keeps
+its pending set in `<per-session state dir>/composer_pending.json`, a
+full-state snapshot file rewritten atomically on every change and never
+derived from the WAL — so it survives WAL truncation structurally (CLAUDE.md's
+recovery-feature gate). Every fire emits `composer_fired`; every drop
+(overflow or `ttl`-eviction) emits `composer_dropped` — both metadata-only
+(composer name + correlation key + reason, never the buffered payload
+content).
 
 **The composed→wake loop-valve bound.** A `composed:<name>` hook's
 wake=true push traverses the exact same inbox `kind="hook"` path any other

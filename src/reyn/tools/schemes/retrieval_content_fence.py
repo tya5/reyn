@@ -55,7 +55,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.tools.exposure import Exposure, ExposureDeviation, descriptors_from_entries
+from reyn.tools.exposure import (
+    Exposure,
+    ExposureDeviation,
+    descriptors_from_entries,
+    without_duplicate_alias_spellings,
+)
 from reyn.tools.scheme import advertised_entries, register_scheme
 from reyn.tools.schemes._content_fence_cell import ContentFenceCellScheme
 from reyn.tools.schemes._retrieval_exposure import retrieval_sp_facts
@@ -136,7 +141,9 @@ def build_retrieval_content_fence_exposure(
     # identifier map derived from it is an encoding, so it does not.
     dispatchable_names = tuple(n for n in (_entry_name(e) for e in all_entries) if n)
 
-    exposed = [e for e in all_entries if _entry_name(e) not in deviation.excluded_names]
+    exposed = without_duplicate_alias_spellings(
+        [e for e in all_entries if _entry_name(e) not in deviation.excluded_names]
+    )
     if deviation.applies_contextual_narrowing:
         contextual = (available or {}).get("contextual_permission")
         if contextual is not None:
