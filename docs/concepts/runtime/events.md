@@ -24,7 +24,16 @@ If the OS is the only mutator (P3) and every mutation emits an audit-event, the 
 A few of the larger buckets:
 
 - **LLM and context** — `llm_called`.
-- **Control IR** — one audit-event per op kind (`sandboxed_exec_started`, `mcp_called`, `web_search_started`, `semantic_search_embed_failed`) plus `permission_denied`. A `file` op like a read instead rides the shared `tool_executed` kind, naming the specific operation in its `op` field rather than as a kind of its own.
+- **Control IR** — one audit-event per op kind, for example:
+  <!-- BEGIN control-ir-bucket-example-kinds -->
+  ```text
+  mcp_called
+  sandboxed_exec_started
+  semantic_search_embed_failed
+  web_search_started
+  ```
+  <!-- END control-ir-bucket-example-kinds -->
+  plus `permission_denied`. A `file` op like a read instead rides the shared `tool_executed` kind, naming the specific operation in its `op` field rather than as a kind of its own.
 - **User interaction** — `user_message_received`, `user_intervention_received`, `chat_started`, `chat_stopped`, `turn_cancelled`.
 - **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`, `chain_timeout`. Each carries `chain_id` so a single user request can be traced across hops.
 
