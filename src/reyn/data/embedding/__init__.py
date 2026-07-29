@@ -24,9 +24,6 @@ Layers (ADR-0033):
 """
 from __future__ import annotations
 
-import inspect
-from typing import Any
-
 from reyn.data.embedding.cost_estimator import CostEstimate, estimate_indexing_cost
 from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
 from reyn.data.embedding.provider import EmbedBatchResult, EmbeddingProvider
@@ -54,8 +51,6 @@ def register_provider(name: str, impl: type[EmbeddingProvider]) -> None:
 def get_provider(
     name: str = "litellm",
     config: dict | None = None,
-    *,
-    event_sink: "Any | None" = None,
 ) -> EmbeddingProvider:
     """Instantiate and return an EmbeddingProvider by name.
 
@@ -64,11 +59,6 @@ def get_provider(
                 ``LiteLLMEmbeddingProvider``.
         config: Provider configuration dict (e.g. reyn.yaml ``embedding:``
                 section). Empty dict used when None.
-        event_sink: Optional ``(kind, text, meta) -> None`` callable forwarded
-                to backends that accept the kwarg. ``LiteLLMEmbeddingProvider``
-                does not accept it (no lazy-load lifecycle to report on), so
-                it is silently ignored for the default provider — kept on the
-                signature for registered custom providers that do consume it.
 
     Returns:
         An EmbeddingProvider instance.
@@ -77,8 +67,6 @@ def get_provider(
         KeyError: if name is not registered.
     """
     cls = _PROVIDERS[name]
-    if event_sink is not None and "event_sink" in inspect.signature(cls).parameters:
-        return cls(config or {}, event_sink=event_sink)  # type: ignore[call-arg]
     return cls(config or {})  # type: ignore[call-arg]
 
 

@@ -288,19 +288,6 @@ class OpContext:
     # None = a non-turn OpContext (direct/test construction, CLI/preprocessor).
     turn_origin: "str | None" = None
 
-    # FP-0057 #2856 Part A: the TUI model-download status sink for the `embed`
-    # op's provider resolution. Carries ONLY the event_sink CALLABLE
-    # (``(kind, text, meta) -> None``) — NOT a provider instance, so provider
-    # lifecycle/construction stays owned by the embed op handler (which still
-    # does its own redaction-egress
-    # scan before calling it). This is the seam that lets ``ActionEmbeddingIndex``
-    # route tool-use embeds through the shared `embed` op (inheriting the redaction
-    # seam) while preserving the session's TUI download-status rows, instead of
-    # calling `provider.embed()` provider-direct (the pre-#2856 redaction bypass).
-    # None = no TUI-observable download status (tests / non-chat construction) —
-    # the provider falls back to its own no-op default.
-    embedding_event_sink: "Callable[[str, str, dict], None] | None" = None
-
     # #3196: the SAME registered-skill-entry SSoT `:skill` invocation resolves
     # against (Session/RouterHostAdapter's `_available_skills`, built by
     # `reyn.data.skills.registry.build_skill_registry` from config) — threaded

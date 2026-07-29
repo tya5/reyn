@@ -69,7 +69,6 @@ def build_router_op_context(
     turn_origin: str | None = None,  # proposal 0060 Phase 1 (A7): OS-derived turn provenance → install-op stamping (A9)
     hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
     render_template_bounds: Any = None,  # #2679: operator RenderTemplateBounds → the render_template op cap. None → the op's in-handler defaults.
-    embedding_event_sink: Any = None,  # FP-0057 #2856 Part A: TUI model-download status sink for the `embed` op's provider resolution (ActionEmbeddingIndex build/query path). None → no TUI-observable download status.
     budget_gateway: Any = None,  # FP-0063 PC: the calling Session's per-session BudgetGateway → the `embed` op's single embedding-cost recording entry point (fans out to session scope + agent/project scope via the tracker it holds, keyed by agent NAME). Wired by BOTH router op-ctx builders; RouterHostAdapter's is the load-bearing one (the `embed` TOOL resolves that factory).
     available_skills: Any = None,  # #3196: the host's registered SkillEntry list (Session/RouterHostAdapter's `_available_skills`) → the `file` op's skill-load provenance gate (the config-registered-entry class, alongside builtin/plugin). None → that provenance class is simply unavailable (fails closed, not open).
 ) -> Any:
@@ -172,7 +171,6 @@ def build_router_op_context(
         turn_origin=turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (A9)
         hot_reloader=hot_reloader,  # #2761 PR-2: per-session reloader for immediate mid-turn install apply
         render_template_bounds=render_template_bounds,  # #2679: operator render_template output cap
-        embedding_event_sink=embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
         budget_gateway=budget_gateway,  # FP-0063 PC: the embed op's embedding-cost recording entry point
         available_skills=available_skills,  # #3196: config-registered-entry provenance class for the file op's skill-load gate
     )
