@@ -92,11 +92,12 @@ def test_cron_tools_are_declared_pending_capability_decision() -> None:
 
 
 def test_registered_router_allow_tools_all_come_from_the_real_registry() -> None:
-    """Tier 2: sanity check that the census population is nonempty and
-    excludes router=deny tools (e.g. ask_user is CLI/internal-only by
-    design and must never appear in this gate's population)."""
+    """Tier 2: sanity check that the census population carries a known
+    router=allow tool and excludes router=deny tools (e.g. ask_user is
+    CLI/internal-only by design and must never appear in this gate's
+    population)."""
     allow_names = compute_router_allow_tool_names()
-    assert len(allow_names) > 50, "sanity: the registry should carry dozens of router=allow tools"
+    assert "web_search" in allow_names, "sanity: web_search is a stable router=allow tool"
     assert "ask_user" not in allow_names, "ask_user is gates.router=deny and out of scope by construction"
 
 
@@ -104,7 +105,7 @@ def test_registered_router_allow_tools_all_come_from_the_real_registry() -> None
 
 
 def test_strip_direct_advertisement_route_makes_the_gate_fire() -> None:
-    """Tier 2 (non-vacuity): removing a tool ONLY reachable via route (a)
+    """Tier 2: non-vacuity -- removing a tool ONLY reachable via route (a)
     (direct build_tools() advertisement, never routed through
     invoke_action) from the AST census must produce an undeclared
     unreachable tool -- proving the identity check in
@@ -144,7 +145,7 @@ def test_strip_direct_advertisement_route_makes_the_gate_fire() -> None:
 
 
 def test_strip_invoke_action_route_makes_the_gate_fire() -> None:
-    """Tier 2 (non-vacuity): removing a tool ONLY reachable via route (b)
+    """Tier 2: non-vacuity -- removing a tool ONLY reachable via route (b)
     (invoke_action / _OPERATION_RULES, never directly advertised by
     build_tools()) must equally produce an undeclared unreachable tool --
     proving route (b) is load-bearing in the gate, not decorative.
@@ -176,7 +177,7 @@ def test_strip_invoke_action_route_makes_the_gate_fire() -> None:
 
 
 def test_a_hypothetically_newly_registered_tool_with_no_route_fires_the_gate() -> None:
-    """Tier 2 (non-vacuity): simulates the actual #3464 scenario -- a brand
+    """Tier 2: non-vacuity -- simulates the actual #3464 scenario -- a brand
     new router=allow ToolDefinition name that was never wired anywhere --
     without registering a real ToolDefinition (which would require a full
     handler + schema and pollute the shared default registry). Confirms the
