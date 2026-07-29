@@ -108,19 +108,34 @@ METRIC_COST_USAGE = "gen_ai.client.cost.usd"
 # and "nothing arrived" reads as "no safety limits were hit". Silence was
 # indistinguishable from health.
 #
-# ★ The live safety kinds are ``limit_denied`` and ``safety_limit_checkpoint``,
-# and NEITHER was substituted in here — routing them is an observability
-# decision, not a rename, and making it silently under cover of a cleanup would
-# be the same class of mistake in the other direction. So safety limits are
-# currently NOT exported at all. Whether they should be is #3439; record the
-# answer HERE, next to this set, when it is decided. A selector set is a promise
-# to an operator about what will arrive and, by omission, about what will not —
-# both halves should be deliberate.
+# ★ The live safety kinds are ``limit_denied`` and ``safety_limit_checkpoint``.
+# #3439 decided which of the two belongs here:
+#
+# * ``limit_denied`` → YES, routed below, at WARN. It is the same story as
+#   ``permission_denied`` on a different axis: both mean "the OS refused an
+#   action the agent wanted" (permission_denied = a capability was denied;
+#   limit_denied = a safety limit was denied and a force-close is imminent).
+#   The reasoning that justifies exporting permission_denied at WARN transfers
+#   unchanged to limit_denied — exporting one and not the other hands an
+#   operator an incomplete picture of "the OS said no", and the missing half
+#   is silent, which is exactly the "silence reads as health" harm this
+#   comment already warns about.
+# * ``safety_limit_checkpoint`` → NO, not routed. The reasoning does NOT
+#   transfer: a checkpoint is a periodic threshold *observation*, not a
+#   refusal — there is no "no" to report. It is also high-volume (semantically
+#   closer to a metric than a log-worthy event); adding it as a log record
+#   would train operators to ignore the channel. "Same safety family" is a
+#   *shape* argument, not a transferred reason, so it is deliberately excluded.
+#
+# Omission is a promise too: this set says both what will arrive at an
+# operator's OTLP backend and, by leaving safety_limit_checkpoint out, what
+# will not. Both halves are intentional as of #3439.
 _LOG_EVENT_TYPES: frozenset[str] = frozenset({
     "permission_granted",
     "permission_denied",
     "user_intervention_requested",
     "user_intervention_received",
+    "limit_denied",
 })
 
 # Tool-family events that open+close a child span at the event (post-hoc audit
@@ -420,7 +435,9 @@ class OtelExporter:
                 attrs[field] = str(data[field])
         severity = (
             SeverityNumber.WARN
-            if etype == "permission_denied"  # the only WARN-worthy live kind here (#3410)
+            if etype in ("permission_denied", "limit_denied")  # WARN-worthy: an
+            # OS refusal (#3410 permission_denied, #3439 limit_denied) — see the
+            # _LOG_EVENT_TYPES comment above for why the reasoning transfers.
             else SeverityNumber.INFO
         )
         self._logger.emit(

@@ -123,6 +123,10 @@ class _Capture:
     def log_bodies(self) -> list[str]:
         return [str(lr.log_record.body) for lr in self._log_exp.get_finished_logs()]
 
+    def log_records(self) -> list[Any]:
+        """Raw finished log records (body + severity_number), for severity assertions."""
+        return [lr.log_record for lr in self._log_exp.get_finished_logs()]
+
 
 def _ev(etype: str, ts: datetime | None = None, **data: Any) -> Event:
     if ts is None:
@@ -308,6 +312,77 @@ def test_emitted_span_attrs_only_use_pinned_genai_keys() -> None:
     llm = next(s for s in cap.spans() if s.name == "chat gpt-4o")
     assert llm.attributes[GEN_AI_REQUEST_MODEL] == "gpt-4o"
     assert llm.attributes[GEN_AI_OPERATION_NAME] == "chat"
+
+
+# ── 3b. safety log-record routing (#3439) ────────────────────────────────────
+
+
+def test_limit_denied_reaches_otlp_log_record_at_warn() -> None:
+    """Tier 2: #3439 — ``limit_denied`` reaches an OTLP log record at WARN.
+
+    This is the non-vacuity witness: it asserts the audit-event actually
+    arrives at the in-memory OTLP log exporter (not merely that the type
+    string sits in ``_LOG_EVENT_TYPES``). Removing ``limit_denied`` from
+    that set (the strip-falsify) is recorded in the PR body and turns this
+    RED, since no log record with this body would be emitted at all.
+    """
+    from opentelemetry._logs import SeverityNumber
+
+    cap = _Capture()
+    cap.exporter(
+        Event(
+            type="limit_denied",
+            data={"run_id": _RID, "agent_id": _AID, "kind": "max_iterations"},
+        ),
+    )
+
+    record = next(r for r in cap.log_records() if str(r.body) == "limit_denied")
+    assert record.severity_number == SeverityNumber.WARN
+
+
+def test_permission_denied_still_warn_after_limit_denied_added() -> None:
+    """Tier 2: adding limit_denied does not regress permission_denied's WARN."""
+    from opentelemetry._logs import SeverityNumber
+
+    cap = _Capture()
+    cap.exporter(
+        Event(type="permission_denied", data={"run_id": _RID, "agent_id": _AID}),
+    )
+    record = next(r for r in cap.log_records() if str(r.body) == "permission_denied")
+    assert record.severity_number == SeverityNumber.WARN
+
+
+def test_permission_granted_stays_info_not_warn() -> None:
+    """Tier 2: a non-refusal safety/permission kind stays at INFO, not WARN."""
+    from opentelemetry._logs import SeverityNumber
+
+    cap = _Capture()
+    cap.exporter(
+        Event(type="permission_granted", data={"run_id": _RID, "agent_id": _AID}),
+    )
+    record = next(r for r in cap.log_records() if str(r.body) == "permission_granted")
+    assert record.severity_number == SeverityNumber.INFO
+
+
+def test_safety_limit_checkpoint_not_exported_as_log_record() -> None:
+    """Tier 2: #3439 — ``safety_limit_checkpoint`` is a deliberate omission.
+
+    A checkpoint is a periodic threshold observation, not an OS refusal, and
+    is high-volume enough to be metric-shaped rather than log-worthy; #3439
+    decided NOT to route it. Asserted here (rather than left unasserted) so
+    the omission stays a witnessed decision, not a silent gap that a future
+    change could reintroduce unnoticed — see the PR body for the tradeoff
+    (this pins today's choice against a later "actually make it a metric"
+    decision, which would need to update this test deliberately).
+    """
+    cap = _Capture()
+    cap.exporter(
+        Event(
+            type="safety_limit_checkpoint",
+            data={"run_id": _RID, "agent_id": _AID},
+        ),
+    )
+    assert cap.log_records() == []
 
 
 # ── 4. metrics (cost/token histogram) ────────────────────────────────────────

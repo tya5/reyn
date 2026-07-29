@@ -66,7 +66,7 @@ in one place.
 | `llm_response_received` | metric histograms | `gen_ai.client.token.usage` (input/output), `gen_ai.client.cost.usd` |
 | `tool_executed` / `mcp_called` / `mcp_failed` / `mcp_cancelled` | child span `execute_tool <name>` | `gen_ai.operation.name` (`execute_tool`), `gen_ai.tool.name` |
 | `web_fetch_started` / `web_search_started` (+ completed/failed) | child span `execute_tool` | `gen_ai.tool.name`; the failed variant sets an error status |
-| `permission_granted` / `permission_denied` / `user_intervention_*` / safety events | log record | `reyn.event.type`, `run_id`, `agent_id`, `actor`, `phase`, `intervention_id` |
+| `permission_granted` / `permission_denied` / `user_intervention_*` / `limit_denied` | log record (`permission_denied` and `limit_denied` at `WARN`, the rest `INFO`) | `reyn.event.type`, `run_id`, `agent_id`, `actor`, `phase`, `intervention_id` |
 
 Spans correlate into one trace per run: children nest under the open turn span,
 turns under the session root, keyed by `run_id` (falling back to `agent_id`).
