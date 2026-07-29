@@ -304,7 +304,7 @@ reyn の現行 Sync 層は完成・稼働中。**Phase 1-3 = 土台(foundation)�
 
 ### 将来リスト(明示掲載 — 忘却防止、owner 裁定「best-effort now, WAL-backed later」対象)
 foundation 段階では入れないが、redesign が load-bearing にするため将来必ず戻る項目:
-1. **Composer pending の WAL-backing**(§5 Q-reyn-1): `WalBackedPendingStore` 差し替え + recovery-feature PR gate(truncate-falsify)。
+1. ~~**Composer pending の WAL-backing**(§5 Q-reyn-1)~~ — **#3180 で決着(実装済)**。結論は差分がある: WAL-event 由来ではなく **full-state snapshot file(`DurablePendingStore`)** を採った(WAL 由来の recovery state は truncate で黙って消える #2259 class そのもので、dead-man switch がそれを踏むのは最悪形)。適用範囲も全 op ではなく `ComposerDef.durable`(`op: deadline` のみ default true)。recovery-feature PR gate(truncate-falsify)は同 PR で適用済。
 2. **loop-valve counter(`_hook_driven_turns`)の persist**(§3.1 Q-reyn-3): 現状 in-memory-only(crash で reset = self-continuation の crash 越し穴)。Bus/Composer/LLM-emit が hook-driven turn の生成経路を増やすため、self-continuation の安全 bound を crash 越しに保証する必要が上がる。snapshot-backed 化(既存 `AgentSnapshot` 系と同型)。
 3. **pre/post_tool_use point の実追加**(§2 Q-reyn-2): Phase 1 で作った schema-driven seam に schema + router-loop の 2 dispatch call-site を足す。
 4. **pipeline_start / pipeline_end point の追加**(§2 review-pass): 現状は pipeline_launch(action)だけあり完了に反応する point が無い非対称。Composer の Count 系 use case(v0.1 §5.4 例)の前提でもある。追加は #3 と同じく schema + call-site のみ(pipeline driver-session の起動/完了 seam に dispatch を足す)。
