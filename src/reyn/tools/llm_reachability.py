@@ -1,0 +1,306 @@
+"""LLM-reachability gate — SSoT for which ``router="allow"`` ToolDefinitions
+the LLM can actually reach in the default production configuration, and a
+closed registry of the ones that cannot be reached today, each carrying a
+falsifiable reason (#3464).
+
+## The defect class (5 prior individually-closed instances)
+
+Being registered in the default ``ToolRegistry`` with ``gates.router="allow"``
+does not imply the LLM can ever call the tool — #2032, #3083, #2913, #2875,
+#3215 each independently patched one instance of "registered + dispatchable
+but never appears on the LLM-visible surface." #3464 is the 6th (cron: 5
+tools). This module is the gate that replaces patching instance N+1 forever:
+it derives reachability structurally and requires every unreachable tool to
+be declared, with a reason, rather than silently open.
+
+## Definition of "LLM-reachable" (measured on current ``main``, not assumed)
+
+A ``router="allow"`` ToolDefinition's ``name`` is reachable in the default
+production configuration iff EITHER of two independently-sufficient routes
+can deliver it to the model:
+
+  (a) **Direct advertisement** — ``build_tools()`` can place the name
+      directly in the ``tools=`` payload. Derived structurally: an AST
+      census of every ``<registry>.lookup(...)`` call inside
+      ``router_tools.build_tools``, resolving both string-literal
+      arguments and names that trace back to a string-literal
+      tuple/list assignment (covers the wrapper-name loop, which looks
+      up a loop variable rather than a literal). Structural, not one
+      execution with one args tuple: several of these tools (the D5-D11
+      MCP resource/prompt verbs, ``compact``, ``session_spawn``,
+      ``search_actions``) are only emitted under a *particular*
+      configuration (MCP servers configured / context near budget /
+      embedding enabled) — that is correct conditional gating, not an
+      unreachability defect, and executing ``build_tools([])`` with one
+      fixed arg tuple cannot tell the two apart (confirmed: doing so
+      flags those as "unreachable" too, a false positive this census
+      avoids).
+  (b) **Resolution via ``invoke_action``** — the name is the bare
+      dispatch target of some qualified name in
+      ``universal_dispatch._OPERATION_RULES``. ``invoke_action`` is
+      itself advertised via route (a) whenever the universal wrappers
+      are enabled, which is the shipped default
+      (``ActionRetrievalConfig.universal_wrappers_enabled: bool = True``
+      in ``reyn.config.embedding``) — so resolving through it is a real,
+      always-available route in the default configuration, not a
+      hypothetical one.
+
+**"Any one route suffices" is the deliberate reading** — the issue does
+not require a SPECIFIC path, only that the model can reach the tool
+SOMEHOW. ``hot_list_aliases`` and the MCP ``tool_search_tool`` meta-tool
+are not independent THIRD routes: both are dynamically-selected SUBSETS of
+route (a)/(b)'s pool (hot-list seeds are qualified names drawn from
+``_OPERATION_RULES``; ``tool_search_tool`` wraps the same MCP-server-derived
+dicts route (a) already assembles) — neither can make an otherwise
+structurally-unreachable tool reachable, so neither is modeled as a
+separate route here.
+
+``gates.router="deny"`` tools (e.g. ``ask_user`` — CLI/internal-only by
+design) are out of scope by construction: the census only looks at
+``gates.router == "allow"``.
+
+## Measured result on current ``main``
+
+8 tools, not cron's 5:
+
+  cron_register, cron_unregister, cron_list, cron_enable, cron_disable
+  embed, emit_hook_event, hooks_add
+
+The cron 5 and the other 3 are different in KIND (see
+``UNREACHABLE_TOOL_REASONS`` below) — cron's fate is an open (A)/(B)/(C)
+product decision (#3464); the other 3 are a same-class wiring bug filed as
+a follow-up (#3465) and deliberately NOT fixed here to avoid touching
+``universal_dispatch.py`` / ``router_tools.py`` while PR #3463 (a 444-file
+alias-removal arc) is open against those same files.
+"""
+from __future__ import annotations
+
+import ast
+import inspect
+from dataclasses import dataclass
+from typing import Final, Mapping
+
+
+@dataclass(frozen=True)
+class UnreachableToolReason:
+    """One closed-vocabulary classification + a falsifiable one-line reason.
+
+    A classification without a reason (or vice versa) is not accepted —
+    ``test_llm_reachability_gate_3464.py`` requires both non-empty for every
+    declared entry, so a hole cannot be registered as a bare shrug.
+    """
+
+    classification: str
+    reason: str
+
+
+# Closed vocabulary. A PR adding an entry to UNREACHABLE_TOOL_REASONS must
+# pick one of these — not invent ad hoc prose — so the "why" stays
+# machine-checkable as a category, not just human-readable as text.
+UNREACHABLE_CLASSIFICATIONS: Final[frozenset[str]] = frozenset({
+    # Registered, but the LLM-facing surface is intentionally withheld
+    # pending an owner-level product decision about GRANTING the
+    # capability — advertising it would change what the LLM can do, not
+    # merely fix a bug. Carries the specific (A)/(B)/(C)-style decision
+    # the entry is waiting on.
+    "PENDING_CAPABILITY_DECISION",
+    # Registered + fully described as LLM-facing (the tool's own module
+    # docstring already states the intent), but never wired into either
+    # reachability route — a same-class instance of the #3464 defect,
+    # deliberately deferred rather than fixed in the PR that discovered it
+    # (wiring touches the same files a large in-flight rename arc owns).
+    # Must carry a tracking issue link; this classification is a queue
+    # entry, not a resting state.
+    "DEFERRED_WIRING_BUG",
+})
+
+
+_CRON_REASON = (
+    "#3464: 5 cron ToolDefinitions (cron_register/_unregister/_list/_enable/"
+    "_disable) are registered router=allow but reach neither build_tools()'s "
+    "direct-advertisement census nor universal_dispatch._OPERATION_RULES. "
+    "Whether to (A) add a `cron` catalog category (capability grant -- the "
+    "LLM could directly operate cron, an owner decision), (B) keep them "
+    "intentionally CLI/internal-only, or (C) delete the dead surface is an "
+    "open product decision tracked on #3464 itself. This entry records (B) "
+    "as the interim state -- withheld on purpose, not forgotten -- pending "
+    "that decision."
+)
+
+_WIRING_BUG_REASON_TEMPLATE = (
+    "Registered router=allow with a module docstring already asserting "
+    "LLM-facing intent ({intent!r}), but never wired into build_tools() or "
+    "universal_dispatch._OPERATION_RULES -- the same 'registered but the "
+    "routing entry was never added' mechanics as #3083. Filed as #3465 "
+    "rather than fixed in #3464's PR: wiring requires touching "
+    "universal_dispatch.py / router_tools.py, which #3464 was scoped to "
+    "leave alone while PR #3463 (444-file alias-removal arc) is open "
+    "against those same files."
+)
+
+
+UNREACHABLE_TOOL_REASONS: Final[Mapping[str, UnreachableToolReason]] = {
+    "cron_register": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_unregister": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_list": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_enable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_disable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "embed": UnreachableToolReason(
+        "DEFERRED_WIRING_BUG",
+        _WIRING_BUG_REASON_TEMPLATE.format(
+            intent="`embed` is the raw, USER-FACING embedding primitive"
+        ),
+    ),
+    "emit_hook_event": UnreachableToolReason(
+        "DEFERRED_WIRING_BUG",
+        _WIRING_BUG_REASON_TEMPLATE.format(
+            intent='Router-only (gates.router="allow")'
+        ),
+    ),
+    "hooks_add": UnreachableToolReason(
+        "DEFERRED_WIRING_BUG",
+        _WIRING_BUG_REASON_TEMPLATE.format(
+            intent="the agent adds a push hook -- the crown-jewel of "
+            "config hot-reload: the agent expands its own hooks"
+        ),
+    ),
+}
+
+
+def _string_constants(node: ast.AST) -> set[str]:
+    return {
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+
+
+def compute_direct_advertisable_tool_names(*, source_text: str | None = None) -> frozenset[str]:
+    """Derive route (a): every tool name ``build_tools()`` can place directly
+    in the ``tools=`` payload under SOME valid combination of its parameters.
+
+    Structural (AST) census, not one execution with one args tuple — see the
+    module docstring for why a single ``build_tools([])`` call produces false
+    positives for correctly-conditional tools (MCP resource verbs, ``compact``,
+    ``session_spawn``, ``search_actions``).
+
+    ``source_text`` defaults to the real ``build_tools`` source (via
+    ``inspect.getsource``); tests pass a modified string to strip-falsify
+    without ever touching the file on disk.
+    """
+    if source_text is None:
+        from reyn.runtime.router_tools import build_tools
+
+        source_text = inspect.getsource(build_tools)
+
+    tree = ast.parse(source_text)
+
+    # Pass 1: every ``NAME = <string-literal-only tuple/list/ifexp>``
+    # assignment becomes a lookup-key -> {candidate strings} pool entry.
+    # This is what resolves the wrapper-name loop below (``_wrapper_names``
+    # is assigned an ``A if cond else B`` tuple-of-literals, not a single
+    # literal).
+    string_var_pool: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        target: ast.AST | None = None
+        value: ast.AST | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            target, value = node.target, node.value
+        if target is None or value is None:
+            continue
+        strs = _string_constants(value)
+        if strs:
+            string_var_pool.setdefault(target.id, set()).update(strs)
+
+    # Pass 2: propagate through ``for X in Y:`` when Y is a known pool name,
+    # so a loop variable (``_wrapper_name``) inherits its iterable's strings
+    # (``_wrapper_names``).
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and isinstance(node.iter, ast.Name):
+            if node.iter.id in string_var_pool:
+                string_var_pool.setdefault(node.target.id, set()).update(string_var_pool[node.iter.id])
+
+    # Pass 3: every ``<obj>.lookup(<arg>)`` call site — resolve a literal
+    # string directly, or a Name via the pool built above.
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "lookup":
+            if not node.args:
+                continue
+            arg = node.args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                names.add(arg.value)
+            elif isinstance(arg, ast.Name) and arg.id in string_var_pool:
+                names |= string_var_pool[arg.id]
+
+    return frozenset(names)
+
+
+def compute_invoke_action_reachable_tool_names(
+    *, operation_rules: Mapping[str, tuple] | None = None
+) -> frozenset[str]:
+    """Derive route (b): every bare tool name ``invoke_action`` can dispatch
+    to, per ``universal_dispatch._OPERATION_RULES`` (qualified_name -> (bare
+    tool name, arg-transform)).
+
+    ``operation_rules`` defaults to the real table; tests pass a filtered
+    copy to strip-falsify this route independently of route (a).
+    """
+    if operation_rules is None:
+        from reyn.tools.universal_dispatch import _OPERATION_RULES
+
+        operation_rules = _OPERATION_RULES
+    return frozenset(bare_name for bare_name, _handler in operation_rules.values())
+
+
+def compute_llm_reachable_tool_names(
+    *,
+    source_text: str | None = None,
+    operation_rules: Mapping[str, tuple] | None = None,
+) -> frozenset[str]:
+    """Union of route (a) and route (b) — see module docstring."""
+    return compute_direct_advertisable_tool_names(source_text=source_text) | (
+        compute_invoke_action_reachable_tool_names(operation_rules=operation_rules)
+    )
+
+
+def compute_router_allow_tool_names() -> frozenset[str]:
+    """Every ``ToolDefinition`` name in the default registry with
+    ``gates.router == "allow"`` — the census population this gate covers."""
+    from reyn.tools import get_default_registry
+
+    return frozenset(tool.name for tool in get_default_registry() if tool.gates.router == "allow")
+
+
+def compute_unreachable_router_allow_tool_names(
+    *,
+    source_text: str | None = None,
+    operation_rules: Mapping[str, tuple] | None = None,
+    allow_names: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """``router="allow"`` tool names that are NOT reachable by either route.
+
+    ``allow_names`` defaults to the real registry census; tests pass an
+    override to simulate "a new tool got registered router=allow" without
+    mutating the shared default registry.
+    """
+    if allow_names is None:
+        allow_names = compute_router_allow_tool_names()
+    reachable = compute_llm_reachable_tool_names(
+        source_text=source_text, operation_rules=operation_rules
+    )
+    return allow_names - reachable
+
+
+__all__ = [
+    "UnreachableToolReason",
+    "UNREACHABLE_CLASSIFICATIONS",
+    "UNREACHABLE_TOOL_REASONS",
+    "compute_direct_advertisable_tool_names",
+    "compute_invoke_action_reachable_tool_names",
+    "compute_llm_reachable_tool_names",
+    "compute_router_allow_tool_names",
+    "compute_unreachable_router_allow_tool_names",
+]
