@@ -24,11 +24,11 @@ If the OS is the only mutator (P3) and every mutation emits an audit-event, the 
 A few of the larger buckets:
 
 - **LLM and context** — `llm_called`.
-- **Control IR** — one audit-event per op kind (`sandboxed_exec_started`, `mcp_called`, `web_search_started`, `semantic_search_embed_failed` — a `file` op like a read instead rides the shared `tool_executed` kind, with the specific op named in its `op` field, not as its own kind) plus `permission_denied`. This list is illustrative, not exhaustive — the full, closed kind vocabulary is being derived from a single source of truth in #3410; until that lands, treat any list of kind names here as examples only.
+- **Control IR** — one audit-event per op kind (`sandboxed_exec_started`, `mcp_called`, `web_search_started`, `semantic_search_embed_failed`) plus `permission_denied`. A `file` op like a read instead rides the shared `tool_executed` kind, naming the specific operation in its `op` field rather than as a kind of its own.
 - **User interaction** — `user_message_received`, `user_intervention_received`, `chat_started`, `chat_stopped`, `turn_cancelled`.
 - **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`, `chain_timeout`. Each carries `chain_id` so a single user request can be traced across hops.
 
-The full taxonomy lives in the [events reference](../../reference/runtime/events.md).
+The buckets above are examples. The `type` field is a **closed vocabulary** — every kind reyn emits, and nothing else, is enumerated in the [events reference](../../reference/runtime/events.md#kind-vocabulary), derived from one source of truth in `src/reyn/core/events/event_schema.py` and CI-checked against both the emitting code and the page. A consumer outside reyn can therefore enumerate the complete set of types it may receive.
 
 ### Task subscription events — WAL, not audit-event log
 
@@ -51,9 +51,11 @@ run_id    — uuid for the run (present on most run-scoped audit-events)
 ```
 
 Note: `run_id` is present on most run-scoped audit-events (`llm_called`,
-`permission_denied`, for example — not an exhaustive list; see #3410) but
-absent from some audit-events emitted outside a run context (e.g.
-`chat_started`).
+`permission_denied`) but absent from some audit-events emitted outside a run
+context (e.g. `chat_started`). Which kinds carry `run_id` is a payload question,
+not a vocabulary one — the closed set above says which kinds exist, and does not
+partition them by field. There is no enumeration of the `run_id`-carrying subset;
+read the per-kind payloads in the reference.
 
 ### Audit-events with required fields (FP-0021)
 

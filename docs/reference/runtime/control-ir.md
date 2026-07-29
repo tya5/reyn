@@ -525,9 +525,9 @@ Per-method correspondence table (#3409, AST-verified — not re-derived here, se
 | method | routes via | permission gate | audit emit | error format | `_ephemeral`/pool routing |
 |---|---|---|---|---|---|
 | `_mcp_list_servers` | neither (returns the static configured-server roster) | — | — | — | — |
-| `_mcp_list_tools` | `MCPGateway` direct | none | suppressed (`MCPListingSuppression.LIST_TOOLS`) | `{"error": ...}` dict, 5 call sites | Y |
+| `_mcp_list_tools` | `MCPGateway` direct | none | `mcp_tools_listed` | `{"error": ...}` dict, 5 call sites | Y |
 | `_mcp_list_resources` | `MCPGateway` direct | none | `mcp_resources_listed` | same 5 sites | Y |
-| `_mcp_list_resource_templates` | `MCPGateway` direct | none | suppressed (`MCPListingSuppression.LIST_RESOURCE_TEMPLATES`) | same 5 sites | Y |
+| `_mcp_list_resource_templates` | `MCPGateway` direct | none | `mcp_resource_templates_listed` | same 5 sites | Y |
 | `_mcp_list_prompts` | `MCPGateway` direct | none | `mcp_prompts_listed` | same 5 sites | Y |
 | `_mcp_call_tool` | `execute_op(MCPIROp)` | `PermissionDecl(mcp=[server])` | — (op layer's own concern) | none — raises into the op layer | Y (+ pool context manager) |
 | `_mcp_read_resource` | `execute_op` | same | — | none | Y (+ pool context manager) |
@@ -540,7 +540,7 @@ The four listing methods now share one seam, `Session._mcp_list_via_gateway` —
 Two of the five columns are **not** blockers, despite looking like gaps:
 
 - **Missing permission gate** — by design. `list_tools`/`list_resources`/`list_resource_templates`/`list_prompts` are declared "no permission gate, no op-kind" in `schemas/models.py` itself (the same file `OP_KIND_MODEL_MAP` lives in): discovering *what's available* is not gated, only reading/calling content is (see "Discovery is NOT gated" above and at `mcp_read_resource`).
-- **Audit-emit split** (`list_tools`/`list_resource_templates` suppressed, `list_resources`/`list_prompts` emitting) — a real asymmetry, but a *declared* one: `MCPListingSuppression` in `session.py` makes it an enumerable, reasoned opt-out rather than a silent gap. Whether all four should emit is tracked separately in #3410 (open) and does not block collapsing the two paths.
+- **Audit-emit split** — resolved in #3410: all four listing methods emit (`mcp_tools_listed` / `mcp_resources_listed` / `mcp_resource_templates_listed` / `mcp_prompts_listed`), and the `MCPListingSuppression` registry that declared the earlier asymmetry is gone. The asymmetry had no recorded rationale — that registry said so in its own comment — and closing the audit-event kind vocabulary made it a public-interface question rather than an internal one: two of four sibling discovery calls being invisible to an external consumer is not something a consumer can reason about. Each call site now passes its kind as a string literal, so the vocabulary gate can read it.
 
 ### The actual blocker: the error contract, not permission
 

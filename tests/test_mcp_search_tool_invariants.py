@@ -18,7 +18,6 @@ Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 """
 from __future__ import annotations
 
-from reyn.core.events.event_schema import EVENT_AUDIT_REQUIREMENTS
 from reyn.runtime.router_tools import MCP_SEARCH_THRESHOLD, build_mcp_search_tool, build_tools
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -137,8 +136,6 @@ def test_search_tool_structure():
     - ``max_results`` is a positive integer
     - ``tools`` is a list (may be empty or populated)
 
-    Also verifies that FP-0024 event kinds are declared in EVENT_AUDIT_REQUIREMENTS
-    (P6 audit trail completeness for mcp_search_invoked and mcp_tool_loaded).
     """
     stub_tools = [
         {
@@ -181,17 +178,11 @@ def test_search_tool_structure():
         f"got {len(result['tools'])}"
     )
 
-    # P6 audit completeness: FP-0024 event kinds must be declared.
-    assert "mcp_search_invoked" in EVENT_AUDIT_REQUIREMENTS, (
-        "FP-0024 P6: 'mcp_search_invoked' missing from EVENT_AUDIT_REQUIREMENTS"
-    )
-    assert "mcp_tool_loaded" in EVENT_AUDIT_REQUIREMENTS, (
-        "FP-0024 P6: 'mcp_tool_loaded' missing from EVENT_AUDIT_REQUIREMENTS"
-    )
-    # Required fields for each event kind.
-    assert EVENT_AUDIT_REQUIREMENTS["mcp_search_invoked"] >= frozenset({"query", "result_count"}), (
-        "mcp_search_invoked missing required audit fields"
-    )
-    assert EVENT_AUDIT_REQUIREMENTS["mcp_tool_loaded"] >= frozenset({"tool_name", "server_name"}), (
-        "mcp_tool_loaded missing required audit fields"
-    )
+    # (#3410) This test used to also assert that ``mcp_search_invoked`` /
+    # ``mcp_tool_loaded`` were declared in ``EVENT_AUDIT_REQUIREMENTS``. Both
+    # declarations were removed: an AST census of every audit-emit seam in
+    # ``src/reyn`` found no producer for either kind, so the assertion pinned a
+    # declaration whose only remaining reader was this assertion. Liveness of
+    # the kind vocabulary is now a repo-wide gate
+    # (``tests/test_audit_event_kind_vocabulary_3410.py``) rather than a
+    # per-feature spot check that could only ever see the declaration side.
