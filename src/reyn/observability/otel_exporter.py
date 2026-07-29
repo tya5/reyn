@@ -101,10 +101,21 @@ METRIC_COST_USAGE = "gen_ai.client.cost.usd"
 # and an operator reading this set would expect safety-limit records in their
 # OTLP backend that never show up. The audit-event kind vocabulary is closed
 # and enumerated in ``reyn.core.events.event_schema.AUDIT_EVENT_KINDS``; a
-# selector naming something outside it is dead by construction. The live safety
-# kinds are ``limit_denied`` and ``safety_limit_checkpoint`` — routing either
-# here is a deliberate observability decision, not a rename, so neither was
-# substituted in.
+# selector naming something outside it is dead by construction.
+#
+# ★ The harm pointed the worst direction, which is why the removal is right on
+# its own: an operator watching safety signals over OTLP got NOTHING, forever,
+# and "nothing arrived" reads as "no safety limits were hit". Silence was
+# indistinguishable from health.
+#
+# ★ The live safety kinds are ``limit_denied`` and ``safety_limit_checkpoint``,
+# and NEITHER was substituted in here — routing them is an observability
+# decision, not a rename, and making it silently under cover of a cleanup would
+# be the same class of mistake in the other direction. So safety limits are
+# currently NOT exported at all. Whether they should be is #3439; record the
+# answer HERE, next to this set, when it is decided. A selector set is a promise
+# to an operator about what will arrive and, by omission, about what will not —
+# both halves should be deliberate.
 _LOG_EVENT_TYPES: frozenset[str] = frozenset({
     "permission_granted",
     "permission_denied",
