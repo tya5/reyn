@@ -32,7 +32,7 @@ The full taxonomy lives in the [events reference](../../reference/runtime/events
 
 ### Task subscription events — WAL, not audit-event log
 
-Task↔session binding changes (`task_subscribed`, `task_rebound`) are recorded in the **WAL** (StateLog, `.reyn/state/wal.jsonl`) — not in the P6 audit-event log. The WAL is the crash-recovery and time-travel substrate; the audit-event log is the per-run trace. They are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*). Do not look for `task_subscribed` in the audit-event log; it is not there.
+Task↔session binding changes are declared as **WAL** kinds (`task_subscribed`, `task_rebound` — StateLog, `.reyn/state/wal.jsonl`), not the P6 audit-event log, so if this mechanism is live you should look for them there, not here. Currently, however, neither kind has a writer anywhere in the codebase — the WAL vocabulary declares them but nothing appends one, so no task↔session binding change is actually recorded today. The WAL is generally the crash-recovery and time-travel substrate; the audit-event log is the per-run trace — they are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*).
 
 ## What an audit-event is
 

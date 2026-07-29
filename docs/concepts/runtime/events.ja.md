@@ -32,7 +32,7 @@ OS が唯一のミューテーターであり（P3）、すべてのミューテ
 
 ### Task subscription event — WAL であって audit-event ログではない
 
-Task↔session の紐付け変更（`task_subscribed`、`task_rebound`）は **WAL**（StateLog、`.reyn/state/wal.jsonl`）に記録されます — P6 audit-event ログにはありません。WAL はクラッシュリカバリと time-travel の基盤であり、audit-event ログは実行ごとのトレースです。両者は耐久性契約の異なる別々のログです（[Time-travel](time-travel.ja.md) の「WAL vs audit-event 分離」を参照）。`task_subscribed` を audit-event ログの中で探さないでください — そこにはありません。
+Task↔session の紐付け変更は **WAL** kind（`task_subscribed`、`task_rebound` — StateLog、`.reyn/state/wal.jsonl`）として宣言されており、P6 audit-event ログにはありません — この機構が生きているなら探す先は audit-event ログではなくこちらです。ただし現状、この2つの kind にはコードベースのどこにも書き込み箇所がありません — WAL の語彙としては宣言されているものの、実際に append する処理が無いため、Task↔session の紐付け変更は現在まったく記録されていません。WAL は一般にクラッシュリカバリと time-travel の基盤であり、audit-event ログは実行ごとのトレースです。両者は耐久性契約の異なる別々のログです（[Time-travel](time-travel.ja.md) の「WAL vs audit-event 分離」を参照）。
 
 ## audit-event とは何か
 
