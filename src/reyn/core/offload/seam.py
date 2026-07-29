@@ -35,7 +35,7 @@ raw for the existing vision follow-up, never embedded in the text body.
 **Structural shape summary (#2656, additive follow-up)**: a head-N-chars ``structured_preview`` is a
 poor summary of *shape* — for a large array-of-objects it shows only (a fragment of) the first element,
 so the LLM cannot reliably read the full top-level key set / value types / array length without a
-``file__read`` round-trip. When a structured attachment is offloaded, the frontmatter ALSO carries
+``read_file`` round-trip. When a structured attachment is offloaded, the frontmatter ALSO carries
 ``structured_shape`` — a deterministically-derived (no extra LLM call) key/type/length descriptor,
 bounded in both depth and breadth (see ``_SHAPE_MAX_DEPTH`` / ``_SHAPE_MAX_KEYS`` /
 ``_SHAPE_MAX_ARRAY_SAMPLE``) so summarizing a huge payload is never itself an unbounded-cost operation.

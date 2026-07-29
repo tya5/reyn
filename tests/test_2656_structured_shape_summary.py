@@ -47,7 +47,7 @@ def test_offloaded_structured_carries_a_shape_summary_alongside_the_preview():
     assert shape is not None, "shape summary is present for an offloaded structured attachment"
     assert shape["rows"]["length"] == 50, "array length is exact, not sampled-approximate"
     # The element shape is the union of keys across the sampled rows — every top-level key of a
-    # single row is visible from the frontmatter alone, without a file__read round-trip.
+    # single row is visible from the frontmatter alone, without a read_file round-trip.
     assert set(shape["rows"]["element"].keys()) == {"id", "name", "active"}
     assert shape["rows"]["element"]["id"] == "number"
     assert shape["rows"]["element"]["name"] == "string"
