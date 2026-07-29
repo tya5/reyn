@@ -180,11 +180,13 @@ def test_search_tool_structure():
 
     # (#3410) This test used to also assert that ``mcp_search_invoked`` /
     # ``mcp_tool_loaded`` were declared in ``EVENT_AUDIT_REQUIREMENTS``. Both
-    # declarations were removed because reyn has no point at which it could
-    # observe either event: ``tool_search`` is resolved SERVER-SIDE by the
-    # provider, so neither the search nor the per-tool load ever comes back to
-    # reyn as something it dispatches. See the decision record next to their
-    # former entries in ``reyn.core.events.event_schema`` — it is a "cannot",
-    # not a "not yet". Liveness of the kind vocabulary is now a repo-wide gate
+    # declarations were removed because the FP-0024 path they describe does not
+    # run: ``MCP_SEARCH_THRESHOLD`` is 0 and no production caller passes a
+    # non-default ``mcp_search_threshold`` (the tests in THIS file are the only
+    # opt-in). ★ That is a "dormant", not a "cannot" — the decision record next
+    # to their former entries in ``reyn.core.events.event_schema`` says which of
+    # the two to re-add when FP-0024 is switched back on, and which to re-check
+    # first. Read it before reinstating either. Liveness of the kind vocabulary
+    # is now a repo-wide gate
     # (``tests/test_audit_event_kind_vocabulary_3410.py``) rather than a
     # per-feature spot check that could only ever see the declaration side.

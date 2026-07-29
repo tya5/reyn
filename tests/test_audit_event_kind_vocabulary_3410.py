@@ -260,7 +260,7 @@ def test_field_requirements_only_constrain_kinds_in_the_vocabulary() -> None:
     *what fields a given kind must carry* — and the field map is a refinement of
     the vocabulary, never a second source of it. Before #3410 nothing said so,
     which is how ``mcp_search_invoked`` / ``mcp_tool_loaded`` sat in the field
-    map while reyn had no point at which it could ever emit them: the only
+    map declaring required fields for a switched-off code path: the only
     registry that mentioned them was the one that never claimed to say what
     exists.
     """
@@ -344,6 +344,76 @@ def test_declared_forwarder_blind_spots_name_a_registered_seam() -> None:
     assert not unbacked, (
         "blind spots classified FORWARDER whose enclosing function is not a "
         f"declared seam (so its callers are not censused either): {unbacked}"
+    )
+
+
+def _kind_selector_collections() -> list[tuple[str, int, list[str], set[str]]]:
+    """Every string-literal collection in ``src/reyn`` that is MOSTLY kind names.
+
+    A consumer selection — "which kinds this surface forwards / maps / logs" —
+    is a legitimate second list; it answers a different question than the
+    vocabulary does. What is never legitimate is a selection naming a kind the
+    vocabulary does not contain: nothing can ever match it.
+
+    "Mostly" is the discriminator, and it is what makes this checkable without a
+    hand-written registry of selections (which would have the same completeness
+    problem as the seam list). A collection where EVERY member is a kind is
+    trivially fine; a collection where NONE is has nothing to do with kinds — a
+    list of ``op`` values, of config keys, of field names. Only the mixed case
+    needs a human: two or more members are kinds, and at least one is not.
+    """
+    out = []
+    for path in _source_files():
+        if path == _SRC / "core" / "events" / "event_schema.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Set, ast.List, ast.Tuple)) or not node.elts:
+                continue
+            values = [
+                e.value for e in node.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            ]
+            if len(values) != len(node.elts):
+                continue
+            known = [v for v in values if v in AUDIT_EVENT_KINDS]
+            if len(known) >= 2 and len(known) < len(values):
+                rel = path.relative_to(_REPO).as_posix()
+                out.append((rel, node.lineno, values, set(values) - AUDIT_EVENT_KINDS))
+    return out
+
+
+def test_no_consumer_selection_names_a_kind_outside_the_vocabulary() -> None:
+    """Tier 2: a collection of audit-event kind names in ``src/reyn`` does not
+    mix in a name the vocabulary does not contain.
+
+    ★ The third face of the same defect. #3357 was a *declaration* with no
+    producer; #3410 was a *producer* with no declaration; this is a *consumer
+    selection* naming a kind that does not exist — an arm that can never fire,
+    invisible because nothing crashes. It is the failure mode the closed
+    vocabulary makes checkable for the first time: before there was a complete
+    list, "is this name real?" had no mechanical answer.
+
+    Found one on its first run: the OTel exporter routed ``safety_triggered`` /
+    ``safety_limit_reached`` to OTLP log records at WARN, and neither name
+    existed anywhere else in the repo — an operator would have waited for
+    safety records that could not arrive.
+
+    Add a plausible-but-nonexistent kind to any such collection → RED.
+
+    Deliberately NOT asserted: that a selection covers every kind it *should*.
+    Which kinds a surface forwards is a product decision (see
+    ``progress_lifecycle.PROGRESS_LIFECYCLE_EVENTS`` — four of 200+, on
+    purpose), and there is nothing to derive a "should" from.
+    """
+    drifted = _kind_selector_collections()
+    assert not drifted, (
+        "these collections are mostly audit-event kind names but include names "
+        "the closed vocabulary does not contain — nothing will ever match "
+        "them: "
+        + "; ".join(
+            f"{rel}:{line} → {sorted(outsiders)}" for rel, line, _v, outsiders in drifted
+        )
     )
 
 

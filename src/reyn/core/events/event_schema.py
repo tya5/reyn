@@ -16,10 +16,10 @@ they are not interchangeable and one is not derived from the other:
 2. ``EVENT_AUDIT_REQUIREMENTS`` — **the field requirements**. Given a kind, what
    its payload must carry (FP-0021). It covers a SUBSET of the vocabulary and
    says nothing about which kinds exist — the distinction that let
-   ``mcp_search_invoked`` / ``mcp_tool_loaded`` sit here with required fields
-   while reyn had no point at which it could ever emit them (see the decision
-   record next to their former entries), and let ``mcp_resources_listed`` /
-   ``mcp_prompts_listed`` ship without appearing here at all.
+   ``mcp_search_invoked`` / ``mcp_tool_loaded`` sit here constraining a code
+   path that no production run reaches (see the decision record next to their
+   former entries), and let ``mcp_resources_listed`` / ``mcp_prompts_listed``
+   ship without appearing here at all.
 
 ``KIND_EMIT_SEAMS`` and ``DYNAMIC_KIND_EMIT_SITES`` support (1): they declare
 where kinds enter the log, and where the AST census that guards the vocabulary
@@ -81,32 +81,50 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "user_intervention_requested": frozenset({"run_id", "actor", "intervention_id"}),
     "user_intervention_received": frozenset({"run_id", "actor", "intervention_id"}),
     # (#3410) ``mcp_search_invoked`` / ``mcp_tool_loaded`` were declared here for
-    # the FP-0024 tool_search meta-tool and REMOVED — not because nobody got
-    # around to writing the emitter, but because **reyn has no point at which it
-    # could observe either event**. Both were measured before removing:
+    # the FP-0024 tool_search meta-tool and REMOVED. The reason is narrower than
+    # it looks, and getting it right matters more than the removal does — see
+    # "when FP-0024 is switched back on" below.
     #
-    #   - ``tool_search`` is Anthropic's SERVER-SIDE meta-tool
-    #     (``tool_search_tool_20251101``). reyn hands the provider a catalog;
-    #     the provider matches the query and loads the subset itself. The search
-    #     call never returns to reyn as a tool call — the literal
-    #     ``"tool_search"`` appears in ``src/reyn`` exactly twice, in
-    #     ``router_tools.build_mcp_search_tool``'s descriptor and the comment
-    #     above it. There is no dispatch arm to emit from, for either the search
-    #     ("mcp_search_invoked") or the per-tool load ("mcp_tool_loaded").
-    #   - Nor is the arm reachable today: it needs ``mcp_search_threshold > 0``,
-    #     ``MCP_SEARCH_THRESHOLD`` is 0, the ``ReynConfig`` field was
-    #     fold-removed (#3218), and neither production ``build_tools()`` caller
-    #     (``router_loop`` / ``capability_visibility``) passes the parameter.
+    # ★ REASON: the FP-0024 path DOES NOT RUN. Not "nobody wrote the emitter",
+    # not "reyn cannot observe it" — the mechanism exists and is switched off:
+    #
+    #   - ``router_tools.MCP_SEARCH_THRESHOLD`` is ``0``, and ``build_tools()``
+    #     takes the tool_search branch only when ``mcp_search_threshold > 0``.
+    #     FP-0032 lowered the default from 30 (the meta-tool is Anthropic-API-
+    #     specific, which collides with reyn's provider-agnostic stance);
+    #     removing it outright is tracked as FP-0033.
+    #   - ``git grep "mcp_search_threshold=" -- src`` → **0 hits**. No production
+    #     caller passes a non-default value; the ``ReynConfig`` field that could
+    #     have was fold-removed in #3218. Only tests opt in, by passing the
+    #     parameter directly to ``build_tools()``.
+    #
+    # So these were required fields for kinds on a branch no production run
+    # reaches. Keeping them would have made the vocabulary describe a code path
+    # that is dormant — the #3357 defect (a consumer waits forever) with an
+    # extra layer of indirection.
+    #
+    # ★ WHEN FP-0024 IS SWITCHED BACK ON, re-decide both kinds SEPARATELY. They
+    # are not the same case, and a single "we removed these" would lose that:
+    #
+    #   - ``mcp_tool_loaded`` — "a specific MCP tool was loaded from a search
+    #     result" is **reyn's own act**: reyn is the one loading. An observation
+    #     point exists. RE-ADD IT.
+    #   - ``mcp_search_invoked`` — "the LLM called tool_search" may resolve
+    #     inside the provider, in which case reyn has nothing to observe.
+    #     CHECK before re-adding; do not assume either way from this comment.
+    #
+    # ★ COROLLARY (the line that decides the above): the audit log records what
+    # the OS DID, not what happened elsewhere. But handing control to a
+    # provider-internal mechanism is itself an OS act, and IS auditable. So the
+    # right shape when this is re-enabled is not "the model searched" (not
+    # observable) but "reyn advertised the meta-tool" / "reyn loaded tool X" —
+    # which is also the shape that matches what the OS is accountable for.
     #
     # ★ Contrast with the ``_mcp_list_*`` decision this same change made in the
-    # other direction (session.py, #3410): there, reyn ITSELF performs the
-    # listing, so an observation point exists and "emitting is the recoverable
-    # direction" applies. Here it does not — the event happens inside the
-    # provider. A declared kind reyn cannot produce is the #3357 defect, so the
-    # honest move is to drop the declaration, not to invent an emit site.
-    #
-    # Reinstating them requires an observation point first (e.g. a provider
-    # response field naming which tools a search loaded), not just an emitter.
+    # other direction (session.py, #3410): those four listing paths RUN on every
+    # production turn that touches MCP, so "emitting is the recoverable
+    # direction" applies and the fix was to add the missing emitters. The
+    # difference is reachability, not observability.
     # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
     # Emitted by RouterLoop when invoke_action or a hot list alias is executed.
     # action_name: the resolved qualified_name (e.g. "agent.peer__alice")
@@ -439,18 +457,34 @@ class DynamicEmitSite:
     turns "the census might be blind somewhere" into an enumerable list that
     cannot grow without a decision.
 
-    Classifications:
+    Each classification names a different way the entry can turn out to be
+    WRONG — which is the point of classifying at all. An entry is a claim about
+    the census's coverage, and a claim you cannot refute is not worth recording:
 
-    - ``FORWARDER`` — the enclosing function is itself a registered seam; the
-      kind came from a caller the census already reads. No kind is minted here.
+    - ``FORWARDER`` — the enclosing function is itself a registered seam, so the
+      kind came from a caller the census already reads and none is minted here.
+      **Breaks when** a caller of that seam passes a computed kind instead of a
+      literal: that kind reaches the log without ever being censused, and the
+      vocabulary silently stops being closed for this path. Refute by finding
+      such a caller — the gate will already be RED on the caller's own site.
     - ``SINK_BINDING`` — a lambda/closure binding a registered sink parameter to
-      a real ``EventLog``. Same reasoning as FORWARDER, one level of injection
-      further out: the kinds are censused at the sink's own call sites.
+      a real ``EventLog``. Same claim one injection level further out: the kinds
+      are censused at the consuming component's own emit sites. **Breaks when**
+      the sink is handed to a component whose emits are NOT literal, which the
+      census cannot see from this end at all.
     - ``KIND_FAMILY`` — the kind is genuinely assembled at runtime, so the
-      census cannot expand it. These are the real holes in the closed vocabulary
-      and each one needs a reason it still exists.
-    - ``NOT_AN_AUDIT_EMIT`` — a name collision with a seam name; the call does
-      not touch the audit log at all.
+      census cannot expand it. These are the real holes; each needs a reason it
+      still exists AND the condition under which it should stop existing.
+      **Breaks when** the reason's premise changes (a producer appears, a
+      provider starts accepting the sink) — at which point kinds flow through a
+      site no gate reads.
+    - ``NOT_AN_AUDIT_EMIT`` — a name collision with a seam name; the call never
+      touches an event log. **Breaks when** the colliding helper is rewired onto
+      a real event log, or the seam registry drops the name: the entry then
+      reads as a granted exemption, and the gate would count a genuine dynamic
+      emit as already-declared. This is the only classification that can turn a
+      RED into a silent GREEN, so verify the call really does not reach a log
+      before using it.
     """
 
     module: str
@@ -589,9 +623,13 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
         classification="NOT_AN_AUDIT_EMIT",
         reason=(
             "A local recursive tree-walk helper that happens to be named "
-            "``_emit``; it appends rendered rows and never touches an event "
-            "log. Declared rather than filtered out by receiver-name "
-            "heuristics, so the collision stays visible to the next reader."
+            "``_emit``; it appends rendered rows to a list and never touches an "
+            "event log (verified: its only sink is the enclosing ``rows`` "
+            "list). Declared rather than filtered out by a receiver-name "
+            "heuristic, so the collision stays visible. ★ If this helper is "
+            "ever rewired onto an event log, DELETE this entry first — leaving "
+            "it turns a genuine unreadable kind into a gate the census counts "
+            "as already-declared."
         ),
     ),
     DynamicEmitSite(
@@ -601,7 +639,7 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
         classification="NOT_AN_AUDIT_EMIT",
         reason=(
             "The call that seeds the tree-walk helper above. Same collision, "
-            "same non-audit call."
+            "same non-audit call, same deletion condition."
         ),
     ),
 )
