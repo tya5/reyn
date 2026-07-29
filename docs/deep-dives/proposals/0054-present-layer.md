@@ -355,7 +355,8 @@ differentiator is making blindness *auditable*, not forbidding it.)
   The offload output shape is landed and fixed; nothing gates this proposal.
 - **Follow-up (additive, post-arc)**: enrich offload frontmatter with a shape summary
   (key names / types / array lengths) instead of only a head-N-chars preview — improves
-  blind template authoring. To be filed as an issue after the arc lands.
+  blind template authoring. Filed and implemented as #2656 (`structured_shape` in
+  `seam.py`'s `build_offload_body`, additive alongside `structured_preview`).
 
 ## Out of scope (v1)
 

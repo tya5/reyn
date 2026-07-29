@@ -25,11 +25,23 @@ Two independent offload streams:
 - **text** — capped by ``cap_tool_result_content`` (token budget) at the caller; its preview is plain
   text, not a JSON stub.
 - **structured** — gated here by ``STRUCTURED_INLINE_MAX_CHARS`` (its own ref when oversized); the
-  frontmatter then carries ``structured_ref`` + a short ``structured_preview`` instead of the data.
+  frontmatter then carries ``structured_ref`` + a short ``structured_preview`` + a bounded
+  ``structured_shape`` summary instead of the data.
 
 The format is INDEPENDENT of the store: with no ``save_fn`` the frontmatter still renders (structured
 stays inline, uncapped) — only the size-gated offloading needs a store. Media attachments are returned
 raw for the existing vision follow-up, never embedded in the text body.
+
+**Structural shape summary (#2656, additive follow-up)**: a head-N-chars ``structured_preview`` is a
+poor summary of *shape* — for a large array-of-objects it shows only (a fragment of) the first element,
+so the LLM cannot reliably read the full top-level key set / value types / array length without a
+``file__read`` round-trip. When a structured attachment is offloaded, the frontmatter ALSO carries
+``structured_shape`` — a deterministically-derived (no extra LLM call) key/type/length descriptor,
+bounded in both depth and breadth (see ``_SHAPE_MAX_DEPTH`` / ``_SHAPE_MAX_KEYS`` /
+``_SHAPE_MAX_ARRAY_SAMPLE``) so summarizing a huge payload is never itself an unbounded-cost operation.
+Hitting a bound is recorded IN the summary (``<max_depth:N>`` / ``<truncated>`` / ``<sampled>`` marker
+values) rather than silently dropping data. Purely additive: ``structured`` / ``structured_ref`` /
+``structured_preview`` are unchanged.
 """
 from __future__ import annotations
 
@@ -43,6 +55,72 @@ from reyn.core.offload.canonical import CanonicalToolResult
 STRUCTURED_INLINE_MAX_CHARS: int = 2_000
 _STRUCTURED_PREVIEW_CHARS: int = 600
 
+# Bounds for the ``structured_shape`` summary (#2656): each bound is on the summarizer's OWN descent,
+# never on the input size, so a huge/deeply-nested payload cannot make shape summarization itself
+# unbounded work — it always stops at a small, fixed number of dict levels / object keys / sampled
+# array elements, and records that it stopped (rather than silently truncating without a trace).
+_SHAPE_MAX_DEPTH: int = 4
+_SHAPE_MAX_KEYS: int = 25
+_SHAPE_MAX_ARRAY_SAMPLE: int = 3
+
+
+def summarize_structured_shape(value: Any, *, depth: int = 0) -> Any:
+    """Deterministically derive a compact *shape* descriptor for ``value`` — key names, value types,
+    array lengths, nested up to a small bound — WITHOUT any LLM call and WITHOUT scanning the full
+    payload (bounded depth/breadth/array-sample, #2656).
+
+    - ``dict`` -> ``{key: <nested shape>, ...}`` for up to ``_SHAPE_MAX_KEYS`` keys (in insertion
+      order); beyond that, a ``"<truncated>"`` marker key records how many more keys exist.
+    - ``list`` -> ``{"length": N, "element": <shape>}``; the element shape is derived only from the
+      first ``_SHAPE_MAX_ARRAY_SAMPLE`` elements (never the whole array — this is what keeps a
+      million-element array cheap to summarize). When the sampled elements are all dicts, ``element``
+      is the UNION of their keys (same "columns = union over the first K rows" heuristic the
+      present-layer table renderer uses for the same reason — not a new concept, 0054). A
+      ``"<sampled>"`` marker records that the length exceeds the sample size.
+    - scalars -> a bare type name (``"string"`` / ``"number"`` / ``"boolean"`` / ``"null"``).
+    - beyond ``_SHAPE_MAX_DEPTH`` nested levels -> a ``"<max_depth:N>"`` marker string instead of
+      descending further.
+    """
+    if depth >= _SHAPE_MAX_DEPTH:
+        return f"<max_depth:{_SHAPE_MAX_DEPTH}>"
+    if isinstance(value, dict):
+        keys = list(value.keys())
+        shown_keys = keys[:_SHAPE_MAX_KEYS]
+        shape: dict[str, Any] = {
+            str(k): summarize_structured_shape(value[k], depth=depth + 1) for k in shown_keys
+        }
+        if len(keys) > _SHAPE_MAX_KEYS:
+            shape["<truncated>"] = f"{len(keys) - _SHAPE_MAX_KEYS} more keys"
+        return shape
+    if isinstance(value, list):
+        length = len(value)
+        sample = value[:_SHAPE_MAX_ARRAY_SAMPLE]
+        element_shape: Any = None
+        if sample and all(isinstance(item, dict) for item in sample):
+            union: dict[str, Any] = {}
+            for item in sample:
+                for k, v in item.items():
+                    if k not in union and len(union) < _SHAPE_MAX_KEYS:
+                        union[str(k)] = summarize_structured_shape(v, depth=depth + 1)
+            element_shape = union
+        elif sample:
+            element_shape = summarize_structured_shape(sample[0], depth=depth + 1)
+        result: dict[str, Any] = {"length": length}
+        if element_shape is not None:
+            result["element"] = element_shape
+        if length > _SHAPE_MAX_ARRAY_SAMPLE:
+            result["<sampled>"] = f"first {_SHAPE_MAX_ARRAY_SAMPLE} of {length}"
+        return result
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return type(value).__name__
+
 
 def build_offload_body(
     canonical: CanonicalToolResult,
@@ -53,9 +131,10 @@ def build_offload_body(
     """Return ``(frontmatter, text, media_blocks, content_type)`` for a canonical tool result.
 
     ``frontmatter`` = the signal meta + the structured data (inline when small, or ``structured_ref`` +
-    ``structured_preview`` when large and a ``save_fn`` is available). Empty ``{}`` when there is
-    nothing but plain text. ``text`` = the (uncapped) body the caller then caps + assembles via
-    :func:`render_tool_result`. ``media_blocks`` = the raw media blocks for the vision follow-up.
+    ``structured_preview`` + ``structured_shape`` when large and a ``save_fn`` is available). Empty
+    ``{}`` when there is nothing but plain text. ``text`` = the (uncapped) body the caller then caps
+    + assembles via :func:`render_tool_result`. ``media_blocks`` = the raw media blocks for the vision
+    follow-up.
     ``content_type`` (#2663) = the canonical's RENDERER-only sidecar (``canonical.get("content_type")``)
     — deliberately NEVER folded into ``frontmatter`` (that would leak a transport/renderer signal into
     the LLM-visible ``role: tool`` body); the caller threads it to the ``text`` offload store's
@@ -100,6 +179,7 @@ def build_offload_body(
             frontmatter["structured"] = "offloaded"
             frontmatter["structured_ref"] = stored.get("path", "")
             frontmatter["structured_preview"] = serialized[:_STRUCTURED_PREVIEW_CHARS]
+            frontmatter["structured_shape"] = summarize_structured_shape(combined)
         else:
             frontmatter["structured"] = combined
 

@@ -151,13 +151,17 @@ the same PR. No compat shim.
   <tail>
   ```
 - **structured** — gated by `STRUCTURED_INLINE_MAX_CHARS` (`seam.py:30`, its own file when
-  oversized); the frontmatter then carries the ref + a short preview instead of the data:
+  oversized); the frontmatter then carries the ref + a short preview + a bounded shape
+  summary instead of the data:
   ```
   ---
   structured: offloaded
   structured_ref: <path>       # read back via file__read
   structured_preview: |
     <first ~600 chars>
+  structured_shape:            # #2656 — key names / value types / array length, deterministic,
+    <key>: <type | nested shape>  # depth/breadth/array-sample all bounded (see seam.py) so
+    ...                            # summarizing a huge payload is never itself unbounded work
   ---
   <text>
   ```
