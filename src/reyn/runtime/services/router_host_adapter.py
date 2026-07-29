@@ -191,11 +191,6 @@ class RouterHostAdapter:
         action_embedding_index: Any = None,
         embedding_provider: Any = None,
         embedding_model_class: str | None = None,
-        # FP-0057 #2856 Part A: the session's TUI model-download status sink
-        # CALLABLE (paired with ``embedding_provider`` above), threaded onto
-        # every router OpContext (``ctx.embedding_event_sink``) so the `embed`
-        # op forwards it into the fresh per-call provider it resolves.
-        embedding_event_sink: Any = None,
         # FP-0063 PC: this session's BudgetGateway, threaded onto every router
         # OpContext so the `embed` op can record its INDEPENDENT embedding-cost
         # aggregate (session scope on the gateway itself; agent/project scope
@@ -453,8 +448,6 @@ class RouterHostAdapter:
         self._action_embedding_index = action_embedding_index
         self._embedding_provider = embedding_provider
         self._embedding_model_class = embedding_model_class
-        # FP-0057 #2856 Part A
-        self._embedding_event_sink = embedding_event_sink
         # FP-0063 PC: embedding-cost recording entry point for the `embed` op.
         self._budget_gateway = budget_gateway
         # #2548 PR-A: enabled skill registry snapshot for the ## Skills block.
@@ -2152,10 +2145,6 @@ class RouterHostAdapter:
             # (skill_management__install_* / pipeline ops → build_legacy_op_context →
             # this factory), so it is the load-bearing wiring for PR-2.
             hot_reloader=self.hot_reloader,
-            # FP-0057 #2856 Part A: forward the session's TUI model-download
-            # status sink so the `embed` op preserves it (ActionEmbeddingIndex
-            # build/query now routes through the op instead of provider-direct).
-            embedding_event_sink=self._embedding_event_sink,
             # FP-0063 PC: the live router-dispatched `embed` tool resolves THIS
             # factory, so this is the load-bearing wiring for embedding-cost
             # recording (all three scopes fan out from the gateway).

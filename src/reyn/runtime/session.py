@@ -654,8 +654,8 @@ class _HookEventBundle:
 @dataclass(frozen=True)
 class _RetrievalBundle:
     """#3082 Family 5: the retrieval spine — the embedding block
-    (``embedding_provider`` / ``embedding_event_sink`` / ``embedding_model_class``
-    / ``action_embedding_index``, four attrs, one conditional construction
+    (``embedding_provider`` / ``embedding_model_class`` /
+    ``action_embedding_index``, three attrs, one conditional construction
     guarded by ``universal_wrappers_enabled and embedding.enabled`` (FP-0066
     §7) with a
     try/except None-fallback) plus ``action_usage_tracker`` (hot-list
@@ -675,17 +675,31 @@ class _RetrievalBundle:
     the construction sequence that used to run inline in ``Session.__init__``
     at its ORIGINAL position (line ~1152), which is BEFORE Family 1
     (``_build_audit_event_bundle``) runs — so unlike ``hot_reloader``
-    (Family 3) or ``budget`` (Family 4), this family's two closures
-    (``_embedding_event_sink`` / ``_on_hot_list_changed``) do NOT take
-    ``chat_events`` as an eager builder input. They keep resolving
+    (Family 3) or ``budget`` (Family 4), this family's closure
+    (``_on_hot_list_changed``) does NOT take
+    ``chat_events`` as an eager builder input. It keeps resolving
     ``self._chat_events`` at CALL time (the EventLog is constructed later in
-    ``__init__``), exactly as the pre-extraction closures did — eager-izing
+    ``__init__``), exactly as the pre-extraction closure did — eager-izing
     that reference here would raise ``AttributeError`` at construction, since
     ``self._chat_events`` does not exist yet at line ~1152. The builder is an
-    instance method precisely so these closures can keep capturing ``self``."""
+    instance method precisely so this closure can keep capturing ``self``.
+
+    #3438: the fourth attr, ``embedding_event_sink`` (a TUI model-download
+    status sink, FP-0057 #2856 Part A), was removed along with its whole
+    seven-hop wire (Session → OpContext → the `embed` op → provider). It had
+    no producer: ``get_provider`` only forwards an ``event_sink`` kwarg to a
+    provider class whose signature accepts it, and the sole implementation
+    (``LiteLLMEmbeddingProvider``) never did. Its original reason for being —
+    reporting a local in-process embedding model's lazy-load lifecycle
+    (FP-0043 Component C.3) — stopped applying when #3128 removed that
+    in-process backend; local/offline embedding now goes through an
+    operator-run litellm proxy (see
+    docs/concepts/data-retrieval/rag.md#local-and-offline-embedding-models),
+    which reyn does not manage a download lifecycle for. No comment/ADR/issue
+    recorded an intent to keep the wire for a future provider, so this was
+    dead wiring, not a deliberate placeholder."""
 
     embedding_provider: "object | None"
-    embedding_event_sink: "object | None"
     embedding_model_class: "str | None"
     action_embedding_index: "object | None"
     action_usage_tracker: "object | None"
@@ -1107,7 +1121,6 @@ class Session:
         self._action_embedding_index = _retrieval_bundle.action_embedding_index
         self._embedding_provider = _retrieval_bundle.embedding_provider
         self._embedding_model_class = _retrieval_bundle.embedding_model_class
-        self._embedding_event_sink = _retrieval_bundle.embedding_event_sink
         self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
         # mcp_connection_service; 4 lambdas deferred-resolve sibling deps at call time (#3082 Family 8c, see session-construction.md#family-8c-mcp-connection-service)
@@ -3546,7 +3559,7 @@ class Session:
         agent_name: str,
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
-        (four attrs, one conditional construction guarded by
+        (three attrs, one conditional construction guarded by
         ``universal_wrappers_enabled and embedding.enabled`` (FP-0066 §7,
         clean-break replacement for the retired ``embedding_class`` truthy
         gate) with a try/except
@@ -3572,17 +3585,17 @@ class Session:
         resolvable before this builder's original call site.
 
         ``chat_events`` is deliberately NOT a builder input, unlike Family
-        3's ``hot_reloader`` or Family 4's ``budget``: both closures below
-        (``_embedding_event_sink`` / ``_on_hot_list_changed``) resolve
+        3's ``hot_reloader`` or Family 4's ``budget``: the closure below
+        (``_on_hot_list_changed``) resolves
         ``self._chat_events`` at CALL time, not construction time — the
         EventLog is built later in ``__init__`` (Family 1, ~line 1560+).
         Eager-izing that reference (the Family 3/4 pattern) would raise
         ``AttributeError`` here, since this builder runs BEFORE Family 1.
-        This builder is an instance method precisely so the closures can
+        This builder is an instance method precisely so the closure can
         keep capturing ``self``.
 
-        FP-0034 Phase 2 steps 1 + 5 / FP-0057 #2856 Part A / Issue #192:
-        see the four embedding attrs' and ``action_usage_tracker``'s
+        FP-0034 Phase 2 steps 1 + 5 / Issue #192:
+        see the three embedding attrs' and ``action_usage_tracker``'s
         original inline comments, reproduced verbatim below."""
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
         # EmbeddingProvider once per session when the operator has set
@@ -3595,14 +3608,6 @@ class Session:
         action_embedding_index: Any = None
         embedding_provider: Any = None
         embedding_model_class: str | None = None
-        # FP-0057 #2856 Part A: the TUI model-download status sink CALLABLE
-        # (set below, alongside ``embedding_provider``), threaded onto every
-        # router OpContext as ``ctx.embedding_event_sink`` so the `embed` op
-        # (which ``ActionEmbeddingIndex`` now routes through instead of
-        # calling ``provider.embed()`` directly) can forward it into the
-        # FRESH per-call provider it resolves — preserving the download-status
-        # rows without the caller holding a long-lived provider instance.
-        embedding_event_sink: Any = None
         if (
             action_retrieval.universal_wrappers_enabled
             and embedding_config is not None
@@ -3612,32 +3617,7 @@ class Session:
                 from reyn.data.embedding import get_provider as _get_provider
                 from reyn.tools.action_index import ActionEmbeddingIndex
 
-                # Sink closure resolves self._chat_events at CALL time —
-                # eager self.events capture once silently disabled
-                # search_actions for every operator (FP-0043 C.3/C.4 #2856; session-construction.md#embedding-event-sink-deferred-self_chat_events-capture-fp-0043-c3c4).
-                def _embedding_event_sink(
-                    kind: str, text: str, meta: dict,
-                ) -> None:
-                    try:
-                        self._chat_events.emit(
-                            f"embedding_{kind}",
-                            text=text,
-                            **meta,
-                        )
-                    except Exception:
-                        pass
-
-                embedding_provider = _get_provider(
-                    "litellm",
-                    embedding_config,
-                    event_sink=_embedding_event_sink,
-                )
-                # FP-0057 #2856 Part A: keep the sink CALLABLE addressable on
-                # its own so it can be threaded onto router OpContexts
-                # (ctx.embedding_event_sink) independently of
-                # ``embedding_provider`` (which stays for non-tool-use /
-                # legacy callers until they migrate).
-                embedding_event_sink = _embedding_event_sink
+                embedding_provider = _get_provider("litellm", embedding_config)
                 embedding_model_class = embedding_config.default_class
                 # FP-0057 Phase 0: unified onto IndexBackend's cache convention — clean-break, no migration. docs/reference/runtime/reyn-dir-layout.md#canonical-layout
                 action_embedding_index = ActionEmbeddingIndex(
@@ -3651,7 +3631,6 @@ class Session:
                 embedding_provider = None
                 action_embedding_index = None
                 embedding_model_class = None
-                embedding_event_sink = None
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
         # Created when universal_wrappers_enabled=True and hot_list_n > 0.
         # Per-agent compacted table at
@@ -3687,7 +3666,6 @@ class Session:
                 action_usage_tracker = None
         return _RetrievalBundle(
             embedding_provider=embedding_provider,
-            embedding_event_sink=embedding_event_sink,
             embedding_model_class=embedding_model_class,
             action_embedding_index=action_embedding_index,
             action_usage_tracker=action_usage_tracker,
@@ -3833,7 +3811,6 @@ class Session:
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
-            embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: forwarded to make_router_op_context
             # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
             action_usage_tracker=self._action_usage_tracker,
             uncompacted_tool_call_records_fn=(
@@ -6958,7 +6935,6 @@ class Session:
             turn_origin=self._current_turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (enumerate ALL op-ctx builders)
             hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
             render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
-            embedding_event_sink=self._embedding_event_sink,  # FP-0057 #2856 Part A: TUI model-download status sink for the embed op
             budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
             # #3196 co-vet round 2: pass the BASE registered set — deliberately NOT run through
             # the visibility filter (that's RouterHostAdapter's own copy, a UX/menu concern).

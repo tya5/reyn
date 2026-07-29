@@ -51,15 +51,17 @@ Lifecycle:
 
 FP-0057 #2856 Part A (redaction-bypass close-out): ``build()``/``query()``
 used to call ``provider.embed(...)`` PROVIDER-DIRECT, carrying a session-
-scoped provider whose only reason for living on this class was to also
-carry the TUI's model-download-status ``event_sink`` — a bypass of the
-shared `embed` op's PRE-embed redaction-egress scan (a secret in the tool
-catalog's ``short_description`` would previously leave the process
-unredacted). Both methods now take an ``OpContext`` instead of an
-``EmbeddingProvider`` and route through ``execute_op(EmbedIROp(...), ctx)``;
-the event_sink is preserved via ``ctx.embedding_event_sink`` (a callable,
-not a provider instance) forwarded to the op's own fresh provider
-resolution (see ``core/op_runtime/embed.py``).
+scoped provider — a bypass of the shared `embed` op's PRE-embed
+redaction-egress scan (a secret in the tool catalog's
+``short_description`` would previously leave the process unredacted).
+Both methods now take an ``OpContext`` instead of an ``EmbeddingProvider``
+and route through ``execute_op(EmbedIROp(...), ctx)`` (see
+``core/op_runtime/embed.py``). (#3438 removed the ``ctx.embedding_event_sink``
+TUI model-download-status forwarding this comment used to describe — it had
+no producer; no provider in the repo ever accepted the ``event_sink`` kwarg
+``get_provider`` conditionally forwarded, and the original reason for it —
+a local in-process embedding model's lazy-load lifecycle, FP-0043 C.3 —
+stopped applying once #3128 removed that in-process backend.)
 
 Catalog hash semantics:
   - Hash is over the SORTED tuple of qualified_names.
@@ -352,9 +354,6 @@ class ActionEmbeddingIndex:
         Replaces the pre-#2856 ``provider.embed(...)`` provider-direct call —
         routing through ``execute_op`` inherits the op's PRE-embed redaction-
         egress scan (``embed.py``'s co-vet #3 seam) instead of bypassing it.
-        ``ctx.embedding_event_sink`` (forwarded by the caller) still reaches
-        the op's freshly-resolved provider, so the TUI model-download status
-        rows are unaffected by this routing change.
 
         Raises ``RuntimeError`` on an op-level failure (mirrors the previous
         provider-direct exception-propagation contract — ``build()``'s

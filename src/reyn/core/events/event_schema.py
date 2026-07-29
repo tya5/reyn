@@ -593,27 +593,15 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
             "``emit_sink``; censused at that component's own emit sites."
         ),
     ),
-    DynamicEmitSite(
-        module="src/reyn/runtime/session.py",
-        function="_embedding_event_sink",
-        seam="emit",
-        classification="KIND_FAMILY",
-        reason=(
-            "``f\"embedding_{kind}\"`` — a real hole, and currently a hole with "
-            "nothing behind it. The sink is only invoked by an embedding "
-            "provider that accepts an ``event_sink`` kwarg, and no provider in "
-            "the repo does: ``reyn.data.embedding.get_provider`` passes it only "
-            "when the class's signature accepts it, and the sole implementation "
-            "(``LiteLLMEmbeddingProvider``) documents that it does not. So no "
-            "``embedding_*`` kind is emitted today, and none is declared in "
-            "AUDIT_EVENT_KINDS. Wiring a provider that DOES report lifecycle "
-            "means deciding the kind names first — pass them as literals then. "
-            "Tracked in #3438: the threading is either removed, or made real "
-            "with literal kind names. This registry entry should not outlive "
-            "that decision — a permanently-registered hole in a closed "
-            "vocabulary is a contradiction."
-        ),
-    ),
+    # #3438: the ``_embedding_event_sink`` KIND_FAMILY entry that used to live
+    # here (``f"embedding_{kind}"`` in src/reyn/runtime/session.py) was
+    # deleted along with the sink itself and its whole seven-hop wire
+    # (Session -> OpContext -> the `embed` op -> provider). It had no
+    # producer — no embedding provider in the repo ever accepted the
+    # ``event_sink`` kwarg ``get_provider`` conditionally forwarded — and no
+    # comment/ADR/issue recorded an intent to keep it for a future provider,
+    # so the hole is closed by removing the wire rather than by keeping this
+    # registry entry.
     # Two entries for one helper: the recursion inside it, and the call that
     # starts the recursion — different enclosing functions, so different keys.
     DynamicEmitSite(
