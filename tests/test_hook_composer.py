@@ -26,6 +26,7 @@ from reyn.hooks.composer import (
     load_composers,
 )
 from reyn.hooks.dispatcher import HookDispatcher
+from reyn.hooks.durable_pending_store import STORE_FILENAME, DurablePendingStore
 from reyn.hooks.event import HookEvent
 from reyn.hooks.event_pattern import EventPattern
 from reyn.hooks.registry import HookRegistry
@@ -119,9 +120,11 @@ def test_load_composers_parses_deadline_config():
     (issue #3166 — distinct from every other op's `inputs: [{kind, match}]`
     list) parses into a ComposerDef with a 1-element inputs tuple, an
     until_input, the top-level `ttl` folded into policy.ttl_seconds, and a
-    default `composed:<name>` emit kind when `emit:` is omitted. Also
-    asserts the load-time crash-non-durability UserWarning (CLAUDE.md: never
-    ship a silent dead-man switch) is emitted."""
+    default `composed:<name>` emit kind when `emit:` is omitted. Also asserts
+    the #3180 durability default: a deadline composer parses to
+    `durable=True` (the load-time crash-non-durability UserWarning now fires
+    only on an explicit `durable: false` opt-out — see
+    tests/test_3180_durable_pending_store.py)."""
     raw = [
         {
             "name": "job_overdue",
@@ -133,9 +136,9 @@ def test_load_composers_parses_deadline_config():
             "ttl": 1800,
         }
     ]
-    with pytest.warns(UserWarning, match="crash-non-durable"):
-        (d,) = load_composers(raw)
+    (d,) = load_composers(raw)
     assert d.op is ComposerOp.DEADLINE
+    assert d.durable is True
     (arm_input,) = d.inputs  # deadline's `on` builds a single-element inputs tuple
     assert arm_input.kind == "mcp_resource_updated"
     assert d.until_input is not None
@@ -185,8 +188,10 @@ def test_check_no_cycles_rejects_self_feed():
 def test_pending_record_is_json_snapshot_friendly():
     """Tier 1: a PendingRecord's shape survives a JSON round-trip once its
     HookEvents are expanded via dataclasses.asdict and its set is sorted —
-    the seam invariant #1 depends on (a future WalBackedPendingStore needs a
-    serializable shape, not a rewrite)."""
+    the seam invariant #1 depends on it, and DurablePendingStore (#3180) is
+    what cashed it in: the durable store's on-disk shape is exactly this
+    expansion, so a PendingRecord field that stopped being JSON-serializable
+    would break crash-durability, not merely a hypothetical future store."""
     record = PendingRecord(
         events=[HookEvent(kind="builtin:external:file_changed", payload={"path": "/a"})],
         matched_inputs={0, 1},
@@ -441,14 +446,22 @@ def test_op_deadline_key_separation_only_undisarmed_key_fires():
     _assert_no_event(sub)  # j1 never fires — nothing further on the bus
 
 
-def test_op_deadline_armed_state_is_lost_on_crash_v1_pin():
-    """Tier 2: (crash witness) pins v1's InMemoryPendingStore posture — a
-    'crash' (process restart => fresh store, the only PendingStore v1 has)
-    silently drops an armed deadline's state. This is the documented,
-    owner-ratified v1 behavior (module docstring invariant #1, proposal §5
-    Q-reyn-1: 'best-effort now, WAL-backed later'), not a bug — this test
-    records the fact as an observed behavior so a future WAL-backed
-    PendingStore's arrival is a visible, deliberate behavior change."""
+def test_op_deadline_armed_state_survives_a_crash_when_durable(tmp_path):
+    """Tier 2: (crash witness) an armed ``deadline`` survives a process crash
+    and still fires.
+
+    This test used to record the OPPOSITE observation — that a restart silently
+    dropped the armed state — as the documented v1 posture (proposal §5
+    Q-reyn-1, 'best-effort now, WAL-backed later'). #3180 turned that posture
+    over: ``op=deadline`` now defaults to ``durable`` and its pending state
+    lives in a ``DurablePendingStore``. The witness is inverted rather than
+    deleted, so the behavior change stays visible and deliberate instead of
+    disappearing from the record.
+
+    The opt-out leg below is the surviving half of the old observation: a
+    composer explicitly configured ``durable: false`` still loses its arm on a
+    crash — that is the documented cost of the opt-out, and the reason
+    ``load_composers`` warns about it."""
     bus = HookBus()
     d = ComposerDef(
         name="job_overdue", op=ComposerOp.DEADLINE,
@@ -456,19 +469,31 @@ def test_op_deadline_armed_state_is_lost_on_crash_v1_pin():
         until_input=_input("orch:job_done"),
         emit_kind="composed:job_overdue",
         policy=ComposerPolicy(ttl_seconds=10.0),
+        durable=True,
     )
-    store = InMemoryPendingStore()
-    composer = Composer(d, bus=bus, pending_store=store)
-    t0 = 1000.0
+    store_path = tmp_path / STORE_FILENAME
+    composer = Composer(d, bus=bus, pending_store=DurablePendingStore(store_path))
     composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j1"}))
-    store.get("job_overdue", "__default__").created_at = t0
-    # Simulate a process crash: a fresh Composer over a fresh
-    # InMemoryPendingStore — the armed state above does NOT carry over.
-    crashed_store = InMemoryPendingStore()
-    recovered = Composer(d, bus=bus, pending_store=crashed_store)
+
+    # The crash: a fresh Composer over a fresh store reading the same file.
+    recovered_store = DurablePendingStore(store_path)
+    armed_at = recovered_store.get("job_overdue", "__default__").created_at
+    recovered = Composer(d, bus=bus, pending_store=recovered_store)
     sub = bus.subscribe()
-    recovered.sweep(now=t0 + 11)
-    _assert_no_event(sub)  # the dead-man monitor never fires — its armed state is gone
+    recovered.sweep(now=armed_at + 11)
+    fired = sub.get_nowait()
+    assert fired.kind == "composed:job_overdue"
+
+    # durable=false — the opt-out still behaves exactly as v1 did.
+    opted_out = dataclasses.replace(d, durable=False)
+    volatile = InMemoryPendingStore()
+    Composer(opted_out, bus=bus, pending_store=volatile).handle_event(
+        HookEvent(kind="orch:job_started", payload={"job_id": "j1"}),
+    )
+    crashed_store = InMemoryPendingStore()
+    sub2 = bus.subscribe()
+    Composer(opted_out, bus=bus, pending_store=crashed_store).sweep(now=armed_at + 11)
+    _assert_no_event(sub2)  # the dead-man monitor never fires — its armed state is gone
     assert crashed_store.keys("job_overdue") == []
 
 

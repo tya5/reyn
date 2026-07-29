@@ -39,7 +39,9 @@ Everything else is excluded, by one of four reasons:
 ├── agents/<name>/state/    RECOVERY-CORE (per-agent) — reconstructed alongside the WAL
 │   ├── snapshot.json       the agent's runtime snapshot (a derived projection of the WAL)
 │   ├── generations/        snapshot generations (gen-<seq>.json) — the PITR base
+│   ├── composer_pending.json  armed `durable` Composer state — standalone snapshot, NOT recovery-core (see below)
 │   └── sessions/<sid>/     per-spawned-session snapshot + generations
+│                           (each also carries its own composer_pending.json)
 ├── config/                 RECOVERY-CORE — agent-managed registries (reconstructed by replay)
 │   ├── mcp.yaml            MCP servers   (mcp_install / mcp_drop_server)
 │   ├── cron.yaml           cron jobs     (cron_register / …)
@@ -130,6 +132,17 @@ truncation — but it does not participate in rewind: A2A/web is a process
 singleton (see [A2A concepts](../../concepts/multi-agent/a2a.md)), and an
 external A2A run is durable + query-coherent but intentionally does not
 time-travel with a session's own rewind.
+
+**Not recovery-core:** `<per-session state dir>/composer_pending.json` — the armed
+pending set of every `durable` Composer (`op: deadline` by default, see
+[reyn-yaml § `composers`](../config/reyn-yaml.md#composers-block)). Same shape and
+same reasoning as `run_registry.json`: a standalone, atomically-written full-state
+snapshot that is never derived from the WAL, so it survives truncation structurally
+rather than by argument — the resolution #2259 established for config recovery. It is
+per-SESSION (not `.reyn/state/`) because composers are per-session; two sessions of the
+same agent arming the same composer name must not overwrite each other. It does not
+participate in rewind: an armed dead-man switch is a live monitor of wall-clock time,
+not a piece of the session's reconstructable history.
 
 ## The recovery-core write-gate (the rule you hit as a workflow author)
 
