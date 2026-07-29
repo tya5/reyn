@@ -264,6 +264,23 @@ _GET_MCP_PROMPT_PARAMETERS: dict[str, Any] = {
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
+def _mcp_list_error(result: "list | None") -> "str | None":
+    """Detect the shared MCP-listing failure sentinel and return its message,
+    or None when *result* is a normal listing.
+
+    All five ``list_mcp_*`` discovery paths (servers / tools / resources /
+    resource_templates / prompts) can fail without raising: a Cancelled /
+    MCPFault error, or an unresolved server config, comes back as a single-
+    element ``[{"error": "..."}]`` list rather than an exception (see
+    ``Session._mcp_list_via_gateway`` / ``_mcp_resolve_server_config``).
+    Surface MCP-layer errors so the LLM can diagnose the failure instead of
+    seeing an empty (or one-entry, error-shaped) list with no explanation.
+    """
+    if result and isinstance(result[0], Mapping) and "error" in result[0]:
+        return result[0]["error"]
+    return None
+
+
 async def _handle_list_mcp_servers(
     args: Mapping[str, Any], ctx: ToolContext
 ) -> ToolResult:
@@ -275,6 +292,9 @@ async def _handle_list_mcp_servers(
     """
     host = _require_host(ctx)
     result = await host.mcp_list_servers()
+    error = _mcp_list_error(result)
+    if error is not None:
+        return {"error": error}
     return {"servers": result}
 
 
@@ -307,6 +327,11 @@ async def _handle_list_mcp_tools(
     host = _require_host(ctx)
     server = str(args["server"])
     result = await host.mcp_list_tools(server)
+    error = _mcp_list_error(result)
+    if error is not None:
+        # Return without "mcp_tools" key so _normalise_router_tool_result
+        # passes the dict through verbatim rather than unwrapping it.
+        return {"error": error}
     # Issue #879: rewrite each entry's ``name`` to the
     # ``<server>__<tool>`` identifier; preserve description + the
     # tool's declared ``inputSchema`` so the LLM can construct
@@ -315,12 +340,6 @@ async def _handle_list_mcp_tools(
     for t in (result or []):
         if not isinstance(t, Mapping):
             continue
-        if "error" in t:
-            # Surface MCP-layer errors so the LLM can diagnose the failure
-            # instead of seeing an empty tool list with no explanation.
-            # Return without "mcp_tools" key so _normalise_router_tool_result
-            # passes the dict through verbatim rather than unwrapping it.
-            return {"error": t["error"]}
         inner_name = t.get("name", "")
         if not inner_name:
             continue
@@ -342,8 +361,9 @@ async def _handle_list_mcp_resources(
     host = _require_host(ctx)
     server = str(args["server"])
     result = await host.mcp_list_resources(server)
-    if result and isinstance(result[0], Mapping) and "error" in result[0]:
-        return {"error": result[0]["error"]}
+    error = _mcp_list_error(result)
+    if error is not None:
+        return {"error": error}
     return {"resources": list(result or [])}
 
 
@@ -356,8 +376,9 @@ async def _handle_list_mcp_resource_templates(
     host = _require_host(ctx)
     server = str(args["server"])
     result = await host.mcp_list_resource_templates(server)
-    if result and isinstance(result[0], Mapping) and "error" in result[0]:
-        return {"error": result[0]["error"]}
+    error = _mcp_list_error(result)
+    if error is not None:
+        return {"error": error}
     return {"resource_templates": list(result or [])}
 
 
@@ -417,8 +438,9 @@ async def _handle_list_mcp_prompts(
     host = _require_host(ctx)
     server = str(args["server"])
     result = await host.mcp_list_prompts(server)
-    if result and isinstance(result[0], Mapping) and "error" in result[0]:
-        return {"error": result[0]["error"]}
+    error = _mcp_list_error(result)
+    if error is not None:
+        return {"error": error}
     return {"prompts": list(result or [])}
 
 
