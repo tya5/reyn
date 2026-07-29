@@ -8,6 +8,242 @@ audience: [human, agent]
 
 reyn emits a structured event for every state change. The full event log is JSONL, written to `.reyn/events/<run_id>.jsonl` and replayable with `reyn events <log_file>`.
 
+## Kind vocabulary
+
+The `type` field is drawn from a **closed set**. Every kind reyn emits is listed
+below, and reyn emits nothing else — so a subscriber can enumerate the complete
+set of types it may receive, and a handler written for a kind not on this list
+will never fire.
+
+The source of truth is `AUDIT_EVENT_KINDS` in
+`src/reyn/core/events/event_schema.py`; this list is checked against it in CI,
+and that declaration is in turn checked against the emitting code — in both
+directions, so neither a kind without a declaration nor a declaration without a
+producer can land. Adding a kind is a public-interface change, and it shows up
+as a diff on this page.
+
+Two things this list is deliberately *not*:
+
+- **Not the `op` values.** `read_file`, `write_file`, `grep` and their siblings
+  are values of the `op` field inside the shared `tool_executed` kind, not kinds
+  of their own. They are a different axis and are not part of this vocabulary.
+- **Not a field contract.** Which payload fields a given kind must carry is a
+  separate registry (`EVENT_AUDIT_REQUIREMENTS`, same module) covering a subset
+  of these kinds; the per-kind sections below document the payloads in prose.
+
+<!-- BEGIN audit-event-kinds -->
+
+```text
+agent_delta
+agent_message_refused
+agent_message_sent
+agent_request_received
+agent_response_received
+asyncio_unhandled_exception
+body_summary_hard_truncated
+budget_reset
+bus_subscriber_dropped
+canonical_degraded
+canonical_fallback_used
+chain_peer_discarded
+chain_timeout
+chain_timeout_extended
+chat_started
+chat_stopped
+chat_turn_completed_inline
+client_attached
+client_detached
+client_seized
+compact_op_completed
+compact_op_failed
+compact_op_requested
+compact_op_unavailable
+compaction_check
+compaction_completed
+compaction_failed
+compaction_started
+composer_dropped
+composer_fired
+config_reload_rejected
+config_reloaded
+control_ir_failed
+control_ir_skipped
+direct_alias_call_salvaged
+elide_evaluated
+embed_attempts
+embed_cancelled
+embed_secret_redacted
+embedding_index_build_complete
+embedding_index_build_error
+embedding_index_build_progress
+embedding_index_build_started
+exec_threat_blocked
+exec_threat_match
+file_read_media_denied
+force_close_triggered
+hook_event_emitted
+hook_push_fired
+hook_shell_executed
+hot_list_updated
+inbox_cancel
+index_dropped
+index_update_cost_warning
+index_updated
+intervention_answer_submitted
+intervention_denied
+intervention_routed
+limit_denied
+llm_call_retry
+llm_call_retry_exhausted
+llm_called
+llm_request
+llm_request_error
+llm_response_received
+mcp_called
+mcp_cancelled
+mcp_completed
+mcp_elicitation_answered
+mcp_elicitation_auto_declined
+mcp_elicitation_requested
+mcp_elicitation_timed_out
+mcp_failed
+mcp_initialized
+mcp_install_cancelled
+mcp_install_probe_failed
+mcp_install_threat_blocked
+mcp_install_threat_match
+mcp_progress
+mcp_prompt_get
+mcp_prompt_get_cancelled
+mcp_prompt_get_completed
+mcp_prompt_get_failed
+mcp_prompt_list_changed
+mcp_prompts_listed
+mcp_resource_read
+mcp_resource_read_cancelled
+mcp_resource_read_completed
+mcp_resource_read_failed
+mcp_resource_subscribe
+mcp_resource_subscribe_cancelled
+mcp_resource_subscribe_failed
+mcp_resource_subscribed
+mcp_resource_templates_listed
+mcp_resource_unsubscribe
+mcp_resource_unsubscribe_cancelled
+mcp_resource_unsubscribe_failed
+mcp_resource_unsubscribed
+mcp_resource_updated
+mcp_resources_listed
+mcp_server_installed
+mcp_server_removed
+mcp_tool_list_changed
+mcp_tools_listed
+memory_deleted
+memory_saved
+model_budget_fallback
+model_cost_block
+model_cost_warn
+network_ssl_verify_disabled
+new_msg_exceeds_budget
+oauth_login_completed
+oauth_login_started
+peer_reply_failed_surfaced
+pending_intervention_claimed
+pending_intervention_discarded
+permission_denied
+permission_granted
+pipeline_install_threat_blocked
+pipeline_install_threat_match
+pipeline_installed
+pipeline_load_failed
+pipeline_run_attached
+pipeline_step_completed
+pipeline_step_started
+plan_step_llm_memoized
+plugin_install_completed
+plugin_install_copied
+plugin_install_reconciled
+plugin_install_registered
+plugin_install_started
+plugin_uninstall_completed
+plugin_uninstall_registry_dropped
+plugin_uninstall_started
+presentation_install_blocked
+presentation_installed
+presentation_load_failed
+presented
+router_context_overflow_detected
+router_context_overflow_unrecovered
+router_empty_response_detected
+router_empty_response_retry_injected
+router_force_close_handoff
+router_loop_terminated_by_exception
+router_represent_round
+router_retry_exhausted
+routing_decided
+safety_limit_checkpoint
+sandbox_policy_narrowed
+sandbox_policy_not_applied
+sandboxed_exec_cancelled
+sandboxed_exec_completed
+sandboxed_exec_started
+secret_cleared
+secret_rotated
+secret_set
+semantic_search_complete
+semantic_search_embed_failed
+semantic_search_started
+session_completed
+session_halted
+session_restored
+session_started
+skill_body_loaded
+skill_install_threat_blocked
+skill_install_threat_match
+skill_installed
+skill_invoke_body_loaded
+skill_invoke_collision
+state_change_notified
+summary_resummarize_failed
+summary_resummarized
+threat_block
+threat_scan_match
+token_refresh_failed
+token_refreshed
+tool_call_cap_exceeded
+tool_call_deduped
+tool_called
+tool_cycle_kept_whole_over_budget
+tool_executed
+tool_failed
+tool_result_offloaded
+tool_returned
+turn_cancelled
+turn_completed
+turn_settled
+turn_started
+turn_too_large_truncated
+untrusted_narrowing_engaged
+user_answered_intervention
+user_intervention_received
+user_intervention_requested
+user_message_received
+user_submitted
+web_fetch_completed
+web_fetch_failed
+web_fetch_media_denied
+web_fetch_ssrf_blocked
+web_fetch_started
+web_fetch_too_large
+web_fetch_too_many_redirects
+web_search_completed
+web_search_failed
+web_search_started
+workspace_updated
+```
+
+<!-- END audit-event-kinds -->
+
 ## Event envelope
 
 Every event has:
