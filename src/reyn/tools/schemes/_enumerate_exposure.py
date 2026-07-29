@@ -26,16 +26,28 @@ alias resolving to the *same* ``ToolDefinition`` (``read_file`` ↔ ``file__read
 ``delegate_to_agent`` ↔ ``multi_agent__delegate``, …), and 15 — the spawn /
 topology / present / render_template / compact tools and the MCP resource+prompt
 family — had no catalog route at all and were simply unreachable from a
-code-API turn. The 18 aliases are exposed twice, exactly as the ``tool_calls``
-cell has always exposed them; deduplicating one cell and not the other would be
-a new undeclared asymmetry, and there is no measurement saying the duplication
-costs anything.
+code-API turn.
+
+#3428 (settled after that): those 18 aliases were then advertised **twice**, in
+both cells and in both retrieval cells too. That is no longer true —
+``without_duplicate_alias_spellings`` (``reyn.tools.exposure``) drops the
+qualified spelling of any operation whose bare spelling is in the same exposed
+set, at every site where a base+catalog population is composed. #3419 shipped
+the duplication on the grounds that no measurement said duplicate rows cost
+anything; a declaration the model is shown on every turn costs its own bytes on
+every turn, which is arithmetic rather than an open measurement. Which spelling
+is kept is the measured half — see that function's docstring.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from reyn.tools.exposure import Exposure, ExposureDeviation, descriptors_from_entries
+from reyn.tools.exposure import (
+    Exposure,
+    ExposureDeviation,
+    descriptors_from_entries,
+    without_duplicate_alias_spellings,
+)
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 _SHARED_RATIONALE_PREFIX = (
@@ -108,7 +120,9 @@ def build_enumerate_all_exposure(
     # identifier map derived from it is an encoding, so it does not.
     dispatchable_names = tuple(n for n in (_entry_name(e) for e in entries) if n)
 
-    exposed = [e for e in entries if _entry_name(e) not in deviation.excluded_names]
+    exposed = without_duplicate_alias_spellings(
+        [e for e in entries if _entry_name(e) not in deviation.excluded_names]
+    )
     if deviation.applies_contextual_narrowing:
         contextual = (available or {}).get("contextual_permission")
         if contextual is not None:

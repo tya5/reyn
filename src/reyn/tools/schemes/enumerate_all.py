@@ -62,7 +62,9 @@ class EnumerateAllScheme:
         # Self-contained presentation (e2e-agreed seam, #1593): the exposure
         # composes what this cell shows — the prior-shape base tools + every
         # catalog action flat (no universal wrappers / no discovery), minus the
-        # declared exclusions — and the tool_calls encoder writes it down. The
+        # declared exclusions and minus the qualified spelling of anything the
+        # base tools already name (#3428) — and the tool_calls encoder writes it
+        # down. The
         # router holds host context + catalog, so the scheme stays P7-clean.
         # catalog_entries is async (the live-catalog enumeration awaits the
         # router caller-state / rag manifest); base_tools stays sync.
