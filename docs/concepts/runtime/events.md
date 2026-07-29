@@ -27,13 +27,12 @@ A few of the larger buckets:
 - **Control IR** — one audit-event per op kind (`sandboxed_exec_started`, `mcp_called`, `web_search_started`, `semantic_search_embed_failed` — a `file` op like a read instead rides the shared `tool_executed` kind, with the specific op named in its `op` field, not as its own kind) plus `permission_denied`. This list is illustrative, not exhaustive — the full, closed kind vocabulary is being derived from a single source of truth in #3410; until that lands, treat any list of kind names here as examples only.
 - **User interaction** — `user_message_received`, `user_intervention_received`, `chat_started`, `chat_stopped`, `turn_cancelled`.
 - **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`, `chain_timeout`. Each carries `chain_id` so a single user request can be traced across hops.
-- **Task management** — `task_op`, `task_readiness`, `task_disposition`, `task_dependency_aborted`.
 
 The full taxonomy lives in the [events reference](../../reference/runtime/events.md).
 
 ### Task subscription events — WAL, not audit-event log
 
-Task↔session binding changes (`task_subscribed`, `task_rebound`) are recorded in the **WAL** (StateLog, `.reyn/state/wal.jsonl`) — not in the P6 audit-event log. The WAL is the crash-recovery and time-travel substrate; the audit-event log is the per-run trace. They are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*). Do not look for `task_subscribed` in the audit-event log; it is not there.
+Task↔session binding changes are declared as **WAL** kinds (`task_subscribed`, `task_rebound` — StateLog, `.reyn/state/wal.jsonl`), not the P6 audit-event log, so if this mechanism is live you should look for them there, not here. Currently, however, neither kind has a writer anywhere in the codebase — the WAL vocabulary declares them but nothing appends one, so no task↔session binding change is actually recorded today. The WAL is generally the crash-recovery and time-travel substrate; the audit-event log is the per-run trace — they are separate logs with different durability contracts (see [Time-travel](time-travel.md) — *WAL vs audit-event separation*).
 
 ## What an audit-event is
 

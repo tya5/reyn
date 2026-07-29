@@ -521,9 +521,6 @@ already set earlier in `__init__`.
   owns its own dispatcher + this set, so disabling a hook in session S1 does NOT affect S2
   (even though the hook config is shared). In-memory (step1 live); step2 was planned to
   persist to the per-session `hooks.yaml`.
-- `_task_subscription_writer` (#2187 backend-master) — the Task SUBSCRIPTION writer (the
-  Reyn-internal task↔session binding WRITE seam), threaded down the same chain as
-  `task_waker`.
 - `_spawned_tasks` (#2103 S1bc-exec) — sid → original-task record for sessions THIS session
   spawned. When a spawned session's result routes back, the result header renders
   `task=<the spawner's OWN request>` from THIS trusted record (keyed by the spawned sid) —
