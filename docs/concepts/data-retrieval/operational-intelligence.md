@@ -28,7 +28,7 @@ Indexing the event log is not a bundled skill — write a `python` step that rea
 
 ## Run-chunk format
 
-Events are stored one-per-line in JSONL, but the meaningful unit for operational intelligence is **one run** (from `turn_started` to `turn_settled` — the current turn-lifecycle boundary; the internal task/skill-run system these events originally named was removed in #3214). Group each run into a single structured chunk before calling `index_update`:
+Events are stored one-per-line in JSONL, but the meaningful unit for operational intelligence is **one run** (from `turn_started` to `turn_settled`). Group each run into a single structured chunk before calling `index_update`:
 
 ```
 [run chunk]
