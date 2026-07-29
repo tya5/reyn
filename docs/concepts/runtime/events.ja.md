@@ -24,7 +24,7 @@ OS が唯一のミューテーターであり（P3）、すべてのミューテ
 主なバケットのいくつか：
 
 - **LLM とコンテキスト** — `llm_called`。
-- **Control IR** — op の種類ごとに 1 つの audit-event（`read_file`、`sandboxed_exec_started`、`mcp_called`、`web_search_started`、`semantic_search_embed_failed` など）と `permission_denied`。
+- **Control IR** — op の種類ごとに 1 つの audit-event(`sandboxed_exec_started`、`mcp_called`、`web_search_started`、`semantic_search_embed_failed` — read などの `file` op は個別の kind ではなく、共有の `tool_executed` kind に乗り、具体的な op 名は `op` フィールドに入る)と `permission_denied`。この列挙は例示であり網羅的ではない — 閉じた完全な kind 語彙は単一の source of truth から導出される予定(#3410)。それまではここに載る kind 名の列挙を例としてのみ扱うこと。
 - **ユーザーとのやり取り** — `user_message_received`、`user_intervention_received`、`chat_started`、`chat_stopped`、`turn_cancelled`。
 - **Agent 間メッセージング** — `agent_message_sent`、`agent_request_received`、`agent_response_received`、`agent_message_refused`、`chain_timeout`。各 audit-event は `chain_id` を持つため、1 つのユーザーリクエストを複数のホップにまたがって追跡できます。
 - **Task 管理** — `task_op`、`task_readiness`、`task_disposition`、`task_dependency_aborted`。
@@ -52,8 +52,9 @@ run_id    — 実行の uuid（run スコープの audit-event の多くに存�
 ```
 
 注: `run_id` は run スコープの audit-event の多く（`llm_called`、
-`permission_denied` など）に存在しますが、run コンテキスト外で発行される
-一部の audit-event（例: `chat_started`）には存在しません。
+`permission_denied` などが例 — 網羅的な列挙ではない。#3410 参照）に
+存在しますが、run コンテキスト外で発行される一部の audit-event（例:
+`chat_started`）には存在しません。
 
 ### 必須フィールド付き audit-event (FP-0021)
 
