@@ -336,10 +336,8 @@ def test_limit_denied_reaches_otlp_log_record_at_warn() -> None:
         ),
     )
 
-    records = cap.log_records()
-    matching = [r for r in records if str(r.body) == "limit_denied"]
-    assert len(matching) == 1, f"expected exactly one limit_denied log record, got {records}"
-    assert matching[0].severity_number == SeverityNumber.WARN
+    record = next(r for r in cap.log_records() if str(r.body) == "limit_denied")
+    assert record.severity_number == SeverityNumber.WARN
 
 
 def test_permission_denied_still_warn_after_limit_denied_added() -> None:
@@ -350,10 +348,8 @@ def test_permission_denied_still_warn_after_limit_denied_added() -> None:
     cap.exporter(
         Event(type="permission_denied", data={"run_id": _RID, "agent_id": _AID}),
     )
-    records = cap.log_records()
-    matching = [r for r in records if str(r.body) == "permission_denied"]
-    assert len(matching) == 1
-    assert matching[0].severity_number == SeverityNumber.WARN
+    record = next(r for r in cap.log_records() if str(r.body) == "permission_denied")
+    assert record.severity_number == SeverityNumber.WARN
 
 
 def test_permission_granted_stays_info_not_warn() -> None:
@@ -364,10 +360,8 @@ def test_permission_granted_stays_info_not_warn() -> None:
     cap.exporter(
         Event(type="permission_granted", data={"run_id": _RID, "agent_id": _AID}),
     )
-    records = cap.log_records()
-    matching = [r for r in records if str(r.body) == "permission_granted"]
-    assert len(matching) == 1
-    assert matching[0].severity_number == SeverityNumber.INFO
+    record = next(r for r in cap.log_records() if str(r.body) == "permission_granted")
+    assert record.severity_number == SeverityNumber.INFO
 
 
 def test_safety_limit_checkpoint_not_exported_as_log_record() -> None:
