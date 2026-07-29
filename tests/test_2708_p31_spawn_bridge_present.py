@@ -173,6 +173,14 @@ async def test_attached_present_audit_event_bridged_to_parent_log(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_detached_present_not_bridged_to_caller(tmp_path: Path) -> None:
     """Tier 2: scope guard — a DETACHED (``start_pipeline_run``) pipeline's present is NOT
     bridged to the (non-attached) invoker: no ``pipeline_run_attached`` marker is emitted,

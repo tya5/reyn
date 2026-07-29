@@ -411,7 +411,8 @@ def _pipeline_ctx(tmp_path: Path) -> OpContext:
 
 
 @pytest.mark.asyncio
-async def test_skill_install_unset_turn_origin_fails_safe_to_auto_improvement(tmp_path):
+@pytest.mark.replay("fixtures/llm/skill_install/unset_turn_origin_fails_safe.jsonl")
+async def test_skill_install_unset_turn_origin_fails_safe_to_auto_improvement(tmp_path, _llm_replay):
     """Tier 2: LOAD-BEARING fail-safe strip-witness for the SKILL stamper
     (#2903 co-vet). A real skill_install with ctx.turn_origin=None/unset (the
     bridge-fallback shape) writes provenance="auto_improvement", never None.

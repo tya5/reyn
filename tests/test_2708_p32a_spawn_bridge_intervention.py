@@ -223,6 +223,14 @@ async def test_attached_ask_user_not_stalled_uses_live_parent_listener(
 
 
 @pytest.mark.asyncio
+@pytest.mark.allow_real_network(
+    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
+    "design exception like B/D): reaches real litellm.acompletion because no "
+    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
+    "structural gate (#3451) must not silently break this test at merge time; "
+    "the real fix (stub the call, matching this file's sibling tests where "
+    "one exists) is tracked in #3452.",
+)
 async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path) -> None:
     """Tier 2: scope guard — a DETACHED (``start_pipeline_run``) pipeline's ``ask_user`` does
     NOT reach the (non-attached) invoker's live operator listener (over a bounded window the
