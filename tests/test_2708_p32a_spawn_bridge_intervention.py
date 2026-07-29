@@ -38,6 +38,8 @@ from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait help
 
 from reyn.core.events.state_log import StateLog  # noqa: E402
 from reyn.core.pipeline.executor import Pipeline, ToolStep  # noqa: E402
+from reyn.llm.llm import LLMToolCallResult  # noqa: E402
+from reyn.llm.pricing import TokenUsage  # noqa: E402
 from reyn.runtime.registry import AgentRegistry  # noqa: E402
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session  # noqa: E402
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run  # noqa: E402
@@ -46,6 +48,19 @@ from tests._support.agent_session import make_session
 
 _QUESTION = "REYN2708P32A which branch?"
 _ANSWER = "REYN2708P32A-the-blue-branch"
+
+
+def _scripted_llm():
+    # The DETACHED driver's completion posts a ``pipeline_result`` inbox
+    # message to the reply-to (caller) session, whose next router turn reaches
+    # real litellm.acompletion with no stub wired — same shape as the sibling
+    # stub in tests/test_2103_s1bc_exec_result_routing.py.
+    async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            content="ack", tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1),
+        )
+    return _fake_llm
 
 
 def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
@@ -223,15 +238,7 @@ async def test_attached_ask_user_not_stalled_uses_live_parent_listener(
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path) -> None:
+async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: scope guard — a DETACHED (``start_pipeline_run``) pipeline's ``ask_user`` does
     NOT reach the (non-attached) invoker's live operator listener (over a bounded window the
     invoker is never prompted). This pins the attached-only scope of P3.2a's PARENT-bridge.
@@ -239,6 +246,7 @@ async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path) -> None:
     resolved locally, NOT the pre-fix origin-pin park/hang — landed in P3-item3; see
     ``test_spawn_routing_detached_fail_mode_2708``. It correctly resolves without ever touching
     this non-attached invoker's registry.)"""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")

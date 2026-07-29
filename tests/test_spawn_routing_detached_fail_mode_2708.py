@@ -29,6 +29,8 @@ from reyn.core.events.config_recovery import reyn_root
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.executor import Pipeline, ToolStep
 from reyn.core.pipeline.work_order import pipeline_run_dir, read_result
+from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
 from reyn.runtime.presentation_consumer import (
     AuditOnlyPresentationConsumer,
     AuditOnlyPresentationSink,
@@ -44,6 +46,20 @@ from reyn.runtime.session_buses import (
 from reyn.runtime.session_params import PresentationWiring
 from reyn.user_intervention import UserIntervention
 from tests._support.agent_session import make_session
+
+
+def _scripted_llm():
+    # These tests spawn real sessions whose run-loop turn (either the
+    # detached driver's reply-to session processing a pipeline_result, the
+    # run_agent_step ephemeral worker's own turn, or a session_spawn child's
+    # initial submitted request) reaches real litellm.acompletion with no stub
+    # wired — same shape as tests/test_2103_s1bc_exec_result_routing.py.
+    async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
+        return LLMToolCallResult(
+            content="ack", tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=1, completion_tokens=1),
+        )
+    return _fake_llm
 
 
 def _recording_registry(tmp_path: Path, state_log: "StateLog") -> "tuple[AgentRegistry, list]":
@@ -171,18 +187,13 @@ async def test_ask_user_op_via_audit_only_bridge_returns_typed_refusal() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_detached_present_is_audit_only_no_orphan_outbox(tmp_path: Path) -> None:
+async def test_detached_present_is_audit_only_no_orphan_outbox(
+    tmp_path: Path, monkeypatch,
+) -> None:
     """Tier 2: a DETACHED pipeline's ``present`` no longer orphans a ``"presentation"`` message on
     the driver's own undrained outbox (the pre-fix #2710 silent-loss); it is audit-only — the
     driver's ``presented`` P6 event still fires (audit trail preserved), zero outbox presentation."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, built = _recording_registry(tmp_path, state_log)
 
@@ -228,19 +239,14 @@ async def test_detached_present_is_audit_only_no_orphan_outbox(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_detached_ask_user_refuses_deliberately_no_hang(tmp_path: Path) -> None:
+async def test_detached_ask_user_refuses_deliberately_no_hang(
+    tmp_path: Path, monkeypatch,
+) -> None:
     """Tier 2: step-1 resolution pinned. A DETACHED pipeline's ``ask_user`` now RESOLVES (terminal
     reached quickly — NOT the pre-fix origin-pin park/hang that never reached terminal in >6s) via
     a DELIBERATE typed refusal: the driver's ``user_intervention_received`` event carries
     ``refused=True`` + the reason, not a fabricated empty auto-refuse."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, built = _recording_registry(tmp_path, state_log)
 
@@ -284,24 +290,17 @@ async def test_detached_ask_user_refuses_deliberately_no_hang(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_agent_step_worker_spawned_audit_only(tmp_path: Path) -> None:
+async def test_agent_step_worker_spawned_audit_only(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: #2706 root-cause-i — ``run_agent_step`` spawns its ephemeral leaf worker with an
     AuditOnly routing (present audit-only, ask_user typed-refusal), NOT the pre-fix self-bound
     consumer that orphaned a present onto the worker's own outbox for the ``kind=="agent"`` filter
     to silently drop. Pinned on the worker's PUBLIC routing accessors."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, built = _recording_registry(tmp_path, state_log)
 
-    # The worker's one router turn has no live LLM here (returns empty agent text); the spawn +
-    # its declared routing is what #2706 root-cause-i fixes — captured via the recording factory.
+    # The worker's one router turn is scripted — the spawn + its declared
+    # routing is what #2706 root-cause-i fixes — captured via the recording factory.
     try:
         await asyncio.wait_for(
             run_agent_step(reg, identity="worker", prompt="do a thing", timeout=5.0),
@@ -334,21 +333,16 @@ async def test_agent_step_worker_spawned_audit_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(tmp_path: Path) -> None:
+async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(
+    tmp_path: Path, monkeypatch,
+) -> None:
     """Tier 2: co-vet must-fix — the LLM ``session_spawn`` tool's BACKGROUND child routes
     ``BridgeToParent`` (not self-bound ReviewedNA), so its ``ask_user`` reaches the spawning
     PARENT's live operator and RESOLVES — it does NOT hit the origin-pin park/hang a self-bound
     child would (its "tui"-stamped iv on a listener-less own registry parks forever). RED before
     fix (child ``intervention_bridge`` is None → ask_user parks on the child's own registry);
     GREEN after (BridgeToParent → the parent operator resolves it)."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, built = _recording_registry(tmp_path, state_log)
     parent = reg.get_or_load("worker")
@@ -407,16 +401,8 @@ async def _spawn_from(
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
 async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitively(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: co-vet recursive-edge closure — a GRANDCHILD (session_spawn from a HEADLESS spawned
     child) routes its ask_user TRANSITIVELY to the first attached ancestor (the ROOT operator), NOT
@@ -424,6 +410,7 @@ async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitiv
     BridgeToParent is hang-safe at EVERY depth (session_spawn has no depth cap + a spawned child's
     router loop re-exposes session_spawn → grandchildren are reachable). RED if the bridge dispatches
     on the immediate parent's coordinator (the grandchild never reaches the root queue → hang)."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, _built = _recording_registry(tmp_path, state_log)
     root = reg.get_or_load("worker")
@@ -456,19 +443,14 @@ async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitiv
 
 
 @pytest.mark.asyncio
-@pytest.mark.allow_real_network(
-    reason="#3445 group A / #3452 (temporary, time-boxed — NOT a permanent "
-    "design exception like B/D): reaches real litellm.acompletion because no "
-    "LLM stub is wired for this session's run-loop (same shape as #3435). The "
-    "structural gate (#3451) must not silently break this test at merge time; "
-    "the real fix (stub the call, matching this file's sibling tests where "
-    "one exists) is tracked in #3452.",
-)
-async def test_fully_headless_spawn_chain_ask_user_refuses_not_hang(tmp_path: Path) -> None:
+async def test_fully_headless_spawn_chain_ask_user_refuses_not_hang(
+    tmp_path: Path, monkeypatch,
+) -> None:
     """Tier 2: co-vet recursive-edge terminal — a FULLY-headless spawn chain (no operator listener
     anywhere in the ancestry) resolves ask_user with a typed refusal, NEVER an unbounded park. This
     is the terminal that makes BridgeToParent hang-safe by construction even with no reachable
     operator at the root."""
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg, _built = _recording_registry(tmp_path, state_log)
     root = reg.get_or_load("worker")  # NO listener registered — a headless root (cron/background)
