@@ -428,15 +428,17 @@ def build_tools(
 
     # ── C. File tools (permission-gated) ─────────────────────────────────────
     #
-    # File access tools are gated on the operator's `permissions.file.*`
-    # declaration. The OS-level dispatch layer
-    # (`permissions._in_default_read_zone`) does grant reads within the
-    # project root by default, but exposing the tools without a matching
-    # config declaration mixes "operator opt-in" with "OS auto-grant" in a
-    # way that makes the safety boundary fuzzy — a previous attempt to
-    # align the two layers (= unconditional tool exposure) was reverted
-    # because it dragged the chat router into the user-file protection
-    # surface. Reyn's own source / docs are accessed via the dedicated
+    # #3458: file tools are exposed iff the corresponding path set is non-empty,
+    # where the set comes from `PermissionResolver.advertised_file_permissions()`
+    # — the SAME `file_scope.resolve_file_scope` answer the runtime gate
+    # enforces. The pre-#3458 gate read only the operator's literal
+    # `permissions.file.*` value while the runtime gate applied a default zone
+    # hidden inside itself, so an unconfigured project withheld `read_file` /
+    # `list_directory` from the model even though the gate would have permitted
+    # them (#3449): the model was not told about a capability it had. The set is
+    # now `deny` → empty (tools hidden), unset → the schema default
+    # (`<zone-root>` for read, `<zone-root>/.reyn` for write), a path list →
+    # exactly that list. Reyn's own source / docs are accessed via the dedicated
     # `reyn_repo_*` tools (see section F below), which carry no
     # permission-protected content and so don't need this gate.
     _file_read = (file_permissions or {}).get("read") or []

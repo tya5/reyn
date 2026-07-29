@@ -200,7 +200,7 @@ Four resolution layers in `PermissionResolver._approve()`:
 | 0 | `ask_user` | not required | unconditional pass | not possible |
 | 1 | `web_search`, `web_fetch` | not required | allow | `deny` blocks |
 | 2 | `mcp` | required | ask (4-layer) | `allow` pre-approves |
-| 3 | `shell`, `file` (outside zone) | required | ✅ ask (JIT — `bus≠None` prompt at gate time; `bus=None` deny) | `allow` pre-approves; `deny` blocks even the default zone |
+| 3 | `shell`, `file` (outside the configured scope) | required | ✅ ask (JIT — `bus≠None` prompt at gate time; `bus=None` deny) | the config value IS the scope (#3458): `allow` = unrestricted, `deny` = empty set (and no JIT ask), a path list = exactly that set |
 
 Tier 0 is "unconditional pass", not "default allow" — there is no config key
 that could block these ops without breaking workflow execution semantics.
@@ -269,8 +269,8 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 
 | Axis | Type | Granularity | Gate site | Notes |
 |---|---|---|---|---|
-| `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`}. Default zone = CWD. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.read: deny` blocks even CWD. Mirrors `http.get` pattern. |
-| `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete. Default zone = `.reyn/`. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.write: deny` blocks even `.reyn/`. Mirrors `http.get` pattern. |
+| `file.read` | `list[{path, scope}]` \| `allow` \| `deny` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`}. The value **is** the readable set (#3458): unset = the schema default `<zone-root>`, `deny` = empty set, a list = exactly that set (it replaces the default), `allow` = unrestricted. Resolved by `permissions/file_scope.resolve_file_scope` — the same function the router tool advertisement reads, so what the model is told matches what the gate enforces. Outside the set: JIT ask (bus≠None) or deny (bus=None); `deny` suppresses the ask too. |
+| `file.write` | `list[{path, scope}]` \| `allow` \| `deny` | per-path | `require_file_write()` | covers write / edit / delete. Same three forms and the same resolution as `file.read` (#3458); its schema default is the narrower `<zone-root>/.reyn` symbol, minus the protected carve-outs — narrowness now visible in the config rather than only in a docstring. |
 | `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.api.safe.http.*` (workflow-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
 | `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | per-key for `~/.reyn/secrets.env`; `"*"` wildcard for runtime-determined keys (= the per-value prompt is the actual gate) |
 | `env.expand` | `list[<name>]` | per-name | `is_env_expand_allowed()` | #3198: read-side counterpart of `secret.write` — gates `${env:VAR}` skill-load expansion (`reyn.plugins.skill_load`). A DISTINCT `CapabilityAxis.ENV_EXPAND`, not `CapabilityAxis.ENV` (that one gates `SandboxPolicy.env_passthrough` — which names pass THROUGH to a sandboxed subprocess — a different capability from reading a name INTO the LLM's context). Deny-by-default: empty/unset expands nothing. `"*"` wildcard is accepted for shape-parity with `secret.write`, but is **strictly more dangerous** here: `secret.write`'s wildcard is backstopped by a per-value operator prompt at the actual write; `env.expand`'s wildcard has **no prompt at all** — it unconditionally exposes every process env var to the LLM's plain-text context. Declare specific names; do not use `"*"` (see [skills.md](../tools-integrations/skills.md#skill-load-variable-expansion)). NON-raising (unlike most `require_*` gates) — a denied name leaves its `${env:VAR}` token unexpanded in the read result rather than failing the whole read. |
@@ -280,13 +280,45 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 | `shell` | *(no live gate)* | — | — | **Doc drift, flagged not fixed here**: this row historically named `require_shell()` as the gate site for a bool `permissions.shell` axis. `require_shell()` does not exist in the current codebase — the subprocess-exec gate it once named was retired when the raw `shell` op was removed (#1352-A/#1352-L3); subprocess access is bounded today by `SandboxPolicy.allow_subprocess` (declared per sandbox config, not per `permissions:` dict entry) at the `sandboxed_exec` seam. See [Why `shell` is the only bool](#why-shell-is-the-only-bool) below for the now-stale rationale this row supported. |
 | `allowed_mcp` | `list[str] \| None` | ACL filter | implicit at MCP call | per-agent restriction, cross-cuts `mcp` |
 
+### One source for the file path sets (#3458)
+
+"Which paths are readable / writable" is answered in exactly one place:
+`reyn.security.permissions.file_scope.resolve_file_scope(config, axis, zone_root=…)`.
+The runtime gates (`require_file_read` / `require_file_write` /
+`is_read_allowed` / `is_write_allowed`, all via `AgentLayer`) and the
+advertisement side (the router file-tool catalog and the system prompt's
+`## Files` section, via `PermissionResolver.advertised_file_permissions()`) both
+call it; a subsystem with no resolver can call the free function directly.
+
+Two properties make that structural rather than a convention kept by hand:
+
+- **The default lives in the schema, not in a gate.** `FILE_SCOPE_SCHEMA`
+  declares each axis's default, so a reader of the configuration sees the
+  default set. Previously the default zone lived inside the gate, invisible to
+  any caller that did not build the gate — so an unconfigured project had the
+  gate saying "the project root is readable" while the advertisement said
+  "nothing is permitted", and the model was never told about a capability it
+  had (#3449).
+- **The default is a symbol, not a literal.** The zone anchor is supplied by the
+  entry point (`ws_base_dir` under chat/web, `project_root` under pipe / plugin
+  / registry bootstrap, the in-container repo root under a container backend),
+  so its value is unknown at config-load time. The schema therefore carries a
+  typed marker (`ZoneRoot` / `ZoneStateDir`, a discriminated union — not a bare
+  `"project_root"` string, which would silently mis-resolve the day the zone
+  becomes a different concept) and the one resolution function turns it into
+  paths for the environment at hand.
+
+The just-in-time layer is unaffected: the configured scope is the standing set,
+and JIT is how a single access extends it (ask when a bus is present, deny when
+not).
+
 ### A deliberately non-declarable gate: plugin git run-code trust
 
 One gate is intentionally absent from the axis table above: `require_plugin_git_run_code_trust` (ADR 0064 §3.10, the `{kind: "git"}` branch of `plugin_install`). It has **no declarable axis, no config key, and no persisted approval** — by design. Installing a git-sourced plugin FETCHES remote code and then RUNS it (an MCP server / pipeline / skill registered to run in future sessions), an RCE trust boundary distinct from the *fetch* axis (`http.get`). If this decision were declarable or persistable, a single ALWAYS / `reyn.yaml` grant would become a standing silent-RCE authorisation for every future git plugin — and worse, an `http.get` approval (per-host, persistent, `web.fetch`-shared) could be mistaken for authority to run code from that host. So the run-code gate is a **per-install, never-persisted operator confirmation**: it consults/writes no approvals map, its choice set (`plugin_run_code_trust_choices`) offers only yes/no (structurally no ALWAYS), and it re-asks every install. Fail-closed: non-interactive callers deny. It is the one gate whose *non-declarability is the security property* — the taxonomy's declarable/persistable axes are exactly what it must not be.
 
 ### A deliberately ungated read: builtin + registered-plugin skill/pipeline bodies
 
-`file.read`'s default zone above is CWD/`project_root`; a builtin skill/pipeline's shipped body (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` `path` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE that zone in every deploy — the package ships outside any given project, and the plugin cache is a per-operator global directory, not project-scoped. The unmodified out-of-zone gate would hard-deny both non-interactively (there is no operator present to approve in a headless/CI run), so `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and its mirror `reyn.plugins.body_read.read_plugin_body_bytes` short-circuit `require_file_read` for exactly this content, inside the `file` op handler (`reyn.core.op_runtime.file.handle`) — every other path, builtin-package or plugin-cache alike, still falls through to the unmodified `_in_default_read_zone` gate.
+`file.read`'s schema default above is the `<zone-root>` symbol (CWD/`project_root` in a host run); a builtin skill/pipeline's shipped body (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` `path` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE that zone in every deploy — the package ships outside any given project, and the plugin cache is a per-operator global directory, not project-scoped. The unmodified out-of-zone gate would hard-deny both non-interactively (there is no operator present to approve in a headless/CI run), so `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and its mirror `reyn.plugins.body_read.read_plugin_body_bytes` short-circuit `require_file_read` for exactly this content, inside the `file` op handler (`reyn.core.op_runtime.file.handle`) — every other path, builtin-package or plugin-cache alike, still falls through to the unmodified scope gate (`file_scope`'s `<zone-root>` resolution).
 
 The plugin bypass's trust boundary is **install-registration**, deliberately NOT the presence of a `.reyn-plugin/` marker: a marker is trivially hand-plantable at `~/.reyn/plugins/<name>/.reyn-plugin/` with no install ever having run, so keying the bypass off marker presence would let anyone read (and, worse, have an agent load as instructions) unreviewed content. Instead the check is `reyn.core.op_runtime.plugin_install.is_registered_plugin_root` — true only once `plugin_install` has reached its completion step (source-resolve → manifest-validate → operator-permission-gated global-copy write → capability-register all succeeded).
 
@@ -461,7 +493,7 @@ allows(axis, value) = all(layer.allows(axis, value) for layer in layers)
 
 | Layer | What it models | Role |
 |---|---|---|
-| **AgentLayer** | Skill declaration + default zone baseline + runtime approvals | Grant layer |
+| **AgentLayer** | Skill declaration + the configured file scope (`permissions.file.*`, schema-defaulting to the `<zone-root>` symbol — #3458) + runtime approvals | Grant layer |
 | **SandboxLayer** | Runtime sandbox caps (paths, network, subprocess, env) | Restrict-only |
 | **ProfileLayer** | Per-agent capability narrowing — the agent's default capability spec | Restrict-only |
 | **ContextualLayer** | Per-session capability narrowing — delegation / topology / untrusted-auto | Restrict-only |

@@ -11,12 +11,25 @@ Reyn の Permission システムは、ファイルパス、シェル、MCP ツ�
 
 ## デフォルト付与（宣言不要）
 
-| Op | スコープ |
-|----|-------|
-| `file.read` / `file.glob` / `file.grep` | プロジェクトルート（CWD）配下の任意のパス。 |
-| `file.write` / `file.edit` / `file.delete` | `<CWD>/.reyn/` または `<CWD>/reyn/` 配下のみ。 |
+読み書きできるパスの集合は `permissions.file.read` / `permissions.file.write` そのものです。何も書かなければ **schema の default** が効きます — 既定は設定の定義の一部であって、ランタイムのゲート内部に隠れた規則ではありません。したがって**実行を止める側と、モデルに「触ってよい範囲」を伝える側が同じ答えを読みます**。
 
-これらのデフォルト外のものはすべて宣言が必要です。
+| 軸 | schema default | 対象 |
+|----|-------|-------|
+| `file.read`（`file.glob` / `file.grep` も） | `<zone-root>` | zone root とその配下すべて。 |
+| `file.write`（`file.edit` / `file.delete` も） | `<zone-root>/.reyn` | state ディレクトリ。ただし保護された除外（`.reyn/approvals.yaml`、および recovery-core の `.reyn/config/` / `.reyn/state/` プレフィックス — これらは専用の op 経由でのみ変更）を除く。 |
+
+`<zone-root>` は**リテラルではなく記号**です。値はエントリポイントが与える zone アンカー（`reyn chat` / `reyn web` では workspace base dir、`reyn pipe` / plugin install / registry bootstrap では project root、コンテナバックエンドではコンテナ内のリポジトリルート）で、**プロセス起動まで確定しない**ため、リテラルパスを default として書くことは原理的にできません。
+
+### 集合の3つの書き方
+
+| 設定 | 意味 |
+|---|---|
+| 未設定 | 上記の schema default |
+| `file.read: deny` | 空集合。都度確認（JIT）も抑止されます |
+| `file.read: [パス…]` | **その集合**。パスリスト自体がパーミッションなので、default に**追加されるのではなく置き換えます**。エントリは素のパスまたは `{path, scope}`。`reyn.yaml` の scope は `just_path` と明示しない限り `recursive` です |
+| `file.read: allow` | この軸にパス制限なし |
+
+解決された集合の外側は、単に拒否されるわけではありません。リクエストバスがあれば都度ユーザーに確認し（chat / 対話実行）、無ければ拒否します（ヘッドレス / eval）。**設定＝常設の集合、JIT＝アクセス単位の拡張**という二層構造です。
 
 ## Skill の宣言（skill.md frontmatter の `permissions:`）
 

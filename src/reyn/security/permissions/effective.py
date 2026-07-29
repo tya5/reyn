@@ -6,11 +6,12 @@ grant-back forbidden**. No layer's deny can be re-granted by another layer; ∩ 
 only narrow.
 
 Four inputs, three ⋂ layers:
-- **agent** (`PermissionDecl` + the default zone): the GRANT layer. Its allow-set
-  is the default zone (layer-0 baseline) ∪ the actor's explicit declarations. The
-  zone is folded in here as the baseline — NOT a separate ∩ restrictor (a
-  separate zone restrictor would cancel the decl grants that intentionally extend
-  beyond the zone; the byte-identical requirement forces zone-as-baseline).
+- **agent** (`PermissionDecl` + the configured file scope): the GRANT layer. Its
+  allow-set is the configured file scope (#3458 — `permissions.file.read` /
+  `file.write`, whose schema default is the symbolic zone) ∪ the actor's explicit
+  declarations. The scope is folded in here as the baseline — NOT a separate ∩
+  restrictor (a separate restrictor would cancel the decl grants that
+  intentionally extend beyond it).
 - **sandbox** (`SandboxPolicy`): runtime caps (paths / network / subprocess / env).
 - **profile** (`AgentProfile`): agent-level allowlists (agents / mcp).
 
@@ -32,10 +33,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
-from reyn.security.permissions.permissions import (
-    _in_default_read_zone,
-    _in_default_write_zone,
-)
+from reyn.security.permissions.file_scope import FileScopes, resolve_file_scopes
 
 if TYPE_CHECKING:
     from reyn.runtime.profile import AgentProfile
@@ -83,8 +81,8 @@ class LayerView(Protocol):
 
 
 class AgentLayer:
-    """The GRANT layer: the agent's ``PermissionDecl`` over the default-zone
-    baseline, faithful to the ``require_*`` gate logic (reuses the same helpers).
+    """The GRANT layer: the agent's ``PermissionDecl`` over the configured
+    file-scope baseline, faithful to the ``require_*`` gate logic.
 
     Runtime approvals are folded IN here (#1199 S3.1b ② — NOT a top-level
     ``approved OR effective`` disjunct, which would let an approval re-grant what
@@ -96,7 +94,9 @@ class AgentLayer:
       lets the conjunction restrict approvals too (grant-back forbidden preserved).
 
     #1199 S3.1c-1: the FILE axes are **decl-less** — a file path is permitted iff
-    it is in the default zone OR explicitly approved. The actor's declared file
+    it is in the configured scope (#3458: ``permissions.file.read`` /
+    ``file.write``, defaulting via the schema to the symbolic zone; the layer
+    itself holds no default) OR explicitly approved. The actor's declared file
     paths are NOT auto-granted (the prior non-interactive ``decl_covers`` disjunct
     + the ``include_decl`` flag are gone). This resolves the S3.1b-2 transitional
     divergence: ``require_file_*`` (op-runtime) and ``is_read/write_allowed``
@@ -111,6 +111,7 @@ class AgentLayer:
         *,
         approval_check: "Any" = None,
         file_zone_root: "Any" = None,
+        file_scopes: "FileScopes | None" = None,
     ) -> None:
         self._decl = decl
         self._approval_check = approval_check
@@ -121,6 +122,14 @@ class AgentLayer:
         # approvals base (the resolver passes ``_file_zone_root``, defaulting to
         # the host ``_project_root`` so host/interactive stays byte-identical).
         self._file_zone_root = file_zone_root
+        # #3458: the resolved path sets for the FILE axes. This layer holds NO
+        # default of its own — an omitted ``file_scopes`` is resolved from an
+        # empty config by the SAME function the gate and the advertisement call,
+        # so the schema default (``file_scope.FILE_SCOPE_SCHEMA``) is the only
+        # place a default zone is written down.
+        self._file_scopes = file_scopes or resolve_file_scopes(
+            {}, zone_root=file_zone_root,
+        )
 
     def _approved(self, axis: CapabilityAxis, value: Any) -> bool:
         return bool(self._approval_check and self._approval_check(axis, value))
@@ -128,15 +137,16 @@ class AgentLayer:
     def allows(self, axis: CapabilityAxis, value: Any) -> bool:
         d = self._decl
         if axis is CapabilityAxis.FILE_READ:
-            # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
+            # #1199 S3.1c-1: decl-less. #3458: the permitted set comes from the
+            # configured scope (schema default when unset) — no zone hardcoded here.
             return (
-                _in_default_read_zone(str(value), self._file_zone_root)
+                self._file_scopes.read.contains(str(value))
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.FILE_WRITE:
-            # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
+            # #1199 S3.1c-1: decl-less. #3458: see FILE_READ above.
             return (
-                _in_default_write_zone(str(value), self._file_zone_root)
+                self._file_scopes.write.contains(str(value))
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.NETWORK_HOST:
@@ -362,14 +372,18 @@ class EffectivePermission:
         profile: "AgentProfile | None" = None,
         approval_check: "Any" = None,
         file_zone_root: "Any" = None,
+        file_scopes: "FileScopes | None" = None,
     ) -> "EffectivePermission":
-        """Build from the inputs (zone + approvals folded into the agent
+        """Build from the inputs (file scope + approvals folded into the agent
         layer; ② grant-back-safe). Build per op-context (Q3).
 
-        #1316/#1414: ``file_zone_root`` anchors the default file zones (None →
-        cwd). Distinct from the host approvals base under a container backend."""
+        #1316/#1414: ``file_zone_root`` anchors the file zone symbols (None →
+        cwd). Distinct from the host approvals base under a container backend.
+        #3458: ``file_scopes`` is the resolved ``permissions.file.*`` set; None →
+        resolved from an empty config (= the schema default) at that anchor."""
         return cls([
-            AgentLayer(decl, approval_check=approval_check, file_zone_root=file_zone_root),
+            AgentLayer(decl, approval_check=approval_check,
+                       file_zone_root=file_zone_root, file_scopes=file_scopes),
             SandboxLayer(sandbox_policy),
             # #2074 S4b: the per-agent layer reads the agent's default capability
             # spec (the unified primitive), not the AgentProfile directly.

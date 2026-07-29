@@ -46,6 +46,7 @@ from reyn.user_intervention import (
 )
 
 if TYPE_CHECKING:
+    from reyn.security.permissions.file_scope import FileScopes
     from reyn.security.sandbox.policy import SandboxPolicy
 
 
@@ -441,6 +442,38 @@ class PermissionResolver:
 
     # ── Public read helpers (= Tier-C1 cleanup wave 27) ───────────────────
 
+    # ── The file path-set source (#3458) ─────────────────────────────────
+
+    def file_scopes(self) -> "FileScopes":
+        """The resolved ``permissions.file.read`` / ``file.write`` path sets.
+
+        #3458: the ONE answer to "which paths are readable / writable". The
+        runtime gates (:meth:`require_file_read` / :meth:`require_file_write` /
+        :meth:`is_read_allowed` / :meth:`is_write_allowed`) and the
+        advertisement side (the router tool catalog + the system prompt's
+        ``## Files`` section) both obtain the set from here, which is a thin
+        wrapper over :func:`reyn.security.permissions.file_scope.resolve_file_scopes`
+        — a subsystem that has no resolver can call that function directly with
+        ``(config, zone_root)`` and get the identical answer.
+        """
+        from reyn.security.permissions.file_scope import resolve_file_scopes
+
+        return resolve_file_scopes(self._config, zone_root=self._file_zone_root)
+
+    def advertised_file_permissions(self) -> dict | None:
+        """``{"read": [paths], "write": [paths]}`` for the router tool catalog
+        and system prompt, or ``None`` when BOTH axes are empty.
+
+        #3458: derived from :meth:`file_scopes`, so what the model is told it
+        may touch is the same set the gate enforces. ``None`` (= advertise no
+        file tools) now means what it says — both axes resolve to the empty
+        set (``deny`` / an explicit ``[]``) — instead of the pre-#3458 "the
+        operator wrote nothing", which hid a live default-zone capability."""
+        scopes = self.file_scopes()
+        if scopes.read.is_empty and scopes.write.is_empty:
+            return None
+        return scopes.advertised()
+
     @property
     def project_root(self) -> Path:
         """The host-side approvals/config base (where ``.reyn`` lives). Public
@@ -709,13 +742,17 @@ class PermissionResolver:
 
         The op-runtime gate (:meth:`require_file_read`) and the Workspace gate
         (:meth:`is_read_allowed`) are documented to make the SAME decision. The
-        config grant + offload grant are the part they MUST agree on, so they
-        live here — a single source both gates call, so the offload-grant
-        decision cannot diverge (the merged D12 bug: only one gate had it). The
-        per-actor path-approval term differs (is_read_allowed guards it on a
-        non-empty actor) and stays inline in each gate.
+        offload grant is the part they MUST agree on, so it lives here — a
+        single source both gates call, so the offload-grant decision cannot
+        diverge (the merged D12 bug: only one gate had it). The per-actor
+        path-approval term differs (is_read_allowed guards it on a non-empty
+        actor) and stays inline in each gate.
+
+        #3458: the config grant (``file.read: allow``) left this helper — it is
+        one of the forms :meth:`file_scopes` resolves, so ``permissions.file.*``
+        is read in exactly one place.
         """
-        return self._is_config_approved("file.read") or self._is_offload_read_granted(path)
+        return self._is_offload_read_granted(path)
 
     def _is_host_approved_for(
         self, host: str, actor: str, kind: str = "http.get",
@@ -832,21 +869,28 @@ class PermissionResolver:
     ) -> None:
         """
         Raise PermissionError if read/glob/grep access to path is not allowed.
-        Default zone (CWD and below) is always granted.
-        Outside CWD: ask via ``bus`` when provided (JIT prompt, mirrors
+
+        #3458: the permitted set is ``permissions.file.read`` resolved by
+        :meth:`file_scopes` — unset = the schema default (``<zone-root>`` and
+        below), ``deny`` = the empty set, a path list = exactly that set. The
+        advertisement side reads the SAME resolution, so what the model is told
+        and what this gate enforces cannot drift.
+
+        Outside that set: ask via ``bus`` when provided (JIT prompt, mirrors
         ``require_http_get``); deny when bus=None (non-interactive).
 
-        Config ``file.read: deny`` overrides even the default zone.
+        Config ``file.read: deny`` still suppresses the JIT ask too.
 
-        #1505: async-ified + JIT ask — outside-zone access now prompts the
+        #1505: async-ified + JIT ask — outside-scope access now prompts the
         user at gate time (bus≠None) instead of hard-denying. bus=None
         (non-interactive / eval) preserves the prior deny behavior.
 
-        #1199 S3.1c-1: decl-less (zone OR approved). #1199 S3.1c-2:
+        #1199 S3.1c-1: decl-less (scope OR approved). #1199 S3.1c-2:
         SandboxLayer ∩ for sandbox_policy path caps.
         """
-        # Config-tier deny always wins — overrides even the default zone.
-        if self._is_config_denied("file.read"):
+        scopes = self.file_scopes()
+        # Config-tier deny always wins — it suppresses even the JIT ask.
+        if scopes.read.is_denied:
             raise PermissionError(
                 f"read from '{path}' denied by config (file.read: deny)."
             )
@@ -866,19 +910,22 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved, file_zone_root=self._file_zone_root),  # #1414
+            AgentLayer(decl, approval_check=_approved,
+                       file_zone_root=self._file_zone_root,  # #1414
+                       file_scopes=scopes),  # #3458
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_READ, path):
             return
 
-        # JIT ask: outside zone, not yet approved. Mirrors require_http_get wildcard path.
+        # JIT ask: outside scope, not yet approved. Mirrors require_http_get wildcard path.
         if bus is not None:
             if await self._prompt_file_access(path, "just_path", actor, "file.read", bus):
                 return
 
         raise PermissionError(
             f"read from '{path}' was not approved (declared but not granted).\n"
-            f"Why: it is outside the default read zone (CWD) and has no approval.\n"
+            f"Why: it is outside the configured read scope "
+            f"({', '.join(scopes.read.advertised_paths) or 'empty'}) and has no approval.\n"
             f"Options:\n"
             f"  - pre-approve in reyn.yaml: permissions.file.read: allow (or the "
             f"specific path), then re-run; or\n"
@@ -896,21 +943,28 @@ class PermissionResolver:
     ) -> None:
         """
         Raise PermissionError if write/edit/delete access to path is not allowed.
-        Default zone (.reyn/) is always granted.
-        Outside the default zone: ask via ``bus`` when provided (JIT prompt,
-        mirrors ``require_http_get``); deny when bus=None (non-interactive).
 
-        Config ``file.write: deny`` overrides even the default zone.
+        #3458: the permitted set is ``permissions.file.write`` resolved by
+        :meth:`file_scopes` — unset = the schema default (``<zone-root>/.reyn``,
+        minus the protected carve-outs), ``deny`` = the empty set, a path list =
+        exactly that set. The narrowness of the write default is now visible in
+        the configuration rather than only in this docstring.
 
-        #1505: async-ified + JIT ask — outside-zone writes now prompt the
+        Outside that set: ask via ``bus`` when provided (JIT prompt, mirrors
+        ``require_http_get``); deny when bus=None (non-interactive).
+
+        Config ``file.write: deny`` still suppresses the JIT ask too.
+
+        #1505: async-ified + JIT ask — outside-scope writes now prompt the
         user at gate time (bus≠None) instead of hard-denying. bus=None
         (non-interactive / eval) preserves the prior deny behavior.
 
-        #1199 S3.1c-1: decl-less (zone OR approved). #1199 S3.1c-2:
+        #1199 S3.1c-1: decl-less (scope OR approved). #1199 S3.1c-2:
         SandboxLayer ∩ for sandbox_policy path caps.
         """
-        # Config-tier deny always wins — overrides even the default zone.
-        if self._is_config_denied("file.write"):
+        scopes = self.file_scopes()
+        # Config-tier deny always wins — it suppresses even the JIT ask.
+        if scopes.write.is_denied:
             raise PermissionError(
                 f"write to '{path}' denied by config (file.write: deny)."
             )
@@ -923,24 +977,29 @@ class PermissionResolver:
         )
 
         def _approved(axis: object, value: object) -> bool:
-            return self._is_config_approved("file.write") or self._is_path_approved_for(
-                str(value), actor, "file.write"
-            )
+            # #3458: the config grant (``file.write: allow``) is no longer read
+            # here — it is one of the forms ``file_scopes()`` resolves, so the
+            # config is consulted in exactly one place. Only the per-actor
+            # runtime approvals remain.
+            return self._is_path_approved_for(str(value), actor, "file.write")
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved, file_zone_root=self._file_zone_root),  # #1414
+            AgentLayer(decl, approval_check=_approved,
+                       file_zone_root=self._file_zone_root,  # #1414
+                       file_scopes=scopes),  # #3458
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
 
-        # JIT ask: outside zone, not yet approved. Mirrors require_http_get wildcard path.
+        # JIT ask: outside scope, not yet approved. Mirrors require_http_get wildcard path.
         if bus is not None:
             if await self._prompt_file_access(path, "just_path", actor, "file.write", bus):
                 return
 
         raise PermissionError(
             f"write to '{path}' was not approved (declared but not granted).\n"
-            f"Why: it is outside the default write zone (.reyn/) and has no "
+            f"Why: it is outside the configured write scope "
+            f"({', '.join(scopes.write.advertised_paths) or 'empty'}) and has no "
             f"approval.\n"
             f"Options:\n"
             f"  - pre-approve in reyn.yaml: permissions.file.write: allow (or the "
@@ -1255,8 +1314,9 @@ class PermissionResolver:
     def is_read_allowed(self, path: str, actor: str = "") -> bool:
         """Check if reading `path` is allowed.
 
-        Allowed if: the path is in the default read zone (under CWD), OR config
-        grants `file.read: allow`, OR a per-actor approval covers it.
+        Allowed if: the path is in the configured read scope (#3458 —
+        ``permissions.file.read``, schema-defaulting to ``<zone-root>`` and
+        below), OR a per-actor approval covers it.
 
         #1199 S3.1b-2b / S3.1c-1 (the Workspace read gate): routed through the
         unified EffectivePermission model — a decl-less AgentLayer (zone OR
@@ -1283,14 +1343,16 @@ class PermissionResolver:
 
         return EffectivePermission([
             AgentLayer(PermissionDecl(), approval_check=_approved,
-                       file_zone_root=self._file_zone_root)  # #1414
+                       file_zone_root=self._file_zone_root,  # #1414
+                       file_scopes=self.file_scopes())  # #3458
         ]).allows(CapabilityAxis.FILE_READ, path)
 
     def is_write_allowed(self, path: str, actor: str = "") -> bool:
         """Check if writing `path` is allowed.
 
-        Allowed if: default write zone, OR config grants `file.write: allow`, OR
-        a per-actor approval covers it.
+        Allowed if: the path is in the configured write scope (#3458 —
+        ``permissions.file.write``, schema-defaulting to ``<zone-root>/.reyn``
+        minus the protected carve-outs), OR a per-actor approval covers it.
 
         #1199 S3.1b-2a / S3.1c-1 (the Workspace write gate): routed through the
         unified EffectivePermission model — the single conjunctive-∩ source. A
@@ -1306,14 +1368,15 @@ class PermissionResolver:
         )
 
         def _approved(axis: object, value: object) -> bool:
-            return self._is_config_approved("file.write") or (
-                bool(actor)
-                and self._is_path_approved_for(str(value), actor, "file.write")
+            # #3458: ``file.write: allow`` is resolved by ``file_scopes()`` now.
+            return bool(actor) and self._is_path_approved_for(
+                str(value), actor, "file.write",
             )
 
         return EffectivePermission([
             AgentLayer(PermissionDecl(), approval_check=_approved,
-                       file_zone_root=self._file_zone_root)  # #1414
+                       file_zone_root=self._file_zone_root,  # #1414
+                       file_scopes=self.file_scopes())  # #3458
         ]).allows(CapabilityAxis.FILE_WRITE, path)
 
     async def require_mcp(

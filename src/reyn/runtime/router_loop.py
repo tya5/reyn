@@ -3573,11 +3573,32 @@ class RouterLoop:
         except Exception:  # noqa: BLE001
             return name, args
         try:
-            resolve_invoke_action(name, args or {})
+            resolved = resolve_invoke_action(name, args or {})
         except UnknownActionError:
             return name, args
         except Exception:  # noqa: BLE001 — never crash the dispatch on a salvage attempt
             return name, args
+        # #3458: prefer the BARE spelling when it is itself dispatchable. The
+        # rewrite below targets ``invoke_action``, which only some presentations
+        # advertise — so a qualified call whose bare equivalent IS in the catalog
+        # used to dead-end as ``unknown_tool: invoke_action`` under a scheme
+        # without the wrapper. That combination became reachable the moment the
+        # file tools started being advertised by default (#3458), because
+        # ``without_duplicate_alias_spellings`` then drops the now-redundant
+        # ``file__read`` / ``file__write`` alias in favour of the bare name the
+        # model is shown. Salvage to the target the alias resolves to instead.
+        _dispatchable = self._dispatch_catalog or self._catalog
+        if resolved.target_tool_name in _dispatchable:
+            try:
+                self.host.events.emit(
+                    "direct_alias_call_salvaged",
+                    original_name=name,
+                    rewritten_to=resolved.target_tool_name,
+                    chain_id=self.chain_id,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return resolved.target_tool_name, dict(resolved.target_args)
         rewritten_args = {"action_name": name, "args": dict(args or {})}
         try:
             self.host.events.emit(
