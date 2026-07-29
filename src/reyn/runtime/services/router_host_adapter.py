@@ -1655,37 +1655,14 @@ class RouterHostAdapter:
     # --- Private helpers ---
 
     def _get_file_permissions_for_router(self) -> dict | None:
-        """Return {read: [paths], write: [paths]} or None if not configured."""
+        """Return {read: [paths], write: [paths]} or None when both axes are empty.
+
+        #3458: a pass-through to ``PermissionResolver.advertised_file_permissions()``
+        — the same resolution the runtime gate enforces (this used to be a
+        second, config-only parser duplicated from ``Session``)."""
         if self._perm is None:
             return None
-        config = self._perm._config or {}
-        read_val = config.get("file.read") or (config.get("file") or {}).get("read")
-        write_val = config.get("file.write") or (config.get("file") or {}).get("write")
-
-        read_paths: list[str] = []
-        write_paths: list[str] = []
-
-        if read_val == "allow":
-            read_paths = ["*"]
-        elif isinstance(read_val, list):
-            for entry in read_val:
-                if isinstance(entry, str):
-                    read_paths.append(entry)
-                elif isinstance(entry, dict) and entry.get("path"):
-                    read_paths.append(str(entry["path"]))
-
-        if write_val == "allow":
-            write_paths = ["*"]
-        elif isinstance(write_val, list):
-            for entry in write_val:
-                if isinstance(entry, str):
-                    write_paths.append(entry)
-                elif isinstance(entry, dict) and entry.get("path"):
-                    write_paths.append(str(entry["path"]))
-
-        if not read_paths and not write_paths:
-            return None
-        return {"read": read_paths, "write": write_paths}
+        return self._perm.advertised_file_permissions()
 
     def _mcp_servers_flat(self) -> dict:
         """Unwrap config.mcp's ``{servers: {...}}`` shape to flat ``{name: cfg}``."""

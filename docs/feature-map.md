@@ -194,7 +194,7 @@ mindmap
 #### Workspace (P5)
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Permission-gated IO | Paths outside CWD require `file.read` / `file.write` declaration | [Concepts: Workspace](concepts/runtime/workspace.md) · [Permissions](reference/config/permissions.md) |
+| Permission-gated IO | `permissions.file.read` / `file.write` **is** the readable / writable path set — one source read by both the runtime gate and the tool advertisement (#3458); unset = the schema default (`<zone-root>` / `<zone-root>/.reyn`), `deny` = empty, a list = that set. Outside it: JIT ask or deny | [Concepts: Workspace](concepts/runtime/workspace.md) · [Permissions](reference/config/permissions.md) |
 
 #### Crash Recovery
 | Feature | Description | Documentation |

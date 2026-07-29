@@ -11,12 +11,36 @@ reyn's permission system gates access to file paths, exec (argv-only process exe
 
 ## Default grants (no declaration needed)
 
-| Op | Scope |
-|----|-------|
-| `file.read` / `file.glob` / `file.grep` | Any path under the project root (CWD). |
-| `file.write` / `file.edit` / `file.delete` | Only under `<CWD>/.reyn/` or `<CWD>/reyn/`. |
+The readable / writable path sets live in `permissions.file.read` and
+`permissions.file.write`. When you write nothing, the **schema default** applies —
+the default is part of the configuration's definition, not a rule hidden inside
+the runtime gate, so the enforcement side and the side that tells the model what
+it may touch read the same answer.
 
-Anything outside these defaults must be declared.
+| Axis | Schema default | Covers |
+|----|-------|-------|
+| `file.read` (also `file.glob` / `file.grep`) | `<zone-root>` | The zone root and everything below it. |
+| `file.write` (also `file.edit` / `file.delete`) | `<zone-root>/.reyn` | The state dir, minus the protected carve-outs (`.reyn/approvals.yaml`, and the `.reyn/config/` + `.reyn/state/` recovery-core prefixes, which are mutated only through their dedicated ops). |
+
+`<zone-root>` is a **symbol**, not a literal path: it is the zone anchor the
+entry point supplies — the workspace base dir under `reyn chat` / `reyn web`,
+the project root under `reyn pipe` / plugin install / registry bootstrap, the
+in-container repo root under a container backend. A literal path could not be
+written as a default because its value is not known until the process starts.
+
+### The three ways to write the set
+
+| Config | Meaning |
+|---|---|
+| unset | the schema default above |
+| `file.read: deny` | the empty set — nothing is readable, and the just-in-time prompt is suppressed too |
+| `file.read: [path, …]` | exactly that set. It **replaces** the default; it is not unioned with it, because the list *is* the permission. An entry is a bare path or `{path, scope}`; a `reyn.yaml` scope entry is `recursive` unless it says `just_path`. |
+| `file.read: allow` | no path restriction on the axis |
+
+A path outside the resolved set is not simply refused: the just-in-time layer
+still asks the operator when a request bus is available (chat / interactive
+runs) and denies when there is none (headless / eval). Config is the standing
+set; JIT is the per-access extension of it.
 
 ## Workflow declarations (`permissions:` in `skill.md` frontmatter)
 
@@ -63,10 +87,15 @@ List of MCP server names / named tool ids the phase may call.
 
 ### `file.read` / `file.write`
 
-For paths outside the default zones. Each entry has:
+Declares paths the actor may need. Each entry has:
 
-- `path` — absolute, or relative to CWD. `~` is expanded.
+- `path` — absolute, or relative to the zone root. `~` is expanded.
 - `scope` — `just_path` (this exact path) or `recursive` (this path and everything below it).
+
+Declaring a path in workflow frontmatter does not itself grant access (the gate
+is decl-less: the configured scope, or an approval). To grant it standing, put
+the path in `reyn.yaml`'s `permissions.file.read` / `file.write` list — that
+list is the set both the gate and the tool advertisement read.
 
 `file.write` covers `write`, `edit`, and `delete` ops.
 

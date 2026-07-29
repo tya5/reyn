@@ -65,8 +65,12 @@ class _ResolveShim:
     _resolve_tool_call = RouterLoop._resolve_tool_call
     _maybe_salvage_qualified_direct_call = RouterLoop._maybe_salvage_qualified_direct_call
 
-    def __init__(self, catalog) -> None:
+    def __init__(self, catalog, dispatch_catalog=None) -> None:
         self._catalog = catalog
+        # #3458: the salvage prefers the BARE target when it is dispatchable;
+        # ``None`` is RouterLoop's own default (the dispatch gate then keys on
+        # ``_catalog``), which is what these cases exercise.
+        self._dispatch_catalog = dispatch_catalog
 
         class _Host:
             events = _RecordingEvents()
@@ -88,7 +92,10 @@ def test_resolve_strips_namespace_so_bare_name_hits_catalog():
 
 def test_resolve_strips_namespace_then_salvages_qualified_call_name():
     """Tier 2: ``default_api.web__search`` as a call NAME → stripped → ``web__search``
-    (not in catalog, has ``__``) → salvaged to invoke_action(action_name=...)."""
+    (not in catalog, has ``__``) → salvaged to invoke_action(action_name=...).
+
+    #3458: the bare target ``web_search`` is NOT in this catalog, so the salvage
+    keeps its ``invoke_action`` route (which this catalog does advertise)."""
     shim = _ResolveShim(catalog={"invoke_action": object()})
     name, args = shim._resolve_tool_call(_tc("default_api.web__search", '{"query": "q"}'))
     assert name == "invoke_action"

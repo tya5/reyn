@@ -8,8 +8,16 @@ hot-list aliases), so ``dispatch_tool`` would reject with ``unknown_tool``.
 The salvage (``router_loop._execute_tool`` →
 ``_maybe_salvage_qualified_direct_call``) detects "qualified name not in
 catalog", confirms it routes via ``universal_dispatch.resolve_invoke_action``,
-and rewrites the call to ``invoke_action(action_name=name, args=args)``. An
-audit event ``direct_alias_call_salvaged`` records the rewrite.
+and rewrites the call. An audit event ``direct_alias_call_salvaged`` records
+the rewrite.
+
+#3458: the rewrite target is the BARE spelling the alias resolves to whenever
+that spelling is itself dispatchable, and ``invoke_action`` otherwise. The
+wrapper is not advertised by every presentation, so an unconditional rewrite to
+it dead-ended as ``unknown_tool: invoke_action`` under the schemes that omit it
+— reachable as soon as the file tools started being advertised by default and
+``without_duplicate_alias_spellings`` (#3428) dropped the redundant
+``file__read`` / ``file__write`` aliases in favour of their bare names.
 
 #187 STEP 1c: this salvage is now MORE load-bearing. With the ARS block removed
 from ``invoke_action.description`` (actions are enumerated only by
@@ -59,7 +67,14 @@ class _MinimalRouterLoopShim:
         RouterLoop._maybe_salvage_qualified_direct_call
     )
 
-    def __init__(self) -> None:
+    def __init__(self, catalog: "dict | None" = None) -> None:
+        # #3458: the salvage now prefers the BARE spelling when it is itself
+        # dispatchable, so the shim carries the two catalog attributes the real
+        # RouterLoop has. An empty catalog = "no bare target advertised", which
+        # is the pre-#3458 situation these first cases keep pinning.
+        self._catalog = catalog or {}
+        self._dispatch_catalog = None
+
         class _Host:
             events = _RecordingEvents()
         self.host = _Host()
@@ -158,3 +173,30 @@ def test_salvage_does_not_emit_audit_on_unknown_name() -> None:
         t != "direct_alias_call_salvaged"
         for t, _ in loop.host.events.events
     )
+
+
+# ── 4. #3458: the bare spelling wins when it is dispatchable ──────────────
+
+
+def test_salvage_prefers_the_bare_target_when_it_is_dispatchable() -> None:
+    """Tier 2: #3458 — ``file__read`` with ``read_file`` in the catalog salvages
+    to ``read_file`` directly, not through the ``invoke_action`` wrapper (which
+    this presentation does not advertise, so the wrapper route would dead-end)."""
+    loop = _MinimalRouterLoopShim(catalog={"read_file": object()})
+    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
+        "file__read", {"path": "README.md"},
+    )
+    assert new_name == "read_file"
+    assert new_args == {"path": "README.md"}
+
+
+def test_salvage_to_bare_target_emits_audit_with_that_target() -> None:
+    """Tier 2: #3458 — the audit event names the spelling actually dispatched."""
+    loop = _MinimalRouterLoopShim(catalog={"read_file": object()})
+    loop._maybe_salvage_qualified_direct_call("file__read", {"path": "x"})
+    audit = [
+        d for t, d in loop.host.events.events
+        if t == "direct_alias_call_salvaged"
+    ]
+    assert audit and audit[0]["rewritten_to"] == "read_file"
+    assert audit[0]["original_name"] == "file__read"
