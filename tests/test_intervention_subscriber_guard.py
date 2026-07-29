@@ -245,8 +245,9 @@ def test_chat_session_register_intervention_listener_round_trip() -> None:
 # ── 6. End-to-end: limit hit under interactive + timeout=0 + no listener ──
 
 
+@pytest.mark.replay("fixtures/llm/intervention_guard/safety_limit_no_listener.jsonl")
 def test_safety_limit_under_interactive_no_timeout_no_listener_no_hang(
-    tmp_path: Path,
+    tmp_path: Path, _llm_replay,
 ) -> None:
     """Tier 2: the exact scenario that motivated issue #254 — a chat
     session hits a safety limit while running ``mode=interactive`` +
@@ -259,6 +260,17 @@ def test_safety_limit_under_interactive_no_timeout_no_listener_no_hang(
     The test asserts the run completes within a small wall-clock budget
     — a 5s ceiling is generous; pre-fix the same path waited the entire
     pytest-timeout window.
+
+    #3435: this turn's router call reaches ``litellm.acompletion`` for
+    real (``make_session`` gives it no LLM stand-in), so on an unauthenticated
+    CI runner the assertion above raced a live network round trip instead of
+    the code under test — on a loaded runner the retry/backoff after the
+    connection failure can outlast the 5s ceiling, independent of any code
+    change (docs-only commits reproduced it; see issue #3435). Pinned via
+    the repo's standard ``@pytest.mark.replay`` + ``_llm_replay`` fixture
+    (``LLMReplay``, not a mock) so the interval this test measures contains
+    only the code under test, same as every other Session-driving test in
+    this file's neighbourhood (grep ``_llm_replay`` across ``tests/``).
     """
     safety = SafetyConfig(
         loop=LoopConfig(max_router_calls_per_turn=3),
