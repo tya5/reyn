@@ -546,6 +546,18 @@ async def _close_litellm_async_clients(pre_existing_keys: frozenset = frozenset(
     litellm's close routine can never permanently evict them. Idempotent /
     safe to call when no client was ever created during this call: the diff
     is then empty (no-op).
+
+    Considered and accepted, not overlooked: the hidden window spans an
+    `await` (litellm's close routine), so in principle another task on the
+    SAME event loop could `get_cache`/`set_cache` a preserved key while it's
+    hidden, miss, create a replacement, and then have this function's final
+    `cache_dict.update(preserved)` clobber that replacement with the
+    preserved (older) entry. Accepted for this call site specifically: this
+    window only exists on `run_async`'s own shutdown path, after `await
+    coro` has already returned/raised — by that point nothing on this loop
+    is meant to still be issuing LLM calls that would touch the cache. The
+    alternative (not hiding at all) reintroduces the #3434 defect this
+    function exists to fix, which is the worse failure mode.
     """
     import litellm
 
