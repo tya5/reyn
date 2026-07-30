@@ -670,19 +670,20 @@ class _RetrievalBundle:
     (dropped) and ``subscription_writer`` is WAL-derived task-subscription
     state, not retrieval (excluded, reassigned to a later family).
 
-    Pure output→input value object, with one inversion from Families 3/4:
-    :meth:`Session._build_retrieval_bundle` is a byte-identical extraction of
-    the construction sequence that used to run inline in ``Session.__init__``
-    at its ORIGINAL position (line ~1152), which is BEFORE Family 1
-    (``_build_audit_event_bundle``) runs — so unlike ``hot_reloader``
-    (Family 3) or ``budget`` (Family 4), this family's closure
-    (``_on_hot_list_changed``) does NOT take
-    ``chat_events`` as an eager builder input. It keeps resolving
-    ``self._chat_events`` at CALL time (the EventLog is constructed later in
-    ``__init__``), exactly as the pre-extraction closure did — eager-izing
-    that reference here would raise ``AttributeError`` at construction, since
-    ``self._chat_events`` does not exist yet at line ~1152. The builder is an
-    instance method precisely so this closure can keep capturing ``self``.
+    Pure output→input value object. #3408 moved the call site from its
+    original pre-Family-1 position to run right AFTER Family 1
+    (``_build_audit_event_bundle``), so this family's closure
+    (``_on_hot_list_changed``) now takes ``chat_events`` as an eager builder
+    input — like ``hot_reloader`` (Family 3) and ``budget`` (Family 4) — and
+    binds it by IDENTITY instead of resolving ``self._chat_events`` by NAME
+    at call time. Before #3408, the builder ran BEFORE Family 1 (so
+    ``self._chat_events`` did not exist yet at its old call site) and the
+    closure deferred the name lookup to call time to avoid an
+    ``AttributeError``; #3408 measured that nothing between the old and new
+    call sites reads or writes this family's own attrs, moved the call site
+    instead, and closed the deferral. See
+    :meth:`Session._build_retrieval_bundle`'s docstring for the full
+    identity-vs-name rationale and the AST guard that keeps it true.
 
     #3438: the fourth attr, ``embedding_event_sink`` (a TUI model-download
     status sink, FP-0057 #2856 Part A), was removed along with its whole
@@ -1114,14 +1115,6 @@ class Session:
         self._last_reply_to: Any = None
         # Outbox interceptor for external transport (e.g. Slack via MCP); None skips interception (FP-0041 #489 PR-D2)
         self._outbox_interceptor: Any = None
-        # Embedding block + action_usage_tracker, byte-identical extraction, unmoved (#3082 Family 5, see session-construction.md#family-5-retrieval)
-        _retrieval_bundle = self._build_retrieval_bundle(
-            self._action_retrieval, embedding_config, self.agent_name,
-        )
-        self._action_embedding_index = _retrieval_bundle.action_embedding_index
-        self._embedding_provider = _retrieval_bundle.embedding_provider
-        self._embedding_model_class = _retrieval_bundle.embedding_model_class
-        self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         self._mcp_servers = mcp_servers
         # mcp_connection_service; 4 lambdas deferred-resolve sibling deps at call time (#3082 Family 8c, see session-construction.md#family-8c-mcp-connection-service)
         self._mcp_connection_service = self._build_mcp_connection_service()
@@ -1278,6 +1271,24 @@ class Session:
         self._event_store = _audit_bundle.event_store
         self._chat_events = _audit_bundle.chat_events
         self._otel_exporter = _audit_bundle.otel_exporter
+        # Embedding block + action_usage_tracker (#3082 Family 5). MOVED here,
+        # right after Family 1, so the hot-list sink can bind chat_events by
+        # IDENTITY (the _audit_bundle.chat_events OBJECT, passed as a builder
+        # arg) instead of by NAME (a `self._chat_events` lookup deferred to
+        # CALL time). #3408: the name-lookup form is the #2856 accident's
+        # class -- a name reference can resolve to a DIFFERENT EventLog than
+        # the one that was live at bind time (the #2856 bug bound `self.events`
+        # by name and silently picked up the wrong log); an identity-bound
+        # reference cannot, because it never re-resolves the name. Safe to
+        # move here because Family 5 has no eager dependency on anything
+        # Family 3/6a/etc. build later (see session-construction.md#family-5-retrieval).
+        _retrieval_bundle = self._build_retrieval_bundle(
+            self._action_retrieval, embedding_config, self.agent_name, self._chat_events,
+        )
+        self._action_embedding_index = _retrieval_bundle.action_embedding_index
+        self._embedding_provider = _retrieval_bundle.embedding_provider
+        self._embedding_model_class = _retrieval_bundle.embedding_model_class
+        self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         # hook_bus -> hook_dispatcher -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader; runs right after Family 1 since hot_reloader reads chat_events eagerly (#3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         _hook_bundle = self._build_hook_event_bundle(
             _boot_in_set,
@@ -3557,6 +3568,7 @@ class Session:
         action_retrieval: "ActionRetrievalConfig",
         embedding_config: "EmbeddingConfig | None",
         agent_name: str,
+        chat_events: "EventLog",
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
         (three attrs, one conditional construction guarded by
@@ -3574,25 +3586,40 @@ class Session:
         retrieval) are excluded per this same spec's DAG corrections.
 
         Byte-identical extraction of the construction sequence that used to
-        run inline in ``__init__`` at its ORIGINAL position (line ~1152,
-        BEFORE Family 1 / ``_build_audit_event_bundle`` runs) — same
-        objects, same order, same conditionals, same try/except
-        None-fallbacks, same args. ``action_retrieval`` / ``embedding_config``
-        / ``agent_name`` are the ``self._action_retrieval`` value / the
+        run inline in ``__init__``, MODULO one reordering (#3408): the
+        call site moved from its ORIGINAL position (line ~1152, BEFORE
+        Family 1 / ``_build_audit_event_bundle`` ran) to run right AFTER
+        Family 1 instead. ``action_retrieval`` / ``embedding_config`` /
+        ``agent_name`` are the ``self._action_retrieval`` value / the
         ``embedding_config`` __init__ parameter / the LOCAL ``agent_name``
         __init__ parameter (NOT ``self.agent_name``, mirroring the original
-        inline reference at the ``action_usage_tracker`` persist path) — all
-        resolvable before this builder's original call site.
+        inline reference at the ``action_usage_tracker`` persist path) —
+        all resolvable at the new call site exactly as they were at the old
+        one, since nothing between the two positions reads or writes them.
 
-        ``chat_events`` is deliberately NOT a builder input, unlike Family
-        3's ``hot_reloader`` or Family 4's ``budget``: the closure below
-        (``_on_hot_list_changed``) resolves
-        ``self._chat_events`` at CALL time, not construction time — the
-        EventLog is built later in ``__init__`` (Family 1, ~line 1560+).
-        Eager-izing that reference (the Family 3/4 pattern) would raise
-        ``AttributeError`` here, since this builder runs BEFORE Family 1.
-        This builder is an instance method precisely so the closure can
-        keep capturing ``self``.
+        ``chat_events`` IS a builder input (#3408), unlike its pre-#3408
+        shape where it was deliberately excluded so the closure below
+        (``_on_hot_list_changed``) could defer ``self._chat_events``
+        resolution to CALL time — the EventLog did not exist yet at the
+        builder's old (pre-Family-1) call site, so an eager reference there
+        would have raised ``AttributeError``. #3408 moved the call site
+        instead of keeping the deferral: ``git grep '_chat_events ='`` across
+        ``src`` finds exactly ONE assignment, ``Session.__init__``'s single
+        ``self._chat_events = _audit_bundle.chat_events`` — no restore/attach
+        path re-binds it — so a NAME lookup deferred to call time and an
+        IDENTITY reference captured once at construction resolve to the same
+        object today. The identity form is preferred structurally: a name
+        lookup re-resolves ``self._chat_events`` on every call, so a future
+        rebinding of that name (however unlikely) would retarget every
+        deferred closure that names it silently — the #2856 accident's
+        class (a name reference resolved to a DIFFERENT EventLog than the
+        one live when the reference was written). An identity reference
+        captured once cannot retarget: it either keeps pointing at the
+        EventLog it was given, or (if that assumption ever breaks) the
+        AST single-assignment guard in
+        ``tests/test_chat_events_single_assignment_3408.py`` goes RED first,
+        naming the new call site and saying "route this through the builder
+        arg, not a rediscovered eager ``self._chat_events``."
 
         FP-0034 Phase 2 steps 1 + 5 / Issue #192:
         see the three embedding attrs' and ``action_usage_tracker``'s
@@ -3644,13 +3671,15 @@ class Session:
         ):
             try:
                 from reyn.tools.action_usage_tracker import ActionUsageTracker
-                # Issue #192: wire a callback that emits ``hot_list_updated``
-                # on every reorder of the compacted ranking. Lambda defers
-                # ``self._chat_events`` resolution to call time (it's
-                # constructed below at the EventLog init).
+                # Issue #192 / #3408: wire a callback that emits
+                # ``hot_list_updated`` on every reorder of the compacted
+                # ranking. Binds the ``chat_events`` builder ARG by IDENTITY
+                # (not a ``self._chat_events`` name lookup) — see this
+                # method's docstring for why identity binding is safe today
+                # and what keeps it safe (the AST single-assignment guard).
                 def _on_hot_list_changed(ranking: list[dict]) -> None:
                     try:
-                        self._chat_events.emit(
+                        chat_events.emit(
                             "hot_list_updated", ranking=ranking,
                         )
                     except Exception:

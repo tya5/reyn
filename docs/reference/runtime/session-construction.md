@@ -272,10 +272,26 @@ Two other cost-adjacent construction points stay inline:
 `action_embedding_index`/`embedding_provider`/`embedding_model_class`) plus
 `action_usage_tracker` — a byte-identical extraction (same
 objects, same conditionals, same try/except None-fallbacks, same args as the inline
-sequence it replaced). It stays UNMOVED, invoked at its original position, BEFORE Family 1
-(`_build_audit_event_bundle`) runs — this family has no eager dependency on `chat_events`,
-only the `_on_hot_list_changed` closure's DEFERRED `self._chat_events` resolution (kept
-verbatim since this is an instance method).
+sequence it replaced), MODULO one reordering (#3408): the call site MOVED from its
+original position (BEFORE Family 1 / `_build_audit_event_bundle`) to run right AFTER
+Family 1 instead. #3408 measured that nothing between the two positions reads or writes
+this family's own attrs (`_action_embedding_index`/`_embedding_provider`/
+`_embedding_model_class`/`_action_usage_tracker`), so the move is safe.
+
+Before #3408, this family had no eager dependency on `chat_events` — only the
+`_on_hot_list_changed` closure's DEFERRED `self._chat_events` NAME resolution, because the
+EventLog did not exist yet at the builder's old (pre-Family-1) call site. #3408 closed that
+deferral instead of keeping it: the builder now takes `chat_events` as an eager arg and the
+closure binds it by IDENTITY (the `_audit_bundle.chat_events` object, passed through), not
+by re-resolving `self._chat_events` on every call. This closes the #2856 accident's CLASS —
+a name reference silently resolving to a DIFFERENT EventLog than the one live when it was
+written — not just the one instance: an identity reference can't retarget.
+
+The rationale (git-grep evidence: `_chat_events =` is a single assignment repo-wide, in
+`Session.__init__` only) is machine-checked, not just asserted in the docstring —
+`tests/test_chat_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
+path adds a second assignment site, naming the offending file:line and saying "route this
+through the builder arg instead."
 
 `_action_retrieval` (FP-0034 PR-3b-iii) drives whether the universal catalog wrappers
 appear in the router `tools=`. Default constructs an off-flag `ActionRetrievalConfig` so
