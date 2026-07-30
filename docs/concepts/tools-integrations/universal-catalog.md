@@ -67,6 +67,14 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `memory_operation` | Memory ops | `list` / `read` (by `layer` + `slug`) / `remember_shared` / `remember_agent` / `forget` |
 | `reyn_repo` | Reyn source / docs (read-only) | read or list |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
+| `skill_management` | Skill definitions | list / install (local dir or git source) |
+| `pipeline` | Registered pipelines | list, or run one to completion |
+| `pipeline_management` | Pipeline definitions | install (local dir or git source) |
+| `presentation_management` | Named presentation templates | install (inline declarative blueprint) |
+| `plugin_management` | Installed plugins | install (builtin/local/git) / uninstall / list |
+| `knowledge` | The operator's own skill/memory/repo content | `search_knowledge` (embedding-gated) |
+| `embedding` | — (compute op, no stored resource) | `embed` a batch of texts into vectors |
+| `hooks` | This session's own push hooks | `hooks_add` a hook / `emit_hook_event` an LLM-authored event |
 
 > **FP-0066 P1b**: the `rag_operation` category (`list_sources` / multi-source
 > `semantic_search` / drop source) is **retired outright** — those were the

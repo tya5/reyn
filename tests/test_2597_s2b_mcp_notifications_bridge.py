@@ -20,7 +20,38 @@ from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.mcp.message_handler import ReynMCPMessageHandler
-from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services import (
+    McpGatewayInputs,
+    MemoryService,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
+
+# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
+# bundled into two frozen, default-free dataclasses. These module-level
+# constants are the "all fields unset" instances this file's tests reuse.
+_EMPTY_OP_CTX = RouterOpContextInputs(
+    allowed_mcp=None,
+    base_available_skills_fn=None,
+    budget_gateway=None,
+    compact_now=None,
+    contextual_permission=None,
+    hook_bus=None,
+    hook_dispatcher=None,
+    hot_reloader=None,
+    multimodal_config=None,
+    presentation_renderer_factory=None,
+    render_template_bounds=None,
+    sandbox_backend_instance=None,
+    sandbox_policy=None,
+    turn_origin_fn=None,
+    workspace_base_dir=None,
+    workspace_state_dir=None,
+)
+_EMPTY_MCP_GATEWAY = McpGatewayInputs(
+    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
+)
+
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
@@ -42,10 +73,6 @@ async def _null_file_delete(path: str) -> dict:
 
 async def _null_file_regen(*, path, output_path, entry_template, header) -> dict:
     return {"path": path, "output_path": output_path, "entries": 0}
-
-
-async def _null_mcp_list_servers() -> list:
-    return []
 
 
 async def _null_send_to_agent(*, to, request, depth, chain_id) -> None:
@@ -81,11 +108,11 @@ def _make_adapter(*, tmp_path: Path, events: EventLog) -> RouterHostAdapter:
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
     )
-    return RouterHostAdapter(
+    adapter = RouterHostAdapter(
         agent_name="test-agent",
         agent_role="test",
         output_language="en",
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers={"srv": {}},
         project_context="",
@@ -99,9 +126,8 @@ def _make_adapter(*, tmp_path: Path, events: EventLog) -> RouterHostAdapter:
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=_probe,
         mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -109,6 +135,10 @@ def _make_adapter(*, tmp_path: Path, events: EventLog) -> RouterHostAdapter:
         agent_replies_tracker=lambda: None,
         state_dir=tmp_path / "state",
     )
+    # #3447: mcp_list_tools is now a real RouterHostAdapter method — see the
+    # same-shaped note in test_mcp_lazy_tools_cache.py's _make_adapter_with_mcp.
+    adapter.mcp_list_tools = _probe
+    return adapter
 
 
 # ── (a) real server-pushed tools/list_changed -> event + cache invalidation ────────

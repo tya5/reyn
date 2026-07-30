@@ -87,6 +87,11 @@ from reyn.core.offload.canonical import emit_hook_event_to_canonical  # noqa: E4
 EMIT_HOOK_EVENT = ToolDefinition(
     canonical=emit_hook_event_to_canonical,
     name="emit_hook_event",
+    # #3465: wired into the catalog action-membership table
+    # (universal_dispatch._CATEGORY_ACTIONS["hooks"]) — dispatched via
+    # invoke_action, which requires router_dispatched=True (#3429's
+    # test_every_catalog_action_is_directly_dispatchable gate).
+    router_dispatched=True,
     description=_EMIT_HOOK_EVENT_DESCRIPTION,
     parameters=_EMIT_HOOK_EVENT_PARAMETERS,
     gates=ToolGates(router="allow"),

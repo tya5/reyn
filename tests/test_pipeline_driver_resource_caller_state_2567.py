@@ -238,14 +238,19 @@ async def test_driver_dispatch_reaches_real_host_mcp_roster(tmp_path: Path) -> N
 def test_pipeline_executor_driver_cancel_event_is_none_not_attributeerror(
     tmp_path: Path,
 ) -> None:
-    """Tier 2: #2813 co-vet catch — Session._mcp_list_tools (and its 3 siblings)
-    read ``self._loop_driver.cancel_event`` unconditionally to thread a Ctrl-C
-    race into MCPGateway. ``PipelineExecutorDriver`` (the OTHER ExecutionDriver
-    implementor, used by driver-sessions born from run_pipeline_async) has no
-    interactive-turn cancel_event concept — before this fix it had no
-    ``cancel_event`` attribute AT ALL, so a driver-session calling any MCP
-    discovery method would AttributeError instead of returning a normal
-    error-list result. Real PipelineExecutorDriver, no mocks."""
+    """Tier 2: #2813 co-vet catch — the 5 gateway-backed ``mcp_list_*``
+    listing methods (#3447: folded onto ``RouterHostAdapter``, formerly
+    ``Session._mcp_list_tools`` and its 3 siblings) unconditionally source a
+    cancel_event to thread a Ctrl-C race into MCPGateway — via
+    ``RouterHostAdapter._cancel_event``, itself wired from
+    ``ExecutionDriver.cancel_event`` (``_set_cancel_event``, called from
+    ``RouterLoopDriver.__init__``). ``PipelineExecutorDriver`` (the OTHER
+    ExecutionDriver implementor, used by driver-sessions born from
+    run_pipeline_async) has no interactive-turn cancel_event concept —
+    before the #2813 fix it had no ``cancel_event`` attribute AT ALL, so a
+    driver-session calling any MCP discovery method would AttributeError
+    instead of returning a normal error-list result. Real
+    PipelineExecutorDriver, no mocks."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _worker_registry(tmp_path, state_log)
     work_order = PipelineWorkOrder(

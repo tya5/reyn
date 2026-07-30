@@ -24,7 +24,36 @@ import pytest
 
 from reyn.config import ActionRetrievalConfig, ReynConfig, load_config
 from reyn.runtime.router_tools import build_tools
-from reyn.runtime.services.router_host_adapter import RouterHostAdapter
+from reyn.runtime.services.router_host_adapter import (
+    McpGatewayInputs,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
+
+# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
+# bundled into two frozen, default-free dataclasses. These module-level
+# constants are the "all fields unset" instances this file's tests reuse.
+_EMPTY_OP_CTX = RouterOpContextInputs(
+    allowed_mcp=None,
+    base_available_skills_fn=None,
+    budget_gateway=None,
+    compact_now=None,
+    contextual_permission=None,
+    hook_bus=None,
+    hook_dispatcher=None,
+    hot_reloader=None,
+    multimodal_config=None,
+    presentation_renderer_factory=None,
+    render_template_bounds=None,
+    sandbox_backend_instance=None,
+    sandbox_policy=None,
+    turn_origin_fn=None,
+    workspace_base_dir=None,
+    workspace_state_dir=None,
+)
+_EMPTY_MCP_GATEWAY = McpGatewayInputs(
+    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
+)
 
 
 def _noop_callable(*_args: Any, **_kwargs: Any) -> None:
@@ -55,7 +84,7 @@ def _make_adapter(
         agent_name="test_agent",
         agent_role="test",
         output_language=None,
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -69,9 +98,8 @@ def _make_adapter(
         file_write=_noop_callable,
         file_delete=_noop_callable,
         file_regenerate_index=_noop_callable,
-        mcp_list_servers=_noop_callable,
-        mcp_list_tools=_noop_callable,
         mcp_call_tool=_noop_callable,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_noop_callable,
         put_outbox=_noop_callable,
         append_history=_noop_callable,

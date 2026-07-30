@@ -269,6 +269,21 @@ ACTION_CATEGORIES_LINES = [
         "Only available when embedding is enabled (reyn.yaml "
         "embedding.enabled: true)."
     ),
+    (
+        "- **embedding** — `embed` turns a batch of texts into a batch of "
+        "vectors (embedding_model optional, default `standard`). Compose it "
+        "with your own external MCP vector-DB tools via a pipeline; reyn "
+        "does not host a user RAG store itself."
+    ),
+    (
+        "- **hooks** — manage your own push hooks: `hooks_add` registers a "
+        "hook (`on` lifecycle point + `message` template, applied at the "
+        "next turn boundary) so a later turn can push a message to you "
+        "automatically; `emit_hook_event` puts a named event (`event_name` "
+        "+ optional `payload`) onto this session's own Bus as "
+        "`llm:<session_id>:<event_name>` — a Composer can then correlate it "
+        "into a `hooks:` entry."
+    ),
 ]
 
 

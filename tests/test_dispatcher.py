@@ -299,3 +299,141 @@ def test_caller_kind_and_id_propagated_in_events():
 
 async def _unused_invoker(args):
     raise AssertionError("invoker should not be called")
+
+
+# ---------------------------------------------------------------------------
+# #3450: envelope correctness — a handler that returns normally with its own
+# error-shaped dict must not be wrapped as {"status": "ok", "data": {...error...}}.
+# ---------------------------------------------------------------------------
+
+
+def test_handler_bare_error_field_promoted_to_outer_error():
+    """Tier 2: #3450 — a handler's bare ``{"error": "..."}`` return (the
+    ``list_mcp_*`` sentinel idiom, #3441) is promoted to
+    ``{"status": "error", "error": {"kind": "handler_error", "message": ...}}``
+    instead of ``{"status": "ok", "data": {"error": "..."}}``. A ``tool_failed``
+    event fires (not ``tool_returned``) so the audit log is trustworthy too."""
+    async def main():
+        async def invoker(args):
+            return {"error": "cancelled"}
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": ""}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {
+            "status": "error",
+            "error": {"kind": "handler_error", "message": "cancelled"},
+        }
+        types = [e[0] for e in ev.events]
+        assert types == ["tool_called", "tool_failed"]
+        assert ev.events[1][1]["error_kind"] == "handler_error"
+        assert ev.events[1][1]["message"] == "cancelled"
+    asyncio.run(main())
+
+
+def test_handler_error_message_and_kind_fields_promoted():
+    """Tier 2: #3450 — a handler's ``{"error_kind": ..., "error_message": ...}``
+    return (the ``embed`` idiom) keeps the handler's own ``kind``, not the
+    generic ``"handler_error"`` fallback."""
+    async def main():
+        async def invoker(args):
+            return {
+                "error_kind": "missing_required_arg",
+                "error_message": "embed requires a non-empty `texts` array.",
+            }
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": ""}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {
+            "status": "error",
+            "error": {
+                "kind": "missing_required_arg",
+                "message": "embed requires a non-empty `texts` array.",
+            },
+        }
+    asyncio.run(main())
+
+
+def test_handler_own_dispatch_shaped_error_kept_verbatim_and_single_wrapped():
+    """Tier 2: #3450 — a handler that already built the standard dispatch-error
+    shape itself (``run_pipeline``'s ``{"status": "error", "error": {"kind",
+    "message"}}`` — #2649) is promoted to dispatch_tool's OUTER envelope
+    verbatim (single-wrapped), instead of double-wrapped as
+    ``{"status": "ok", "data": {"status": "error", "error": {...}}}``."""
+    async def main():
+        async def invoker(args):
+            return {
+                "status": "error",
+                "error": {"kind": "pipeline_failed", "message": "pipeline X failed"},
+            }
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": ""}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {
+            "status": "error",
+            "error": {"kind": "pipeline_failed", "message": "pipeline X failed"},
+        }
+    asyncio.run(main())
+
+
+def test_handler_self_enveloped_status_data_error_promoted():
+    """Tier 2: #3450 — a handler that self-envelopes as ``{"status": "error",
+    "data": {"error": ...}}`` (the ``mcp_verbs``/``pipeline_verbs``/
+    ``skill_verbs`` idiom) is peeled one level and promoted to the outer
+    ``{"status": "error", "error": {"kind", "message"}}`` shape."""
+    async def main():
+        async def invoker(args):
+            return {"status": "error", "data": {"error": "name is required"}}
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": ""}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {
+            "status": "error",
+            "error": {"kind": "handler_error", "message": "name is required"},
+        }
+    asyncio.run(main())
+
+
+def test_handler_status_error_alone_is_not_promoted():
+    """Tier 2: #3450 negative — a bare ``status: "error"`` with NO
+    error-message field reachable is DATA, not a dispatch failure
+    (``sandboxed_exec``'s ``{"status": "error", "returncode": 2, "stdout",
+    "stderr"}`` — a nonzero exit is a SUCCESSFUL execution). Must stay
+    wrapped as an ordinary "ok" result; promoting it would silently drop
+    ``stdout``/``stderr`` behind a "handler_error" the process never raised."""
+    async def main():
+        async def invoker(args):
+            return {"status": "error", "returncode": 2, "stdout": "", "stderr": "boom"}
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": ""}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {
+            "status": "ok",
+            "data": {"status": "error", "returncode": 2, "stdout": "", "stderr": "boom"},
+        }
+        types = [e[0] for e in ev.events]
+        assert types == ["tool_called", "tool_returned"]
+    asyncio.run(main())
+
+
+def test_handler_iserror_flag_alone_is_not_promoted():
+    """Tier 2: #3450 negative acceptance condition — the MCP ``isError``
+    protocol flag is deliberately OUT of scope (owned by the call/read/
+    get-prompt family's own throw contract + canonical rendering, #3447).
+    A bare ``isError`` with no error-message field must not be promoted."""
+    async def main():
+        async def invoker(args):
+            return {"content": "tool-reported failure text", "isError": True}
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": ""}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {
+            "status": "ok",
+            "data": {"content": "tool-reported failure text", "isError": True},
+        }
+    asyncio.run(main())

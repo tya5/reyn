@@ -66,7 +66,12 @@ dependencies = [
     # LAZILY on the TTY path only, so the plain / --cui / non-TTY / CI paths never
     # touch textual or flowview and stay green even if flowview fails to resolve.
     "textual>=0.80",
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@4ea1e0670172c29b6f0e96ffb02fdab73f8cc997",
+    # v0.6.0 (e64b278). 0.5.0: animated jumps, body_width/effective gutter
+    # widths. 0.6.0: empty state, scroll_to_entry(align=), opt-in keyboard
+    # cursor, ReachedTop/ReachedBottom infinite scroll, insert_many/extend.
+    # All additive; defaults unchanged (cursor=False, empty=None,
+    # animate=False) — #3476 adoption arc.
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@e64b278ebff81c0b8823e88f91a6af78b43b313c",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)

@@ -84,6 +84,12 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "presentation_install_local",
     "reyn_repo_glob", "reyn_repo_grep",
     "skill_install_local", "skill_install_source", "skill_list",
+    # #3465: emit_hook_event / hooks_add gained router_dispatched=True when
+    # they were wired into the catalog action-membership table
+    # (universal_dispatch._CATEGORY_ACTIONS["hooks"]) — dispatched via
+    # invoke_action, same requirement #3429 states above for the 23 catalog
+    # actions.
+    "emit_hook_event", "hooks_add",
 })
 
 _AG = [{"name": "a1", "description": "d"}]

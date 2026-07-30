@@ -69,6 +69,32 @@ async def dispatch_tool(
         - "invalid_args": args fail schema validation
         - "permission_denied": invoker raised PermissionError
         - "exception": invoker raised any other Exception
+        - any handler-supplied ``kind`` (see #3450 below) — else "handler_error"
+
+    #3450: a handler that returns NORMALLY (no raise) but its own return value
+    declares an error (an ``error`` / ``error_message`` / ``error_kind`` field,
+    plain or one level under its own ``{"status": "error", "data": {...}}``
+    self-envelope — see :func:`_handler_declared_error`) is promoted to this
+    function's OWN ``{"status": "error", ...}`` outer shape too, instead of
+    being silently wrapped as ``{"status": "ok", "data": {...error...}}``. Two
+    real consumers relied on the outer ``status`` being trustworthy and both
+    got fooled by the wrap: the LLM read the outer ``ok`` and never opened
+    ``data`` to find the failure (MCP listing failures, #3450's original
+    report), and ``routing_decided``'s audit ``outcome`` — which reads THIS
+    same outer envelope, not the handler's own return — recorded "success"
+    for a failed catalog dispatch (#3429 arc, the second consumer that
+    surfaced the identical defect). This is an envelope-level fix, not a
+    per-handler one: any handler written in one of the two established
+    "declare an error without raising" idioms above is enveloped correctly
+    automatically, with no per-handler change required.
+
+    Deliberately excludes MCP's ``isError`` protocol flag: that signal is
+    owned by the MCP call/read/get-prompt family's own throw-only contract
+    (Session's ``_mcp_call_tool`` / ``_mcp_read_resource`` / ``_mcp_get_prompt``,
+    #3447) and its own canonical rendering (``mcp_to_canonical`` et al. in
+    ``reyn.core.offload.canonical``); folding ``isError`` in here would
+    re-couple this generic envelope check to that family's rendering and
+    risk regressing it.
 
     Events emitted (via ctx.events.emit):
         - tool_called (caller_kind, caller_id, tool, chain_id, args, args_hash)
@@ -154,6 +180,28 @@ async def dispatch_tool(
                 "error": {"kind": "exception",
                           "message": f"{type(e).__name__}: {e}"}}
 
+    # 4b. Envelope correctness (#3450): the invoker returned normally, but its
+    # own return value may itself declare an error (see the docstring above
+    # and _handler_declared_error's). Promote it to THIS function's outer
+    # {"status": "error", ...} shape before the "ok" wrap below, so neither
+    # the LLM nor routing_decided ever sees a failure dressed as success.
+    if isinstance(result, dict):
+        _handler_err = _handler_declared_error(result)
+        if _handler_err is not None:
+            _err_kind, _err_message = _handler_err
+            ctx.events.emit(
+                "tool_failed",
+                caller_kind=ctx.caller_kind,
+                caller_id=ctx.caller_id,
+                tool=name,
+                chain_id=ctx.chain_id,
+                args_hash=args_hash,
+                error_kind=_err_kind,
+                message=_err_message,
+            )
+            return {"status": "error",
+                    "error": {"kind": _err_kind, "message": _err_message}}
+
     # 5. Post-event: record the result.
     ctx.events.emit(
         "tool_returned",
@@ -165,6 +213,63 @@ async def dispatch_tool(
         result=result,
     )
     return {"status": "ok", "data": result}
+
+
+def _handler_declared_error(result: dict) -> "tuple[str, str] | None":
+    """Return ``(kind, message)`` when *result* — a handler's own non-raising
+    return value — declares an error, else ``None`` (#3450).
+
+    Two established "declare a failure without raising" idioms both count,
+    covering every handler surveyed across ``src/reyn/tools/*.py`` at the time
+    of #3450 (``mcp``/``memory``/``file``/``reyn_repo``/``cron``/``embed``/
+    ``pipeline_verbs``/``mcp_verbs``/``skill_verbs``/``plugin_management_verbs``
+    and others):
+
+    - a bare error-message field, no self-envelope (``{"error": "..."}`` — the
+      MCP ``list_mcp_*`` sentinel is the concrete #3450 report; ``error``/
+      ``error_message``/``error_kind`` are the three field names in use). The
+      field IS the message; ``kind`` defaults to ``"handler_error"`` (or the
+      handler's own ``error_kind`` when present) since there is nothing richer
+      to recover from a bare string.
+    - the handler already built its OWN dispatch-shaped envelope
+      (``{"status": "error", "error": {"kind", "message"}}`` — ``run_pipeline``,
+      designed to match this exact vocabulary per #2649 — or
+      ``{"status": "error", "data": {"error": ...}}`` — ``mcp_verbs``/
+      ``pipeline_verbs``/``skill_verbs``/``plugin_management_verbs``): peel
+      ONE level (into ``data``) to reach the message, keeping any ``kind`` the
+      handler itself supplied.
+
+    Deliberately does NOT treat a bare ``status == "error"`` (with no
+    error-message field reachable) as a failure on its own — a producer whose
+    ``status``/``ok`` value is DATA, not a failure signal, is a real, named
+    hazard here (``sandboxed_exec``'s ``{"status": "error", "returncode": 2,
+    "stdout", "stderr"}`` is a SUCCESSFUL execution reporting a nonzero exit
+    code as its own domain data, dispatchable through this same function via
+    the unified tool registry). Every genuine error producer surveyed pairs
+    its ``status``/self-envelope with one of the three message fields; a bare
+    status value never is, by itself, a trigger (mirrors the same tightening
+    ``reyn.core.offload.canonical.is_error_result`` already applies at the
+    chat-rendering layer, minus its ``isError`` leg — see this module's
+    ``dispatch_tool`` docstring for why ``isError`` is out of scope here).
+    """
+    probe: dict = result
+    if result.get("status") == "error":
+        data = result.get("data")
+        if isinstance(data, dict):
+            probe = data
+    error_field = probe.get("error")
+    if isinstance(error_field, dict) and (error_field.get("kind") or error_field.get("message")):
+        kind = str(error_field.get("kind") or "handler_error")
+        message = str(error_field.get("message") or "") or "error"
+        return kind, message
+    for field in ("error_message", "error"):
+        value = probe.get(field)
+        if value:
+            return str(probe.get("error_kind") or "handler_error"), str(value)
+    error_kind = probe.get("error_kind")
+    if error_kind:
+        return str(error_kind), f"error: {error_kind}"
+    return None
 
 
 def _compute_args_hash(args: dict) -> str:

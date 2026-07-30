@@ -364,6 +364,27 @@ same construction order, same ~40 args, including 3 DEFERRED per-turn lambdas �
 over `self` and resolved at call time, not eager-ized). It stays UNMOVED, invoked at its
 original position — every dependency is already set on `self` by this point.
 
+**#3482 param bundling**: `RouterHostAdapter.__init__` groups two real
+consumer-set clusters (measured by AST, not by name prefix) into frozen,
+default-free dataclasses built just before the constructor call: the
+16-field `RouterOpContextInputs` (every field's sole reader is
+`RouterHostAdapter.make_router_op_context` — includes `turn_origin_fn` from
+the paragraph above, plus `allowed_mcp`/`budget_gateway`/`compact_now`/
+`contextual_permission`/`hook_bus`/`hook_dispatcher`/`hot_reloader`/
+`multimodal_config`/`presentation_renderer_factory`/`render_template_bounds`/
+`sandbox_backend_instance`/`sandbox_policy`/`workspace_base_dir`/
+`workspace_state_dir`/`base_available_skills_fn`) and the 3-field
+`McpGatewayInputs` (`mcp_connection_service`/`mcp_agent_id`/`ephemeral_fn` —
+#3447's Path A fold, sole reader `_mcp_list_via_gateway`). Session still
+builds each field with the exact same expression as before (same object,
+same order, same call-time semantics — `turn_origin_fn`/`ephemeral_fn` are
+still live per-turn lambdas, not eager-ized); only the wire shape changed,
+from ~19 flat kwargs to 2 bundle kwargs. The remaining ~58 params stay bare
+scalars, each with a reason recorded in
+`ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS` (`router_host_adapter.py`) — bundle
+coverage is deliberately not 100% (forcing it would be a name-prefix
+grouping pressure, not a consumer-set one).
+
 ### Chat turn_budget engine — None on small context, never raise (#1092 PR-F1)
 
 `_build_router_waist` builds the chat axis's `turn_budget` engine off the
@@ -472,13 +493,20 @@ Construction is unconditional and cheap — an empty dict until the first
 `get()`.
 
 **Ephemeral routing.** Only the non-ephemeral MCP call sites
-(`_mcp_call_tool` / `_mcp_list_tools`) route through this held-open service.
-An ephemeral session (`self._ephemeral`, set post-construction by the
-registry once spawn mode is known) keeps using the per-call `MCPClientPool`
-instead, so a sub-second-lived spawned session never holds a server
-connection open needlessly. The service is closed at session teardown via
-`aclose_mcp_connections` (`registry.remove_session` / `archive_agent`'s
-main-session path).
+(`Session._mcp_call_tool` and, on `RouterHostAdapter`,
+`mcp_list_servers`/`mcp_list_tools`/`mcp_list_resources`/
+`mcp_list_resource_templates`/`mcp_list_prompts` — #3447 folded the five
+listing methods off `Session` onto the adapter itself, threading this same
+`self._mcp_connection_service` instance through as a raw constructor
+argument) route through this held-open service. An ephemeral session
+(`self._ephemeral`, set post-construction by the registry once spawn mode
+is known — read via a LIVE `ephemeral_fn` callable on the adapter side, not
+a snapshot, for the same reason `session_id`/`ephemeral` are read through
+live providers elsewhere in this doc) keeps using the per-call
+`MCPClientPool` instead, so a sub-second-lived spawned session never holds
+a server connection open needlessly. The service is closed at session
+teardown via `aclose_mcp_connections` (`registry.remove_session` /
+`archive_agent`'s main-session path).
 
 **Deferred lambdas.** Three of the six constructor arguments are lambdas
 that defer resolution to CALL time, because none of the attributes they

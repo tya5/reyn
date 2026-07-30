@@ -10,7 +10,12 @@ from pathlib import Path
 
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
-from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services import (
+    McpGatewayInputs,
+    MemoryService,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
 
 
 async def null_file_read(path: str) -> dict:
@@ -27,14 +32,6 @@ async def null_file_delete(path: str) -> dict:
 
 async def null_file_regen(*, path, output_path, entry_template, header) -> dict:
     return {"path": path, "output_path": output_path, "entries": 0}
-
-
-async def null_mcp_list_servers() -> list:
-    return []
-
-
-async def null_mcp_list_tools(server: str) -> list:
-    return []
 
 
 async def null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
@@ -117,11 +114,35 @@ def make_adapter(
     _delegations = delegation_list
     _replies = agent_replies_list
 
+    op_context_inputs = RouterOpContextInputs(
+        allowed_mcp=None,
+        base_available_skills_fn=None,
+        budget_gateway=None,
+        compact_now=None,
+        contextual_permission=None,
+        hook_bus=None,
+        hook_dispatcher=None,
+        hot_reloader=None,
+        multimodal_config=None,
+        presentation_renderer_factory=None,
+        render_template_bounds=None,
+        sandbox_backend_instance=None,
+        sandbox_policy=None,
+        turn_origin_fn=turn_origin_fn,
+        workspace_base_dir=workspace_base_dir,
+        workspace_state_dir=None,
+    )
+    mcp_gateway_inputs = McpGatewayInputs(
+        mcp_connection_service=None,
+        mcp_agent_id=None,
+        ephemeral_fn=None,
+    )
+
     return RouterHostAdapter(
         agent_name=agent_name,
         agent_role="test role",
         output_language="en",
-        allowed_mcp=None,
+        op_context_inputs=op_context_inputs,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -138,9 +159,8 @@ def make_adapter(
         file_write=null_file_write,
         file_delete=null_file_delete,
         file_regenerate_index=null_file_regen,
-        mcp_list_servers=null_mcp_list_servers,
-        mcp_list_tools=null_mcp_list_tools,
         mcp_call_tool=null_mcp_call_tool,
+        mcp_gateway_inputs=mcp_gateway_inputs,
         send_to_agent=null_send_to_agent,
         put_outbox=null_put_outbox,
         append_history=null_append_history,
@@ -149,6 +169,4 @@ def make_adapter(
         turn_budget_engine=turn_budget_engine,
         environment_backend=environment_backend,
         session_id=session_id,
-        turn_origin_fn=turn_origin_fn,
-        workspace_base_dir=workspace_base_dir,
     )

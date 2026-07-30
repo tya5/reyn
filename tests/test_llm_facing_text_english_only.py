@@ -307,6 +307,9 @@ class TestSPToolNamesResolveToLiveTools:
 _NON_TOOL_BACKTICK_TOKENS = frozenset({
     # ``read_memory_body``'s / ``mcp_call_tool``'s argument keys, named inline.
     "kind", "layer", "slug", "source",
+    # #3465: ``emit_hook_event``'s argument key, named inline in the
+    # ``hooks`` category bullet.
+    "event_name",
 })
 _BARE_BACKTICK_TOKEN_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_.]*)`")
 
