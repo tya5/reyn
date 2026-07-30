@@ -26,6 +26,7 @@ per policy, and pointedly so for a permission gate (#3037's invented
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,8 @@ from reyn.config.chat import (
     SafetyConfig,
     ThreatScanConfig,
 )
+from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
 from reyn.security.permissions.capability_profile import (
     UNTRUSTED_NARROWING_CONFIG_KEY,
     UNTRUSTED_NARROWING_ORIGIN,
@@ -52,6 +55,49 @@ from reyn.security.permissions.effective import (
     narrowing_terms,
 )
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.agent_session import make_session
+from tests._support.untrusted_narrowing import narrowing_on
+
+_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
+_REMEMBER_ARGS = {
+    "slug": "y", "name": "n", "description": "d", "type": "user", "body": "x",
+}
+
+
+def _tool_call_result(calls: "list[dict]") -> LLMToolCallResult:
+    return LLMToolCallResult(
+        content=None,
+        tool_calls=[
+            {
+                "id": c["id"],
+                "type": "function",
+                "function": {
+                    "name": c["name"], "arguments": json.dumps(c.get("args", {})),
+                },
+            }
+            for c in calls
+        ],
+        finish_reason="tool_calls",
+        usage=_USAGE,
+    )
+
+
+def _text_result(text: str) -> LLMToolCallResult:
+    return LLMToolCallResult(
+        content=text, tool_calls=[], finish_reason="stop", usage=_USAGE,
+    )
+
+
+def _scripted_llm(rounds: list):
+    """A real async callable standing in for ``call_llm_tools`` (policy: a real
+    callable, so signature drift raises here as it would in production)."""
+    state = {"n": 0}
+
+    async def _call(**kwargs: object) -> LLMToolCallResult:
+        r = rounds[state["n"]]
+        state["n"] += 1
+        return r
+    return _call
 
 # One tool from the built-in `_untrusted` deny-set. Which one does not matter —
 # `test_2111_floor_alias_completeness.py` is what keeps the whole set denied; this
@@ -276,6 +322,55 @@ class _NeverAskedBus:
         raise AssertionError(
             "the contextual layer must deny before the approval prompt is raised"
         )
+
+
+# ── the string the MODEL actually receives ──────────────────────────────────
+#
+# The arms above measure the builder and the gates that call it. This one measures
+# what a real turn puts in front of the LLM — a different question, and the one the
+# issue is about: the operator's agent read the router-loop tool-result, not a
+# PermissionError and not the Tool tab. Verified necessary by strip-falsify: with
+# the router-loop deny site reverted to its old fixed string, every other arm in
+# this file and in test_3380 stayed GREEN.
+
+
+@pytest.mark.asyncio
+async def test_the_tool_result_the_model_reads_carries_the_three_parts(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: the model-facing tool-result names the narrowing, its cause and its
+    lift conditions.
+
+    A real ``Session`` turn: round 1 dispatches an external-content tool (taint
+    lands in history via the real producer seam), round 2 calls a floored tool.
+    The assertion is on the tool-result content that becomes the LLM's next
+    message — not on the gate's return value, and not on the Tool tab.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = make_session(
+        agent_name="test_agent", safety=narrowing_on("iteration"),
+    )
+    monkeypatch.setattr(
+        "reyn.runtime.router_loop.call_llm_tools",
+        _scripted_llm([
+            _tool_call_result([
+                {"name": "list_memory", "args": {"path": ""}, "id": "tc_ext"},
+            ]),
+            _tool_call_result([
+                {"name": _FLOORED_TOOL, "args": _REMEMBER_ARGS, "id": "tc_denied"},
+            ]),
+            _text_result("done"),
+        ]),
+    )
+    await session._handle_user_message("look it up then remember it", chain_id="c1")
+
+    (denied,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
+    content = str(denied.content)
+    assert "tool_excluded" in content, "the deny must still be the tool_excluded kind"
+    assert "_untrusted" in content, "which narrowing fired"
+    assert "external_source" in content, "why it is active"
+    assert "compacted out" in content, "what lifts it on its own"
+    assert UNTRUSTED_NARROWING_CONFIG_KEY in content, "what disables it"
 
 
 # ── the completeness arm ────────────────────────────────────────────────────
