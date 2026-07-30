@@ -39,7 +39,6 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
-from rich.style import Style
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
@@ -180,40 +179,6 @@ def _configured_gutter_visibility(config) -> "tuple[bool, bool]":
         return (bool(gutters.left), bool(gutters.right))
     except AttributeError:
         return (defaults.left, defaults.right)
-
-
-class _UnmarkedFlowView(FlowView):
-    """``FlowView`` whose ADDRESSED-row component styles paint nothing (#3496).
-
-    reyn marks the addressed row in the GUTTER (:class:`ReynGutter`'s
-    ``is_marked``) and deliberately leaves the row's own colours alone. Simply
-    not declaring ``flowview--cursor`` / ``--selected`` in CSS does NOT achieve
-    that: Textual resolves an undeclared component class to a CONCRETE style
-    synthesised from inherited values — measured,
-    ``get_component_rich_style("flowview--cursor")`` returned
-    ``Style(color=#e0e0e0, bgcolor=#121212)`` — and flowview applies it to the
-    addressed row, so every segment carrying no background of its own was
-    painted near-black. ``background: transparent`` does not help either; it
-    resolves to the inherited background, not to "no background" (also
-    measured). Owner review found the symptom as "一番下のエントリは常に真っ黒
-    背景": the cursor auto-arms on the newest entry, so the bottom row wore a
-    black block permanently.
-
-    Overriding the accessor is the narrowest fix available — it is the exact
-    seam flowview reads the style from, it needs no upstream change, and it
-    leaves every OTHER component class (``flowview--sticky-header``) untouched.
-    Subclassing is not forking: Textual matches CSS type selectors against base
-    class names too, so the ``FlowView { … }`` rules still apply (verified —
-    the pane still lays out at ``height: 1fr``).
-    """
-
-    #: The component classes whose styling reyn owns elsewhere (the gutter rail).
-    _SUPPRESSED = frozenset({"flowview--cursor", "flowview--selected"})
-
-    def get_component_rich_style(self, *names: str, partial: bool = False) -> "Style":
-        if any(name in self._SUPPRESSED for name in names):
-            return Style()
-        return super().get_component_rich_style(*names, partial=partial)
 
 
 def empty_state_hint() -> "object":
@@ -562,12 +527,17 @@ class TextualChatApp(App):
         height: 1fr;
         scrollbar-size-vertical: 0;
     }
-    /* #3496: the ``flowview--cursor`` / ``--selected`` component styles are
-       suppressed in CODE, not here — see ``_UnmarkedFlowView``. CSS cannot
-       express "paint nothing": an UNDECLARED component class does not resolve
-       to an empty style, it resolves to a CONCRETE one synthesised from
-       inherited values, and ``background: transparent`` resolves to the
-       inherited background rather than to "no background" (both measured). */
+    /* #3496 / flowview#5: ``flowview--cursor`` / ``--selected`` are left
+       UNDECLARED on purpose — the addressed row is marked in the gutter (see
+       ReynGutter's ``is_marked``), never by restyling the row. flowview 0.6.1
+       honours that: an undeclared component class paints nothing, because the
+       row overlay uses the *partial* component style. Under 0.6.0 it did not
+       (an undeclared class resolved to a CONCRETE inherited style and was
+       painted, turning the addressed row near-black), which needed a subclass
+       suppressing the accessor; the pin bump removed that workaround.
+       ``test_the_addressed_row_keeps_its_own_background`` is what holds this —
+       it fails if the row's own colours are ever disturbed again, whichever
+       side causes it. */
     /* #3490: NO ``flowview--selected`` / ``--cursor`` component style. Both
        are deliberately left unstyled (flowview's own default) and the
        addressed row is marked in the GUTTER instead — see ReynGutter's
@@ -865,7 +835,7 @@ class TextualChatApp(App):
         # Held so the frame pump can start/stop the per-entry BODY animation
         # (``animate_entry``/``stop_entry_animation``) that drives a RUNNING tool
         # row's live spinner + elapsed (Phase ②).
-        self._flow: "FlowView[OutboxMessage]" = _UnmarkedFlowView(
+        self._flow: "FlowView[OutboxMessage]" = FlowView(
             model=self.conversation,
             presenter=self._presenter,
             decorator=ReynGutter(
