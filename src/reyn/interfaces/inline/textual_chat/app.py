@@ -89,6 +89,7 @@ from .presenter import (
 )
 from .restore import project_restored_frames
 from .rewind_picker import RewindPicker
+from .search_bar import SearchBar
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
@@ -510,6 +511,12 @@ class TextualChatApp(App):
         # reservation that IS still live.
         ("ctrl+g", "toggle_left_gutter", "Show/hide left gutter (state)"),
         ("ctrl+t", "toggle_right_gutter", "Show/hide right gutter (elapsed/tokens)"),
+        # #3476 ⑤: in-conversation search (owner-decided entry point). ctrl+f
+        # re-verified free against the same enumeration the ctrl+g/ctrl+t
+        # comment above records: TextArea binds no ctrl+f (its ``chrome.py
+        # _EDIT_KEYS`` listing only flags a completion recompute, it consumes
+        # nothing), and ``chrome.RESERVED_KEYS`` reserves ctrl+r/f2 only.
+        ("ctrl+f", "open_search", "Search conversation"),
     ]
 
     CSS = """
@@ -517,6 +524,22 @@ class TextualChatApp(App):
     FlowView {
         height: 1fr;
         scrollbar-size-vertical: 0;
+    }
+    /* #3476 ⑤: the current search hit (and any click-selected entry —
+       flowview applies the same class to both). flowview ships NO colour of
+       its own for this ("unstyled by default", its component-class contract),
+       so without this rule a selection is invisible. ``reverse`` — the
+       terminal-native current-hit affordance (less/vim) — rather than a
+       background wash: flowview merges a row's ``Presentation.background``
+       into every segment BEFORE applying this component style, and
+       ``apply_style`` lets segment-explicit attributes win, so a background
+       here would vanish on exactly the rows that carry a full-row backdrop
+       (user lines, failure rows). ``reverse`` is an attribute no presenter
+       segment sets, so it survives the merge on every row kind. (Upstream
+       structural gap noted on #3476: selected/cursor component styles should
+       apply with override semantics — ⑥'s keyboard cursor hits the same.) */
+    FlowView > .flowview--selected {
+        text-style: reverse;
     }
     #inputrow {
         height: auto;
@@ -829,6 +852,12 @@ class TextualChatApp(App):
             # away, so the next history page is in place by the time the user
             # actually arrives at it.
             reach_threshold=3,
+            # #3476 ⑤: the search bar marks the current hit through flowview's
+            # entry selection (``select()`` is a documented no-op without
+            # this). Also enables flowview's native click-to-select — a
+            # clicked entry gets the same ``flowview--selected`` highlight,
+            # which reads as a deliberate affordance, not a search leak.
+            selectable=True,
         )
         # #3352: apply the configured START state. flowview has no constructor
         # parameter for gutter visibility (both flags initialise True), so the
@@ -871,6 +900,12 @@ class TextualChatApp(App):
         # (``display=False`` — see ``CompletionPopup.on_mount``).
         self._completion = CompletionPopup(id="completion")
         yield self._completion
+        # #3476 ⑤: the ctrl+f search bar — the last chrome region before the
+        # composer (collapsed by default; the completion popup above it can
+        # never be open at the same time, since completion follows COMPOSER
+        # typing and the search bar owns focus while visible).
+        self._search_bar = SearchBar(id="search-bar")
+        yield self._search_bar
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
@@ -1181,6 +1216,97 @@ class TextualChatApp(App):
         self._older_frames = self._older_frames[:-_HYDRATE_PAGE_FRAMES]
         for msg, entry in zip(page, entries):
             _apply_restored_state(msg, entry)
+
+    # ── #3476 ⑤: in-conversation search ────────────────────────────────────
+
+    def _materialise_all_older(self) -> None:
+        """Materialise the ENTIRE lazily-held older prefix (#3476 ④) in one
+        ``insert_many`` (one reflow). Search must see the full restored
+        history — a hit that exists in history but not in the materialised
+        page would read as "no match", a lie — and the measured full-hydrate
+        cost is negligible (#3476 issue comment), so search-open simply pays
+        it all at once rather than teaching search a second, virtual domain."""
+        if not self._older_frames:
+            return
+        rest = self._older_frames
+        try:
+            entries = self.conversation.insert_many(0, rest)
+        except Exception:
+            logger.exception("textual chat: search-open history materialise failed")
+            return
+        self._older_frames = []
+        for msg, entry in zip(rest, entries):
+            _apply_restored_state(msg, entry)
+
+    def action_open_search(self) -> None:
+        """ctrl+f: open (or refocus) the search bar. Reopening keeps the
+        previous query (the browser convention), so re-sync its match state."""
+        self._materialise_all_older()
+        self._search_bar.open()
+        if self._search_bar.query:
+            self._search_sync(self._search_bar.query, jump=True)
+
+    @staticmethod
+    def _search_predicate(query: str):
+        """Case-insensitive substring over the MODEL text (``entry.item.text``)
+        — what the frame says, independent of presentation. ``entry_text()``
+        (the rendered body) is deliberately NOT used: it returns ``""`` for
+        entries that have never been painted, which would silently exclude
+        every never-scrolled-to row from the search domain."""
+        q = query.lower()
+        return lambda entry: q in (entry.item.text or "").lower()
+
+    def _search_sync(self, query: str, *, jump: bool) -> None:
+        """Recompute the match set for ``query`` and sync count + selection.
+        ``jump=True`` selects the NEWEST match (a bottom-anchored conversation
+        searches backward from now) and centers it; ``jump=False`` only
+        re-anchors the count around the current selection."""
+        flow = self._flow
+        if not query:
+            flow.clear_selection()
+            self._search_bar.set_count(0, 0)
+            return
+        hits = flow.find(self._search_predicate(query))
+        if not hits:
+            flow.clear_selection()
+            self._search_bar.set_count(0, 0)
+            return
+        current = flow.selected
+        if jump or current not in hits:
+            current = hits[-1]
+            flow.select(current)
+            flow.scroll_to_entry(current, align="center", animate=True)
+        self._search_bar.set_count(hits.index(current) + 1, len(hits))
+
+    def on_search_bar_query_changed(self, event: "SearchBar.QueryChanged") -> None:
+        # Incremental: every keystroke recomputes and jumps to the newest
+        # match, browser-style.
+        self._search_sync(event.query, jump=True)
+
+    def on_search_bar_navigate(self, event: "SearchBar.Navigate") -> None:
+        query = self._search_bar.query
+        if not query:
+            return
+        flow = self._flow
+        pred = self._search_predicate(query)
+        # Recompute lazily AT the navigation (not on every live append): the
+        # find_next/find_previous walk runs over the live model, so matches
+        # that arrived since the last keystroke are found without any
+        # append-time bookkeeping.
+        step = flow.find_previous if event.older else flow.find_next
+        target = step(pred)  # from the current selection, wrapping
+        if target is None:
+            self._search_bar.set_count(0, 0)
+            return
+        flow.select(target)
+        flow.scroll_to_entry(target, align="center", animate=True)
+        hits = flow.find(pred)
+        self._search_bar.set_count(hits.index(target) + 1, len(hits))
+
+    def on_search_bar_dismissed(self, event: "SearchBar.Dismissed") -> None:
+        self._search_bar.hide()
+        self._flow.clear_selection()
+        self.query_one(Composer).focus()
 
     def _open_drawer(self, tab_id: "str | None") -> None:
         """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``

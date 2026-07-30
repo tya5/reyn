@@ -498,6 +498,18 @@ SENTQUEUE_KEYS: "list[tuple[str, str]]" = [
     ("esc", "back to composer"),
 ]
 
+#: The search bar's keys while it is open (#3476 ⑤,
+#: ``search_bar.SearchBar`` — imperative ``on_key`` + the Input's own Enter,
+#: sourced from HERE for the Help pane per the same single-source-of-truth
+#: convention as the sibling ledgers above). The bar itself opens from the
+#: app's declarative ``ctrl+f`` binding, which the Help pane already lists
+#: via ``app_bindings``.
+SEARCHBAR_KEYS: "list[tuple[str, str]]" = [
+    ("enter / ↑", "search: older match"),
+    ("shift+enter / ↓", "search: newer match"),
+    ("esc", "close search, back to composer"),
+]
+
 
 def pane_is_list(tab_id: str) -> bool:
     """Whether ``tab_id``'s drawer pane is an interactive :class:`OptionList`
@@ -1033,6 +1045,7 @@ def help_pane_lines(
     composer_keys: "Sequence[tuple[str, str]]" = tuple(COMPOSER_KEYS),
     menubar_keys: "Sequence[tuple[str, str]]" = tuple(MENUBAR_KEYS),
     sentqueue_keys: "Sequence[tuple[str, str]]" = tuple(SENTQUEUE_KEYS),
+    searchbar_keys: "Sequence[tuple[str, str]]" = tuple(SEARCHBAR_KEYS),
 ) -> list[str]:
     """The Help readout — the app's declarative ``BINDINGS`` (passed as
     ``(key, description)`` pairs) plus the imperative composer/menu navigation
@@ -1045,6 +1058,7 @@ def help_pane_lines(
     lines += [f"  {key}  {desc}" for key, desc in composer_keys]
     lines += [f"  {key}  {desc}" for key, desc in menubar_keys]
     lines += [f"  {key}  {desc}" for key, desc in sentqueue_keys]
+    lines += [f"  {key}  {desc}" for key, desc in searchbar_keys]
     lines += [f"  {key}  {desc}" for key, desc in app_bindings]
     return lines
 
