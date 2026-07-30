@@ -46,7 +46,7 @@ def _mk_host_with_kwargs():
         journal=None, agent_registry=None,
         agent_workspace_dir=workspace,
         file_read=_noop, file_write=_noop, file_delete=_noop,
-        file_regenerate_index=_noop, mcp_list_servers=_noop, mcp_list_tools=_noop,
+        file_regenerate_index=_noop,
         mcp_call_tool=_noop, send_to_agent=_noop,
         put_outbox=_noop, append_history=_noop,
         delegation_tracker=lambda: [], agent_replies_tracker=lambda: [],

@@ -42,10 +42,6 @@ async def _null_file_regen(*, path, output_path, entry_template, header) -> dict
     return {"path": path, "output_path": output_path, "entries": 0}
 
 
-async def _null_mcp_list_servers() -> list:
-    return []
-
-
 async def _null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
     return {}
 
@@ -85,7 +81,7 @@ def _make_adapter_with_mcp(
     # FP-0037 S1: pass an empty per-test state_dir so the warm-start path
     # never reads a stale on-disk cache from the project root (.reyn/state/).
     # Each test gets a fresh isolated directory → live probe always runs.
-    return RouterHostAdapter(
+    adapter = RouterHostAdapter(
         agent_name="test-agent",
         agent_role="test",
         output_language="en",
@@ -103,8 +99,6 @@ def _make_adapter_with_mcp(
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=mcp_list_tools_cb,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
@@ -113,6 +107,15 @@ def _make_adapter_with_mcp(
         agent_replies_tracker=lambda: None,
         state_dir=tmp_path / "state",
     )
+    # #3447: mcp_list_tools is now a real RouterHostAdapter method (folded off
+    # Session's former callback-injected _mcp_list_tools). This test suite's
+    # subject is ensure_mcp_tools_cached()'s OWN caching/parallel/timeout
+    # logic, not the gateway underneath mcp_list_tools — so the probe is
+    # wired the same way any other test double overrides one method on a
+    # real, cheaply-constructed instance: an instance-attribute assignment
+    # shadowing the bound method (real callable, not a mock/patch).
+    adapter.mcp_list_tools = mcp_list_tools_cb
+    return adapter
 
 
 # ── 1. No-server case ──────────────────────────────────────────────────────
