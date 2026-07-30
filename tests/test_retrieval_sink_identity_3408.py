@@ -54,10 +54,13 @@ def test_hot_list_sink_reaches_the_sessions_own_chat_events() -> None:
     sink = _EventSink()
     session._chat_events.add_subscriber(sink)
 
-    # A real qualified-name usage record, reordering the compacted ranking
-    # from empty -> one entry (order always changes on the first record),
-    # which fires ActionUsageTracker's on_ranking_changed callback for real.
-    tracker.merge_compacted([("file__read", time.time())])
+    # A synthetic-but-validly-shaped (<category>__<entry>, category in
+    # CATEGORIES) usage record -- deliberately NOT a real production action
+    # name, so this fixture never reads as "here is a currently-valid
+    # action" -- reordering the compacted ranking from empty -> one entry
+    # (order always changes on the first record), which fires
+    # ActionUsageTracker's on_ranking_changed callback for real.
+    tracker.merge_compacted([("file__test_hot_list_entry", time.time())])
 
     hot_list_events = [e for e in sink.events if e.type == "hot_list_updated"]
     assert hot_list_events, (
