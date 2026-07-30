@@ -105,22 +105,30 @@ def test_markdown_sample_emits_only_palette_or_default_foregrounds() -> None:
         ]
 
     basic = _BASIC_FG.findall(ansi)
+    diag = ""
     if basic:  # CI-only so far — have the red run report its own resolution
-        import rich
+        import os
+        from importlib.metadata import version as _pkg_version
+
+        from rich.rule import Rule
 
         probe = Console(
-            force_terminal=True, color_system="truecolor", width=80,
-            highlight=False, theme=chat_markdown_theme(),
+            file=StringIO(), force_terminal=True, color_system="truecolor",
+            width=80, highlight=False, theme=chat_markdown_theme(),
         )
+        hr_style = probe.get_style("markdown.hr", default="none")
+        probe.print(Rule(style=hr_style, characters="-"))
+        rule_ansi = probe.file.getvalue()
+        env = {k: os.environ.get(k) for k in ("TERM", "NO_COLOR", "COLORTERM", "TTY_COMPATIBLE", "FORCE_COLOR")}
         diag = (
-            f"rich={rich.__version__} color_system={probe.color_system} "
-            f"hr_style={probe.get_style('markdown.hr', default='none')!r} "
-            f"theme_hr={chat_markdown_theme().styles.get('markdown.hr')!r}"
+            f" Diag: rich={_pkg_version('rich')} "
+            f"color_system={probe.color_system} hr_style={hr_style!r} "
+            f"fresh_rule_ansi={rule_ansi[:120]!r} env={env}"
         )
     assert not basic, (
         f"basic/bright ANSI foreground code(s) {basic} reached the screen — "
         "a named rich default colour (magenta/cyan/...) leaked past the theme. "
-        f"Context: {_contexts(_BASIC_FG)} Diag: {diag}"
+        f"Context: {_contexts(_BASIC_FG)}{diag}"
     )
     assert not _EIGHT_BIT_FG.findall(ansi), (
         "a 256-colour foreground reached the screen — not a palette colour"
