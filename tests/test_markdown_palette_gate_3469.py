@@ -94,10 +94,21 @@ def test_markdown_sample_emits_only_palette_or_default_foregrounds() -> None:
     ansi = _render_ansi(themed=True)
     assert ansi.strip(), "test setup: the sample rendered to nothing"
 
+    def _contexts(pattern: "re.Pattern[str]") -> "list[str]":
+        """±40 chars of raw output around each match — names WHICH sample
+        element leaked, so a red run localizes the leak instead of only
+        reporting that one exists (a CI-only red is otherwise undebuggable
+        from the assertion message alone)."""
+        return [
+            repr(ansi[max(0, m.start() - 40):m.end() + 40])
+            for m in pattern.finditer(ansi)
+        ]
+
     basic = _BASIC_FG.findall(ansi)
     assert not basic, (
         f"basic/bright ANSI foreground code(s) {basic} reached the screen — "
-        "a named rich default colour (magenta/cyan/...) leaked past the theme"
+        "a named rich default colour (magenta/cyan/...) leaked past the theme. "
+        f"Context: {_contexts(_BASIC_FG)}"
     )
     assert not _EIGHT_BIT_FG.findall(ansi), (
         "a 256-colour foreground reached the screen — not a palette colour"
