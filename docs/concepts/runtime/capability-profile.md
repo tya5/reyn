@@ -107,33 +107,96 @@ The agreement is re-established whenever the narrowing changes mid-turn — the
 untrusted auto-narrowing below can engage between rounds, and the round after it
 engages is advertised against the new narrowing, not the turn's opening one.
 
+### The deny names which narrowing fired
+
+A capability can be narrowed by any of six things — a topology binding, the
+`_delegate` floor, a per-session capability config, the ⊆-parent cap, the
+`/visibility` override, or the `_untrusted` context narrowing. Composition folds
+them into one ∩ term, which is what the gate evaluates and which by itself cannot
+say *which* of the six rejected a given name.
+
+So each term carries a `NarrowingOrigin` — three parts, all required:
+
+| Part | Answers |
+|------|---------|
+| `label` | Which narrowing this is, named so it can be looked up |
+| `cause` | Why it is currently active |
+| `lifts_when` | What would remove it — a condition, a config key, or both |
+
+The composed term keeps its input terms, so the deny site walks them and reports
+the origin of the first one that rejects the name. One shared builder
+(`contextual_deny_message`) produces the text for every deny site — the
+router-loop tool gate, `require_tool`, and `require_mcp` — so the three cannot
+drift into differently-informative answers to the same question.
+
+**This is the message the model receives**, not only what the Tool tab renders. A
+deny that lists the *candidate* narrowings without naming the one that fired is
+not decision-enabling: the reader still has to guess, and an agent handed that
+string can neither explain the loss nor act to undo it. The Tool tab (below) is
+the operator's view of the same facts; it is not a substitute for putting them in
+the deny, because reaching the tab requires already knowing something is wrong.
+
 `invoke_action` is the one deliberate exception on the advertisement side: it
 carries its real target in `action_name`, so what it resolves to is knowable only
 at call time. The wrapper is therefore always advertised and always unwrapped
 before the gate decides — withholding the wrapper under a `tool_allow` list would
 remove the only route to every *allowed* action.
 
-## Context-auto untrusted narrowing
+## Context-auto untrusted narrowing (opt-in, default off)
 
-One profile is auto-applied while untrusted external content is live in the
-active context — no explicit binding needed:
+One profile is applied while untrusted external content is live in the active
+context. It is **off by default** and engages only when the operator asks for it:
 
-**Profile name:** `_untrusted` (built-in secure default; overridable via
-`.reyn/capability_profiles/_untrusted.yaml`)
+**Enable:** `safety.threat_scan.capability_narrowing` in `reyn.yaml` — one ordered
+ladder of three settings, not an enable flag plus a granularity flag:
 
-**Trigger:** any history/context entry whose meta carries `external_source=true`
-(stamped by the content-fence seam at ingest). Two seams stamp it today: an
-external peer's `ask_user` answer (A2A / webhook), and the result of any tool
-declaring `returns_external_content` (e.g. web fetch) — both land in
-`self.history` meta, and the narrowing check (`metas_have_untrusted`) live-scans
-`self.history` on every turn rather than caching the verdict, so the very next
-dispatch after an external tool-result lands is already narrowed, and the
-narrowing self-clears once that entry compacts out of context.
+| Setting | Behaviour |
+|---------|-----------|
+| `off` (default) | The narrowing never engages. An agent keeps the capabilities it started the session with, whatever enters its context. |
+| `turn` | While external content is live, the `_untrusted` profile applies, resolved at each turn boundary — so content arriving mid-turn narrows from the *next* turn. |
+| `iteration` | As `turn`, and re-resolved at every router-loop iteration, so content arriving in round *N* narrows round *N+1* of the same turn. Monotonic within the turn (see below). |
+
+**Why off by default.** The narrowing removes capabilities *mid-session*, and the
+agent that loses them has no way to see why: the reported symptom was a capability
+that worked at the start of a session, stopped working after a web fetch, and an
+agent that could not explain the loss. Predictability is the default posture and
+security hardening is opted into; a mechanism that silently changes what an agent
+can do is exactly the kind that has to be asked for. Legibility at the point of
+denial (below) is what makes the opted-in state workable rather than merely on.
+
+This is the CAPABILITY half of the same defense whose CONTENT half is the
+`safety.threat_scan` fence + scan — which is why the setting lives in that block
+and not next to the loop caps.
+
+**Profile name:** `_untrusted` (built-in deny-set; overridable via
+`.reyn/capability_profiles/_untrusted.yaml`). The two surfaces answer different
+questions and neither is a second spelling of the other: the config setting decides
+*whether* the narrowing runs, the profile file decides *what it denies when it
+runs*. This is the same split `delegation.capability_default` + `_delegate.yaml`
+already uses.
+
+**Trigger (once enabled):** any history/context entry whose meta carries
+`external_source=true` (stamped by the content-fence seam at ingest). Two seams
+stamp it today: an external peer's `ask_user` answer (A2A / webhook), and the
+result of any tool declaring `returns_external_content` (e.g. web fetch) — both
+land in `self.history` meta, and the narrowing check (`metas_have_untrusted`)
+live-scans `self.history` on every turn rather than caching the verdict, so the
+very next dispatch after an external tool-result lands is already narrowed, and
+the narrowing self-clears once that entry compacts out of context. Under
+`iteration` the engagement is additionally *latched* for the rest of the turn, so
+a compaction that evicts the tainted entry mid-turn cannot launder the taint away
+and recover the capability before the turn ends.
 
 **Built-in deny-set:** memory writes/deletes, re-delegation, sandboxed
-execution, MCP install. Untrusted content can be read and reasoned about, but
-cannot drive irreversible actions. Override is a deliberate loosening — a
-malformed `_untrusted.yaml` falls back to the built-in (surfaced on stderr).
+execution, MCP / skill / pipeline install, session and agent spawn, pipeline run.
+Untrusted content can be read and reasoned about, but cannot drive irreversible
+actions. Override is a deliberate loosening — a malformed `_untrusted.yaml` falls
+back to the built-in (surfaced on stderr).
+
+**The single opt-in read.** `Session._ephemeral_contextual_for_turn` is the one
+place the setting is consulted. The live gate, the advertisement filter and the
+Tool tab all derive from that one method, so they are engaged together or
+disengaged together and cannot disagree about whether the mechanism is on.
 
 **Where you see it:** the Tool tab of the CUI's bottom drawer marks such a tool
 `[--] <name>  · denied while untrusted content is in context` — the *condition*,
