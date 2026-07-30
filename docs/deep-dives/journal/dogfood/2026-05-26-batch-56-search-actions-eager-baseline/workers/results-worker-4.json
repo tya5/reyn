@@ -42,7 +42,7 @@
       "scenario_index": 2,
       "verdict": "I",
       "events_pass": false,
-      "reply_summary": "Turn1: invalid category 'mcp.server' error. Turn2: mcp.install_package action not found, suggested mcp__install_package — would try that.",
+      "reply_summary": "Turn1: invalid category 'mcp.server' error. Turn2: mcp.install_package action not found, suggested mcp_install_package — would try that.",
       "rubric_notes": "Acknowledges install request and does not silently fail. BUT events must_emit skill_run_spawned>=1 not satisfied — LLM tried wrong action names (mcp.install_package) and got errors, never successfully spawned a skill. routing_decided fired on turn 2. events_pass=false -> I. Note: PR #918 split mcp__install_server 3-way but LLM still failed to discover correct action name format.",
       "events_emitted": ["user_message_received", "tool_failed", "chat_turn_completed_inline", "compaction_check", "user_message_received", "tool_called", "tool_returned", "routing_decided", "compaction_check"],
       "events_missing": ["skill_run_spawned"]
@@ -121,7 +121,7 @@
       "severity": "medium",
       "scenario": "mcp_install_gate_prompt",
       "summary": "S2 MCP install regression persists: PR #918 3-way split did not help — LLM still failed to invoke correct action name, skill_run_spawned not emitted.",
-      "detail": "LLM first used invalid category 'mcp.server' for list_actions, then tried action_name 'mcp.install_package' (missing __ separator). Error message correctly suggested mcp__install_package/install_local/install_registry but LLM did not retry with correct name in turn 2 — ended with an offer to try rather than attempting. PR #918 action naming fix did not propagate to LLM routing behavior."
+      "detail": "LLM first used invalid category 'mcp.server' for list_actions, then tried action_name 'mcp.install_package' (missing __ separator). Error message correctly suggested mcp_install_package/install_local/install_registry but LLM did not retry with correct name in turn 2 — ended with an offer to try rather than attempting. PR #918 action naming fix did not propagate to LLM routing behavior."
     },
     {
       "id": "NF-W4-3",

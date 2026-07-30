@@ -25,11 +25,11 @@
 
 | Fix | Primary evidence | Worker |
 |---|---|---|
-| **D2-wrapper scope expansion** (= ARS covers all session-visible actions, not just hot-list) | All 7 workers dumped `invoke_action` description; ARS header reads `"ACTION ARG SCHEMAS (canonical keys for all session-visible actions)"`; W5 listed 97 peer agents; W4/W5/W7 quoted concrete entries (`file__write: {content, path}`, `rag.operation__drop_source: {source}`, `agent.peer__researcher: {request}`) | W1/W2/W3/W4/W5/W6/W7 |
+| **D2-wrapper scope expansion** (= ARS covers all session-visible actions, not just hot-list) | All 7 workers dumped `invoke_action` description; ARS header reads `"ACTION ARG SCHEMAS (canonical keys for all session-visible actions)"`; W5 listed 97 peer agents; W4/W5/W7 quoted concrete entries (`write_file: {content, path}`, `rag.operation__drop_source: {source}`, `agent.peer__researcher: {request}`) | W1/W2/W3/W4/W5/W6/W7 |
 | **Cold-start peer canonical** | B37 `args={"message": ...}` → **B38 `args={"request": ...}`** on `agent.peer__researcher` cold invoke. Description body's hardcoded `args={'message': <user_query>}` text confirmed absent; replaced with `(e.g. {request: ...})` | W5 S3 |
-| **S1 `file__write` canonical** | B36/B37 `text` (non-canonical) → **B38 `content` (canonical)**. B34 arg-normalize **did not fire**. permission_denied gate reached correctly. | W4 S1 |
+| **S1 `write_file` canonical** | B36/B37 `text` (non-canonical) → **B38 `content` (canonical)**. B34 arg-normalize **did not fire**. permission_denied gate reached correctly. | W4 S1 |
 | **R-WEB mcp_search routing chain CLOSED** (= 2-batch chain effect) | B37 `e5ecadb` opened python.unsafe gate; B38 `5e05b9b` added mcp_search to HOT_LIST_SEED. B38 evidence: all 3 R-WEB scenarios now emit `routing_decided{action_name: skill__mcp_search, source: invoke_action, outcome: success}` + `skill_run_spawned`. B37 had zero tool calls (routing miss). | W6 (narr-1 / s-fp11-3 / s-fp12-completion-1) |
-| **Ghost rejection (qualified-name corruption)** | B37-OBS-1 `default_api.web__search` 0/17 LLM requests; `[reyn] action_usage: skipping invalid alias 'web_search'` on every turn | W1 |
+| **Ghost rejection (qualified-name corruption)** | B37-OBS-1 `default_api.web_search` 0/17 LLM requests; `[reyn] action_usage: skipping invalid alias 'web_search'` on every turn | W1 |
 | **C1 stability + zero latency degradation** at +44% description length | W7 single-agent / 35 turns accumulated, 35/35 clean, 0 empty-stop / 0 G12 Pattern E; p50 latency 4.82s / p90 9.94s identical to B37 W7 | W7 |
 
 ### Why these are "verified" despite the V drop
@@ -65,7 +65,7 @@ This was published the same day as B38 fix-wave landing. B38 then **inadvertentl
 |---|---|---|---|---|
 | W4 | S6 drop_source | `source_id` (arg-key drift) | `source_name` (arg-key drift to new variant) | **wrong action entirely: `skill__index_events`** (action-name drift) |
 | W2 | S1 drop_source | — | `source_id` (arg-key) | wrong tool: `operation__create_index` direct invoke |
-| W3 | S2 file_glob | `dir` (arg-key) | `dir` (arg-key) | LLM picks `file__list` regardless of ARS (= action selection unchanged) |
+| W3 | S2 file_glob | `dir` (arg-key) | `dir` (arg-key) | LLM picks `list_directory` regardless of ARS (= action selection unchanged) |
 
 The B37 mismatch we structurally fixed (= arg-key layer, via ARS embedding canonical keys) is **not reproducible in B38** because the LLM's wrong-path generation **migrated to other surfaces** (= action name selection, alternate tool routing). This is direct evidence of G31's surface-fungibility hypothesis applied to our fix layer.
 
@@ -81,7 +81,7 @@ The B37 mismatch we structurally fixed (= arg-key layer, via ARS embedding canon
 
 Three observations in B38 supporting this:
 
-1. **W3 S2** (`file_glob_grep`): ARS now lists `file__glob: {pattern, path}` + `file__grep: {pattern, path, glob, ...}` even without hot-list usage. LLM still selects `file__list`. ARS = visibility ≠ preference.
+1. **W3 S2** (`file_glob_grep`): ARS now lists `glob_files: {pattern, path}` + `grep_files: {pattern, path, glob, ...}` even without hot-list usage. LLM still selects `list_directory`. ARS = visibility ≠ preference.
 2. **W4 S6** (`drop_source`): ARS lists `rag.operation__drop_source: {source}`. LLM dispatches `skill__index_events{mode: drop}` (= completely different action). ARS canonical key not exercised because action not picked.
 3. **W2 S1** (`drop_source` variant): LLM invokes `operation__create_index` directly (= unknown tool name) bypassing the wrapper entirely.
 

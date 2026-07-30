@@ -36,7 +36,7 @@ pipelines:
       description: "Greet a name and shout it"
 ```
 
-あるいは、同等の効果として、エージェントに `pipeline_management__install_local(path="pipelines/greet.yaml")` を呼んでもらうこともできます — これはファイルを parse し、名前を検証し、`.reyn/config/pipelines.yaml` に同種のエントリを書き込みます。どちらの方法でも、変更は次のターン境界で hot-reload によって反映されます — 新しく登録した pipeline を反映させるのに**セッションの再起動は不要**です。
+あるいは、同等の効果として、エージェントに `pipeline_install_local(path="pipelines/greet.yaml")` を呼んでもらうこともできます — これはファイルを parse し、名前を検証し、`.reyn/config/pipelines.yaml` に同種のエントリを書き込みます。どちらの方法でも、変更は次のターン境界で hot-reload によって反映されます — 新しく登録した pipeline を反映させるのに**セッションの再起動は不要**です。
 
 ファイルの parse に失敗した場合、または 2 つのエントリが同じ `pipeline:` 名を宣言した場合、読み込みは問題のエントリを名指しして大きく失敗します — タイプミスが、出荷するつもりだった pipeline を静かに消すことはありません。詳細な表は [Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-fail-loud) を参照してください。
 
@@ -48,13 +48,9 @@ pipelines:
 run_pipeline(name="greet", input={name: "Reyn"})
 ```
 
-または、登録済みのすべての pipeline についてアクションカタログが提示する qualified なカタログ verb で:
+これが唯一の形式です。(以前は pipeline ごとの `pipeline__<name>` という綴りも受け付けていましたが、同じ呼び出しに対する2つ目の名前だったため削除されました。名前が分からないときは `pipeline_list` が登録済み pipeline を列挙します。)
 
-```
-pipeline__greet({name: "Reyn"})
-```
-
-どちらも pipeline が完了するまで block し、最終出力(ここでは叫ばれた挨拶)を返します。run の間、ライブなステップ進捗が TUI で見え、Ctrl-C は途中で kill するのではなく次のステップ境界でクリーンに停止させます。
+pipeline が完了するまで block し、最終出力(ここでは叫ばれた挨拶)を返します。run の間、ライブなステップ進捗が TUI で見え、Ctrl-C は途中で kill するのではなく次のステップ境界でクリーンに停止させます。
 
 ### 同期 vs 非同期
 
@@ -124,7 +120,7 @@ run_pipeline(name="review", input={reviewers: ["reviewer_a", "reviewer_b"], doc:
 
 各レビュアーは隔離された並行 `agent` ステップとして実行され(最大 4 並行、失敗時は 1 回リトライ)、全員の結果が揃うと、R1 の `all()` コンビネータで `all_passed` という 1 つの boolean に畳み込まれます — これは bare な `reviews` ではなく、`for_each` ステップの `output` が書き込んだ永続的な named store である `ctx.reviews` から読みます — そして `match` がそれに応じて `report_pass` または `report_fail` の sub-pipeline にルーティングします(どちらも別途登録が必要です。単一ファイルで完結させたい場合は、素の `transform`/`tool` ステップに置き換えてください)。
 
-この 2 つ目の pipeline も、手順 2 と同様に独自の `pipelines.entries` 宣言(または `pipeline_management__install_local` 呼び出し)が必要です — エージェントがそれを起動できるようになる前に。
+この 2 つ目の pipeline も、手順 2 と同様に独自の `pipelines.entries` 宣言(または `pipeline_install_local` 呼び出し)が必要です — エージェントがそれを起動できるようになる前に。
 
 ## 5. CLI から直接 pipeline を管理・実行する
 

@@ -48,10 +48,6 @@ async def _null_file_regen(*, path, output_path, entry_template, header) -> dict
     return {"path": path, "output_path": output_path, "entries": 0}
 
 
-async def _null_mcp_list_servers() -> list:
-    return []
-
-
 async def _null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
     return {}
 
@@ -139,8 +135,6 @@ def _make_adapter(
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=probe,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
@@ -561,8 +555,6 @@ async def test_session_handle_user_message_calls_yaml_watch_before_reload(
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=probe,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,

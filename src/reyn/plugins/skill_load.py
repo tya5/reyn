@@ -42,7 +42,7 @@ would freeze every future enabling project to whichever one installed it
 first). This module resolves ALL THREE tokens on every load regardless:
 for a body P2 already baked ``${REYN_PLUGIN_ROOT}`` into, a second pass
 through the same expander is a no-op (no ``${...}`` left to match); for a
-body from the pre-plugin-model install path (``skill_management__install_*``,
+body from the pre-plugin-model install path (``skill_install_*``,
 no P2 bake at all) or for ``${REYN_SKILL_DIR}``/``${REYN_PROJECT_DIR}``
 (never baked by either path), this is the ONLY place they resolve.
 ``${REYN_PROJECT_DIR}`` in particular MUST be resolved fresh on every
@@ -51,7 +51,7 @@ session at a different project, or a different project enables the same
 globally-installed plugin.
 
 **Plugin-root resolution.** A skill installed via
-``skill_management__install_local``/``_install_source`` (the pre-plugin-model
+``skill_install_local``/``_install_source`` (the pre-plugin-model
 skill install path, unrelated to a ``.reyn-plugin/plugin.json`` manifest) has
 no separate plugin directory — its own directory IS the root for
 ``${REYN_PLUGIN_ROOT}`` purposes there, so :func:`resolve_plugin_root` falls

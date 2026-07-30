@@ -88,7 +88,7 @@ S2: LLM called `search_actions` (tool_failed: unknown_tool) before falling back 
 | mcp_call_remote_tool (S2) | INCONCLUSIVE | PASS | 0 | search_actions hallucination + list_actions(github) empty → inline. PASS via chat_turn_completed_inline. |
 | agent_delegation_simple (S3) | VERIFIED | PASS | 2 | request arg canonical (HELD). Peer existed, responded. |
 | multi_agent_topology_route (S4) | INCONCLUSIVE | PASS | 6 | P1: peer-researcher dispatched (request canonical). P2: writer invoke_action({action_name:"writer"}) bad call (no args). No 3-line summary. |
-| a2a_task_lifecycle_status_poll (S5) | REFUTED | PASS | 1 | routing_decided=1 via web__search error. Didn't describe message/send or reyn web startup. |
+| a2a_task_lifecycle_status_poll (S5) | REFUTED | PASS | 1 | routing_decided=1 via web_search error. Didn't describe message/send or reyn web startup. |
 | mcp_install_permission_gate (S6) | REFUTED | FAIL | 0 | Inline clarification, no tool call. mcp_install misroute NOT observed. |
 | cron_schedule_status (S7) | REFUTED | FAIL | 0 | Inline "機能は提供されていません". No routing. Same as B38. |
 

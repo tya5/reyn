@@ -110,7 +110,7 @@ def register(sub) -> None:
         metavar="NAMES",
         help=(
             "LLM の visible catalog から隠すツール名 (カンマ区切り、例 "
-            "web__search,web__fetch)。faithful eval の web-leak 抑止に "
+            "web_search,web_fetch)。faithful eval の web-leak 抑止に "
             "(`reyn chat --exclude-tools` と同等)。"
         ),
     )

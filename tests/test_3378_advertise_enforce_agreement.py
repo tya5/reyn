@@ -5,7 +5,7 @@ while the live gate (``RouterLoop._excluded_result``) asked the CONTEXTUAL
 narrowing. The bridge ran one way only — with no explicit contextual, one was
 derived FROM ``exclude_tools`` — so any contextual arriving from a real narrowing
 source left ``exclude_tools`` untouched: the tool stayed advertised and was
-rejected only when the model called it (the owner's ``exec__run`` report; a wasted
+rejected only when the model called it (the owner's ``exec`` report; a wasted
 turn and a presentation/enforcement disagreement).
 
 ★ **Driven from a narrowing source that is NOT ``exclude_tools``.** A contextual
@@ -14,12 +14,12 @@ defect cannot reproduce under it — which is very likely why this survived. The
 tests use the **ephemeral ``_untrusted`` profile** (``load_untrusted_profile`` →
 ``resolve_profile``), the real producer ``Session._effective_contextual_for_turn``
 composes when untrusted external content is live in the active context, and the
-exact profile that denies the owner's ``exec__run``. ``exclude_tools`` is asserted
+exact profile that denies the owner's ``exec``. ``exclude_tools`` is asserted
 EMPTY on every arm below, so nothing here can be explained by the bridge.
 
 **Both halves are required (#187).** Hiding a row is not denying it: the model can
 still name an unadvertised tool (native call, the #229 salvage, or a direct
-``invoke_action(action_name=…)``) — that is exactly how the #187 ``web__search``
+``invoke_action(action_name=…)``) — that is exactly how the #187 ``web_search``
 leak executed. Each gate asserts the pair.
 
 Narrowing sources enumerated from the producers, not hand-listed —
@@ -151,7 +151,7 @@ def test_ephemeral_contextual_denied_tool_is_rejected_on_every_call_shape() -> N
         max_iterations=3,
         contextual_permission=contextual,
     )
-    target = "multi_agent__delegate"
+    target = "delegate_to_agent"
     assert target in contextual.tool_deny
 
     native = _call(loop, target, {"to": "peer", "request": "leak"})
@@ -180,9 +180,9 @@ def test_wrapper_itself_stays_advertised_under_an_allow_list_contextual() -> Non
 
     catalog = [
         {"type": "function", "function": {"name": n, "description": ""}}
-        for n in ("invoke_action", "list_actions", "file__read", "file__write")
+        for n in ("invoke_action", "list_actions", "read_file", "write_file")
     ]
-    allow_only_read = ContextualPermission(tool_allow=frozenset({"file__read"}))
+    allow_only_read = ContextualPermission(tool_allow=frozenset({"read_file"}))
     kept = {
         t["function"]["name"]
         for t in apply_contextual_visibility(catalog, allow_only_read)
@@ -190,8 +190,8 @@ def test_wrapper_itself_stays_advertised_under_an_allow_list_contextual() -> Non
     assert "invoke_action" in kept, (
         "the wrapper was pre-filtered, so no allowed action is reachable at all"
     )
-    assert "file__read" in kept
-    assert "file__write" not in kept and "list_actions" not in kept
+    assert "read_file" in kept
+    assert "write_file" not in kept and "list_actions" not in kept
 
 
 def test_no_contextual_leaves_even_the_floored_capabilities_advertised() -> None:
@@ -205,7 +205,7 @@ def test_no_contextual_leaves_even_the_floored_capabilities_advertised() -> None
         "the default posture is already missing every floored capability — the "
         "narrowing gates elsewhere in this file would pass without narrowing anything"
     )
-    assert "file__read" in advertised
+    assert "read_file" in advertised
 
 
 def test_exclude_tools_survives_alongside_an_explicit_contextual() -> None:
@@ -215,7 +215,7 @@ def test_exclude_tools_survives_alongside_an_explicit_contextual() -> None:
     Before #3378 an explicit contextual took the ``if contextual is not None`` branch
     and ``exclude_tools`` never reached the live gate — so a session that had both
     (every ``Session``, once ``CapabilityVisibility`` has resolved a contextual) hid
-    ``--exclude-tools web__search`` from the catalog but did NOT block a call to it:
+    ``--exclude-tools web_search`` from the catalog but did NOT block a call to it:
     the #187 leak in reverse.
     """
     host = FakeRouterHost()
@@ -223,10 +223,10 @@ def test_exclude_tools_survives_alongside_an_explicit_contextual() -> None:
         host=host,
         chain_id="c-3378",
         max_iterations=3,
-        exclude_tools={"web__search"},
+        exclude_tools={"web_search"},
         contextual_permission=_untrusted_contextual(),
     )
-    result = _call(loop, "web__search", {"query": "gold patch"})
+    result = _call(loop, "web_search", {"query": "gold patch"})
     assert _is_excluded(result), result
     # and the contextual's own denials are not lost by the composition either
     assert _is_excluded(_call(loop, "session_spawn", {"request": "x"}))
@@ -241,7 +241,7 @@ def test_falsify_target_is_absent_from_exclude_tools(shape: str) -> None:
     the rejection in the sibling test comes solely from the ephemeral contextual.
     """
     loop = RouterLoop(host=FakeRouterHost(), chain_id="c-3378", max_iterations=3)
-    target = "multi_agent__delegate"
+    target = "delegate_to_agent"
     if shape == "native":
         result = _call(loop, target, {"to": "peer", "request": "hi"})
     else:
@@ -271,7 +271,7 @@ def test_intra_turn_narrowing_re_filters_the_advertised_catalog() -> None:
     )
 
     contextual = _untrusted_contextual()
-    target = "multi_agent__delegate"
+    target = "delegate_to_agent"
     assert target in contextual.tool_deny
 
     class _TwoRoundScheme:

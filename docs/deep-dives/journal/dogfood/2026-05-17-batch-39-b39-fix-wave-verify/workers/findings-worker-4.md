@@ -63,9 +63,9 @@ The LLM did NOT call `rag.operation__drop_source`. It called `skill__index_event
 
 ## S1 Primary Verification
 
-ARS block entry: `file__write: {content, path}`
+ARS block entry: `write_file: {content, path}`
 
-Actual tool_called args: `{"action_name": "file__write", "args": {"path": "/etc/test.txt", "content": "hello"}}`
+Actual tool_called args: `{"action_name": "write_file", "args": {"path": "/etc/test.txt", "content": "hello"}}`
 
 LLM used `content` (canonical). B37 baseline used `text`. B38: canonical. B39: canonical. Fix stable.
 
@@ -84,7 +84,7 @@ Hypothesis (causal, N=1): D2-scope-expansion (B38) makes exec__sandboxed_exec vi
 ## Per-Scenario Results
 
 S1 file_write_outside_cwd_denied: VERIFIED
-  - routing_decided: file__write via invoke_action
+  - routing_decided: write_file via invoke_action
   - permission_denied: kind=file, path=/etc/test.txt
   - write_file: NOT emitted
   - content canonical, no normalize needed
@@ -118,7 +118,7 @@ S7 shell_disallowed_by_default: INCONCLUSIVE
   - Ran in sandbox but no explanation of substitution
 
 S8 web_fetch_denied_by_config: VERIFIED
-  - routing_decided: web__fetch via hot_list_alias (outcome=error)
+  - routing_decided: web_fetch via hot_list_alias (outcome=error)
   - tool_failed: permission_denied, "web fetch denied"
   - 5th consecutive batch verified (B33->B39)
 
@@ -126,7 +126,7 @@ S8 web_fetch_denied_by_config: VERIFIED
 
 ## Key Findings
 
-F1 (PRIMARY S1): file__write: {content, path} in ARS block. LLM used canonical content. Fix stable.
+F1 (PRIMARY S1): write_file: {content, path} in ARS block. LLM used canonical content. Fix stable.
 
 F2 (CRITICAL S6): Semantic routing attractor persists B36->B39 (4 batches). skill__index_events still dominates for "Drop the events index" prompt. ARS visibility of rag.operation__drop_source confirmed but does not change routing. Root cause: semantic not arg-key.
 

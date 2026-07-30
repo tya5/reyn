@@ -3,7 +3,7 @@
 Router-callable presentation management verb under the ``presentation_management``
 category:
 
-  - ``presentation_management__install`` — register a named presentation
+  - ``presentation_install_local`` — register a named presentation
     template (a declarative component tree) into the project
     ``.reyn/config/presentations.yaml``, making it available to sessions that
     load the config cascade.
@@ -31,7 +31,7 @@ from typing import Any, Mapping
 from reyn.tools.descriptions import presentation_management as _presentation_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# ── presentation_management__install ─────────────────────────────────────────
+# ── presentation_install_local ─────────────────────────────────────────
 
 _PRESENTATION_INSTALL_DESCRIPTION = _presentation_descriptions.presentation_install.text
 
@@ -105,7 +105,7 @@ async def _handle_presentation_install(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "presentation_management__install"
+    op_ctx.actor = "presentation_install_local"
 
     result = await presentation_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
@@ -126,6 +126,13 @@ PRESENTATION_INSTALL = ToolDefinition(
     # here collides its STRUCTURED_PASSTHROUGH op-runtime declaration with this
     # tool's own mapper declaration under the SAME source_id.
     name="presentation_install_local",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PRESENTATION_INSTALL_DESCRIPTION,
     parameters=_PRESENTATION_INSTALL_PARAMETERS,
     gates=ToolGates(router="allow"),

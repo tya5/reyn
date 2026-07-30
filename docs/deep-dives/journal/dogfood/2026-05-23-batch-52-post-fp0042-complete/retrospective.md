@@ -135,7 +135,7 @@ runner config. Both fixes landed and the two scenarios flipped to V.
 
 | Scenario | Verdict | Evidence |
 |---|---|---|
-| W3-S4 web_fetch_url | **R → V** | `web__fetch` succeeded status=200, reply names PEP 695 + PEP 701 |
+| W3-S4 web_fetch_url | **R → V** | `web_fetch` succeeded status=200, reply names PEP 695 + PEP 701 |
 | W3-S5 sandboxed_exec_simple | **R → I** | tool ran but `sandboxed_exec_started.backend == "seatbelt"` despite `sandbox.backend: noop` in reyn.local.yaml — config didn't propagate to runtime |
 
 The Round-1 partial failure on S5 was the smoking gun: `load_config().sandbox.backend == "noop"` returned correctly, but the runtime handler picked Seatbelt anyway. Tracing the chain:

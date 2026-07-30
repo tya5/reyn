@@ -40,7 +40,7 @@ The structural cause was verified with a 24-chain experiment matrix
   `GET /a2a/tasks/<id>` + `reyn web` boot order.
 - **V18 weak result**: 0/3 (catalog overlap with `web__*` and `mcp.*`)
 - **V18 strong result**: 1/3 (compound external-HTTP semantics still
-  pulls 2/3 toward `web__search` / `list_actions(filter='web')`)
+  pulls 2/3 toward `web_search` / `list_actions(filter='web')`)
 - **Hypothesised resolutions** (= for a future PR, not now):
   - RAG indexing of `docs/concepts/a2a.ja.md` + a `recall` call surfaces
     the A2A section by semantic similarity even when the keyword doesn't
@@ -68,7 +68,7 @@ Findings:
 - SP-side disambiguators (subject-anchor, surface-keyword enumeration,
   imperative-verb clauses) yielded marginal gain on weak (4/18 → 0-4/18
   range) and risked false-positive routing on non-Reyn topics
-  (= V13 broke `file__read` on a plain "read this file" task).
+  (= V13 broke `read_file` on a plain "read this file" task).
 - Industry literature ("Tool Selection Problem at Scale",
   vLLM Semantic Router, Tool-to-Agent Retrieval) converges on the same
   conclusion: SP-level disambiguation has a ceiling; catalog overlap
@@ -96,5 +96,5 @@ future-challenge list.
   with minimal tool executor; built specifically for this investigation).
 - Tool description fix shipped alongside V18:
   `src/reyn/tools/read_tool_result.py` (PATH SCOPE clamp — prevents
-  weak-LLM confusion between `read_tool_result` and `file__read` on
+  weak-LLM confusion between `read_tool_result` and `read_file` on
   source-file paths).

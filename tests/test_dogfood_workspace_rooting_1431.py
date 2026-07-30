@@ -2,7 +2,7 @@
 
 dogfood builds an EnvironmentBackend (DockerEnvironmentBackend for a container
 agent) and threads it to the chat session as ``environment_backend`` — but it
-passed ``workspace_base_dir=None``, so chat file ops (file__read/grep/glob/edit)
+passed ``workspace_base_dir=None``, so chat file ops (read_file/grep/glob/edit)
 rooted on the HOST cwd while the exec/diff seam pointed at the container repo.
 That FS disagreement is the #187 wrong-FS class (#1410 base_dir sibling); the
 #1402 single-source migration made the dropped workspace dirs explicit and

@@ -2,7 +2,7 @@
 to the conversation, not dropped.
 
 When an LLM response carries BOTH ``tool_calls`` and ``content`` (e.g. "Let me read
-that file first." + a file__read call), the explanatory text must appear in the
+that file first." + a read_file call), the explanatory text must appear in the
 conversation. Pre-#1642 the only site that emitted ``result.content`` to the outbox was
 the no-tool_calls terminal text-reply path, so on a tool-turn the text was persisted to
 history but never displayed. The fix emits an ``agent`` outbox bubble at the start of the

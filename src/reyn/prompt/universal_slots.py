@@ -64,14 +64,14 @@ ABOUT_REYN_ITSELF_SUFFIX = (
 #      actually invoke — invoke_action(...) under wrappers, the flat qualified
 #      call otherwise (#1977).
 REYN_SELF_CALL_WRAPPERS_ON = (
-    " `invoke_action(action_name=\"reyn_repo__read\","
+    " `invoke_action(action_name=\"reyn_repo_read\","
     " args={\"path\": \"README.md\"})`"
 )
-REYN_SELF_CALL_WRAPPERS_OFF = " `reyn_repo__read(path=\"README.md\")`"
+REYN_SELF_CALL_WRAPPERS_OFF = " `reyn_repo_read(path=\"README.md\")`"
 
 ABOUT_EXTERNAL_LINE = (
-    "- About external / current information: `web__search` or"
-    " `web__fetch`."
+    "- About external / current information: `web_search` or"
+    " `web_fetch`."
 )
 
 ALREADY_TRAINED_LINE = "- Already in your training: answer directly."
@@ -80,16 +80,16 @@ TASK_PERFORM_HEADER = "**A task to perform** — pick by target shape:"
 
 SINGLE_TARGET_PREFIX = (
     "- Single-target action (= one file, one URL, one"
-    " item): if the action is obvious (`file__read` for \"read this"
-    " file\", `reyn_repo__read` for \"open Reyn doc X\", `web__fetch`"
+    " item): if the action is obvious (`read_file` for \"read this"
+    " file\", `reyn_repo_read` for \"open Reyn doc X\", `web_fetch`"
     " for a specific URL), invoke directly. "
 )
 
 MULTI_TARGET_LINE = (
     "- Multi-target / iteration (= \"do X for each Y\", \"process N"
     " files\", \"run X on every Y\") or multi-step work: call the"
-    " per-target action once per item in sequence (or run a registered"
-    " `pipeline__` for a structured multi-step composition), or delegate"
+    " per-target action once per item in sequence (or `run_pipeline` a"
+    " registered pipeline for a structured multi-step composition), or delegate"
     " the whole request to another agent when the work belongs to a"
     " different capability profile."
 )
@@ -103,20 +103,20 @@ OTHERWISE_WRAPPERS_ON_DISCOVERY_PREFIX = (
     "or guess). Then "
 )
 OTHERWISE_WRAPPERS_ON_DISCOVERY_SUFFIX = (
-    ". To edit a file you MUST use `file__edit`, found via `list_actions`."
+    ". To edit a file you MUST use `edit_file`, found via `list_actions`."
 )
 OTHERWISE_WRAPPERS_ON_NO_DISCOVERY_PREFIX = "Otherwise "
 OTHERWISE_WRAPPERS_ON_NO_DISCOVERY_SUFFIX = "."
 
 OTHERWISE_WRAPPERS_OFF_DISCOVERY = (
     "Otherwise — i.e. for any action that is NOT obvious or a named "
-    "action above — call the matching action DIRECTLY by its qualified "
-    "`<category>__<entry>` name from your available tools (do NOT "
-    "refuse or guess). To edit a file you MUST use `file__edit`."
+    "action above — call the matching action DIRECTLY by name from your "
+    "available tools (do NOT refuse or guess). To edit a file you MUST "
+    "use `edit_file`."
 )
 OTHERWISE_WRAPPERS_OFF_NO_DISCOVERY = (
-    "Otherwise call the matching action directly by its qualified "
-    "`<category>__<entry>` name from your available tools."
+    "Otherwise call the matching action directly by name from your "
+    "available tools."
 )
 
 
@@ -197,8 +197,9 @@ def build_capabilities_routing_guide(
 ACTION_CATEGORIES_HEADER = "## Action categories"
 
 ACTION_CATEGORIES_INTRO = (
-    "Actions are addressed by qualified name (`<category>__<entry>`)."
-    " Names in backticks of the form `<category>__<entry>` are invocable action names."
+    "Each action has ONE name, the same name on every route; a category is a"
+    " way to browse them, never part of the name."
+    " Names in backticks are invocable action names."
     " Discover via `list_actions(category=[...])`; describe via"
     " `describe_action(action_name=...)`; execute via"
     " `invoke_action(action_name=..., args={...})`."
@@ -210,8 +211,8 @@ ACTION_CATEGORIES_LINES = [
     "- **file** — workspace file ops (read/write/delete/list).",
     "- **web** — web search and content fetch.",
     (
-        "- **memory_operation** — persistent memory: `memory_operation__list` "
-        "names the entries, `memory_operation__read` returns one body "
+        "- **memory_operation** — persistent memory: `list_memory` "
+        "names the entries, `read_memory_body` returns one body "
         "(`layer` shared|agent + `slug`); remember_shared / remember_agent / "
         "forget write them."
     ),
@@ -219,54 +220,69 @@ ACTION_CATEGORIES_LINES = [
     "- **exec** — sandboxed argv execution (only when sandbox backend is enabled).",
     (
         "- **skill_management** — discover and manage skill definitions: "
-        "`skill_management__list` returns every skill available to you "
+        "`skill_list` returns every skill available to you "
         "(name, description, file path) — including on-demand skills that are "
         "not listed in the Skills menu above; read a listed skill's path with "
-        "the file read tool to use it. `skill_management__install_local` "
+        "the file read tool to use it. `skill_install_local` "
         "registers a local skill directory (one containing a SKILL.md file) "
-        "into .reyn/config/skills.yaml; `skill_management__install_source` "
+        "into .reyn/config/skills.yaml; `skill_install_source` "
         "fetches and installs a skill from a git/GitHub URL (shallow-clones "
         "to .reyn/skills/<name>/)."
     ),
     (
-        "- **pipeline** — launch a registered pipeline: `pipeline__list` names "
-        "them; `pipeline__run` runs one by name to completion and returns its "
+        "- **pipeline** — launch a registered pipeline: `pipeline_list` names "
+        "them; `run_pipeline` runs one by name to completion and returns its "
         "final output (synchronous — blocks until done)."
     ),
     (
         "- **pipeline_management** — manage pipeline definitions: "
-        "`pipeline_management__install_local` to register a local pipeline "
+        "`pipeline_install_local` to register a local pipeline "
         "DSL file into .reyn/config/pipelines.yaml; "
-        "`pipeline_management__install_source` to fetch and install a "
+        "`pipeline_install_source` to fetch and install a "
         "pipeline from a git/GitHub URL (shallow-clones to "
         ".reyn/pipelines/<name>/)."
     ),
     (
         "- **presentation_management** — manage named presentation templates: "
-        "`presentation_management__install` to register a named presentation "
+        "`presentation_install_local` to register a named presentation "
         "blueprint (a declarative component tree) into "
         ".reyn/config/presentations.yaml, so a later `present(view=<name>)` "
         "op can render it (proposal 0060 Phase 1 Layer A)."
     ),
     (
         "- **plugin_management** — install / uninstall a plugin: "
-        "`plugin_management__install` promotes one from `source` "
+        "`install_plugin` promotes one from `source` "
         "(`{kind: builtin, name}` for a plugin reyn ships, `{kind: local, "
         "path}` for one you authored/tested, or `{kind: git, url}` for a "
         "remote repo) into your active plugin set; "
-        "`plugin_management__uninstall` removes an installed plugin by name "
+        "`uninstall_plugin` removes an installed plugin by name "
         "(ADR 0064)."
     ),
     (
         "- **knowledge** — semantic search across your own knowledge: "
-        "`knowledge__search` (= `search_knowledge`) searches installed "
+        "`search_knowledge` (= `search_knowledge`) searches installed "
         "skills, memory entries, and the reyn repo's docs/source together, "
         "returning one row per matching entity ({kind, id, title, "
         "description}). Activate a hit via the verb matching its `kind` — "
         "skill -> `load_skill`, memory -> `read_memory_body`, repo_doc/"
-        "repo_src -> `reyn_repo__read` — never a single unified load call. "
+        "repo_src -> `reyn_repo_read` — never a single unified load call. "
         "Only available when embedding is enabled (reyn.yaml "
         "embedding.enabled: true)."
+    ),
+    (
+        "- **embedding** — `embed` turns a batch of texts into a batch of "
+        "vectors (embedding_model optional, default `standard`). Compose it "
+        "with your own external MCP vector-DB tools via a pipeline; reyn "
+        "does not host a user RAG store itself."
+    ),
+    (
+        "- **hooks** — manage your own push hooks: `hooks_add` registers a "
+        "hook (`on` lifecycle point + `message` template, applied at the "
+        "next turn boundary) so a later turn can push a message to you "
+        "automatically; `emit_hook_event` puts a named event (`event_name` "
+        "+ optional `payload`) onto this session's own Bus as "
+        "`llm:<session_id>:<event_name>` — a Composer can then correlate it "
+        "into a `hooks:` entry."
     ),
 ]
 
@@ -353,13 +369,13 @@ NEVER_INVENT_WRAPPERS_OFF = (
 
 ROUTING_RULE_WRAPPERS_ON = (
     "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-    " name (= valid `invoke_action` action_name, e.g. `mcp__call_tool`),"
+    " name (= valid `invoke_action` action_name, e.g. `mcp_call_tool`),"
     " call `invoke_action` immediately. NO clarifying questions. NO text replies."
 )
 
 ROUTING_RULE_WRAPPERS_OFF = (
     "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-    " name (e.g. `mcp__call_tool`), call that action directly by its"
+    " name (e.g. `mcp_call_tool`), call that action directly by its"
     " name immediately. NO clarifying questions. NO text replies."
 )
 
@@ -421,12 +437,12 @@ def build_behaviour_slot(
 #      呼び出し語彙が変わる（#1977）。
 ENVIRONMENT_HOW_WRAPPERS_ON = (
     "discover the contents with `list_actions(category=['file'])` →"
-    " `invoke_action(file__list, ...)` → `invoke_action(file__read, ...)`"
+    " `invoke_action(list_directory, ...)` → `invoke_action(read_file, ...)`"
     " within the cwd's read scope."
 )
 
 ENVIRONMENT_HOW_WRAPPERS_OFF = (
-    "discover the contents with `file__list(...)` → `file__read(...)`"
+    "discover the contents with `list_directory(...)` → `read_file(...)`"
     " within the cwd's read scope."
 )
 

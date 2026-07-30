@@ -61,7 +61,7 @@
         "permission_denied": false,
         "phase_started": false
       },
-      "failure_reason": "Router used direct file__read op instead of dispatching read_local_files skill. No skill_run_spawned/completed events emitted (rubric required). Reply quality is good but structural contract not met.",
+      "failure_reason": "Router used direct read_file op instead of dispatching read_local_files skill. No skill_run_spawned/completed events emitted (rubric required). Reply quality is good but structural contract not met.",
       "notes": "Same routing miss as B45. Router resolved file read directly without going through stdlib skill."
     },
     {
@@ -79,7 +79,7 @@
         "permission_denied": false,
         "phase_started": false
       },
-      "failure_reason": "Router used file__list + router_empty_response_retry instead of read_local_files skill. skill_run_spawned/completed required by rubric events but not emitted. Reply was generated via inline inference, not from actual file reads.",
+      "failure_reason": "Router used list_directory + router_empty_response_retry instead of read_local_files skill. skill_run_spawned/completed required by rubric events but not emitted. Reply was generated via inline inference, not from actual file reads.",
       "notes": "Router empty-stop then inline response. Structural bypass of read_local_files skill."
     },
     {
@@ -218,8 +218,8 @@
       "id": "NF-W2-3",
       "title": "read_local_files routing bypass — router uses direct file ops instead of skill",
       "severity": "MED",
-      "description": "Both S2 and S3 prompts requesting file explanation routed to direct file__read/file__list ops instead of dispatching the read_local_files skill. This is a persistent routing miss. The skill is available in the action catalog but the router prefers the lower-level file ops. Reply quality is good (rubric text passes) but structural contract (skill_run_spawned/completed) is not met.",
-      "evidence": "S2: routing_decided action_name=file__read source=hot_list_alias. S3: routing_decided action_name=file__list. Neither emitted skill_run_spawned.",
+      "description": "Both S2 and S3 prompts requesting file explanation routed to direct read_file/list_directory ops instead of dispatching the read_local_files skill. This is a persistent routing miss. The skill is available in the action catalog but the router prefers the lower-level file ops. Reply quality is good (rubric text passes) but structural contract (skill_run_spawned/completed) is not met.",
+      "evidence": "S2: routing_decided action_name=read_file source=hot_list_alias. S3: routing_decided action_name=list_directory. Neither emitted skill_run_spawned.",
       "category": "behavioral/routing"
     }
   ]

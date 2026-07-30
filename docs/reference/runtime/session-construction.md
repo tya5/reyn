@@ -42,7 +42,7 @@ block):
 - `_workspace_base_dir` / `_workspace_state_dir` (#187) — the chat `OpContext`
   `Workspace`'s FS root + host-side state dir. With a container env-backend the repo lives
   *inside* the container, so `base_dir` must be the container repo root (the partner of
-  `build_environment_backend`'s backend) — otherwise `file__read`/`grep`/`glob` resolve
+  `build_environment_backend`'s backend) — otherwise `read_file`/`grep`/`glob` resolve
   against the host cwd and the agent never sees the target tree (the #187 step-3 empty-FS
   defect this param closes).
 - `_sandbox_backend` (#1200 PR-F2) — the agent's `SandboxBackend` INSTANCE for the chat exec
@@ -272,10 +272,26 @@ Two other cost-adjacent construction points stay inline:
 `action_embedding_index`/`embedding_provider`/`embedding_model_class`) plus
 `action_usage_tracker` — a byte-identical extraction (same
 objects, same conditionals, same try/except None-fallbacks, same args as the inline
-sequence it replaced). It stays UNMOVED, invoked at its original position, BEFORE Family 1
-(`_build_audit_event_bundle`) runs — this family has no eager dependency on `chat_events`,
-only the `_on_hot_list_changed` closure's DEFERRED `self._chat_events` resolution (kept
-verbatim since this is an instance method).
+sequence it replaced), MODULO one reordering (#3408): the call site MOVED from its
+original position (BEFORE Family 1 / `_build_audit_event_bundle`) to run right AFTER
+Family 1 instead. #3408 measured that nothing between the two positions reads or writes
+this family's own attrs (`_action_embedding_index`/`_embedding_provider`/
+`_embedding_model_class`/`_action_usage_tracker`), so the move is safe.
+
+Before #3408, this family had no eager dependency on `chat_events` — only the
+`_on_hot_list_changed` closure's DEFERRED `self._chat_events` NAME resolution, because the
+EventLog did not exist yet at the builder's old (pre-Family-1) call site. #3408 closed that
+deferral instead of keeping it: the builder now takes `chat_events` as an eager arg and the
+closure binds it by IDENTITY (the `_audit_bundle.chat_events` object, passed through), not
+by re-resolving `self._chat_events` on every call. This closes the #2856 accident's CLASS —
+a name reference silently resolving to a DIFFERENT EventLog than the one live when it was
+written — not just the one instance: an identity reference can't retarget.
+
+The rationale (git-grep evidence: `_chat_events =` is a single assignment repo-wide, in
+`Session.__init__` only) is machine-checked, not just asserted in the docstring —
+`tests/test_chat_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
+path adds a second assignment site, naming the offending file:line and saying "route this
+through the builder arg instead."
 
 `_action_retrieval` (FP-0034 PR-3b-iii) drives whether the universal catalog wrappers
 appear in the router `tools=`. Default constructs an off-flag `ActionRetrievalConfig` so
@@ -456,13 +472,20 @@ Construction is unconditional and cheap — an empty dict until the first
 `get()`.
 
 **Ephemeral routing.** Only the non-ephemeral MCP call sites
-(`_mcp_call_tool` / `_mcp_list_tools`) route through this held-open service.
-An ephemeral session (`self._ephemeral`, set post-construction by the
-registry once spawn mode is known) keeps using the per-call `MCPClientPool`
-instead, so a sub-second-lived spawned session never holds a server
-connection open needlessly. The service is closed at session teardown via
-`aclose_mcp_connections` (`registry.remove_session` / `archive_agent`'s
-main-session path).
+(`Session._mcp_call_tool` and, on `RouterHostAdapter`,
+`mcp_list_servers`/`mcp_list_tools`/`mcp_list_resources`/
+`mcp_list_resource_templates`/`mcp_list_prompts` — #3447 folded the five
+listing methods off `Session` onto the adapter itself, threading this same
+`self._mcp_connection_service` instance through as a raw constructor
+argument) route through this held-open service. An ephemeral session
+(`self._ephemeral`, set post-construction by the registry once spawn mode
+is known — read via a LIVE `ephemeral_fn` callable on the adapter side, not
+a snapshot, for the same reason `session_id`/`ephemeral` are read through
+live providers elsewhere in this doc) keeps using the per-call
+`MCPClientPool` instead, so a sub-second-lived spawned session never holds
+a server connection open needlessly. The service is closed at session
+teardown via `aclose_mcp_connections` (`registry.remove_session` /
+`archive_agent`'s main-session path).
 
 **Deferred lambdas.** Three of the six constructor arguments are lambdas
 that defer resolution to CALL time, because none of the attributes they
@@ -497,7 +520,7 @@ already set earlier in `__init__`.
 - `_skill_collisions` (#3100 Axis 4) — same-name-across-config-tiers collision map, consulted by `:skill` invocation (`reyn.interfaces.skill_invoke`) to fire a LOUD audit-event + warning instead of silently letting one skill definition shadow another.
 - `_exclude_tools` (#187) — tool names excluded for the MAIN chat `RouterLoop`, threaded to
   the loop construction below. General capability (mirrors the sub-loop `exclude_tools`,
-  `planner.py:1136`); the faithful SWE-eval excludes `web__search`/`web__fetch` so the agent
+  `planner.py:1136`); the faithful SWE-eval excludes `web_search`/`web_fetch` so the agent
   solves from the repo + issue, not a web lookup of the gold solution. #3378: this is **not**
   a separate advertisement axis — `RouterLoop` composes it into `_contextual_permission` as
   one more restrict-only ∩ term, so it reaches the LLM-visible catalog and the live
@@ -584,7 +607,7 @@ trust decision on a specific skill, discovered later if at all.
 ## Multimodal / media
 
 - `_multimodal_config` (#364) — media-size gate config plumbed through to spawned Agents
-  AND to the router host adapter (chat-router `web__fetch`/`file__read`/mcp paths).
+  AND to the router host adapter (chat-router `web_fetch`/`read_file`/mcp paths).
 - `_media_store` (#383 PR-C) — a single `MediaStore` instance per Session, constructed from
   the multimodal config's storage dirs, then threaded into spawned Agents (for control-IR
   ops invoked from sub-agents) AND into the router host adapter (for ops invoked directly

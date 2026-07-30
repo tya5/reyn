@@ -29,7 +29,7 @@ scenarios:
   # so `skill_run_spawned` has had no producer since 2026-07-03 and this
   # scenario could not pass. The scenario's INTENT survives intact, because
   # the capability did not move with the skill: the registry search is now
-  # the `mcp__search_registry` tool verb (tools/mcp_verbs.py), dispatched
+  # the `mcp_search_registry` tool verb (tools/mcp_verbs.py), dispatched
   # op-runtime-direct with no skill spawn. So only the dead assertion is
   # dropped — `routing_decided` (the router resolved a catalog action) plus
   # `tool_executed` (the verb actually ran) are the structural signals on
@@ -174,8 +174,8 @@ scenarios:
   #
   # F2 (2026-05-27): post-PR-#918 mcp install 3-verb split removed the
   # ``mcp_install`` stdlib skill in favour of the
-  # ``mcp__install_registry`` / ``mcp__install_package`` /
-  # ``mcp__install_local`` verb handlers (= op_runtime direct, no skill
+  # ``mcp_install_registry`` / ``mcp_install_package`` /
+  # ``mcp_install_local`` verb handlers (= op_runtime direct, no skill
   # spawn). ``skill_run_spawned`` no longer fires for install; structural
   # signal narrows to ``routing_decided`` + the behavioural rubric. The
   # ``stdlib-skills/mcp-install`` cover tag is dropped accordingly.

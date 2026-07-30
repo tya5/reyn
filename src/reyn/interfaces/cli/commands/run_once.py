@@ -53,7 +53,7 @@ def register(sub) -> None:
         "--exclude-tools", dest="exclude_tools", default=None, metavar="NAMES",
         help=(
             "Comma-separated tool names to hide from the agent's LLM-visible "
-            "catalog (e.g. 'web__search,web__fetch'). Same as `reyn chat "
+            "catalog (e.g. 'web_search,web_fetch'). Same as `reyn chat "
             "--exclude-tools`."
         ),
     )

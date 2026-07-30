@@ -148,9 +148,9 @@ class _CatalogOps:
 
     async def catalog_entries(self) -> list[dict]:
         return [
-            {"name": "file__read", "description": "Read a file.",
+            {"name": "read_file", "description": "Read a file.",
              "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}},
-            {"name": "web__fetch", "description": "Fetch a URL.\nSecond line ignored.",
+            {"name": "web_fetch", "description": "Fetch a URL.\nSecond line ignored.",
              "parameters": {"type": "object", "properties": {}}},
         ]
 
@@ -166,9 +166,9 @@ async def test_build_presentation_renders_code_api_into_tool_use_sp() -> None:
     assert isinstance(pres.tools_channel, NoToolsChannel)
     # The actions surface in the code-API as DIRECT functions (#1658: def <name>(...),
     # not the tool('name') string-proxy), via the REPLACE channel (tool_use_sp).
-    assert "file__read" in pres.tool_use_sp
-    assert "web__fetch" in pres.tool_use_sp
-    assert "def file__read(" in pres.tool_use_sp  # #1658 direct-function signature
+    assert "read_file" in pres.tool_use_sp
+    assert "web_fetch" in pres.tool_use_sp
+    assert "def read_file(" in pres.tool_use_sp  # #1658 direct-function signature
     assert "tool('" not in pres.tool_use_sp        # #1658: no string-proxy token
     # The prose=terminal contract (#2) must be stated so the model knows how to finish.
     assert "plain prose" in pres.tool_use_sp
@@ -178,14 +178,14 @@ async def test_build_presentation_renders_code_api_into_tool_use_sp() -> None:
 async def test_build_presentation_includes_arg_names() -> None:
     """Tier 2: an action's schema arg names appear in its code-API signature."""
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
-    assert "path" in pres.tool_use_sp  # file__read's parameters.properties key
+    assert "path" in pres.tool_use_sp  # read_file's parameters.properties key
 
 
 @pytest.mark.asyncio
 async def test_code_api_has_no_tool_string_proxy_token() -> None:
     """Tier 2: #1658 (supersedes #1638) — the rendered code-API carries NO
     ``tool('<x>')`` string-proxy token at all. The direct-function redesign renders
-    ``def file__read(path)`` signatures the model calls by name, so the quoted
+    ``def read_file(path)`` signatures the model calls by name, so the quoted
     ``tool('<quoted>')`` token (which caused ~100% empty-choices on
     gemini-2.5-flash-lite, #1638) is eliminated entirely — there is no string the
     model produces for the action name. Strictly stronger than the #1638 backtick-wrap."""
@@ -194,7 +194,7 @@ async def test_code_api_has_no_tool_string_proxy_token() -> None:
     assert "tool('" not in pres.tool_use_sp
     assert 'tool("' not in pres.tool_use_sp
     # The action IS present as a DIRECT function the model calls by name.
-    assert "def file__read(" in pres.tool_use_sp
+    assert "def read_file(" in pres.tool_use_sp
 
 
 @pytest.mark.asyncio
@@ -207,12 +207,12 @@ async def test_build_presentation_omits_excluded_actions() -> None:
 
     pres = await CodeActScheme().build_presentation(
         {"contextual_permission": ContextualPermission(
-            tool_deny=frozenset({"web__fetch"}),
+            tool_deny=frozenset({"web_fetch"}),
         )},
         {}, _CatalogOps(),
     )
-    assert "file__read" in pres.tool_use_sp   # kept
-    assert "web__fetch" not in pres.tool_use_sp  # excluded → omitted
+    assert "read_file" in pres.tool_use_sp   # kept
+    assert "web_fetch" not in pres.tool_use_sp  # excluded → omitted
 
 
 @pytest.mark.asyncio
@@ -240,7 +240,7 @@ async def test_full_sp_for_codeact_session_carries_os_frame_autonomy_rule() -> N
         tool_use_sp=pres.tool_use_sp,
     )
     # The CodeAct code-API is present (REPLACE channel reached the OS frame).
-    assert "def file__read(" in sp
+    assert "def read_file(" in sp
     # The promoted ambiguity/proceed-vs-ask Behaviour rule reaches CodeAct.
     assert "Ask ONE targeted clarifying question ONLY when the ambiguity is BOTH" in sp
     assert "prefer proceeding with a stated," in sp  # interactive default wording

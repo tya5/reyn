@@ -281,7 +281,7 @@ async def test_tool_step_dispatch_structurally_denies_launch_and_delegation() ->
     driver path build their dispatch here), for bare AND qualified names."""
     dispatch = _make_tool_dispatch(_bare_ctx())
     for denied in ("run_pipeline", "run_pipeline_async", "delegate_to_agent",
-                   "pipeline__run", "multi_agent__delegate"):
+                   "run_pipeline", "delegate_to_agent"):
         with pytest.raises(PipelineExecutionError) as exc:
             await dispatch(denied, {})
         assert "structurally denied" in str(exc.value)
@@ -353,12 +353,12 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
 async def test_pipeline_run_async_reachable_via_invoke_action(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2c: #2589 — ``pipeline__run_async`` (one of the 4 verbs that were
+    """Tier 2c: #2589 — ``run_pipeline_async`` (one of the 4 verbs that were
     dispatch-wired but NEVER enumerated for a default agent) is reachable
     end-to-end through ``invoke_action``, not just the direct handler call
     the test above exercises. Drives the SAME production entry point a
     default enumerate-all agent would use (``INVOKE_ACTION.handler({
-    "action_name": "pipeline__run_async", ...})``), proving resolve →
+    "action_name": "run_pipeline_async", ...})``), proving resolve →
     lookup → dispatch → real async driver-session launch all connect for
     the previously-unreachable verb."""
     from reyn.tools.universal_catalog import INVOKE_ACTION
@@ -387,7 +387,7 @@ async def test_pipeline_run_async_reachable_via_invoke_action(
     )
 
     result = await INVOKE_ACTION.handler(
-        {"action_name": "pipeline__run_async", "args": {"name": "p", "input": {"seed": 10}}},
+        {"action_name": "run_pipeline_async", "args": {"name": "p", "input": {"seed": 10}}},
         ctx,
     )
     assert result["status"] == "started"

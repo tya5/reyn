@@ -11,7 +11,7 @@ from __future__ import annotations
 from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 plugin_install = ToolDescription(
-    tool_name="plugin_management__install",
+    tool_name="install_plugin",
     surfaced="router (gates.router=allow)",
     purpose=(
         "Promote a just-authored, just-tested capability (an MCP server / "
@@ -51,7 +51,7 @@ plugin_install = ToolDescription(
 )
 
 plugin_uninstall = ToolDescription(
-    tool_name="plugin_management__uninstall",
+    tool_name="uninstall_plugin",
     surfaced="router (gates.router=allow)",
     purpose="Remove a previously installed plugin — the inverse of plugin_install.",
     text=(
@@ -69,7 +69,7 @@ plugin_uninstall = ToolDescription(
 )
 
 plugin_list = ToolDescription(
-    tool_name="plugin_management__list",
+    tool_name="list_plugins",
     surfaced="router (gates.router=allow)",
     purpose=(
         "Discover which builtin plugins reyn ships and can install (#3202) "
@@ -84,9 +84,9 @@ plugin_list = ToolDescription(
         "may exist but simply not be installed yet. Returns each plugin's "
         "name, description, capabilities (any subset of mcp/pipelines/"
         "skills), and the exact call to install it: "
-        "plugin_management__install(source={'kind': 'builtin', 'name': "
+        "install_plugin(source={'kind': 'builtin', 'name': "
         "'<name>'}). For example, if 'rag' is listed, install it with "
-        "plugin_management__install(source={'kind': 'builtin', 'name': "
+        "install_plugin(source={'kind': 'builtin', 'name': "
         "'rag'})."
     ),
     ja=(
@@ -95,19 +95,19 @@ plugin_list = ToolDescription(
         "「できない」と結論する前にまずこれを呼ぶこと -- 対応する builtin "
         "プラグインが存在するが未 install なだけかもしれない。各プラグイン"
         "の名前・description・capabilities に加え、install する具体的な"
-        "呼び出し(plugin_management__install(source={'kind':'builtin', "
+        "呼び出し(install_plugin(source={'kind':'builtin', "
         "'name':'<name>'}))を返す。"
     ),
 )
 
 ALL: dict[str, ToolDescription] = {
-    "plugin_management__install": plugin_install,
-    "plugin_management__uninstall": plugin_uninstall,
-    "plugin_management__list": plugin_list,
+    "install_plugin": plugin_install,
+    "uninstall_plugin": plugin_uninstall,
+    "list_plugins": plugin_list,
 }
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
-    "plugin_management__install": {
+    "install_plugin": {
         "source": ParamDescription(
             text=(
                 "Discriminated union — exactly one of "
@@ -123,10 +123,10 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ja="マニフェスト名を上書きするインストール名(省略可)。",
         ),
     },
-    "plugin_management__uninstall": {
+    "uninstall_plugin": {
         "name": ParamDescription(
-            text="The plugin's install name (as returned by plugin_management__install).",
-            ja="プラグインのインストール名(plugin_management__install が返した名前)。",
+            text="The plugin's install name (as returned by install_plugin).",
+            ja="プラグインのインストール名(install_plugin が返した名前)。",
         ),
     },
 }

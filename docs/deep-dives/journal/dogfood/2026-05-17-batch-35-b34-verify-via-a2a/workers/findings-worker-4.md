@@ -15,9 +15,9 @@ The B34 arg-normalize fix (aaf2971) normalized `text → content` in `_handle_wr
 
 **Events log (primary data)**:
 ```
-tool_called: action_name=file__write, args={text:"hello", path:"/etc/test.txt"}
+tool_called: action_name=write_file, args={text:"hello", path:"/etc/test.txt"}
 permission_denied: kind=file, path=/etc/test.txt, reason="write to '/etc/test.txt' was not approved. Declare it in the skill.md frontmatter..."
-routing_decided: action_name=file__write, outcome=success
+routing_decided: action_name=write_file, outcome=success
 ```
 
 - `permission_denied` event fired with full path + rationale
@@ -49,9 +49,9 @@ Config applied: `web.fetch: deny` added to reyn.yaml, server restarted.
 
 **Events log (primary data)**:
 ```
-tool_called: action_name=web__fetch, args={url:"https://example.com"}
+tool_called: action_name=web_fetch, args={url:"https://example.com"}
 tool_failed: error_kind=permission_denied, message="web fetch denied by config (web.fetch: deny)"
-routing_decided: action_name=web__fetch, outcome=error
+routing_decided: action_name=web_fetch, outcome=error
 ```
 
 - Permission gate fired at config layer (Layer 1a per permissions.py:906)
@@ -74,7 +74,7 @@ Root cause: `search_actions` not available in this deployment.
 
 ### S3: sandbox_seatbelt_denied_network — INCONCLUSIVE
 
-Agent attempted `exec__run` action but received "Unknown action 'exec__run': no routing rule for category 'exec'".
+Agent attempted `exec` action but received "Unknown action 'exec': no routing rule for category 'exec'".
 The seatbelt sandbox was never reached. `routing_decided` fired (must_emit satisfied) but with error outcome.
 
 Root cause: exec routing category not registered in this deployment.
@@ -95,7 +95,7 @@ Root cause: eval skill internal failure (schema mismatch in postprocessor).
 
 ### S7: shell_disallowed_by_default — INCONCLUSIVE
 
-Agent attempted `exec__run` — same routing gap as S3. Action returned "Unknown action 'exec__run'".
+Agent attempted `exec` — same routing gap as S3. Action returned "Unknown action 'exec'".
 `routing_decided` fired (`must_emit_any` satisfied). Agent declined correctly.
 Shell permission gate (Layer 1 config check) not reached because exec routing doesn't exist.
 
@@ -103,7 +103,7 @@ Shell permission gate (Layer 1 config check) not reached because exec routing do
 
 ## Cross-Scenario Observations
 
-1. **Exec routing gap**: S3 and S7 both hit "Unknown action 'exec__run': no routing rule for category 'exec'". This is a consistent gap — sandboxed exec and raw shell ops cannot be exercised in this deployment.
+1. **Exec routing gap**: S3 and S7 both hit "Unknown action 'exec': no routing rule for category 'exec'". This is a consistent gap — sandboxed exec and raw shell ops cannot be exercised in this deployment.
 
 2. **search_actions unavailability**: S2 blocked by `tool_failed: search_actions`. MCP install flow never reached routing.
 

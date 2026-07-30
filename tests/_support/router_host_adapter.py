@@ -29,14 +29,6 @@ async def null_file_regen(*, path, output_path, entry_template, header) -> dict:
     return {"path": path, "output_path": output_path, "entries": 0}
 
 
-async def null_mcp_list_servers() -> list:
-    return []
-
-
-async def null_mcp_list_tools(server: str) -> list:
-    return []
-
-
 async def null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
     return {}
 
@@ -138,8 +130,6 @@ def make_adapter(
         file_write=null_file_write,
         file_delete=null_file_delete,
         file_regenerate_index=null_file_regen,
-        mcp_list_servers=null_mcp_list_servers,
-        mcp_list_tools=null_mcp_list_tools,
         mcp_call_tool=null_mcp_call_tool,
         send_to_agent=null_send_to_agent,
         put_outbox=null_put_outbox,

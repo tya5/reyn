@@ -40,10 +40,10 @@ from `_FLOORED_DENY_CLASSES`):
 
 | Class | Denied tools | Rationale |
 |-------|-------------|-----------|
-| `re-delegation` | `multi_agent__delegate`, `delegate_to_agent` | Prevent unlimited spawning chains from an unbound delegate |
-| `exec` | `exec__run`, `exec` | Execution requires explicit operator authorization |
-| `mcp-install` | `mcp__install_registry`, `mcp__install_package`, `mcp__install_local` | MCP server installation is a high-privilege, operator-controlled action |
-| `memory-write` | `memory_operation__remember_shared`, `memory_operation__remember_agent`, `memory_operation__forget` | Persistence from an unbound delegate requires deliberate opt-in |
+| `re-delegation` | `delegate_to_agent`, `delegate_to_agent` | Prevent unlimited spawning chains from an unbound delegate |
+| `exec` | `exec`, `exec` | Execution requires explicit operator authorization |
+| `mcp-install` | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` | MCP server installation is a high-privilege, operator-controlled action |
+| `memory-write` | `remember_shared`, `remember_agent`, `forget_memory` | Persistence from an unbound delegate requires deliberate opt-in |
 
 The floor is overridable: an operator file
 `.reyn/capability_profiles/_delegate.yaml` replaces the built-in profile. A
@@ -104,7 +104,7 @@ target — it is not flagged, avoiding a false HIGH exit.
 | `_delegate.yaml` re-grants a class | HIGH / MED | Same class-to-severity mapping |
 | Posture nudge | INFO | `capability_default=inherit` while any topology has a delegation edge |
 
-The `destructive-fs` class (`delete_file`, `file__delete`) is **audit-only** —
+The `destructive-fs` class (`delete_file`, `delete_file`) is **audit-only** —
 it is not on the runtime `_delegate` floor because it is already gated by the
 FILE_WRITE permission system. The audit surfaces it as a re-grant judgment for
 delegate-reachable roles.
@@ -116,11 +116,11 @@ delegate-reachable roles.
 
 | Class | Severity | Tools |
 |-------|----------|-------|
-| `re-delegation` | HIGH | `multi_agent__delegate`, `delegate_to_agent` |
-| `exec` | HIGH | `exec__run`, `exec` |
-| `mcp-install` | HIGH | `mcp__install_registry`, `mcp__install_package`, `mcp__install_local` |
-| `memory-write` | MED | `memory_operation__remember_shared`, `memory_operation__remember_agent`, `memory_operation__forget` |
-| `destructive-fs` | MED | `delete_file`, `file__delete` (audit-only, not on runtime floor) |
+| `re-delegation` | HIGH | `delegate_to_agent`, `delegate_to_agent` |
+| `exec` | HIGH | `exec`, `exec` |
+| `mcp-install` | HIGH | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` |
+| `memory-write` | MED | `remember_shared`, `remember_agent`, `forget_memory` |
+| `destructive-fs` | MED | `delete_file`, `delete_file` (audit-only, not on runtime floor) |
 
 ### Usage
 

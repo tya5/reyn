@@ -1519,7 +1519,7 @@ class PermissionResolver:
     ) -> None:
         """Multi-modal cluster gate (issue #364) — applies to binary media
         (images today; audio/video deferred) about to be loaded into LLM
-        context from web__fetch / file__read / MCP / user input.
+        context from web_fetch / read_file / MCP / user input.
 
         Under-limit: returns immediately (= zero overhead for the common
         case). At-or-over limit: behaves per ``on_oversize`` (see
@@ -1535,7 +1535,7 @@ class PermissionResolver:
             Layer 3 (session):   prior in-memory decision (= ALWAYS/NEVER).
             Layer 4 (interactive): prompt with concrete size + source.
 
-        The shared infrastructure is reused by #365 (file__read binary) and
+        The shared infrastructure is reused by #365 (read_file binary) and
         #366 (user chat input image) — only the ``source`` string differs.
         """
         if size_bytes <= max_bytes:

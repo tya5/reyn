@@ -6,7 +6,7 @@ The ``retrieval`` presentation's search-first surface, expressed over the
 fenced snippet that searches and then calls what the search returned::
 
     hits = search_actions(query="read a file")
-    result = invoke_action(action_name="file__read", args={"path": "README.md"})
+    result = invoke_action(action_name="read_file", args={"path": "README.md"})
 
 **Why this cell needs no ``RePresent``, and could not use one.** The
 ``tool_calls`` cell narrows by re-presentation: its search affordance is
@@ -59,7 +59,7 @@ from reyn.tools.exposure import (
     Exposure,
     ExposureDeviation,
     descriptors_from_entries,
-    without_duplicate_alias_spellings,
+    without_duplicate_names,
 )
 from reyn.tools.scheme import advertised_entries, register_scheme
 from reyn.tools.schemes._content_fence_cell import ContentFenceCellScheme
@@ -141,7 +141,7 @@ def build_retrieval_content_fence_exposure(
     # identifier map derived from it is an encoding, so it does not.
     dispatchable_names = tuple(n for n in (_entry_name(e) for e in all_entries) if n)
 
-    exposed = without_duplicate_alias_spellings(
+    exposed = without_duplicate_names(
         [e for e in all_entries if _entry_name(e) not in deviation.excluded_names]
     )
     if deviation.applies_contextual_narrowing:

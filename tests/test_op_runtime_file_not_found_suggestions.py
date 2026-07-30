@@ -1,4 +1,4 @@
-"""Tests for file__read / file__edit not_found envelope shape.
+"""Tests for read_file / edit_file not_found envelope shape.
 
 When a file doesn't exist, the op result includes an ``error`` string and a
 ``suggestions`` list of sibling files under the same parent — matching the
@@ -48,7 +48,7 @@ def _run(coro):
 
 
 def test_read_not_found_returns_error_and_suggestions(tmp_path, monkeypatch):
-    """Tier 2: file__read of a missing file in a populated parent dir returns
+    """Tier 2: read_file of a missing file in a populated parent dir returns
     status='not_found' plus ``error`` string and ``suggestions`` list."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "alpha.md").write_text("alpha", encoding="utf-8")
@@ -119,7 +119,7 @@ def test_read_ok_still_returns_ok_shape(tmp_path, monkeypatch):
 
 
 def test_edit_not_found_returns_error_and_suggestions(tmp_path, monkeypatch):
-    """Tier 2: file__edit on a missing file returns the same error+suggestions shape as read."""
+    """Tier 2: edit_file on a missing file returns the same error+suggestions shape as read."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "existing.py").write_text("pass", encoding="utf-8")
     (tmp_path / "other.py").write_text("pass", encoding="utf-8")

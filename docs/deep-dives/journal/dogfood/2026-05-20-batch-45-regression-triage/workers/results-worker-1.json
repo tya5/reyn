@@ -42,7 +42,7 @@
       "reply_rubric_pass": true,
       "events_pass": true,
       "artifacts_pass": false,
-      "notes": "Reply: explains idempotency factually and comprehensibly. Events: no permission_denied. Fail: artifact direct_llm not present — router used web__search instead of spawning direct_llm skill. routing_decided fired for web__search, not direct_llm.",
+      "notes": "Reply: explains idempotency factually and comprehensibly. Events: no permission_denied. Fail: artifact direct_llm not present — router used web_search instead of spawning direct_llm skill. routing_decided fired for web_search, not direct_llm.",
       "events_observed": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
       "http_status": 200
     },
@@ -107,8 +107,8 @@
     },
     {
       "id": "B45-F2",
-      "title": "S2 routes to web__search instead of direct_llm for factual query",
-      "description": "Factual question '「冪等」とはどういう意味ですか?' triggered web__search (routing_decided for web__search) rather than direct_llm skill invocation. Reply quality was good (answered correctly from web results) but artifact check fails. Regression vs B43/B42 where this may have passed.",
+      "title": "S2 routes to web_search instead of direct_llm for factual query",
+      "description": "Factual question '「冪等」とはどういう意味ですか?' triggered web_search (routing_decided for web_search) rather than direct_llm skill invocation. Reply quality was good (answered correctly from web results) but artifact check fails. Regression vs B43/B42 where this may have passed.",
       "severity": "MED",
       "affected_scenarios": ["factual_query_direct_llm"]
     },

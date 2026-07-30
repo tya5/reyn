@@ -23,10 +23,10 @@
   "ars_session_skills_count": 1,
   "ars_key_fixes_verified": {
     "rag.operation__drop_source": "source",
-    "file__write": "content, path",
-    "web__fetch": "max_length, url",
-    "file__glob": "path, pattern",
-    "file__grep": "case_sensitive, glob, max_results, path, pattern"
+    "write_file": "content, path",
+    "web_fetch": "max_length, url",
+    "glob_files": "path, pattern",
+    "grep_files": "case_sensitive, glob, max_results, path, pattern"
   },
   "description_length_b37_base": 2150,
   "description_length_b38_enriched": 3104,
@@ -144,7 +144,7 @@
   ],
   "key_findings": [
     "F1: C1 non-regression maintained (35/35 clean). No G12 Pattern E. B35=B36=B37=B38 clean on long_session_v1.",
-    "F2: D2-wrapper scope expansion confirmed (18 ARS entries: 17 static + 1 skill). B37 problem actions all fixed: rag.operation__drop_source={source}, file__write={content,path}, web__fetch={max_length,url}.",
+    "F2: D2-wrapper scope expansion confirmed (18 ARS entries: 17 static + 1 skill). B37 problem actions all fixed: rag.operation__drop_source={source}, write_file={content,path}, web_fetch={max_length,url}.",
     "F3: Description length 3104 chars (base 2150 + 954 ARS). Matches commit estimate ~3080 within 1%. No latency degradation: p50=4.82s, p90=9.94s identical to B37 W7.",
     "F4: invoke_action S2 T2 (skill__haiku) used canonical arg keys [action_name, args]. No arg-name mismatch. Flow: list_actions -> describe_action -> invoke_action (correct).",
     "F5: S2 pronoun resolution improved vs B37: T2 resolved 'simplest one' to haiku skill via invocation, rather than deflecting with disambiguation requests (B37 pattern). Hypothesis: HOT_LIST_SEED fix or cross-scenario context grounding (N=1, not confirmed).",

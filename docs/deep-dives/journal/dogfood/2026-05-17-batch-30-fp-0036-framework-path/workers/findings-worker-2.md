@@ -12,8 +12,8 @@
 | ID | Scenario | B27 | B28 | B30 | Notes |
 |----|----------|-----|-----|-----|-------|
 | S1 | index_docs_basic | R | R | R | rag.operation__create_index hallucination persists |
-| S2 | read_local_files_explain_source | R | R | R | Routed file__read directly, no skill_run_spawned |
-| S3 | read_local_files_multi_file | R | R | R | Routed file__list directly, no skill_run_spawned |
+| S2 | read_local_files_explain_source | R | R | R | Routed read_file directly, no skill_run_spawned |
+| S3 | read_local_files_multi_file | R | R | R | Routed list_directory directly, no skill_run_spawned |
 | S4 | skill_builder_web_summariser | R | R | V | skill__skill_builder invoked, run completed |
 | S5 | word_stats_demo_sentence | R | R | I | python.safe step runs (NEW-2 fix), stats not shown synchronously |
 | S6 | word_stats_demo_multiline | R | R | I | python.safe step runs (NEW-2 fix), S5 stats appear in S6 session |
@@ -32,7 +32,7 @@
 **Result: PASS — no duplicates found**
 
 All 9 scenario traces checked. Tool lists consistently show 14 entries:
-`plan, list_actions, describe_action, invoke_action, file__read, file__list, reyn.source__list, web__search, web__fetch, memory.operation__remember_shared, skill__skill_builder, skill__skill_improver, skill__skill_importer, skill__mcp_search`
+`plan, list_actions, describe_action, invoke_action, read_file, list_directory, reyn.source__list, web_search, web_fetch, memory.operation__remember_shared, skill__skill_builder, skill__skill_improver, skill__skill_importer, skill__mcp_search`
 
 No duplicate names appear in any LLM call across all traces. The `_UNIVERSAL_WRAPPER_NAMES` defensive filter in `_build_hot_list_aliases` is effective.
 
@@ -102,8 +102,8 @@ The description disambiguation (B29) eliminated the skill_improver confusion. Bu
 | Scenario | routing_decided | source | chat_turn_completed_inline |
 |----------|----------------|--------|---------------------------|
 | S1 | YES | invoke_action (outcome success) | NO |
-| S2 | YES | invoke_action (file__read) | NO |
-| S3 | YES | invoke_action (file__list) | NO |
+| S2 | YES | invoke_action (read_file) | NO |
+| S3 | YES | invoke_action (list_directory) | NO |
 | S4 | YES | invoke_action (skill__skill_builder) | YES |
 | S5 | YES | invoke_action (skill__word_stats_demo) | YES |
 | S6 | YES | invoke_action (skill__word_stats_demo) | YES (x2) |

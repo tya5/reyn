@@ -25,7 +25,7 @@ interpret:
                     ``canonical_to_ctx_fields``) reads a fact whose only other form is display prose.
 
 FP-0056 PR-F1 — coverage enforcement by construction (this module's endgame). The pre-F1 design had
-two structural defects the 2026-07-09 dogfood incident exposed (a ``reyn_repo__read`` doc read
+two structural defects the 2026-07-09 dogfood incident exposed (a ``reyn_repo_read`` doc read
 offloaded as a whole-dict ``structured`` blob instead of the readable body):
 
 1. **Free-floating ``_MAPPERS`` dict, hand-synced with the op/tool registries.** Nothing forced
@@ -578,14 +578,17 @@ def _file_signal_meta(result: dict) -> "dict[str, Any]":
 
     ``truncated`` / ``total_count`` / ``returned_count`` (#2998) — the ``glob`` op's silent-cap signal:
     set by the op_runtime handler only when the ``max_results`` cap actually discarded matches (never
-    unconditionally — an always-present key would make the signal meaningless), so a consumer downstream
-    of ``to_canonical`` (pipeline ``tool:`` step, CodeAct) can tell a capped listing from a complete one
-    and knows the fix (pass a larger ``max_results``). The interactive router chat path for
-    ``list_directory`` bypasses ``to_canonical`` entirely (see ``router_loop._normalise_router_tool_
-    result``, which flattens to a bare list before this ever runs) and carries the same fields through
-    its own append-a-note branch instead."""
+    unconditionally — an always-present key would make the signal meaningless), so a consumer can tell
+    a capped listing from a complete one and knows the fix (pass a larger ``max_results``).
+
+    ``note`` (#3191) — the ``read`` op's truncation detail: how much of the file was shown, plus the
+    on-disk path and offset to resume from. Same class of signal as ``truncated`` and set under the
+    same discipline (only when the op actually truncated). #3429 added it here: the interactive chat
+    path used to bypass ``to_canonical`` for ``read_file`` / ``list_directory`` (``router_loop``
+    flattened both to a bare string / list before this ever ran) and appended the note to that flat
+    body itself. That bypass is deleted, so the signals ride the one channel every consumer reads."""
     meta: dict[str, Any] = {}
-    for key in ("op", "status", "path", "truncated", "total_count", "returned_count"):
+    for key in ("op", "status", "path", "truncated", "total_count", "returned_count", "note"):
         value = result.get(key)
         if value is not None:
             meta[key] = value
@@ -758,7 +761,7 @@ def load_skill_to_canonical(result: dict) -> CanonicalToolResult:
 def reyn_repo_to_canonical(result: dict) -> CanonicalToolResult:
     """``reyn_repo_*`` handler result (read/list/glob/grep) → canonical. These handlers return a
     kind-less ``{path, content}`` / ``{entries}`` / ``{matches}`` dict — the dogfood incident root: a
-    doc read via ``reyn_repo__read`` was offloaded as a whole-dict ``structured`` blob instead of the
+    doc read via ``reyn_repo_read`` was offloaded as a whole-dict ``structured`` blob instead of the
     readable body. Under PR-F1 the ``reyn_repo_*`` ToolDefinitions *declare* this mapper (identity
     dispatch), so the result no longer needs a ``kind`` field to route here.
 
@@ -1155,7 +1158,7 @@ def _render_presentation_install_verb(result: dict) -> str:
     return f"Installed presentation '{result.get('name', '')}'."
 
 
-# ``presentation_management__install_local`` (tools/presentation_management_verbs.py,
+# ``presentation_install_local`` (tools/presentation_management_verbs.py,
 # proposal 0060 Phase 1 Layer A / A8) — delegates to
 # ``op_runtime.presentation_install.handle`` and surfaces its
 # ``{status:"installed", name, config_path}`` verbatim (envelope peeled the same
@@ -1346,7 +1349,7 @@ def list_actions_to_canonical(result: dict) -> CanonicalToolResult:
 
 def search_actions_to_canonical(result: dict) -> CanonicalToolResult:
     """``search_actions`` result -> canonical (#2681 Bucket B). ``items`` (each
-    ``{qualified_name, short_description, score}``) is the ranked semantic-match list."""
+    ``{action_name, short_description, score}``) is the ranked semantic-match list."""
     items = result.get("items") or []
     total = result.get("total", len(items))
     text = f"{total} matching action(s)."
@@ -1360,7 +1363,7 @@ def search_knowledge_to_canonical(result: dict) -> CanonicalToolResult:
     list across the four knowledge sources (skill / memory / repo_doc /
     repo_src). Same shape as ``search_actions_to_canonical`` — a separate
     mapper because the record shape differs (kind/id/title/description vs
-    qualified_name/short_description/score)."""
+    action_name/short_description/score)."""
     items = result.get("items") or []
     total = result.get("total", len(items))
     text = f"{total} matching knowledge entit{'y' if total == 1 else 'ies'}."
@@ -1369,15 +1372,15 @@ def search_knowledge_to_canonical(result: dict) -> CanonicalToolResult:
 
 def describe_action_to_canonical(result: dict) -> CanonicalToolResult:
     """``describe_action`` result -> canonical (#2681 Bucket B). A SINGLE resolved-action record
-    (``qualified_name``, ``description``, ``input_schema``, ``metadata``) carried whole in the
+    (``action_name``, ``description``, ``input_schema``, ``metadata``) carried whole in the
     structured attachment; ``text`` names the action + its dispatch target. (The router-loop
     chokepoint pops the ``_post_text`` B41 post-call directive BEFORE canonicalization — see
     ``router_loop.py``'s dedicated strip — so it never reaches this mapper there; a pipeline `tool:`
     step does not strip it, so it rides along inside the structured attachment there, unchanged from
     the prior whole-dict behavior.)"""
-    qualified_name = result.get("qualified_name", "")
+    action_name = result.get("action_name", "")
     target = (result.get("metadata") or {}).get("target_tool_name", "")
-    text = f"action {qualified_name} -> {target}." if target else f"action {qualified_name}."
+    text = f"action {action_name} -> {target}." if target else f"action {action_name}."
     return _records_to_canonical(text, result)
 
 
@@ -1441,7 +1444,7 @@ def pipeline_list_to_canonical(result: dict) -> CanonicalToolResult:
     ``{name, description}`` — the discovery view of every REGISTERED pipeline.
 
     ``name`` rides in the records because it is the field the model acts on: it
-    is passed straight back as ``pipeline__run(name=...)``, so it must survive
+    is passed straight back as ``run_pipeline(name=...)``, so it must survive
     offload. The summary only needs to say what is on offer.
     """
     pipelines = result.get("pipelines") or []
@@ -1452,14 +1455,14 @@ def pipeline_list_to_canonical(result: dict) -> CanonicalToolResult:
 
 
 def plugin_list_to_canonical(result: dict) -> CanonicalToolResult:
-    """``plugin_management__list`` result -> canonical (#3202 symptom 3).
+    """``list_plugins`` result -> canonical (#3202 symptom 3).
     ``plugins`` entries carry ``{name, description, capabilities}`` -- the
     discovery view of every builtin plugin advertised by ``BUILTIN_PLUGINS``
     and readable from its own manifest.
 
     ``name`` rides in the records because it is the field the model acts on:
     it is passed straight back as
-    ``plugin_management__install(source={"kind": "builtin", "name": ...})``,
+    ``install_plugin(source={"kind": "builtin", "name": ...})``,
     so it must survive offload. The summary only needs to say what is on
     offer.
     """

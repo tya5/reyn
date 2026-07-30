@@ -159,7 +159,7 @@ Rubric tightness is a real but secondary plateau driver. 3/5 selected scenarios 
 **Primary plateau drivers** (fix these for verified-rate improvement):
 1. routing_decided not emitted when LLM uses list_actions inline path (W1_S3, W5_S6, W5_S7, W6 plan scenarios) — 5+ scenarios
 2. skill_run_failed due to SafeModeViolation / unsafe-python gaps — 3+ scenarios
-3. Missing routing rules (file__grep, exec, mcp_install) — 3 scenarios
+3. Missing routing rules (grep_files, exec, mcp_install) — 3 scenarios
 4. WAL/history contamination between scenarios — transient but inflates R count
 
 **Secondary plateau drivers** (rubric improvements):

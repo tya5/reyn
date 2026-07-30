@@ -84,7 +84,7 @@
       "turns": 5,
       "empty_stops": 0,
       "errors": 0,
-      "tool_used": "web__search",
+      "tool_used": "web_search",
       "notes": "Eventual consistency chain complete. Each turn built on prior context. Web search used for supplemental data."
     }
   },

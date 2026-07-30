@@ -56,12 +56,12 @@ The chat router exposes the same install surface as four `mcp` verbs split along
 
 | CLI | Chat verb | Notes |
 |---|---|---|
-| `reyn mcp search <QUERY>` | `mcp__search_registry({text})` | Identical registry-API call |
-| `reyn mcp install <SERVER_ID>` | `mcp__install_registry({server_id})` | Identical registry-driven install |
-| `reyn mcp install --source npm:<pkg>[@v]` / `pypi:<pkg>[==v]` / `docker:<img>[:tag]` / GitHub URL | `mcp__install_package({kind, identifier, version?})` | LLM passes structured fields; the handler composes the source specifier |
-| _(no CLI; hand-edit `.reyn/config/mcp.yaml`)_ | `mcp__install_local({name, command, args})` | New chat-only surface: register a local executable (e.g. an LLM-authored MCP script) directly as a stdio server |
-| `reyn mcp list` | `mcp__list_servers()` | |
-| `reyn mcp remove <NAME>` | `mcp__drop_server({server})` | |
+| `reyn mcp search <QUERY>` | `mcp_search_registry({text})` | Identical registry-API call |
+| `reyn mcp install <SERVER_ID>` | `mcp_install_registry({server_id})` | Identical registry-driven install |
+| `reyn mcp install --source npm:<pkg>[@v]` / `pypi:<pkg>[==v]` / `docker:<img>[:tag]` / GitHub URL | `mcp_install_package({kind, identifier, version?})` | LLM passes structured fields; the handler composes the source specifier |
+| _(no CLI; hand-edit `.reyn/config/mcp.yaml`)_ | `mcp_install_local({name, command, args})` | New chat-only surface: register a local executable (e.g. an LLM-authored MCP script) directly as a stdio server |
+| `reyn mcp list` | `list_mcp_servers()` | |
+| `reyn mcp remove <NAME>` | `mcp_drop_server({server})` | |
 
 The CLI and chat paths converge at `op_runtime/mcp_install.py`, so permission gates, secret detection, and audit events are identical.
 

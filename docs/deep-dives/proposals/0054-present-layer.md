@@ -14,7 +14,7 @@ always round-trips through LLM tokens. Splitting the cost into axes:
 
 | Axis | Cost | Status |
 |---|---|---|
-| **A. Ingestion (input)** | tool result entering LLM context | **Solved** by the offload mechanism + tool-result-schema-redesign arc (`docs/deep-dives/proposals/0053-tool-result-schema-redesign.md`, IMPLEMENTED): data lands in a ref file, the LLM sees schema + preview, reads back on demand via `file__read` |
+| **A. Ingestion (input)** | tool result entering LLM context | **Solved** by the offload mechanism + tool-result-schema-redesign arc (`docs/deep-dives/proposals/0053-tool-result-schema-redesign.md`, IMPLEMENTED): data lands in a ref file, the LLM sees schema + preview, reads back on demand via `read_file` |
 | **B. Reproduction (output)** | the LLM re-types the data as output tokens to show the user | **Unsolved — target of this proposal** |
 | **C. Fidelity loss** | to fit output, the LLM summarizes/truncates; the user loses data | **Unsolved — same mechanism solves it** |
 
@@ -26,9 +26,9 @@ Two existing reyn mechanisms are each half of the answer, currently unconnected:
 
 1. **Offload** (redesign arc, landed) — the offload refs are the data handles.
    Structured stream: an inline `structured` frontmatter field, or when offloaded
-   `structured: offloaded` + `structured_ref` (a `file__read`-able path) +
+   `structured: offloaded` + `structured_ref` (a `read_file`-able path) +
    `structured_preview`. Text stream: the body text, or when offloaded a plain-text note
-   `...[truncated: <N> chars total — full body: file__read(path="<ref>")]...` (no
+   `...[truncated: <N> chars total — full body: read_file(path="<ref>")]...` (no
    dedicated frontmatter field for the text ref). Saves input tokens only; presentation
    still goes through output tokens.
 2. **Tool-result viewer registry + LLM template** (FP-0051,
@@ -131,7 +131,7 @@ present:
 - **`data_ref` resolution seam (junction with the tool-result arc).** A `data_ref` may
   be a plain workspace path *or* an offload ref (e.g. a `structured_ref` produced by the
   arc). `present` resolves it by loading the **full value** through the same file-read /
-  offload-store access the arc established (`file__read(path=<ref>)` semantics), under
+  offload-store access the arc established (`read_file(path=<ref>)` semantics), under
   the `file.read` authority check above — i.e. present re-hydrates offloaded structured
   data from `structured_ref` rather than from the LLM-visible preview. The resolver is a
   single explicit seam (`resolve_present_source(data_ref) -> bytes|obj`), so the two arcs
@@ -275,7 +275,7 @@ uniform "escape everything" guard corrupts markup-inert sinks):
   for `code`/`diff`, Rich syntax highlighting is costly, so truncate the source to the
   row/line budget first and highlight only the survivors. There is no pager in the
   inline-CUI; the **ref is the full-fidelity escape hatch** (re-present with a
-  filter/higher cap, or `file__read`).
+  filter/higher cap, or `read_file`).
   This bound is orthogonal to the inline-CUI's live-region caps
   (`_ABOVE_REGION_MAX_HEIGHT` / `_MENU_REGION_MAX_HEIGHT` = 12), which govern persistent
   UI regions, not one-shot conversation output.
@@ -321,7 +321,7 @@ presented:
 
 **Blind-routing is not a permission mode — it is an audit annotation.** Whether the LLM
 read the data before presenting is a fact the OS can compute (result was inline, or a
-`file__read(ref)` appears earlier in the session). No config gate in v1; the guard runs
+`read_file(ref)` appears earlier in the session). No config gate in v1; the guard runs
 regardless; audit records the fact. (The standards world routes blind as the norm; reyn's
 differentiator is making blindness *auditable*, not forbidding it.)
 

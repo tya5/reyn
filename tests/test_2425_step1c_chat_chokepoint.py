@@ -72,8 +72,8 @@ def _mcp_env(**data_extra) -> dict:
 
 
 def _text_ref(content: str) -> str:
-    m = re.search(r'file__read\(path="([^"]+)"\)', content)
-    assert m, f"no file__read read-back path in {content[:200]!r}"
+    m = re.search(r'read_file\(path="([^"]+)"\)', content)
+    assert m, f"no read_file read-back path in {content[:200]!r}"
     return m.group(1)
 
 
@@ -83,7 +83,7 @@ def test_single_payload_mcp_offloads_text_clean(tmp_path):
     store = MediaStore(project_root=tmp_path)
     content = _tool_content(_feedback(_mcp_env(content=_BIG), store))
     assert not content.lstrip().startswith("{"), "plain-text preview, not a JSON stub"
-    assert "file__read(path=" in content, "the preview names the file__read read-back path"
+    assert "read_file(path=" in content, "the preview names the read_file read-back path"
     body = (tmp_path / _text_ref(content)).read_text(encoding="utf-8")
     assert body == _BIG, "the offloaded body is the CLEAN content (real newlines)"
 

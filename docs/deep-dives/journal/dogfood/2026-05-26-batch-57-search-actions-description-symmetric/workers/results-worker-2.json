@@ -161,7 +161,7 @@
       "title": "search_actions offered in 50/64 requests but called 0 times (W2)",
       "description": "LLM trace shows search_actions was included in the available tools for 50 out of 64 LLM requests. The LLM made zero calls to search_actions across all scenarios. Instead it used list_actions (7 calls) and describe_action calls. This replicates B56 W2 pattern (0/N). The B57 batch-level hypothesis about search_actions description symmetry fix should be evaluated by comparing search_actions call rate in W1 (different scenario set) vs W2.",
       "severity": "observation",
-      "primary_data": "LLM trace: 64 requests, 50 offered search_actions, 0 LLM tool_calls to search_actions. All tool calls: describe_action, file__glob, invoke_action, list_actions, read_tool_result, reyn.source__list, skill__index_docs, source__read, web__search",
+      "primary_data": "LLM trace: 64 requests, 50 offered search_actions, 0 LLM tool_calls to search_actions. All tool calls: describe_action, glob_files, invoke_action, list_actions, read_tool_result, reyn.source__list, skill__index_docs, source__read, web_search",
       "batch_comparison": "B56 W2: 0/N search_actions calls (per worker prompt). B57 W2: 0/N. No improvement observed for W2 scenario set."
     },
     {

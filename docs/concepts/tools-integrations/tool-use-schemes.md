@@ -106,7 +106,7 @@ does, but the functions it is shown are the catalog **wrappers**
 so a call reads
 
 ```python
-result = invoke_action(action_name="file__read", args={"path": "README.md"})
+result = invoke_action(action_name="read_file", args={"path": "README.md"})
 ```
 
 and the code-API **does not grow with the catalog**, which is the whole point of
@@ -127,7 +127,7 @@ what separates it from the `category` cell above:
 
 ```python
 hits = search_actions(query="read a file")
-result = invoke_action(action_name="file__read", args={"path": "README.md"})
+result = invoke_action(action_name="read_file", args={"path": "README.md"})
 ```
 
 **It costs one round trip less than its `tool_calls` sibling**, and this is the

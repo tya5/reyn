@@ -15,9 +15,14 @@ patch. This suite exercises ``reyn.tools.llm_reachability``:
      gate's identity check would go RED for an undeclared tool.
 
 No mocks -- everything here reads the real default ToolRegistry /
-``_OPERATION_RULES`` / ``build_tools`` source, or passes a plain string /
-dict override to the module's own testability seams (``source_text`` /
-``operation_rules`` / ``allow_names``).
+``KNOWN_ACTION_NAMES`` / ``build_tools`` source, or passes a plain string /
+set override to the module's own testability seams (``source_text`` /
+``action_names`` / ``allow_names``).
+
+#3429 (merged alongside): route (b) is restated from "bare dispatch target of
+an ``_OPERATION_RULES`` qualified name" to "member of the catalog action set"
+-- the same route in the one-name world, measured to produce the same
+unreachable set at the switch-over.
 """
 from __future__ import annotations
 
@@ -113,12 +118,11 @@ def test_strip_direct_advertisement_route_makes_the_gate_fire() -> None:
     RED if this ever happened for real, instead of the assertion being
     vacuously satisfied.
 
-    ``topology_create`` is confirmed (by inspection of
-    ``universal_dispatch._OPERATION_RULES``) to have no qualified-name
-    entry -- it is direct-route-only, so stripping its lookup call site
-    removes it from BOTH routes' union, unlike stripping e.g. ``web_search``
-    (also reachable via ``web__search`` in _OPERATION_RULES) which would
-    still be reachable through route (b) alone.
+    ``topology_create`` is confirmed (asserted below against the live set)
+    to not be a catalog action -- it is direct-route-only, so stripping its
+    lookup call site removes it from BOTH routes' union, unlike stripping
+    e.g. ``web_search`` (a catalog action) which would still be reachable
+    through route (b) alone.
     """
     from reyn.runtime.router_tools import build_tools
 
@@ -150,11 +154,11 @@ def test_strip_invoke_action_route_makes_the_gate_fire() -> None:
     build_tools()) must equally produce an undeclared unreachable tool --
     proving route (b) is load-bearing in the gate, not decorative.
 
-    ``search_knowledge`` (``knowledge__search``) is confirmed to have no
-    direct ``_registry.lookup("search_knowledge")`` call site in
-    ``build_tools`` -- it is invoke-route-only.
+    ``search_knowledge`` is confirmed to have no direct
+    ``_registry.lookup("search_knowledge")`` call site in ``build_tools`` --
+    it is invoke-route-only (the ``knowledge`` category's single action).
     """
-    from reyn.tools.universal_dispatch import _OPERATION_RULES
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
 
     direct_reachable = compute_direct_advertisable_tool_names()
     assert "search_knowledge" not in direct_reachable, (
@@ -164,12 +168,8 @@ def test_strip_invoke_action_route_makes_the_gate_fire() -> None:
     baseline_unreachable = compute_unreachable_router_allow_tool_names()
     assert "search_knowledge" not in baseline_unreachable
 
-    stripped_rules = {
-        qualified: target
-        for qualified, target in _OPERATION_RULES.items()
-        if qualified != "knowledge__search"
-    }
-    stripped_unreachable = compute_unreachable_router_allow_tool_names(operation_rules=stripped_rules)
+    stripped_names = frozenset(KNOWN_ACTION_NAMES - {"search_knowledge"})
+    stripped_unreachable = compute_unreachable_router_allow_tool_names(action_names=stripped_names)
     assert "search_knowledge" in stripped_unreachable
 
     with pytest.raises(AssertionError):

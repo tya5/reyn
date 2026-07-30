@@ -4,7 +4,7 @@ The ``category`` presentation's small, catalog-size-independent surface,
 expressed over the ``content_fence`` transport: the model is shown a Python
 code-API of the **wrappers** (``list_actions`` / ``describe_action`` /
 ``invoke_action``) plus the base tools, and it acts by writing a fenced snippet
-that calls one of them — ``invoke_action(action_name="file__read", args={...})``
+that calls one of them — ``invoke_action(action_name="read_file", args={...})``
 rather than a native tool call.
 
 **Why this cell could not be composed before.** ``category``'s defining

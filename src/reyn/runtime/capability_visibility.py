@@ -68,7 +68,7 @@ class _VisibilityProbeOps:
     ``RouterLoop``'s real ``SchemeOps`` implementation wraps. Calling a scheme's
     REAL (unmodified, imported from ``reyn.tools.schemes.*``) ``build_presentation``
     through this facade reproduces the scheme's OWN composition transform (e.g.
-    ``EnumerateAllScheme``'s #3224 post-catalog ``mcp__call_tool`` exclusion)
+    ``EnumerateAllScheme``'s #3224 post-catalog ``mcp_call_tool`` exclusion)
     instead of re-deriving the final output in parallel and silently drifting the
     moment a scheme adds one of those — the exact bug an architect co-vet caught
     in this fix's first cut.
@@ -387,7 +387,7 @@ class CapabilityVisibility:
         ``build_tools()`` + ``universal_catalog.catalog_entries()`` DIRECTLY, in
         parallel with (not through) each scheme's ``build_presentation`` — which
         re-introduced the exact same class of divergence at finer grain: #3224
-        made ``EnumerateAllScheme.build_presentation`` EXCLUDE ``mcp__call_tool``
+        made ``EnumerateAllScheme.build_presentation`` EXCLUDE ``mcp_call_tool``
         from its flattened payload (already covered by the native ``call_mcp_tool``
         tool), a transform that lives INSIDE the scheme method, not in the raw
         ``catalog_entries()`` building block — a parallel re-derivation has no way

@@ -18,11 +18,11 @@ Reyn で人気のローカル MCP サーバー 5 種を、コピー&ペースト
 >
 > - filesystem ↔ `file__*`（= read / write / list / grep / glob）
 > - memory ↔ `memory_operation__*`（= remember_shared / forget）
-> - fetch ↔ `web__fetch`（= markdown 抽出付きの HTTP fetch）
+> - fetch ↔ `web_fetch`（= markdown 抽出付きの HTTP fetch）
 >
 > 両方が利用可能な場合、チャットルーターは自然なプロンプトに対して一貫して Reyn 内部の op を選びます（測定で 10/10、2026-05-21）。MCP サーバーはエージェント経路では動かされません。
 >
-> **抽出パリティ**: `pip install reyn[fetch]` をインストールすると、trafilatura が `web__fetch` の HTML 抽出器として追加されます。その時点で、Reyn の op はコンテンツの濃いページにおいて `mcp-server-fetch` の抽出品質に匹敵します。MCP サーバーに残る優位性は `start_index` ページネーションと robots.txt 認識です。それらが特に必要な場合のみ、直接呼び出し（`scripts/mcp_smoke.py`）か MCP サーバー自体を使ってください。
+> **抽出パリティ**: `pip install reyn[fetch]` をインストールすると、trafilatura が `web_fetch` の HTML 抽出器として追加されます。その時点で、Reyn の op はコンテンツの濃いページにおいて `mcp-server-fetch` の抽出品質に匹敵します。MCP サーバーに残る優位性は `start_index` ページネーションと robots.txt 認識です。それらが特に必要な場合のみ、直接呼び出し（`scripts/mcp_smoke.py`）か MCP サーバー自体を使ってください。
 
 > **チャット履歴の汚染に関する注意。** エージェントが以前ある機能を拒否した場合（= LLM が「私には…できません」と言った）、SP のシグナルが別を指示していても、in-context learning が後続ターンで拒否パターンを継続することがあります。下記の利用例が期待するツール呼び出しを生成しない場合は、まずエージェントの履歴をクリアしてください:
 >
@@ -39,9 +39,9 @@ Reyn で人気のローカル MCP サーバー 5 種を、コピー&ペースト
 - インストール済みの Reyn（MCP ランタイムはコアインストールに同梱され、extra は不要です）
 - チャット利用の場合: サーバーごとに 1 度だけ per-server permission を事前承認（= 各セクションに示す 1 行）。
 
-smoke ランナー `scripts/mcp_smoke.py` はチャットルーターをバイパスして直接 `reyn.mcp.client.MCPClient` に向かいます。接続性の健全性確認に便利です。エージェント駆動の利用（= 典型的なエンドユーザーの形）では、チャットルーターが汎用の `mcp__call_tool` / `invoke_action` ディスパッチ経由でサーバーを呼びます。
+smoke ランナー `scripts/mcp_smoke.py` はチャットルーターをバイパスして直接 `reyn.mcp.client.MCPClient` に向かいます。接続性の健全性確認に便利です。エージェント駆動の利用（= 典型的なエンドユーザーの形）では、チャットルーターが汎用の `mcp_call_tool` / `invoke_action` ディスパッチ経由でサーバーを呼びます。
 
-> 各セクションの `reyn mcp install --source ...` シェルコマンドには、チャット側の同等な動詞があります: `mcp__install_package({kind, identifier, version?})`（= 同じパッケージチャネル: `npm` / `pypi` / `docker` / `github`）。ワークフローに合う面を使ってください。どちらも同じ `.reyn/config/mcp.yaml` への書き込みに収束します。完全な対応は [`reyn mcp` CLI § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents) を参照してください。
+> 各セクションの `reyn mcp install --source ...` シェルコマンドには、チャット側の同等な動詞があります: `mcp_install_package({kind, identifier, version?})`（= 同じパッケージチャネル: `npm` / `pypi` / `docker` / `github`）。ワークフローに合う面を使ってください。どちらも同じ `.reyn/config/mcp.yaml` への書き込みに収束します。完全な対応は [`reyn mcp` CLI § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents) を参照してください。
 
 ---
 
@@ -78,7 +78,7 @@ reyn chat
 > What time is it in Tokyo right now?
 ```
 
-エージェントは `mcp__call_tool({tool: "time__get_current_time", tool_args: {timezone: "Asia/Tokyo"}})` を呼び、自然言語で応答します。複数タイムゾーンのクエリ（「Tokyo, NYC, London」）では、エージェントは 3 回の呼び出しを連鎖させ、1 つの回答に統合します。
+エージェントは `mcp_call_tool({tool: "time__get_current_time", tool_args: {timezone: "Asia/Tokyo"}})` を呼び、自然言語で応答します。複数タイムゾーンのクエリ（「Tokyo, NYC, London」）では、エージェントは 3 回の呼び出しを連鎖させ、1 つの回答に統合します。
 
 ### 公開されるツール
 
@@ -114,7 +114,7 @@ reyn chat
 > Summarise the last 3 commits in this repo.
 ```
 
-エージェントは `mcp__call_tool({tool: "git__git_log", tool_args: {repo_path: "<session cwd>", max_count: 3}})` を呼び、短い要約を生成します。
+エージェントは `mcp_call_tool({tool: "git__git_log", tool_args: {repo_path: "<session cwd>", max_count: 3}})` を呼び、短い要約を生成します。
 
 ### 公開されるツール
 
@@ -156,7 +156,7 @@ reyn chat
 > Use sequential-thinking to plan how to organise a personal task list.
 ```
 
-エージェントは一連の `mcp__call_tool({tool: "sequential_thinking__sequentialthinking", args: {...}})` 呼び出し（通常 5〜7 thoughts）を発行し、その連鎖を自然言語のプランに統合します。サーバーは thought の履歴を内部で追跡し、複数の呼び出しが 1 つのサーバー存続期間内で連鎖を積み上げます。
+エージェントは一連の `mcp_call_tool({tool: "sequential_thinking__sequentialthinking", args: {...}})` 呼び出し（通常 5〜7 thoughts）を発行し、その連鎖を自然言語のプランに統合します。サーバーは thought の履歴を内部で追跡し、複数の呼び出しが 1 つのサーバー存続期間内で連鎖を積み上げます。
 
 > 注: ユーザープロンプト内のキーワード「sequential-thinking」は、汎用の問題解決経路（= 明確なターゲットの無い invoke_action）ではなくこのサーバーをルーターが選ぶのを助けます。
 
@@ -205,7 +205,7 @@ reyn chat
 > insert a row with body "first note", and show me everything in the table.
 ```
 
-エージェントは 1 ターン内で 3 つの `mcp__call_tool` 呼び出し（= `sqlite__create_table` → `sqlite__write_query` → `sqlite__read_query`）を連鎖させます。クリーン履歴での成功率は約 90% です。エージェントが「テーブルを列挙できません…」と言う場合は、履歴を消去（上記の行）してリトライしてください。
+エージェントは 1 ターン内で 3 つの `mcp_call_tool` 呼び出し（= `sqlite__create_table` → `sqlite__write_query` → `sqlite__read_query`）を連鎖させます。クリーン履歴での成功率は約 90% です。エージェントが「テーブルを列挙できません…」と言う場合は、履歴を消去（上記の行）してリトライしてください。
 
 ### 公開されるツール
 
@@ -246,7 +246,7 @@ reyn chat
 > Use the everything MCP server to compute 17 plus 25.
 ```
 
-エージェントは `mcp__call_tool({tool: "everything__get-sum", tool_args: {a: 17, b: 25}})` を呼び、結果を報告します。クリーン履歴での成功率は約 90% です。
+エージェントは `mcp_call_tool({tool: "everything__get-sum", tool_args: {a: 17, b: 25}})` を呼び、結果を報告します。クリーン履歴での成功率は約 90% です。
 
 > 注: プロンプトで「the everything MCP server」と明示するとルーターの曖昧性解消を助けます。汎用的な「compute 17 plus 25」では、LLM がツール呼び出しなしで算術的に答えてしまうことがあります。
 
@@ -283,4 +283,4 @@ install コマンドはローダーが読み込める設定を自動で書き込
 | `MCP server <name> access denied` | permission が未承認 | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
 | install 後の `not found` エラー | サーバーが uvx（Python）を使うが `uv` 未インストール | `brew install uv` |
 | YAML のサーバー設定に `type: stdio` が無い、または `server-` 接頭辞がある | 古い install 経路 | `reyn mcp install` で再インストール |
-| MCP fetch / filesystem / memory をインストールしたのにエージェントが Reyn op を使う | Reyn 内部 op（`web__fetch` / `file__*` / `memory_operation__*`）が自然プロンプトで勝つ | `scripts/mcp_smoke.py` の直接呼び出しを使う; MCP サーバーはチャットルーター経由では動かない |
+| MCP fetch / filesystem / memory をインストールしたのにエージェントが Reyn op を使う | Reyn 内部 op（`web_fetch` / `file__*` / `memory_operation__*`）が自然プロンプトで勝つ | `scripts/mcp_smoke.py` の直接呼び出しを使う; MCP サーバーはチャットルーター経由では動かない |

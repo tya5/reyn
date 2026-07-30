@@ -515,7 +515,7 @@ async def test_history_pane_refresh_preserves_bracket_labels() -> None:
 # Both widget-construction call sites get their own witness, for the same reason
 # the History pair does.
 
-_VIS_ROW = "[off] file__read"
+_VIS_ROW = "[off] read_file"
 
 
 @pytest.mark.asyncio
@@ -551,7 +551,7 @@ async def test_tool_pane_refresh_preserves_the_state_marker() -> None:
 
     snap = dict(_SNAP)
     snap["visibility_items"] = [
-        {"kind": "tool", "name": "file__read", "on": False, "denied": False,
+        {"kind": "tool", "name": "read_file", "on": False, "denied": False,
          "denied_reason": None},
     ]
     app = TextualChatApp(

@@ -138,7 +138,7 @@ The journal pages for each ablation worker contain **observations and the patch 
 ### 5.2 Ablation precedes fix-design
 
 Two examples concretely:
-- I wrote in B30 *"B29-MED-3 cwd injection pushed LLM toward plan-first"*. H1 P-H1 patch (= remove `plan` from tools array) showed 3/3 baseline vs 3/3 patched on S4 — the LLM picks `invoke_action(web__fetch)` either way. The B30 hypothesis was wrong; the ablation cost was ~30 min.
+- I wrote in B30 *"B29-MED-3 cwd injection pushed LLM toward plan-first"*. H1 P-H1 patch (= remove `plan` from tools array) showed 3/3 baseline vs 3/3 patched on S4 — the LLM picks `invoke_action(web_fetch)` either way. The B30 hypothesis was wrong; the ablation cost was ~30 min.
 - I would have proposed a "skill description 4-way audit" as a B33 fix. H4 ablation found 0/4 flipped under that patch. The cost of running that fix wave without ablation would have been hours of sonnet work plus a B33 retest. Ablation saved both.
 
 The cost-benefit: ~30 min wall-clock for 7 parallel ablations to prevent ~10x that in misdirected fix waves.
@@ -154,7 +154,7 @@ The user constraint *"SP 変更だけは慎重に"* held: no ablation patch touc
 **Before B32 aggregate**: the dogfood verified-rate plateau ~19% read as "Reyn has a plateau ceiling that incremental fixes can't break." Multiple fix waves had landed without much ΔV.
 
 **After this ablation wave**: ~19% is **the actual system performance** under flash-lite, on a scenario set whose `outcome_prediction` bands were authored ~30 pp too optimistic. The fix waves did land their structural fixes correctly; the residual is mostly outside reach of either small fixes or model upgrades:
-- ~50% of refuted scenarios are `must_emit` failures whose scenarios assumed dispatch paths the router doesn't take (= partly addressable by `must_emit_any` extensions, partly by routing rule gaps for `file__grep` / `mcp_install` / etc.)
+- ~50% of refuted scenarios are `must_emit` failures whose scenarios assumed dispatch paths the router doesn't take (= partly addressable by `must_emit_any` extensions, partly by routing rule gaps for `grep_files` / `mcp_install` / etc.)
 - ~14-27% are rubric-tightness flips waiting for a per-scenario audit
 - ~5% are wipe-recipe artifacts
 - The plateau is not a wall; it's a sum of small things, none of which is dominant, and the predictions that suggested otherwise were the loudest source of "plateau" perception.

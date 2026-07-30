@@ -11,7 +11,7 @@ driver-session (`_spawn_pipeline_driver_session`, `mode="persistent"`), or a
 its `_mcp_servers` stayed whatever the registry's `session_factory` closure captured
 at REGISTRY construction (boot time), even for a server `mcp_install` wrote to the
 IN-set `.reyn/config/mcp.yaml` moments before this exact spawn (the RAG turnkey flow:
-install in the chat session, then `pipeline__run` spawns the ingest driver-session —
+install in the chat session, then `run_pipeline` spawns the ingest driver-session —
 topology-confirmed as ALWAYS two sessions with install strictly preceding the spawn,
 never a mid-run mutation of an already-spawned session, so a spawn-time-only refresh
 is sufficient for this family member).
@@ -48,7 +48,7 @@ from tests._support.agent_session import make_session
 
 def _install_server_in_config(project_root: Path, name: str) -> None:
     """Write a new MCP server to the IN-set `.reyn/config/mcp.yaml` — where
-    `mcp_install` writes, mirroring the RAG SKILL.md's `mcp__install_local` flow."""
+    `mcp_install` writes, mirroring the RAG SKILL.md's `mcp_install_local` flow."""
     cfg = project_root / ".reyn" / "config" / "mcp.yaml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(

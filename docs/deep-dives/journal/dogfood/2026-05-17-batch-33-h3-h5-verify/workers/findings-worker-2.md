@@ -39,7 +39,7 @@ skill__index_docs and skill__eval NOT visible in cold-start tools array (15 uniq
 
 S1 index_docs_basic: REFUTED (predicted refuted) Brier=0.000. LLM tried rag.operation__create_index (nonexistent). No invoke_skill. Router used list_actions fallback.
 
-S2 read_local_files_explain_source: REFUTED (predicted refuted) Brier=0.094. Reply VERIFIED (judge 0.8, correctly explained scheduler.py). Events refuted: used file__read via invoke_action, not invoke_skill. skill_run_spawned count=0. Artifact absent.
+S2 read_local_files_explain_source: REFUTED (predicted refuted) Brier=0.094. Reply VERIFIED (judge 0.8, correctly explained scheduler.py). Events refuted: used read_file via invoke_action, not invoke_skill. skill_run_spawned count=0. Artifact absent.
 
 S3 read_local_files_multi_file: REFUTED (predicted refuted) Brier=0.000. Same direct-action pattern. Judge score below threshold.
 
@@ -53,7 +53,7 @@ S7 eval_run_direct_llm: REFUTED (predicted refuted) Brier=0.031. H3 fires. Route
 
 S8 chat_compactor_long_session: REFUTED (predicted refuted) Brier=0.125. 5 inline turns, no skill dispatch. Final reply VERIFIED (judge confirmed routing answer). Events refuted: skill_run_spawned=0 (expected), llm_called=0 (event type never emitted in router path).
 
-S9 chained_find_then_index: REFUTED (predicted refuted) Brier=0.000. Turn 1: file__list found no docs. Turn 2: tried rag.operation__create_index (nonexistent). Same S1 root cause.
+S9 chained_find_then_index: REFUTED (predicted refuted) Brier=0.000. Turn 1: list_directory found no docs. Turn 2: tried rag.operation__create_index (nonexistent). Same S1 root cause.
 
 ## Cross-Scenario Patterns
 

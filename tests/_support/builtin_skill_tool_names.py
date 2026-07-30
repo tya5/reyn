@@ -35,12 +35,11 @@ class _NoOpEvents:
 
 
 def real_catalog_tool_names() -> "set[str]":
-    """The REAL qualified tool names an enumerate-all LLM turn is sent —
-    ``catalog_entries(ctx)`` is single-source for every ``mcp__`` /
-    ``pipeline__`` / ``plugin_management__`` / ... name (#3026: every
-    category is a STATIC operation category enumerated from
-    ``universal_dispatch._OPERATION_RULES`` — no operator-state ctx needed
-    to produce the NAMES, only to gate availability)."""
+    """The REAL tool names an enumerate-all LLM turn is sent —
+    ``catalog_entries(ctx)`` is single-source for every one of them (#3026:
+    every category is a STATIC operation category enumerated from the
+    membership table — no operator-state ctx needed to produce the NAMES, only
+    to gate availability)."""
     ctx = ToolContext(
         events=_NoOpEvents(), permission_resolver=None, workspace=None,
         caller_kind="router",
@@ -49,82 +48,63 @@ def real_catalog_tool_names() -> "set[str]":
     return {entry["name"] for entry in catalog_entries(ctx)}
 
 
-def qualified_tool_names_referenced(text: str) -> "set[str]":
-    """Extract every qualified (`category__verb`) tool-CALL name from a
-    SKILL.md body. Extracted, never restated: a hardcoded list would drift
-    with the prose it claims to guard and stay green through the exact bug
-    (#3090 / #3092) this extraction exists to catch.
+def qualified_tool_calls_referenced(text: str) -> "set[str]":
+    """Extract every ``<a>__<b>(`` tool-CALL name from a SKILL.md body.
 
-    REACH LIMIT (do not read a clean result as "no drift anywhere" in the
-    source text): matches only the CALL shape ``verb(`` — a tool name
-    mentioned in prose WITHOUT parens, or a non-qualified bare FUNCTION name
-    with no ``__`` separator (the exact #3092 drift shape,
-    ``run_pipeline_inline(...)`` rather than ``pipeline__run_inline(...)``),
-    is invisible to this regex. That is a deliberate precision/reach trade
-    (see ``tests/test_fp0063_p4_builtin_rag_skill.py``'s twin extractor for
-    why widening it is not the fix: a bare mention can equally be a
-    legitimate internal-module reference). #3092's fix is to REWRITE the
-    drifted prose to the qualified form, which this extractor then covers
-    going forward — not to widen the regex."""
+    #3429 inverted this extractor's verdict. It used to find the QUALIFIED
+    spelling and check that each hit RESOLVED in the real catalog — the
+    spelling was correct and the risk was a stale one. The spelling is
+    abolished, so any hit is drift by construction: prose telling the model to
+    call a name the OS no longer answers to.
+
+    REACH LIMIT (do not read a clean result as "no drift anywhere"): matches
+    only the CALL shape, so a name mentioned in prose without parens is
+    invisible. That is a deliberate precision/reach trade — a bare mention can
+    equally be a legitimate internal-module reference."""
     return set(re.findall(
         r"\b([a-zA-Z][a-zA-Z0-9_]*__[a-zA-Z][a-zA-Z0-9_]*)\(", text,
     ))
 
 
-def _internal_dispatch_target_names() -> "set[str]":
-    """The set of INTERNAL dispatch-target function names (= the RHS of
-    ``universal_dispatch._OPERATION_RULES`` / ``_RESOURCE_RULES`` — e.g.
-    ``run_pipeline_inline``, ``skill_install_local``, ``mcp_call_tool``) that
-    are, by construction, never a name the enumerate-all catalog offers the
-    LLM: only the LHS QUALIFIED name (``pipeline__run_inline``,
-    ``skill_management__install_local``, ``mcp__call_tool``) is ever put in a
-    ``tools=`` payload (see that module's own docstring: "a resource is an
-    ARGUMENT to a verb, never a tool of its own" / the #879->#1647 cautionary
-    tale). A bare CALL of one of these names in SKILL.md prose is therefore
-    always the #3090/#3092 drift shape — the pre-refactor "friendly" host
-    function name instead of the qualified catalog name — never a false
-    positive on an unrelated identifier, because these strings are reserved
-    to routing-internal use by the routing table itself (#3141: this does
-    NOT exclude fenced code blocks, so a dual-use name such as
-    ``semantic_search`` shown in a legitimate Python-step example could
-    still trip this check)."""
-    from reyn.tools.universal_dispatch import _OPERATION_RULES, _RESOURCE_RULES
+def os_internal_op_kind_names() -> "set[str]":
+    """Control-IR OP KINDS that no tool answers to — names the LLM's ``tools=``
+    payload can never carry, DERIVED as ``OP_KIND_MODEL_MAP`` minus every
+    registered tool name and every catalog action.
+
+    #3429 re-grounded this set. It used to be "the RHS of the qualified→flat
+    routing table": every dispatch TARGET was an internal name because only the
+    qualified LHS was ever advertised, which made ``run_pipeline_inline(`` in
+    SKILL.md prose the #3092 drift shape. The routing table is gone and those
+    targets ARE the advertised names now, so that particular drift class cannot
+    occur — but the general one can, because the op-runtime layer still has
+    kinds with no tool of the same name (``sandboxed_exec``, ``semantic_search``,
+    ``index_query``, the ``plugin_install`` / ``skill_install`` op kinds behind
+    the install verbs). A CALL of one of those in SKILL.md prose is prose
+    telling the model to call something it will never be offered.
+
+    (#3141 still applies: this does NOT exclude fenced code blocks, so a
+    dual-use name such as ``semantic_search`` shown in a legitimate Python-step
+    example could still trip the check that reads this set.)"""
+    from reyn.schemas.models import OP_KIND_MODEL_MAP
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
 
     return (
-        {target for target, _ in _OPERATION_RULES.values()}
-        | {target for target, _ in _RESOURCE_RULES.values()}
+        set(OP_KIND_MODEL_MAP)
+        - set(get_default_registry().names())
+        - set(KNOWN_ACTION_NAMES)
     )
 
 
-def bare_internal_dispatch_target_calls_referenced(text: str) -> "set[str]":
-    """Extract every CALL-shaped bare identifier in *text* that matches an
-    INTERNAL dispatch-target function name (never a name the LLM's ``tools=``
-    payload can carry). This complements ``qualified_tool_names_referenced``:
-    that extractor only sees ``category__verb(`` shapes and is blind to a
-    bare pre-refactor host-function-name call like ``run_pipeline_inline(``
-    (no ``__`` separator) — precisely the #3092 drift shape the qualified-only
-    extractor could not see even after generalizing it to every builtin
-    SKILL.md. Grounded in the SAME single-source routing table
-    (``universal_dispatch``) the real catalog is built from, not a
-    hand-maintained marker list.
+def bare_os_internal_calls_referenced(text: str) -> "set[str]":
+    """Extract every CALL-shaped bare identifier in *text* that names an
+    OS-internal op kind the LLM can never be offered.
 
-    Restricted to candidates WITHOUT a ``__`` separator: a handful of
-    dispatch-target values are SELF-mapped (``plugin_management__install`` ->
-    ``plugin_management__install`` — see that routing table's own #3083
-    comment: "unlike most other management verbs, there is no separate
-    'bare' spelling to alias"), so a qualified-SHAPED candidate is always
-    already covered (and correctly validated) by
-    ``qualified_tool_names_referenced`` — flagging it again here, against
-    the same internal-name set, would false-positive on that legitimate
-    self-mapped case."""
-    candidates = {
-        name for name in re.findall(r"\b([a-z][a-z0-9_]*)\(", text)
-        if "__" not in name
-    }
-    targets = {
-        name for name in _internal_dispatch_target_names() if "__" not in name
-    }
-    return candidates & targets
+    Grounded in the live ``OP_KIND_MODEL_MAP`` + registry, not a
+    hand-maintained marker list — a new op kind without a matching tool is
+    covered the moment it is declared."""
+    candidates = set(re.findall(r"\b([a-z][a-z0-9_]*)\(", text))
+    return candidates & os_internal_op_kind_names()
 
 
 def discover_builtin_skill_md_files() -> "list[Path]":

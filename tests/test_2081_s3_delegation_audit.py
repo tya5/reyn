@@ -160,21 +160,21 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
     # aliases (#2111 — the audit taxonomy covers every invocable form, so a profile
     # denying only the qualified form would still re-grant the bare one).
     (_profiles(tmp_path) / "tight.yaml").write_text(
-        "name: tight\ntool_deny: [delegate_to_agent, multi_agent__delegate, exec, "
-        "exec__run, "
-        "delete_file, file__delete, memory_operation__remember_shared, "
-        "memory_operation__remember_agent, memory_operation__forget, remember_shared, "
-        "remember_agent, forget_memory, mcp__install_registry, mcp__install_package, "
-        "mcp__install_local, mcp_install_registry, mcp_install_package, mcp_install_local, "
-        "skill_management__install_local, skill_install_local, "  # #2548 PR-C: skill-install class
-        "skill_management__install_source, skill_install_source, "  # #2548 PR-D: source install
-        "pipeline_management__install_local, pipeline_install_local, "  # pipeline-install class (mirrors skill-install)
-        "pipeline_management__install_source, pipeline_install_source, "  # pipeline source install
+        "name: tight\ntool_deny: [delegate_to_agent, delegate_to_agent, exec, "
+        "exec, "
+        "delete_file, delete_file, remember_shared, "
+        "remember_agent, forget_memory, remember_shared, "
+        "remember_agent, forget_memory, mcp_install_registry, mcp_install_package, "
+        "mcp_install_local, mcp_install_registry, mcp_install_package, mcp_install_local, "
+        "skill_install_local, skill_install_local, "  # #2548 PR-C: skill-install class
+        "skill_install_source, skill_install_source, "  # #2548 PR-D: source install
+        "pipeline_install_local, pipeline_install_local, "  # pipeline-install class (mirrors skill-install)
+        "pipeline_install_source, pipeline_install_source, "  # pipeline source install
         "session_spawn, agent_spawn, topology_create, "  # #2103: the full spawn class (session + agent + topology)
-        "pipeline__run, run_pipeline, "  # IS-1: pipeline-run class (spawn-adjacent)
-        "pipeline__run_async, run_pipeline_async, "  # IS-2: async launch, same class
-        "pipeline__run_inline, run_pipeline_inline, "  # IS-4: inline launch, same class
-        "pipeline__run_inline_async, run_pipeline_inline_async]\n",  # IS-4: inline async
+        "run_pipeline, run_pipeline, "  # IS-1: pipeline-run class (spawn-adjacent)
+        "run_pipeline_async, run_pipeline_async, "  # IS-2: async launch, same class
+        "run_pipeline_inline, run_pipeline_inline, "  # IS-4: inline launch, same class
+        "run_pipeline_inline_async, run_pipeline_inline_async]\n",  # IS-4: inline async
         encoding="utf-8",
     )
     assert not _by(_findings(monkeypatch, tmp_path), contains="worker")

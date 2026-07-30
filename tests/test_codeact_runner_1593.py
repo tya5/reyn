@@ -29,11 +29,11 @@ async def test_tool_call_round_trips_to_parent_dispatch() -> None:
         return {"status": "ok", "data": {"echoed": args}}
 
     runner = CodeActRunner()
-    code = "r = tool('file__read', path='a.txt')\nresult = r['echoed']['path']"
+    code = "r = tool('read_file', path='a.txt')\nresult = r['echoed']['path']"
     out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is True, out
     assert out["result"] == "a.txt"
-    assert seen == [("file__read", {"path": "a.txt"})]
+    assert seen == [("read_file", {"path": "a.txt"})]
 
 
 @pytest.mark.asyncio
@@ -62,7 +62,7 @@ async def test_exclude_gate_blocks_per_call_mixed() -> None:
     calls), exactly as the JSON-path #1406/#187 pre-dispatch exclude gate would —
     the gate re-enters per call, so exclude is enforced per call (not once)."""
     seen: list[str] = []
-    excluded = {"web__search"}
+    excluded = {"web_search"}
 
     async def dispatch(name: str, args: dict) -> dict:
         seen.append(name)
@@ -74,12 +74,12 @@ async def test_exclude_gate_blocks_per_call_mixed() -> None:
     runner = CodeActRunner()
     # allowed, excluded (caught), allowed — the snippet try/excepts the ToolError.
     code = (
-        "out = [tool('file__read', p=1)]\n"
+        "out = [tool('read_file', p=1)]\n"
         "try:\n"
-        "    tool('web__search', q='x')\n"
+        "    tool('web_search', q='x')\n"
         "except Exception as e:\n"
         "    out.append('blocked:' + type(e).__name__)\n"
-        "out.append(tool('file__read', p=2))\n"
+        "out.append(tool('read_file', p=2))\n"
         "result = out"
     )
     res = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
@@ -88,7 +88,7 @@ async def test_exclude_gate_blocks_per_call_mixed() -> None:
     # ToolError, caught by the snippet → "blocked:ToolError".
     assert res["result"] == ["ok", "blocked:ToolError", "ok"]
     # The gate was consulted for EACH call including the excluded one (per-call).
-    assert seen == ["file__read", "web__search", "file__read"]
+    assert seen == ["read_file", "web_search", "read_file"]
 
 
 @pytest.mark.asyncio
@@ -99,7 +99,7 @@ async def test_error_envelope_raises_tool_error_in_snippet() -> None:
         return {"status": "error", "error": {"kind": "permission_denied", "message": "no-write"}}
 
     runner = CodeActRunner()
-    code = "tool('file__write', path='x')"
+    code = "tool('write_file', path='x')"
     out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is False
     assert out["kind"] == "ToolError"
@@ -321,7 +321,7 @@ async def test_user_print_does_not_corrupt_result() -> None:
         return {"status": "ok", "data": "PURPLE-OTTER-42"}
 
     runner = CodeActRunner()
-    code = "print('noisy debug line'); print({'a': 1})\nresult = tool('file__read', path='x')"
+    code = "print('noisy debug line'); print({'a': 1})\nresult = tool('read_file', path='x')"
     out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is True, out
     assert out["result"] == "PURPLE-OTTER-42"          # result intact, not corrupted

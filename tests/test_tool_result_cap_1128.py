@@ -38,9 +38,9 @@ _MODEL = "gpt-4o"
 
 
 def _ref_from_preview(preview: str) -> str:
-    """Extract the offload ref path from the plain-text preview's ``file__read(path="<ref>")`` marker."""
-    m = re.search(r'file__read\(path="([^"]+)"\)', preview)
-    assert m, f"preview must name a file__read read-back path: {preview[:200]!r}"
+    """Extract the offload ref path from the plain-text preview's ``read_file(path="<ref>")`` marker."""
+    m = re.search(r'read_file\(path="([^"]+)"\)', preview)
+    assert m, f"preview must name a read_file read-back path: {preview[:200]!r}"
     return m.group(1)
 
 
@@ -78,7 +78,7 @@ def test_over_cap_preview_is_within_cap_tokens(tmp_path: Path, cap_tokens: int) 
         "single-turn compactable (the by-construction dead-end-#1 bound)"
     )
     assert len(out) <= MAX_TOOL_RESULT_INLINE_BYTES
-    assert "file__read(path=" in out, "the plain-text preview names the file__read read-back path"
+    assert "read_file(path=" in out, "the plain-text preview names the read_file read-back path"
 
 
 def test_offloaded_body_reads_back_lossless(tmp_path: Path) -> None:

@@ -339,7 +339,7 @@ so ordinary memo/replay applies.
 
 Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend`. Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
 
-The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3, catalog qualified name **`exec__run`**) — the rename is tool/qualified-name-only and does not touch this op schema, its events, or its result shape.
+The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3) — the rename is tool-name-only and does not touch this op schema, its events, or its result shape. The op kind and the tool name therefore differ, which is why `op_runtime.contextual_gate._OP_KIND_TOOLS` still bridges these two strings after #3429 removed the rest of that table.
 
 ```json
 {
@@ -509,52 +509,27 @@ The OS resolves the server's transport, dispatches via `MCPClient.get_prompt` (g
 
 **Prompts have no subscribe concept.** Unlike resources (`mcp_subscribe_resource`/`mcp_unsubscribe_resource`), MCP's `prompts` capability has no server-push notification for a specific prompt's content changing — only the coarser `notifications/prompts/list_changed` (bridged to an EventLog event by `reyn.mcp.message_handler.ReynMCPMessageHandler.on_prompt_list_changed`, independent of this op kind). There is no `mcp_subscribe_prompt` to build.
 
-## Two dispatch paths reach MCP capability, and why they stay separate (#3409)
+## MCP dispatch: discovery lives on the adapter, content/action ops go through `execute_op` (#3409/#3411/#3447)
 
 Tool handlers in `src/reyn/tools/*.py` reach MCP capability by two different routes:
 
-- **Path A** — a handler calls `host.<named method>` (a callback injected into `RouterHostAdapter`). The four discovery methods above — `list_mcp_tools`, `list_mcp_resources`, `list_mcp_resource_templates`, `list_mcp_prompts` — route straight through `MCPGateway` from `RouterHostAdapter`, bypassing `execute_op` entirely.
-- **Path B** — a handler calls `execute_op(TypedIROp, ctx)` directly. The five content/action op kinds documented above — `mcp` (call_tool), `mcp_read_resource`, `mcp_subscribe_resource`, `mcp_unsubscribe_resource`, `mcp_get_prompt` — all go through this path already.
+- **Discovery** (`list_mcp_servers`, `list_mcp_tools`, `list_mcp_resources`, `list_mcp_resource_templates`, `list_mcp_prompts`) — a handler calls `host.mcp_list_*(...)`, where `host` is `RouterHostAdapter` and these are the adapter's OWN methods (#3447 folded them off `Session`, which used to inject each as a constructor-callback — see history below). They route straight through `MCPGateway`, bypassing `execute_op` entirely — these five are declared "no permission gate, no op-kind" in `schemas/models.py` itself (the same file `OP_KIND_MODEL_MAP` lives in): discovering *what's available* is not gated, only reading/calling content is (see "Discovery is NOT gated" above and at `mcp_read_resource`).
+- **Content/action** — a handler calls `execute_op(TypedIROp, ctx)` directly. The five op kinds documented above — `mcp` (call_tool), `mcp_read_resource`, `mcp_subscribe_resource`, `mcp_unsubscribe_resource`, `mcp_get_prompt` — all go through this path.
 
-Typed op kinds for the Path-A methods already exist in `OP_KIND_MODEL_MAP` (see the op-kind table at the top of this doc), and `tools/mcp.py`'s own docstring names `execute_op` as the eventual destination for MCP dispatch. So today's route to the four list methods takes three hops that do not pass through the abstraction (`ToolDefinition.handler` -> `host.list_mcp_*` -> the injected `RouterHostAdapter` callback -> `Session._mcp_list_*`) before reaching the same op layer the other five methods reach directly.
+### The error contract: raise at the gateway seam, catch at the tool-handler boundary
 
-### The measurement
+Both routes now share the same exception discipline: `Cancelled`/`MCPFault` propagate as exceptions out of the `MCPGateway` call and are **not** caught inside `RouterHostAdapter`. The catch happens at the tool-handler boundary in `src/reyn/tools/mcp.py`:
 
-Per-method correspondence table (#3409, AST-verified — not re-derived here, see the issue for the full audit trail):
+- The 5 content/action op kinds never catch at all — an uncaught exception reaches `dispatch_tool`, which promotes it to the outer envelope (`{status: "error", error: {kind, message}}`, #3450/#3478).
+- The 5 discovery methods route every gateway call through `_call_mcp_list` (`tools/mcp.py`), a shared try/except that reproduces the exact `{"error": "cancelled"}` / `{"error": str(exc)}` shape the caller received when the catch lived inside `Session._mcp_list_via_gateway` (pre-#3447). A separate failure mode — an unresolved server config (roster empty / server not configured / config not a dict) — is NOT an exception at all; `RouterHostAdapter._mcp_resolve_server_config` returns it as the same `[{"error": ...}]` sentinel shape as an early return, and `_mcp_list_error` (also `tools/mcp.py`) detects it identically whether it came from config resolution or from `_call_mcp_list`'s catch.
 
-| method | routes via | permission gate | audit emit | error format | `_ephemeral`/pool routing |
-|---|---|---|---|---|---|
-| `_mcp_list_servers` | neither (returns the static configured-server roster) | — | — | — | — |
-| `_mcp_list_tools` | `MCPGateway` direct | none | `mcp_tools_listed` | `{"error": ...}` dict, 5 call sites | Y |
-| `_mcp_list_resources` | `MCPGateway` direct | none | `mcp_resources_listed` | same 5 sites | Y |
-| `_mcp_list_resource_templates` | `MCPGateway` direct | none | `mcp_resource_templates_listed` | same 5 sites | Y |
-| `_mcp_list_prompts` | `MCPGateway` direct | none | `mcp_prompts_listed` | same 5 sites | Y |
-| `_mcp_call_tool` | `execute_op(MCPIROp)` | `PermissionDecl(mcp=[server])` | — (op layer's own concern) | none — raises into the op layer | Y (+ pool context manager) |
-| `_mcp_read_resource` | `execute_op` | same | — | none | Y (+ pool context manager) |
-| `_mcp_subscribe_resource` | `execute_op` | same | — | none | Y |
-| `_mcp_unsubscribe_resource` | `execute_op` | same | — | none | Y |
-| `_mcp_get_prompt` | `execute_op` | same | — | none | Y (+ pool context manager) |
+Architect firm (#3411, 2026-07-29): moving the catch upward is behavior-preserving, not a contract change — no context-manager / audit-emit / pool-teardown step sits between the raise site (inside `MCPGateway`) and either catch position (the old in-`Session` one or the new in-`tools/mcp.py` one).
 
-The four listing methods now share one seam, `Session._mcp_list_via_gateway` — the "error format" and "audit emit" columns above are its behavior, not four independent implementations.
+**Out of scope, by explicit negative acceptance criterion (#3447):** the call-family op kinds (`mcp`, `mcp_read_resource`, `mcp_get_prompt`) were ALREADY unified on the throw contract before this fold and get NO new catch — adding one would change their LLM-visible failure shape (today: `dispatch_tool`'s `Error (kind): message` envelope; a handler-level catch would instead surface as an ok-shaped `{"error": ...}` dict, a real behavior change). "Symmetric with discovery" is not a reason to add one; see #3447 (architect self-correction) for the full reasoning against a shared call-family catch helper.
 
-Two of the five columns are **not** blockers, despite looking like gaps:
+### History: why this used to be two structurally different paths (#3409)
 
-- **Missing permission gate** — by design. `list_tools`/`list_resources`/`list_resource_templates`/`list_prompts` are declared "no permission gate, no op-kind" in `schemas/models.py` itself (the same file `OP_KIND_MODEL_MAP` lives in): discovering *what's available* is not gated, only reading/calling content is (see "Discovery is NOT gated" above and at `mcp_read_resource`).
-- **Audit-emit split** — resolved in #3410: all four listing methods emit (`mcp_tools_listed` / `mcp_resources_listed` / `mcp_resource_templates_listed` / `mcp_prompts_listed`), and the `MCPListingSuppression` registry that declared the earlier asymmetry is gone. The asymmetry had no recorded rationale — that registry said so in its own comment — and closing the audit-event kind vocabulary made it a public-interface question rather than an internal one: two of four sibling discovery calls being invisible to an external consumer is not something a consumer can reason about. Each call site now passes its kind as a string literal, so the vocabulary gate can read it.
-
-### The actual blocker: the error contract, not permission
-
-Path A's four listing methods return `[{"error": ...}]` at five call sites inside `_mcp_list_via_gateway`: no MCP servers configured, the named server not configured, its config not a dict, a `Cancelled` cancellation folded to `{"error": "cancelled"}`, and an `MCPFault` folded to `{"error": str(exc)}`. That list-wrapped dict is the op layer's internal representation — unchanged by #3441. What reaches the tool handler's caller changed: all five `_handle_list_mcp_*` handlers now route through the shared `_mcp_list_error` helper (`tools/mcp.py`, #3441), which detects the sentinel and returns a bare `{"error": ...}` dict instead of the list. That dict is still the value the tool handler returns to the LLM — it is caller-visible, and **LLM-visible**: a model reading `{"error": "cancelled"}` is reading response text, not observing a raised exception. The normalization changes the wire shape (list of one vs. a bare dict), not this section's underlying point — Path A still returns error text as a dict, Path B still raises.
-
-Path B's five `execute_op`-routed methods have none of that. `Cancelled`, `MCPFault`, and everything else propagate as exceptions into the op layer; there is no `{"error": ...}` dict anywhere on that path.
-
-Folding the four listing methods into `execute_op` is therefore not a structural move by itself — it requires first deciding what the *unified* error contract is: the op layer starts returning `list_*`-shaped error dicts, the listing call sites start accepting exceptions, or `execute_op` grows a dual contract. Any of those changes what the LLM receives on a listing failure, which is a **behaviour change**, not a refactor — and behaviour changes are not folded into structural changes (a regression on either axis then has no attribution). That decision is tracked separately as **#3411** and is deliberately out of scope here.
-
-🔴 **This document is accurate only while #3411 is open.** Once #3411 settles which error contract Path A and Path B share, the one blocking asymmetry in the table above closes and folding the four listing methods into `execute_op` becomes a plain structural move — subject to the usual `OP_KIND_MODEL_MAP` <-> `control-ir.md` same-PR sync rule, since the typed op kinds already exist. Re-derive the table above before acting on it once #3411 closes; do not assume the reasoning here still applies unchanged.
-
-### `RouterHostAdapter`'s parameter count is a shadow of this split, not a Parameter-Object problem
-
-This is why `RouterHostAdapter.__init__` carries 10 `mcp_*` callback parameters (out of its ~80 total) instead of one facade: each of the ten methods above needs its own injected callable because none of them is a thin delegate — the table's "error format" and "`_ephemeral`/pool routing" columns are real logic living on the `Session` side of each callback, not a 2-4 line pass-through. Grouping the 80 parameters into a Parameter Object was already measured as a near-no-op on #3121 (54 -> 45 params, 41 left flat) — the width tracks the tools-handler -> host hop counted in this section, not a missing grouping. The falsifiable form of this claim is recorded as a K-inline directly on `RouterHostAdapter.__init__` in `src/reyn/runtime/services/router_host_adapter.py`.
+Before #3447, discovery routed through `Session` callbacks injected into `RouterHostAdapter.__init__` (`mcp_list_servers=self._mcp_list_servers`, etc. — five separate constructor parameters), which is why `RouterHostAdapter.__init__` carried 10 `mcp_*` callback parameters instead of one facade or zero. The five discovery methods shared one seam, `Session._mcp_list_via_gateway`, which — unlike the content/action ops — caught `Cancelled`/`MCPFault` itself and returned `[{"error": ...}]` rather than raising (#3409's "the actual blocker: the error contract, not permission" finding). #3411 settled the error-contract question (raise, matching the content/action ops) once #3443 gave the discovery handlers a shared catch point (`_mcp_list_error`) to normalize the raised exception back into the same wire shape. #3447 did the resulting structural move: the five discovery methods became `RouterHostAdapter`'s own methods (no more `Session`-side implementation, no more constructor callback for these five — the adapter already duplicated the two inputs they needed, `_mcp_servers_flat`/`_get_mcp_servers_for_router`), and the exception catch moved from `Session._mcp_list_via_gateway` to `tools/mcp.py`'s `_call_mcp_list`.
 
 ## `mcp_install`
 
@@ -621,8 +596,8 @@ Handler lifecycle:
 
 Registers a skill (from a local directory or a git/GitHub source URL) into the
 project's `skills.entries` config. Two tool surface verbs converge on the same
-`op_runtime/skill_install.py` handler: `skill_management__install_local` (local
-path) and `skill_management__install_source` (git/URL, PR-D, #2548).
+`op_runtime/skill_install.py` handler: `skill_install_local` (local
+path) and `skill_install_source` (git/URL, PR-D, #2548).
 
 Local-path example:
 ```json
@@ -702,7 +677,7 @@ a skill body is model instructions, not code to execute; there is still no
 `run_skill` op). Extracted OUT of `read_file`'s former `is_skill_body_path`
 special-case (ADR 0064 §3.5 originally called for a dedicated verb; #2971
 instead folded it into the ordinary read op — this reverses that drift).
-Tool surface: `load_skill` (flat name), qualified `skill_management__load`
+Tool surface: `load_skill`
 (ratified per the #3223 naming-convention arc).
 
 ```json
@@ -762,8 +737,8 @@ expanded/denied values) only when provenance was classified.
 
 Registers a pipeline (from a local DSL file or a git/GitHub source URL) into the
 project's `pipelines.entries` config. Two tool surface verbs converge on the same
-`op_runtime/pipeline_install.py` handler: `pipeline_management__install_local` (local
-path) and `pipeline_management__install_source` (git/URL). Mirrors `skill_install`
+`op_runtime/pipeline_install.py` handler: `pipeline_install_local` (local
+path) and `pipeline_install_source` (git/URL). Mirrors `skill_install`
 as closely as possible, reusing its generic path-safety + sandboxed git-clone helpers
 verbatim (`_safe_skill_name` / `_contained_under` / `_parse_source_spec` /
 `_source_host` / `_shallow_clone` / `_read_yaml` / `_write_yaml` /
@@ -845,7 +820,7 @@ Events emitted: `pipeline_install_threat_match`, `pipeline_install_threat_blocke
 
 Registers a named presentation template (a declarative component tree) into the
 project's `presentations.entries` config (proposal 0060 Phase 1 Layer A, A8).
-One tool surface verb: `presentation_management__install`, handled by
+One tool surface verb: `presentation_install_local`, handled by
 `op_runtime/presentation_install.py`. Mirrors `skill_install` /
 `pipeline_install`'s STRUCTURE (permission gate → config write →
 `record_config_generation` → emit event → hot-reload), but there is **no**
@@ -936,7 +911,7 @@ OS-level error; plugin_install/spawn never falls back to a runtime fetch.
 See ADR 0064 §3.11a for the interpreter-path-resolution history this
 redesign supersedes. Handled by
 `op_runtime/plugin_install.py` / `op_runtime/plugin_uninstall.py`. LLM tool
-surface: `plugin_management__install` / `plugin_management__uninstall`
+surface: `install_plugin` / `uninstall_plugin`
 (`tools/plugin_management_verbs.py`) — named distinctly from the op kind to
 avoid a canonical-declaration collision (mirrors the `mcp_install_local` vs
 `mcp_install` op-kind precedent).
@@ -947,7 +922,7 @@ ADR §3.9 (P3): the SAME typed op is also exposed as a slash command
 (`reyn plugin install builtin|local|git <SOURCE>` / `reyn plugin uninstall
 <NAME>`, `interfaces/cli/commands/plugin.py`) — both thin adapters that build
 a `ToolContext` and call `invoke_tool(get_default_registry(),
-"plugin_management__install"/"__uninstall", ...)`, the SAME lookup+dispatch a
+"install_plugin"/"__uninstall", ...)`, the SAME lookup+dispatch a
 live chat-router LLM tool call uses. No surface re-implements the security
 logic: the composite permission decl is declared once in
 `tools/plugin_management_verbs.py` (the tool wrapper), and the `{kind: "git"}`
@@ -1077,7 +1052,7 @@ higher-trust one.
    manifest capability, call `skill_install.handle` / `pipeline_install.
    handle` (each sub-op carries `plugin_id=<name>`, §3.7) for
    skills/pipelines, or write `.reyn/config/mcp.yaml` directly
-   (probe-then-commit, mirrors `mcp__install_local`) for the root
+   (probe-then-commit, mirrors `mcp_install_local`) for the root
    `.mcp.json` — a server's `command` is registered AS-IS, no
    venv-interpreter rewrite. Emit `plugin_install_registered`.
 8. Delete the `_install_state.json` marker (absence = completed) and emit

@@ -36,7 +36,7 @@ from reyn.tools.encoders import encoder_for_transport
 from reyn.tools.exposure import (
     Exposure,
     descriptors_from_entries,
-    without_duplicate_alias_spellings,
+    without_duplicate_names,
 )
 from reyn.tools.scheme import (
     ExecContext,
@@ -151,7 +151,7 @@ class RetrievalScheme:
                 catalog = await ops.catalog_entries()
                 return self._encode(Exposure(
                     descriptors=descriptors_from_entries(
-                        without_duplicate_alias_spellings(base + catalog)
+                        without_duplicate_names(base + catalog)
                     ),
                     sp_facts=self._sp_facts(available, layer_ctx),
                     sp_slot_overrides={"slot_post_catalog": _HIDDEN_STATE_HINT},
@@ -159,10 +159,10 @@ class RetrievalScheme:
             # Initial presentation: the base + the search tool (no catalog flood).
             return self._encode(Exposure(
                 # No dedup pass here, and that is a decision rather than an
-                # omission: this branch adds ONE entry, ``search_actions``, which
-                # is not a qualified ``<category>__<verb>`` spelling of anything,
-                # so no pair can arise. It becomes wrong the day this branch
-                # composes a catalog subset (#3428).
+                # omission: this branch adds ONE entry, ``search_actions``,
+                # which the base tools do not carry, so no duplicate can arise.
+                # It becomes wrong the day this branch composes a catalog
+                # subset (#3428).
                 descriptors=descriptors_from_entries(base + [_search_tool_schema()]),
                 sp_facts=self._sp_facts(available, layer_ctx),
                 sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=False)},
@@ -195,15 +195,15 @@ class RetrievalScheme:
             tools = tools + [_search_tool_schema()]
         return self._encode(
             Exposure(
-                # The searched subset can name a qualified spelling whose bare
-                # twin is already among ``base`` (a hit on ``file__read`` next to
-                # ``read_file``). Deduplicating here does not touch ``matched`` /
-                # ``candidates``, so the OS's convergence accumulator sees the
-                # same candidate set it would have seen; only the duplicate row
-                # is withheld, and the capability stays visible under the bare
-                # spelling that ``base`` already carries.
+                # The searched subset can name an action ``base`` already
+                # carries (a catalog hit on ``read_file`` next to the base
+                # ``read_file`` row). Deduplicating here does not touch
+                # ``matched`` / ``candidates``, so the OS's convergence
+                # accumulator sees the same candidate set it would have seen;
+                # only the repeated row is withheld, and the capability stays
+                # visible under the base entry.
                 descriptors=descriptors_from_entries(
-                    without_duplicate_alias_spellings(tools)
+                    without_duplicate_names(tools)
                 ),
                 sp_facts=self._sp_facts(available, layer_ctx),
                 sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=terminal)},

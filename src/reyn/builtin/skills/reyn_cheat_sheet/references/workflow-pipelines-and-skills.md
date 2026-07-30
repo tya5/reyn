@@ -70,7 +70,7 @@ fields:
 ```
 
 This ships as the builtin pipeline `flagship.research_and_report` (inert --
-invoke by name: `pipeline__run(name="flagship.research_and_report",
+invoke by name: `run_pipeline(name="flagship.research_and_report",
 input={"query": "..."})`, not copy-pasted inline).
 
 ## Skills -- authoring a new one
@@ -80,6 +80,6 @@ Markdown body -- not a schema the OS parses (the pre-1.0 phase-graph
 `entry:`/`graph:`/`final_output:` shape is REMOVED). The registry never
 reads the body -- only `path`/`description` populate the L1 menu; you read
 the body yourself at L2 via the ordinary read op when its description looks
-relevant. Install via `skill_management__install_local` /
-`skill_management__install_source`. Full spec:
+relevant. Install via `skill_install_local` /
+`skill_install_source`. Full spec:
 `docs/concepts/tools-integrations/skills.md`.

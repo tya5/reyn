@@ -50,7 +50,7 @@
     {
       "id": "s3_read_local_files_multi_file",
       "score": "R",
-      "reason": "Router called list_actions(category=file, filter=path) -> 0 items. No skill dispatched. Should use file__glob instead.",
+      "reason": "Router called list_actions(category=file, filter=path) -> 0 items. No skill dispatched. Should use glob_files instead.",
       "events_check": {
         "routing_decided": false,
         "skill_run_spawned": false,
@@ -135,7 +135,7 @@
   "bugs_observed": [
     {
       "id": "BUG-list_actions-path-filter",
-      "description": "Router uses list_actions(category=file, filter=path) for directory listing instead of file__glob. list_actions filter matches action names not filesystem paths, so returns 0 items.",
+      "description": "Router uses list_actions(category=file, filter=path) for directory listing instead of glob_files. list_actions filter matches action names not filesystem paths, so returns 0 items.",
       "scenarios": ["s3", "s9_t1"],
       "severity": "MED",
       "new_in_b35": "possibly persisting"

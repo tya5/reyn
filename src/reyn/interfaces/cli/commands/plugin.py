@@ -10,7 +10,7 @@ uninstall <NAME>         Remove a previously installed plugin (registry entries 
 This is a THIN adapter over the SAME typed op the LLM tool / slash surfaces use
 (ADR 0064 §3.9: "each a thin adapter over the same typed op — surfaces never
 re-implement the logic"). It builds a real ``ToolContext`` and calls
-``invoke_tool(get_default_registry(), "plugin_management__install"/"__uninstall", ...)``
+``invoke_tool(get_default_registry(), "install_plugin"/"__uninstall", ...)``
 — the SAME lookup+dispatch a live chat-router LLM tool call uses (mirrors
 ``RouterLoop._dispatch_registry_tool``) — so the composite permission decl
 (``require_file_write`` on ``~/.reyn/plugins/`` + ``require_http_get``) and the
@@ -284,7 +284,7 @@ def run_install(args: argparse.Namespace) -> None:
     print(f"Installing plugin (kind={kind}): {source_name}")
     try:
         result = asyncio.run(
-            _invoke_plugin_tool("plugin_management__install", tool_args, ctx),
+            _invoke_plugin_tool("install_plugin", tool_args, ctx),
         )
     except PermissionError as exc:
         print(f"\nPermission denied: {exc}", file=sys.stderr)
@@ -323,7 +323,7 @@ def run_uninstall(args: argparse.Namespace) -> None:
     print(f"Uninstalling plugin: {name}")
     try:
         result = asyncio.run(
-            _invoke_plugin_tool("plugin_management__uninstall", {"name": name}, ctx),
+            _invoke_plugin_tool("uninstall_plugin", {"name": name}, ctx),
         )
     except PermissionError as exc:
         print(f"\nPermission denied: {exc}", file=sys.stderr)

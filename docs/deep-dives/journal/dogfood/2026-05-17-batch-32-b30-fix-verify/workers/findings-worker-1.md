@@ -26,7 +26,7 @@
 ## S1: simple_capability_question — VERIFIED
 
 Events: user_message_received + chat_turn_completed_inline emitted. No permission_denied.
-Reply listed list_actions, invoke_action, file__read, skill__*, memory.operation__remember_shared.
+Reply listed list_actions, invoke_action, read_file, skill__*, memory.operation__remember_shared.
 Rubric: mentions skills and capabilities — PASS.
 
 NEW-1: 17 tools in first request including skill__index_docs + skill__eval — CONFIRMED.

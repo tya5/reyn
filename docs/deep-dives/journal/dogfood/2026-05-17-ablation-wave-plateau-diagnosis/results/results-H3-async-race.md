@@ -66,7 +66,7 @@ The patch exits at step 2 (before step 3), preventing step 4.
    to verified" = inference — depends on (a) LLM choosing skill spawn path and
    (b) underlying infrastructure (MCP) being available.
 
-3. **Falsification**: In 4/8 patched S1 runs, LLM chose direct `file__read` instead
+3. **Falsification**: In 4/8 patched S1 runs, LLM chose direct `read_file` instead
    of skill spawn. The patch correctly did NOT fire on those runs. When LLM chose skill
    spawn, patch fired and skill failed due to MCP infrastructure gap (not the race).
    This means the patch is correct but S1 verdict under patch depends on infrastructure.
@@ -106,7 +106,7 @@ The patch exits at step 2 (before step 3), preventing step 4.
 The H3 hypothesis is **partially confirmed** for the one scenario where the race was
 directly attributed (W3 S1), but the "non-trivial fraction of refuted scenarios" claim
 is **not supported** — only 1/22 refuted scenarios in B32 are attributable to this race.
-The dominant refusal causes are: routing misses (file__grep absence), infrastructure gaps
+The dominant refusal causes are: routing misses (grep_files absence), infrastructure gaps
 (MCP/unsafe-python), and unrelated LLM behavior (double-dispatch, plan trigger misses).
 
 ---

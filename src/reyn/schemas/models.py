@@ -431,7 +431,7 @@ class LoadSkillIROp(BaseModel):
     ``skill_body_loaded`` audit-event (fails closed, never open).
 
     LLM-callable via ToolDefinition ``load_skill`` (qualified name
-    ``skill_management__load`` per the #3223 naming-convention arc —
+    ``load_skill`` per the #3223 naming-convention arc —
     ratified, not provisional).
     """
     kind: Literal["load_skill"]
@@ -833,7 +833,8 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "mcp":         MCPIROp,
     # #2597 slice ②a: resources consumption — read is permission-gated (external
     # content); list/list-templates stay op-kind-free, mirroring list_tools (see
-    # op_runtime/mcp_read_resource.py + session.py's _mcp_list_resources).
+    # op_runtime/mcp_read_resource.py + RouterHostAdapter.mcp_list_resources,
+    # #3447 — folded off Session, still no op-kind of its own).
     "mcp_read_resource": MCPReadResourceIROp,
     # #2597 slice ②b: resource subscriptions — subscribe/unsubscribe are
     # permission-gated the same way read is (stateful action against the
@@ -843,7 +844,8 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "mcp_unsubscribe_resource": MCPUnsubscribeResourceIROp,
     # #2597 slice ②c: prompts consumption — get is permission-gated (external
     # content); list stays op-kind-free, mirroring list_tools/list_resources (see
-    # op_runtime/mcp_get_prompt.py + session.py's _mcp_list_prompts).
+    # op_runtime/mcp_get_prompt.py + RouterHostAdapter.mcp_list_prompts, #3447 —
+    # folded off Session, still no op-kind of its own).
     "mcp_get_prompt": MCPGetPromptIROp,
     "ask_user":    AskUserIROp,
     # FP-0054 PR-A: present bulk data + a declarative view to the user surface

@@ -10,15 +10,37 @@ LLM-callable surface for the cron message-based shape landed in PR-B
   CRON_ENABLE     — toggle a job to enabled (purity=side_effect)
   CRON_DISABLE    — toggle a job to disabled (purity=side_effect)
 
-LLM call shape (= invoke_action wrapper category):
+Call shape (each tool has ONE name — #3429):
 
-  invoke_action(action_name="cron__register", args={
-      "name": "morning_news",
-      "to": "news_agent",
-      "message": "今日のニュースまとめ",
-      "schedule": "0 9 * * *",
-      "enabled": true,
-  })
+  cron_register(
+      name="morning_news",
+      to="news_agent",
+      message="今日のニュースまとめ",
+      schedule="0 9 * * *",
+      enabled=True,
+  )
+
+  This docstring used to show ``invoke_action(action_name="cron__register", …)``.
+  BOTH halves of that were wrong, and #3429 only caused the first:
+
+  - ``cron__register`` is the abolished ``<category>__<verb>`` spelling.
+  - **There is no ``cron`` category, and these five are not catalog actions**
+    (measured: ``is_known_action("cron_register")`` is False, ``"cron"`` is not
+    in ``CATEGORIES``), so ``invoke_action`` REFUSES them with the §D12
+    unknown-action error. That was already true before #3429 — the qualified
+    spelling never resolved either.
+
+  They are registered with ``gates.router="allow"`` but carry no
+  ``router_dispatched`` flag and are emitted by no ``build_tools`` branch
+  (measured on both wrapper modes), i.e. **registered-but-LLM-unreachable**.
+  That class has now been closed SIX times one instance at a time (#2032 /
+  #3083 / #2913 / #2875 / #3215, and this); **#3464 tracks closing it with a
+  gate instead of a seventh rename**, and explicitly rules out "just add
+  ``cron`` to ``CATEGORIES``" as the fix.
+
+  #3429 therefore leaves the reachability alone — deciding whether cron belongs
+  in the catalog is a design call, not a rename — rather than papering over it
+  with a call example that does not work.
 
 Persistence + live update:
 
@@ -356,7 +378,7 @@ async def _handle_cron_list(
 async def _set_enabled(
     args: Mapping[str, Any], ctx: ToolContext, *, enabled: bool,
 ) -> ToolResult:
-    """Shared backbone for cron__enable / cron__disable."""
+    """Shared backbone for cron_enable / cron_disable."""
     name = str(args["name"])
     await _gate(ctx, name)
 

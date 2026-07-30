@@ -33,8 +33,8 @@ Trace file: `/tmp/reyn-worktrees/b27-3/traces/recall_fresh.jsonl`
 
 LLM call `f27e3ee0-faf3-40d0-b126-9c2e66cb5245` tools list (13 entries):
 ```
-list_actions, describe_action, invoke_action, list_actions, exec__run,
-web__fetch, web__search, file__grep, file__read,
+list_actions, describe_action, invoke_action, list_actions, exec,
+web_fetch, web_search, grep_files, read_file,
 memory.operation__remember_shared, skill__skill_builder,
 skill__skill_improver, skill__skill_importer
 ```
@@ -52,12 +52,12 @@ recorded action.
 
 Primary data: `.reyn/state/action_usage.jsonl` contents:
 ```
-{"qualified_name": "file__read", "ts": ...}
-{"qualified_name": "file__grep", "ts": ...}
-{"qualified_name": "web__search", "ts": ...}
-{"qualified_name": "web__fetch", "ts": ...}
-{"qualified_name": "exec__run", "ts": ...}
-{"qualified_name": "list_actions", "ts": ...}
+{"action_name": "read_file", "ts": ...}
+{"action_name": "grep_files", "ts": ...}
+{"action_name": "web_search", "ts": ...}
+{"action_name": "web_fetch", "ts": ...}
+{"action_name": "exec", "ts": ...}
+{"action_name": "list_actions", "ts": ...}
 ```
 
 The `list_actions` universal catalog wrapper was itself recorded in the
@@ -115,8 +115,8 @@ tool_executed PASS, skill_run_spawned FAIL. Artifacts FAIL.
 
 ### S2: file_glob_grep — refuted
 
-Routing error: `file__grep` has no routing rule (`no routing rule for
-category 'exec'`). Agent replied it cannot grep. `file__grep` appears in
+Routing error: `grep_files` has no routing rule (`no routing rule for
+category 'exec'`). Agent replied it cannot grep. `grep_files` appears in
 DEFAULT_HOT_LIST_SEED but is not a registered action. Rubric FAIL.
 
 ### S3: web_search_query — inconclusive
@@ -133,7 +133,7 @@ FAIL. Artifacts FAIL.
 
 ### S5: sandboxed_exec_simple — refuted
 
-LLM called `exec__run` (non-existent); routing returned error suggesting
+LLM called `exec` (non-existent); routing returned error suggesting
 `exec__sandboxed_exec`. LLM did not retry. No sandboxed_exec events. No
 output "4". Fresh agent blocked by dup-tool bug independently.
 
@@ -173,8 +173,8 @@ Applied before the dup-tool infrastructure finding:
 1. [CRITICAL] Filter universal wrapper names from hot-list candidates.
    Fix: exclude list_actions/describe_action/invoke_action/search_actions
    from ActionUsageTracker.get_top_n() results or from _build_hot_list_aliases.
-2. [HIGH] file__grep not registered despite appearing in DEFAULT_HOT_LIST_SEED.
-3. [HIGH] exec__run has no routing rule; exec__sandboxed_exec is correct.
+2. [HIGH] grep_files not registered despite appearing in DEFAULT_HOT_LIST_SEED.
+3. [HIGH] exec has no routing rule; exec__sandboxed_exec is correct.
    LLM does not auto-retry after routing error with suggestions.
 4. [MED] skill_run_spawned assertions incompatible with chat router architecture.
 5. [MED] artifacts assertions incompatible with chat router execution model.

@@ -54,7 +54,7 @@ def test_web_fetch_router_render_matches_legacy_shape():
     assert "max_length" in fn["description"]
     assert "50000" in fn["description"]
     assert "web_search" in fn["description"]
-    assert "file__read" in fn["description"]  # #1449: read_tool_result retired
+    assert "read_file" in fn["description"]  # #1449: read_tool_result retired
 
     # Parameters schema
     params = fn["parameters"]
@@ -79,7 +79,7 @@ def test_web_fetch_router_render_exact_description():
         "stored under .reyn/tool-results/. url: absolute http/https URL. "
         "max_length: cap on extracted body length (default 50000). "
         "Use after web_search to load a result page; call "
-        "file__read(path) to read the full body."
+        "read_file(path) to read the full body."
     )
     assert rendered["function"]["description"] == expected_description
 
@@ -309,7 +309,7 @@ def test_router_invoke_action_web_fetch_deny_raises_permission_error(
     """Tier 2: WEB_FETCH._handle raises PermissionError under web.fetch: deny.
 
     Regression for #53. Before the fix, the router-invoked path of
-    ``invoke_action(web__fetch, ...)`` silently bypassed the deny check —
+    ``invoke_action(web_fetch, ...)`` silently bypassed the deny check —
     ``ctx.permission_resolver`` was None (the ToolContext lookup
     ``getattr(host, "permission_resolver", None)`` returned None because
     the adapter stored the resolver as ``_perm``), so ``handle_web_fetch``

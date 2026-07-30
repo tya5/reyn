@@ -142,8 +142,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(WEB_SEARCH)
     registry.register(WEB_FETCH)
     # #1449: read_tool_result retired — its same-host path-ref read is covered by
-    # file__read(path) (the refs are plain files under .reyn/tool-results/), and
-    # its image guard is superseded by file__read's #365 media-blocks + #1449
+    # read_file(path) (the refs are plain files under .reyn/tool-results/), and
+    # its image guard is superseded by read_file's #365 media-blocks + #1449
     # binary guard. The cross-host resource_uri path was a never-implemented stub.
     # FP-0066 P1b: semantic_search / drop_source / index_update / list_rag_sources
     # (the agent-facing layer-1 in-core RAG tools, ADR-0033 Phase 1 / FP-0057
@@ -232,7 +232,7 @@ def get_default_registry() -> ToolRegistry:
     # handler needs a live session-bound HookBus/session_id).
     registry.register(EMIT_HOOK_EVENT)
     # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
-    # the file__glob / file__grep surfaces but scoped to the OS source tree.
+    # the glob_files / grep_files surfaces but scoped to the OS source tree.
     registry.register(REYN_REPO_GLOB)
     registry.register(REYN_REPO_GREP)
     # ── Coarse-name ops ──────────────────────────────────────────────────
@@ -242,11 +242,12 @@ def get_default_registry() -> ToolRegistry:
     # surface that used to invoke it is gone (#2434 / #2438); the bare-name
     # pipeline-step path still reaches it (#2696).
     registry.register(MCP_INSTALL_OP)
-    # FP-0034 §D23: mcp_drop_server is reachable via the universal_action
-    # ``mcp.operation__drop_server`` wrapper.
+    # FP-0034 §D23: mcp_drop_server is reachable through the ``invoke_action``
+    # wrapper as well as directly.
     registry.register(MCP_DROP_SERVER_OP)
     # Issue #879: verb-object MCP wrappers — pure op-runtime handlers
-    # (no skill spawn) under the new ``mcp`` category in _OPERATION_RULES.
+    # (no skill spawn) under the ``mcp`` category (universal_dispatch
+    # ``_CATEGORY_ACTIONS``).
     registry.register(MCP_SEARCH_REGISTRY)
     registry.register(MCP_INSTALL_REGISTRY)
     registry.register(MCP_INSTALL_PACKAGE)
@@ -284,7 +285,7 @@ def get_default_registry() -> ToolRegistry:
     # IS-1 (pipeline v0.9 R6): run_pipeline — sync launch of a REGISTERED
     # pipeline. IS-5: surfaced to the live LLM catalog
     # via the ``pipeline`` universal-catalog category enumerator (lists
-    # registered pipelines) + invoke_action (``pipeline__run`` /
+    # registered pipelines) + invoke_action (``run_pipeline`` /
     # ``run_pipeline``) — the same PR-3b-shipped path every other
     # universal-catalog wrapper uses, NOT build_tools() (which is
     # hand-assembled and strips direct tools once wrappers are on).
@@ -292,7 +293,7 @@ def get_default_registry() -> ToolRegistry:
     # #3026: pipeline discovery verb — the surface that NAMES the registered
     # pipelines. Constant-count replacement for the per-pipeline
     # ``pipeline__<name>`` catalog actions (which scaled the LLM payload with
-    # the operator's pipeline count); ``pipeline__run``'s ``name`` argument is
+    # the operator's pipeline count); ``run_pipeline``'s ``name`` argument is
     # unguessable without it.
     registry.register(PIPELINE_LIST)
     # IS-2: run_pipeline_async — background launch in a crash-recoverable
@@ -316,8 +317,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(DESCRIBE_ACTION)
     registry.register(INVOKE_ACTION)
     # FP-0066 P3c (#3247 firm §2/§3): search_knowledge — semantic search across
-    # the operator's own skill/memory/repo knowledge (the ``knowledge`` category,
-    # qualified ``knowledge__search`` via universal_dispatch._OPERATION_RULES).
+    # the operator's own skill/memory/repo knowledge (the ``knowledge`` category
+    # in universal_dispatch._CATEGORY_ACTIONS).
     # Distinct from search_actions (tool-catalog search, above) — separate index,
     # separate role (discovery over knowledge content, not capability discovery).
     registry.register(SEARCH_KNOWLEDGE)

@@ -60,10 +60,10 @@ def test_cli_scoped_overrides_contextmanager_isolation():
     override never leaks across tests."""
     set_cli_scoped_overrides(None)
     assert get_cli_scoped_overrides().exclude_tools is None
-    ov = CliScopedOverrides(exclude_tools=frozenset({"web__search"}), grant_file_write=True)
+    ov = CliScopedOverrides(exclude_tools=frozenset({"web_search"}), grant_file_write=True)
     with cli_scoped_overrides(ov):
         g = get_cli_scoped_overrides()
-        assert g.exclude_tools == frozenset({"web__search"})
+        assert g.exclude_tools == frozenset({"web_search"})
         assert g.grant_file_write is True
     assert get_cli_scoped_overrides().exclude_tools is None
     assert get_cli_scoped_overrides().grant_file_write is False
@@ -85,7 +85,7 @@ def test_no_scoped_flag_is_noop():
 @pytest.mark.parametrize("scoped_kw", [
     {"env_backend": "docker"},
     {"grant_file_write": True},
-    {"exclude_tools": "web__search,web__fetch"},
+    {"exclude_tools": "web_search,web_fetch"},
 ])
 def test_reload_guard_blocks_each_scoped_flag(scoped_kw):
     """Tier 2: #1401 — each scoped flag + --reload fails loud (SystemExit), not a
@@ -103,10 +103,10 @@ def test_exclude_and_grant_thread_to_holder():
     set_cli_scoped_overrides(None)
     try:
         _apply_cli_scoped_overrides(
-            _ns(exclude_tools="web__search, web__fetch", grant_file_write=True)
+            _ns(exclude_tools="web_search, web_fetch", grant_file_write=True)
         )
         g = get_cli_scoped_overrides()
-        assert g.exclude_tools == frozenset({"web__search", "web__fetch"})
+        assert g.exclude_tools == frozenset({"web_search", "web_fetch"})
         assert g.grant_file_write is True
         assert g.environment_backend is None
     finally:

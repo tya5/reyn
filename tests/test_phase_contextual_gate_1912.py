@@ -25,11 +25,11 @@ from reyn.security.permissions.effective import (
 
 def test_shared_gate_denies_and_allows():
     """Tier 2: tool_contextually_denied — the single seam every path calls."""
-    ctx = ContextualPermission(tool_deny=frozenset({"exec__run"}))
-    assert tool_contextually_denied(ctx, "exec__run") is True
+    ctx = ContextualPermission(tool_deny=frozenset({"exec"}))
+    assert tool_contextually_denied(ctx, "exec") is True
     assert tool_contextually_denied(ctx, "semantic_search") is False
     # None contextual is inert (⊤) → byte-identical to pre-#1827.
-    assert tool_contextually_denied(None, "exec__run") is False
+    assert tool_contextually_denied(None, "exec") is False
 
 
 class _Host:
@@ -60,12 +60,12 @@ def test_phase_style_routerloop_blocks_denied_tool():
     PhaseExecutor now passes ``contextual_permission`` to it. Here we pin that such
     a RouterLoop blocks via the shared gate (native + invoke_action shapes).
     """
-    ctx = ContextualPermission(tool_deny=frozenset({"exec__run"}))
+    ctx = ContextualPermission(tool_deny=frozenset({"exec"}))
     narrowed = RouterLoop(host=_Host(), chain_id="p", max_iterations=5,
                           contextual_permission=ctx)
-    assert _exec(narrowed, "exec__run", {}).get("error", {}).get("kind") == "tool_excluded"
-    assert _exec(narrowed, "invoke_action", {"action_name": "exec__run"}).get("error", {}).get("kind") == "tool_excluded"
+    assert _exec(narrowed, "exec", {}).get("error", {}).get("kind") == "tool_excluded"
+    assert _exec(narrowed, "invoke_action", {"action_name": "exec"}).get("error", {}).get("kind") == "tool_excluded"
 
     # falsify: with no contextual (the pre-#1912 phase RouterLoop) it is NOT blocked
     open_loop = RouterLoop(host=_Host(), chain_id="p", max_iterations=5)
-    assert _exec(open_loop, "exec__run", {}).get("error", {}).get("kind") != "tool_excluded"
+    assert _exec(open_loop, "exec", {}).get("error", {}).get("kind") != "tool_excluded"

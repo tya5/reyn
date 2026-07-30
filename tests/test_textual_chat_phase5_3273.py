@@ -163,14 +163,14 @@ def _fixture_log() -> "list[ChatMessage]":
                     "id": "call_1",
                     "type": "function",
                     "function": {
-                        "name": "file__read",
+                        "name": "read_file",
                         "arguments": '{"path": "foo.py", "limit": 42}',
                     },
                 }
             ],
         ),
         ChatMessage(
-            role="tool", content="Read 42 lines", name="file__read",
+            role="tool", content="Read 42 lines", name="read_file",
             tool_call_id="call_1",
         ),
         ChatMessage(role="summary", content="(compactor carry — never shown)"),
@@ -206,14 +206,14 @@ def test_projection_maps_roles_preserves_order_and_names_source() -> None:
     assert convo == [
         ("user", "first question"),
         ("agent", "first answer"),
-        ("tool_call_started", "file__read"),
+        ("tool_call_started", "read_file"),
         ("user", "second question"),
         ("agent", "second answer"),
     ]
     # The coalesced tool row carries BOTH the correlated call (a REAL non-default
     # tool name + non-empty args, correlated by tool_call_id) AND the result.
     tool = next(f for f in frames if f.kind == "tool_call_started")
-    assert tool.meta.get("tool") == "file__read"
+    assert tool.meta.get("tool") == "read_file"
     assert tool.meta.get("args") == {"path": "foo.py", "limit": 42}
     assert tool.meta.get(RESULT_KIND_KEY) == "tool_call_completed"
     assert tool.meta.get(RESULT_META_KEY) == {"result": "Read 42 lines"}
@@ -272,7 +272,7 @@ def test_projection_typed_dispatch_envelope_failure_classified_as_tool_call_fail
     failure_text = "Error (not_found): file not found: missing.py"
     frames = project_restored_frames([
         ChatMessage(
-            role="tool", content=failure_text, name="file__read",
+            role="tool", content=failure_text, name="read_file",
             tool_call_id="missing_call",
             meta={
                 TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
@@ -295,7 +295,7 @@ def test_projection_typed_dispatch_envelope_failure_classified_as_tool_call_fail
     # Non-vacuity: the OLD behaviour (raw string fed to summarize_tool_result,
     # ignoring meta entirely) never detects a failure — proving the fix
     # actually changed the outcome, not merely re-asserted the input shape.
-    old_summary = summarize_tool_result("file__read", failure_text)
+    old_summary = summarize_tool_result("read_file", failure_text)
     assert not old_summary.startswith("✗"), (
         "sanity check failed: the OLD string-based summary already looked "
         "like a failure, so this test would not prove the fix changed anything"
@@ -332,7 +332,7 @@ def test_projection_success_payload_starting_with_error_word_not_misclassified()
     """Tier 1: THE false positive Option B (an earlier, since-abandoned
     string-prefix approach) could not close, and the reason for the #73
     co-vet pivot to a typed flag — a SUCCESSFUL tool result whose own payload
-    literally STARTS WITH "Error:" (e.g. ``file__read`` of a log file whose
+    literally STARTS WITH "Error:" (e.g. ``read_file`` of a log file whose
     first line happens to be an "Error: ..." message) carries NO typed
     ``TOOL_STATUS_META_KEY`` (persist time correctly classified it as a
     success), so the projection must NOT classify it as a failure — the
@@ -340,7 +340,7 @@ def test_projection_success_payload_starting_with_error_word_not_misclassified()
     log_first_line = "Error: disk full at 03:14, retrying write"
     frames = project_restored_frames([
         ChatMessage(
-            role="tool", content=log_first_line, name="file__read",
+            role="tool", content=log_first_line, name="read_file",
             tool_call_id="missing_call",
         ),
     ])
@@ -359,7 +359,7 @@ def test_projection_pre73_history_with_no_typed_flag_reads_as_success() -> None:
     fix), never inferred as failure from the string or from anything else."""
     frames = project_restored_frames([
         ChatMessage(
-            role="tool", content="Read 42 lines", name="file__read",
+            role="tool", content="Read 42 lines", name="read_file",
             tool_call_id="missing_call", meta={},
         ),
     ])
@@ -409,7 +409,7 @@ async def test_restart_shows_previous_conversation_before_live_frames() -> None:
             ("system", "⤺ resumed previous conversation"),
             ("user", "first question"),
             ("agent", "first answer"),
-            ("tool_call_started", "file__read"),
+            ("tool_call_started", "read_file"),
             ("user", "second question"),
             ("agent", "second answer"),
             ("user", "LIVE turn after restart"),
@@ -461,7 +461,7 @@ async def test_restored_failed_tool_resolves_to_error_state() -> None:
     log = [
         ChatMessage(
             role="tool", content="Error (not_found): file not found: missing.py",
-            name="file__read", tool_call_id="missing_call",
+            name="read_file", tool_call_id="missing_call",
             meta={
                 TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
                 TOOL_ERROR_KIND_META_KEY: "not_found",
@@ -616,7 +616,7 @@ async def test_typed_failure_flag_round_trips_through_disk_history(tmp_path, mon
         session = await reg.attach("solo")
         session._append_history(ChatMessage(
             role="tool", content="Error (not_found): file not found: missing.py",
-            name="file__read", tool_call_id="call_fail",
+            name="read_file", tool_call_id="call_fail",
             meta={
                 TOOL_STATUS_META_KEY: TOOL_STATUS_ERROR,
                 TOOL_ERROR_KIND_META_KEY: "not_found",
@@ -625,7 +625,7 @@ async def test_typed_failure_flag_round_trips_through_disk_history(tmp_path, mon
         ))
         session._append_history(ChatMessage(
             role="tool", content="Error: disk full at 03:14, retrying write",
-            name="file__read", tool_call_id="call_ok",
+            name="read_file", tool_call_id="call_ok",
         ))
 
         # REAL disk round trip: drop the in-memory list, reload from history.jsonl.

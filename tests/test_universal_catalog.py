@@ -33,11 +33,8 @@ from reyn.tools.universal_catalog import (
     INVOKE_ACTION,
     LIST_ACTIONS,
     SEARCH_ACTIONS,
-    build_qualified_name,
     is_exec_available,
     is_search_available,
-    is_valid_qualified_name,
-    split_qualified_name,
     visible_categories,
 )
 
@@ -59,6 +56,11 @@ def test_categories_master_table_order() -> None:
     was itself retired outright in FP-0066 P1b, along with the layer-1 agent
     tools it routed to — there is no in-core-RAG category any more. See the
     module docstring's "four collapses" note.
+
+    #3465 appended ``embedding`` (the ``embed`` primitive) and ``hooks``
+    (``emit_hook_event`` / ``hooks_add``) — both were registered
+    router=allow + dispatch-wired but missing a CATEGORIES entry, the same
+    #3083-class gap the ``plugin_management`` comment below documents.
     """
     assert CATEGORIES == (
         "multi_agent",
@@ -77,7 +79,7 @@ def test_categories_master_table_order() -> None:
         # #2548 PR-C: skill management ops (install_local). NOT the ``skill__``
         # resource category; this is the management plane (mirrors ``mcp``).
         "skill_management",
-        # IS-1: pipeline launch verb(s) (pipeline__run = run_pipeline).
+        # IS-1: pipeline launch verb(s) (run_pipeline = run_pipeline).
         "pipeline",
         # pipeline management ops (install_local / install_source). NOT the
         # ``pipeline__`` resource category; management plane (mirrors
@@ -85,21 +87,29 @@ def test_categories_master_table_order() -> None:
         "pipeline_management",
         # proposal 0060 Phase 1 Layer A (A8): presentation management ops
         # (install). Management plane (mirrors skill_management /
-        # pipeline_management); required for presentation_management__install to
+        # pipeline_management); required for presentation_install_local to
         # dispatch.
         "presentation_management",
         # #3083: ADR 0064 P2 plugin management ops (install / uninstall).
         # Management plane (mirrors skill_management / pipeline_management);
         # was registered + dispatch-wired but missing from CATEGORIES, which
-        # made plugin_management__install/__uninstall unreachable via every
+        # made install_plugin/__uninstall unreachable via every
         # enumerate-all / retrieval / codeact catalog scheme.
         "plugin_management",
         # FP-0066 P3c (#3247 firm §3): the ``knowledge`` category —
-        # search_knowledge / knowledge__search, semantic search over the
+        # search_knowledge / search_knowledge, semantic search over the
         # operator's own skill/memory/repo knowledge. Single-entry, like
         # ``exec`` — runtime-gated on ``embedding.enabled`` rather than a
         # sandbox backend.
         "knowledge",
+        # #3465: ``embed`` — the raw, USER-FACING batch text->vector
+        # primitive. Registered + dispatch-wired but missing from
+        # CATEGORIES until now.
+        "embedding",
+        # #3465: ``emit_hook_event`` / ``hooks_add`` — both already declared
+        # ``ToolDefinition(category="hooks")``; registered + dispatch-wired
+        # but missing from CATEGORIES until now.
+        "hooks",
     )
 
 
@@ -111,9 +121,9 @@ def test_categories_no_duplicates() -> None:
 def test_categories_covers_every_dispatch_wired_category() -> None:
     """Tier 2: every category with dispatch rules is enumerable via CATEGORIES.
 
-    #3083: ``plugin_management__install`` / ``plugin_management__uninstall``
-    were registered in the default ToolRegistry AND given routing rules in
-    ``universal_dispatch._OPERATION_RULES``, but ``CATEGORIES`` (this
+    #3083: ``install_plugin`` / ``uninstall_plugin``
+    were registered in the default ToolRegistry AND listed as catalog
+    actions, but ``CATEGORIES`` (this
     module's closed tuple) never gained a ``"plugin_management"`` entry —
     so ``_enumerate_category`` never emitted either action into ANY
     catalog scheme's ``tools=`` payload (dogfood witness: 0/75 tools). Same
@@ -121,22 +131,22 @@ def test_categories_covers_every_dispatch_wired_category() -> None:
     #2589/#2621/#2032 (skill_management / pipeline_management /
     presentation_management all needed the identical fix previously).
 
-    This test derives the expected category set from
-    ``KNOWN_STATIC_QUALIFIED_NAMES`` — the public, registration-derived view
-    of ``_OPERATION_RULES`` (the actual dispatch-routing source of truth) —
-    rather than hand-listing categories a second time, so a future category
-    that gains dispatch rules but not a CATEGORIES entry fails LOUD here
-    instead of silently vanishing from the LLM's tool surface.
+    This test derives the expected category set from the membership table's
+    own ``category_of`` view — the actual dispatch source of truth — rather
+    than hand-listing categories a second time, so a future category that
+    gains actions but not a CATEGORIES entry fails LOUD here instead of
+    silently vanishing from the LLM's tool surface. (#3429: the derivation
+    used to split the category out of each qualified NAME; the category is now
+    a table lookup, so the same fact is read rather than parsed.)
     """
-    from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES_SORTED, category_of
 
     dispatch_wired_categories = {
-        qualified_name.split("__", 1)[0]
-        for qualified_name in KNOWN_STATIC_QUALIFIED_NAMES
+        category_of(name) for name in KNOWN_ACTION_NAMES_SORTED
     }
     missing = dispatch_wired_categories - set(CATEGORIES)
     assert not missing, (
-        f"categories {sorted(missing)} have _OPERATION_RULES routing but are "
+        f"categories {sorted(missing)} have catalog actions but are "
         f"missing from CATEGORIES — their actions are dispatchable via "
         f"invoke_action but will never appear in an enumerated tools= "
         f"payload (see #3083)"
@@ -149,7 +159,7 @@ def test_action_categories_sp_slot_covers_every_category() -> None:
     ``reyn.prompt.universal_slots.ACTION_CATEGORIES_LINES`` is the
     hand-maintained "## Action categories" system-prompt slot content
     (R2) — the per-category one-liner that teaches a (frequently weak)
-    router model what a category is for and its qualified-name shape.
+    router model what a category is for.
     It is a SEPARATE closed list from ``CATEGORIES`` (same #2032/#3083
     "closed enum forgot the new member" shape, just a second surface),
     so a category can be dispatch-wired and catalog-enumerable while
@@ -176,10 +186,10 @@ def test_plugin_management_actions_reachable_via_catalog_entries() -> None:
 
     #3083 root-cause: ``catalog_entries()`` — the function every enumerate-
     all / retrieval / codeact chat scheme calls to build the LLM's ``tools=``
-    — never surfaced ``plugin_management__install`` / ``__uninstall``
+    — never surfaced ``install_plugin`` / ``__uninstall``
     because ``CATEGORIES`` omitted ``"plugin_management"``. This directly
     exercises the real production entry point (not a private accessor) with
-    a minimal real ``ToolContext`` and asserts both qualified names are
+    a minimal real ``ToolContext`` and asserts both action names are
     present, closing the exact reachability gap the dogfood trace witnessed
     (0/75 tools).
     """
@@ -187,124 +197,99 @@ def test_plugin_management_actions_reachable_via_catalog_entries() -> None:
 
     ctx = _make_minimal_ctx()
     entries = catalog_entries(ctx)
-    qualified_names = {item["name"] for item in entries}
-    assert "plugin_management__install" in qualified_names
-    assert "plugin_management__uninstall" in qualified_names
+    action_names = {item["name"] for item in entries}
+    assert "install_plugin" in action_names
+    assert "uninstall_plugin" in action_names
 
 
-# ── 2. Qualified-name parse / build / validate round-trip ─────────────────
+def test_embed_and_hooks_actions_reachable_via_catalog_entries() -> None:
+    """Tier 2: ``embed`` / ``emit_hook_event`` / ``hooks_add`` appear in the
+    flat catalog payload (#3465).
 
-
-@pytest.mark.parametrize(
-    "qualified, category, entry_name",
-    [
-        # Flat category, simple entry
-        ("file__read", "file", "read"),
-        ("web__search", "web", "search"),
-        ("exec__run", "exec", "run"),
-        # Dotted category, simple entry
-        ("multi_agent__delegate", "multi_agent", "delegate"),
-        # #3026: ``memory_entry__<slug>`` (a per-memory RESOURCE name) no
-        # longer parses — replaced by the ``memory_operation__read`` VERB,
-        # which takes ``layer`` + ``slug`` as explicit arguments instead of
-        # currying the slug into the qualified name.
-        ("memory_operation__read", "memory_operation", "read"),
-        ("memory_operation__remember_shared", "memory_operation", "remember_shared"),
-        # FP-0066 P1b: ``rag_operation__*`` rows retired — the category no
-        # longer exists (#3026's ``rag_corpus`` operation-category replacement,
-        # itself now retired outright).
-        ("reyn_repo__read", "reyn_repo", "read"),
-        # Issue #879 collapsed mcp surface — verb_object actions.
-        ("mcp__search_registry", "mcp", "search_registry"),
-        ("mcp__install_registry", "mcp", "install_registry"),
-        ("mcp__list_tools", "mcp", "list_tools"),
-        ("mcp__call_tool", "mcp", "call_tool"),
-        ("mcp__drop_server", "mcp", "drop_server"),
-        # Entry name containing further underscores (must not re-split)
-        ("mcp__multi__word__name", "mcp", "multi__word__name"),
-    ],
-)
-def test_split_qualified_name_parses_correctly(
-    qualified: str, category: str, entry_name: str,
-) -> None:
-    """Tier 2: split_qualified_name parses §D18 examples correctly.
-
-    Splits on FIRST ``__`` so dotted entry names and multi-underscore
-    entries round-trip.
+    Same #3083-class gap ``test_plugin_management_actions_reachable_via_catalog_entries``
+    closes: all 3 were registered router=allow with a module docstring
+    already asserting LLM-facing intent, but ``_CATEGORY_ACTIONS`` /
+    ``CATEGORIES`` never gained an entry for them, so #3464's
+    reachability gate flagged them ``DEFERRED_WIRING_BUG``. This exercises
+    the real production entry point (not a private accessor) and asserts
+    all 3 names are present in the enumerated ``tools=`` payload — the
+    advertised-surface half of the fix (route (b) membership alone would
+    make them dispatchable but not discoverable).
     """
-    assert split_qualified_name(qualified) == (category, entry_name)
+    from reyn.tools.universal_catalog import catalog_entries
+
+    ctx = _make_minimal_ctx()
+    entries = catalog_entries(ctx)
+    action_names = {item["name"] for item in entries}
+    assert "embed" in action_names
+    assert "emit_hook_event" in action_names
+    assert "hooks_add" in action_names
 
 
-@pytest.mark.parametrize(
-    "category, entry_name, expected",
-    [
-        # FP-0066 P1b: the ``rag_operation`` row is retired — the category no
-        # longer exists.
-        # Issue #879 collapsed mcp surface.
-        ("mcp", "search_registry", "mcp__search_registry"),
-        ("mcp", "call_tool", "mcp__call_tool"),
-    ],
-)
-def test_build_qualified_name_round_trips(
-    category: str, entry_name: str, expected: str,
-) -> None:
-    """Tier 2: build_qualified_name is inverse of split_qualified_name."""
-    built = build_qualified_name(category, entry_name)
-    assert built == expected
-    # Round-trip
-    assert split_qualified_name(built) == (category, entry_name)
+# ── 2. Action names carry no catalog separator (#3429) ───────────────────
+#
+# Sections 2 and 3 used to pin the ``<category>__<entry>`` parser
+# (``split_qualified_name`` / ``build_qualified_name`` /
+# ``is_valid_qualified_name``): round-trips, unknown-category rejection, the
+# "an entry name may itself contain ``__``" rule, and so on. The parser is
+# deleted with the spelling it parsed, so those tests are deleted rather than
+# adapted — there is no second name to parse OUT of.
+#
+# What replaces them is the property the parser's existence made impossible to
+# state: no name the catalog offers contains the separator at all.
 
 
-# ── 3. Negative cases ─────────────────────────────────────────────────────
+def test_no_category_name_contains_the_separator() -> None:
+    """Tier 2: #3429 — a category name is a browsing label, never a prefix.
+
+    ``list_actions(category=[…])`` is where a category reaches the model. A
+    ``__`` in one would be the qualified spelling growing back from the other
+    end (``file__ops__read``), so it fails here."""
+    offenders = [c for c in CATEGORIES if "__" in c]
+    assert offenders == [], f"category name(s) contain the separator: {offenders}"
 
 
-def test_split_qualified_name_missing_separator_raises() -> None:
-    """Tier 2: missing __ separator raises ValueError."""
-    with pytest.raises(ValueError, match=r"missing.*separator"):
-        split_qualified_name("skill_code_review")
+def test_every_catalog_action_is_directly_dispatchable() -> None:
+    """Tier 2: #3429 — every catalog action is in ``REGISTRY_DISPATCH_TOOLS``.
+
+    ``_invoke_router_tool`` used to have a second arm: a name containing ``__``
+    was an action's QUALIFIED spelling, which the dispatch set did not carry, so
+    it was re-routed through ``invoke_action``. 23 of the 46 actions depended on
+    that arm entirely — they were advertised by the flat catalog under their
+    qualified name and dispatched by the wrapper hop, so their ToolDefinitions
+    never set ``router_dispatched``.
+
+    Deleting the arm turned that into a live break: an advertised action without
+    the flag reaches the "unhandled tool" safety return. It was caught by a
+    Tier-3 replay fixture (``test_fp0063_arc_witness``) rather than by a unit
+    check, which is exactly the #2120/#2122 "wired at one seam, not the others"
+    class ``router_dispatched`` was introduced to kill — so the invariant is
+    stated here, over the whole action set, rather than left to a fixture."""
+    from reyn.runtime.router_loop import RouterLoop
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
+
+    assert KNOWN_ACTION_NAMES, "no actions — this check would be vacuous"
+    missing = sorted(KNOWN_ACTION_NAMES - RouterLoop.REGISTRY_DISPATCH_TOOLS)
+    assert missing == [], (
+        f"catalog action(s) not in REGISTRY_DISPATCH_TOOLS: {missing}. A direct "
+        f"call to one of these lands on 'unhandled tool'. Set "
+        f"router_dispatched=True on the ToolDefinition."
+    )
 
 
-def test_split_qualified_name_unknown_category_raises() -> None:
-    """Tier 2: category not in CATEGORIES raises ValueError."""
-    with pytest.raises(ValueError, match="unknown category"):
-        split_qualified_name("nonexistent__something")
+def test_no_enumerated_action_name_contains_the_separator() -> None:
+    """Tier 2: #3429 — nothing the catalog ENUMERATES is qualified.
 
+    Read off the live ``catalog_entries`` payload (the flat action list every
+    scheme sends as ``tools=``) rather than off the membership table, so this
+    fails on a name minted anywhere between the table and the wire."""
+    from reyn.tools.universal_catalog import catalog_entries
 
-def test_split_qualified_name_empty_entry_raises() -> None:
-    """Tier 2: empty entry_name raises ValueError."""
-    with pytest.raises(ValueError, match="empty entry_name"):
-        split_qualified_name("file__")
+    entries = catalog_entries(_make_minimal_ctx())
+    assert entries, "catalog_entries produced nothing — the check would be vacuous"
+    offenders = sorted(e["name"] for e in entries if "__" in e["name"])
+    assert offenders == [], f"qualified name(s) in the enumerated catalog: {offenders}"
 
-
-def test_split_qualified_name_non_string_raises() -> None:
-    """Tier 2: non-string input raises ValueError."""
-    with pytest.raises(ValueError, match="must be str"):
-        split_qualified_name(42)  # type: ignore[arg-type]
-
-
-def test_build_qualified_name_unknown_category_raises() -> None:
-    """Tier 2: build_qualified_name rejects unknown category."""
-    with pytest.raises(ValueError, match="unknown category"):
-        build_qualified_name("nonexistent", "x")
-
-
-def test_build_qualified_name_empty_entry_raises() -> None:
-    """Tier 2: build_qualified_name rejects empty entry_name."""
-    with pytest.raises(ValueError, match="non-empty"):
-        build_qualified_name("file", "")
-
-
-def test_is_valid_qualified_name_predicate() -> None:
-    """Tier 2: is_valid_qualified_name returns True/False without raising.
-
-    Mirrors the predicate convenience contract; useful in filter
-    pipelines and schema validators.
-    """
-    assert is_valid_qualified_name("file__read") is True
-    assert is_valid_qualified_name("mcp__call_tool") is True
-    assert is_valid_qualified_name("missing_separator") is False
-    assert is_valid_qualified_name("unknown__entry") is False
-    assert is_valid_qualified_name("file__") is False
 
 
 # ── 4. 4 ToolDefinitions shape ────────────────────────────────────────────
@@ -393,7 +378,7 @@ def test_describe_action_requires_action_name() -> None:
 def test_invoke_action_requires_action_name_only() -> None:
     """Tier 2: invoke_action.action_name required; args optional (D19).
 
-    Per §D19, resource invoke for memory_entry / mcp__list_servers takes
+    Per §D19, resource invoke for memory_entry / list_mcp_servers takes
     no args, so args MUST be optional. action_name is always required.
     """
     required = INVOKE_ACTION.parameters.get("required", [])

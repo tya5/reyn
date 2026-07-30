@@ -53,7 +53,7 @@ For researcher, the LLM successfully used `agent.peer__researcher` (presumably s
 ### F6: A2A, mcp_install, cron — no skill routing at all (S5, S6, S7)
 
 All three scenarios resulted in inline replies with no skill routing attempts:
-- S5 (a2a): LLM replied it "can't launch reyn web" without checking if ops-report or web__fetch could help
+- S5 (a2a): LLM replied it "can't launch reyn web" without checking if ops-report or web_fetch could help
 - S6 (mcp_install): Replied "no capability" without attempting mcp_install skill dispatch
 - S7 (cron): Called `list_actions(category=["mcp.server"])` (irrelevant category), found nothing, replied "no tool found"
 

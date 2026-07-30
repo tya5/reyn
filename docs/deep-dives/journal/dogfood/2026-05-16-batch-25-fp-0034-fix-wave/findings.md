@@ -47,7 +47,7 @@
 
 - HIDE_LEGACY body は 4-part template 適用済 (= WHAT/WHEN/WHEN NOT/PREFERRED OVER/POST_CALL)
 - **しかし parameter descriptions (= `category` / `filter`) は 4-part 化されていない、 使い分け基準が明示なし**
-- handler は `category='exec'` (string) も accept (= defensive coercion)、 `filter='exec'` も実質動作 (= qualified_name 先頭 match)
+- handler は `category='exec'` (string) も accept (= defensive coercion)、 `filter='exec'` も実質動作 (= action_name 先頭 match)
 - test fixtures: category=[...] 17/18 (= dominant)、 filter 単独 0
 - **推奨 fix**: parameter description で `category`: 「For named categories ALWAYS use this array.」 + `filter`: 「Free-text substring only.」
 

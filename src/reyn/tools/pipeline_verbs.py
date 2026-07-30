@@ -93,11 +93,10 @@ before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
     attached run's duration (``Session.register_cancel_forward``), so the
     caller's Ctrl-C reaches the driver's step-boundary ``cancel_check``.
   - **Real tool-step dispatch, not a stub.** A pipeline ``ToolStep``'s
-    ``tool_dispatch`` is wired through the SAME routing seam
-    ``invoke_action`` uses (``universal_dispatch.resolve_invoke_action`` +
-    the unified ``ToolRegistry`` — see :func:`_make_tool_dispatch`), so a
-    ``tool`` step actually executes a real capability (qualified action name
-    OR bare registered tool name), not a caller-supplied fake.
+    ``tool_dispatch`` resolves ``step.name`` in the unified ``ToolRegistry``
+    and runs that tool's own handler (see :func:`_make_tool_dispatch`), so a
+    ``tool`` step actually executes a real capability, not a caller-supplied
+    fake.
   - **S3 cost-bound**: denied to pipeline-internal ``agent`` steps (an
     ``agent`` step is a leaf worker — nesting is ``call``-only, a later
     slice) — enforced structurally in
@@ -118,23 +117,23 @@ identity, anchors its work-order on a WAL, and replies to the caller):
 
 NOTE (surfacing, IS-5): this tool is registered in the unified
 ``ToolRegistry`` (dispatch-completeness: routable via
-``invoke_action``/``pipeline__run``, classified for the content-threat +
+``invoke_action``/``run_pipeline``, classified for the content-threat +
 capability-floor guards) and IS surfaced to the live LLM — not via
 ``build_tools()`` (which is hand-assembled and strips direct tools once the
 universal-catalog wrappers are on; PR-3b already shipped that default-on),
 but via the same modern path every other universal-catalog wrapper uses.
 
-#3026: discovery of a REGISTERED pipeline is now the ``pipeline__list`` verb
+#3026: discovery of a REGISTERED pipeline is now the ``pipeline_list`` verb
 (``pipeline_list`` below), which returns each registered pipeline's name +
 description from ``ctx.router_state.pipeline_registry``; the LLM launches a
-chosen one through ``invoke_action(action="pipeline__run", args={name,
+chosen one through ``invoke_action(action="run_pipeline", args={name,
 input})``. Previously ``_enumerate_category`` emitted one
-``pipeline__<name>`` action per REGISTERED pipeline — so the LLM's ``tools=``
+action per REGISTERED pipeline — so the LLM's ``tools=``
 payload grew with the operator's pipelines, and the per-pipeline action was
-in any case a pure currying of ``pipeline__run`` (it forwarded ``input``
+in any case a pure currying of ``run_pipeline`` (it forwarded ``input``
 and curried ``name``, reaching ``run_pipeline`` with identical effective
 args). Collapsing it cost no capability; the one thing it did uniquely —
-NAMING the registered pipelines — is what ``pipeline__list`` now does in a
+NAMING the registered pipelines — is what ``pipeline_list`` now does in a
 constant single tool.
 ``Session`` (``runtime/session.py``) constructs + owns the production
 ``PipelineRegistry`` that backs this (empty until a later slice populates it
@@ -183,9 +182,9 @@ _RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
 # ``ToolStep`` that dispatches a pipeline launch (sync or async) or a
 # delegation would nest agentic work under a step, defeating the
 # transitive-closure cost-bound approval a REGISTERED pipeline gets at launch
-# time — nesting is ``call``-only. Checked on BOTH the raw step name and the
-# post-``resolve_invoke_action`` target, so the qualified forms
-# (``pipeline__run`` / ``multi_agent__delegate``) are covered too.
+# time — nesting is ``call``-only. One name per tool (#3429), so checking the
+# step name is the whole check: there is no second spelling that could reach a
+# denied tool past this set.
 _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
     "run_pipeline", "run_pipeline_async", "delegate_to_agent",
     # IS-4 sibling sweep: the inline launch verbs are the same escape hatch as
@@ -199,39 +198,30 @@ _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
 def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
     """Build the real ``tool_dispatch`` a pipeline ``ToolStep`` invokes through.
 
-    Routes ``step.name`` through the SAME seam ``invoke_action`` uses
-    (``universal_dispatch.resolve_invoke_action`` — see
-    ``tools/universal_catalog.py:_handle_invoke_action``, the precedent this
-    mirrors): a qualified action name (``file__read``) resolves to its target
-    tool + shaped args; a name with no operation-rule route falls back to a
-    direct bare-name lookup in the unified registry (so a pipeline can also
-    name a tool directly, e.g. ``"web_search"``). Either way the target
-    handler is invoked with ``ctx`` forwarded VERBATIM — same as
-    ``invoke_action`` forwards it — so router_state callbacks (permission
-    resolver, workspace, etc.) reach the target exactly as if the caller had
-    invoked it directly. No stub, no op_runtime bridge: this IS the real
-    tool-execution path.
+    ``step.name`` is looked up directly in the unified registry and its handler
+    invoked with ``ctx`` forwarded VERBATIM — same as ``invoke_action`` forwards
+    it — so router_state callbacks (permission resolver, workspace, etc.) reach
+    the tool exactly as if the caller had invoked it directly. No stub, no
+    op_runtime bridge: this IS the real tool-execution path.
+
+    #3429: this used to try ``universal_dispatch.resolve_invoke_action`` first,
+    so a step could name a tool by its second, ``<category>__<verb>`` spelling
+    (``tool: file__read``) or by an author-time resource form (``tool:
+    mcp__echo__ping``, ``tool: pipeline__greet``) that curried the resource id
+    out of ``args``. Those spellings are gone: a step names the flat tool and
+    passes the resource id as an ordinary argument
+    (``mcp_call_tool{tool, tool_args}``, ``run_pipeline{name}``) — the shape the
+    enumerated verbs already used, and the shape the two remaining call sites of
+    that resolution had to special-case around.
     """
 
     async def _dispatch(name: str, resolved_args: "dict[str, Any]") -> Any:
         from reyn.tools import get_default_registry
-        from reyn.tools.universal_dispatch import (
-            UnknownActionError,
-            resolve_invoke_action,
-        )
 
         registry = get_default_registry()
-        target_name = name
         target_args: "dict[str, Any]" = dict(resolved_args)
-        try:
-            resolved = resolve_invoke_action(name, resolved_args)
-        except UnknownActionError:
-            resolved = None
-        if resolved is not None:
-            target_name = resolved.target_tool_name
-            target_args = dict(resolved.target_args)
 
-        if name in _PIPELINE_STEP_DENY_TOOLS or target_name in _PIPELINE_STEP_DENY_TOOLS:
+        if name in _PIPELINE_STEP_DENY_TOOLS:
             raise PipelineExecutionError(
                 f"pipeline tool step {name!r} is structurally denied (R6 S3): "
                 "a step must not launch a pipeline or delegate — nesting is "
@@ -239,13 +229,13 @@ def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
                 "transitive closure."
             )
 
-        target = registry.lookup(target_name)
+        target = registry.lookup(name)
         if target is None:
             raise PipelineExecutionError(
                 f"pipeline tool step {name!r} does not resolve to a "
-                f"registered tool (tried qualified-action routing, then a "
-                f"bare lookup of {target_name!r})"
+                f"registered tool"
             )
+        target_name = name
         result = await target.handler(target_args, ctx)
         # FP-0056 PR-F1: tag the RESOLVED target tool name so _run_tool_step canonicalizes by invoked
         # identity (declaration born at the tool's registration seam), not result["kind"]. Stripped
@@ -409,7 +399,7 @@ from reyn.core.offload.canonical import (  # noqa: E402
     run_pipeline_to_canonical,
 )
 
-# ── pipeline__list (#3026) ───────────────────────────────────────────────────
+# ── pipeline_list (#3026) ───────────────────────────────────────────────────
 
 _PIPELINE_LIST_DESCRIPTION = _pipeline_descriptions.pipeline_list.text
 
@@ -428,7 +418,7 @@ async def _handle_pipeline_list(
     """Return the registered pipelines: ``{pipelines: [{name, description}, ...]}``.
 
     Reads the SAME ``ctx.router_state.pipeline_registry`` the catalog used to
-    enumerate ``pipeline__<name>`` from, so this verb and ``pipeline__run``
+    enumerate a per-pipeline action from, so this verb and ``run_pipeline``
     cannot disagree about which pipelines exist.
 
     A None registry — a narrow test host, or a host that does not support
@@ -437,7 +427,7 @@ async def _handle_pipeline_list(
     the catalog enumeration has always degraded.
 
     ``name`` is the load-bearing field: it is what the caller passes back as
-    ``pipeline__run(name=...)``.
+    ``run_pipeline(name=...)``.
     """
     rs = getattr(ctx, "router_state", None)
     registry = getattr(rs, "pipeline_registry", None) if rs is not None else None
@@ -454,6 +444,13 @@ async def _handle_pipeline_list(
 PIPELINE_LIST = ToolDefinition(
     canonical=pipeline_list_to_canonical,
     name="pipeline_list",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PIPELINE_LIST_DESCRIPTION,
     parameters=_PIPELINE_LIST_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -461,7 +458,7 @@ PIPELINE_LIST = ToolDefinition(
     category="discovery",
     purity="read_only",
     # A pipeline's description is operator- OR third-party-authored text:
-    # ``pipeline_management__install_source`` registers a pipeline straight out of
+    # ``pipeline_install_source`` registers a pipeline straight out of
     # a fetched git repo. It is threat-scanned at install, but this tool
     # re-surfaces it on every later call, when a scan-rule update may have changed
     # the verdict. Identical rationale to ``skill_list`` (#2971), whose
@@ -472,6 +469,13 @@ PIPELINE_LIST = ToolDefinition(
 RUN_PIPELINE = ToolDefinition(
     canonical=run_pipeline_to_canonical,
     name="run_pipeline",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_RUN_PIPELINE_DESCRIPTION,
     parameters=_RUN_PIPELINE_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -569,6 +573,13 @@ async def _handle_run_pipeline_async(
 RUN_PIPELINE_ASYNC = ToolDefinition(
     canonical=run_pipeline_async_to_canonical,
     name="run_pipeline_async",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_RUN_PIPELINE_ASYNC_DESCRIPTION,
     parameters=_RUN_PIPELINE_PARAMETERS,  # same surface: name + optional input
     gates=ToolGates(router="allow"),
@@ -621,10 +632,6 @@ def _static_analysis_gate(
     nothing, so the caller can run it strictly before any driver-session launch.
     """
     from reyn.tools import get_default_registry
-    from reyn.tools.universal_dispatch import (
-        UnknownActionError,
-        resolve_invoke_action,
-    )
 
     registry = get_default_registry()
     for i, step in enumerate(pipeline.steps):
@@ -635,33 +642,25 @@ def _static_analysis_gate(
                 f"step {i}: schema ref {schema!r} does not resolve — no "
                 "'schema:' document in the definition defines it"
             )
-        # Checks 3 + 5: tool-step name resolution + S3 nested-launch deny. Mirror
-        # the run-time resolution ``_make_tool_dispatch`` performs (qualified
-        # action routing first, then a bare registry lookup) so the static verdict
-        # matches what would actually dispatch.
+        # Checks 3 + 5: tool-step name resolution + S3 nested-launch deny. Mirrors
+        # the run-time resolution ``_make_tool_dispatch`` performs (a registry
+        # lookup of the step name) so the static verdict matches what would
+        # actually dispatch.
         if isinstance(step, ToolStep):
             name = step.name
-            target_name = name
-            try:
-                resolved = resolve_invoke_action(name, {})
-            except UnknownActionError:
-                resolved = None
-            if resolved is not None:
-                target_name = resolved.target_tool_name
             # Check 5 (S3): reject BEFORE the registry lookup — a launch/delegate
             # verb IS a registered tool, so lookup would pass; the deny must win.
-            if name in _PIPELINE_STEP_DENY_TOOLS or target_name in _PIPELINE_STEP_DENY_TOOLS:
+            if name in _PIPELINE_STEP_DENY_TOOLS:
                 return (
                     f"step {i}: tool {name!r} is structurally denied (R6 S3) — an "
                     "inline pipeline step must not launch a pipeline or delegate "
                     "(nesting is call-only)"
                 )
             # Check 3: the tool name must resolve to a registered tool.
-            if registry.lookup(target_name) is None:
+            if registry.lookup(name) is None:
                 return (
                     f"step {i}: tool {name!r} does not resolve to a registered "
-                    f"tool (tried qualified-action routing, then a bare lookup of "
-                    f"{target_name!r})"
+                    f"tool"
                 )
         # Check 6 (INLINE-ONLY): an agent step may only run under the invoker's
         # own identity — a non-invoker identity is a capability escalation.
@@ -883,6 +882,13 @@ async def _handle_run_pipeline_inline_async(
 RUN_PIPELINE_INLINE = ToolDefinition(
     canonical=run_pipeline_to_canonical,
     name="run_pipeline_inline",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_RUN_PIPELINE_INLINE_DESCRIPTION,
     parameters=_RUN_PIPELINE_INLINE_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -895,6 +901,13 @@ RUN_PIPELINE_INLINE = ToolDefinition(
 RUN_PIPELINE_INLINE_ASYNC = ToolDefinition(
     canonical=run_pipeline_async_to_canonical,
     name="run_pipeline_inline_async",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION,
     parameters=_RUN_PIPELINE_INLINE_PARAMETERS,  # same surface: definition + input
     gates=ToolGates(router="allow"),

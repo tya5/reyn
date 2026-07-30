@@ -17,7 +17,7 @@ mirror of the ``category`` field).
 #3026 adds a fifth, ``pipeline_list`` — the read-only discovery verb
 (``category="discovery"``, grouped here by feature-area like the rest). Its
 text is NOT a relocation (the tool is new): it replaced the per-pipeline
-``pipeline__<name>`` catalog actions, which were the only surface naming a
+catalog actions, which were the only surface naming a
 REGISTERED pipeline but put one action per pipeline into the LLM's
 ``tools=``. A required ``name`` argument the model has no stated way to
 enumerate is the same reachability gap #2971 closed for skills.
@@ -32,21 +32,21 @@ pipeline_list = ToolDescription(
     purpose=(
         "The discovery half of the pipeline launch surface (#3026): names the "
         "REGISTERED pipelines so `run_pipeline`'s `name` argument is "
-        "answerable. Replaces the per-pipeline `pipeline__<name>` catalog "
+        "answerable. Replaces the per-pipeline catalog "
         "actions, whose count scaled with the operator's pipelines."
     ),
     text=(
         "List the pipelines registered in this session, with each pipeline's "
-        "name and description. Call this before `pipeline__run` when you do "
+        "name and description. Call this before `run_pipeline` when you do "
         "not already know a pipeline name: the names are chosen by the "
         "operator, so they cannot be guessed. An empty list means no "
         "pipelines are registered — say so rather than guessing a name."
     ),
     ja=(
         "このセッションに登録済みのパイプラインを名前・説明つきで列挙する。"
-        "pipeline__run の name は運用者が決めた名前なので推測できない。"
-        "名前を知らない場合はまずこれを呼ぶ。#3026 で pipeline__<name>（= "
-        "payload が運用者のパイプライン数に比例して増える原因）を畳んだ"
+        "run_pipeline の name は運用者が決めた名前なので推測できない。"
+        "名前を知らない場合はまずこれを呼ぶ。#3026 でパイプラインごとの"
+        "アクション（= payload が運用者のパイプライン数に比例して増える原因）を畳んだ"
         "代わりに置かれた、定数個の discovery verb。"
     ),
 )

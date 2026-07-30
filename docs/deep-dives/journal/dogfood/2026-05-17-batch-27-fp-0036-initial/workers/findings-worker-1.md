@@ -39,9 +39,9 @@
 - **Scenario**: explicit_skill_invocation_word_stats, catalog_routing_decided_emitted, multi_turn_pronoun_reference, out_of_scope_graceful_decline
 - **Observation** (primary data):
   - stdout for all 4 runs: `litellm.BadRequestError: GeminiException BadRequestError - {"error": {"code": 400, "message": "Duplicate function declaration found: list_actions"}}`
-  - Trace 7cba69d2 (s4): `tools (13): ['list_actions', 'describe_action', 'invoke_action', 'list_actions', 'file__read', ...]` — list_actions at positions 0 and 3.
+  - Trace 7cba69d2 (s4): `tools (13): ['list_actions', 'describe_action', 'invoke_action', 'list_actions', 'read_file', ...]` — list_actions at positions 0 and 3.
   - Trace 528971cd (s5, fresh agent): identical duplicate pattern.
-  - Pre-duplication (S1 trace cd153ed3): `tools (13): ['list_actions', 'describe_action', 'invoke_action', 'file__read', ..., 'skill__read_local_files']` — no duplicate, all unique. `skill__read_local_files` also disappears from list when duplicate appears.
+  - Pre-duplication (S1 trace cd153ed3): `tools (13): ['list_actions', 'describe_action', 'invoke_action', 'read_file', ..., 'skill__read_local_files']` — no duplicate, all unique. `skill__read_local_files` also disappears from list when duplicate appears.
   - Trigger: duplicate first appears after scenario 3's `tool_called`/`tool_returned` pair for `list_actions` enters history. Reproducible across all agents created or used after this point (verified: dogfood-b27-1-s4, s5, s6, s7, dogfood-b27-1-test, dogfood-b27-1 itself post-S3).
 - **Expectation** (from yaml): valid LLM reply + skill_run events for all 4 scenarios.
 - **Gap**: Router sends duplicate tool name to Gemini API, which rejects with INVALID_ARGUMENT. Router does not deduplicate tool list before LLM call. All 4 scenarios receive no reply and emit no skill events.

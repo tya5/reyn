@@ -69,8 +69,6 @@ def _make_adapter(
         file_write=_noop_callable,
         file_delete=_noop_callable,
         file_regenerate_index=_noop_callable,
-        mcp_list_servers=_noop_callable,
-        mcp_list_tools=_noop_callable,
         mcp_call_tool=_noop_callable,
         send_to_agent=_noop_callable,
         put_outbox=_noop_callable,

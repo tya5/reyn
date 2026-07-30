@@ -17,7 +17,7 @@
     "real_os_layer": "+structural: D2-wrapper visible all workers + R-WEB unblock confirmed; +scope_refinement"
   },
   "workers": {
-    "W1_chat_router_smoke":      {"v": 4, "i": 1, "r": 2, "b": 0, "delta_vs_b36": 4,  "d2_wrapper_visible": true,  "wrapper_path_arg_canonical": "partial", "notable": "ghost alias default_api.web__search [MED]"},
+    "W1_chat_router_smoke":      {"v": 4, "i": 1, "r": 2, "b": 0, "delta_vs_b36": 4,  "d2_wrapper_visible": true,  "wrapper_path_arg_canonical": "partial", "notable": "ghost alias default_api.web_search [MED]"},
     "W2_stdlib_skills_core":     {"v": 2, "i": 5, "r": 2, "b": 0, "delta_vs_b36": -1, "d2_wrapper_visible": true,  "wrapper_path_arg_canonical": "partial", "notable": "ghost alias skill__create_skill [MED], hot-list coverage gap unchanged"},
     "W3_control_ir_ops":         {"v": 4, "i": 0, "r": 5, "b": 0, "delta_vs_b36": 0,  "d2_wrapper_visible": true,  "direct_alias_non_regress": true, "notable": "S8 judge_phase schema validation bug [MED]; worktree-freshness V swing"},
     "W4_permissions_and_safety": {"v": 3, "i": 5, "r": 0, "b": 0, "delta_vs_b36": 0,  "wrapper_arg_canonical_s1": false, "wrapper_arg_canonical_s6": false, "notable": "hallucination drift source_id->source_name [HIGH: synonym normalize structural break evidence]"},
@@ -29,7 +29,7 @@
     "hypothesis": "D2-wrapper scope is hot-list-only; non-hot-listed actions on invoke_action path remain schema-blind, leading to LLM hallucination drift across batches.",
     "observations": [
       {"worker": "W2", "scenario": "S1", "action": "rag.operation__drop_source", "hot_list_state": "absent", "llm_args_key": "source_id"},
-      {"worker": "W4", "scenario": "S1", "action": "file__write", "hot_list_state": "absent", "llm_args_key": "text"},
+      {"worker": "W4", "scenario": "S1", "action": "write_file", "hot_list_state": "absent", "llm_args_key": "text"},
       {"worker": "W4", "scenario": "S6", "action": "rag.operation__drop_source", "hot_list_state": "absent", "llm_args_key": "source_name", "note": "NEW VARIANT — drift from B36 source_id (= synonym normalize bankrupt)"},
       {"worker": "W5", "scenario": "S3", "action": "agent.peer__researcher", "hot_list_state": "absent (cold)", "llm_args_key": "message", "note": "invoke_action description body hardcoded example overwhelms ARS"}
     ],
@@ -41,7 +41,7 @@
   },
   "ghost_alias_seed_corruption": {
     "observations": [
-      {"worker": "W1", "ghost_name": "default_api.web__search", "note": "qualified-name corruption in action_usage.jsonl"},
+      {"worker": "W1", "ghost_name": "default_api.web_search", "note": "qualified-name corruption in action_usage.jsonl"},
       {"worker": "W2", "ghost_name": "skill__create_skill", "note": "renamed skill (canonical: skill__skill_builder), prior session persistence"}
     ],
     "fix_candidate": "Validate alias existence at hot-list seed load time; reject names not in current action registry"

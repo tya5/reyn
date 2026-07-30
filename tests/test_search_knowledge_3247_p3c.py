@@ -17,7 +17,7 @@ Covers:
      flagset_1822.py``; this file adds a direct, narrower check).
   4. visibility gate (firm §6, shared with search_actions):
      ``_enumerate_category("knowledge", ctx)`` is empty when embedding is
-     not configured / ``rs`` is None, and returns ``knowledge__search``
+     not configured / ``rs`` is None, and returns ``search_knowledge``
      when it is.
   5. completeness (search_await contract): a dirty knowledge source is
      healed (re-built) before ``search_knowledge`` serves results.
@@ -169,14 +169,14 @@ def test_enumerate_knowledge_category_hidden_when_embedding_not_configured() -> 
 
 def test_enumerate_knowledge_category_visible_when_embedding_configured() -> None:
     """Tier 2: embedding_provider + embedding_model_class present (embedding.
-    enabled=true) -> knowledge__search enumerated."""
+    enabled=true) -> search_knowledge enumerated."""
     rs = RouterCallerState(embedding_provider=object(), embedding_model_class="standard")
     ctx = ToolContext(
         events=None, permission_resolver=None, workspace=None,
         caller_kind="router", router_state=rs,
     )
     entries = _enumerate_category("knowledge", ctx)
-    assert [e["qualified_name"] for e in entries] == ["knowledge__search"]
+    assert [e["action_name"] for e in entries] == ["search_knowledge"]
 
 
 # ── 1. §5 contract end-to-end (real memory + skill ingest) ─────────────────

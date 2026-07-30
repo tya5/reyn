@@ -32,7 +32,6 @@ from reyn.tools.encoders import build_actions_map, render_code_api
 from reyn.tools.schemes._content_fence_cell import _format_codeact_observation
 from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 from reyn.tools.schemes.retrieval import _search_sp
-from reyn.tools.universal_dispatch import _OPERATION_RULES
 
 # Hiragana, Katakana, and CJK Unified Ideographs (incl. extension A) — the
 # same three ranges the owner named for the audit.
@@ -115,12 +114,12 @@ def _all_assembled_system_prompts() -> list[tuple[str, str]]:
 
     # CodeAct scheme's code-API render.
     sample_entries = [
-        {"qualified_name": "file__read", "name": "file__read",
+        {"action_name": "read_file", "name": "read_file",
          "description": "Read a file", "parameters": {"properties": {"path": {}}}},
-        {"qualified_name": "exec__run", "name": "exec__run",
+        {"action_name": "exec", "name": "exec",
          "description": "Run a shell command", "parameters": {"properties": {"argv": {}}}},
     ]
-    ident_by_qn = build_actions_map([e["qualified_name"] for e in sample_entries])
+    ident_by_qn = build_actions_map([e["action_name"] for e in sample_entries])
     out.append(("encoders.render_code_api", render_code_api(sample_entries, ident_by_qn)))
 
     return out
@@ -245,30 +244,6 @@ class TestAssembledSystemPromptsAreCJKFree:
         )
 
 
-def _is_illustrative_mcp_tool_example(token: str) -> bool:
-    """A dynamic MCP tool reference of the form ``mcp__<server>__<tool>`` (3+
-    ``__``-segments under the ``mcp`` prefix) is a per-server example, not a
-    statically registered verb — the SP uses ``mcp__brave__search`` to teach the
-    ``mcp__<server>__<tool>`` shape. The static ``mcp`` management verbs
-    (``mcp__call_tool`` etc.) are 2-segment and DO resolve via _OPERATION_RULES,
-    so they are NOT excluded here."""
-    return token.startswith("mcp__") and token.count("__") >= 2
-
-
-def _resolve_qualified_action(token: str) -> "str | None":
-    """Resolve a qualified action name from SP prose to a live registry tool
-    name, or return None if it does not resolve. Mirrors the real dispatch
-    lookup: ``_OPERATION_RULES[token]`` → target ToolDefinition name → registry.
-    """
-    rule = _OPERATION_RULES.get(token)
-    if rule is None:
-        return None
-    target_name = rule[0]
-    if target_name in get_default_registry():
-        return target_name
-    return None
-
-
 class TestSPToolNamesResolveToLiveTools:
     """Tier 2b: every tool name referenced in assembled system-prompt prose
     resolves to a LIVE registered tool. Structurally prevents a stale
@@ -276,21 +251,26 @@ class TestSPToolNamesResolveToLiveTools:
     the SP text) from silently shipping — the SP would instruct the LLM to call
     a name the OS no longer dispatches."""
 
-    def test_every_qualified_action_name_in_sp_resolves(self):
-        """Tier 2b: each backtick `<category>__<entry>` token in the assembled
-        SP resolves via the real dispatch table (_OPERATION_RULES → registry),
-        except the documented dynamic ``mcp__<server>__<tool>`` example shape."""
-        stale: list[tuple[str, str]] = []
+    def test_sp_prose_teaches_no_double_underscore_tool_name(self):
+        """Tier 2b: #3429 — no backtick token in the assembled SP names a tool
+        with a ``__`` in it.
+
+        The catalog's ``<category>__<verb>`` spelling was abolished, so a
+        ``__``-bearing name in SP prose is either a resurrected alias or a
+        stale line teaching one. The single exception is the MCP tool
+        IDENTIFIER (``<server>__<tool>``), which is an ARGUMENT VALUE for
+        ``mcp_call_tool`` in a namespace reyn does not own — allowed only when
+        the surrounding line marks it as such."""
+        offenders: list[tuple[str, str]] = []
         for path, text in _all_assembled_system_prompts():
             for m in _QUALIFIED_TOKEN_RE.finditer(text):
                 token = m.group(1)
-                if _is_illustrative_mcp_tool_example(token):
+                if token.startswith("<server>__") or token == "<server>__<tool>":
                     continue
-                if _resolve_qualified_action(token) is None:
-                    stale.append((path, token))
-        assert stale == [], (
-            "SP prose references qualified action name(s) that do NOT resolve "
-            f"to a live registered tool (stale rename?): {sorted(set(stale))!r}"
+                offenders.append((path, token))
+        assert offenders == [], (
+            "SP prose contains a `<a>__<b>` tool name — the qualified spelling "
+            f"was abolished in #3429: {sorted(set(offenders))!r}"
         )
 
     def test_every_wrapper_tool_name_in_sp_is_registered(self):
@@ -309,108 +289,80 @@ class TestSPToolNamesResolveToLiveTools:
             f"{sorted(set(stale))!r}"
         )
 
-    def test_strip_falsify_stale_qualified_name_is_detected(self):
-        """Tier 2b: a qualified action name whose dispatch target is NOT
-        registered must be flagged as stale (falsification) — proves the
-        resolver actually checks liveness against the registry."""
-        # `file__edit` → _OPERATION_RULES → "edit_file". Simulate the registry
-        # tool being renamed/removed by resolving a bogus target that cannot be
-        # in the registry — the resolver must return None (= stale).
-        assert _resolve_qualified_action("file__edit") is not None, (
-            "precondition: file__edit should resolve to a live tool"
-        )
-        # A token not in _OPERATION_RULES resolves to None (the stale signal).
-        assert _resolve_qualified_action("file__edit_NONEXISTENT_XYZ") is None, (
-            "strip-falsify: an unresolvable qualified name was not flagged — "
-            "liveness gate is not live"
+    def test_strip_falsify_double_underscore_scan_is_live(self):
+        """Tier 2b: the scan above fires on a planted ``__`` token — proves it
+        is not vacuously passing because the regex never matches anything."""
+        planted = "call `file__read` to read a file"
+        found = [m.group(1) for m in _QUALIFIED_TOKEN_RE.finditer(planted)]
+        assert found == ["file__read"], (
+            "strip-falsify: the qualified-token regex did not match a planted "
+            f"`file__read`, so the SP scan proves nothing: {found!r}"
         )
 
 
-# The bare (non-qualified, no "__") tool-registry-internal names the SP prose
-# is DELIBERATELY allowed to reference by bare backtick — the universal-
-# wrapper vocabulary itself. Any OTHER bare backtick token that happens to
-# match a live registry tool's internal name (e.g. a stray `read_file`
-# instead of the qualified `file__read` the dispatch table expects) is a
-# smell: either a copy-paste of the internal implementation name into SP
-# prose (which the LLM cannot call — dispatch is keyed by qualified name,
-# not this internal name), or a new wrapper-style verb that needs this
-# watch-list extended deliberately (closes the curated-subset trap: adding a
-# 5th SP-referenced bare name must be a conscious edit here, not silent).
-_CURATED_BARE_NAME_WATCHLIST = frozenset(
-    {
-        "list_actions", "search_actions", "invoke_action", "describe_action",
-        # #3083: plugin_management__install / plugin_management__uninstall
-        # (ADR 0064 P2) are registered in the ToolRegistry under their OWN
-        # qualified name — unlike every sibling management verb
-        # (skill_management__install_local -> "skill_install_local",
-        # pipeline_management__install_local -> "pipeline_install_local",
-        # etc.), there is no separate internal bare alias. So referencing
-        # them by backtick in SP prose is the deliberate qualified-name
-        # reference, not an accidental internal-name leak — same reasoning
-        # as the 4 universal-wrapper verbs above, added deliberately here
-        # rather than silently.
-        "plugin_management__install", "plugin_management__uninstall",
-        # FP-0066 P3c (#3247 firm §5): the ``knowledge`` category's
-        # ACTION_CATEGORIES_LINES bullet (universal_slots.py) deliberately
-        # names the kind-routed activation verbs (load_skill /
-        # read_memory_body) plus the new tool itself (search_knowledge) by
-        # their exact registry name, in backticks, to teach the LLM the
-        # kind->verb routing table directly — same "deliberate exact-name
-        # SP vocabulary" reasoning as the 4 universal-wrapper verbs above.
-        "search_knowledge", "load_skill", "read_memory_body",
-    }
-)
+# Backtick tokens in SP prose that are deliberately NOT tool names — argument
+# keys and schema field names the prose has to name. Everything else that looks
+# like a tool name (snake_case with an underscore) must BE one, live in the
+# registry; see the class below.
+_NON_TOOL_BACKTICK_TOKENS = frozenset({
+    # ``read_memory_body``'s / ``mcp_call_tool``'s argument keys, named inline.
+    "kind", "layer", "slug", "source",
+    # #3465: ``emit_hook_event``'s argument key, named inline in the
+    # ``hooks`` category bullet.
+    "event_name",
+})
 _BARE_BACKTICK_TOKEN_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_.]*)`")
 
 
-class TestBareBacktickTokensAreWatchlisted:
-    """Tier 2b: bare-name meta-guard (SP Phase 1 prompt-package co-vet). Any
-    backtick-bare token in the assembled SP that matches a LIVE registered
-    tool's internal name, but is NOT one of the 4 curated universal-wrapper
-    verbs, fails — forcing the watch-list to be extended deliberately as the
-    SP's bare-name vocabulary evolves, instead of silently growing unchecked."""
+class TestSPToolTokensAreLiveRegistryNames:
+    """Tier 2b: every backtick token in the assembled SP that has a tool name's
+    SHAPE resolves to a live registered tool.
 
-    def test_bare_backtick_tokens_matching_registered_tools_are_watchlisted(self):
-        """Tier 2b: every bare backtick token in the assembled SP that
-        matches a live registered tool name is on the curated watch-list."""
-        registry = get_default_registry()
-        registry_names = {tool.name for tool in registry}
-        unexpected: list[tuple[str, str]] = []
+    #3429 inverted this guard's predecessor. That one treated a backticked
+    ``read_file`` as a SMELL — "the LLM cannot call it, dispatch is keyed by the
+    qualified name" — and kept a curated watch-list of the few bare names the SP
+    was allowed to say. The qualified spelling is gone: the flat name IS the
+    dispatch name, so every tool the SP names it names correctly, and a
+    watch-list of exceptions has nothing left to except.
+
+    What survives is the failure the class was created for: a rename that
+    updates the registry and misses the SP prose, leaving the model instructed
+    to call a name the OS no longer dispatches. That is now checkable directly
+    and totally — no curated subset — because a token with a tool name's shape
+    is a tool name."""
+
+    def test_every_tool_shaped_backtick_token_in_sp_is_registered(self):
+        """Tier 2b: each backtick snake_case token in the assembled SP is a live
+        registered tool name (or a declared non-tool argument key)."""
+        registry_names = {tool.name for tool in get_default_registry()}
+        stale: list[tuple[str, str]] = []
         for path, text in _all_assembled_system_prompts():
             for m in _BARE_BACKTICK_TOKEN_RE.finditer(text):
                 token = m.group(1)
-                if token in registry_names and token not in _CURATED_BARE_NAME_WATCHLIST:
-                    unexpected.append((path, token))
-        assert unexpected == [], (
-            "SP prose contains bare backtick token(s) matching a live "
-            "registered tool name that are NOT on the curated watch-list "
-            "(extend _CURATED_BARE_NAME_WATCHLIST deliberately if this is "
-            f"intentional new SP vocabulary): {sorted(set(unexpected))!r}"
+                if "_" not in token or token in _NON_TOOL_BACKTICK_TOKENS:
+                    continue
+                if token not in registry_names:
+                    stale.append((path, token))
+        assert stale == [], (
+            "SP prose names tool-shaped token(s) that are NOT live registered "
+            "tools (stale rename, or a new non-tool term that belongs in "
+            f"_NON_TOOL_BACKTICK_TOKENS): {sorted(set(stale))!r}"
         )
 
-    def test_strip_falsify_unwatchlisted_bare_name_is_detected(self):
-        """Tier 2b: a bare backtick token matching a live registry tool name
-        that is NOT on the watch-list must be flagged (falsification) —
-        proves the scan is live, not vacuously passing."""
-        registry = get_default_registry()
-        registry_names = {tool.name for tool in registry}
-        # `read_file` is a real internal registry name (per get_default_registry())
-        # but is NOT one of the 4 curated wrapper verbs — a bare reference to
-        # it in SP prose must be flagged.
-        assert "read_file" in registry_names, (
-            "precondition: read_file should be a live registered tool name"
-        )
-        assert "read_file" not in _CURATED_BARE_NAME_WATCHLIST, (
-            "precondition: read_file must not already be on the watch-list"
-        )
-        poisoned_text = "Some SP prose accidentally names `read_file` bare."
+    def test_strip_falsify_stale_tool_token_is_detected(self):
+        """Tier 2b: a planted tool-shaped token that is NOT registered must be
+        flagged — proves the scan is live, not vacuously passing."""
+        registry_names = {tool.name for tool in get_default_registry()}
+        poisoned = "Some SP prose still says `read_file_RENAMED_AWAY`."
         hits = [
-            m.group(1) for m in _BARE_BACKTICK_TOKEN_RE.finditer(poisoned_text)
-            if m.group(1) in registry_names and m.group(1) not in _CURATED_BARE_NAME_WATCHLIST
+            m.group(1) for m in _BARE_BACKTICK_TOKEN_RE.finditer(poisoned)
+            if "_" in m.group(1)
+            and m.group(1) not in _NON_TOOL_BACKTICK_TOKENS
+            and m.group(1) not in registry_names
         ]
-        assert hits == ["read_file"], (
-            "strip-falsify: an unwatchlisted bare registry-tool-name token "
-            "was not detected — the meta-guard is not live"
+        assert hits == ["read_file_RENAMED_AWAY"], (
+            "strip-falsify: a stale tool-shaped token was not detected — the "
+            f"liveness guard is not live: {hits!r}"
         )
 
 

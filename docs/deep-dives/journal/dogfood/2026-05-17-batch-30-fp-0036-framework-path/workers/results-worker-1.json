@@ -28,7 +28,7 @@
       "c1_regression": false,
       "routing_decided_emitted": true,
       "chat_turn_completed_inline_emitted": false,
-      "evidence_one_liner": "routing_decided(web__search) emitted, good idempotency reply, but direct_llm artifact absent (web_search used instead)"
+      "evidence_one_liner": "routing_decided(web_search) emitted, good idempotency reply, but direct_llm artifact absent (web_search used instead)"
     },
     {
       "scenario_id": "skill_discovery_request",

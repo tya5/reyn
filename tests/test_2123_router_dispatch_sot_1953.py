@@ -63,9 +63,33 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "load_skill",
     # FP-0066 P3c (#3247 firm §3): search_knowledge gained a router-dispatched
     # ToolDefinition (the new `knowledge` category's semantic-search verb,
-    # qualified `knowledge__search`) so chat + pipeline reach the new
+    # qualified `search_knowledge`) so chat + pipeline reach the new
     # search_knowledge handler.
     "search_knowledge",
+    # #3429: the 23 catalog actions that had NO router_dispatched flag because
+    # they were reached only through ``invoke_action`` — ``_invoke_router_tool``
+    # re-routed anything containing ``__`` (their QUALIFIED spelling) to the
+    # wrapper, so the flat name never needed a dispatch route. With one name per
+    # action that arm is gone, and an ADVERTISED action without the flag lands on
+    # the "unhandled tool" safety return — the exact drift class this file's
+    # cross-seam guard exists to catch, now covering them too.
+    "exec",
+    "install_plugin", "uninstall_plugin", "list_plugins",
+    "mcp_call_tool", "mcp_drop_server",
+    "mcp_install_local", "mcp_install_package", "mcp_install_registry",
+    "mcp_search_registry",
+    "pipeline_install_local", "pipeline_install_source",
+    "pipeline_list", "run_pipeline", "run_pipeline_async",
+    "run_pipeline_inline", "run_pipeline_inline_async",
+    "presentation_install_local",
+    "reyn_repo_glob", "reyn_repo_grep",
+    "skill_install_local", "skill_install_source", "skill_list",
+    # #3465: emit_hook_event / hooks_add gained router_dispatched=True when
+    # they were wired into the catalog action-membership table
+    # (universal_dispatch._CATEGORY_ACTIONS["hooks"]) — dispatched via
+    # invoke_action, same requirement #3429 states above for the 23 catalog
+    # actions.
+    "emit_hook_event", "hooks_add",
 })
 
 _AG = [{"name": "a1", "description": "d"}]
@@ -73,8 +97,8 @@ _MCP = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
 def _advertised_bare_router_tools() -> "set[str]":
-    """Bare (non-qualified) router-tool names build_tools advertises across the broadest
-    surface (all gates open, wrappers both ways) — what the LLM can actually call."""
+    """Router-tool names build_tools advertises across the broadest surface (all
+    gates open, wrappers both ways) — what the LLM can actually call."""
     names: set[str] = set()
     for wrappers in (True, False):
         tools = build_tools(
@@ -83,7 +107,11 @@ def _advertised_bare_router_tools() -> "set[str]":
             mcp_servers=_MCP, universal_wrappers_enabled=wrappers, compact_visible=True,
         )
         names |= {t["function"]["name"] for t in tools}
-    return {n for n in names if "__" not in n}  # qualified aliases route via invoke_action
+    # #3429: the filter that used to sit here dropped ``__``-bearing names,
+    # because a qualified alias routed via invoke_action rather than through the
+    # dispatch set. There is no such name any more, so every advertised name is
+    # in scope for the cross-seam guard below.
+    return names
 
 
 def test_dispatch_set_is_migration_equivalent():
@@ -111,7 +139,7 @@ def test_read_tool_result_dead_drift_removed():
     assert "read_tool_result" not in RouterLoop.REGISTRY_DISPATCH_TOOLS
 
 
-def test_advertised_bare_router_tool_implies_dispatched():
+def test_advertised_router_tool_implies_dispatched():
     """Tier 2: (THE cross-seam guard — the recurrence-killer) every bare router tool that
     build_tools ADVERTISES is in REGISTRY_DISPATCH_TOOLS, so the LLM can never call an
     advertised tool that falls through to 'unhandled tool' (#2120 / read_tool_result

@@ -15,7 +15,7 @@
 | Scenario | Outcome | Key observation |
 |---|---|---|
 | index_docs_basic | REFUTED | Plan+web_search triggered; no rag tool in router |
-| read_local_files_explain_source | INCONCLUSIVE | Correct reply (535 chars) but via file__read, not read_local_files skill |
+| read_local_files_explain_source | INCONCLUSIVE | Correct reply (535 chars) but via read_file, not read_local_files skill |
 | read_local_files_multi_file | REFUTED | Router loop exceeded max_iterations (5); list_actions loop |
 | skill_builder_web_summariser | VERIFIED | skill__skill_builder alias invoked directly with correct args |
 | word_stats_demo_sentence | VERIFIED | invoke_action→word_stats_demo; correct stats in reply (44 chars) |
@@ -109,10 +109,10 @@ The hot-list is usage-history-seeded. These skills had no prior usage in this fr
 `skill__word_stats_demo` alias shows empty properties and `additionalProperties: True`. This is correct per the implementation (skill.md has no input_schema). The skill takes input via `user_message` context not via skill input fields. The alias description does not explain this, so LLMs calling the alias directly (s6) pass no args and get empty stat results.
 
 ### F4: Router loop (s3 = read_local_files_multi_file)
-s3 hit `Router loop exceeded max iterations (5)`. The LLM made 3 `list_actions` calls followed by 2 file tool calls but couldn't converge. This is a structural attractor: without `file__read` or `file__glob` in the initial hot list, the LLM used `list_actions` to discover them, consuming iteration budget before completing the task.
+s3 hit `Router loop exceeded max iterations (5)`. The LLM made 3 `list_actions` calls followed by 2 file tool calls but couldn't converge. This is a structural attractor: without `read_file` or `glob_files` in the initial hot list, the LLM used `list_actions` to discover them, consuming iteration budget before completing the task.
 
-### F5: read_local_files_explain_source routed via file__read (not skill)
-s2 got a correct, substantive reply (535 chars) about `cron/scheduler.py` via `invoke_action → file__read`. The `read_local_files` skill was not in the hot list. The LLM correctly adapted to use the available file tool directly. **Rubric-wise partially satisfying but not the intended skill path.**
+### F5: read_local_files_explain_source routed via read_file (not skill)
+s2 got a correct, substantive reply (535 chars) about `cron/scheduler.py` via `invoke_action → read_file`. The `read_local_files` skill was not in the hot list. The LLM correctly adapted to use the available file tool directly. **Rubric-wise partially satisfying but not the intended skill path.**
 
 ---
 
@@ -120,7 +120,7 @@ s2 got a correct, substantive reply (535 chars) about `cron/scheduler.py` via `i
 
 Positive evidence (direct observations):
 - `skill__skill_builder` RICH schema → LLM invoked with correct 3-field args → skill completed (VERIFIED)
-- `file__glob`, `file__read`, `web__search`, `web__fetch` RICH schemas → LLM invoked these tools correctly in s3, s9
+- `glob_files`, `read_file`, `web_search`, `web_fetch` RICH schemas → LLM invoked these tools correctly in s3, s9
 
 Not tested by this batch (skills absent from hot list):
 - `skill__eval` alias schema (eval not hot-listed, never visible to LLM)

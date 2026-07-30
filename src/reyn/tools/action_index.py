@@ -34,7 +34,7 @@ recovery-core). See ``docs/reference/runtime/reyn-dir-layout.md``.
 Lifecycle:
   1. Construction: empty index, ``is_ready() == False``.
   2. ``await build(items, ctx, model_class)`` — embeds each item's
-     ``"{qualified_name}: {short_description}"`` text via
+     ``"{action_name}: {short_description}"`` text via
      ``execute_op(EmbedIROp(...), ctx)`` (FP-0057 #2856 Part A — the shared
      `embed` op, not a provider-direct call), stores the vectors via the
      backend, and records a catalog snapshot hash. On completion
@@ -64,7 +64,7 @@ a local in-process embedding model's lazy-load lifecycle, FP-0043 C.3 —
 stopped applying once #3128 removed that in-process backend.)
 
 Catalog hash semantics:
-  - Hash is over the SORTED tuple of qualified_names.
+  - Hash is over the SORTED tuple of action_names.
   - When ``build()`` is called with the same hash AND model class, it is
     a no-op (= idempotent reload guard).
   - Different hash, or same hash but a different model class → rebuild
@@ -95,7 +95,7 @@ runtime-invoke category to add — the skill ENGINE was deleted (#2438);
 install-plane), never a per-skill dynamic-dispatch category — so the prior
 "NOT skills" gap note no longer describes a live extension point. The
 ``source``/``kind`` metadata captured on every chunk (``extra["kind"]``,
-derived from the qualified_name's category prefix) still keeps the door
+derived from the action_name's category prefix) still keeps the door
 open for a future per-kind source split or filter without requiring a
 storage-layer rewrite, should a per-skill invoke category ever return.
 """
@@ -121,34 +121,36 @@ DEFAULT_ACTION_SOURCE = "actions"
 
 
 def compute_catalog_hash(items: list[Mapping[str, Any]]) -> str:
-    """Snapshot hash over the qualified_name set.
+    """Snapshot hash over the action_name set.
 
     Stable to ordering, since the items list is sorted before hashing.
     Used as the rebuild trigger: same hash → no-op build.
     """
     names = sorted(
-        str(it.get("qualified_name", ""))
+        str(it.get("action_name", ""))
         for it in items
-        if it.get("qualified_name")
+        if it.get("action_name")
     )
     joined = "\n".join(names)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
-def _split_category(qualified_name: str) -> str:
-    """Best-effort category prefix for metadata/kind hints only.
+def _split_category(action_name: str) -> str:
+    """Best-effort category for metadata/kind hints only.
 
-    Deliberately NOT ``universal_catalog.split_qualified_name`` — that
-    helper raises ``ValueError`` for any category outside the strict
-    ``CATEGORIES`` set, which is too strict for an optional metadata
-    field (test fixtures and future kinds may use qualified_names that
-    don't (yet) validate against that set). This is a soft hint stored
-    in ``ChunkMetadata.extra`` for future kind-based filtering — never
-    correctness-critical.
+    Reads ``universal_dispatch.category_of``, returning ``""`` for a name the
+    catalog does not know — a soft hint stored in ``ChunkMetadata.extra`` for
+    future kind-based filtering, never correctness-critical, so an unknown name
+    must degrade rather than raise (test fixtures and future kinds may index
+    names outside the current action set).
+
+    #3429: it used to take the prefix before ``__``, which was the category
+    only because a name's category was baked into its spelling. The category is
+    now a table lookup.
     """
-    if "__" not in qualified_name:
-        return ""
-    return qualified_name.split("__", 1)[0]
+    from reyn.tools.universal_dispatch import category_of
+
+    return category_of(action_name) or ""
 
 
 class ActionEmbeddingIndex:
@@ -303,7 +305,7 @@ class ActionEmbeddingIndex:
     def _to_chunk_record(
         self, item: Mapping[str, Any], vector: list[float], model_class: str,
     ) -> ChunkRecord:
-        qn = str(item["qualified_name"])
+        qn = str(item["action_name"])
         category = _split_category(qn)
         content_hash = hashlib.sha256(qn.encode("utf-8")).hexdigest()
         metadata: dict[str, Any] = {
@@ -416,11 +418,11 @@ class ActionEmbeddingIndex:
             return None  # cache hit — skip embed call
 
         valid_items = sorted(
-            (dict(it) for it in items if it.get("qualified_name")),
-            key=lambda it: str(it["qualified_name"]),
+            (dict(it) for it in items if it.get("action_name")),
+            key=lambda it: str(it["action_name"]),
         )
         texts = [
-            f"{it['qualified_name']}: {it.get('short_description', '')}"
+            f"{it['action_name']}: {it.get('short_description', '')}"
             for it in valid_items
         ]
         return BuildMaterial(
@@ -441,9 +443,9 @@ class ActionEmbeddingIndex:
     ) -> None:
         """Embed each item and store the vector via the backend.
 
-        Each item must carry ``qualified_name`` and optionally
+        Each item must carry ``action_name`` and optionally
         ``short_description``.  The embedded text is
-        ``"{qualified_name}: {short_description}"`` so both the
+        ``"{action_name}: {short_description}"`` so both the
         category-prefixed name and the human-readable summary
         contribute to the embedding.
 

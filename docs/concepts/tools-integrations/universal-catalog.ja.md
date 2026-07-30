@@ -15,8 +15,8 @@ LLM が学ぶべき tool が 1 つ増えていた。
 **Universal action catalog** (FP-0034) は、 種別ごとの N 個の discover /
 describe / invoke tool を、 **全 category を一律にカバーする 4 つの
 wrapper** に置き換える。 あらゆる action — workflow / peer agent / MCP
-tool / memory entry / file op / indexed corpus / … — は単一の qualified
-name (`<category>__<entry>`) でアドレッシングされ、 `invoke_action` 経由
+tool / memory entry / file op / indexed corpus / … — は **1 つの名前**
+でアドレッシングされ、 `invoke_action` 経由
 で dispatch される。 discovery は `list_actions`、 詳細 introspection は
 `describe_action`、 自然言語 / semantic 検索は `search_actions`
 (embedding-backed) で扱う。
@@ -68,66 +68,49 @@ memory / indexed corpus / install 済 MCP tool / 登録済 pipeline) は verb �
 **引数** であって、それ自体が列挙される action ではない — だから LLM に見せる
 action 数は operator が溜め込んだ量に依存しない。 resource category の collapse で
 resource を *名指しする* surface が失われる箇所には、固定数の discovery verb を
-置いてある (`memory_operation__list` / `rag_operation__list_sources` /
-`mcp__list_tools` / `pipeline__list` / `skill_management__list`)。
+置いてある (`list_memory` / `list_mcp_tools` / `pipeline_list` /
+`skill_list`)。
 
 `mcp` category は LLM に見える surface として 6 個の verb_object actions を提供する:
 
 | Action | 用途 |
 |---|---|
-| `mcp__search_registry`  | 公式 MCP registry で新規 server を検索 |
-| `mcp__install_registry` | registry の server を現 project に install |
-| `mcp__install_package`  | npm / pypi / docker / github URL から install |
-| `mcp__install_local`    | local command (LLM 生成 script 等) を直接登録 |
-| `mcp__list_servers`     | install 済 server を列挙 |
-| `mcp__list_tools`     | 1 server の tool を `<server>__<tool>` ID で列挙 |
-| `mcp__call_tool`      | `<server>__<tool>` ID + `tool_args` で tool を call |
-| `mcp__drop_server`    | install 済 server を削除 |
+| `mcp_search_registry`  | 公式 MCP registry で新規 server を検索 |
+| `mcp_install_registry` | registry の server を現 project に install |
+| `mcp_install_package`  | npm / pypi / docker / github URL から install |
+| `mcp_install_local`    | local command (LLM 生成 script 等) を直接登録 |
+| `list_mcp_servers`     | install 済 server を列挙 |
+| `list_mcp_tools`     | 1 server の tool を `<server>__<tool>` ID で列挙 |
+| `mcp_call_tool`      | `<server>__<tool>` ID + `tool_args` で tool を call |
+| `mcp_drop_server`    | install 済 server を削除 |
 
-## Qualified-name format
+## Action name (#3429)
 
-```
-<category>__<entry_name>
-```
+action の名前は **flat な registry tool 名** — `read_file` / `web_search` /
+`mcp_call_tool` — で、 それが唯一の名前。 category は browsing 軸
+(`list_actions(category=["file"])`) であって、 名前の一部ではない。
 
-separator は **double underscore** (`__`)。 category は `.` を含んでよく
-(`agent.peer` 等)、 entry name は boundary
-の `__` sequence 以外なら任意。 split rule は 「category 名直後の最初の
-`__`」 なので `agent.peer__alice` は (`agent.peer`, `alice`) と正しく
-パースされる。
+**§D18 はかつて 2 つ目の綴りを規定していた** — `<category>__<verb>` (=
+`read_file` は `file__read` でもあった) — parser と、 一方を他方に写す
+routing table つきで。 1 つの操作に 2 つの名前があると、 **tool 名で引く
+subsystem ごとに「両形に対応するか忘れるか」の賭けが 1 回発生する**。 実在
+する 11 subsystem を数えたところ、 明示的な両形補償があるのは 4 (permission
+軸の `_expand_tool_forms`、 op-gate の alias 表、…)、 無いのが 7 (結果の正規化 /
+canonicalization の宣言 / permission-denied のヒント / 広告ゲート /
+exclusive-wrapper の strip 一覧 / `routing_decided` の audit-event /
+action-usage 追跡)。 7 を直しても 12 番目の subsystem が同じ賭けをするので、
+**2 つ目の名前の方を消した**。
 
-例:
+生き残った名前の命名規約は
+[`docs/reference/runtime/tool-naming.md`](../../reference/runtime/tool-naming.md)。
+gate は `tests/test_no_qualified_tool_names_3429.py` — live registry /
+membership table / categories / 組み立て済み `tools=` payload を回り、 名前に
+`__` があれば落ちる。 (削除は状態、 gate が性質。)
 
-| Qualified name | パース結果 |
-|---|---|
-| `agent.peer__alice` | (`agent.peer`, `alice`) |
-| `mcp__call_tool` | (`mcp`, `call_tool`) |
-| `mcp__install_registry` | (`mcp`, `install_registry`) |
-| `rag_operation__semantic_search` | (`rag_operation`, `semantic_search`) |
-| `file__read` | (`file`, `read`) |
-
-### Provider portability — qualified name 中の `.`
-
-OpenAI native function-call API は tool 名を `^[a-zA-Z0-9_-]{1,64}$` に
-制限している (= `.` は不可)。 Reyn の qualified name はカテゴリに `.` を
-含む形 (`agent.peer` 等) があり、 **LiteLLM
-proxy 経由なら OK** だが OpenAI native を直接叩く場合 reject される
-可能性がある。
-
-Reyn の標準設定は全 provider を LiteLLM 経由でルーティングする
-(`reyn.yaml: models: standard: openai/...`) ため、 ドット入り名でも
-end-to-end で動作する。 Gemini / Anthropic / OpenAI-compat endpoint は
-すべて LiteLLM 経由なら `.` を許容する。
-
-OpenAI native (= LiteLLM を介さない) 経路を新規に追加する場合は:
-
-  - LiteLLM proxy を前に立てる (= 推奨、 Reyn の default に揃う)、 もしくは
-  - qualified name を全て `_` ベースに移行 (= catalog enumerator /
-    dispatch table / hot-list / fixture / scenario すべて同期 update が
-    必要な breaking change。 FP-0034 §D18 で tracking)。
-
-直接 OpenAI native callsite が現プロジェクトには存在しないため、
-移行は今は scope 外。 LiteLLM proxy が canonical ingress。
+副次的効果として、 全ての名前が OpenAI native の function-name 文法
+`^[a-zA-Z0-9_-]{1,64}$` を構成上満たす。 qualified name を LiteLLM proxy 依存
+にしていたドット入り category はとうに無く、
+`tests/test_qualified_name_provider_grammar_1456.py` がこの性質を pin している。
 
 ## 3 つの wrapper
 
@@ -135,20 +118,20 @@ OpenAI native (= LiteLLM を介さない) 経路を新規に追加する場合�
 
 カタログをアルファベット順に browse する。 `category` は category 名の
 list (省略 / `[]` 渡しで全 visible category)。 `filter` は
-`qualified_name` と `short_description` に対する大文字小文字無視の部分
-一致。 `offset` / `limit` で pagination。 各 item は `qualified_name` と
+`action_name` と `short_description` に対する大文字小文字無視の部分
+一致。 `offset` / `limit` で pagination。 各 item は `action_name` と
 短い description を持つ; 長い description は意図的に出さず、 一覧を
 コンパクトに保つ。
 
 **weak-model landing 設計** では、 category で絞った結果は各 item の
-完全な `description` と `input_schema` を運ぶ (= `qualified_name` +
+完全な `description` と `input_schema` を運ぶ (= `action_name` +
 `description` + `input_schema` の3点)。 これにより common flow は
 `list_actions` → `invoke_action` の2段になり、 間の `describe_action`
 が不要になる。
 [Weak-model discovery + selection reliability](#weak-model-discovery-selection-reliability)
 参照。
 
-### `describe_action(action_name) → {qualified_name, description, input_schema, metadata}`
+### `describe_action(action_name) → {action_name, description, input_schema, metadata}`
 
 1 つの action の long description、 完全な input schema (= 元 tool の
 `parameters`)、 metadata (`target_tool_name`, `category`, `purity`) を
@@ -164,7 +147,7 @@ schema を既に返すため。 edge case 用にのみ残す: 単一名 lookup�
 
 ### `invoke_action(action_name, args) → <target の result>`
 
-routing layer (下記 [Dispatch](#dispatch-routing-layer) 参照) 経由で
+membership table (下記 [Membership](#membership-action-名の意味) 参照) 経由で
 target tool に dispatch する。 wrapper は transparent: target handler は
 完全な `ToolContext` 下で動くので、 permission gate / events / budget /
 workspace 効果は legacy tool を直接 call した場合と完全に同一。 未知の
@@ -185,50 +168,52 @@ discover し、 その id を引数として渡す:
 
 | やりたいこと | discover | invoke |
 |---|---|---|
-| indexed corpus を検索 | `rag_operation__list_sources` | `rag_operation__semantic_search({sources: ["meetings"], query: "Q3 roadmap"})` |
-| 保存済 memory を read | `memory_operation__list` | `memory_operation__read({layer: "shared", slug: "..."})` |
-| MCP tool を call | `mcp__list_tools` | `mcp__call_tool({tool: "<server>__<tool>", tool_args})` |
-| 登録済 pipeline を実行 | `pipeline__list` | `pipeline__run({name: "greet", input: {...}})` |
+| 保存済 memory を read | `list_memory` | `read_memory_body({layer: "shared", slug: "..."})` |
+| MCP tool を call | `list_mcp_tools` | `mcp_call_tool({tool: "<server>__<tool>", tool_args})` |
+| 登録済 pipeline を実行 | `pipeline_list` | `run_pipeline({name: "greet", input: {...}})` |
+| 自分の knowledge を検索 | — | `search_knowledge({query: "..."})` |
 
-`memory_operation__read` は `layer` (`shared` または `agent`) を明示的に取るので、
+`read_memory_body` は `layer` (`shared` または `agent`) を明示的に取るので、
 両 layer とも catalog から read できる。
 
-**author-time** の resource 形式 2 つは、 列挙されないが **解決は続く** —
-human や agent が手で書く name だから: `pipeline__<name>`
-([pipeline guide](../../guide/for-users/write-a-pipeline.md) が教える形 —
-`pipeline__greet({name: "Reyn"})`) と `mcp__<server>__<tool>` (pipeline DSL
-file の `tool: mcp__echo__ping` step)。 いずれも verb 版と同じ target に同じ
-実効 args で到達する。 caller が既に書いた name の解決は tool を 1 つも消費
-しないが、 列挙は resource 1 件につき tool 1 つを要する。
+MCP の行にある `<server>__<tool>` は MCP **サーバ側** の tool 識別子であり、
+Reyn が所有しない namespace の引数値。 Reyn の tool 名ではない。
 
-## Dispatch (routing layer)
+**#3429 が author-time の例外を削除した。** 「caller が既に書いた name の解決
+は tool を 1 つも消費しない」という理由で、 列挙されないまま **解決だけは
+続いていた** resource 形式が 2 つあった: `pipeline__<name>` (pipeline guide
+が教えていた形) と `mcp__<server>__<tool>` (pipeline DSL の `tool:` step)。
+この理由は payload については真だが、 命名については何も言っていない — どちらも
+既存 verb の **2 つ目の名前**であり、 2 つ目の名前こそが「tool 名で引く
+subsystem ごとの賭け」の源。 pipeline step は flat な tool を名指し、 resource
+id は上表のとおり通常の引数として渡す。
 
-qualified name → target tool 名のマッピングは
+## Membership (action 名の意味)
+
+**action** は登録済みの `ToolDefinition` で、 flat な registry 名でアドレッシング
+される。 **category** はその集合に対する browsing 軸。 membership table は
 [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn)
-にある。 **pure** — I/O なし、 state なし、 live invocation なし。 2 つ
-の table が routing を駆動する:
+にあり **pure** — I/O なし、 state なし、 live invocation なし:
 
-- **`_OPERATION_RULES`** — **完全な literal qualified name の閉じた表** →
-  `(target_tool_name, arg_transformer)`、 全 category を網羅。 これが列挙
-  surface であり、 enumerator が読んでよい唯一の表 — payload を constant に
+- **`_CATEGORY_ACTIONS`** — category → その category が browse する flat tool 名
+  の **閉じた表**。 enumerator が読んでよい唯一の表 — payload を constant に
   保っているのはこの点。
-- **`_RESOURCE_RULES`** — category → `(target_tool_name, arg_transformer)`、
-  完全名が `_OPERATION_RULES` に無い場合のみ参照。 上述の author-time 形式
-  2 つ (`pipeline` / `mcp`) を保持し、 enumerator からは **決して** 読まれない。
 
-Routing は常に:
+`invoke_action` は:
 
-1. qualified name を (`category`, `entry_name`) に split。
-2. 完全な qualified name を `_OPERATION_RULES` で lookup、 無ければその
-   category の `_RESOURCE_RULES` entry に fallback。
-3. arg transformer を実行 (例: `_mcp_tool_args` は `mcp__echo__ping({...})`
-   を `mcp_call_tool({tool, tool_args})` に組み替える)。
-4. `ResolvedAction(target_tool_name, target_args)` を返し、 wrapper が
-   それを unified `ToolRegistry` に渡す。
+1. `action_name` を `KNOWN_ACTION_NAMES` に照合 (`require_known_action`)。
+2. その名前を unified `ToolRegistry` で lookup。
+3. その tool 自身の handler を、 caller が送った args のまま呼ぶ。
 
-match する rule がなければ dispatch は `UnknownActionError` を raise
-し、 既知の qualified name set + visible resource entries から
-`difflib`-ranked suggestions を運ぶ。
+**(1) と (3) の間に書き換え段は無い。** #3429 までは有った: 名前は
+`<category>__<verb>` 綴りで届き、 この層が flat な registry 名に写していた。
+しかも 2 つの写像は args も組み替えていた (`cluster`→`path`、
+`message`→`request`) — **どの広告スキーマにも宣言されていない引数**、 つまり
+qualified 経路だけが持っていた能力。 model が送った args がそのまま handler が
+受け取る args であることが、 "transparent wrapper" が本来意味していたこと。
+
+action でない名前なら dispatch は `UnknownActionError` を raise し、 live で
+availability を反映した action 集合から `difflib`-ranked suggestions を運ぶ。
 
 ## Error response (§D12)
 
@@ -237,15 +222,15 @@ match する rule がなければ dispatch は `UnknownActionError` を raise
 
 ```json
 {
-  "error": "Unknown action 'skil__foo'",
-  "reason": "...",
-  "suggestions": ["skill__foo", "skill__form"],
+  "error": "Unknown action 'read_fil'",
+  "reason": "not a known action name",
+  "suggestions": ["read_file", "edit_file", "delete_file"],
   "hint": "Use list_actions(category=[...]) to discover the correct name."
 }
 ```
 
-`suggestions` は静的 qualified-name set と router-state-aware candidate
-を merge し `difflib.get_close_matches` で生成。 hint は常に
+`suggestions` は live で availability を反映した action 集合に対して
+`difflib.get_close_matches` で生成。 hint は常に
 `list_actions` に戻り、 LLM の recovery 手段を明示する。
 
 ## Visibility gating (§D14)
@@ -281,13 +266,13 @@ strong model (`router_model: strong`) は category 一覧から action を柔軟
 (`router_model: light`) は 2 つの信頼できる failure mode を示し、 catalog
 はこれを **構造的に** 解く — weak 対応が strong の柔軟性を損なわない形で:
 
-1. **Satisficing** — より適した action (`file__edit`) を discover せず、
-   見えている hot-list action (`file__write`) を「十分」として invoke する。
+1. **Satisficing** — より適した action (`edit_file`) を discover せず、
+   見えている hot-list action (`write_file`) を「十分」として invoke する。
 2. **Discovery-skip** — 能動的に `list_actions` を呼ばず、 training prior
    から action 名を推測する (しばしば malformed: `file.write`,
    `file__read_file`)。
 
-*Status: no-names system prompt と `file__edit` cross-reference は出荷済;
+*Status: no-names system prompt と `edit_file` cross-reference は出荷済;
 `list_actions` が schema を返す点と tier-gated mandate は合意済の landing
 設計 (実装進行中)。 以下の各 lever は `gemini-2.5-flash-lite` に対し
 patch + live で reliable N で検証済。*
@@ -307,7 +292,7 @@ system prompt (category を capability で記述し、 action 名は載せない
   obscure なワークフローで `list_actions` 16/16 を観測)。
 
   注意 — 名前隠蔽が discovery を強制するのは *未知* action のみ。 training
-  で **既知** の概念 (`file__read` / `file__write`) では、 weak model は
+  で **既知** の概念 (`read_file` / `write_file`) では、 weak model は
   概念を recall し、 正確な名前を discover せず malformed な近似を emit
   する。 既知 action の *選択* は名前隠蔽ではなく、 下記の機械的 mandate
   で扱う。
@@ -315,7 +300,7 @@ system prompt (category を capability で記述し、 action 名は載せない
 ### `list_actions` が name + description + schema を返す
 
 `list_actions(category=[…])` が bounded set に絞ったとき、 各 item は
-**3点セット** — `qualified_name` / `description` / `input_schema` — を運ぶ:
+**3点セット** — `action_name` / `description` / `input_schema` — を運ぶ:
 
 - **`description`** は model が正しい action を *選ぶ* ための材料; model は
   読めない action を選べない (tool description の慣例的役割)。
@@ -337,8 +322,8 @@ schema を全体的に省くことでは保たない。
 
 weak model は **機械的・無条件の手続き mandate には従う** が **推論ベース
 の推奨は無視する**。 *説明する* cross-reference (「partial edit には
-`file__edit` を推奨」) は無視され (0/20 が従う)、 無条件 mandate (「edit は
-`file__write` でなく `file__edit` を使わ MUST」) は従われる (edit 3 /
+`edit_file` を推奨」) は無視され (0/20 が従う)、 無条件 mandate (「edit は
+`write_file` でなく `edit_file` を使わ MUST」) は従われる (edit 3 /
 write 1)。
 
 そのため router は一連の機械的 system-prompt mandate を model tier で
@@ -346,8 +331,8 @@ gate する (`router_model: light` → on; `strong` → off):
 
 - **`list_actions`-first** — 最初の tool 呼び出しは、 何かを read / write
   / edit する前に MUST `list_actions`。
-- **`file__edit`-MUST** — partial / surgical edit は `file__write` でなく
-  `file__edit` を使う。
+- **`edit_file`-MUST** — partial / surgical edit は `write_file` でなく
+  `edit_file` を使う。
 
 mandate を効かせるのは 2 つの性質:
 
@@ -411,8 +396,8 @@ action_retrieval:
 
 ## 参照ファイル
 
-- [`src/reyn/tools/universal_catalog.py`](https://github.com/anthropics/reyn) — `CATEGORIES`、 4 ToolDefinition、 qualified-name parser、 D14 helper、 real handler
-- [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — routing table、 `ResolvedAction`、 `UnknownActionError`、 `suggest_similar_names`
+- [`src/reyn/tools/universal_catalog.py`](https://github.com/anthropics/reyn) — `CATEGORIES`、 4 ToolDefinition、 D14 helper、 real handler
+- [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — `_CATEGORY_ACTIONS` membership table、 `require_known_action`、 `UnknownActionError`、 `suggest_similar_names`
 - [`src/reyn/runtime/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gate された wrapper)
 - [`src/reyn/runtime/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
 - [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`

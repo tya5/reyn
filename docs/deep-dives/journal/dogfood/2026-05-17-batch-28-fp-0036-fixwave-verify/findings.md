@@ -59,9 +59,9 @@ W1, W2, W3, W4, W5, W6 corroborate. The fix in `_build_hot_list_aliases` (commit
 
 `plan_emitted` event fired in 2/3 plan_mode scenarios. The third (`plan_explain_with_code_references`) chose `reyn_src_read` directly — rational behaviour for a single-file meta question, not a regression.
 
-### 2.3 ✅ B27-H2 — `web__fetch` always-visible per FP-0022
+### 2.3 ✅ B27-H2 — `web_fetch` always-visible per FP-0022
 
-**Status: VERIFIED via W4 S8.** With `web.fetch: deny` in `reyn.local.yaml`, `web__fetch` is present in the tools array (14 tools, request_id `9eb7feb7`). FP-0022 spec restored.
+**Status: VERIFIED via W4 S8.** With `web.fetch: deny` in `reyn.local.yaml`, `web_fetch` is present in the tools array (14 tools, request_id `9eb7feb7`). FP-0022 spec restored.
 
 (The enforcement-layer bug — fetch returning 200 despite deny — is tracked as issue #53; not addressed in this wave.)
 
@@ -79,9 +79,9 @@ The original "`acompletion was never awaited` warning" root cause remains tracke
 
 **Status: PARTIAL VERIFIED.** Scenarios that genuinely exercise inline ops (W3 9/9, W4 several, W7 several) emit `routing_decided` as expected. The non-emissions cluster cleanly as a separate finding (= §3.2 pre-flight refusal pattern) — scenarios where the LLM identifies the task as "no action needed / unavailable" before invoking anything.
 
-### 2.7 ✅ B27-M2 — `file__grep` removed from seed
+### 2.7 ✅ B27-M2 — `grep_files` removed from seed
 
-**Status: VERIFIED via W3.** `file__grep` is never called by the LLM in B28 traces. The invariant test added with the fix (commit `1636584`) continues to enforce the routing-rule presence.
+**Status: VERIFIED via W3.** `grep_files` is never called by the LLM in B28 traces. The invariant test added with the fix (commit `1636584`) continues to enforce the routing-rule presence.
 
 ### 2.8 ✅ B28-NEW-2 — `python.pure` → `python.safe` in reyn.yaml (landed mid-batch)
 
@@ -113,7 +113,7 @@ The scenarios' `must_emit: routing_decided` (= post-Q1) is violated because no t
 
 **Action: B28-Q2 design decision** — should scenarios assert `routing_decided` only when the rubric requires a tool call, OR should the router emit a `chat_turn_decided_inline` synthetic event when it answers without invoking anything?
 
-### 3.3 `file__write` `KeyError: 'content'` (W4 S1)
+### 3.3 `write_file` `KeyError: 'content'` (W4 S1)
 
 `_handle_write` reads `args["content"]` (`tools/file.py:143`). LLM in W4 S1 sent args without the `content` key. This is **LLM schema non-compliance**, not an OS routing bug — the schema requires both `path` and `content`.
 
@@ -187,7 +187,7 @@ Environment-level — MCP registry not reachable from worktree. Routes correctly
 
 | ID | Finding |
 |---|---|
-| B28-LOW-1 | `file__write` KeyError on missing content (W4) — defensive handler |
+| B28-LOW-1 | `write_file` KeyError on missing content (W4) — defensive handler |
 | B28-LOW-2 | STEPS_JSON_ESCAPE (W6) — plan description hardening |
 | B28-LOW-3 | Self-message detection (W6) |
 | B28-LOW-4 | ADR depth discoverability (W7) |

@@ -79,7 +79,7 @@ so a drop-in swap needs **no file edit** -- just pass the new name (install it
 first, same as the router SKILL.md's "Prerequisites"):
 
 ```
-pipeline__run(name="rag_ingest.ingest", input={
+run_pipeline(name="rag_ingest.ingest", input={
   "input_path": "/abs/docs", "output_db": "./docs.sqlite",
   "vectorstore_server": "my_qdrant",
 })
@@ -90,7 +90,7 @@ The replacement must expose the same tool shapes (`upsert` / `query` /
 Copy `~/.reyn/plugins/rag/pipelines/rag_ingest.yaml` (+ `rag_query.yaml`,
 present once the plugin is installed) into the operator's project and edit
 it -- or promote your edited copy back as its own plugin
-(`plugin_management__install(source={"kind": "local", "path": "..."})`). **This is the
+(`install_plugin(source={"kind": "local", "path": "..."})`). **This is the
 intended extension mechanism, not a workaround**: reyn builds no adapter for
 a user's RAG store (FP-0057 C2).
 

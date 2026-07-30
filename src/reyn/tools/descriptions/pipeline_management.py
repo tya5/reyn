@@ -23,14 +23,13 @@ pipeline_install_local = ToolDescription(
     surfaced="router (gates.router=allow)",
     purpose=(
         "Register a local pipeline DSL file into the project config so "
-        "sessions can launch it (via pipeline__<key>.<name> or "
-        "run_pipeline) after the next hot-reload."
+        "sessions can launch it with run_pipeline after the next hot-reload."
     ),
     text=(
         "Register a local pipeline DSL file into the project config "
         "by writing an entry to .reyn/config/pipelines.yaml. The pipeline is "
-        "immediately available to sessions (as pipeline__<key>.<name> and "
-        "run_pipeline) after the next hot-reload. Pass the direct path to the "
+        "immediately available to sessions (run_pipeline with name "
+        "'<key>.<declared-name>') after the next hot-reload. Pass the direct path to the "
         "pipeline's *.yaml DSL file (which may hold multiple '---'-separated "
         "'pipeline:' documents). "
         "Use 'name' to set the NAMESPACE KEY for the file; every pipeline in it "
@@ -41,8 +40,8 @@ pipeline_install_local = ToolDescription(
     ja=(
         "ローカルのパイプライン DSL ファイルをプロジェクト設定に登録す"
         "る（.reyn/config/pipelines.yaml へのエントリ書き込み）。次の"
-        "ホットリロード後、pipeline__<key>.<name> および run_pipeline "
-        "としてセッションから即座に利用可能になる。"
+        "次のホットリロード後、run_pipeline（name = '<key>.<宣言名>'）で"
+        "セッションから即座に利用可能になる。"
     ),
 )
 

@@ -1,4 +1,4 @@
-"""Tier 2: #1452 — file__read decode ladder (charset-normalizer).
+"""Tier 2: #1452 — read_file decode ladder (charset-normalizer).
 
 Follow-up to #1449's binary guard: non-UTF-8 *text* (SJIS / EUC-JP / UTF-16) is
 decoded and returned as text with a detected `encoding` field, instead of being

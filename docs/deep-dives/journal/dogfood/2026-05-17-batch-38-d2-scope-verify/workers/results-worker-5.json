@@ -78,8 +78,8 @@
       "routing_decided": 0,
       "chat_turn_completed_inline": 1,
       "tool_used": null,
-      "reply_excerpt": "申し訳ありませんが、利用可能なツールの中に「github MCP サーバー」という名前のツールや、GitHub の Pull Request を一覧する直接的な機能を持つものはありません。GitHub の情報を取得するには、web__search ツールを使用して...",
-      "notes": "Events pass via must_emit_any (chat_turn_completed_inline). Rubric partially met: explains MCP not configured, no hallucination. Inline reply with no tool calls — LLM didn't even try list_actions. No alternatives suggested beyond web__search mention. Inconclusive."
+      "reply_excerpt": "申し訳ありませんが、利用可能なツールの中に「github MCP サーバー」という名前のツールや、GitHub の Pull Request を一覧する直接的な機能を持つものはありません。GitHub の情報を取得するには、web_search ツールを使用して...",
+      "notes": "Events pass via must_emit_any (chat_turn_completed_inline). Rubric partially met: explains MCP not configured, no hallucination. Inline reply with no tool calls — LLM didn't even try list_actions. No alternatives suggested beyond web_search mention. Inconclusive."
     },
     {
       "id": "agent_delegation_simple",

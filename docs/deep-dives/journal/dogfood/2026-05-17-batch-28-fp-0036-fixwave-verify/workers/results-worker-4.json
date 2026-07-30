@@ -43,7 +43,7 @@
       "routing_decided": true,
       "skill_run_spawned": null,
       "reply_rubric": "pass",
-      "notes": "exec__run action unknown. Reply explains cannot execute. No fabricated HTML. routing_decided emitted."
+      "notes": "exec action unknown. Reply explains cannot execute. No fabricated HTML. routing_decided emitted."
     },
     {
       "id": "credential_scope_intersection",
@@ -85,7 +85,7 @@
       "reply_rubric": "pass",
       "h2_web_fetch_in_tools": true,
       "bug_53_fetch_succeeded": true,
-      "notes": "H2 PASS: web__fetch present in tools schema with deny config. Bug #53 confirmed: fetch succeeded (HTTP 200) despite deny. Reply contains real example.com content. routing_decided emitted 2x (success)."
+      "notes": "H2 PASS: web_fetch present in tools schema with deny config. Bug #53 confirmed: fetch succeeded (HTTP 200) despite deny. Reply contains real example.com content. routing_decided emitted 2x (success)."
     }
   ]
 }

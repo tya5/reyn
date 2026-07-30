@@ -110,7 +110,7 @@
       "scenario_index": 7,
       "verdict": "I",
       "agent": "dogfood-b47-2-s7",
-      "reply_summary": "Turn 1: correctly listed docs/concepts/ markdown files via file__glob. Turn 2: dispatched index_docs skill but failed: 'unsafe python step ./chunkers.py:gather_samples requires --allow-unsafe-python flag'.",
+      "reply_summary": "Turn 1: correctly listed docs/concepts/ markdown files via glob_files. Turn 2: dispatched index_docs skill but failed: 'unsafe python step ./chunkers.py:gather_samples requires --allow-unsafe-python flag'.",
       "events_pass": false,
       "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_failed", "tool_executed", "permission_granted"],
       "events_missing": ["skill_run_completed", "phase_started", "phase_completed"],

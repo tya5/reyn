@@ -125,16 +125,22 @@ async def test_universal_category_expands_wrapper_to_reachable_capabilities(tmp_
     assert "describe_action" not in authorized_tools
 
     # The underlying catalog capability the wrapper makes reachable IS shown,
-    # expanded to its real (qualified) name -- not the wrapper's name.
-    assert "mcp__list_servers" in authorized_tools
-    assert "mcp__call_tool" in authorized_tools
+    # under its own name -- not the wrapper's.
+    assert "list_mcp_servers" in authorized_tools
+    assert "mcp_call_tool" in authorized_tools
 
     # A router-only primitive that SURVIVES the universal wrapper-mode strip (still
     # literally advertised, not folded into the wrapper) stays visible too.
     assert "agent_spawn" in authorized_tools
-    # A LEGACY per-kind name the wrapper mode DOES strip from tools= is reachable
-    # only via the catalog now, not under its legacy native name.
-    assert "delegate_to_agent" not in authorized_tools
+    # #3429: the arm that used to sit here asserted ``delegate_to_agent not in
+    # authorized_tools`` -- that the per-kind NATIVE name is stripped from
+    # tools= while the same capability stays reachable under its qualified
+    # catalog name (``multi_agent__delegate``). Both names were the same
+    # capability, so what that arm actually distinguished was two SPELLINGS of
+    # it, and with one spelling the distinction is not observable by name. The
+    # capability is reachable either way, which is what the census is for:
+    assert "delegate_to_agent" in authorized_tools
+    # ...and the wrapper's own plumbing name is still not (asserted above).
 
 
 @pytest.mark.asyncio
@@ -144,11 +150,11 @@ async def test_enumerate_all_shows_flattened_legacy_and_catalog_names(tmp_path, 
     the qualified catalog action names must be visible.
 
     #3224 (merged on top of this branch): ``EnumerateAllScheme.build_presentation``
-    EXCLUDES ``mcp__call_tool`` from its own flattened catalog union (already
+    EXCLUDES ``mcp_call_tool`` from its own flattened catalog union (already
     covered by the native ``call_mcp_tool``, so the model no longer sees the same
     MCP-call action twice) -- a transform inside the scheme method itself, not
     the raw ``catalog_entries()`` building block. The census must reflect that
-    exclusion too (i.e. NOT show ``mcp__call_tool``), because it now sources
+    exclusion too (i.e. NOT show ``mcp_call_tool``), because it now sources
     from the scheme's real ``build_presentation``, not a parallel re-derivation
     of "base_tools + catalog_entries" that has no way to see a scheme-owned
     transform layered on top."""
@@ -162,10 +168,10 @@ async def test_enumerate_all_shows_flattened_legacy_and_catalog_names(tmp_path, 
     # Legacy native name (literally advertised under enumerate-all).
     assert "delegate_to_agent" in authorized_tools
     # Qualified catalog action (also literally advertised, flattened alongside it).
-    assert "mcp__list_servers" in authorized_tools
+    assert "list_mcp_servers" in authorized_tools
     # #3224: enumerate-all's OWN build_presentation excludes this one qualified
     # catalog action (duplicate of the native call_mcp_tool) -- absent here too.
-    assert "mcp__call_tool" not in authorized_tools
+    assert "mcp_call_tool" not in authorized_tools
     # enumerate-all never adds the universal wrapper meta-tools.
     assert "invoke_action" not in authorized_tools
 
@@ -262,11 +268,11 @@ async def test_visibility_census_exactly_matches_composed_payload(tmp_path, monk
 
     RED under a parallel ``build_tools()`` + ``universal_catalog.catalog_entries()``
     re-derivation (this PR's first cut, and the co-vet finding that triggered this
-    test): under merged #3224, the enumerate-all payload excludes ``mcp__call_tool``
+    test): under merged #3224, the enumerate-all payload excludes ``mcp_call_tool``
     (a transform ``EnumerateAllScheme.build_presentation`` applies on top of the raw
     ``catalog_entries()`` ingredient) — a parallel re-derivation that calls
     ``catalog_entries()`` directly has no way to see that exclusion and keeps
-    ``mcp__call_tool`` in its set, so it would NOT equal this oracle's set (which
+    ``mcp_call_tool`` in its set, so it would NOT equal this oracle's set (which
     reflects the real scheme transform). GREEN once the source is
     ``build_presentation()`` itself (this PR's final cut)."""
     monkeypatch.chdir(tmp_path)

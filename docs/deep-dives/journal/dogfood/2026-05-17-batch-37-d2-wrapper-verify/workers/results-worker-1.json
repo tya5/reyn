@@ -65,7 +65,7 @@
       "reply_rubric": "PASS",
       "events_pass": true,
       "artifact_pass": false,
-      "note": "Correct code example despite invoke_action(default_api.web__search) error. Graceful fallback to LLM knowledge."
+      "note": "Correct code example despite invoke_action(default_api.web_search) error. Graceful fallback to LLM knowledge."
     },
     {
       "id": "out_of_scope_graceful_decline",
@@ -83,16 +83,16 @@
     "action_arg_schemas_block_present": true,
     "d2_min_baseline": true,
     "wrapper_path_arg_canonical": "partial",
-    "canonical_correct": ["b806c465 skill__word_stats_demo", "c895cce9 web__search retry"],
-    "canonical_wrong": ["030a8544 default_api.web__search (hallucinated)", "2bf460ec default_api.web__search (toolset pollution)"]
+    "canonical_correct": ["b806c465 skill__word_stats_demo", "c895cce9 web_search retry"],
+    "canonical_wrong": ["030a8544 default_api.web_search (hallucinated)", "2bf460ec default_api.web_search (toolset pollution)"]
   },
   "new_findings": [
     {
       "id": "B37-OBS-1",
-      "title": "default_api.web__search spurious tool in toolset",
+      "title": "default_api.web_search spurious tool in toolset",
       "requests_affected": ["d8775949", "ae44217a", "2bf460ec"],
       "agents_affected": ["dogfood-b37-1-s3", "dogfood-b37-1-s4", "dogfood-b37-1-s6"],
-      "description": "Three LLM requests received default_api.web__search as an actual tool with empty properties. Non-canonical qualified name causing occasional invoke_action wrong-name calls.",
+      "description": "Three LLM requests received default_api.web_search as an actual tool with empty properties. Non-canonical qualified name causing occasional invoke_action wrong-name calls.",
       "severity": "MED",
       "hypothesis": "action_usage.jsonl hot_list may have recorded the malformed name from a prior session"
     }

@@ -59,7 +59,7 @@ is handled by the caller per ADR-0026 M3 wave pattern.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any, Final, Mapping
+from typing import TYPE_CHECKING, Any, Awaitable, Final, Mapping
 
 from reyn.tools.descriptions import mcp as _mcp_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
@@ -100,7 +100,7 @@ _LIST_MCP_TOOLS_PARAMETERS: dict[str, Any] = {
 
 # #1646: the target MCP tool's OWN parameters are carried under THIS key —
 # deliberately NOT "args". The universal-scheme live path wraps this verb in
-# invoke_action(action_name="mcp__call_tool", args={...}); a nested "args" here would
+# invoke_action(action_name="mcp_call_tool", args={...}); a nested "args" here would
 # collide with invoke_action's own "args" (two same-named levels), which the LLM
 # collapsed (params flat beside server/mcp_tool_name, inner level dropped) → empty args
 # at the MCP call (owner-observed). A distinct key kills the collision by construction.
@@ -268,17 +268,51 @@ def _mcp_list_error(result: "list | None") -> "str | None":
     """Detect the shared MCP-listing failure sentinel and return its message,
     or None when *result* is a normal listing.
 
-    All five ``list_mcp_*`` discovery paths (servers / tools / resources /
-    resource_templates / prompts) can fail without raising: a Cancelled /
-    MCPFault error, or an unresolved server config, comes back as a single-
-    element ``[{"error": "..."}]`` list rather than an exception (see
-    ``Session._mcp_list_via_gateway`` / ``_mcp_resolve_server_config``).
-    Surface MCP-layer errors so the LLM can diagnose the failure instead of
-    seeing an empty (or one-entry, error-shaped) list with no explanation.
+    An unresolved server config (roster empty / server not configured /
+    config not a dict) comes back as a single-element ``[{"error": "..."}]``
+    list rather than an exception (see
+    ``RouterHostAdapter._mcp_resolve_server_config``) — that is validation,
+    not a gateway-call failure, so it stays an early-return sentinel rather
+    than a raise. Surface MCP-layer errors so the LLM can diagnose the
+    failure instead of seeing an empty (or one-entry, error-shaped) list
+    with no explanation.
+
+    #3447: the *gateway-call* failure (``Cancelled``/``MCPFault``) used to
+    ALSO reach this sentinel shape, caught inside
+    ``Session._mcp_list_via_gateway``. That catch moved to each
+    ``_handle_list_mcp_*`` call site below (folded into
+    ``RouterHostAdapter``'s own listing methods, which now let the two
+    exceptions propagate) — see ``_call_mcp_list`` just below.
     """
     if result and isinstance(result[0], Mapping) and "error" in result[0]:
         return result[0]["error"]
     return None
+
+
+async def _call_mcp_list(host_call: "Awaitable[list]") -> "list | dict":
+    """Shared catch point (#3447) for the four gateway-backed
+    ``mcp_list_*`` host methods (tools / resources / resource_templates /
+    prompts — ``mcp_list_servers`` never raises, it has no gateway call).
+
+    ``RouterHostAdapter.mcp_list_*`` now let ``Cancelled``/``MCPFault``
+    propagate (folded off ``Session._mcp_list_via_gateway``'s former
+    in-place catch — architect firm, #3411: no context-manager / audit-emit
+    / pool-teardown step sits between the raise site and either catch
+    position, so moving the catch here is behavior-preserving). Catching
+    here reproduces the exact byte-identical ``{"error": "cancelled"}`` /
+    ``{"error": str(exc)}`` shape the caller previously received as a
+    return value, so every ``_handle_list_mcp_*`` handler below stays
+    unchanged past this point.
+    """
+    from reyn.core.cancellable import Cancelled
+    from reyn.mcp.gateway import MCPFault
+
+    try:
+        return await host_call
+    except Cancelled:
+        return [{"error": "cancelled"}]
+    except MCPFault as exc:
+        return [{"error": str(exc)}]
 
 
 async def _handle_list_mcp_servers(
@@ -314,28 +348,28 @@ async def _handle_list_mcp_tools(
         also stripped ``inputSchema`` so the entries could not be
         mistaken for top-level callable functions.
       - Issue #879 collapsed MCP dispatch into a single
-        ``mcp__call_tool`` verb whose ``tool`` arg takes a
+        ``mcp_call_tool`` verb whose ``tool`` arg takes a
         ``<server>__<tool>`` self-contained identifier. In that
         world the entry name is **not** a callable function name in
         the router's ``tools=`` array, so the FP-0032 shape-collision
         concern no longer applies — and the LLM needs the schema
-        directly to construct ``mcp__call_tool``'s ``args`` field
+        directly to construct ``mcp_call_tool``'s ``args`` field
         without an extra ``describe_mcp_tool`` round-trip. Include
         ``inputSchema`` in each entry verbatim from the MCP server's
         declared shape.
     """
     host = _require_host(ctx)
     server = str(args["server"])
-    result = await host.mcp_list_tools(server)
+    result = await _call_mcp_list(host.mcp_list_tools(server))
     error = _mcp_list_error(result)
     if error is not None:
-        # Return without "mcp_tools" key so _normalise_router_tool_result
-        # passes the dict through verbatim rather than unwrapping it.
+        # An error envelope, returned as-is: no key the caller could mistake
+        # for a successful listing.
         return {"error": error}
     # Issue #879: rewrite each entry's ``name`` to the
     # ``<server>__<tool>`` identifier; preserve description + the
     # tool's declared ``inputSchema`` so the LLM can construct
-    # mcp__call_tool args in a single follow-up turn.
+    # mcp_call_tool args in a single follow-up turn.
     rebuilt: list[dict] = []
     for t in (result or []):
         if not isinstance(t, Mapping):
@@ -360,7 +394,7 @@ async def _handle_list_mcp_resources(
     """
     host = _require_host(ctx)
     server = str(args["server"])
-    result = await host.mcp_list_resources(server)
+    result = await _call_mcp_list(host.mcp_list_resources(server))
     error = _mcp_list_error(result)
     if error is not None:
         return {"error": error}
@@ -375,7 +409,7 @@ async def _handle_list_mcp_resource_templates(
     templates registered), not an error."""
     host = _require_host(ctx)
     server = str(args["server"])
-    result = await host.mcp_list_resource_templates(server)
+    result = await _call_mcp_list(host.mcp_list_resource_templates(server))
     error = _mcp_list_error(result)
     if error is not None:
         return {"error": error}
@@ -437,7 +471,7 @@ async def _handle_list_mcp_prompts(
     """
     host = _require_host(ctx)
     server = str(args["server"])
-    result = await host.mcp_list_prompts(server)
+    result = await _call_mcp_list(host.mcp_list_prompts(server))
     error = _mcp_list_error(result)
     if error is not None:
         return {"error": error}

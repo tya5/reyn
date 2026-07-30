@@ -904,12 +904,19 @@ def test_agent_step_without_narrowing_reaches_autogranted_mcp_server_control(
 
 def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, capsys):
     """Tier 2: regression pin for the router_state=None bug — a 'tool:' step
-    calling the first-class 'mcp__<server>__<tool>' action now genuinely
-    resolves and dispatches through the real MCP call path (permission gate,
+    calling an MCP tool genuinely resolves and dispatches through the real
+    MCP call path (permission gate,
     MCPGateway/MCPConnectionService, the op_runtime mcp handler all real; only
     the MCP CLIENT's transport is faked, mirroring
     test_2421_gateway_acceptance.py's own fixture convention of patching
-    MCPClient at its import site)."""
+    MCPClient at its import site).
+
+    #3429: the step used to name the tool directly as
+    ``mcp__<server>__<tool>``, an author-time spelling that curried the
+    server+tool out of the NAME. That was the qualified spelling in
+    operator-facing clothes and went with it; the step names ``mcp_call_tool``
+    and passes the MCP tool identifier as the ``tool`` ARGUMENT, which is the
+    shape ``list_mcp_tools`` already returns."""
     monkeypatch.chdir(tmp_path)
     import reyn.mcp.connection_service as connection_service_mod
     import reyn.mcp.pool as pool_mod
@@ -920,7 +927,12 @@ def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, cap
     dsl_path.write_text(
         "pipeline: uses_mcp\n"
         "steps:\n"
-        "  - tool: {name: mcp__echo__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        "  - tool:\n"
+        "      name: mcp_call_tool\n"
+        "      args:\n"
+        "        tool: echo__ping\n"
+        "        tool_args: !expr \"{msg: ctx.msg}\"\n"
+        "      output: r\n",
         encoding="utf-8",
     )
     (tmp_path / "reyn.yaml").write_text(
@@ -977,7 +989,12 @@ def test_run_tool_step_mcp_auto_grants_configured_server_no_explicit_permission(
     dsl_path.write_text(
         "pipeline: uses_mcp\n"
         "steps:\n"
-        "  - tool: {name: mcp__echo__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        "  - tool:\n"
+        "      name: mcp_call_tool\n"
+        "      args:\n"
+        "        tool: echo__ping\n"
+        "        tool_args: !expr \"{msg: ctx.msg}\"\n"
+        "      output: r\n",
         encoding="utf-8",
     )
     (tmp_path / "reyn.yaml").write_text(
@@ -1022,7 +1039,12 @@ def test_run_tool_step_mcp_unconfigured_server_still_denied_with_actionable_erro
     dsl_path.write_text(
         "pipeline: uses_mcp\n"
         "steps:\n"
-        "  - tool: {name: mcp__ghost__ping, args: {msg: !expr ctx.msg}, output: r}\n",
+        "  - tool:\n"
+        "      name: mcp_call_tool\n"
+        "      args:\n"
+        "        tool: ghost__ping\n"
+        "        tool_args: !expr \"{msg: ctx.msg}\"\n"
+        "      output: r\n",
         encoding="utf-8",
     )
     (tmp_path / "reyn.yaml").write_text(

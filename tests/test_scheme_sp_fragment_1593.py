@@ -69,7 +69,7 @@ def test_empty_fragment_leaves_named_gate_sp_unchanged() -> None:
 
 def test_non_empty_fragment_appears_in_sp() -> None:
     """Tier 2: #1593 — a scheme's free-form tool-use SP lands verbatim in the SP."""
-    fragment = "## Code API\nCall tools by writing Python: `result = file__read(path=...)`."
+    fragment = "## Code API\nCall tools by writing Python: `result = read_file(path=...)`."
     sp = _sp(scheme_sp_fragment=fragment)
     assert fragment in sp, "the scheme sp_fragment must appear verbatim in the SP"
 

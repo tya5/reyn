@@ -101,12 +101,12 @@ async def test_initial_presentation_falls_back_to_catalog_when_search_unavailabl
     """
     from reyn.tools.universal_catalog import _HIDDEN_STATE_HINT
 
-    ops = _FakeOps(catalog=[_tool("file__write"), _tool("file__read")])
+    ops = _FakeOps(catalog=[_tool("write_file"), _tool("read_file")])
     # search_visible absent (defaults False) — mirrors "no embedding configured".
     pres = await RetrievalScheme().build_presentation({}, {}, ops)
     names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
     assert _SEARCH_TOOL_NAME not in names                 # search NEVER offered — would be a dead end
-    assert {"file__write", "file__read"} <= names          # catalog stays fully reachable instead
+    assert {"write_file", "read_file"} <= names          # catalog stays fully reachable instead
     assert "respond" in names                              # base tools still present
     assert ops.calls == []                                 # no dead search ever attempted
     assert pres.tool_use_sp.get("slot_post_catalog") == _HIDDEN_STATE_HINT  # enable-hint surfaced
@@ -117,13 +117,13 @@ async def test_refined_presentation_runs_search_and_exposes_candidates(tmp_path)
     """Tier 2: given a refinement query, build_presentation runs the search and
     presents the matched catalog subset + the search tool, exposing the matches as
     Presentation.candidates (the OS convergence signal)."""
-    ops = _FakeOps(matches=["file__write", "file__read"], catalog=[_tool("file__write"), _tool("file__read"), _tool("web__fetch")])
+    ops = _FakeOps(matches=["write_file", "read_file"], catalog=[_tool("write_file"), _tool("read_file"), _tool("web_fetch")])
     pres = await RetrievalScheme().build_presentation({}, {"refinement": {"query": "edit a file"}}, ops)
     names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
-    assert {"file__write", "file__read"} <= names         # matched subset presented
-    assert "web__fetch" not in names                      # unmatched NOT presented
+    assert {"write_file", "read_file"} <= names         # matched subset presented
+    assert "web_fetch" not in names                      # unmatched NOT presented
     assert _SEARCH_TOOL_NAME in names                     # search stays (non-terminal)
-    assert pres.candidates == ("file__write", "file__read")  # candidates for OS convergence
+    assert pres.candidates == ("write_file", "read_file")  # candidates for OS convergence
     assert ops.calls == [("search", "edit a file")]       # the dynamic query ran
 
 
@@ -134,12 +134,12 @@ async def test_convergence_drops_search_tool(tmp_path) -> None:
     OS already threaded in via ``presented`` (matched ⊆ presented ⇒ new == ∅), the
     presentation is terminal: it drops the search tool → the LLM can only Execute
     (no re-search) → the OS RePresent loop exits."""
-    ops = _FakeOps(matches=["file__write"], catalog=[_tool("file__write")])
+    ops = _FakeOps(matches=["write_file"], catalog=[_tool("write_file")])
     pres = await RetrievalScheme().build_presentation(
-        {}, {"refinement": {"query": "edit"}, "presented": ("file__write",)}, ops,
+        {}, {"refinement": {"query": "edit"}, "presented": ("write_file",)}, ops,
     )
     names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
-    assert "file__write" in names
+    assert "write_file" in names
     assert _SEARCH_TOOL_NAME not in names                 # converged → search dropped → must Execute
 
 
@@ -148,12 +148,12 @@ async def test_new_matches_keep_search_tool(tmp_path) -> None:
     """Tier 2: the contrast — a search that yields a match NOT yet presented
     (new != ∅) is non-terminal: the search tool stays so the LLM may refine again.
     Pins that the terminal decision is the scheme's, driven by new-vs-presented."""
-    ops = _FakeOps(matches=["file__read"], catalog=[_tool("file__read"), _tool("file__write")])
+    ops = _FakeOps(matches=["read_file"], catalog=[_tool("read_file"), _tool("write_file")])
     pres = await RetrievalScheme().build_presentation(
-        {}, {"refinement": {"query": "read"}, "presented": ("file__write",)}, ops,
+        {}, {"refinement": {"query": "read"}, "presented": ("write_file",)}, ops,
     )
     names = {t["function"]["name"] for t in advertised_entries(pres.tools_channel)}
-    assert _SEARCH_TOOL_NAME in names                     # file__read is new → not converged → search stays
+    assert _SEARCH_TOOL_NAME in names                     # read_file is new → not converged → search stays
 
 
 @pytest.mark.asyncio
@@ -177,9 +177,9 @@ async def test_terminal_presentation_guidance_reflects_dropped_search(tmp_path) 
     slot_post_catalog guidance flips from "search first" to "call one of the presented
     matches" — the SP and the tools= stay consistent (no dangling search instruction).
     Guidance lives in tool_use_sp["slot_post_catalog"]."""
-    ops = _FakeOps(matches=["file__write"], catalog=[_tool("file__write")])
+    ops = _FakeOps(matches=["write_file"], catalog=[_tool("write_file")])
     pres = await RetrievalScheme().build_presentation(
-        {}, {"refinement": {"query": "edit"}, "presented": ("file__write",)}, ops,
+        {}, {"refinement": {"query": "edit"}, "presented": ("write_file",)}, ops,
     )
     assert isinstance(pres.tool_use_sp, dict)
     slot = pres.tool_use_sp.get("slot_post_catalog", "")
@@ -204,10 +204,10 @@ def test_interpret_tool_call_is_execute() -> None:
     """Tier 2: a non-search tool call → Execute (reuses the shared resolution so the
     OS exclude-gates pre-dispatch)."""
     interp = RetrievalScheme().interpret(
-        _Resp([_call("file__write", path="x")]), tool_catalog={}, ops=_FakeOps(),
+        _Resp([_call("write_file", path="x")]), tool_catalog={}, ops=_FakeOps(),
     )
     assert isinstance(interp, Execute)
-    assert [a["name"] for a in interp.actions] == ["file__write"]
+    assert [a["name"] for a in interp.actions] == ["write_file"]
 
 
 def test_interpret_no_tool_call_is_plaintext() -> None:
@@ -225,6 +225,6 @@ async def test_execute_and_feedback_delegate() -> None:
     """Tier 2: execute/format_feedback reuse the universal dispatch substrate."""
     ops = _FakeOps()
     scheme = RetrievalScheme()
-    res = await scheme.execute(Execute(actions=[{"name": "file__write"}]), ExecContext(), ops)
-    assert res.tool_results == [{"status": "ok", "for": "file__write"}]
+    res = await scheme.execute(Execute(actions=[{"name": "write_file"}]), ExecContext(), ops)
+    assert res.tool_results == [{"status": "ok", "for": "write_file"}]
     assert scheme.format_feedback(ExecutionResult(tool_results=res.tool_results), ops) == res.tool_results

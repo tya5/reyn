@@ -12,9 +12,10 @@ completed-or-failed follow-up — mirrors ``mcp_resource_read``/
 
 Discovery (``list_prompts``) is deliberately NOT an op kind here — it mirrors
 ``list_resources``/``list_tools``, which bypass the permission gate + op-kind
-machinery entirely (see ``session.py::_mcp_list_prompts``). Only the
-content-returning get is gated, matching the tools/resources surface's own
-split between ungated `list_*` and gated `call_tool`/`read_resource`.
+machinery entirely (see ``RouterHostAdapter.mcp_list_prompts``, #3447 —
+folded off Session, still no op-kind of its own). Only the content-returning
+get is gated, matching the tools/resources surface's own split between
+ungated `list_*` and gated `call_tool`/`read_resource`.
 
 Prompts have no subscribe concept — out of scope entirely, unlike resources.
 """

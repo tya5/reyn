@@ -35,7 +35,7 @@
       "routing_decided_emitted": true,
       "routing_decided_required": false,
       "routing_decided_source": "invoke_action",
-      "evidence_one_liner": "LLM called invoke_action(web__search) for idempotency; routing_decided emitted (source=invoke_action); reply correct; no direct_llm artifact"
+      "evidence_one_liner": "LLM called invoke_action(web_search) for idempotency; routing_decided emitted (source=invoke_action); reply correct; no direct_llm artifact"
     },
     {
       "id": "skill_discovery_request",

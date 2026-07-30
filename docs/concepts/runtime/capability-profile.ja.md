@@ -131,12 +131,12 @@ mcp_allow: null        # 全 MCP サーバー利用可能
 mcp_deny: []
 tool_allow: null       # 拒否リストのみ
 tool_deny:
-  - exec__run
-  - memory_operation__remember_shared
-  - multi_agent__delegate
+  - exec
+  - remember_shared
+  - delegate_to_agent
 ```
 
-**どちらの綴りで書いても、両方が deny されます。** `multi_agent__delegate` と
+**どちらの綴りで書いても、両方が deny されます。** `delegate_to_agent` と
 `delegate_to_agent` は 1 つの操作の 2 つの名前で、モデルに現在 *見えている* のがどちらかは
 [tool-use のセル](../tools-integrations/tool-use-schemes.md)とホスト設定で変わります。
 `tool_deny` のエントリは gate になる前に **invocable な全形**へ展開されるため

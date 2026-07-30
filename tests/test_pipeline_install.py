@@ -9,7 +9,7 @@ Tests:
      installed pipeline SURVIVES.
   3. threat-scan block: a DSL description that triggers a blocking threat →
      handler returns status="blocked", no config write.
-  4. trust floor: pipeline_management__install_local / __install_source are denied
+  4. trust floor: pipeline_install_local / __install_source are denied
      under the builtin_untrusted_profile (mirrors the skill-install floor).
   5. name-mismatch refusal: op.name disagreeing with the DSL's declared
      'pipeline:' name is refused (fail-loud, the pipeline-specific validation
@@ -290,58 +290,48 @@ async def test_pipeline_install_threat_scan_blocks_on_matching_description(tmp_p
 
 
 def test_pipeline_install_local_is_denied_under_untrusted_floor() -> None:
-    """Tier 2: pipeline_management__install_local is in the builtin_untrusted_profile
+    """Tier 2: pipeline_install_local is in the builtin_untrusted_profile
     deny set (mirrors the skill-install floor)."""
     from reyn.security.permissions.capability_profile import (
         _BUILTIN_UNTRUSTED_DENY,
-        _FLOORED_QUALIFIED,
+        _FLOORED_TOOLS,
         builtin_untrusted_profile,
         resolve_profile,
     )
     from reyn.security.permissions.effective import tool_contextually_denied
-    from reyn.tools.universal_dispatch import unwrapped_tool_name
 
-    assert "pipeline-install" in _FLOORED_QUALIFIED, "pipeline-install class missing from _FLOORED_QUALIFIED"
-    assert "pipeline_management__install_local" in _FLOORED_QUALIFIED["pipeline-install"], \
-        "pipeline_management__install_local not in the pipeline-install floor class"
+    assert "pipeline-install" in _FLOORED_TOOLS, "pipeline-install class missing from _FLOORED_TOOLS"
+    assert "pipeline_install_local" in _FLOORED_TOOLS["pipeline-install"], \
+        "pipeline_install_local not in the pipeline-install floor class"
 
-    assert "pipeline_management__install_local" in _BUILTIN_UNTRUSTED_DENY, \
-        "pipeline_management__install_local not in _BUILTIN_UNTRUSTED_DENY"
+    assert "pipeline_install_local" in _BUILTIN_UNTRUSTED_DENY, \
+        "pipeline_install_local not in _BUILTIN_UNTRUSTED_DENY"
 
-    bare = unwrapped_tool_name("pipeline_management__install_local")
-    assert bare is not None, \
-        "pipeline_management__install_local has no _OPERATION_RULES entry — bare alias cannot be derived"
-    assert bare in _BUILTIN_UNTRUSTED_DENY, f"bare alias {bare!r} not in _BUILTIN_UNTRUSTED_DENY"
+    # #3429: one invocable name — no second form to derive.
 
     contextual, _ = resolve_profile(builtin_untrusted_profile())
-    assert tool_contextually_denied(contextual, "pipeline_management__install_local"), \
-        "untrusted floor does not deny pipeline_management__install_local at the live gate"
-    assert tool_contextually_denied(contextual, bare), \
-        f"untrusted floor does not deny bare alias {bare!r} at the live gate"
+    assert tool_contextually_denied(contextual, "pipeline_install_local"), \
+        "untrusted floor does not deny pipeline_install_local at the live gate"
 
 
 def test_pipeline_install_source_is_denied_under_untrusted_floor() -> None:
-    """Tier 2: pipeline_management__install_source is in the builtin_untrusted_profile
+    """Tier 2: pipeline_install_source is in the builtin_untrusted_profile
     deny set (source install — higher risk than local, adds HTTP trust boundary)."""
     from reyn.security.permissions.capability_profile import (
         _BUILTIN_UNTRUSTED_DENY,
-        _FLOORED_QUALIFIED,
+        _FLOORED_TOOLS,
         builtin_untrusted_profile,
         resolve_profile,
     )
     from reyn.security.permissions.effective import tool_contextually_denied
-    from reyn.tools.universal_dispatch import unwrapped_tool_name
 
-    assert "pipeline_management__install_source" in _FLOORED_QUALIFIED["pipeline-install"]
-    assert "pipeline_management__install_source" in _BUILTIN_UNTRUSTED_DENY
+    assert "pipeline_install_source" in _FLOORED_TOOLS["pipeline-install"]
+    assert "pipeline_install_source" in _BUILTIN_UNTRUSTED_DENY
 
-    bare = unwrapped_tool_name("pipeline_management__install_source")
-    assert bare is not None
-    assert bare in _BUILTIN_UNTRUSTED_DENY
+    # #3429: one invocable name — no second form to derive.
 
     contextual, _ = resolve_profile(builtin_untrusted_profile())
-    assert tool_contextually_denied(contextual, "pipeline_management__install_source")
-    assert tool_contextually_denied(contextual, bare)
+    assert tool_contextually_denied(contextual, "pipeline_install_source")
 
 
 # ── Test 5: name-mismatch refusal (pipeline-specific validation rule) ─────────
@@ -573,7 +563,7 @@ async def test_pipeline_install_clone_routes_through_sandbox_abstraction(tmp_pat
 
 @pytest.mark.asyncio
 async def test_pipeline_management_verbs_appear_in_list_actions() -> None:
-    """Tier 2c: pipeline_management__install_local / __install_source must
+    """Tier 2c: pipeline_install_local / __install_source must
     actually appear in list_actions(category=["pipeline_management"]) — NOT
     just be dispatchable via invoke_action. RED against a catalog wiring that
     registers + dispatches a verb but never enumerates it (the exact
@@ -590,16 +580,16 @@ async def test_pipeline_management_verbs_appear_in_list_actions() -> None:
 
     result = await LIST_ACTIONS.handler({"category": ["pipeline_management"]}, ctx)
 
-    names = {it["qualified_name"] for it in result["items"]}
-    assert "pipeline_management__install_local" in names, \
-        f"pipeline_management__install_local not enumerated; got {names}"
-    assert "pipeline_management__install_source" in names, \
-        f"pipeline_management__install_source not enumerated; got {names}"
+    names = {it["action_name"] for it in result["items"]}
+    assert "pipeline_install_local" in names, \
+        f"pipeline_install_local not enumerated; got {names}"
+    assert "pipeline_install_source" in names, \
+        f"pipeline_install_source not enumerated; got {names}"
 
 
 @pytest.mark.asyncio
 async def test_skill_management_verbs_also_reachable_via_list_actions() -> None:
-    """Tier 2c: companion assertion — skill_management__install_local /
+    """Tier 2c: companion assertion — skill_install_local /
     __install_source (the pre-existing category found to have the SAME
     enumeration gap while wiring pipeline_management) are now ALSO enumerable.
     RED if the skill_management fix (adding it alongside pipeline_management
@@ -614,6 +604,6 @@ async def test_skill_management_verbs_also_reachable_via_list_actions() -> None:
 
     result = await LIST_ACTIONS.handler({"category": ["skill_management"]}, ctx)
 
-    names = {it["qualified_name"] for it in result["items"]}
-    assert "skill_management__install_local" in names
-    assert "skill_management__install_source" in names
+    names = {it["action_name"] for it in result["items"]}
+    assert "skill_install_local" in names
+    assert "skill_install_source" in names

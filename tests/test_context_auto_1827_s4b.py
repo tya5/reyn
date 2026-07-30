@@ -59,8 +59,8 @@ def test_tainted_composes_untrusted_and_denies(tmp_path):
     eff = s._effective_contextual_for_turn()
     assert eff is not None
     # the dangerous side-effecting surfaces are now denied (context-auto)
-    for denied in ("memory_operation__remember_shared", "delegate_to_agent",
-                   "exec__run", "exec"):
+    for denied in ("remember_shared", "delegate_to_agent",
+                   "exec", "exec"):
         assert tool_contextually_denied(eff, denied), denied
     # a read tool stays allowed
     assert not tool_contextually_denied(eff, "web_fetch")
@@ -71,7 +71,7 @@ def test_self_clears_when_taint_removed(tmp_path):
     s = _session(tmp_path)
     _mark_untrusted(s)
     eff = s._effective_contextual_for_turn()
-    assert tool_contextually_denied(eff, "exec__run")
+    assert tool_contextually_denied(eff, "exec")
     # simulate the untrusted entry compacting out of the active context
     s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
     eff = s._effective_contextual_for_turn()
@@ -81,14 +81,14 @@ def test_self_clears_when_taint_removed(tmp_path):
 def test_composes_with_static_union(tmp_path):
     """Tier 2: a static topology narrowing AND the untrusted profile both apply
     while tainted (union-of-excludes / most-restrictive)."""
-    static = ContextualPermission(tool_deny=frozenset({"web__search"}))
+    static = ContextualPermission(tool_deny=frozenset({"web_search"}))
     s = _session(tmp_path, contextual=static)
     # untainted: only the static deny applies
     eff = s._effective_contextual_for_turn()
-    assert tool_contextually_denied(eff, "web__search")
-    assert not tool_contextually_denied(eff, "exec__run")
+    assert tool_contextually_denied(eff, "web_search")
+    assert not tool_contextually_denied(eff, "exec")
     # tainted: BOTH the static deny AND the untrusted deny-set apply
     _mark_untrusted(s)
     eff = s._effective_contextual_for_turn()
-    assert tool_contextually_denied(eff, "web__search")          # static
-    assert tool_contextually_denied(eff, "exec__run")  # untrusted
+    assert tool_contextually_denied(eff, "web_search")          # static
+    assert tool_contextually_denied(eff, "exec")  # untrusted

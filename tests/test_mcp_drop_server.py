@@ -406,26 +406,13 @@ def test_mcp_drop_server_preserves_secrets_when_requested(
 # ── 5. universal_dispatch route ───────────────────────────────────────────
 
 
-def test_universal_dispatch_routes_drop_server() -> None:
-    """Tier 2: mcp__drop_server resolves to mcp_drop_server target (#879)."""
-    from reyn.tools.universal_dispatch import resolve_invoke_action
+def test_mcp_drop_server_is_an_mcp_category_action() -> None:
+    """Tier 2: mcp_drop_server is browsable under ``mcp`` (#879), so
+    list_actions surfaces it and invoke_action / describe_action accept it."""
+    from reyn.tools.universal_dispatch import action_names_for_category, is_known_action
 
-    resolved = resolve_invoke_action(
-        "mcp__drop_server",
-        {"server": "filesystem", "scope": "local"},
-    )
-    assert resolved.target_tool_name == "mcp_drop_server"
-    # Passthrough args — server / scope flow through unchanged
-    assert resolved.target_args["server"] == "filesystem"
-    assert resolved.target_args["scope"] == "local"
-
-
-def test_universal_dispatch_describe_drop_server() -> None:
-    """Tier 2: describe_action for mcp__drop_server resolves cleanly (#879)."""
-    from reyn.tools.universal_dispatch import resolve_describe_action
-
-    resolved = resolve_describe_action("mcp__drop_server")
-    assert resolved.target_tool_name == "mcp_drop_server"
+    assert "mcp_drop_server" in action_names_for_category("mcp")
+    assert is_known_action("mcp_drop_server")
 
 
 # ── 6. ToolDefinition registration ────────────────────────────────────────

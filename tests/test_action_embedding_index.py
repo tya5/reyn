@@ -8,7 +8,7 @@ of any real embedding backend.
 Coverage:
   - is_ready() lifecycle (= False → True after build)
   - catalog_hash idempotence (= same hash = no-op rebuild)
-  - hash sensitivity to qualified_name set changes
+  - hash sensitivity to action_name set changes
   - query top-K ranking via cosine similarity
   - empty / whitespace query degrades to []
   - not-ready query degrades to []
@@ -136,7 +136,7 @@ def test_build_then_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     idx = ActionEmbeddingIndex()
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
-        [{"qualified_name": "skill__a", "short_description": "A"}],
+        [{"action_name": "skill__a", "short_description": "A"}],
         ctx,
         "standard",
     ))
@@ -149,24 +149,24 @@ def test_build_then_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_catalog_hash_stable_to_order() -> None:
-    """Tier 2: catalog hash is order-independent (sorted qualified_names)."""
+    """Tier 2: catalog hash is order-independent (sorted action_names)."""
     a = compute_catalog_hash([
-        {"qualified_name": "skill__foo"},
-        {"qualified_name": "skill__bar"},
+        {"action_name": "skill__foo"},
+        {"action_name": "skill__bar"},
     ])
     b = compute_catalog_hash([
-        {"qualified_name": "skill__bar"},
-        {"qualified_name": "skill__foo"},
+        {"action_name": "skill__bar"},
+        {"action_name": "skill__foo"},
     ])
     assert a == b
 
 
 def test_catalog_hash_changes_when_names_change() -> None:
-    """Tier 2: adding a qualified_name changes the hash."""
-    a = compute_catalog_hash([{"qualified_name": "skill__foo"}])
+    """Tier 2: adding a action_name changes the hash."""
+    a = compute_catalog_hash([{"action_name": "skill__foo"}])
     b = compute_catalog_hash([
-        {"qualified_name": "skill__foo"},
-        {"qualified_name": "skill__bar"},
+        {"action_name": "skill__foo"},
+        {"action_name": "skill__bar"},
     ])
     assert a != b
 
@@ -174,8 +174,8 @@ def test_catalog_hash_changes_when_names_change() -> None:
 def test_idempotent_rebuild_with_same_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: second build() with same catalog is a no-op (no re-embed)."""
     items = [
-        {"qualified_name": "skill__a", "short_description": "A"},
-        {"qualified_name": "skill__b", "short_description": "B"},
+        {"action_name": "skill__a", "short_description": "A"},
+        {"action_name": "skill__b", "short_description": "B"},
     ]
     provider = _FakeEmbeddingProvider()
     ctx = _ctx_for(provider, monkeypatch)
@@ -190,19 +190,19 @@ def test_idempotent_rebuild_with_same_catalog(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_rebuild_when_catalog_changes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tier 2: changing the qualified_name set triggers a fresh build."""
+    """Tier 2: changing the action_name set triggers a fresh build."""
     provider = _FakeEmbeddingProvider()
     ctx = _ctx_for(provider, monkeypatch)
     idx = ActionEmbeddingIndex()
     _run(idx.build(
-        [{"qualified_name": "skill__a", "short_description": "A"}],
+        [{"action_name": "skill__a", "short_description": "A"}],
         ctx, "standard",
     ))
     first_call_count = len(provider.calls)
     _run(idx.build(
         [
-            {"qualified_name": "skill__a", "short_description": "A"},
-            {"qualified_name": "skill__b", "short_description": "B"},
+            {"action_name": "skill__a", "short_description": "A"},
+            {"action_name": "skill__b", "short_description": "B"},
         ],
         ctx, "standard",
     ))
@@ -216,7 +216,7 @@ def test_rebuild_when_catalog_changes(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_query_returns_top_k_items(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: query returns top_k results sorted by score descending."""
     items = [
-        {"qualified_name": f"skill__item_{i}", "short_description": f"Item {i}"}
+        {"action_name": f"skill__item_{i}", "short_description": f"Item {i}"}
         for i in range(5)
     ]
     idx = ActionEmbeddingIndex()
@@ -229,7 +229,7 @@ def test_query_returns_top_k_items(monkeypatch: pytest.MonkeyPatch) -> None:
     assert scores == sorted(scores, reverse=True)
     # Each result has the original fields + score.
     for r in (r0, r1, r2):
-        assert "qualified_name" in r
+        assert "action_name" in r
         assert "short_description" in r
         assert "score" in r
         assert -1.0 <= r["score"] <= 1.0
@@ -238,7 +238,7 @@ def test_query_returns_top_k_items(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_query_top_k_larger_than_catalog_returns_all(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: top_k > catalog size returns the full catalog."""
     items = [
-        {"qualified_name": "skill__only", "short_description": "Only one"},
+        {"action_name": "skill__only", "short_description": "Only one"},
     ]
     idx = ActionEmbeddingIndex()
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
@@ -262,7 +262,7 @@ def test_query_empty_string_returns_empty(monkeypatch: pytest.MonkeyPatch) -> No
     idx = ActionEmbeddingIndex()
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
-        [{"qualified_name": "skill__a", "short_description": "A"}],
+        [{"action_name": "skill__a", "short_description": "A"}],
         ctx, "standard",
     ))
     assert _run(idx.query("", ctx, "standard")) == []
@@ -274,7 +274,7 @@ def test_query_zero_top_k_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None
     idx = ActionEmbeddingIndex()
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
-        [{"qualified_name": "skill__a", "short_description": "A"}],
+        [{"action_name": "skill__a", "short_description": "A"}],
         ctx, "standard",
     ))
     assert _run(idx.query("q", ctx, "standard", top_k=0)) == []
@@ -295,14 +295,14 @@ def test_empty_catalog_records_hash_no_vectors(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_items_without_qualified_name_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tier 2: items missing qualified_name are silently skipped."""
+    """Tier 2: items missing action_name are silently skipped."""
     idx = ActionEmbeddingIndex()
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(
         [
-            {"qualified_name": "skill__valid", "short_description": "Valid"},
-            {"short_description": "No qualified_name field"},  # dropped
-            {"qualified_name": "", "short_description": "Empty name"},  # dropped
+            {"action_name": "skill__valid", "short_description": "Valid"},
+            {"short_description": "No action_name field"},  # dropped
+            {"action_name": "", "short_description": "Empty name"},  # dropped
         ],
         ctx,
         "standard",
@@ -321,8 +321,8 @@ def test_mismatched_vector_count_refuses_partial_build(monkeypatch: pytest.Monke
     with pytest.raises(RuntimeError, match="refusing partial build"):
         _run(idx.build(
             [
-                {"qualified_name": "skill__a"},
-                {"qualified_name": "skill__b"},  # 2 items but provider returns 1
+                {"action_name": "skill__a"},
+                {"action_name": "skill__b"},  # 2 items but provider returns 1
             ],
             ctx,
             "standard",
@@ -346,7 +346,7 @@ def test_workspace_root_build_creates_db_file(
     tmp_path: "Path", monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: build() with a workspace_root creates the unified index.db."""
-    items = [{"qualified_name": "skill__a", "short_description": "A"}]
+    items = [{"action_name": "skill__a", "short_description": "A"}]
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(items, ctx, "standard"))
@@ -365,7 +365,7 @@ def test_unified_path_replaces_old_action_index_dir(
     ``.reyn/cache/index/<source>/`` convention, NOT the old private
     ``.reyn/cache/action_index/`` directory (which is no longer read or
     written; regenerable cache, no migration needed)."""
-    items = [{"qualified_name": "skill__a", "short_description": "A"}]
+    items = [{"action_name": "skill__a", "short_description": "A"}]
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
     _run(idx.build(items, ctx, "standard"))
@@ -390,8 +390,8 @@ def test_workspace_root_loads_from_disk_skips_embed(
     The disk cache hit must prevent any embed call.
     """
     items = [
-        {"qualified_name": "skill__a", "short_description": "A"},
-        {"qualified_name": "skill__b", "short_description": "B"},
+        {"action_name": "skill__a", "short_description": "A"},
+        {"action_name": "skill__b", "short_description": "B"},
     ]
 
     # First process — build + persist
@@ -419,10 +419,10 @@ def test_workspace_root_rebuilds_on_stale_disk_hash(
     tmp_path: "Path", monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: changed catalog triggers re-embed and overwrites disk hash."""
-    items_v1 = [{"qualified_name": "skill__a", "short_description": "A"}]
+    items_v1 = [{"action_name": "skill__a", "short_description": "A"}]
     items_v2 = [
-        {"qualified_name": "skill__a", "short_description": "A"},
-        {"qualified_name": "skill__b", "short_description": "B"},
+        {"action_name": "skill__a", "short_description": "A"},
+        {"action_name": "skill__b", "short_description": "B"},
     ]
 
     idx1 = ActionEmbeddingIndex(workspace_root=tmp_path)
@@ -472,7 +472,7 @@ def test_build_redacts_secret_in_short_description_before_embed(
     idx = ActionEmbeddingIndex()
     secret_desc = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
     _run(idx.build(
-        [{"qualified_name": "skill__leaky", "short_description": secret_desc}],
+        [{"action_name": "skill__leaky", "short_description": secret_desc}],
         ctx,
         "standard",
     ))

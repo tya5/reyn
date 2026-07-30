@@ -20,7 +20,7 @@
   "arg_normalize_note": "S1 LLM used content (canonical) directly — no normalize needed. S6 LLM dispatched skill__index_events (wrong action); rag.operation__drop_source never called, so arg-normalize path not exercised.",
   "d2_wrapper_scope_expanded": true,
   "ars_block_header": "ACTION ARG SCHEMAS (canonical keys for all session-visible actions):",
-  "ars_file_write_entry": "file__write: {content, path}",
+  "ars_file_write_entry": "write_file: {content, path}",
   "ars_drop_source_entry": "rag.operation__drop_source: {source}",
   "s8_web_fetch_deny_verified": true,
   "scenarios": [
@@ -28,16 +28,16 @@
       "id": "file_write_outside_cwd_denied",
       "outcome": "verified",
       "arg_normalize_verify": {
-        "llm_args_sent": {"action_name": "file__write", "args": {"content": "hello", "path": "/etc/test.txt"}},
+        "llm_args_sent": {"action_name": "write_file", "args": {"content": "hello", "path": "/etc/test.txt"}},
         "canonical_key": "content",
         "llm_used_canonical": true,
         "d2_wrapper_schema_visible": true,
-        "ars_entry_confirmed": "file__write: {content, path}",
+        "ars_entry_confirmed": "write_file: {content, path}",
         "b37_baseline": "text (non-canonical)",
-        "note": "B38 ARS block covers all session-visible actions; file__write now listed with {content, path}. LLM used content (canonical). Permission gate fired: kind=file, path=/etc/test.txt. B34 normalize NOT needed — ARS structural fix effective."
+        "note": "B38 ARS block covers all session-visible actions; write_file now listed with {content, path}. LLM used content (canonical). Permission gate fired: kind=file, path=/etc/test.txt. B34 normalize NOT needed — ARS structural fix effective."
       },
       "events": {
-        "routing_decided": {"action_name": "file__write", "source": "invoke_action", "outcome": "success"},
+        "routing_decided": {"action_name": "write_file", "source": "invoke_action", "outcome": "success"},
         "permission_denied": {"kind": "file", "path": "/etc/test.txt"},
         "write_file": false
       },
@@ -121,15 +121,15 @@
       "outcome": "verified",
       "arg_normalize_verify": null,
       "events": {
-        "routing_decided": {"action_name": "web__fetch", "outcome": "error"},
+        "routing_decided": {"action_name": "web_fetch", "outcome": "error"},
         "tool_failed": {"error_kind": "permission_denied", "message": "web fetch denied"},
         "web_fetch_started": false
       },
-      "notes": "VERIFIED: web.fetch:deny gate fired. LLM attempted web__fetch -> permission_denied. Reply says 'fetching web content is currently not allowed'. #53 non-regression confirmed. Per-scenario reyn.local.yaml with policy:deny applied correctly."
+      "notes": "VERIFIED: web.fetch:deny gate fired. LLM attempted web_fetch -> permission_denied. Reply says 'fetching web content is currently not allowed'. #53 non-regression confirmed. Per-scenario reyn.local.yaml with policy:deny applied correctly."
     }
   ],
   "key_findings": [
-    "F1: S1 PRIMARY VERIFIED — B38 D2-scope-expansion fix effective. LLM used file__write with args {content, path} (canonical). B37 used {text, path} (non-canonical). ARS block explicitly lists 'file__write: {content, path}'. No B34 normalize needed.",
+    "F1: S1 PRIMARY VERIFIED — B38 D2-scope-expansion fix effective. LLM used write_file with args {content, path} (canonical). B37 used {text, path} (non-canonical). ARS block explicitly lists 'write_file: {content, path}'. No B34 normalize needed.",
     "F2: S6 CRITICAL RETEST — hallucination drift test inconclusive due to skill misrouting. LLM dispatched skill__index_events{mode:drop} instead of rag.operation__drop_source{source}. ARS block IS present with 'rag.operation__drop_source: {source}' (confirmed from LLM trace). Whether the arg key would be canonical if the right action were picked cannot be determined from this observation.",
     "F3: ARS block scope confirmed expanded — header changed from 'current hot-list actions' to 'all session-visible actions'. Block covers all 17 static ops (file/web/exec/memory/rag/reyn/mcp) plus 33 session skills and all peer agents. Total ~50+ entries visible to LLM.",
     "F4: S8 web.fetch:deny non-regression VERIFIED. #53 fix continues to hold.",

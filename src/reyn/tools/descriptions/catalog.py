@@ -65,13 +65,13 @@ invoke_action = ToolDescription(
         "catalog's single dispatch entry point for all 13 action categories"
     ),
     purpose=(
-        "Execute any catalog action by qualified name — the ONE dispatch "
+        "Execute any catalog action by name — the ONE dispatch "
         "surface every action category (MCP tool, file op, web search, "
         "memory write, semantic search, agent delegation, etc.) routes "
         "through, so the LLM never needs a per-kind legacy tool."
     ),
     text=(
-        "WHAT: Execute an action by qualified name (<category>__<entry>). "
+        "WHAT: Execute an action by name (e.g. 'read_file', 'web_search'). "
         "Executes the action's default semantic operation. "
         "WHEN: Call this whenever you intend to run any action — MCP tool, "
         "file operation, web search, memory write, semantic search, etc. All catalog actions "
@@ -103,20 +103,20 @@ invoke_action = ToolDescription(
         "indicate the task did not complete normally. "
         ""
         "AGENT DELEGATION: For peer agent delegation, use "
-        "action_name='multi_agent__delegate' with args {to: '<agent_name>', "
+        "action_name='delegate_to_agent' with args {to: '<agent_name>', "
         "request: ...}; get its canonical args via "
-        "describe_action(action_name='multi_agent__delegate'). "
+        "describe_action(action_name='delegate_to_agent'). "
         "Use when task is outside available actions but matches a peer agent's role, "
         "or when user explicitly addresses a named agent. "
         "Acknowledge delegation in 1 sentence."
     ),
     ja=(
-        "修飾名（<category>__<entry>）でアクションを実行する。MCP ツー"
+        "名前でアクションを実行する。MCP ツー"
         "ル・ファイル操作・ウェブ検索・メモリ書き込み・意味検索など、"
         "あらゆるカテゴリのアクションはこの単一のディスパッチ入口を通"
         "して実行される。未知の action_name にはエラーと類似名の提案が"
         "返る。ピアエージェントへの委任は "
-        "action_name='multi_agent__delegate' を使う。"
+        "action_name='delegate_to_agent' を使う。"
     ),
 )
 
@@ -136,25 +136,25 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
     "invoke_action": {
         "action_name": ParamDescription(
             text=(
-                "Qualified name of the action/resource to invoke "
-                "(e.g. 'mcp__brave__search', 'multi_agent__delegate')."
+                "Name of the action to invoke (e.g. 'read_file', "
+                "'delegate_to_agent'), as returned by list_actions or "
+                "search_actions."
             ),
             ja=(
-                "呼び出すアクション/リソースの修飾名（例 "
-                "'mcp__brave__search', 'multi_agent__delegate'）。"
+                "呼び出すアクションの名前（例 'read_file', "
+                "'delegate_to_agent'）。list_actions / search_actions が返す名前。"
             ),
         ),
         "args": ParamDescription(
             text=(
                 "Arguments for the action; shape comes from "
-                "describe_action.input_schema. May be omitted for "
-                "resources whose canonical invoke takes no args "
-                "(e.g. memory_entry__foo)."
+                "describe_action.input_schema. May be omitted for an "
+                "action that takes no arguments (e.g. list_mcp_servers)."
             ),
             ja=(
                 "アクションへの引数。形は describe_action.input_schema から"
-                "得る。正規の呼び出しが引数を取らないリソース（例 "
-                "memory_entry__foo）では省略可。"
+                "得る。引数を取らないアクション（例 list_mcp_servers）では"
+                "省略可。"
             ),
         ),
     },

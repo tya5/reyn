@@ -86,14 +86,14 @@ batch 17-22 progression (= 0.96 → 0.55 → 0.30 → 0.20 → 0.18) と一致�
 
 ---
 
-### B26-S3-NOOP-1 (LOW、 latent bypass observation) — invoke_action(exec__run) silent accept under noop
+### B26-S3-NOOP-1 (LOW、 latent bypass observation) — invoke_action(exec) silent accept under noop
 
 **Severity**: LOW (= observation、 production impact なし)
 
 **Observation**: S3-noop R3 で LLM が:
 - list_actions(category=['exec']) → empty
 - search_actions(query='sandboxed') → empty
-- **invoke_action(action_name='exec__run')** → noop backend が silent accept、 routing_decided event emit (outcome=success)
+- **invoke_action(action_name='exec')** → noop backend が silent accept、 routing_decided event emit (outcome=success)
 - describe_action で error 確認、 final reply で 「利用不可」 と正しく narrate
 
 **Issue**: noop backend は invoke_action 経由で exec action probe を block しない。 D14 visibility gate は list_actions レイヤで動作するが、 invoke_action 直撃 (= LLM が action name を hallucinate / probe) では gate not exercised。

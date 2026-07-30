@@ -14,7 +14,7 @@ cancellable turn task (Ctrl+C → ``CancelledError`` propagates after teardown; 
 write is strictly after the probe, a cancel commits nothing).
 
 Coverage note: the completeness for the PRIMARY stdio use runs through
-``mcp__install_local`` (``tools/mcp_verbs``), which writes ``.reyn/config/mcp.yaml``
+``mcp_install_local`` (``tools/mcp_verbs``), which writes ``.reyn/config/mcp.yaml``
 DIRECTLY — a parallel path to the ``mcp_install`` op — so it carries the SAME contract.
 These e2e tests drive that real path against a REAL stdio MCP server subprocess
 (``tests/_support/mcp_tools_only_pid_server.py``).
@@ -200,13 +200,13 @@ async def test_apply_now_mcp_install_targets_mcp_seam_only(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_apply_now_mcp_install_local_targets_mcp_seam_only(tmp_path: Path) -> None:
-    """Tier 2: the parallel mcp__install_local source label also maps to the "mcp" seam."""
+    """Tier 2: the parallel mcp_install_local source label also maps to the "mcp" seam."""
     ran, make = _seam_recorder()
     hr = HotReloader(project_root=tmp_path, events=EventLog())
     hr.register_seam("mcp", make("mcp"))
     hr.register_seam("skills", make("skills"))
 
-    summary = await hr.apply_now(source="mcp__install_local")
+    summary = await hr.apply_now(source="mcp_install_local")
 
     assert summary["applied"] == ["mcp"]
     assert ran == {"mcp": 1}
@@ -347,14 +347,14 @@ async def test_local_install_probe_cancel_event_interrupts_immediately(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: #2813 — the LIVE incident this fixes. Before this fix, Ctrl-C during
-    ``mcp__install_local``'s probe did NOT interrupt it: the probe ran to its own full
+    ``mcp_install_local``'s probe did NOT interrupt it: the probe ran to its own full
     ``call_timeout_seconds`` (120s default) regardless, and only the SURROUNDING turn's
     cooperative cancel flag was set (checked between tool-iteration boundaries, per
     ``Session.cancel_inflight``'s documented V1 boundary) — so the user's Ctrl-C
     appeared to hang for up to 2 minutes.
 
     This drives the REAL production path (``_handle_mcp_install_local``, the exact
-    ``mcp__install_local`` tool the incident used — NOT the parallel ``mcp_install``
+    ``mcp_install_local`` tool the incident used — NOT the parallel ``mcp_install``
     op path, which has its own equivalent test above) with a genuinely hung stdio
     subprocess, sets ``cancel_event`` shortly after the probe starts (mirroring
     ``Session.cancel_inflight()``), and asserts the call returns FAST — well under the

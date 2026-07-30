@@ -190,7 +190,7 @@ def _sp_codeact() -> str:
     return build_system_prompt(
         agent_name="test", agent_role="tester", available_agents=[],
         memory_index={}, tool_use_sp="## Code API\nCall tools via tool(name, **args).",
-        scheme_sp_fragment="def file__read(path: str) -> str: ...",
+        scheme_sp_fragment="def read_file(path: str) -> str: ...",
     )
 
 

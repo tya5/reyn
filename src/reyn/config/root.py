@@ -245,7 +245,7 @@ class ReynConfig:
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).
     web: WebConfig = field(default_factory=WebConfig)
     # Issue #364 — multi-modal cluster: cap binary media size (= images from
-    # web__fetch / file__read / MCP) + iv-gated user permission when exceeded.
+    # web_fetch / read_file / MCP) + iv-gated user permission when exceeded.
     multimodal: MultimodalConfig = field(default_factory=MultimodalConfig)
     # FP-0017: sandbox backend selection + unsupported-platform policy.
     # Default: auto-select the best available backend for this platform.

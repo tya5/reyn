@@ -30,7 +30,7 @@ substitution the shared primitives have no reason to know about.
 **No new permission gate on WHICH file is read.** `:skillname` names come
 from the operator's OWN registered ``skills.entries`` — a set the operator
 already declared in config or installed through a permission-gated
-``skill_management__install_*`` call. Resolving `:name` to that entry's
+``skill_install_local`` / ``skill_install_source`` call. Resolving `:name` to that entry's
 path and reading it grants no capability beyond what the operator already
 put there themselves; there is no LLM in the loop deciding which file to
 read. This mirrors the "operator typing a path in their own terminal needs

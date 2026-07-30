@@ -140,10 +140,10 @@ def _assembled_output_corpus() -> str:
     ))
 
     sample_entries = [
-        {"qualified_name": "file__read", "name": "file__read", "description": "Read a file",
+        {"action_name": "read_file", "name": "read_file", "description": "Read a file",
          "parameters": {"properties": {"path": {}}}},
     ]
-    ident_by_qn = build_actions_map([e["qualified_name"] for e in sample_entries])
+    ident_by_qn = build_actions_map([e["action_name"] for e in sample_entries])
     chunks.append(render_code_api(sample_entries, ident_by_qn))
 
     chunks.append(_search_sp(terminal=True))

@@ -326,8 +326,11 @@ async def test_refresh_does_not_raise_on_adapter_failure(
     """
     state_dir = _state_dir(tmp_path)
     # No pre-written disk cache — forces live-probe path (ensure_mcp_tools_cached).
-    # The real mcp_list_tools callback is the session's _mcp_list_tools,
-    # which on error/non-existent server returns [] (= adapter defensive behaviour).
+    # mcp_list_tools is RouterHostAdapter's own method (#3447: folded off
+    # Session's former _mcp_list_tools callback) — ensure_mcp_tools_cached's
+    # _probe_one wraps it in a blanket except-Exception, so on error/
+    # non-existent server the per-server entry is still cached as []
+    # (= adapter defensive behaviour, unchanged by the fold).
 
     old_cwd = os.getcwd()
     os.chdir(tmp_path)

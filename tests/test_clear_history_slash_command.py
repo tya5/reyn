@@ -62,7 +62,7 @@ def test_tracker_reset_empties_in_memory_state(tmp_path: Path):
     """Tier 2: tracker.reset() clears the compacted table."""
     path = tmp_path / "action_usage.json"
     tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("file__read", 100.0), ("file__write", 101.0)])
+    tracker.merge_compacted([("read_file", 100.0), ("write_file", 101.0)])
     tracker_size = len(tracker)
     assert tracker_size == 2
 
@@ -75,7 +75,7 @@ def test_tracker_reset_removes_persist_file(tmp_path: Path):
     """Tier 2: tracker.reset() deletes the on-disk persist file."""
     path = tmp_path / "action_usage.json"
     tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("file__read", 100.0)])
+    tracker.merge_compacted([("read_file", 100.0)])
     assert path.exists()
 
     tracker.reset()
@@ -86,7 +86,7 @@ def test_tracker_reset_safe_when_file_already_gone(tmp_path: Path):
     """Tier 2: reset() is idempotent — second call is a no-op, no exception."""
     path = tmp_path / "action_usage.json"
     tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("file__read", 100.0)])
+    tracker.merge_compacted([("read_file", 100.0)])
     tracker.reset()
     # Second reset should not raise even though file is gone.
     tracker.reset()
@@ -99,19 +99,19 @@ def test_tracker_reset_preserves_instance_identity(tmp_path: Path):
     appends from a clean slate so the caller's wiring keeps working."""
     path = tmp_path / "action_usage.json"
     tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("file__read", 50.0)])
+    tracker.merge_compacted([("read_file", 50.0)])
     tracker.reset()
-    tracker.merge_compacted([("file__write", 200.0)])
-    names = {r["qualified_name"] for r in tracker.full_ranking()}
-    assert "file__read" not in names
-    assert "file__write" in names
+    tracker.merge_compacted([("write_file", 200.0)])
+    names = {r["action_name"] for r in tracker.full_ranking()}
+    assert "read_file" not in names
+    assert "write_file" in names
 
 
 def test_tracker_reset_with_no_persist_path():
     """Tier 2: tracker constructed without persist_path → reset() doesn't
     crash trying to unlink a None path."""
     tracker = ActionUsageTracker(persist_path=None)
-    tracker.merge_compacted([("file__read", 1.0)])
+    tracker.merge_compacted([("read_file", 1.0)])
     tracker.reset()
     tracker_size = len(tracker)
     assert tracker_size == 0
@@ -135,7 +135,7 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
     history_path = tmp_path / "history.jsonl"
     history_path.write_text("nonempty\n")
     tracker = ActionUsageTracker(persist_path=tmp_path / "action_usage.json")
-    tracker.merge_compacted([("file__read", 100.0)])
+    tracker.merge_compacted([("read_file", 100.0)])
 
     session = _StubSession(
         history=["turn1", "turn2"],
@@ -153,8 +153,8 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
     # Data still intact.
     assert session.history == ["turn1", "turn2"]
     assert history_path.exists()
-    names = {r["qualified_name"] for r in tracker.full_ranking()}
-    assert "file__read" in names
+    names = {r["action_name"] for r in tracker.full_ranking()}
+    assert "read_file" in names
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_confirm_clears_history_and_tracker(tmp_path: Path):
         json.dumps({"role": "user", "content": "hi"}) + "\n",
     )
     tracker = ActionUsageTracker(persist_path=tmp_path / "action_usage.json")
-    tracker.merge_compacted([("file__read", 100.0), ("file__write", 101.0)])
+    tracker.merge_compacted([("read_file", 100.0), ("write_file", 101.0)])
 
     session = _StubSession(
         history=["turn1", "turn2", "turn3"],
@@ -201,7 +201,7 @@ async def test_confirm_preserves_unrelated_files(tmp_path: Path):
     snapshot_sentinel.write_text("{}\n")
 
     tracker = ActionUsageTracker(persist_path=tmp_path / "action_usage.json")
-    tracker.merge_compacted([("file__read", 1.0)])
+    tracker.merge_compacted([("read_file", 1.0)])
 
     session = _StubSession(
         history=["x"], history_path=history_path, tracker=tracker,

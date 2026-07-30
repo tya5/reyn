@@ -275,7 +275,7 @@ def _overflow_ref_text(ref: dict) -> str:
     return (
         f"[image not loaded — exceeds the per-turn media budget. "
         f"Stored at {ref['path']} ({ref.get('mime_type', 'image')}); "
-        f"load it with file__read(path={ref['path']!r}) when the context has room.]"
+        f"load it with read_file(path={ref['path']!r}) when the context has room.]"
     )
 
 
@@ -311,7 +311,7 @@ def _build_media_tail_preview(
                     f"[{n} more image(s) exceed the per-turn media budget and are "
                     f"not shown here. A lossless manifest of their on-disk paths is "
                     f"stored at {saved['path']}; load it with "
-                    f"file__read(path={saved['path']!r}) to access them.]"
+                    f"read_file(path={saved['path']!r}) to access them.]"
                 )}
             except Exception:  # noqa: BLE001 — offload best-effort; degrade below
                 pass
@@ -632,7 +632,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         forwards this into ``RouterCallerState.sandbox_backend`` so the
         ``exec`` category D14 visibility gate in
         ``universal_catalog._enumerate_category`` can decide whether to
-        expose ``exec__run``.  ``None`` and ``"noop"`` both
+        expose ``exec``.  ``None`` and ``"noop"`` both
         hide the category; any other value (``"seatbelt"`` /
         ``"landlock"`` / ``"auto"``) makes it visible.
         """
@@ -768,6 +768,14 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 # FP-0034 Phase 2 step 5: hot list alias builder
 # ---------------------------------------------------------------------------
 
+def _known_action_names() -> "frozenset[str]":
+    """The catalog action set, imported lazily to keep module import order free
+    of a ``reyn.tools`` cycle at load time."""
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
+
+    return KNOWN_ACTION_NAMES
+
+
 # Universal wrapper tool names that are already added by section I of
 # build_tools().  Filtering them here prevents duplicate function
 # declarations when ActionUsageTracker.get_top_n() returns a wrapper name
@@ -779,6 +787,11 @@ _UNIVERSAL_WRAPPER_NAMES: frozenset[str] = frozenset({
     "invoke_action",
 })
 
+# The catalog's action set, bound once at import. Read by the ``routing_decided``
+# audit arm to tell a direct call on a catalog action from a direct call on a
+# base tool that the catalog does not carry.
+_KNOWN_ACTION_NAMES: frozenset[str] = _known_action_names()
+
 
 def _filter_ghost_names_by_registry(
     names: "list[str]",
@@ -787,109 +800,49 @@ def _filter_ghost_names_by_registry(
     *,
     _warned: "set[str] | None" = None,
 ) -> "list[str]":
-    """Filter hot-list names that pass structural check but don't exist in the registry.
+    """Drop hot-list names that are not catalog actions — the ghosts.
 
-    B38 W2 finding: ``_is_valid_qualified_name`` only validates shape
-    (= category + separator + entry). A stale alias (e.g. a renamed MCP
-    tool) passes structural check but is a ghost — it no longer resolves
-    in the current registry. This filter adds the existence check at
-    hot-list materialization time, when session registry data is
-    available.
+    A hot-list name reaches here from the on-disk usage table or from the
+    operator-supplied ``action_retrieval.hot_list_seed``, and either can carry a
+    name that no longer exists (a rename, a retired tool, a typo in the seed).
+    Emitting one into ``tools=`` would advertise a function the dispatcher then
+    rejects, so the check is membership in ``KNOWN_ACTION_NAMES`` — the closed
+    table that IS the current action set (#3026: no category mints names from
+    operator data, so this is total).
 
-    Categories and their existence signals:
-    - ``agent.peer__*`` / ``mcp.tool__*`` / ``mcp.server__*`` → DEAD legs. These
-      categories were collapsed at #909 / #879, so such a name has not parsed
-      since; #3026 made the unparseable branch DROP rather than pass, so they
-      are now filtered for the right reason and these branches are unreachable.
-      Kept only until someone confirms no tracker table still carries the shape.
-    - Every other name → must be in ``KNOWN_STATIC_QUALIFIED_NAMES`` (the
-      static op registry). #3026: since no category mints names from operator
-      data any more, that registry is the WHOLE action set, and this check is
-      total rather than a per-dynamic-category special case. The former
-      ``memory_entry__*`` leg (which consulted a per-session enumeration of
-      ``.reyn/memory/*.md``) is gone with the category; a stale
-      ``memory_entry__<slug>`` still sitting in a tracker table now correctly
-      falls to this check and is dropped as the ghost it is.
+    B38 W2 found the gap this closes: the tracker's own filter was structural
+    ("does the name look like an action name"), which a stale name passes. #3429
+    then made structure and identity the same question — the check is the same
+    membership test the tracker now applies, so a name that survives one survives
+    the other.
 
     Ghost names are logged once per unique name per session to stderr.
     ``_warned`` is an optional set for cross-call deduplication.
 
-    P7-clean: check is data-driven from registry enumeration only —
-    no hardcoded ghost names.
+    P7-clean: data-driven from the catalog table only — no hardcoded ghost names.
+    ``mcp_tool_map`` / ``available_agents`` are the session-state signals the
+    per-resource categories needed before #3026 collapsed them; they stay in the
+    signature because the call sites thread them and a future dynamic category
+    would need them again.
     """
     import sys
 
-    from reyn.tools.universal_catalog import split_qualified_name
-    from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
+    from reyn.tools.universal_dispatch import is_known_action
 
     if _warned is None:
         _warned = set()
 
-    # Build existence sets from session state.
-    known_mcp_tools: frozenset[str] = frozenset(mcp_tool_map or {})
-    # Extract MCP server names from mcp_tool_map keys (mcp.tool__<server>.<tool>)
-    known_mcp_servers: set[str] = set()
-    for qn in known_mcp_tools:
-        try:
-            _cat, entry = split_qualified_name(qn)
-        except ValueError:
-            continue
-        if "." in entry:
-            known_mcp_servers.add(entry.split(".", 1)[0])
-    # Phase 1 collapse (2026-05-25): the prior ``known_agents`` set
-    # supported the ``agent.peer__<name>`` ghost-filter branch which is
-    # now removed — multi_agent__* aliases pass through the static-ops
-    # check below since they live in KNOWN_STATIC_QUALIFIED_NAMES.
-    static_ops: frozenset[str] = frozenset(KNOWN_STATIC_QUALIFIED_NAMES)
-
     result: list[str] = []
     for name in names:
-        try:
-            category, entry_name = split_qualified_name(name)
-        except ValueError:
-            # #3026: a name that does not parse cannot resolve, so it must never
-            # become a tools= function name — DROP it. This branch used to let it
-            # through on the reasoning that structural rejection "already happened
-            # at load"; that is true of the action_usage tracker's on-disk table
-            # (ActionUsageTracker._is_valid_qualified_name filters it there) but
-            # NOT of the operator-supplied ``action_retrieval.hot_list_seed``,
-            # which reaches this filter unfiltered. #3026 made the gap reachable:
-            # a seed naming a collapsed category (memory_entry__foo) now fails to
-            # parse, and letting it through would emit a function name the
-            # dispatcher rejects. Dropping is also what this function is FOR — a
-            # ghost is exactly a name that cannot resolve.
+        if not is_known_action(name):
             if name not in _warned:
                 print(
                     f"[reyn] action_usage: skipping ghost alias "
-                    f"{name!r} — not a resolvable qualified action name",
+                    f"{name!r} — not a known action name",
                     file=sys.stderr,
                 )
                 _warned.add(name)
             continue
-
-        exists = True
-        if category == "mcp.tool":
-            exists = name in known_mcp_tools
-        elif category == "mcp.server":
-            exists = entry_name in known_mcp_servers
-        else:
-            # #3026: the static op registry is the complete action set.
-            if name in static_ops:
-                exists = True
-            else:
-                # Not in static ops: unknown to the registry.
-                exists = False
-
-        if not exists:
-            if name not in _warned:
-                print(
-                    f"[reyn] action_usage: skipping ghost alias "
-                    f"{name!r} — not found in current registry",
-                    file=sys.stderr,
-                )
-                _warned.add(name)
-            continue
-
         result.append(name)
     return result
 
@@ -999,40 +952,31 @@ def _build_hot_list_aliases(
 
 
 def _operation_alias_metadata(
-    qualified_name: str,
+    action_name: str,
 ) -> "tuple[str, dict] | None":
-    """Return ``(description, parameters)`` for an operation-category alias.
+    """Return ``(description, parameters)`` for a hot-list action entry.
 
-    Scoped to qualified names whose category routes through ``_OPERATION_RULES``
-    in ``reyn.tools.universal_dispatch`` (= ``_passthrough_args`` transform —
-    the alias's args are forwarded verbatim to the target). For those, the
-    target ``ToolDefinition.description`` and ``ToolDefinition.parameters``
-    are the correct alias metadata.
+    The hot list advertises a catalog action as a direct function so the model
+    can call it without a ``list_actions`` round-trip; the row it advertises is
+    the action's own ``ToolDefinition.description`` + ``.parameters``.
 
-    #3026: this is total for every alias the hot-list can hold. It used to
-    return ``None`` for resource-category aliases (agent.peer / mcp.tool /
+    #3026: this is total for every name the hot list can hold. It used to
+    return ``None`` for resource-category entries (agent.peer / mcp.tool /
     memory_entry / rag_corpus), whose generic-dispatcher target did not match
     the resource's real schema, leaving a ``_resource_alias_metadata``
     companion to introspect it per-resource (D2-full). Those categories are
-    collapsed and that companion is gone; a name that is not an exact
-    ``_OPERATION_RULES`` key is not an alias candidate at all — the ghost
-    filter drops it before this is reached.
+    collapsed and that companion is gone; a name that is not a catalog action
+    is not a hot-list candidate at all — the ghost filter drops it before this
+    is reached.
     """
     # Late imports to avoid circular dependency at module load time.
     from reyn.tools import get_default_registry
     from reyn.tools.types import parameters_for_export
-    from reyn.tools.universal_dispatch import (
-        KNOWN_STATIC_QUALIFIED_NAMES,
-        resolve_describe_action,
-    )
+    from reyn.tools.universal_dispatch import is_known_action
 
-    if qualified_name not in KNOWN_STATIC_QUALIFIED_NAMES:
+    if not is_known_action(action_name):
         return None
-    try:
-        resolved = resolve_describe_action(qualified_name)
-    except Exception:
-        return None
-    tool = get_default_registry().lookup(resolved.target_tool_name)
+    tool = get_default_registry().lookup(action_name)
     if tool is None:
         return None
     # #3383: ``_build_hot_list_aliases`` drops this value straight into an OpenAI
@@ -1080,11 +1024,11 @@ def apply_contextual_visibility(
     ``tool_excluded`` is never offered in the first place. The prior filter keyed on
     ``exclude_tools`` ALONE, so any contextual that did not come from
     ``exclude_tools`` (topology / delegate / ephemeral) left the tool advertised and
-    denied it only at call time — the owner-reported ``exec__run`` symptom.
+    denied it only at call time — the owner-reported ``exec`` symptom.
 
     **Not a substitute for enforcement (#187).** Hiding a row does not stop the LLM
     from naming it anyway (native direct call, the #229 salvage, or a direct
-    ``invoke_action(action_name=…)``), which is exactly how the #187 ``web__search``
+    ``invoke_action(action_name=…)``), which is exactly how the #187 ``web_search``
     leak executed. ``_excluded_result`` stays the boundary; this is the presentation
     half that keeps the model from wasting a turn on a tool it cannot have.
 
@@ -1200,11 +1144,11 @@ class RouterLoop:
         # Composition (not either/or) closes the defect in BOTH directions:
         #   - a contextual from topology / delegate / ephemeral used to leave
         #     ``exclude_tools``-driven advertisement untouched → the tool stayed
-        #     advertised and was denied only at call time (the owner's ``exec__run``);
+        #     advertised and was denied only at call time (the owner's ``exec``);
         #   - the old ``if contextual is not None`` branch DISCARDED ``exclude_tools``
         #     from enforcement whenever any contextual was present (every Session goes
         #     through CapabilityVisibility, which yields a non-None contextual once
-        #     ``reapply_visibility_override`` has run) → a ``--exclude-tools web__search``
+        #     ``reapply_visibility_override`` has run) → a ``--exclude-tools web_search``
         #     was hidden but NOT execution-blocked, i.e. the #187 leak in reverse.
         self._contextual_permission: "object | None" = self._with_exclude_tools(
             contextual_permission
@@ -1520,8 +1464,8 @@ class RouterLoop:
             # Issue #879: per-mcp-tool aliases (``mcp.tool__<srv>.<tool>``)
             # were removed when the mcp surface collapsed to six verb
             # actions. LLMs now dispatch tool calls through
-            # ``mcp__call_tool(server, mcp_tool_name, args)`` and learn
-            # the per-tool args via ``mcp__list_tools`` /
+            # ``mcp_call_tool(server, mcp_tool_name, args)`` and learn
+            # the per-tool args via ``list_mcp_tools`` /
             # ``describe_mcp_tool``. The previous per-tool input-schema
             # lookup is no longer wired here.
         # FP-0034 Phase 2 step 5: hot list aliases for frequent actions.
@@ -1548,7 +1492,7 @@ class RouterLoop:
                 # model could read a saved memory without a discovery step; those
                 # names no longer resolve, so seeding them would emit ghost
                 # function names the dispatcher rejects. The capability is
-                # ``memory_operation__list`` + ``memory_operation__read`` (which,
+                # ``list_memory`` + ``read_memory_body`` (which,
                 # unlike the alias, also reaches AGENT-layer memories). The cost is
                 # honest and known: cross-session memory retrieval is a discovery
                 # step again, which the N4 probe found the weak default model
@@ -1666,7 +1610,7 @@ class RouterLoop:
         # owner directive disallows — so it is removed here (its two builder
         # functions, _collect_all_session_ars_entries / _enrich_invoke_action_
         # description, are deleted as dead). Sibling-tool cross-ref pointers
-        # (e.g. file__write → file__edit, #1420) hand the model the specific
+        # (e.g. write_file → edit_file, #1420) hand the model the specific
         # action names it needs without re-listing the catalog; for the rest,
         # discovery is list_actions and schema is describe_action.
         # #3378: advertisement is derived from the SAME effective contextual the live
@@ -1820,11 +1764,17 @@ class RouterLoop:
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
-        # _routing_decided_fired: set to True the first time routing_decided
-        #   is emitted in this turn (= invoke_action or hot_list_alias path).
+        # #3455: routing_decided is now emitted from ``_dispatch_resolved`` —
+        # the single chokepoint every catalog dispatch funnels through
+        # (invoke_action wrapper, bare hot-list alias, ARS-salvaged direct
+        # call, AND the flat/default bare-name dispatch that runs when
+        # universal wrappers are OFF, which the prior ``_univ_enabled``-gated
+        # emit never covered). An instance attribute (not a run_loop-local)
+        # because the emit site moved to a method called from multiple
+        # places; reset here so it reads "did routing happen THIS turn".
         # _tool_calls_attempted: count of tool_call rounds where the LLM
         #   invoked at least one tool (including non-catalog tools).
-        _routing_decided_fired: bool = False
+        self._routing_decided_this_turn: bool = False
         _tool_calls_attempted: int = 0
         # B42-NF-W6-1: empty-stop retry counter. The empty-stop handler
         # consults this before injecting a continuation prompt + looping,
@@ -2298,57 +2248,20 @@ class RouterLoop:
                     )
                     return self._total_usage
 
-                # FP-0034 Phase 3: routing_decided P6 event for catalog dispatch audit.
-                # Emitted independently of tracker (tracker=None is valid when
-                # hot_list_n=0, but P6 audit must fire whenever catalog routing
-                # actually happened). Guard: only when universal wrappers are on,
-                # which is the only condition under which catalog routing occurs.
-                if _univ_enabled:
-                    for tc, r in zip(tool_calls, tool_results):
-                        _rd_name = tc.get("function", {}).get("name", "")
-                        if _rd_name == "invoke_action":
-                            _rd_args = tc.get("function", {}).get("arguments", {})
-                            if isinstance(_rd_args, str):
-                                try:
-                                    import json as _json_rd
-                                    _rd_args = _json_rd.loads(_rd_args)
-                                except Exception:  # noqa: BLE001
-                                    _rd_args = {}
-                            _rd_action = (
-                                _rd_args.get("action_name", "")
-                                if isinstance(_rd_args, dict) else ""
-                            )
-                            _rd_source = "invoke_action"
-                        elif "__" in _rd_name:
-                            # Issue #241: distinguish "real hot-list alias the
-                            # LLM correctly used" (= name actually surfaced in
-                            # tools[]) from "ARS-only direct call the salvage
-                            # path covers" (= name appeared only in the
-                            # invoke_action.description ARS block, salvaged
-                            # by PR #240). Pre-#241, both cases were tagged
-                            # ``"hot_list_alias"`` regardless, muddying the
-                            # audit chain for downstream readers (B42 W5-S6).
-                            _rd_action = _rd_name
-                            if _rd_name in self._catalog:
-                                _rd_source = "hot_list_alias"
-                            else:
-                                _rd_source = "ars_direct"
-                        else:
-                            continue  # non-catalog tool — skip
-                        if not _rd_action:
-                            continue
-                        _rd_outcome = "error" if (
-                            isinstance(r, dict)
-                            and ("error" in r or r.get("status") == "error")
-                        ) else "success"
-                        host.events.emit(
-                            "routing_decided",
-                            action_name=_rd_action,
-                            source=_rd_source,
-                            outcome=_rd_outcome,
-                            chain_id=self.chain_id,
-                        )
-                        _routing_decided_fired = True  # B28-Q2: track for inline exclusivity
+                # #3455: routing_decided is no longer emitted here. It used to
+                # live in this loop, gated on ``if _univ_enabled:`` — which
+                # meant the opt-out configuration (an operator setting
+                # ``action_retrieval.universal_wrappers_enabled: false`` in
+                # reyn.yaml → flat bare-name ``tools=``, the pre-PR-3b-iv
+                # shape) never emitted it at all, even though catalog routing
+                # was happening on every dispatched call. The
+                # emit is now inside ``_dispatch_resolved`` (the #3429-census
+                # chokepoint every dispatch funnels through — invoke_action,
+                # bare hot-list alias, ARS-salvaged direct call, and the flat
+                # bare-name path alike), so coverage is structural rather than
+                # a property of which entry surface the model happened to
+                # use. ``self._routing_decided_this_turn`` (set there) is the
+                # B28-Q2 inline-exclusivity flag consumed below.
                 # #1608: the active scheme builds the appendable message sequence
                 # (assistant tool-call turn + per-result {role:tool, tool_call_id}
                 # messages + media follow-ups) AND persists each to history; the OS
@@ -2449,7 +2362,7 @@ class RouterLoop:
             # B28-Q2 Case A: emit chat_turn_completed_inline when no catalog
             # dispatch happened in this turn (= routing_decided never fired).
             # Mutually exclusive with routing_decided per turn (P6 audit).
-            if _univ_enabled and not _routing_decided_fired:
+            if _univ_enabled and not self._routing_decided_this_turn:
                 host.events.emit(
                     "chat_turn_completed_inline",
                     chain_id=self.chain_id,
@@ -2872,34 +2785,54 @@ class RouterLoop:
         and dispatch via the wrapper path so the user-visible behavior
         matches what the LLM intended.
         """
-        name, args = self._resolve_tool_call(tc)
+        name, args, raw_name = self._resolve_tool_call(tc)
 
         excluded = self._excluded_result(name, args)
         if excluded is not None:
+            # #3455: a pre-dispatch exclude IS a routing decision (the
+            # decision was "deny") — it never reaches ``_dispatch_resolved``,
+            # so its own emit call there would silently drop this outcome.
+            # Matches the pre-#3455 behavior (the old run_loop-local emit
+            # iterated ALL tool_results, excluded ones included).
+            self._emit_routing_decided(name, args, excluded, raw_name=raw_name)
             return excluded
-        return await self._dispatch_resolved(name, args)
+        return await self._dispatch_resolved(name, args, raw_name=raw_name)
 
-    def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict]":
-        """#1593: name + args + #229 salvage → the effective ``(name, args)``.
+    def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict, str]":
+        """#1593: name + args + #229 salvage → the effective ``(name, args)``,
+        plus (#3455) the ``raw_name`` the model actually called BEFORE any
+        salvage rewrite.
 
         **Resolution only** (no dispatch), so the scheme's ``interpret`` runs it and
         the OS exclude-gates the result BEFORE ``execute`` — preserving the #1406/#187
-        pre-dispatch order across the scheme split (byte-identical)."""
+        pre-dispatch order across the scheme split (byte-identical).
+
+        #3455: ``raw_name`` is threaded through to ``_dispatch_resolved`` so
+        ``routing_decided``'s ``source`` classification keeps reading "which
+        surface did the MODEL use" (invoke_action / a bare name) rather than
+        "what name did dispatch end up running" — the #229 salvage rewrites
+        an un-advertised bare call's EFFECTIVE name/args to ``invoke_action``
+        internally, but that rewrite is an OS routing mechanic, not a change
+        in what the model did. Losing this distinction would silently
+        reclassify every existing ``"ars_direct"``-labeled call as
+        ``"invoke_action"`` the moment the emit moved to the resolved
+        chokepoint — the #241 discriminator would break value, not shape."""
         from reyn.tools.universal_catalog import strip_provider_tool_namespace  # noqa: PLC0415
 
         # #1989: a weak model (Gemini) may echo its function-calling namespace
         # onto the call name (``default_api.invoke_action`` /
-        # ``default_api.web__search``). Strip it FIRST so the catalog membership +
-        # the ``__`` salvage below see the bare name. Safe: reyn names are dot-free.
-        name = strip_provider_tool_namespace(tc["function"]["name"])
+        # ``default_api.web_search``). Strip it FIRST so the catalog membership +
+        # the salvage below see the plain name. Safe: reyn names are dot-free.
+        raw_name = strip_provider_tool_namespace(tc["function"]["name"])
+        name = raw_name
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):
             args = {}
 
-        if name not in self._catalog and "__" in name:
-            name, args = self._maybe_salvage_qualified_direct_call(name, args)
-        return name, args
+        if name not in self._catalog:
+            name, args = self._maybe_salvage_action_direct_call(name, args)
+        return name, args, raw_name
 
     def _excluded_result(self, name: str, args: dict) -> "dict | None":
         """#1406/#187: the **pre-dispatch** exclude gate. Returns the
@@ -2910,7 +2843,7 @@ class RouterLoop:
         ``self._catalog``) — the LLM can still call an excluded tool by name, which
         the #229 salvage rewrites to ``invoke_action(action_name=<excluded>)`` (or it
         is called as ``invoke_action`` directly), and ``universal_dispatch`` then
-        resolves and EXECUTES it (the #187 N=3 web__search leak). Compute the
+        resolves and EXECUTES it (the #187 N=3 web_search leak). Compute the
         effective resolved action — unwrap ``invoke_action`` — and reject if excluded.
         Covers all three bypass paths (native direct / salvaged / direct
         invoke_action). The ``tool_excluded`` kind + decision-enabling message lets
@@ -2947,7 +2880,9 @@ class RouterLoop:
                 }
         return None
 
-    async def _dispatch_resolved(self, name: str, args: dict) -> dict:
+    async def _dispatch_resolved(
+        self, name: str, args: dict, *, raw_name: "str | None" = None,
+    ) -> dict:
         """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
         (DispatchContext / ``dispatch_tool`` — P5). The pure-OS dispatch
         half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
@@ -2959,7 +2894,17 @@ class RouterLoop:
         ``self._catalog`` (universal / enumerate / retrieval, where dispatchable =
         advertised — byte-identical). CodeAct advertises ∅ but dispatches the full
         catalog, so its gate must key on the dispatchable set, not the empty mirror
-        (the #7 "not in catalog" root)."""
+        (the #7 "not in catalog" root).
+
+        #3455: ``raw_name`` (optional) is the name the MODEL literally called,
+        before the #229 salvage rewrite — see ``_resolve_tool_call``. This is
+        the single chokepoint EVERY dispatch funnels through (native
+        Execute-round calls via ``resolve()``/``dispatch()``, the direct
+        ``_execute_tool`` test seam, and the CodeAct in-snippet ``tool()``
+        call via ``_run_codeblock_round``'s ``_os_gate`` — the latter has no
+        separate "raw" surface, so it omits ``raw_name`` and
+        ``_emit_routing_decided`` falls back to ``name``), which is what
+        makes it the right place for ``routing_decided`` (#3455)."""
         catalog = (
             self._dispatch_catalog
             if self._dispatch_catalog is not None
@@ -2986,7 +2931,75 @@ class RouterLoop:
         # source takes the deepest); a direct call has only this outer tag = the named tool.
         if isinstance(result, dict):
             result.setdefault("_canonical_source", name)
+        self._emit_routing_decided(name, args, result, raw_name=raw_name)
         return result
+
+    def _emit_routing_decided(
+        self, name: str, args: dict, result: Any, *, raw_name: "str | None" = None,
+    ) -> None:
+        """#3455: emit ``routing_decided`` at the chokepoint EVERY catalog
+        dispatch funnels through (``_dispatch_resolved`` — the #3429 census
+        finding that ``dispatch_tool`` is called from exactly this one
+        call site plus the CodeAct ``tool()`` unwrap, both of which route
+        here). Structural fix, not a widened gate: this replaces the prior
+        ``run_loop``-local emit that lived inside ``if _univ_enabled:`` —
+        a guard keyed on which ENTRY SURFACE the model used (the
+        ``invoke_action`` wrapper), not on whether routing actually
+        happened. The opt-out configuration (an operator setting
+        ``action_retrieval.universal_wrappers_enabled: false`` in
+        reyn.yaml → flat bare-name ``tools=``, the pre-PR-3b-iv shape)
+        never advertises ``invoke_action`` at all, so that guard silently
+        zeroed out ``routing_decided`` for that path even though every one
+        of its tool calls dispatches a catalog action right here.
+
+        ``surface`` (``raw_name`` if given, else ``name``) is what the model
+        actually called, BEFORE the #229 salvage rewrite. This matters
+        because the salvage rewrites an un-advertised bare call's EFFECTIVE
+        ``(name, args)`` to ``invoke_action`` internally — a routing
+        mechanic, not something the model did — so classifying off the
+        POST-salvage ``name`` would relabel every existing
+        ``"ars_direct"`` call as ``"invoke_action"``, silently changing the
+        #241 discriminator's meaning the moment the emit moved here.
+
+        Source classification (unchanged from the relocated logic):
+          - ``"invoke_action"``: the model called the universal wrapper;
+            the real action name is nested in ``args["action_name"]``.
+          - ``"hot_list_alias"``: a bare catalog-action name that was
+            actually advertised in ``tools=`` (#241).
+          - ``"ars_direct"``: a bare catalog-action name NOT advertised —
+            reached only via the #229/#3429 salvage.
+          - anything else (e.g. ``delegate_to_agent``, an async peer tool):
+            not a catalog action — no routing decision to record.
+        """
+        surface = raw_name if raw_name is not None else name
+        if surface == "invoke_action":
+            action_name = (
+                args.get("action_name", "") if isinstance(args, dict) else ""
+            )
+            source = "invoke_action"
+        elif surface in _KNOWN_ACTION_NAMES:
+            action_name = surface
+            source = "hot_list_alias" if surface in self._catalog else "ars_direct"
+        else:
+            return  # non-catalog tool — no routing decision to record
+        if not action_name:
+            return
+        # #3450: derive from the SAME source as the LLM-visible envelope —
+        # dispatch_tool's own outer ``status`` field, which now promotes any
+        # handler-declared error before ``result`` is ever built (see
+        # dispatcher.py), so this check is trustworthy for every catalog
+        # dispatch outcome.
+        outcome = "error" if (
+            isinstance(result, dict) and result.get("status") == "error"
+        ) else "success"
+        self.host.events.emit(
+            "routing_decided",
+            action_name=action_name,
+            source=source,
+            outcome=outcome,
+            chain_id=self.chain_id,
+        )
+        self._routing_decided_this_turn = True
 
     # ── #1593 SchemeOps adapter ─────────────────────────────────────────────
     # The router IS the ``SchemeOps`` a *delegating* scheme calls. PR-1's
@@ -3127,7 +3140,7 @@ class RouterLoop:
         except Exception as e:  # noqa: BLE001 — search is best-effort presentation aid
             import logging
             logging.getLogger(__name__).warning("search_actions failed: %s", e)
-        return [r["qualified_name"] for r in results if r.get("qualified_name")]
+        return [r["action_name"] for r in results if r.get("action_name")]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original
@@ -3136,8 +3149,8 @@ class RouterLoop:
         deduped = self._dedupe_tool_calls_round(llm_response.tool_calls)
         actions: list[dict] = []
         for tc in deduped:
-            name, args = self._resolve_tool_call(tc)
-            actions.append({"tc": tc, "name": name, "args": args})
+            name, args, raw_name = self._resolve_tool_call(tc)
+            actions.append({"tc": tc, "name": name, "args": args, "raw_name": raw_name})
         return actions
 
     async def dispatch(self, actions: list[dict]) -> list[dict]:
@@ -3158,7 +3171,9 @@ class RouterLoop:
         parallel latency for genuinely-independent calls."""
         results: list[dict] = []
         for a in actions:
-            results.append(await self._dispatch_resolved(a["name"], a["args"]))
+            results.append(await self._dispatch_resolved(
+                a["name"], a["args"], raw_name=a.get("raw_name"),
+            ))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
         # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
         # may be the ``invoke_action`` wrapper, so classifying there would miss
@@ -3492,6 +3507,14 @@ class RouterLoop:
         for i, a in enumerate(actions):
             ex = self._excluded_result(a["name"], a["args"])
             if ex is not None:
+                # #3455: the exclude gate IS a routing decision (outcome
+                # "error") — this action never reaches ``dispatch()`` /
+                # ``_dispatch_resolved``, so its emit call there would never
+                # see it. Mirrors the pre-#3455 behavior (the old run_loop
+                # emit iterated every tool_result, excluded ones included).
+                self._emit_routing_decided(
+                    a["name"], a["args"], ex, raw_name=a.get("raw_name"),
+                )
                 results[i] = ex
             else:
                 to_dispatch.append((i, a))
@@ -3523,6 +3546,12 @@ class RouterLoop:
         async def _os_gate(name: str, args: dict) -> dict:
             excluded = self._excluded_result(name, args)
             if excluded is not None:
+                # #3455: CodeAct's in-snippet ``tool()`` calls previously had
+                # NO routing_decided coverage at all (the old emit only ever
+                # iterated the Execute arm's tool_calls/tool_results). Now
+                # covered symmetrically with the exclude branches above:
+                # the exclude gate is itself a routing decision.
+                self._emit_routing_decided(name, args, excluded)
                 return excluded
             return await self._dispatch_resolved(name, args)
 
@@ -3537,7 +3566,7 @@ class RouterLoop:
                 "dispatch": _os_gate,
                 # #1658: the DISPATCHABLE catalog (the gate's membership map — the same
                 # names `_os_gate` accepts). CodeAct builds the {identifier:
-                # qualified_name} direct-function stub map from this; self._catalog (the
+                # action_name} direct-function stub map from this; self._catalog (the
                 # ADVERTISED payload) is empty for CodeAct, so the dispatchable map is
                 # the right source. Generic catalog (action names), not scheme vocab (P7).
                 "dispatchable_catalog": self._dispatch_catalog or self._catalog,
@@ -3548,17 +3577,38 @@ class RouterLoop:
         exec_res = await self._scheme.execute(interp, exec_ctx, ops=self)
         return self._scheme.format_feedback(exec_res, ops=self)
 
-    def _maybe_salvage_qualified_direct_call(
+    def _maybe_salvage_action_direct_call(
         self, name: str, args: dict,
     ) -> tuple[str, dict]:
-        """Issue #229: rewrite an ARS-only direct call into invoke_action.
+        """Issue #229: rewrite an ARS-only direct call into ``invoke_action``.
 
-        Triggered when the LLM emitted ``<category>__<entry>`` as a
-        direct function call but the name isn't in ``self._catalog``
-        (= it wasn't a hot-list alias, only an ARS schema-hint entry).
-        Returns ``(name, args)`` unchanged when ``universal_dispatch``
-        cannot resolve the qualified name — the original ``unknown_tool``
-        rejection path then surfaces the error normally.
+        Triggered when the LLM called a catalog action by name as a direct
+        function but the name is not in ``self._catalog`` — i.e. it was never
+        advertised as a row, only named in the ``invoke_action`` description's
+        ARS block. Returns ``(name, args)`` unchanged when there is nothing to
+        salvage; the ordinary ``unknown_tool`` path then surfaces the error.
+
+        **Why it survives #3429.** Its input is not the qualified spelling. The
+        TRIGGER used to be ``"__" in name``, which was a proxy for "this looks
+        like a catalog action", and with one name per action the proxy and the
+        question became the same test — asked directly here, against the
+        membership table. The case itself is untouched: a scheme that advertises
+        only the wrappers still teaches action names through the ARS block, and
+        a model still calls them directly instead of wrapping them. Removing
+        this would reopen #229 for every such name.
+
+        **What #3429 DID remove is #3461's first arm.** #3461 added "if the
+        alias's bare target is itself dispatchable, salvage to THAT instead of
+        to ``invoke_action``" — because a qualified call whose bare equivalent
+        was advertised would otherwise dead-end as ``unknown_tool:
+        invoke_action`` under a scheme that does not advertise the wrapper. With
+        one name, "the alias" and "its bare target" are the same string, so that
+        arm degenerates into "return the name unchanged". It is kept in that
+        honest form — an early return, not a rewrite — because the CONDITION it
+        tested is still load-bearing: a name absent from the advertised catalog
+        but present in the DISPATCHABLE one (CodeAct advertises nothing and
+        dispatches everything) must reach the OS gate under its own name rather
+        than be wrapped.
 
         Audit event ``direct_alias_call_salvaged`` records the rewrite
         so we can count how often this fires in dogfood and inform
@@ -3566,39 +3616,21 @@ class RouterLoop:
         the rate over time.
         """
         try:
-            from reyn.tools.universal_dispatch import (
-                UnknownActionError,
-                resolve_invoke_action,
-            )
+            from reyn.tools.universal_dispatch import is_known_action
         except Exception:  # noqa: BLE001
             return name, args
         try:
-            resolved = resolve_invoke_action(name, args or {})
-        except UnknownActionError:
-            return name, args
+            if not is_known_action(name):
+                return name, args
         except Exception:  # noqa: BLE001 — never crash the dispatch on a salvage attempt
             return name, args
-        # #3458: prefer the BARE spelling when it is itself dispatchable. The
-        # rewrite below targets ``invoke_action``, which only some presentations
-        # advertise — so a qualified call whose bare equivalent IS in the catalog
-        # used to dead-end as ``unknown_tool: invoke_action`` under a scheme
-        # without the wrapper. That combination became reachable the moment the
-        # file tools started being advertised by default (#3458), because
-        # ``without_duplicate_alias_spellings`` then drops the now-redundant
-        # ``file__read`` / ``file__write`` alias in favour of the bare name the
-        # model is shown. Salvage to the target the alias resolves to instead.
+        # #3458/#3461: an action the executor CAN dispatch needs no wrapper hop.
+        # ``invoke_action`` is advertised by only some presentations, so
+        # rewriting to it unconditionally dead-ends as ``unknown_tool`` under a
+        # scheme without the wrapper.
         _dispatchable = self._dispatch_catalog or self._catalog
-        if resolved.target_tool_name in _dispatchable:
-            try:
-                self.host.events.emit(
-                    "direct_alias_call_salvaged",
-                    original_name=name,
-                    rewritten_to=resolved.target_tool_name,
-                    chain_id=self.chain_id,
-                )
-            except Exception:  # noqa: BLE001
-                pass
-            return resolved.target_tool_name, dict(resolved.target_args)
+        if name in _dispatchable:
+            return name, args
         rewritten_args = {"action_name": name, "args": dict(args or {})}
         try:
             self.host.events.emit(
@@ -3954,12 +3986,29 @@ class RouterLoop:
         externally by ``dispatch_tool`` (= same cross-cutting events /
         validation / error envelope as the legacy invoker path).
 
-        Some handlers return raw op_runtime dict envelopes whereas the
-        legacy router branches returned extracted shapes (= the host
-        adapter did the extraction).  ``_normalise_router_tool_result``
-        replicates that extraction so byte-identity with prior LLM-visible
-        output is preserved (= refactor-only migration, no external spec
-        change).
+        The handler's result is returned VERBATIM. #3429 deleted the
+        ``_normalise_router_tool_result`` post-step that used to sit here: it
+        re-extracted ``read_file``'s ``content`` to a bare string and
+        ``list_directory``'s ``entries`` to a bare list, so that registry
+        dispatch stayed byte-identical to the pre-ADR-0026 router branches the
+        migration replaced. Its own docstring gave that — "byte-identity with
+        prior LLM-visible output" — as the whole reason it existed, i.e. it was
+        back-compat with a code path that no longer exists, and back-compat is
+        not a reason.
+
+        It was also the sharpest instance of the #3429 defect: it keyed on the
+        name it was DISPATCHED with, so the qualified spelling of the same read
+        (dispatched as ``invoke_action``) skipped it and the model got a
+        different value back for the same operation.
+
+        Deleting it lets both results reach ``file_to_canonical`` — the mapper
+        that already renders a read's ``content`` as the body and a listing's
+        paths as a ``structured`` attachment, and that additionally surfaces an
+        image read's ``media_blocks`` (which the flattening dropped outright)
+        and the ``truncated`` / ``total_count`` / ``returned_count`` /
+        ``note`` signals as frontmatter the model reads. Nothing is
+        re-implemented here; the mapper was always the designed destination —
+        ``_file_signal_meta``'s docstring named this bypass as a known one.
         """
         from reyn.tools import get_default_registry
         from reyn.tools.dispatch import invoke_tool
@@ -3980,90 +4029,7 @@ class RouterLoop:
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
             agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
         )
-        result = await invoke_tool(get_default_registry(), name, args, tool_ctx)
-        return self._normalise_router_tool_result(name, result)
-
-    @staticmethod
-    def _normalise_router_tool_result(name: str, result: Any) -> Any:
-        """Match registry-handler output to the legacy router-branch shape.
-
-        File handlers in ``src/reyn/tools/file.py`` return raw op_runtime
-        dict envelopes (e.g. ``{"kind": "file", "op": "read", "status":
-        "ok", "content": "..."}``) but the legacy router path
-        (RouterHostAdapter.file_read) extracted ``content`` before
-        returning so the LLM saw a bare string. This helper applies the
-        same extraction so registry dispatch is LLM-visible-identical to
-        the prior path. (``file_list_directory`` was a sibling legacy
-        adapter method with the same shape — #3193 removed it: it had zero
-        call sites, list_directory has always flowed through this
-        registry/``tools/file.py`` path, not the adapter.)
-
-        ``list_mcp_servers`` / ``list_mcp_tools`` deliberately do NOT get this
-        treatment (removed — owner-reported bug): unwrapping their
-        ``{"servers": [...]}`` / ``{"mcp_tools": [...]}`` dict down to a bare
-        list here defeated the canonicalization mappers (``list_mcp_servers_
-        to_canonical`` / ``list_mcp_tools_to_canonical``, ``canonical.py``),
-        which expect that dict key to still be present when ``to_canonical``
-        runs — ``dispatch_tool``'s envelope wraps whatever this returns, and
-        ``unwrap_dispatch_envelope`` only peels a ``dict``-shaped ``data``, so
-        a bare list stayed wrapped and the mapper's ``result.get("servers")``
-        found nothing, reporting "0" to the LLM while the raw list still
-        displayed correctly (as "N items") in the conversation transcript.
-        Returning the dict unchanged lets both consumers read the same shape.
-
-        The former ``describe_mcp_tool`` branch was ALSO removed in the same
-        change, but for an unrelated reason (consolidation, not the bug
-        above): it was ``if name == "describe_mcp_tool": return result`` —
-        byte-identical to this function's own unconditional fallthrough
-        (``return result`` at the end), i.e. a documented no-op. Deleting it
-        changes zero behavior; kept only as a comment here so a future reader
-        diffing this docstring against the code doesn't mistake its absence
-        for an accidental drop (co-vet finding, lead-coder — this file's own
-        docstring is exactly what should have named all three removed
-        branches the first time).
-        """
-        import json
-        if name == "read_file":
-            if isinstance(result, dict):
-                if "content" in result:
-                    content = result["content"]
-                    # #3191: this branch flattens to a bare string BEFORE `to_canonical`
-                    # ever runs (same choke point #2998/#3190 already found for
-                    # list_directory/glob), so the op_runtime read handler's
-                    # `status == "truncated"` signal — and the `note` it carries — would
-                    # otherwise be silently dropped here. Only set when the op layer
-                    # actually truncated (never unconditionally — mirrors the #2998
-                    # list_directory fix below). Reuse the op layer's own `note` rather
-                    # than re-deriving a summary: it is already decision-enabling (chars
-                    # shown of total, plus the on-disk path + offset to resume from) —
-                    # see op_runtime/file.py's `read` handler.
-                    if result.get("status") == "truncated" and result.get("note"):
-                        content = f"{content}\n\n... {result['note']}"
-                    return content
-                return json.dumps(result)
-            return result
-        if name == "list_directory":
-            if isinstance(result, dict):
-                entries = result.get("entries", [result])
-                # #2998: this branch flattens to a bare list BEFORE `to_canonical`
-                # ever runs (see the caller above), so a truncation the op_runtime
-                # glob handler recorded in `result["truncated"]` would otherwise be
-                # silently dropped here — the "signal loaded onto meta but nobody
-                # reads it" failure mode. Append it as a plain-text trailing entry
-                # (decision-enabling: how many of how many, and the fix) rather
-                # than changing `entries`' element type.
-                if result.get("truncated") and isinstance(entries, list):
-                    entries = [
-                        *entries,
-                        (
-                            f"... truncated: {result.get('returned_count')} of "
-                            f"{result.get('total_count')} entries shown — pass a "
-                            "larger max_results to list_directory to see the rest."
-                        ),
-                    ]
-                return entries
-            return result
-        return result
+        return await invoke_tool(get_default_registry(), name, args, tool_ctx)
 
     async def _invoke_router_tool(self, name: str, args: dict) -> Any:
         """Execute a validated tool call by name.
@@ -4086,16 +4052,15 @@ class RouterLoop:
         # capability not yet in the dispatch set, the new branch lands
         # here as the legacy stop-gap until the adapter migrates.
 
-        # FP-0034 Phase 2 step 5: hot list direct alias dispatch.
-        # Qualified names (containing "__") not in the static dispatch set
-        # are hot list aliases. Route them as invoke_action so the catalog
-        # dispatch handles them correctly.
-        if "__" in name:
-            return await self._invoke_via_registry(
-                "invoke_action",
-                {"action_name": name, "args": args or {}},
-            )
-
+        # #3429: there is no second arm. A catalog action used to be reachable
+        # under a ``<category>__<verb>`` spelling that was NOT in
+        # ``REGISTRY_DISPATCH_TOOLS``, so it needed re-routing through
+        # ``invoke_action`` — the wrapper hop that made the two spellings of one
+        # operation return different things to the model (skipped result
+        # normalisation, a generic canonical renderer, a wrapper-named
+        # ``routing_decided``). The spelling is gone, so every action arrives
+        # here under the one name the registry dispatches directly.
+        #
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.
         return {"error": f"unhandled tool: {name}"}

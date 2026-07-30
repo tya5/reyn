@@ -32,10 +32,10 @@ delegation:
 
 | クラス | 拒否されるツール | 理由 |
 |--------|----------------|------|
-| `re-delegation` | `multi_agent__delegate`、`delegate_to_agent` | アンバウンド委任エージェントからの無制限スポーニングチェーンを防止 |
-| `exec` | `exec__run`、`exec` | 実行には明示的なオペレーター認証が必要 |
-| `mcp-install` | `mcp__install_registry`、`mcp__install_package`、`mcp__install_local` | MCP サーバーインストールは高権限のオペレーター管理アクション |
-| `memory-write` | `memory_operation__remember_shared`、`memory_operation__remember_agent`、`memory_operation__forget` | アンバウンド委任エージェントからの永続化には意図的なオプトインが必要 |
+| `re-delegation` | `delegate_to_agent`、`delegate_to_agent` | アンバウンド委任エージェントからの無制限スポーニングチェーンを防止 |
+| `exec` | `exec`、`exec` | 実行には明示的なオペレーター認証が必要 |
+| `mcp-install` | `mcp_install_registry`、`mcp_install_package`、`mcp_install_local` | MCP サーバーインストールは高権限のオペレーター管理アクション |
+| `memory-write` | `remember_shared`、`remember_agent`、`forget_memory` | アンバウンド委任エージェントからの永続化には意図的なオプトインが必要 |
 
 フロアはオーバーライド可能です: オペレーターファイル `.reyn/capability_profiles/_delegate.yaml` が組み込みプロファイルを置き換えます。不正なオーバーライドは組み込みにフォールバックします（stderr に出力）— タイプミスでフロアが暗黙的に削除されることはありません。
 
@@ -73,7 +73,7 @@ delegation:
 | `_delegate.yaml` がクラスを再付与 | HIGH / MED | 同クラス対重大度マッピング |
 | ポスチャーナッジ | INFO | `capability_default=inherit` で任意のトポロジーに委任エッジがある |
 
-`destructive-fs` クラス（`delete_file`、`file__delete`）は**監査のみ** — FILE_WRITE パーミッションシステムでゲートされているためランタイム `_delegate` フロアには含まれていませんが、委任可能ロールへの再付与判断として監査で表面化されます。
+`destructive-fs` クラス（`delete_file`、`delete_file`）は**監査のみ** — FILE_WRITE パーミッションシステムでゲートされているためランタイム `_delegate` フロアには含まれていませんが、委任可能ロールへの再付与判断として監査で表面化されます。
 
 **終了動作**: `reyn audit` は HIGH フィンディングの場合にのみ非ゼロで終了します — CI セーフです（HIGH はデプロイをブロック; MED と INFO は情報提供のみ）。
 
@@ -81,11 +81,11 @@ delegation:
 
 | クラス | 重大度 | ツール |
 |--------|--------|--------|
-| `re-delegation` | HIGH | `multi_agent__delegate`、`delegate_to_agent` |
-| `exec` | HIGH | `exec__run`、`exec` |
-| `mcp-install` | HIGH | `mcp__install_registry`、`mcp__install_package`、`mcp__install_local` |
-| `memory-write` | MED | `memory_operation__remember_shared`、`memory_operation__remember_agent`、`memory_operation__forget` |
-| `destructive-fs` | MED | `delete_file`、`file__delete`（監査のみ、ランタイムフロア外） |
+| `re-delegation` | HIGH | `delegate_to_agent`、`delegate_to_agent` |
+| `exec` | HIGH | `exec`、`exec` |
+| `mcp-install` | HIGH | `mcp_install_registry`、`mcp_install_package`、`mcp_install_local` |
+| `memory-write` | MED | `remember_shared`、`remember_agent`、`forget_memory` |
+| `destructive-fs` | MED | `delete_file`、`delete_file`（監査のみ、ランタイムフロア外） |
 
 ### 使用法
 

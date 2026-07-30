@@ -43,10 +43,10 @@
       "reply_summary": "Reply explains idempotency: same operation multiple times yields same result, cites HTTP GET/PUT/DELETE/HEAD.",
       "rubric_pass": true,
       "events_pass": true,
-      "events_observed": ["user_message_received", "tool_called(web__search)", "web_search_started", "web_search_completed", "tool_returned", "routing_decided(web__search, hot_list_alias)", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
+      "events_observed": ["user_message_received", "tool_called(web_search)", "web_search_started", "web_search_completed", "tool_returned", "routing_decided(web_search, hot_list_alias)", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
       "events_must_not_violated": false,
       "artifacts_pass": true,
-      "notes": "Router called web__search (hot_list_alias). Empty stop after tool_returned; REYN_EMPTY_STOP_RETRY retry fired and produced valid reply. search_actions not called. No artifact requirement — rubric met."
+      "notes": "Router called web_search (hot_list_alias). Empty stop after tool_returned; REYN_EMPTY_STOP_RETRY retry fired and produced valid reply. search_actions not called. No artifact requirement — rubric met."
     },
     {
       "id": "skill_discovery_request",
@@ -135,8 +135,8 @@
     },
     {
       "id": "B56-W1-F4",
-      "title": "S2 empty-stop after web__search tool return — REYN_EMPTY_STOP_RETRY resolved",
-      "description": "S2 factual_query_direct_llm: router called web__search (hot_list_alias routing), then produced an empty stop (finish_reason=stop, completion_tokens=0). REYN_EMPTY_STOP_RETRY=1 retry injected directive (176 chars) and the subsequent LLM call produced a valid factual answer. Final verdict V. This is expected behavior for the retry mechanism.",
+      "title": "S2 empty-stop after web_search tool return — REYN_EMPTY_STOP_RETRY resolved",
+      "description": "S2 factual_query_direct_llm: router called web_search (hot_list_alias routing), then produced an empty stop (finish_reason=stop, completion_tokens=0). REYN_EMPTY_STOP_RETRY=1 retry injected directive (176 chars) and the subsequent LLM call produced a valid factual answer. Final verdict V. This is expected behavior for the retry mechanism.",
       "severity": "observation",
       "affects_verdict": false
     }

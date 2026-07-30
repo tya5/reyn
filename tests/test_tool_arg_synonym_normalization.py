@@ -1,11 +1,11 @@
 """Tier 2 regression tests for LLM arg-name synonym normalization (B34).
 
 Covers:
-  - file__write with ``text`` instead of ``content`` → handler accepts, no KeyError
+  - write_file with ``text`` instead of ``content`` → handler accepts, no KeyError
   - Canonical key wins when both synonyms are provided simultaneously
 
 Observed in dogfood:
-  - B33 W4 S1: LLM sends {path:..., text:...} to file__write → KeyError: 'content'
+  - B33 W4 S1: LLM sends {path:..., text:...} to write_file → KeyError: 'content'
   - B30 W4 S1: same mismatch (cross-batch recurrence)
 
 FP-0066 P1b: the ``drop_source`` synonym tests (B33 W4 S6: LLM sends
@@ -43,12 +43,12 @@ def _make_ctx() -> ToolContext:
     )
 
 
-# ── file__write synonym: text → content ───────────────────────────────────────
+# ── write_file synonym: text → content ───────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_write_file_accepts_text_synonym(monkeypatch):
-    """Tier 2: file__write handler accepts ``text`` as synonym for ``content``.
+    """Tier 2: write_file handler accepts ``text`` as synonym for ``content``.
 
     Regression guard for B33 W4 S1 / B30 W4 S1: LLM sends {text:...} and
     handler previously raised KeyError: 'content' before reaching permission gate.
@@ -79,7 +79,7 @@ async def test_write_file_accepts_text_synonym(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_write_file_canonical_content_wins_over_text(monkeypatch):
-    """Tier 2: file__write canonical ``content`` key takes priority over ``text``.
+    """Tier 2: write_file canonical ``content`` key takes priority over ``text``.
 
     When both are present, ``content`` is used unchanged (no synonym substitution).
     """
@@ -106,7 +106,7 @@ async def test_write_file_canonical_content_wins_over_text(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_write_file_canonical_content_still_works(monkeypatch):
-    """Tier 2: file__write canonical {path, content} call is unaffected by B34 fix."""
+    """Tier 2: write_file canonical {path, content} call is unaffected by B34 fix."""
     from reyn.schemas.models import FileIROp
 
     captured_ops: list = []

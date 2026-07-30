@@ -109,7 +109,7 @@ These are recorded as *signal*, not blockers, given the confounders above.
   `direct_llm` skill spawn) while still producing usable text replies.
   Rubrics requiring spawn events fail. **Possible scenario-design
   issue, not OS regression.**
-- **B45-F2 (W1 S2)**: `web__search` used for a `direct_llm` factual
+- **B45-F2 (W1 S2)**: `web_search` used for a `direct_llm` factual
   question (hijacking).
 - **B45-F3 (W2 S4)**: skill_builder dispatch routed to
   `skill__simple_memo_app` instead. **Routing-decision quality
@@ -117,7 +117,7 @@ These are recorded as *signal*, not blockers, given the confounders above.
 - **B45-F4 (W4 S7)**: `hot_list` cross-agent contamination hypothesis
   (= S7 reply mentioned S3 context). Needs trace replay to confirm
   vs reject — currently *worker hypothesis only*, not proven.
-- **B45-F5 (W3 S4/S6/S7/S9)**: 4 structural surfaces — `web__fetch`
+- **B45-F5 (W3 S4/S6/S7/S9)**: 4 structural surfaces — `web_fetch`
   permission gap, eval postprocessor schema mismatch,
   `recall_indexed_source` `KeyError('sources')`, `skill_builder`
   invocation failure.

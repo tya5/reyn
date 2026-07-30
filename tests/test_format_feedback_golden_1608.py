@@ -48,16 +48,16 @@ async def test_execute_round_message_sequence_golden(monkeypatch):
     sequence, ids aligned, the excluded call's error at its own index."""
     host = FakeRouterHost()
     host._files["a.txt"] = "hello"
-    # file__write is excluded → the pre-dispatch gate must emit a tool_excluded
+    # write_file is excluded → the pre-dispatch gate must emit a tool_excluded
     # error result IN PLACE at its index (not drop the call).
     loop = RouterLoop(
         host=host, chain_id="chain-golden", max_iterations=5,
-        exclude_tools={"file__write"},
+        exclude_tools={"write_file"},
     )
 
     round1 = tool_result([
-        {"name": "file__read", "args": {"path": "a.txt"}, "id": "call_read"},
-        {"name": "file__write", "args": {"path": "b.txt", "content": "x"}, "id": "call_write"},
+        {"name": "read_file", "args": {"path": "a.txt"}, "id": "call_read"},
+        {"name": "write_file", "args": {"path": "b.txt", "content": "x"}, "id": "call_write"},
     ])
     scripted = _CapturingLLM([round1, text_result("done")])
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)

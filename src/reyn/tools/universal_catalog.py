@@ -2,41 +2,45 @@
 
 This module defines the 4 universal wrapper ToolDefinitions
 (``list_actions`` / ``search_actions`` / ``describe_action`` /
-``invoke_action``) plus the qualified-name parser/builder and the
-canonical category enum that FP-0034 establishes.
+``invoke_action``) plus the canonical category enum that FP-0034
+establishes.
 
 Per FP-0034 §D1, the universal catalog replaces the per-category
 discover ops (= ``list_mcp_tools`` / ``list_memory``
-etc.) with 4 wrappers that cover every category uniformly. Per
-§D18, qualified names use ``<category>__<entry_name>`` format with
-``__`` (double underscore) as the separator.
+etc.) with 4 wrappers that cover every category uniformly.
 
-**#3026 — the catalog *enumeration* is constant.** (Reworded per FP-0066 §G8:
-the retrieval index legitimately carries operator-derived dynamic names — mcp
-tool / pipeline names — that ``universal_dispatch._RESOURCE_RULES`` already
-resolves without enumerating them, so the invariant is about ENUMERATION, not
-about no dynamic names existing anywhere.) Every category here enumerates a
-FIXED set of verbs. No category mints an action from operator data, so the
-number of tools the LLM is sent does not depend on how many memories, corpora,
-MCP tools or pipelines the operator has accumulated. This is the invariant
-this module exists to hold: every name it emits comes from
-``universal_dispatch._OPERATION_RULES``, a closed table of full literal names.
+**#3429 — an action has exactly one name: its flat registry tool name.**
+§D18 used to give every action a second, ``<category>__<verb>`` *qualified*
+spelling, which this module parsed and built. Both spellings reached a
+handler, but they reached it differently, and every subsystem keyed on a
+tool name had to remember to handle both — 7 of the 11 that exist did not.
+The parser (``split_qualified_name`` / ``build_qualified_name`` /
+``is_valid_qualified_name``) is gone with the spelling it parsed; a category
+is now purely the browsing axis ``list_actions(category=[…])`` exposes, and
+``universal_dispatch._CATEGORY_ACTIONS`` is the membership table.
 
-``universal_dispatch._RESOURCE_RULES`` still RESOLVES author-time resource
-names (``pipeline__<name>``, ``tool: mcp__echo__ping`` in a pipeline DSL) —
-that table is deliberately NOT read here. Resolving a name the caller already
-typed costs zero tools; enumerating one costs a tool per resource. Keep the
-two apart: reading ``_RESOURCE_RULES`` from an enumerator is precisely the
-#1647 regression.
+**#3026 — the catalog *enumeration* is constant.** Every category here
+enumerates a FIXED set of verbs. No category mints an action from operator
+data, so the number of tools the LLM is sent does not depend on how many
+memories, corpora, MCP tools or pipelines the operator has accumulated. This
+is the invariant this module exists to hold: every name it emits comes from
+``universal_dispatch._CATEGORY_ACTIONS``, a closed table of literal names.
+
+#3429 removed the one remaining exception — the author-time resource names
+(``pipeline__<name>``, ``tool: mcp__echo__ping`` in a pipeline DSL) that
+RESOLVED without being enumerated. They were the qualified spelling in
+operator-facing clothes; a step now names the flat tool and passes the
+resource id as an ordinary argument. A rule keyed by anything other than a
+literal action name re-opens operator-scaled growth (#1647).
 
 The four collapses that got here — #879 (mcp.server/mcp.tool), #909
 (agent.peer), and #3026 (memory_entry, rag_corpus, plus the dynamic
-``mcp__<server>__<tool>`` and ``pipeline__<name>`` entries) — all applied one
+per-MCP-tool and per-pipeline entries) — all applied one
 rule: a resource is an ARGUMENT to a verb, never a tool of its own. Where
 collapsing removed the only surface that NAMED a resource, #3026 added a
 constant-count discovery verb rather than accepting the loss
-(``pipeline__list`` and the ``memory_operation__list`` / ``__read`` routes;
-the ``rag_operation__list_sources`` verb #3026 added the same way was itself
+(``pipeline_list`` and the ``list_memory`` / ``read_memory_body`` routes;
+the RAG list-sources verb #3026 added the same way was itself
 retired in FP-0066 P1b along with the rest of the layer-1 RAG tools).
 
 **#879 → #1647 is the cautionary tale.** #879 collapsed the mcp resource
@@ -46,32 +50,20 @@ earlier by renaming the inner param to ``tool_args`` — and (b) the need to
 show each tool's real ``inputSchema``, which #879 had ALREADY solved by
 shipping ``inputSchema`` verbatim in ``list_mcp_tools``' result, explicitly
 so no ``describe_mcp_tool`` round-trip is needed (see the docstring in
-``tools/mcp.py``). Its design note says it mirrors ``skill__<name>`` — a
-category that has never existed. Before re-introducing per-resource actions,
+``tools/mcp.py``). Its design note says it mirrors a per-skill category that
+has never existed. Before re-introducing per-resource actions,
 check whether the motivating gap is still open: twice now it was not.
 
 PR-1 (landed): type surface only — 4 ToolDefinitions with stub
-handlers, qualified-name parse / build / validate, 12-category enum,
-D14 visibility-gating helpers.
+handlers, the 12-category enum, D14 visibility-gating helpers.
 
-PR-2 (landed): pure routing layer — ``universal_dispatch.py`` with
-resolve_invoke_action / resolve_describe_action / suggest_similar_names.
+PR-2 (landed): the action-membership layer — ``universal_dispatch.py`` with
+``require_known_action`` / ``action_names_for_category`` /
+``suggest_similar_names``.
 
-PR-3a (this commit): wire real handlers — list_actions /
-describe_action / invoke_action handlers delegate via the PR-2 routing
-+ the unified ToolRegistry. ``search_actions`` remains a stub (= depends
-on Phase 2 embedding index). The 4 wrappers are NOT yet added to the
-router's tools= (= that lands in PR-3b). Registry registration is
-landed so any caller iterating the registry sees the wrappers.
-
-PR-3b (later): router tools= placement + SP refactor (D9
-category-only description); build_tools() shape change.
-
-PR-4 (later): new op ``mcp.operation__drop_server`` for the destructor
-side of MCP server CRUD (D23).
-
-PR-5 (later): Tier 3 LLMReplay fixtures + e2e verification of §Phase 1
-verification 1-9.
+PR-3a (landed): wire real handlers — list_actions /
+describe_action / invoke_action handlers resolve the named action against
+the membership table and dispatch it through the unified ToolRegistry.
 """
 from __future__ import annotations
 
@@ -88,9 +80,9 @@ from reyn.tools.types import (
 )
 
 # Lazy-imported at function-body level to break the circular dependency
-# with universal_dispatch.py (which imports CATEGORIES + split_qualified_name
-# from this module). The handlers below import the dispatch symbols inside
-# their function bodies; this typing-time alias is for type checkers only.
+# with universal_dispatch.py (which imports CATEGORIES from this module).
+# The handlers below import the dispatch symbols inside their function
+# bodies; this typing-time alias is for type checkers only.
 if TYPE_CHECKING:
     from reyn.tools.universal_dispatch import UnknownActionError
 
@@ -111,10 +103,10 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # mcp.operation sub-categories + prior mcp search/install actions
     # into a single ``mcp`` category. 2026-05-25: install surface
     # further split along the source axis into 3 verbs (registry /
-    # package / local). Full verb set: mcp__search_registry,
-    # mcp__install_registry, mcp__install_package, mcp__install_local,
-    # mcp__list_servers, mcp__list_tools, mcp__call_tool,
-    # mcp__drop_server. See universal_dispatch._OPERATION_RULES.
+    # package / local). Full verb set: mcp_search_registry,
+    # mcp_install_registry, mcp_install_package, mcp_install_local,
+    # list_mcp_servers, list_mcp_tools, mcp_call_tool,
+    # mcp_drop_server. See universal_dispatch._CATEGORY_ACTIONS.
     "mcp",
     "file",
     "web",
@@ -122,7 +114,7 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # categories — one action per stored memory / indexed corpus — so the LLM's
     # tools= payload scaled with what the operator had accumulated. The
     # memory_operation verb counterpart below now carries the resource id as an
-    # ARGUMENT (memory_operation__read{layer,slug}). Same shape rationale as the
+    # ARGUMENT (read_memory_body{layer,slug}). Same shape rationale as the
     # #879 mcp collapse and the #909 agent.peer collapse. FP-0066 P1b: the
     # ``rag_operation`` category itself (semantic_search / drop_source /
     # index_update / list_sources) is retired outright — those were the
@@ -135,21 +127,21 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # already-correct shape and always were: there is no ``skill__`` resource
     # category — despite what several comments in this repo used to claim, and
     # what #1647 said it was mirroring — so skills have never added a tool per
-    # skill. #2971 added the ``skill_management__list`` DISCOVERY verb, which is
+    # skill. #2971 added the ``skill_list`` DISCOVERY verb, which is
     # the same move #3026 makes for corpora and pipelines.
     "skill_management",
     # IS-1/IS-2/IS-4 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md
-    # R6): pipeline launch verbs. ``pipeline__run`` = run_pipeline (sync,
-    # REGISTERED-only); ``pipeline__run_async`` = run_pipeline_async (IS-2:
+    # R6): pipeline launch verbs. ``run_pipeline`` (sync,
+    # REGISTERED-only); ``run_pipeline_async`` (IS-2:
     # background launch in a crash-recoverable driver-session);
-    # ``pipeline__run_inline`` / ``pipeline__run_inline_async`` (IS-4) = the
+    # ``run_pipeline_inline`` / ``run_pipeline_inline_async`` (IS-4) = the
     # ad-hoc INLINE launches of an agent-GENERATED DSL definition, gated by a
     # static-analysis pass before spawn.
     "pipeline",
     # pipeline management ops (install_local / install_source) — the management
     # plane, mirroring ``skill_management``. (#3026 removed the per-registered-
-    # pipeline ``pipeline__<name>`` dynamic actions; ``pipeline`` is now launch
-    # verbs + ``pipeline__list`` only.)
+    # pipeline dynamic actions; ``pipeline`` is now launch
+    # verbs + ``pipeline_list`` only.)
     "pipeline_management",
     # proposal 0060 Phase 1 Layer A (A8): presentation management ops (install).
     # Single verb (no source/git-fetch counterpart — a blueprint is inline
@@ -157,13 +149,13 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ``pipeline_management``.
     "presentation_management",
     # ADR 0064 P2: plugin management ops (install / uninstall). #3083: this
-    # category was ADDED to ``_OPERATION_RULES`` (dispatch-wired) when the P2
-    # verbs landed, but never added HERE — the exact #2032-class gap the
+    # category was ADDED to the action-membership table (dispatch-wired) when
+    # the P2 verbs landed, but never added HERE — the exact #2032-class gap the
     # comments above this tuple already document for skill_management /
     # pipeline_management / presentation_management. Registered +
     # dispatchable but absent from CATEGORIES means every enumerate-all /
     # retrieval / codeact scheme's ``tools=`` payload never carried
-    # plugin_management__install/__uninstall, so the LLM could never
+    # plugin_install / plugin_uninstall, so the LLM could never
     # discover — let alone call — them. See
     # ``test_categories_covers_every_dispatch_wired_category`` in
     # ``tests/test_universal_catalog.py`` for the routing-table-derived
@@ -172,93 +164,29 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "plugin_management",
     # FP-0066 P3c (#3247 "P3 設計 firm" §3): the ``knowledge`` category —
     # semantic search over the operator's own skill/memory/repo knowledge
-    # (``search_knowledge`` / qualified ``knowledge__search``). Single-entry
+    # (``search_knowledge``). Single-entry
     # category, same runtime-gated shape as ``exec`` (visible only when
     # ``embedding.enabled: true`` — see ``_enumerate_category``'s
     # ``"knowledge"`` branch, which shares ``is_search_available`` with
     # ``search_actions``'s own visibility gate rather than re-deriving the
     # embedding-config check a second time).
     "knowledge",
+    # #3465: FP-0057 Phase 1 ``embed`` — the raw, USER-FACING batch
+    # text->vector primitive (distinct from ``knowledge``'s search-over-own-
+    # content axis). Registered + dispatch-wired but missing from CATEGORIES
+    # until now, the same #3083-class gap this tuple's comments already
+    # document for skill_management / pipeline_management /
+    # presentation_management / plugin_management. Always visible — no
+    # runtime gate like ``exec``/``knowledge``.
+    "embedding",
+    # #3465: the hooks management/self-expansion plane — ``emit_hook_event``
+    # (publish an LLM-authored hook-event onto this session's own HookBus)
+    # and ``hooks_add`` (the agent adds a push hook to its own runtime
+    # layer). Both ToolDefinitions already declared ``category="hooks"``;
+    # this closes the same "registered + dispatchable but catalog-invisible"
+    # gap. Always visible.
+    "hooks",
 )
-
-
-# The qualified-name separator. Double-underscore is chosen so a dotted
-# entry name (``brave.search``) never collides with the boundary; see
-# FP-0034 §D18. (#1456: category names are now dot-free — alnum/_/- only,
-# per the provider function-name grammar; entry names may still carry dots.)
-_NAME_SEPARATOR: Final[str] = "__"
-
-
-# ── Qualified name parse / build / validate ────────────────────────────────
-
-
-def split_qualified_name(qualified_name: str) -> tuple[str, str]:
-    """Split a qualified name into (category, entry_name).
-
-    Splits on the FIRST occurrence of ``__`` (double underscore). The
-    category portion must match one of CATEGORIES; otherwise raises
-    ValueError. The entry name may contain any characters including
-    further ``__`` sequences (which stay inside the entry portion).
-
-    Examples:
-        ``mcp__call_tool``            → ("mcp", "call_tool")
-        ``memory_operation__read``    → ("memory_operation", "read")
-
-    Raises:
-        ValueError: when the input has no ``__`` separator, the category
-            portion is not in CATEGORIES, or the entry_name is empty.
-    """
-    if not isinstance(qualified_name, str):
-        raise ValueError(
-            f"qualified_name must be str, got {type(qualified_name).__name__}"
-        )
-    sep_idx = qualified_name.find(_NAME_SEPARATOR)
-    if sep_idx < 0:
-        raise ValueError(
-            f"qualified_name {qualified_name!r} missing {_NAME_SEPARATOR!r} "
-            f"separator; expected <category>__<entry_name>"
-        )
-    category = qualified_name[:sep_idx]
-    entry_name = qualified_name[sep_idx + len(_NAME_SEPARATOR):]
-    if category not in CATEGORIES:
-        raise ValueError(
-            f"qualified_name {qualified_name!r} has unknown category "
-            f"{category!r}; expected one of {list(CATEGORIES)}"
-        )
-    if not entry_name:
-        raise ValueError(
-            f"qualified_name {qualified_name!r} has empty entry_name"
-        )
-    return category, entry_name
-
-
-def build_qualified_name(category: str, entry_name: str) -> str:
-    """Build a qualified name from category + entry_name.
-
-    Validates ``category`` against CATEGORIES and rejects empty
-    ``entry_name``. Inverse of split_qualified_name (round-trips).
-    """
-    if category not in CATEGORIES:
-        raise ValueError(
-            f"unknown category {category!r}; expected one of {list(CATEGORIES)}"
-        )
-    if not entry_name:
-        raise ValueError("entry_name must be non-empty")
-    return f"{category}{_NAME_SEPARATOR}{entry_name}"
-
-
-def is_valid_qualified_name(qualified_name: str) -> bool:
-    """Return True iff ``qualified_name`` parses cleanly.
-
-    Convenience predicate; identical semantics to wrapping
-    split_qualified_name in a try/except ValueError. Useful in
-    list/filter pipelines and schema validators.
-    """
-    try:
-        split_qualified_name(qualified_name)
-    except ValueError:
-        return False
-    return True
 
 
 # ── provider tool-name normalization (#1989) ───────────────────────────────
@@ -266,12 +194,12 @@ def is_valid_qualified_name(qualified_name: str) -> bool:
 # Known LLM function-calling namespace prefixes a model may echo onto a tool
 # name. Gemini wraps tools in a ``default_api`` namespace and a weak model
 # sometimes emits ``default_api.<tool>`` (e.g. ``default_api.invoke_action`` /
-# ``default_api.web__search``) — both as a function-call name and, observed in
+# ``default_api.web_search``) — both as a function-call name and, observed in
 # #1989, as a string value inside a ``plan``'s step ``tools``. Stripping a
 # leading one is SAFE for EVERY provider: reyn tool names never contain a ``.``
-# — qualified names use ``__`` (``_NAME_SEPARATOR``) and bare verbs use single
-# underscores — so a dot-delimited ``<namespace>.`` prefix can never be part of a
-# legit reyn name. Extending the set (e.g. OpenAI ``functions.``) is a one-line add.
+# — they are single-underscore-joined verbs — so a dot-delimited
+# ``<namespace>.`` prefix can never be part of a legit reyn name. Extending the
+# set (e.g. OpenAI ``functions.``) is a one-line add.
 _PROVIDER_TOOL_NAMESPACES: tuple[str, ...] = ("default_api.",)
 
 
@@ -309,8 +237,8 @@ def is_search_available(*, embedding_enabled: bool) -> bool:
 def is_exec_available(*, sandbox_backend: str | None) -> bool:
     """Return True iff the ``exec`` category should be exposed.
 
-    Per FP-0034 §D14-ext, the ``exec`` category (and the ``exec__*``
-    qualified names it contains) is only visible when a real sandbox
+    Per FP-0034 §D14-ext, the ``exec`` category (and the ``exec`` action
+    it contains) is only visible when a real sandbox
     backend is configured. ``sandbox_backend`` of ``"noop"`` or None
     keeps the category hidden so list_actions(category=["exec"])
     returns empty and the schema enum can also drop ``"exec"``.
@@ -499,58 +427,48 @@ def _missing_action_name_error() -> dict[str, Any]:
         "reason": "action_name parameter was not provided",
         "suggestions": [],
         "hint": (
-            "Provide action_name (qualified, e.g. 'mcp__brave__search') "
+            "Provide action_name (e.g. 'web_search') "
             "from list_actions or search_actions output."
         ),
     }
 
 
 def _enumerate_static_category(category: str) -> list[dict[str, str]]:
-    """Enumerate qualified names for a STATIC operation category.
+    """Enumerate the action names a STATIC operation category offers.
 
-    #3026: EVERY category is a static operation category now — all qualified
-    names are declared in ``universal_dispatch._OPERATION_RULES``, and each
-    entry's short_description comes from its target ToolDefinition in the
-    registry. The former resource categories, which minted names from caller
-    state (``ctx.router_state.available_*``) and so scaled the payload with the
+    #3026: EVERY category is a static operation category now — all action
+    names are declared in ``universal_dispatch._CATEGORY_ACTIONS``, and each
+    entry's short_description comes from its ToolDefinition in the registry.
+    The former resource categories, which minted names from caller state
+    (``ctx.router_state.available_*``) and so scaled the payload with the
     operator's data, are collapsed into verbs.
     """
     # Lazy imports to avoid circular dependency (universal_dispatch imports
-    # CATEGORIES + split_qualified_name from THIS module).
+    # CATEGORIES from THIS module).
     from reyn.tools import get_default_registry
-    from reyn.tools.universal_dispatch import (
-        UnknownActionError,
-        known_qualified_name_for_category,
-        resolve_describe_action,
-    )
+    from reyn.tools.universal_dispatch import action_names_for_category
 
     registry = get_default_registry()
     out: list[dict[str, str]] = []
-    for qualified_name in known_qualified_name_for_category(category):
-        try:
-            resolved = resolve_describe_action(qualified_name)
-        except UnknownActionError:
-            continue
-        target = registry.lookup(resolved.target_tool_name)
+    for action_name in action_names_for_category(category):
+        target = registry.lookup(action_name)
         short = _truncate_short_description(
             target.description if target is not None else "",
         )
         out.append({
-            "qualified_name": qualified_name,
+            "action_name": action_name,
             "short_description": short,
         })
     return out
 
 
 def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]:
-    """Enumerate the qualified names ``category`` offers this session.
+    """Enumerate the action names ``category`` offers this session.
 
     EVERY category resolves to a fixed verb set read out of
-    ``universal_dispatch._OPERATION_RULES`` via ``_enumerate_static_category``.
-    There is no per-category branch that mints a name from operator data, and
-    ``_RESOURCE_RULES`` is deliberately NOT read here (#3026) — that table
-    exists so an author-time name a human already typed still RESOLVES, which
-    costs no tools; enumerating one costs a tool per resource. This function is
+    ``universal_dispatch._CATEGORY_ACTIONS`` via ``_enumerate_static_category``.
+    There is no per-category branch that mints a name from operator data
+    (#3026). This function is
     where the payload invariant lives, so keep it that way: the number of names
     returned must not depend on how many memories / corpora / MCP tools /
     pipelines the operator has accumulated.
@@ -561,7 +479,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
       - ``sandbox_backend`` (D14-ext) — ``exec`` enumerates its single verb only
         when a real backend is configured, and nothing otherwise.
 
-    The output items each carry ``qualified_name`` (= what
+    The output items each carry ``action_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
     (= LLM-facing summary, truncated per _MAX_SHORT_DESC).
     """
@@ -585,10 +503,10 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         "file", "web", "memory_operation", "reyn_repo",
         "multi_agent",
         # Pre-existing #2032-class gap found + closed while adding
-        # pipeline_management: skill_management had a static _OPERATION_RULES
+        # pipeline_management: skill_management had a static membership-table
         # entry + dispatch route but was NEVER added to this enumeration list —
         # list_actions(category=["skill_management"]) silently returned empty
-        # even though skill_management__install_local/_source were fully
+        # even though skill_install_local/_source were fully
         # dispatchable via invoke_action (the exact "registered + dispatchable
         # but LLM-invisible" bug class, same root cause as #2589/#2621).
         # pipeline_management is added alongside it so the new verbs don't
@@ -601,14 +519,20 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # install verb (not just dispatchable-but-invisible).
         "presentation_management",
         # #3083: same enumeration wiring for plugin_management — closes the
-        # dogfood-witnessed 0/75 gap (plugin_management__install/__uninstall
+        # dogfood-witnessed 0/75 gap (plugin_install / plugin_uninstall
         # were registered + dispatch-wired but never enumerated).
         "plugin_management",
+        # #3465: same enumeration wiring for the 2 new always-visible
+        # categories (embed / hooks) — neither has a runtime-availability
+        # gate the way ``exec``/``knowledge`` do, so they belong in this
+        # unconditional-static branch, not a dedicated ``if`` below.
+        "embedding",
+        "hooks",
     ):
         return _enumerate_static_category(category)
 
     # #3026: the ``mcp`` category is its static verbs and nothing else. #1647
-    # additionally emitted one ``mcp__<server>__<tool>`` action per tool on every
+    # additionally emitted one action per tool on every
     # connected server, so the payload scaled with the operator's MCP surface.
     # Its own commit called that layer "purely a catalog/args ergonomics layer
     # over call_mcp_tool" — zero capability of its own. See the module docstring
@@ -617,19 +541,19 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         return _enumerate_static_category("mcp")
 
     if category == "pipeline":
-        # #2589: the static launch verbs (pipeline__run / _async / _inline /
-        # _inline_async) live in ``_OPERATION_RULES`` but were never enumerated,
+        # #2589: the static launch verbs (run_pipeline / _async / _inline /
+        # _inline_async) live in the membership table but were never enumerated,
         # so a default enumerate-all agent could dispatch them yet never
         # discover them. #3026: this is now the WHOLE of the category — the IS-5
-        # per-registered-pipeline ``pipeline__<name>`` entries are gone, because
+        # per-registered-pipeline entries are gone, because
         # one action per registered pipeline made the payload scale with the
         # operator's pipelines. They cost no capability to remove (each merely
-        # curried ``name`` into the ``pipeline__run`` this list already carries);
+        # curried ``name`` into the ``run_pipeline`` this list already carries);
         # the one thing they did uniquely — NAMING the registered pipelines — is
-        # now ``pipeline__list``, a single fixed verb.
+        # now ``pipeline_list``, a single fixed verb.
         return _enumerate_static_category("pipeline")
 
-    # knowledge category — search_knowledge / knowledge__search (FP-0066 P3c,
+    # knowledge category — search_knowledge (FP-0066 P3c,
     # #3247 firm §3/§6). Visible only when embedding is configured, mirroring
     # the exec branch just below (a runtime-gated, not just router-state-
     # excludable, category) — SHARES ``is_search_available`` with
@@ -662,7 +586,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             return []
         return [
             {
-                "qualified_name": "exec__run",
+                "action_name": "exec",
                 "short_description": (
                     "Execute a command in a sandboxed environment."
                 ),
@@ -692,8 +616,8 @@ _LEGACY_CATEGORY_REDIRECTS: Final[dict[str, str]] = {
     "mcp.tool": "mcp",
     "mcp.operation": "mcp",
     # PR #909 — agent.peer resource category collapsed into ``multi_agent``
-    # operation category (= multi_agent__list_peers / __describe_peer /
-    # __delegate).
+    # operation category (= list_agents / describe_agent /
+    # delegate_to_agent).
     "agent.peer": "multi_agent",
     # #3026 — the last two resource categories collapsed into their verb
     # counterparts. A model whose catalog snapshot pre-dates the collapse asks
@@ -850,13 +774,13 @@ async def _handle_list_actions(
     pagination.
 
     Per FP-0034 §D11 + #1455 uniform enrich, returns:
-      ``{items: [{qualified_name, short_description, description, input_schema},
+      ``{items: [{action_name, short_description, description, input_schema},
       ...], total: int}`` — EVERY page item is enriched via ``_describe_one``
       (no longer gated to category-narrowed browses), so an unfiltered browse is
       as actionable as a narrowed one. Token-bounded by the page limit (default
       10).
 
-    Sort is alphabetical by qualified_name (= pagination stability).
+    Sort is alphabetical by action_name (= pagination stability).
     Pagination uses offset+limit REST conventions (default limit 10).
 
     #934: when ``category=[…]`` carries a name not in the current
@@ -884,7 +808,7 @@ async def _handle_list_actions(
         items.extend(_enumerate_category(cat, ctx))
 
     # Alphabetical sort for pagination stability (§D11)
-    items.sort(key=lambda it: it["qualified_name"])
+    items.sort(key=lambda it: it["action_name"])
     total = len(items)
     page = items[offset:offset + limit]
 
@@ -903,7 +827,7 @@ async def _handle_list_actions(
     _registry = get_default_registry()
     enriched: list[dict[str, Any]] = []
     for it in page:
-        one = _describe_one(it["qualified_name"], ctx, _registry)
+        one = _describe_one(it["action_name"], ctx, _registry)
         enriched.append({**it, **one} if one is not None else it)
     page = enriched
 
@@ -925,7 +849,7 @@ async def _handle_search_actions(
     index + provider + model class into the ``RouterCallerState``.
 
     Response shape per §D11:
-        ``{items: [{qualified_name, short_description, score}, ...]}``
+        ``{items: [{action_name, short_description, score}, ...]}``
 
     Graceful degradation:
       - ``ctx.router_state`` absent → empty result
@@ -1031,12 +955,13 @@ async def _handle_search_actions(
     )
 
     if category_set:
-        from reyn.tools.universal_catalog import split_qualified_name
+        from reyn.tools.universal_dispatch import category_of
         filtered: list[dict[str, Any]] = []
         for it in results:
-            try:
-                cat, _ = split_qualified_name(str(it.get("qualified_name", "")))
-            except ValueError:
+            # #3429: the category is a property of the action, looked up in the
+            # membership table — it is no longer a parseable prefix of the name.
+            cat = category_of(str(it.get("action_name", "")))
+            if cat is None:
                 continue
             if cat in category_set:
                 filtered.append(it)
@@ -1050,39 +975,33 @@ async def _handle_search_actions(
 
 
 def _describe_one(
-    qualified_name: str, ctx: ToolContext, registry: Any,
+    action_name: str, ctx: ToolContext, registry: Any,
 ) -> "dict[str, Any] | None":
-    """Resolve ``{description, input_schema}`` for one qualified action.
+    """Resolve ``{description, input_schema}`` for one action.
 
     The shared selection-grade core of ``describe_action`` AND ``list_actions``'
     enriched items, so the two return the SAME description + schema for a given
-    action BY CONSTRUCTION (list ≡ describe). Returns ``None`` when the name
-    doesn't resolve or has no registry target (the caller skips / errors as it
-    sees fit). Intentionally returns ONLY description + input_schema — the
+    action BY CONSTRUCTION (list ≡ describe). Returns ``None`` when the name is
+    not a catalog action or has no registry entry (the caller skips / errors as
+    it sees fit). Intentionally returns ONLY description + input_schema — the
     describe_action metadata block and the B41 post-call directive stay in
     ``describe_action`` and are not carried into ``list_actions`` items.
 
-    #3026: every action's description + schema is now simply its target
-    ToolDefinition's, because every action IS a verb whose target is the action.
-    The former per-resource override pair (``_resource_description`` /
-    ``_resource_input_schema``) existed to paper over resource actions whose
-    target was a generic dispatcher — ``rag_corpus__<name>`` showing
-    ``semantic_search``'s schema minus the curried ``sources``, and so on. With
-    the resource categories collapsed there is no such action left, so the
-    override seam is gone rather than kept as an unused hook. ``ctx`` stays in
-    the signature: it is what ``list_actions`` / ``catalog_entries`` already
-    thread, and removing it would churn both call sites for nothing.
+    #3026 + #3429: an action's description + schema is simply its
+    ToolDefinition's, because the action IS the tool — one name, one schema, on
+    every route. The former per-resource override pair
+    (``_resource_description`` / ``_resource_input_schema``) existed to paper
+    over resource actions whose target was a generic dispatcher; with the
+    resource categories collapsed there is no such action left, so the override
+    seam is gone rather than kept as an unused hook. ``ctx`` stays in the
+    signature: it is what ``list_actions`` / ``catalog_entries`` already thread,
+    and removing it would churn both call sites for nothing.
     """
-    from reyn.tools.universal_dispatch import (
-        UnknownActionError,
-        resolve_describe_action,
-    )
+    from reyn.tools.universal_dispatch import is_known_action
 
-    try:
-        resolved = resolve_describe_action(qualified_name)
-    except UnknownActionError:
+    if not is_known_action(action_name):
         return None
-    target = registry.lookup(resolved.target_tool_name)
+    target = registry.lookup(action_name)
     if target is None:
         return None
 
@@ -1132,17 +1051,17 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for category in CATEGORIES:
         for item in _enumerate_category(category, ctx):
-            qualified_name = item["qualified_name"]
-            one = _describe_one(qualified_name, ctx, registry)
+            action_name = item["action_name"]
+            one = _describe_one(action_name, ctx, registry)
             if one is None:
-                # Unresolvable action (no registry target) — not a usable entry.
+                # Unresolvable action (no registry entry) — not a usable entry.
                 continue
             parameters = one.get("input_schema")
             if not isinstance(parameters, dict):
                 # Completeness bar: a valid no-arg signature, never None.
                 parameters = {"type": "object", "properties": {}}
             entries.append({
-                "name": qualified_name,
+                "name": action_name,
                 "description": one.get("description") or "",
                 "parameters": parameters,
             })
@@ -1153,64 +1072,60 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
 async def _handle_describe_action(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """describe_action handler — return target's description + input_schema.
+    """describe_action handler — return the action's description + input_schema.
 
-    Per FP-0034 §D11, returns ``{long_description?, input_schema,
-    metadata?}``. PR-3a mapped this to the target ToolDefinition's
-    ``.parameters`` directly — which is correct for operation-category
-    actions (web__fetch / file__read / …) whose target IS the action.
+    Per FP-0034 §D11, returns ``{description, input_schema, metadata}``, read
+    straight off the named action's ToolDefinition.
 
-    #3026: that is now the whole story — every enumerated action IS its target,
-    so the target's ``.parameters`` is always the right schema. The D2-full
+    #3026 + #3429: that is the whole story — the action IS the tool, under one
+    name, so ``.parameters`` is always the right schema. The D2-full
     per-resource override (look the schema up from ``ctx.router_state`` because
     the target was a generic dispatcher) went with the resource categories it
-    served; see ``_describe_one``.
+    served; see ``_describe_one``. The response no longer carries a
+    ``metadata.target_tool_name``: it existed to name the tool the *qualified*
+    spelling resolved to, and there is nothing left for it to differ from.
 
-    For unknown qualified_name, returns the §D12 error-with-suggestions
+    For an unknown action_name, returns the §D12 error-with-suggestions
     response.
     """
-    qualified_name = args.get("action_name")
-    if not qualified_name:
+    action_name = args.get("action_name")
+    if not action_name:
         return _missing_action_name_error()
 
     # Lazy imports for circular-dep safety
     from reyn.tools import get_default_registry
     from reyn.tools.universal_dispatch import (
         UnknownActionError,
-        resolve_describe_action,
+        require_known_action,
     )
 
     try:
-        resolved = resolve_describe_action(qualified_name)
+        require_known_action(action_name)
     except UnknownActionError as exc:
         # Augment suggestions with router_state-aware candidates
         return _build_error_response(_augment_suggestions(exc, ctx))
 
     registry = get_default_registry()
-    target = registry.lookup(resolved.target_tool_name)
+    target = registry.lookup(action_name)
     if target is None:
         return _build_error_response(UnknownActionError(
-            qualified_name,
-            f"target tool {resolved.target_tool_name!r} is not in the "
-            f"registry (PR-3a wires the canonical surface; if you see "
-            f"this in production, the target may be a future-PR op)",
+            action_name,
+            f"action {action_name!r} is a catalog member but is not in the "
+            f"registry — the membership table and the registry have drifted",
         ))
 
     # D2-full / B42-NF-W7-1: description + input_schema come from the shared
-    # _describe_one core (per-resource fields win over the dispatcher target's
-    # generic ones, falling back to target.parameters/.description for
-    # operation categories), so describe_action and list_actions' enriched
-    # items agree BY CONSTRUCTION. ``one`` is non-None here — the resolve +
+    # _describe_one core, so describe_action and list_actions' enriched items
+    # agree BY CONSTRUCTION. ``one`` is non-None here — the membership +
     # registry lookup above already succeeded, so _describe_one's same
     # resolution does too.
-    one = _describe_one(qualified_name, ctx, registry) or {}
+    one = _describe_one(action_name, ctx, registry) or {}
 
     return {
-        "qualified_name": qualified_name,
+        "action_name": action_name,
         "description": one.get("description"),
         "input_schema": one.get("input_schema"),
         "metadata": {
-            "target_tool_name": resolved.target_tool_name,
             "category": target.category,
             "purity": target.purity,
         },
@@ -1232,24 +1147,29 @@ async def _handle_describe_action(
 async def _handle_invoke_action(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """invoke_action handler — delegate to target via PR-2 routing.
+    """invoke_action handler — run the named action's own handler.
 
-    PR-3a wiring:
-      1. Resolve qualified_name → target_tool_name + transformed_args
-         via universal_dispatch.resolve_invoke_action.
-      2. Look up target ToolDefinition in the unified registry.
-      3. Invoke target.handler(transformed_args, ctx).
+    Wiring:
+      1. Check ``action_name`` is a catalog action (``require_known_action``).
+      2. Look up its ToolDefinition in the unified registry.
+      3. Invoke ``target.handler(args, ctx)``.
+
+    #3429: there is no name rewriting and no arg transform between (1) and (3).
+    There used to be — the action name arrived in a ``<category>__<verb>``
+    spelling this layer mapped to a flat registry name, and two of the mappings
+    also reshaped args (``cluster``→``path``, ``message``→``request``) in ways
+    no advertised schema declared. The spelling is gone; the args the model
+    sends are the args the handler receives, which is what "transparent
+    wrapper" was always supposed to mean.
 
     The ToolContext is forwarded verbatim so router_state callbacks
     (= send_to_agent / op_context_factory / list_memory_fn / etc.)
-    reach the target handler as if the caller had invoked it directly.
-    This is what makes invoke_action a transparent wrapper rather than
-    a separate execution path.
+    reach the handler as if the caller had invoked it directly.
 
-    Unknown qualified_name → §D12 error-with-suggestions response.
+    Unknown action_name → §D12 error-with-suggestions response.
     """
-    qualified_name = args.get("action_name")
-    if not qualified_name:
+    action_name = args.get("action_name")
+    if not action_name:
         return _missing_action_name_error()
 
     inner_args = args.get("args") or {}
@@ -1258,33 +1178,32 @@ async def _handle_invoke_action(
     from reyn.tools import get_default_registry
     from reyn.tools.universal_dispatch import (
         UnknownActionError,
-        resolve_invoke_action,
+        require_known_action,
     )
 
     try:
-        resolved = resolve_invoke_action(qualified_name, inner_args)
+        require_known_action(action_name)
     except UnknownActionError as exc:
         return _build_error_response(_augment_suggestions(exc, ctx))
 
     registry = get_default_registry()
-    target = registry.lookup(resolved.target_tool_name)
+    target = registry.lookup(action_name)
     if target is None:
         return _build_error_response(UnknownActionError(
-            qualified_name,
-            f"target tool {resolved.target_tool_name!r} is not in the "
-            f"registry (PR-3a wires the canonical surface; if you see "
-            f"this in production, the target may be a future-PR op)",
+            action_name,
+            f"action {action_name!r} is a catalog member but is not in the "
+            f"registry — the membership table and the registry have drifted",
         ))
 
     # Forward ctx verbatim — target handlers consume their slice of
     # router_state via the typed sub-object.
-    result = await target.handler(resolved.target_args, ctx)
-    # FP-0056 PR-F1: tag the RESOLVED target tool name so canonicalization dispatches by the true
+    result = await target.handler(dict(inner_args), ctx)
+    # FP-0056 PR-F1: tag the INVOKED action so canonicalization dispatches by the true
     # invoked identity, not the ``invoke_action`` wrapper (which would resolve to the wrapper's own
     # passthrough declaration and hide the target's text body). The chat/pipeline chokepoints strip
     # this before rendering; dispatch()'s outer tag defers to it (setdefault).
     if isinstance(result, dict) and "_canonical_source" not in result:
-        result = {**result, "_canonical_source": resolved.target_tool_name}
+        result = {**result, "_canonical_source": action_name}
     return result
 
 
@@ -1294,7 +1213,7 @@ def _augment_suggestions(
     """Re-suggest using router_state-aware candidates when available.
 
     The PR-2 default suggestion pool is the static catalogue
-    (= KNOWN_STATIC_QUALIFIED_NAMES). This re-derives it from the live
+    (= KNOWN_ACTION_NAMES). This re-derives it from the live
     enumeration instead, so a suggestion is availability-aware: a category the
     caller excluded (#1667), or ``exec`` without a sandbox backend, contributes
     nothing here and is never suggested.
@@ -1316,7 +1235,7 @@ def _augment_suggestions(
     candidates: list[str] = []
     for cat in CATEGORIES:
         for item in _enumerate_category(cat, ctx):
-            candidates.append(item["qualified_name"])
+            candidates.append(item["action_name"])
 
     if not candidates:
         return exc
@@ -1402,9 +1321,6 @@ __all__ = [
     "_SEARCH_ACTIONS_DESCRIPTION",
     "_DESCRIBE_ACTION_DESCRIPTION",
     "_INVOKE_ACTION_DESCRIPTION",
-    "split_qualified_name",
-    "build_qualified_name",
-    "is_valid_qualified_name",
     "is_search_available",
     "is_exec_available",
     "visible_categories",

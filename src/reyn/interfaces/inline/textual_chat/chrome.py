@@ -304,6 +304,28 @@ class Composer(TextArea):
                     event.prevent_default()
                     sent_queue.first().focus()
                     return
+        if event.key in ("pageup", "pagedown"):
+            # #3470: PageUp/PageDown scroll the CONVERSATION, unconditionally —
+            # never the composer's own text. TextArea's default binds these to
+            # page-sized cursor jumps, which in a <= MAX_ROWS-tall chat box has
+            # no practical value; meanwhile "scroll back through the chat" had
+            # NO discoverable key at all (the only route was an undocumented
+            # Shift+Tab focus hop into the conversation pane, with no visual
+            # cue that focus had left the composer). Unconditional delegation
+            # keeps one meaning per key (#3365 principle: a key's meaning does
+            # not change with state), and focus never leaves the composer.
+            # The pane is queried by type NAME so this module keeps its
+            # import-isolation (textual_flowview stays out of chrome.py —
+            # pinned by test_phase3_chrome_imports_stay_tty_only).
+            flow = self.app.query("FlowView")
+            if flow:
+                event.stop()
+                event.prevent_default()
+                if event.key == "pageup":
+                    flow.first().scroll_page_up(animate=False)
+                else:
+                    flow.first().scroll_page_down(animate=False)
+                return
         await super()._on_key(event)
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
@@ -397,6 +419,9 @@ _LIST_PANES = frozenset({
 COMPOSER_KEYS: "list[tuple[str, str]]" = [
     ("enter", "send"),
     ("shift+enter", "newline"),
+    # #3470: the conversation's scroll keys, usable WITHOUT leaving the
+    # composer (delegated in ``Composer._on_key`` — focus never moves).
+    ("pgup / pgdn", "scroll conversation"),
     ("↓", "focus menu"),
     # #3327: ↑ now targets whichever of the two regions above the composer
     # actually has something to act on, pending intervention first — see

@@ -27,9 +27,9 @@ The owner's standing intents: loose-coupling (a capability's runtime deps must n
 ## 2. Grounding — what reyn already has (verified on `origin/main`)
 
 - **Runtime-writable registries exist for ALL THREE capability types** (compile-time builtin dict + runtime `./.reyn/config/*.yaml`, same shape):
-  - `mcp__install_local` → `.reyn/config/mcp.yaml`
-  - `pipeline_management__install_local` / `__install_source` → `.reyn/config/pipelines.yaml`
-  - `skill_management__install_local` / `__install_source` → `.reyn/config/skills.yaml`
+  - `mcp_install_local` → `.reyn/config/mcp.yaml`
+  - `pipeline_install_local` / `__install_source` → `.reyn/config/pipelines.yaml`
+  - `skill_install_local` / `__install_source` → `.reyn/config/skills.yaml`
   - All merged by `config/loader.py`; all in the hot-reload IN-set.
 - **hot-reload is op-triggered (not fs-watch)** (`runtime/hot_reload.py`): `_INSTALL_SOURCE_SEAMS` maps `{mcp,pipeline,skill}_install` → their registry; **pure additions apply same-turn** (`apply_now`), same-name overwrites defer to the turn boundary. The OUT-set (security/permission/sandbox/budget in `reyn.yaml`) is **restart-only, structurally write-gated**.
 - **Inline pipelines** already exist (`run_pipeline_inline`, skips the registry) — the "test it ad-hoc" plane for the authoring loop.
@@ -140,7 +140,7 @@ The typed `kind` discriminator (§3.8) carries across every surface (CLI subcomm
 
 Implementation **mirrors how existing ops (e.g. mcp install / `reyn` CLI subcommands / slash commands) are already exposed across tool·slash·CLI** — grounded against those precedents, not a new surface pattern (grep them at impl time).
 
-### 3.9a Discovery — `plugin_management__list` (#3202 symptom 3)
+### 3.9a Discovery — `list_plugins` (#3202 symptom 3)
 
 `plugin_install`'s `source={kind:"builtin", name:"rag"}` shape requires the
 caller to already know the name `"rag"` — but until this addition, nothing
@@ -170,7 +170,7 @@ rather than duplicating it:
   into the registry (copying would create the redundant-projection drift
   class #3164 hit for a different value — the registry answers "which", the
   manifest answers "what").
-- **`plugin_management__list` LLM tool** (`src/reyn/tools/plugin_management_verbs.py`)
+- **`list_plugins` LLM tool** (`src/reyn/tools/plugin_management_verbs.py`)
   — a read-only discovery verb with no Control IR op (mirrors `skill_list`,
   #2971: a pure enumeration has no side effect to gate). Reachable from the
   ordinary tool-call flow — an LLM can call it directly to answer "what can

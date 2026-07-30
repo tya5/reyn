@@ -8,7 +8,7 @@ on the line marked `RESULT:` so a parent driver / agent can parse it.
 Scenarios:
 - s1a: Catalog discovery — parallel-tolerant (list_actions + invoke_action parallel OK if error surface)
 - s1b: Catalog discovery — sequential connector (list_actions single turn, next-turn SEQ)
-- s2:  routing_decided P6 event emit (invoke_action file__read)
+- s2:  routing_decided P6 event emit (invoke_action read_file)
 - s3_noop: exec visibility — sandbox.backend=noop empty variant
 - s3_auto: exec visibility — sandbox.backend=auto path
 - s4_hot_cold: Hot list cold start direct alias rate
@@ -51,8 +51,8 @@ SCENARIOS = {
     },
     "s2": {  # 既存
         "name": "routing_decided P6 event emit",
-        "prompt": "file__read を invoke_action で /etc/hostname に対して使ってください",
-        "expected_path": "invoke_action(file__read, /etc/hostname) → routing_decided event",
+        "prompt": "read_file を invoke_action で /etc/hostname に対して使ってください",
+        "expected_path": "invoke_action(read_file, /etc/hostname) → routing_decided event",
         "prompt_class": "P-explicit",
     },
     "s3_noop": {  # explicit noop override
@@ -64,7 +64,7 @@ SCENARIOS = {
     "s3_auto": {  # default auto
         "name": "exec visibility — sandbox.backend=auto path",
         "prompt": "sandboxed コマンド実行に使える action はありますか",
-        "expected_path": "list_actions(category=['exec']) → [exec__run] → describe",
+        "expected_path": "list_actions(category=['exec']) → [exec] → describe",
         "prompt_class": "P-natural",
     },
     "s4_hot_cold": {  # hot list cold start

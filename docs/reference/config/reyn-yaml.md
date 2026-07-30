@@ -559,7 +559,7 @@ counterpart of CodeAct: the model writes fenced Python, but the functions it is
 shown are the catalog **wrappers** (`list_actions` / `describe_action` /
 `invoke_action`) plus the base tools — so the system prompt does not grow with
 the catalog the way CodeAct's does. A call reads
-`result = invoke_action(action_name="file__read", args={"path": "README.md"})`.
+`result = invoke_action(action_name="read_file", args={"path": "README.md"})`.
 
 ```yaml
 tool_use:
@@ -580,7 +580,7 @@ is a search, not a listing. A turn reads
 
 ```python
 hits = search_actions(query="read a file")
-result = invoke_action(action_name="file__read", args={"path": "README.md"})
+result = invoke_action(action_name="read_file", args={"path": "README.md"})
 ```
 
 ```yaml
@@ -968,7 +968,7 @@ embedding:
 | `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
 | `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
-| `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp__call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
+| `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp_call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
 
 > **FP-0066 §7 (2026-07) — config clean-break.** The prior fragmented gate
 > `action_retrieval.embedding_class` (which conflated the on/off decision with
@@ -1015,11 +1015,11 @@ action_retrieval:
 
 When enabled (default), the chat router's `tools=` includes the wrappers at the tail.  The LLM can call:
 
-- `list_actions(category=["mcp"])` → enumerate available actions in a category as qualified names (e.g. `mcp__call_tool`)
-- `describe_action(action_name="mcp__call_tool")` → fetch the input schema
-- `invoke_action(action_name="mcp__call_tool", args={...})` → execute via the existing handler
+- `list_actions(category=["mcp"])` → enumerate available actions in a category as qualified names (e.g. `mcp_call_tool`)
+- `describe_action(action_name="mcp_call_tool")` → fetch the input schema
+- `invoke_action(action_name="mcp_call_tool", args={...})` → execute via the existing handler
 
-Every category enumerates a fixed set of verbs — a resource (a stored memory, an indexed corpus, an MCP tool, a registered pipeline) is an argument to a verb, not an action of its own, so the enumerated set does not grow with what you have accumulated.  Discover resources with the category's discovery verb (`memory_operation__list`, `rag_operation__list_sources`, `mcp__list_tools`, `pipeline__list`) and pass the id as an argument.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
+Every category enumerates a fixed set of verbs — a resource (a stored memory, an indexed corpus, an MCP tool, a registered pipeline) is an argument to a verb, not an action of its own, so the enumerated set does not grow with what you have accumulated.  Discover resources with the category's discovery verb (`list_memory`, `rag_operation__list_sources`, `list_mcp_tools`, `pipeline_list`) and pass the id as an argument.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
 See Concepts: architecture (architecture doc removed) for the tool registry / dispatch background.
 
@@ -1563,7 +1563,7 @@ skills:
 
 **Removed in #2971: `auto_invoke`** (a misnomer — nothing auto-invokes a skill; it only controlled menu rendering, which was then the sole surface naming a skill, so `false` made the skill unreachable rather than merely unadvertised). A config still carrying it fails at load naming the replacement: `auto_invoke: true` → `visibility: menu`; `auto_invoke: false` → `visibility: hidden`.
 
-`skills.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/skills.yaml` (written by the `skill_management__install_local` / `skill_management__install_source` chat tools), later tiers winning on name collision — the same merge shape as `mcp.servers`.
+`skills.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/skills.yaml` (written by the `skill_install_local` / `skill_install_source` chat tools), later tiers winning on name collision — the same merge shape as `mcp.servers`.
 
 See [Concepts: Skills](../../concepts/tools-integrations/skills.md) for the full registration model, the three-layer exposure model (menu / on-demand read / bundled assets), and the install tools.
 
@@ -1588,7 +1588,7 @@ pipelines:
 
 The entry **key is a pure namespace label** — it need not equal any declared `pipeline:` name. Every pipeline in the file registers under the global name `{key}.{declared-name}` (namespacing is always on). A `.` is reserved as the namespace separator, so it is forbidden in both an entry key and a declared `pipeline:` name. A dot-less `call`/`match` target resolves to a same-file sibling (`{key}.name`); a dotted target is a global reference (`other_key.name`).
 
-`pipelines.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/pipelines.yaml` (written by the `pipeline_management__install_local` / `pipeline_management__install_source` chat tools), later tiers winning on name collision — the same merge shape as `skills.entries` / `mcp.servers`.
+`pipelines.entries` merges across `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ the dynamic `<project>/.reyn/config/pipelines.yaml` (written by the `pipeline_install_local` / `pipeline_install_source` chat tools), later tiers winning on name collision — the same merge shape as `skills.entries` / `mcp.servers`.
 
 See [Concepts: Pipeline registration](../../concepts/runtime/pipeline-registration.md) for the full registration model and the install tools.
 
@@ -1836,7 +1836,7 @@ python:
 
 ## `multimodal` block
 
-Controls how Reyn handles binary media (images from `web__fetch` / `file__read` / MCP servers) and where multimodal artefacts live on disk.
+Controls how Reyn handles binary media (images from `web_fetch` / `read_file` / MCP servers) and where multimodal artefacts live on disk.
 
 ```yaml
 multimodal:

@@ -123,7 +123,7 @@
         }
       ],
       "tool_sequence": [
-        "file__glob",
+        "glob_files",
         "list_actions"
       ],
       "empty_stop_events": 0,

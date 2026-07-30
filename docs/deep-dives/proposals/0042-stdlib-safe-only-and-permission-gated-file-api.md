@@ -168,7 +168,7 @@ Each call:
    `permissions.file.read_paths` / `write_paths`.
 2. Hands off to `PermissionResolver` for the 4-layer gate (config-deny /
    saved-grant / interactive-ask / default — same flow the chat router
-   uses for `invoke_action(file__read)`).
+   uses for `invoke_action(read_file)`).
 3. On grant: performs the I/O.
 4. On deny: raises `PermissionError`. The skill run fails with a clear
    `skill_run_failed` event carrying the permission denial, the same

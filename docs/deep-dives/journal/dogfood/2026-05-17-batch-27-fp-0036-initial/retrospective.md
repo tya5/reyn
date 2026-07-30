@@ -120,7 +120,7 @@ different but the symptom converges, look at the envelope."
   about, but neither named hot-list aliases specifically. The blast
   radius (= 13 blocked + bleeds into refuted) is larger than any single
   bug we've previously hit in dogfood.
-- **The `web__fetch` enforcement gap** is a clean example of "fixing the
+- **The `web_fetch` enforcement gap** is a clean example of "fixing the
   visible symptom (= list_actions output) without fixing the underlying
   enforcement". Memory `feedback_verify_reproduce_first.md` warned about
   exactly this with the term "wrong layer trap". My #49 fix targeted the
@@ -159,8 +159,8 @@ different but the symptom converges, look at the envelope."
    implementation. Re-run W7 long-session set to validate.
 2. **B27-H1** — remove `"plan"` from `_LEGACY_TOOL_NAMES`. Probably 1
    line + 1 test. Re-run W6 plan_mode set to validate.
-3. **B27-H2** — restore enforcement gate for direct `web__fetch` /
-   `web__search` router-tool exposure under config-deny. Probably 5-10
+3. **B27-H2** — restore enforcement gate for direct `web_fetch` /
+   `web_search` router-tool exposure under config-deny. Probably 5-10
    lines in `build_tools()`. Re-run W4 S8 to validate.
 4. **B27-Q1 design decision** — read ADR-0034 + FP-0001 router-vs-skill
    contract, then decide whether to (a) emit `chat_turn_spawned` or (b)
