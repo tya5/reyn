@@ -66,6 +66,7 @@ from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
 from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
+from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from .chrome import (
     _MENU_TABS,
@@ -1522,11 +1523,53 @@ class TextualChatApp(App):
             self._remark_entry(self._flow.highlighted)
 
     def on_flow_view_highlighted(self, event: "FlowView.Highlighted") -> None:
-        """#3490: move the rail with the keyboard cursor — repaint the row it
-        left as well as the one it arrived on."""
+        """#3490: move the rail with the highlight — repaint the row it left as
+        well as the one it arrived on. #3508: and unfold the arrived row's tool
+        detail, folding the one left behind."""
         previous, self._marked_cursor = self._marked_cursor, event.entry
+        self._set_expanded(previous, False)
+        self._set_expanded(event.entry, True)
         self._remark_entry(previous)
         self._remark_entry(event.entry)
+
+    def _set_expanded(self, entry: "Entry[OutboxMessage] | None", expanded: bool) -> None:
+        """Stamp/clear the expansion flag on ``entry``'s ITEM and re-present it.
+
+        #3508 — a settled tool row shows its FULL result while the highlight is
+        on it, and its one-line summary otherwise. Two properties make this safe
+        rather than a hack:
+
+        * the flag lives on the item, not in this app, because
+          ``FlowPresenter.present`` is pure with respect to ``(item, width)`` —
+          "expanded" has to BE item state for a differing re-present to be
+          legitimate, and ``Entry.update()`` is the sanctioned way to say the
+          item changed;
+        * only rows that HAVE a folded result are touched, so a user line or an
+          agent reply is never marked and never re-presented — moving the
+          highlight through ordinary conversation costs nothing.
+
+        The height changes when it unfolds; flowview reflows on ``update()``
+        (verified) and the highlight is anchored to the entry, so the row being
+        read does not slide."""
+        if entry is None:
+            return
+        meta = entry.item.meta
+        if not meta or _RESULT_KIND_KEY not in meta:
+            return  # not a settled tool row — nothing folded to show
+        if bool(meta.get(_EXPANDED_KEY)) == expanded:
+            return  # already in the wanted state; no revision churn
+        try:
+            # ``OutboxMessage`` is a FROZEN dataclass, so the dict is mutated in
+            # place rather than reassigned — which is also the honest shape: the
+            # frame's identity does not change, only a display-state key on the
+            # meta the presenter already reads.
+            if expanded:
+                meta[_EXPANDED_KEY] = True
+            else:
+                meta.pop(_EXPANDED_KEY, None)
+            entry.update()
+        except Exception:
+            logger.exception("textual chat: tool-detail expand failed")
 
     # ── #3476 ⑥: the keyboard cursor's own actions ─────────────────────────
 

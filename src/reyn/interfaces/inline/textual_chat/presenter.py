@@ -12,6 +12,7 @@ never reaches an always-loaded module.
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import TYPE_CHECKING, Callable
 
@@ -35,6 +36,7 @@ from reyn.interfaces.repl.renderer import (
     summarize_tool_result,
 )
 
+from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
@@ -170,6 +172,38 @@ def _tool_head(msg: "OutboxMessage") -> Text:
     return Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
 
 
+#: How many lines of a full tool result the expanded view shows before it stops.
+#: A cap, not a preference: the expansion is driven by the highlight simply
+#: ARRIVING on a row, so an uncapped body would let a 10k-line result shove the
+#: whole conversation off-screen as a side effect of pressing ``k`` — the reader
+#: never asked for that. Anything beyond is summarised by the trailer line, and
+#: the untruncated text is still reachable through the row's own copy
+#: (``Enter``/``Space``), which copies ``item.text``, not what is on screen.
+_EXPANDED_MAX_LINES = 40
+
+
+def _result_detail_lines(msg: "OutboxMessage") -> "list[str]":
+    """The FULL tool result as display lines — what the one-line summary drops.
+
+    ``summarize_tool_result`` reduces a result to e.g. ``Read 42 lines``; the raw
+    value survives on the frame (``meta[_RESULT_META_KEY]["result"]``), so the
+    expansion is a different RENDERING of data the row already carries, not a
+    re-fetch. A dict/list is pretty-printed rather than ``repr``'d so a JSON-ish
+    result reads as structure; anything unprintable degrades to ``str`` rather
+    than raising, because a presenter that raises takes the whole row down."""
+    result = ((msg.meta or {}).get(_RESULT_META_KEY) or {}).get("result")
+    if result is None or result == "":
+        return []
+    if isinstance(result, str):
+        text = result
+    else:
+        try:
+            text = json.dumps(result, ensure_ascii=False, indent=2)
+        except Exception:
+            text = str(result)
+    return text.splitlines() or [text]
+
+
 def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
     """The ``⎿ <result summary>`` sub-line + optional coral tint of a SETTLED tool
     row — the completion folded into its started entry (:data:`_RESULT_KIND_KEY`).
@@ -197,6 +231,33 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
         return Text(f"  ⎿ ✗ {err}", style=_CC_ERR), _CC_ERR_BG
     summary = summarize_tool_result(meta.get("tool"), result_meta.get("result"))
     failed = summary.startswith("✗")
+    if meta.get(_EXPANDED_KEY) and not failed:
+        # #3508: the highlight is on this row — show the result the summary
+        # dropped. The summary line is KEPT as the first line so the row reads
+        # the same whether or not it is expanded; the detail is added under it
+        # rather than replacing it, which is what makes moving the highlight
+        # through a log feel like the rows are unfolding rather than swapping.
+        lines = _result_detail_lines(msg)
+        # Only unfold when the summary is actually WITHHOLDING something. For a
+        # short scalar result ``summarize_tool_result`` falls back to the value
+        # itself, so the "detail" is the summary again — expanding then printed
+        # the same sentence twice (seen in a real terminal; the headless tests
+        # used list results, which always elide, so they could not catch it).
+        if len(lines) == 1 and lines[0].strip() in summary:
+            lines = []
+        if lines:
+            body = Text(f"  ⎿ {summary}", style=_CC_DIM)
+            for line in lines[:_EXPANDED_MAX_LINES]:
+                body.append("\n")
+                body.append(f"     {line}", style=_CC_DIM)
+            if len(lines) > _EXPANDED_MAX_LINES:
+                body.append("\n")
+                body.append(
+                    f"     … {len(lines) - _EXPANDED_MAX_LINES} more lines"
+                    " (Enter copies the whole result)",
+                    style=_CC_DIM,
+                )
+            return body, None
     return (
         Text(f"  ⎿ {summary}", style=_CC_ERR if failed else _CC_DIM),
         (_CC_ERR_BG if failed else None),
