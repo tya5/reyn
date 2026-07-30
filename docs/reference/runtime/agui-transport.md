@@ -936,12 +936,13 @@ directly and does not depend on the cursor at all.
 | `r` | Open `/rewind` |
 | `Esc` | Back to the composer |
 
-Arriving at the pane arms the cursor on the **newest** entry rather than
-leaving it invisible until the first arrow press: flowview's `move_cursor`
-starts from "no cursor" and only lands on an entry once a direction key moves
-it, which is a real gap for a feature whose whole point is a visible position
-indicator. A remembered position is kept across visits — leaving and
-re-entering resumes where you were.
+Arriving at the pane arms the highlight on the **newest** entry rather than
+leaving it invisible until the first arrow press: flowview's `move_highlight`
+starts from `highlighted=None` and only lands on an entry once a direction key
+moves it (`Textual`'s own, unrelated `TextArea.move_cursor` is a same-named
+different API and not this one), which is a real gap for a feature whose whole
+point is a visible position indicator. A remembered position is kept across
+visits — leaving and re-entering resumes where you were.
 
 **Copy** (`FlowView.Activated`) is a direct, ring-free path: `/copy N`
 addresses one of the last `COPY_BUFFER_MAX` **agent replies** by ordinal,
