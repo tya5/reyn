@@ -510,6 +510,17 @@ SEARCHBAR_KEYS: "list[tuple[str, str]]" = [
     ("esc", "close search, back to composer"),
 ]
 
+#: The conversation pane's keyboard cursor (#3476 ⑥, reached the SAME way as
+#: ``SENTQUEUE_KEYS`` — Shift+Tab focus-cycling, ``app.py``'s ``cursor=True``).
+#: ↑/↓/PageUp/PageDown/Home/End are flowview's OWN built-in cursor bindings
+#: (not re-declared here — this ledger only lists what reyn adds on top).
+CONVERSATION_CURSOR_KEYS: "list[tuple[str, str]]" = [
+    ("↑ / ↓ / PgUp / PgDn / Home / End", "move cursor"),
+    ("enter / space", "copy entry to clipboard"),
+    ("r", "open /rewind"),
+    ("esc", "back to composer"),
+]
+
 
 def pane_is_list(tab_id: str) -> bool:
     """Whether ``tab_id``'s drawer pane is an interactive :class:`OptionList`
@@ -1046,6 +1057,7 @@ def help_pane_lines(
     menubar_keys: "Sequence[tuple[str, str]]" = tuple(MENUBAR_KEYS),
     sentqueue_keys: "Sequence[tuple[str, str]]" = tuple(SENTQUEUE_KEYS),
     searchbar_keys: "Sequence[tuple[str, str]]" = tuple(SEARCHBAR_KEYS),
+    cursor_keys: "Sequence[tuple[str, str]]" = tuple(CONVERSATION_CURSOR_KEYS),
 ) -> list[str]:
     """The Help readout — the app's declarative ``BINDINGS`` (passed as
     ``(key, description)`` pairs) plus the imperative composer/menu navigation
@@ -1059,6 +1071,7 @@ def help_pane_lines(
     lines += [f"  {key}  {desc}" for key, desc in menubar_keys]
     lines += [f"  {key}  {desc}" for key, desc in sentqueue_keys]
     lines += [f"  {key}  {desc}" for key, desc in searchbar_keys]
+    lines += [f"  {key}  {desc}" for key, desc in cursor_keys]
     lines += [f"  {key}  {desc}" for key, desc in app_bindings]
     return lines
 

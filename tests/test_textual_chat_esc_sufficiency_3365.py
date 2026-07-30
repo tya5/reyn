@@ -13,7 +13,7 @@ gate is what lets a later PR remove Tab's "back" binding with a real, not
 merely assumed, safety net; and what would immediately catch that future
 Input-vs-Esc regression by going RED.
 
-Six HAND-ENUMERATED focus states, each independently reachable and each
+Seven HAND-ENUMERATED focus states, each independently reachable and each
 asserted to return to the Composer on ``Esc``:
   1. MenuBar (tab-bar row, not yet opened)
   2. Drawer content (an OptionList pane)
@@ -26,6 +26,10 @@ asserted to return to the Composer on ``Esc``:
      this region ALREADY existed outside the original hand-enumeration —
      exactly the "6th focusable region" case the note below predicted —
      so it is now armed here per that note's own instruction.
+  7. SearchBar's query ``Input`` (#3476 ⑤ — reached via ``ctrl+f``, not
+     Shift+Tab cycling). Added on the SAME "maintainer's job" instruction
+     the note below states — #3488 introduced this region without arming
+     it here; closed by this PR.
 
 This list is NOT derived from an exhaustive enumeration of every focusable
 widget the app can mount (co-vet note, #3365 review) — it is the set of
@@ -279,4 +283,37 @@ async def test_esc_from_conversation_pane_returns_to_composer() -> None:
         await pilot.pause()
         assert app.query_one(Composer).has_focus, (
             f"Esc from the conversation pane did not return to Composer: {app.focused!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_esc_from_search_bar_returns_to_composer() -> None:
+    """Tier 2b: Esc from the search bar's query Input -> Composer.
+
+    The 7th hand-enumerated state (see the module docstring): SearchBar is
+    reached via ``ctrl+f`` (#3476 ⑤), not Shift+Tab cycling — a different
+    reachability path than every other state in this file, so it is armed
+    here as its own case rather than assumed to be covered by the FlowView
+    case above."""
+    from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
+
+    app = TextualChatApp(transport=_Transport([]))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.query_one(Composer).focus()
+        await pilot.pause()
+
+        await pilot.press("ctrl+f")
+        await pilot.pause()
+        assert isinstance(app.focused, Input), (
+            f"setup: ctrl+f did not focus the search input: {app.focused!r}"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.query_one(Composer).has_focus, (
+            f"Esc from the search bar did not return to Composer: {app.focused!r}"
+        )
+        assert not app.query_one(SearchBar).display, (
+            "Esc from the search bar left it open"
         )
