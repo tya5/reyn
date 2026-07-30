@@ -6,6 +6,20 @@ status: draft
 
 # TUI light-terminal compatibility audit
 
+!!! warning "Superseded — this is a 2026-05-17 snapshot, not current behaviour"
+
+    The chat TUI no longer paints its own dark ground. It now runs Textual's
+    `ansi-dark` theme, so `$background`/`$surface`/`$panel` resolve to the
+    `ansi_default` marker (or `transparent`) and the host terminal's own
+    colours show through *by design* — the opposite of the "the host
+    terminal's pixels do not bleed through" finding below. The
+    recommendation to defer was also overtaken: the change shipped.
+
+    Read on for the survey of where colour was hard-coded and why a light
+    terminal was survivable at the time; do not read it as a description of
+    what the TUI does today. Current behaviour lives in the CSS in
+    `src/reyn/interfaces/inline/textual_chat/` and its `on_mount` commentary.
+
 ## TL;DR
 
 The premise "Reyn TUI is unreadable on a light terminal because its text uses

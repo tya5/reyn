@@ -635,6 +635,18 @@ class TextualChatApp(App):
            Screen alone does not reach it. */
         background: transparent;
     }
+    /* The placeholder must read as an invitation, not as typed text. Textual's
+       own rule is ``color: $text 40%``, which under ``ansi-dark`` resolves
+       ``$text`` to the ansi_default MARKER — and alpha compositing DROPS the
+       marker, so the 40% never applies and it painted at the terminal's full
+       default foreground (measured: ``Color('default')``, no dim). ``dim``
+       is used instead of a muted colour because it leaves the HUE to the
+       terminal, which is what a themed default is for; ``$text-muted`` hits
+       the identical trap, and a concrete grey would pin a colour the user's
+       theme is entitled to choose. */
+    Composer > .text-area--placeholder {
+        text-style: dim;
+    }
     StatusLine {
         height: 1;
         color: $text-muted;
