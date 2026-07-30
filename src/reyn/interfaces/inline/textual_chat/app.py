@@ -557,7 +557,20 @@ class TextualChatApp(App):
     ]
 
     CSS = """
-    Screen { layout: vertical; }
+    /* #3503: the app paints NO ground of its own — the terminal's background
+       shows through. Measured before this: ``#inputrow`` / ``#inputgutter`` /
+       ``SentQueue`` / ``MenuBar`` all declare ``transparent`` already, yet all
+       painted ``#121212``, because "transparent" means "show what is behind"
+       and what was behind is the SCREEN's own ``#121212`` (Textual's dark
+       theme). So this could not be fixed per widget — the Screen is the source,
+       which is why the fix reaches the whole surface rather than just the two
+       regions the report named. Regions that are meant to stand OUT keep
+       declaring ``$panel`` explicitly (drawer, completion popup, search bar,
+       rewind picker), and the presenter's deliberate ROW TINTS
+       (``_CC_USER_BG`` / ``_CC_ERR_BG``) are unaffected — those are content,
+       not ground. */
+    App { background: ansi_default; }
+    Screen { layout: vertical; background: transparent; }
     FlowView {
         height: 1fr;
         scrollbar-size-vertical: 0;
@@ -602,6 +615,11 @@ class TextualChatApp(App):
         max-height: 6;
         border: none;
         padding: 0;
+        /* #3503: ``TextArea``'s own DEFAULT_CSS sets ``background: $surface``
+           (measured: it painted ``#1e1e1e`` while everything around it was
+           transparent), so the input box needs its own opt-out — a transparent
+           Screen alone does not reach it. */
+        background: transparent;
     }
     StatusLine {
         height: 1;
