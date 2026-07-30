@@ -3510,7 +3510,7 @@ class AgentRegistry:
                     label="the per-session capability narrowing for this session",
                     cause=(
                         "the agent that started this session narrowed it at spawn "
-                        f"time; the narrowing is recorded in this session's own "
+                        "time; the narrowing is recorded in this session's own "
                         "config.yaml under .reyn/state"
                     ),
                     lifts_when=(

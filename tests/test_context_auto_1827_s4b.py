@@ -112,8 +112,9 @@ def test_off_by_default_no_narrowing_even_when_tainted(tmp_path):
         snapshot_path=tmp_path / "snap.json",
     )
     _mark_untrusted(s)
-    assert s._effective_contextual_for_turn() is None
-    assert not tool_contextually_denied(s._effective_contextual_for_turn(), "exec")
+    eff = s._effective_contextual_for_turn()
+    assert eff is None
+    assert not tool_contextually_denied(eff, "exec")
 
 
 def test_off_by_default_keeps_a_static_narrowing_intact(tmp_path):
