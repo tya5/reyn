@@ -136,14 +136,29 @@ async def test_real_retry_populates_attempts_and_op_emits_embed_attempts(
     emit are on the real path. A first-try success would make this vacuous
     (`attempts == successful_batches`); the forced retry is what gives `2 != 1`,
     a value only the real loop counter can produce (architect co-vet #1)."""
+    # #3460: this test's subject is the retry *counter* being wired to the real
+    # loop, not the wall-clock bound (that's #3043's territory). Under full-suite
+    # co-location (many `-n auto` workers on one machine), a tight per-attempt
+    # `asyncio.timeout` can be exhausted by scheduling delay BEFORE attempt 1
+    # reaches the stand-in server, so attempt 2 draws the stand-in's "first
+    # request" 500 and a real 3rd attempt succeeds -> `attempts == 3` (measured,
+    # #3460 reopen: `attempt 1/3 failed: ` (empty reason == TimeoutError) then
+    # `attempt 2/3 failed: ... stand-in 500`). Give this attempt a generous
+    # per-attempt timeout so co-location noise cannot masquerade as a second
+    # real retry; the counter-wiring assertion below is what's under test.
+    _PER_ATTEMPT_TIMEOUT = 60.0
     provider = LiteLLMEmbeddingProvider(
         {
-            "timeout": 5.0,
+            "timeout": _PER_ATTEMPT_TIMEOUT,
             "max_retries": 3,
             "retry_backoff": 1.0,  # 1.0^attempt == 1s sleeps; keeps the test quick
             "classes": {"standard": _MODEL},
         }
     )
+    # Witness that the generous timeout actually reached the provider (not
+    # silently dropped by a config-parsing path) — #3460's fix is inert if this
+    # config value never arrives.
+    assert provider.timeout == _PER_ATTEMPT_TIMEOUT, provider.timeout
     import reyn.core.op_runtime.embed as _embed_mod
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
 
@@ -182,14 +197,21 @@ async def test_embed_attempts_does_not_double_count_cost(
     The whole point of candidate (c) is that observation does not touch the cost
     aggregate. Two attempts were delivered but only one returned, so the recorded
     figure must be the single response's `_RESPONSE_TOKENS`, NOT twice it."""
+    # #3460: same co-location noise as the sibling test above — a generous
+    # per-attempt timeout keeps scheduling delay from injecting a spurious
+    # extra attempt into the cost-invariance assertion below (this test's
+    # subject is cost non-double-counting, not the wall-clock bound; that's
+    # #3043's territory).
+    _PER_ATTEMPT_TIMEOUT = 60.0
     provider = LiteLLMEmbeddingProvider(
         {
-            "timeout": 5.0,
+            "timeout": _PER_ATTEMPT_TIMEOUT,
             "max_retries": 3,
             "retry_backoff": 1.0,
             "classes": {"standard": _MODEL},
         }
     )
+    assert provider.timeout == _PER_ATTEMPT_TIMEOUT, provider.timeout
     import reyn.core.op_runtime.embed as _embed_mod
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
 
