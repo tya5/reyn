@@ -23,7 +23,38 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
-from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services import (
+    McpGatewayInputs,
+    MemoryService,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
+
+# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
+# bundled into two frozen, default-free dataclasses. These module-level
+# constants are the "all fields unset" instances this file's tests reuse.
+_EMPTY_OP_CTX = RouterOpContextInputs(
+    allowed_mcp=None,
+    base_available_skills_fn=None,
+    budget_gateway=None,
+    compact_now=None,
+    contextual_permission=None,
+    hook_bus=None,
+    hook_dispatcher=None,
+    hot_reloader=None,
+    multimodal_config=None,
+    presentation_renderer_factory=None,
+    render_template_bounds=None,
+    sandbox_backend_instance=None,
+    sandbox_policy=None,
+    turn_origin_fn=None,
+    workspace_base_dir=None,
+    workspace_state_dir=None,
+)
+_EMPTY_MCP_GATEWAY = McpGatewayInputs(
+    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
+)
+
 
 
 async def _null_file_read(path: str) -> dict:
@@ -85,7 +116,7 @@ def _make_adapter_with_mcp(
         agent_name="test-agent",
         agent_role="test",
         output_language="en",
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=mcp_servers,
         project_context="",
@@ -100,6 +131,7 @@ def _make_adapter_with_mcp(
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,

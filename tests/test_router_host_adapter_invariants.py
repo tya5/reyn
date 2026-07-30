@@ -14,11 +14,43 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.router_loop import RouterLoopHost
-from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services import (
+    McpGatewayInputs,
+    MemoryService,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
 
 # ---------------------------------------------------------------------------
 # Minimal stubs and helpers
 # ---------------------------------------------------------------------------
+
+# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
+# bundled into two frozen, default-free dataclasses. These module-level
+# constants are the "all fields unset" instances the tests below reuse —
+# the bundle classes themselves stay default-free (see RouterOpContextInputs
+# / McpGatewayInputs docstrings), the defaulting lives here in caller code.
+_EMPTY_OP_CTX = RouterOpContextInputs(
+    allowed_mcp=None,
+    base_available_skills_fn=None,
+    budget_gateway=None,
+    compact_now=None,
+    contextual_permission=None,
+    hook_bus=None,
+    hook_dispatcher=None,
+    hot_reloader=None,
+    multimodal_config=None,
+    presentation_renderer_factory=None,
+    render_template_bounds=None,
+    sandbox_backend_instance=None,
+    sandbox_policy=None,
+    turn_origin_fn=None,
+    workspace_base_dir=None,
+    workspace_state_dir=None,
+)
+_EMPTY_MCP_GATEWAY = McpGatewayInputs(
+    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
+)
 
 class _FakeEventStore:
     """Minimal event store that discards events."""
@@ -155,7 +187,7 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         agent_name="alpha",
         agent_role="role",
         output_language=None,
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -177,6 +209,7 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=fake_send,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -232,7 +265,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         agent_name="alpha2",
         agent_role="role",
         output_language=None,
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=sentinel,
         mcp_servers=None,
         project_context="",
@@ -247,6 +280,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -289,7 +323,7 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         agent_name="bus-test",
         agent_role="role",
         output_language=None,
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -304,6 +338,7 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -345,7 +380,7 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         agent_name="nobus-test",
         agent_role="role",
         output_language=None,
-        allowed_mcp=None,
+        op_context_inputs=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -360,6 +395,7 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
