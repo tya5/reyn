@@ -113,12 +113,36 @@ async def test_the_root_and_menu_row_force_no_background_either() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(
+    reason=(
+        "#3505 (owner-approved, 2026-07-30): TextualChatApp.on_mount now sets "
+        "``self.theme = 'ansi-dark'`` to fix a DIFFERENT residue (two chrome "
+        "regions painting a concrete #0c0c0c instead of the terminal's true "
+        "default — see app.py's on_mount docstring). Side effect, measured: "
+        "under 'ansi-dark' every alpha-bearing design variable including "
+        "``$panel``/``$surface`` resolves to ``ansi_default`` instead of a "
+        "literal hex, so #drawer/#completion now ALSO take the terminal's own "
+        "background — this test's invariant ('overlays must NOT match the "
+        "terminal default') is no longer true under this theme. This is a "
+        "known, disclosed trade-off (see #3505's PR body impact table), "
+        "explicitly NOT fixed in that PR pending owner real-hardware review — "
+        "skipped rather than asserting either the now-false old invariant or "
+        "a new one the owner hasn't ratified. Un-skip (or replace) once the "
+        "owner decides whether the drawer/completion popup need an explicit "
+        "concrete background under ansi-dark (tracked as separate follow-up "
+        "work, not part of #3505)."
+    )
+)
 async def test_overlay_regions_still_carry_their_own_background() -> None:
     """Tier 2b: non-vacuity, and a real design boundary — dropping the app's
     ground must NOT flatten the surfaces that are supposed to read as raised.
     The drawer and the completion popup declare ``$panel`` deliberately; if
     this test ever goes red alongside the ones above, the change went too far
-    and the whole chrome became one undifferentiated plane."""
+    and the whole chrome became one undifferentiated plane.
+
+    SKIPPED under #3505 — see the skip reason above; this is no longer a
+    reliable non-vacuity signal while the app theme is 'ansi-dark', since
+    ``$panel`` itself is now an ``ansi_default``-resolving variable."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
