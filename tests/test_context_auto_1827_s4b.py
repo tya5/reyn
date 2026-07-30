@@ -25,14 +25,19 @@ from reyn.security.permissions.effective import (
     tool_contextually_denied,
 )
 from tests._support.agent_session import make_session
+from tests._support.untrusted_narrowing import narrowing_on
 
 
 def _session(tmp_path: Path, *, contextual=None) -> Session:
+    # #3501: the narrowing is opt-in, so a test whose subject IS the narrowing
+    # must turn it on. ``test_off_by_default_no_narrowing`` below is the arm that
+    # deliberately does not.
     s = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
         capability_scope=CapabilityScope(contextual_permission=contextual),
+        safety=narrowing_on(),
     )
     return s
 
@@ -92,3 +97,37 @@ def test_composes_with_static_union(tmp_path):
     eff = s._effective_contextual_for_turn()
     assert tool_contextually_denied(eff, "web_search")          # static
     assert tool_contextually_denied(eff, "exec")  # untrusted
+
+
+def test_off_by_default_no_narrowing_even_when_tainted(tmp_path):
+    """Tier 2: #3501 — with the default config an untrusted entry narrows NOTHING.
+
+    The counterpart to every arm above: the same taint, the same session, but no
+    ``safety.threat_scan.capability_narrowing`` opt-in. This is the arm that goes
+    RED if the opt-in gate is removed from ``_ephemeral_contextual_for_turn``.
+    """
+    s = make_session(
+        agent_name="alpha",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snap.json",
+    )
+    _mark_untrusted(s)
+    assert s._effective_contextual_for_turn() is None
+    assert not tool_contextually_denied(s._effective_contextual_for_turn(), "exec")
+
+
+def test_off_by_default_keeps_a_static_narrowing_intact(tmp_path):
+    """Tier 2: #3501 — opting OUT of the untrusted narrowing does not weaken the
+    static envelope. The two are separate narrowings; the opt-in governs only the
+    context-auto one."""
+    static = ContextualPermission(tool_deny=frozenset({"web_search"}))
+    s = make_session(
+        agent_name="alpha",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snap.json",
+        capability_scope=CapabilityScope(contextual_permission=static),
+    )
+    _mark_untrusted(s)
+    eff = s._effective_contextual_for_turn()
+    assert tool_contextually_denied(eff, "web_search")   # envelope survives
+    assert not tool_contextually_denied(eff, "exec")     # untrusted term absent

@@ -20,13 +20,17 @@ from reyn.runtime.session import Session
 from reyn.security.permissions.effective import tool_contextually_denied
 from reyn.user_intervention import UserIntervention
 from tests._support.agent_session import make_session
+from tests._support.untrusted_narrowing import narrowing_on
 
 
 def _session(tmp_path: Path) -> Session:
+    # #3501: the narrowing is opt-in; this test's subject is the producer ->
+    # consumer path, which only exists when it is on.
     s = make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
+        safety=narrowing_on(),
     )
     s.register_intervention_listener("test")
     return s

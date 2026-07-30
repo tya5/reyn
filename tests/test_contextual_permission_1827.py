@@ -32,6 +32,7 @@ from reyn.security.permissions.effective import (
     ContextualLayer,
     ContextualPermission,
     EffectivePermission,
+    NarrowingOrigin,
 )
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
@@ -90,14 +91,27 @@ async def test_contextual_deny_blocks_declared_tool(tmp_path):
     """Tier 2: a declared tool denied by contextual tool_deny is blocked.
 
     The deny is decision-enabling (distinct message: blocked by context, not
-    undeclared) and fires at the layer — before the _approve prompt.
+    undeclared) and fires at the layer — before the _approve prompt. #3501: the
+    "which narrowing" half is asserted by naming the term's own origin, so the
+    message cannot degrade back to listing candidate narrowings.
     """
     r = _resolver(tmp_path)
     bus = _RecordingBus(answer_id="yes")
     decl = PermissionDecl(tool=["web_search"])
-    ctx = ContextualPermission(tool_deny=frozenset({"web_search"}))
-    with pytest.raises(PermissionError, match="blocked by the active capability context"):
+    ctx = ContextualPermission(
+        tool_deny=frozenset({"web_search"}),
+        origin=NarrowingOrigin(
+            label="the narrowing under test",
+            cause="this test applied it",
+            lifts_when="the test stops applying it",
+        ),
+    )
+    with pytest.raises(PermissionError) as exc:
         await r.require_tool(decl, "web_search", bus, contextual=ctx)
+    assert "the narrowing under test" in str(exc.value)
+    assert "declared in actor permissions" in str(exc.value), (
+        "must stay distinguishable from the undeclared-tool deny"
+    )
     assert bus.captured == [], "contextual deny must fire before the approve prompt"
 
 
@@ -111,7 +125,7 @@ async def test_contextual_allowlist_narrows_to_subset(tmp_path):
     # web_search: declared ∩ contextual-allowed → passes.
     await r.require_tool(decl, "web_search", bus, contextual=ctx)
     # file_read: declared but NOT in the contextual allow-list → narrowed away.
-    with pytest.raises(PermissionError, match="blocked by the active capability context"):
+    with pytest.raises(PermissionError, match="declared in actor permissions"):
         await r.require_tool(decl, "file_read", bus, contextual=ctx)
 
 
