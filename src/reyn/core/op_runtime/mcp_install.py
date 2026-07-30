@@ -188,14 +188,14 @@ async def probe_mcp_server(
     raises, and because the config write is strictly AFTER this probe, nothing gets
     committed. **Transport-uniform**: stdio and remote (http/sse) share this one path —
     ``MCPClient.__aexit__`` owns the transport-appropriate teardown, so the probe never
-    branches on transport (mirrors ``Session._mcp_list_tools``)."""
+    branches on transport (mirrors ``RouterHostAdapter.mcp_list_tools``, #3447)."""
     from reyn.mcp.client import expand_env  # noqa: PLC0415
     from reyn.mcp.gateway import MCPFault, MCPGateway  # noqa: PLC0415
 
     expanded = expand_env(server_entry)
     if not isinstance(expanded, dict):
         return f"server config must be a dict, got {type(expanded).__name__}"
-    # A url-only remote entry defaults to http (mirrors _mcp_list_tools).
+    # A url-only remote entry defaults to http (mirrors mcp_list_tools).
     if "type" not in expanded and expanded.get("url"):
         expanded = {**expanded, "type": "http"}
     gateway = MCPGateway(agent_id=agent_id, cancel_event=cancel_event)

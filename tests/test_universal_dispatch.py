@@ -333,6 +333,15 @@ _ACTION_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # `limit` is optional). Mirrors mcp_search_registry's shape above
     # (a single required free-text query key).
     ("search_knowledge", {"query": "widgets"}),
+    # embedding category (#3465, FP-0057 Phase 1) — embed requires a
+    # non-empty `texts` array; `embedding_model` is optional (default
+    # "standard").
+    ("embed", {"texts": ["widgets"]}),
+    # hooks category (#3465) — emit_hook_event requires `event_name`;
+    # `payload` is optional.
+    ("emit_hook_event", {"event_name": "deploy_ready"}),
+    # hooks category (#3465) — hooks_add requires `on` + `message`.
+    ("hooks_add", {"on": "turn_end", "message": "hi"}),
 ]
 
 

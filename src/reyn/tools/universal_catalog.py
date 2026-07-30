@@ -171,6 +171,21 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # ``search_actions``'s own visibility gate rather than re-deriving the
     # embedding-config check a second time).
     "knowledge",
+    # #3465: FP-0057 Phase 1 ``embed`` — the raw, USER-FACING batch
+    # text->vector primitive (distinct from ``knowledge``'s search-over-own-
+    # content axis). Registered + dispatch-wired but missing from CATEGORIES
+    # until now, the same #3083-class gap this tuple's comments already
+    # document for skill_management / pipeline_management /
+    # presentation_management / plugin_management. Always visible — no
+    # runtime gate like ``exec``/``knowledge``.
+    "embedding",
+    # #3465: the hooks management/self-expansion plane — ``emit_hook_event``
+    # (publish an LLM-authored hook-event onto this session's own HookBus)
+    # and ``hooks_add`` (the agent adds a push hook to its own runtime
+    # layer). Both ToolDefinitions already declared ``category="hooks"``;
+    # this closes the same "registered + dispatchable but catalog-invisible"
+    # gap. Always visible.
+    "hooks",
 )
 
 
@@ -507,6 +522,12 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         # dogfood-witnessed 0/75 gap (plugin_install / plugin_uninstall
         # were registered + dispatch-wired but never enumerated).
         "plugin_management",
+        # #3465: same enumeration wiring for the 2 new always-visible
+        # categories (embed / hooks) — neither has a runtime-availability
+        # gate the way ``exec``/``knowledge`` do, so they belong in this
+        # unconditional-static branch, not a dedicated ``if`` below.
+        "embedding",
+        "hooks",
     ):
         return _enumerate_static_category(category)
 

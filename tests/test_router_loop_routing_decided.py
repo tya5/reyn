@@ -217,14 +217,24 @@ def _routing_decided_events(host: _FakeRouterHost) -> list[dict]:
 
 
 def test_routing_decided_emitted_for_invoke_action(monkeypatch: pytest.MonkeyPatch):
-    """Tier 2: invoke_action call emits routing_decided with source='invoke_action' and outcome='success'."""
+    """Tier 2: invoke_action call emits routing_decided with source='invoke_action' and outcome='success'.
+
+    #3450: was ``action_name="skill__foo"`` — a name #3429 (removal of the
+    qualified-spelling convention) left non-resolvable, so this actually
+    exercised ``invoke_action``'s ``UnknownActionError`` branch (a bare
+    ``{"error": ...}`` handler return) the whole time, silently miscounted
+    as outcome="success" by the very envelope bug #3450 fixes. Switched to
+    ``list_agents`` — a real, always-resolvable action given this host's
+    ``list_available_agents`` stub — so this test exercises an actual
+    success path, not an error path mislabeled by the pre-#3450 defect.
+    """
     host = _FakeRouterHost(universal_wrappers_enabled=True)
-    # Turn 1: LLM calls invoke_action(action_name="skill__foo")
+    # Turn 1: LLM calls invoke_action(action_name="list_agents")
     # Turn 2: LLM emits text reply (stop)
     _run_with_llm_sequence(
         host,
         [
-            _tool_result([{"name": "invoke_action", "args": {"action_name": "skill__foo", "args": {}}}]),
+            _tool_result([{"name": "invoke_action", "args": {"action_name": "list_agents", "args": {}}}]),
             _text_result("ok"),
         ],
         monkeypatch,
@@ -232,7 +242,7 @@ def test_routing_decided_emitted_for_invoke_action(monkeypatch: pytest.MonkeyPat
 
     events = _routing_decided_events(host)
     (ev,) = events
-    assert ev["action_name"] == "skill__foo"
+    assert ev["action_name"] == "list_agents"
     assert ev["source"] == "invoke_action"
     assert ev["outcome"] == "success"
     assert ev["chain_id"] == "chain-test"
@@ -258,12 +268,14 @@ def test_routing_decided_outcome_error_on_tool_error(monkeypatch: pytest.MonkeyP
     now keys on catalog membership, so an unresolvable name emits nothing
     (correctly: that is a rejected call, not a routing decision).
 
-    ★ A HANDLER-level failure is a different story and is NOT what this pins:
-    ``dispatch_tool`` wraps it as ``{"status": "ok", "data": {..., "status":
-    "error"}}``, which this discriminator reads as a success. That is a
-    pre-existing ``routing_decided`` completeness defect in #3455's family; it
-    was invisible while the only reachable error shape was the OS-level
-    rejection above, and #3429 neither introduced nor fixes it.
+    ★ A HANDLER-level failure was ONCE a different, unfixed story (pre-#3450):
+    ``dispatch_tool`` wrapped it as ``{"status": "ok", "data": {..., "error":
+    ...}}``, which this discriminator read as a success. #3450 fixed that
+    class at the envelope (``dispatch_tool`` now promotes a handler-declared
+    error to its OWN outer ``status``) — see
+    ``test_routing_decided_outcome_error_on_handler_declared_error`` below for
+    the now-reachable HANDLER-level case, driven through the same real
+    dispatch_tool + RouterLoop chokepoints as this test.
     """
     from reyn.security.permissions.effective import ContextualPermission
 
@@ -285,6 +297,85 @@ def test_routing_decided_outcome_error_on_tool_error(monkeypatch: pytest.MonkeyP
     assert ev["outcome"] == "error", (
         f"Expected outcome='error' for an OS-rejected action, got {ev['outcome']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 3b (#3450): HANDLER-level failure → outcome="error" AND the SAME
+# turn's role:tool body shows the failure (intermediate-cut witness — both
+# the audit log and the LLM-visible text, not either alone).
+# ---------------------------------------------------------------------------
+
+
+def test_routing_decided_outcome_error_on_handler_declared_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Tier 2: #3450 — a handler that returns ``{"error": ...}`` WITHOUT
+    raising (``list_mcp_servers``'s MCP-failure sentinel, #3441/#3429) drives
+    routing_decided outcome="error" AND an "Error (...): ..." role:tool body
+    — neither read is fooled by dispatch_tool's success wrap anymore.
+
+    Pre-#3450: dispatch_tool wrapped the handler's return as ``{"status":
+    "ok", "data": {"error": "...", ...}}``. The LLM read the outer "ok" and
+    never opened ``data`` to find the failure (#3450's original report), and
+    routing_decided's outcome discriminator — which reads this SAME outer
+    envelope, not the rendered text — recorded outcome="success" for a call
+    whose handler plainly failed (the #3429 arc's measurement that broadened
+    this issue's scope). Test 3 above could only reach the OS-level
+    ``tool_excluded`` shape (already a top-level ``{"status": "error", ...}``
+    before #3450); THIS test drives the previously-unreachable HANDLER-level
+    shape through the real dispatch_tool + invoke_action + RouterLoop.feedback()
+    chokepoints — no fabricated envelope.
+
+    Strip-falsify: reverting ``_handler_declared_error``'s promotion in
+    ``core/dispatch/dispatcher.py`` (or the ``routing_decided`` outcome
+    derivation in ``router_loop.py`` back to its pre-#3450 form) turns BOTH
+    assertions below RED — the outer envelope's ``status`` goes back to "ok"
+    and the role:tool body falls back to the generic (non-"Error (...)"...)
+    canonical rendering of a one-entry ``{"servers": [{"error": ...}]}`` list.
+    """
+    class _McpFailureHost(_FakeRouterHost):
+        def __init__(self, **kw) -> None:
+            super().__init__(**kw)
+            self.history_entries: list[dict] = []
+
+        async def mcp_list_servers(self) -> list[dict]:
+            # The real Session-layer sentinel #3441 documents (a Cancelled /
+            # MCPFault / unresolved-config failure surfaced without raising).
+            return [{"error": "boom, mcp handshake failed"}]
+
+        def append_history_entry(self, *, role, content, meta=None, **kw) -> None:
+            self.history_entries.append(
+                {"role": role, "content": content, "meta": meta or {}},
+            )
+
+    host = _McpFailureHost(universal_wrappers_enabled=True)
+
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([{
+                "name": "invoke_action",
+                "args": {"action_name": "list_mcp_servers", "args": {}},
+            }]),
+            _text_result("done"),
+        ],
+        monkeypatch,
+    )
+
+    # (1) The audit log: routing_decided must record the handler's failure.
+    events = _routing_decided_events(host)
+    (ev,) = events
+    assert ev["action_name"] == "list_mcp_servers"
+    assert ev["outcome"] == "error", (
+        f"Expected outcome='error' for a handler-declared failure, got {ev['outcome']!r}"
+    )
+
+    # (2) The LLM-visible body from the SAME turn must ALSO show the failure —
+    # the intermediate-cut witness #3450 requires both, not the audit log alone.
+    tool_entries = [e for e in host.history_entries if e["role"] == "tool"]
+    (entry,) = tool_entries
+    assert entry["content"].startswith("Error ("), entry["content"]
+    assert "boom, mcp handshake failed" in entry["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +530,99 @@ def test_invoke_action_description_has_no_ars_block(monkeypatch: pytest.MonkeyPa
     # The ARS block's headers (public surface the LLM saw) must be absent.
     assert "ACTION ARG SCHEMAS" not in desc
     assert "canonical keys for all session-visible actions" not in desc
+
+
+# ---------------------------------------------------------------------------
+# #3455: coverage-hole fix — routing_decided emitted at the dispatch
+# chokepoint (_dispatch_resolved) regardless of which entry surface the
+# model used, INCLUDING the flat/default bare-name dispatch shape that the
+# prior ``if _univ_enabled:``-gated emit never covered.
+# ---------------------------------------------------------------------------
+
+
+def test_routing_decided_emitted_for_bare_direct_call_when_universal_wrappers_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Tier 2: #3455 — bare-name direct catalog dispatch emits routing_decided
+    even with ``universal_wrappers_enabled=False`` (the opt-out shape an
+    operator gets from ``action_retrieval.universal_wrappers_enabled: false``
+    in reyn.yaml: flat bare-name ``tools=``, no ``invoke_action`` wrapper at
+    all — the production default, since PR-3b-iv, is actually ``True``).
+
+    This is the actual coverage hole #3455 reports. Before the fix, the
+    emit lived in ``run_loop`` inside ``if _univ_enabled:`` — with wrappers
+    off that whole block was skipped unconditionally, so EVERY catalog
+    dispatch through the flat bare-name tool shape produced NO
+    ``routing_decided`` event, even though ``dispatch_tool`` ran the exact
+    same real catalog dispatch it always does. The fix relocates the emit
+    into ``_dispatch_resolved`` — the single chokepoint every dispatch
+    (wrapped or bare) funnels through — so coverage no longer depends on
+    which entry surface the model used, or on the ``_univ_enabled`` flag.
+
+    Strip-falsify: commenting out the ``self._emit_routing_decided(...)``
+    call in ``RouterLoop._dispatch_resolved`` turns this RED (0 events)
+    while every other routing_decided test that uses
+    ``universal_wrappers_enabled=True`` stays unaffected — proving this
+    test is the one pinned on the new (previously-uncovered) path.
+    """
+    host = _FakeRouterHost(universal_wrappers_enabled=False)
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([{"name": "list_agents", "args": {"path": "."}}]),
+            _text_result("done"),
+        ],
+        monkeypatch,
+    )
+
+    events = _routing_decided_events(host)
+    (ev,) = events
+    assert ev["action_name"] == "list_agents"
+    assert ev["outcome"] == "success"
+    assert ev["chain_id"] == "chain-test"
+
+
+def test_routing_decided_both_entry_surfaces_no_double_emit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Tier 2: #3455 intermediate-cut witness — a bare direct call AND an
+    ``invoke_action``-wrapped call in the SAME round both drive
+    ``routing_decided`` through the real dispatch chokepoint, with the
+    correct per-call outcome, and with NO double-emit (2 dispatched tool
+    calls → exactly 2 routing_decided events, not 4 and not 0).
+
+    ``universal_wrappers_enabled=True`` here so both entry surfaces are
+    simultaneously available to the (simulated) model in one round —
+    the flat/default (wrappers-off) coverage is pinned separately above.
+    """
+    host = _FakeRouterHost(universal_wrappers_enabled=True)
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([
+                {"name": "list_agents", "args": {"path": "."}},
+                {
+                    "name": "invoke_action",
+                    "args": {"action_name": "skill_list", "args": {}},
+                },
+            ]),
+            _text_result("done"),
+        ],
+        monkeypatch,
+    )
+
+    events = _routing_decided_events(host)
+    # Behavioral (not a size pin): the MULTISET of action_names emitted must
+    # be exactly one "list_agents" + one "skill_list" — no double-emit (a
+    # dup would surface as a repeated name in this sorted list) and no
+    # missing emit (a drop would surface as a missing name).
+    assert sorted(e["action_name"] for e in events) == ["list_agents", "skill_list"]
+    by_action = {e["action_name"]: e for e in events}
+    # No tracker on this host → list_agents is not advertised as a hot-list
+    # row (same "no tracker" baseline as the existing ars_direct tests
+    # above), so the bare direct call classifies as "ars_direct" — the
+    # #229/#3429 salvage path, not "hot_list_alias".
+    assert by_action["list_agents"]["source"] == "ars_direct"
+    assert by_action["list_agents"]["outcome"] == "success"
+    assert by_action["skill_list"]["source"] == "invoke_action"
+    assert by_action["skill_list"]["outcome"] == "success"

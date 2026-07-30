@@ -68,17 +68,23 @@ design) are out of scope by construction: the census only looks at
 
 ## Measured result on current ``main``
 
-8 tools, not cron's 5:
+5 tools — the cron family only:
 
   cron_register, cron_unregister, cron_list, cron_enable, cron_disable
-  embed, emit_hook_event, hooks_add
 
-The cron 5 and the other 3 are different in KIND (see
-``UNREACHABLE_TOOL_REASONS`` below) — cron's fate is an open (A)/(B)/(C)
-product decision (#3464); the other 3 are a same-class wiring bug filed as
-a follow-up (#3465) and deliberately NOT fixed here to avoid touching
-``universal_dispatch.py`` / ``router_tools.py`` while PR #3463 (a 444-file
-alias-removal arc) is open against those same files.
+#3464 originally measured 8 (cron 5 + ``embed`` / ``emit_hook_event`` /
+``hooks_add``): those 3 were a different-in-KIND, same-class-as-#3083
+wiring bug (each tool's own module docstring already asserted LLM-facing
+intent; they were simply never added to
+``universal_dispatch._CATEGORY_ACTIONS``), filed as #3465 and deliberately
+NOT fixed in #3464's PR to avoid touching ``universal_dispatch.py`` /
+``router_tools.py`` while PR #3463 (a 444-file alias-removal arc) was open
+against those same files. #3465 closed all 3 by adding an ``"embedding"``
+and a ``"hooks"`` entry to ``_CATEGORY_ACTIONS`` (route (b)) + a matching
+``CATEGORIES`` / ``_enumerate_category`` entry in ``universal_catalog.py``
+(so they are enumerable, not just dispatchable) + ``router_dispatched=True``
+on the two tools that did not already have it. Only cron's fate remains an
+open (A)/(B)/(C) product decision (#3464).
 """
 from __future__ import annotations
 
@@ -135,44 +141,12 @@ _CRON_REASON = (
     "that decision."
 )
 
-_WIRING_BUG_REASON_TEMPLATE = (
-    "Registered router=allow with a module docstring already asserting "
-    "LLM-facing intent ({intent!r}), but never wired into build_tools() or "
-    "the catalog membership table (universal_dispatch._CATEGORY_ACTIONS) -- "
-    "the same 'registered but the "
-    "routing entry was never added' mechanics as #3083. Filed as #3465 "
-    "rather than fixed in #3464's PR: wiring requires touching "
-    "universal_dispatch.py / router_tools.py, which #3464 was scoped to "
-    "leave alone while PR #3463 (444-file alias-removal arc) is open "
-    "against those same files."
-)
-
-
 UNREACHABLE_TOOL_REASONS: Final[Mapping[str, UnreachableToolReason]] = {
     "cron_register": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
     "cron_unregister": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
     "cron_list": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
     "cron_enable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
     "cron_disable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
-    "embed": UnreachableToolReason(
-        "DEFERRED_WIRING_BUG",
-        _WIRING_BUG_REASON_TEMPLATE.format(
-            intent="`embed` is the raw, USER-FACING embedding primitive"
-        ),
-    ),
-    "emit_hook_event": UnreachableToolReason(
-        "DEFERRED_WIRING_BUG",
-        _WIRING_BUG_REASON_TEMPLATE.format(
-            intent='Router-only (gates.router="allow")'
-        ),
-    ),
-    "hooks_add": UnreachableToolReason(
-        "DEFERRED_WIRING_BUG",
-        _WIRING_BUG_REASON_TEMPLATE.format(
-            intent="the agent adds a push hook -- the crown-jewel of "
-            "config hot-reload: the agent expands its own hooks"
-        ),
-    ),
 }
 
 

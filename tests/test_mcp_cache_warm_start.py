@@ -48,10 +48,6 @@ async def _null_file_regen(*, path, output_path, entry_template, header) -> dict
     return {"path": path, "output_path": output_path, "entries": 0}
 
 
-async def _null_mcp_list_servers() -> list:
-    return []
-
-
 async def _null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
     return {}
 
@@ -111,7 +107,7 @@ def _make_adapter(
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
     )
-    return RouterHostAdapter(
+    adapter = RouterHostAdapter(
         agent_name="test-agent",
         agent_role="test",
         output_language="en",
@@ -129,8 +125,6 @@ def _make_adapter(
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=probe,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
@@ -139,6 +133,10 @@ def _make_adapter(
         agent_replies_tracker=lambda: None,
         state_dir=state_dir,
     )
+    # #3447: mcp_list_tools is now a real RouterHostAdapter method — see the
+    # same-shaped note in test_mcp_lazy_tools_cache.py's _make_adapter_with_mcp.
+    adapter.mcp_list_tools = probe
+    return adapter
 
 
 # ---------------------------------------------------------------------------

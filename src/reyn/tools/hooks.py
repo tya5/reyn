@@ -250,6 +250,11 @@ from reyn.core.offload.canonical import hooks_add_to_canonical  # noqa: E402
 HOOKS_ADD = ToolDefinition(
     canonical=hooks_add_to_canonical,
     name="hooks_add",
+    # #3465: wired into the catalog action-membership table
+    # (universal_dispatch._CATEGORY_ACTIONS["hooks"]) — dispatched via
+    # invoke_action, which requires router_dispatched=True (#3429's
+    # test_every_catalog_action_is_directly_dispatchable gate).
+    router_dispatched=True,
     description=_HOOKS_ADD_DESCRIPTION,
     parameters=_HOOKS_ADD_PARAMETERS,
     gates=ToolGates(router="allow"),

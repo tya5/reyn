@@ -3818,19 +3818,27 @@ class Session:
             file_write=self._file_write,
             file_delete=self._file_delete,
             file_regenerate_index=self._file_regenerate_index,
-            mcp_list_servers=self._mcp_list_servers,
-            mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
-            # #2597 slice ②a: resources consumption (list/read/templates).
-            mcp_list_resources=self._mcp_list_resources,
-            mcp_list_resource_templates=self._mcp_list_resource_templates,
+            # #2597 slice ②a: resources consumption (read/templates).
             mcp_read_resource=self._mcp_read_resource,
             # #2597 slice ②b: resource subscriptions.
             mcp_subscribe_resource=self._mcp_subscribe_resource,
             mcp_unsubscribe_resource=self._mcp_unsubscribe_resource,
-            # #2597 slice ②c: prompts consumption (list/get).
-            mcp_list_prompts=self._mcp_list_prompts,
+            # #2597 slice ②c: prompt fetch (get).
             mcp_get_prompt=self._mcp_get_prompt,
+            # #3447: the 5 mcp_list_* callbacks (servers/tools/resources/
+            # resource_templates/prompts) were folded onto the adapter itself
+            # (RouterHostAdapter.mcp_list_*) — it already duplicated
+            # _mcp_servers_flat/_get_mcp_servers_for_router, so only the raw
+            # gateway-identity inputs need threading through, not a callback
+            # per listing method. ``ephemeral_fn`` is a LIVE read (not a
+            # snapshot bool) because ``self._ephemeral`` is reassigned
+            # post-construction by the registry / pipeline_executor_driver
+            # (spawn-time ephemeral flip) — see the ``_spawn_tracker``
+            # construction note above for the same hazard on session_id.
+            mcp_connection_service=self._mcp_connection_service,
+            mcp_agent_id=self._agent.agent_id,
+            ephemeral_fn=lambda: self._ephemeral,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -7075,132 +7083,26 @@ class Session:
             return out
         return {"error": result.get("error", "regenerate_index failed")}
 
-    async def _mcp_list_servers(self) -> list[dict]:
-        """Returns the configured MCP server list with descriptions."""
-        return self._get_mcp_servers_for_router()
-
-    async def _mcp_list_via_gateway(
-        self,
-        server: str,
-        expanded: dict,
-        *,
-        gateway_call: Callable[[Any], Awaitable[list[dict]]],
-        event_kind: str,
-    ) -> list[dict]:
-        """Shared MCP-listing seam (#3082): owns gateway construction, the
-        ``Cancelled``/``MCPFault`` error contract, and the audit emit for all
-        four ``_mcp_list_*`` methods (tools / resources / resource_templates /
-        prompts). Each caller has already resolved its own *server* config into
-        *expanded* and passes a *gateway_call* closure naming which
-        ``MCPGateway`` listing method to invoke, plus *event_kind* — the
-        audit-event kind this listing emits.
-
-        ``event_kind`` is passed as a string LITERAL by every call site and is
-        never assembled here (#3410 — see the module-level note above
-        ``Session``): a kind the vocabulary gate cannot read as a constant is a
-        kind it cannot check against the closed vocabulary.
-        """
-        # All four listing paths emit — see the #3410 note above the class.
-        from reyn.core.cancellable import Cancelled
-        from reyn.mcp.gateway import MCPFault, MCPGateway
-
-        # #2421: routed through the MCPGateway seam rather than a raw MCP client — the
-        # seam contains the crash path, so a mid-list server death raises MCPFault
-        # instead of an uncontained BaseExceptionGroup. #2597 S2a: pool only when
-        # non-ephemeral — pooling a sub-second-lived session is pure churn.
-        # (Wording note: keep the class name away from a following "(" — the #2813
-        # completeness scanner reads `MCPGateway\s*\(` as a construction site.)
-        gateway = (
-            MCPGateway(
-                pool=self._mcp_connection_service, agent_id=self._agent.agent_id,
-                cancel_event=self._loop_driver.cancel_event,
-            )
-            if not self._ephemeral
-            else MCPGateway(agent_id=self._agent.agent_id, cancel_event=self._loop_driver.cancel_event)
-        )
-        try:
-            result = await gateway_call(gateway)
-        except Cancelled:
-            return [{"error": "cancelled"}]
-        except MCPFault as exc:
-            return [{"error": str(exc)}]
-        self._chat_events.emit(event_kind, server=server, count=len(result))
-        return result
-
-    def _mcp_resolve_server_config(self, server: str) -> "list[dict] | dict":
-        """Shared config-resolution step for all four ``_mcp_list_*``
-        methods: look up *server* in the flattened MCP server map and
-        ``expand_env`` it. Returns the expanded config dict on success, or a
-        single-error ``[{"error": ...}]`` list (the four methods' existing
-        early-return shape) when the server isn't configured / doesn't
-        resolve to a dict."""
-        servers = self._mcp_servers_flat()
-        if not servers:
-            return [{"error": "no MCP servers configured"}]
-        server_cfg = servers.get(server)
-        if not server_cfg:
-            return [{"error": f"MCP server {server!r} not configured"}]
-
-        from reyn.mcp.client import expand_env
-
-        expanded = expand_env(server_cfg)
-        if not isinstance(expanded, dict):
-            return [{"error": f"MCP server {server!r} config must be a dict"}]
-        if "type" not in expanded and expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
-        return expanded
-
-    async def _mcp_list_tools(self, server: str) -> list[dict]:
-        """Query the MCP server for its tools list.
-
-        Discovery-only, NOT permission-gated (no op-kind), routed through the
-        shared ``_mcp_list_via_gateway`` seam. Emits ``mcp_tools_listed``
-        (#3410 — all four listing paths emit; see the note above ``Session``).
-        """
-        expanded = self._mcp_resolve_server_config(server)
-        if isinstance(expanded, list):
-            return expanded
-        return await self._mcp_list_via_gateway(
-            server, expanded,
-            gateway_call=lambda gw: gw.list_tools(server, expanded),
-            event_kind="mcp_tools_listed",
-        )
-
-    async def _mcp_list_resources(self, server: str) -> list[dict]:
-        """Query the MCP server for its resources list.
-
-        #2597 slice ②a: mirrors ``_mcp_list_tools`` exactly — discovery-only,
-        NOT permission-gated (no op-kind), routed through the same
-        ``MCPGateway`` seam (held connection service on a non-ephemeral
-        session, one-shot pool otherwise). Emits ``mcp_resources_listed`` for
-        observability (#3410 — all four listing paths emit; see the note
-        above ``Session``).
-        """
-        expanded = self._mcp_resolve_server_config(server)
-        if isinstance(expanded, list):
-            return expanded
-        return await self._mcp_list_via_gateway(
-            server, expanded,
-            gateway_call=lambda gw: gw.list_resources(server, expanded),
-            event_kind="mcp_resources_listed",
-        )
-
-    async def _mcp_list_resource_templates(self, server: str) -> list[dict]:
-        """Query the MCP server for its resource templates list.
-
-        #2597 slice ②a: mirrors ``_mcp_list_resources`` (discovery-only, not
-        permission-gated). Empty list is a normal result for a server that
-        registers no templates. Emits ``mcp_resource_templates_listed``
-        (#3410 — all four listing paths emit; see the note above ``Session``).
-        """
-        expanded = self._mcp_resolve_server_config(server)
-        if isinstance(expanded, list):
-            return expanded
-        return await self._mcp_list_via_gateway(
-            server, expanded,
-            gateway_call=lambda gw: gw.list_resource_templates(server, expanded),
-            event_kind="mcp_resource_templates_listed",
-        )
+    # #3447: the five discovery-only mcp_list_* methods (servers / tools /
+    # resources / resource_templates / prompts) FOLDED onto RouterHostAdapter —
+    # see ``RouterHostAdapter._mcp_list_via_gateway`` /
+    # ``RouterHostAdapter._mcp_resolve_server_config`` /
+    # ``RouterHostAdapter.mcp_list_*``. Unlike the call-family methods below
+    # (read/subscribe/unsubscribe/get_prompt/call_tool), the listing methods
+    # never touched permission-gated ``execute_op`` state Session alone
+    # holds — the adapter already duplicated the two inputs they needed
+    # (``_mcp_servers_flat`` / ``_get_mcp_servers_for_router``), so moving the
+    # gateway-calling logic there too let the corresponding 5 constructor
+    # callbacks (``mcp_list_servers`` / ``mcp_list_tools`` /
+    # ``mcp_list_resources`` / ``mcp_list_resource_templates`` /
+    # ``mcp_list_prompts``) drop from ``RouterHostAdapter.__init__`` entirely
+    # (#3409's "17 callbacks" constructor-width finding). The op layer now
+    # RAISES ``Cancelled``/``MCPFault`` instead of catching them locally; the
+    # catch moved to ``tools/mcp.py``'s ``_handle_list_mcp_*`` handlers, at
+    # the same position the ``_mcp_list_error`` sentinel-check already sat —
+    # architect firm (#3411, 2026-07-29): no context-manager / audit-emit /
+    # pool-teardown sits between the raise site and either catch position, so
+    # this is behavior-preserving, not a contract change.
 
     async def _mcp_read_resource(self, server: str, uri: str) -> dict:
         """Read one MCP resource by URI and return its contents.
@@ -7300,23 +7202,8 @@ class Session:
         ctx.mcp_connection_service = self._mcp_connection_service
         return await execute_op(op, ctx)
 
-    async def _mcp_list_prompts(self, server: str) -> list[dict]:
-        """Query the MCP server for its prompts list.
-
-        #2597 slice ②c: mirrors ``_mcp_list_resources`` exactly — discovery-only,
-        NOT permission-gated (no op-kind), routed through the same
-        ``MCPGateway`` seam (held connection service on a non-ephemeral
-        session, one-shot pool otherwise). Emits ``mcp_prompts_listed`` for
-        observability, same rationale as ``mcp_resources_listed``.
-        """
-        expanded = self._mcp_resolve_server_config(server)
-        if isinstance(expanded, list):
-            return expanded
-        return await self._mcp_list_via_gateway(
-            server, expanded,
-            gateway_call=lambda gw: gw.list_prompts(server, expanded),
-            event_kind="mcp_prompts_listed",
-        )
+    # #3447: _mcp_list_prompts folded onto RouterHostAdapter.mcp_list_prompts —
+    # see the note above ``_mcp_read_resource``.
 
     async def _mcp_get_prompt(self, server: str, name: str, arguments: "dict | None" = None) -> dict:
         """Fetch one rendered MCP prompt by name and return its messages.
