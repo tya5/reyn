@@ -39,7 +39,6 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
-from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import ContentSwitcher, OptionList, Static
@@ -52,7 +51,7 @@ from textual_flowview import (
 )
 
 from reyn.interfaces.repl._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
-from reyn.interfaces.repl.renderer import summarize_tool_result
+from reyn.interfaces.repl.renderer import chat_markdown_theme, summarize_tool_result
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
@@ -963,17 +962,16 @@ class TextualChatApp(App):
         return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
-        # #3326: tone down rich.Markdown's default inline-code style ("bold
-        # cyan on black" — rich.default_styles.DEFAULT_STYLES["markdown.code"]
-        # — measured far too loud against the rest of a reply's body). Pushed
-        # once here onto the app's own Rich console, which Textual's
-        # compositor uses to resolve every ``__rich_console__`` render
-        # (verified: this is the actual seam, not merely a plausible one) —
-        # so every agent reply's inline code gets the muted style app-wide,
-        # not just newly-composed widgets. No bold, no forced background box:
-        # a plain cyan tint distinguishes it from body text without the
-        # heavy box the default theme draws.
-        self.console.push_theme(Theme({"markdown.code": "cyan"}))
+        # #3469 (generalizing #3326's single-key fix): push the COMPLETE
+        # palette-derived markdown theme (``renderer.CHAT_MARKDOWN_THEME_STYLES``
+        # — the plain renderers' Consoles consume the same constant) onto the
+        # app's own Rich console, which Textual's compositor uses to resolve
+        # every ``__rich_console__`` render (verified on #3326: this is the
+        # actual seam, not merely a plausible one). #3326 overrode ONLY
+        # ``markdown.code``, which left every other rich default leaking —
+        # H2/H3 headings rendered in rich's "underline magenta" / "bold
+        # magenta", the one off-palette colour on the whole screen.
+        self.console.push_theme(chat_markdown_theme())
         # Phase 5 (#3273): hydrate the retained model from the PERSISTED
         # conversation log BEFORE the live frame pump starts, so a restart shows
         # the previous conversation (CC ``--resume`` parity) instead of a blank
