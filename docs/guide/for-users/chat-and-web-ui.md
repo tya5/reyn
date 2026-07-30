@@ -184,6 +184,22 @@ Press `↓` from an empty input to focus the status bar, then:
 | `Ctrl+C` | Cancel the in-flight turn (a second `Ctrl+C` quits) |
 | `Ctrl+D` / `Ctrl+Q` | Quit (also `/quit`) |
 
+### Conversation pane (interactive TTY)
+
+Two ways to interact directly with the conversation history, not just the input line — details in [feature-map: Textual TUI conversation-pane interaction](../../feature-map.md) and [AG-UI transport reference](../../reference/runtime/agui-transport.md):
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+F` | Open the in-conversation search bar. Incremental, case-insensitive substring match; `Enter`/`↑` = older match, `Shift+Enter`/`↓` = newer, both wrapping; `Esc` closes the bar and returns focus to the input. Searching moves the same cursor `Shift+Tab` uses, and closing the bar leaves it on the match you found — so `Shift+Tab` picks up from there |
+| `Shift+Tab` | Move focus into the conversation pane itself, arming a per-entry keyboard cursor on the newest entry; `Esc` returns focus to the input |
+
+Once the pane holds focus (via `Shift+Tab`), the cursor moves with `↑`/`↓`/`PageUp`/`PageDown`/`Home`/`End`:
+
+| Key | Action |
+|-----|--------|
+| `Enter` / `Space` | Copy the cursor's entry text to the clipboard |
+| `r` | Send a bare `/rewind` (the same as typing it) — not a jump to that specific entry |
+
 ### Working indicator
 
 The `turn_started` → `turn_settled` event pair (consumed by
