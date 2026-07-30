@@ -1186,6 +1186,42 @@ class TextualChatApp(App):
         return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
+        # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
+        # terminal's true default), but two chrome regions still painted a
+        # concrete ``#0c0c0c`` — the alpha-blend of ``ansi_default`` with any
+        # other color drops the "send as terminal default" marker and
+        # produces a solid dark RGB instead (Textualize/textual#5452, closed
+        # not planned). Textual's own ``"ansi-dark"``/``"ansi-light"`` themes
+        # exist for exactly this: every alpha-bearing design-system variable
+        # (``$foreground``/``$background``/``$surface``/``$panel``/``$text``/
+        # ``$text-muted``/etc.) resolves to ``ansi_default`` (or another
+        # marker-carrying ``ansi_*`` value) instead of a literal hex, so the
+        # SAME blend that broke under the default theme now blends two
+        # marker-carrying values and the marker survives — measured: no
+        # ``48;2;`` truecolor background escape codes anywhere in a real
+        # terminal capture after this switch, versus 2 residue regions
+        # before. A LOCALIZED per-selector ``background: ansi_default;``
+        # override (mirroring how #3504 fixed ``App``) was tried first and
+        # does NOT work: the literal ``ansi_default`` value fails to
+        # propagate when declared on anything other than ``App`` itself
+        # (verified with a ``background: red;`` positive control on the same
+        # selectors, which DID paint immediately — ruling out a selector/
+        # specificity mistake). This theme switch is the only measured fix.
+        #
+        # Known, accepted trade-off (owner-reviewed, 2026-07-30): every
+        # widget that reads a now-``ansi_default``-valued variable loses its
+        # concrete-hex identity — most visibly ``$panel``/``$surface`` (the
+        # drawer / completion popup / search bar / rewind picker, and
+        # ``Composer``'s own opt-out target) go ``transparent`` instead of
+        # their prior dark shade, and ``MenuBar``'s own
+        # ``color: $text-muted`` / ``:focus-within { color: $text }`` rule
+        # collapses to the identical value (partially offset by Tab's own
+        # ``:ansi`` variant, which still distinguishes active/inactive via
+        # dim/bold text-style). None of this is patched here — see the PR
+        # body for the full impact table; MenuBar re-coloring and any
+        # ``$panel``/``$surface`` follow-up are separate, out-of-scope
+        # issues pending a real-terminal look.
+        self.theme = "ansi-dark"
         # #3469 (generalizing #3326's single-key fix): push the COMPLETE
         # palette-derived markdown theme (``renderer.CHAT_MARKDOWN_THEME_STYLES``
         # — the plain renderers' Consoles consume the same constant) onto the

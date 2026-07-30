@@ -10,10 +10,18 @@ using `ansi_default`), so the fix has to happen at the root — which is why it
 reaches the whole surface rather than only the two regions named.
 
 These tests assert the RESOLVED background of each chrome region is the
-terminal's default rather than a forced colour, and that the regions which are
-*meant* to stand out (the `$panel` overlays) still carry one. A test that only
-checked the CSS declaration would have passed before the fix — the declaration
-was already `transparent`; the painted colour is the thing that was wrong.
+terminal's default rather than a forced colour. A test that only checked the
+CSS declaration would have passed before the fix — the declaration was
+already `transparent`; the painted colour is the thing that was wrong.
+
+#3505 (owner-approved, 2026-07-30) removed the non-vacuity test that used to
+live here asserting the `$panel` overlays (#drawer, #completion) still carry
+their OWN background rather than the terminal's default — under the
+`ansi-dark` theme #3505 switches to for a different fix, `$panel` itself
+resolves to `ansi_default`, so that invariant is no longer true by
+construction, not merely harder to measure. See
+`src/reyn/interfaces/inline/textual_chat/app.py`'s `on_mount` docstring for
+the full mechanism and the removal's own history note in this file.
 """
 from __future__ import annotations
 
@@ -22,6 +30,7 @@ from typing import AsyncIterator
 
 import pytest
 from rich.color import ColorType
+from textual.color import Color
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import Composer, MenuBar
@@ -112,19 +121,68 @@ async def test_the_root_and_menu_row_force_no_background_either() -> None:
         assert _is_terminal_default(app.query_one(MenuBar))
 
 
+
+# #3505 (owner-approved, 2026-07-30) REMOVED
+# ``test_overlay_regions_still_carry_their_own_background`` here — not skipped.
+# That test asserted a non-vacuity invariant: dropping the app's own ground
+# (#3503) must not ALSO flatten the ``$panel`` overlays (#drawer,
+# #completion) into the terminal's default. #3505 switches
+# ``TextualChatApp``'s theme to ``ansi-dark`` to fix a different residue
+# (see app.py's ``on_mount`` docstring), and under that theme ``$panel``
+# itself resolves to ``ansi_default`` instead of a literal hex — so
+# #drawer/#completion now correctly resolve to the terminal's own
+# background too, same as every other chrome region. The invariant this
+# test checked is not "true but hard to measure now" — it is permanently
+# false by construction under this theme, so there is nothing to
+# reactivate later; keeping it as a skip would misread as "pending a
+# fix." Whether the drawer/completion popup should get an explicit
+# concrete background under ``ansi-dark`` is real-hardware-review-gated,
+# owner-deferred work tracked separately, not part of #3505 — a NEW test
+# belongs with that follow-up if it lands, not a revived version of this
+# one.
+#
+# ★ That removed test was ALSO the file's non-vacuity guard for the two
+# tests above: without it, ``test_the_input_row_and_sent_queue_...`` and
+# ``test_the_root_and_menu_row_...`` would go green even under a defect
+# that resolves EVERYTHING (the whole chrome, no exceptions) to the
+# terminal's default — exactly what ``$panel``/``$surface`` -> ``ansi_default``
+# risks under #3505's theme. The replacement below restores that role with
+# a check that does not depend on the owner's still-open ``$panel``
+# decision: it forces a widget's background directly (bypassing CSS/theme
+# entirely) and asserts ``_is_terminal_default`` reports it as NOT the
+# terminal default — proving the helper (and the render path it reads)
+# can still tell "forced concrete color" apart from "terminal default" at
+# all, independent of what any theme resolves ``$panel`` to.
+
+
 @pytest.mark.asyncio
-async def test_overlay_regions_still_carry_their_own_background() -> None:
-    """Tier 2b: non-vacuity, and a real design boundary — dropping the app's
-    ground must NOT flatten the surfaces that are supposed to read as raised.
-    The drawer and the completion popup declare ``$panel`` deliberately; if
-    this test ever goes red alongside the ones above, the change went too far
-    and the whole chrome became one undifferentiated plane."""
+async def test_a_forced_concrete_background_is_still_detected_as_non_default() -> None:
+    """Tier 2b: non-vacuity guard, theme-independent. Directly overrides one
+    widget's resolved background (bypassing CSS/theme resolution entirely,
+    so this holds regardless of what any theme resolves ``$panel`` to) and
+    asserts ``_is_terminal_default`` reports False for it. This is the
+    replacement for the #3503 non-vacuity role the (now-removed, see the
+    comment above) ``test_overlay_regions_still_carry_their_own_background``
+    used to serve — without SOME live check that ``_is_terminal_default``
+    can still say "no" to a real color, the two tests above would pass
+    vacuously under a hypothetical defect that flattens the ENTIRE chrome to
+    the terminal's default, exactly the shape of risk #3505's theme switch
+    introduces via ``$panel``/``$surface`` -> ``ansi_default``. Falsify: drop
+    the ``widget.styles.background = ...`` line below and this goes red,
+    confirming the guard is live, not a tautology."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        for selector in ("#drawer", "#completion"):
-            widget = app.query_one(selector)
-            assert not _is_terminal_default(widget), (
-                f"{selector} lost its own background — overlays are meant to "
-                "stand out from the terminal ground, not merge into it"
-            )
+        widget = app.query_one(MenuBar)
+        assert _is_terminal_default(widget), (
+            "sanity: MenuBar should resolve to the terminal default BEFORE "
+            "the forced override below, or this test proves nothing"
+        )
+        widget.styles.background = Color.parse("red")
+        await pilot.pause()
+        assert not _is_terminal_default(widget), (
+            "forcing a concrete background did not change "
+            f"{widget.rich_style.bgcolor!r} away from the terminal default — "
+            "the non-vacuity check itself is broken, independent of any "
+            "theme or $panel decision"
+        )
