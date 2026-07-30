@@ -66,6 +66,7 @@ from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
 from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
+from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from .chrome import (
     _MENU_TABS,
@@ -1186,6 +1187,42 @@ class TextualChatApp(App):
         return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
+        # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
+        # terminal's true default), but two chrome regions still painted a
+        # concrete ``#0c0c0c`` — the alpha-blend of ``ansi_default`` with any
+        # other color drops the "send as terminal default" marker and
+        # produces a solid dark RGB instead (Textualize/textual#5452, closed
+        # not planned). Textual's own ``"ansi-dark"``/``"ansi-light"`` themes
+        # exist for exactly this: every alpha-bearing design-system variable
+        # (``$foreground``/``$background``/``$surface``/``$panel``/``$text``/
+        # ``$text-muted``/etc.) resolves to ``ansi_default`` (or another
+        # marker-carrying ``ansi_*`` value) instead of a literal hex, so the
+        # SAME blend that broke under the default theme now blends two
+        # marker-carrying values and the marker survives — measured: no
+        # ``48;2;`` truecolor background escape codes anywhere in a real
+        # terminal capture after this switch, versus 2 residue regions
+        # before. A LOCALIZED per-selector ``background: ansi_default;``
+        # override (mirroring how #3504 fixed ``App``) was tried first and
+        # does NOT work: the literal ``ansi_default`` value fails to
+        # propagate when declared on anything other than ``App`` itself
+        # (verified with a ``background: red;`` positive control on the same
+        # selectors, which DID paint immediately — ruling out a selector/
+        # specificity mistake). This theme switch is the only measured fix.
+        #
+        # Known, accepted trade-off (owner-reviewed, 2026-07-30): every
+        # widget that reads a now-``ansi_default``-valued variable loses its
+        # concrete-hex identity — most visibly ``$panel``/``$surface`` (the
+        # drawer / completion popup / search bar / rewind picker, and
+        # ``Composer``'s own opt-out target) go ``transparent`` instead of
+        # their prior dark shade, and ``MenuBar``'s own
+        # ``color: $text-muted`` / ``:focus-within { color: $text }`` rule
+        # collapses to the identical value (partially offset by Tab's own
+        # ``:ansi`` variant, which still distinguishes active/inactive via
+        # dim/bold text-style). None of this is patched here — see the PR
+        # body for the full impact table; MenuBar re-coloring and any
+        # ``$panel``/``$surface`` follow-up are separate, out-of-scope
+        # issues pending a real-terminal look.
+        self.theme = "ansi-dark"
         # #3469 (generalizing #3326's single-key fix): push the COMPLETE
         # palette-derived markdown theme (``renderer.CHAT_MARKDOWN_THEME_STYLES``
         # — the plain renderers' Consoles consume the same constant) onto the
@@ -1486,11 +1523,53 @@ class TextualChatApp(App):
             self._remark_entry(self._flow.highlighted)
 
     def on_flow_view_highlighted(self, event: "FlowView.Highlighted") -> None:
-        """#3490: move the rail with the keyboard cursor — repaint the row it
-        left as well as the one it arrived on."""
+        """#3490: move the rail with the highlight — repaint the row it left as
+        well as the one it arrived on. #3508: and unfold the arrived row's tool
+        detail, folding the one left behind."""
         previous, self._marked_cursor = self._marked_cursor, event.entry
+        self._set_expanded(previous, False)
+        self._set_expanded(event.entry, True)
         self._remark_entry(previous)
         self._remark_entry(event.entry)
+
+    def _set_expanded(self, entry: "Entry[OutboxMessage] | None", expanded: bool) -> None:
+        """Stamp/clear the expansion flag on ``entry``'s ITEM and re-present it.
+
+        #3508 — a settled tool row shows its FULL result while the highlight is
+        on it, and its one-line summary otherwise. Two properties make this safe
+        rather than a hack:
+
+        * the flag lives on the item, not in this app, because
+          ``FlowPresenter.present`` is pure with respect to ``(item, width)`` —
+          "expanded" has to BE item state for a differing re-present to be
+          legitimate, and ``Entry.update()`` is the sanctioned way to say the
+          item changed;
+        * only rows that HAVE a folded result are touched, so a user line or an
+          agent reply is never marked and never re-presented — moving the
+          highlight through ordinary conversation costs nothing.
+
+        The height changes when it unfolds; flowview reflows on ``update()``
+        (verified) and the highlight is anchored to the entry, so the row being
+        read does not slide."""
+        if entry is None:
+            return
+        meta = entry.item.meta
+        if not meta or _RESULT_KIND_KEY not in meta:
+            return  # not a settled tool row — nothing folded to show
+        if bool(meta.get(_EXPANDED_KEY)) == expanded:
+            return  # already in the wanted state; no revision churn
+        try:
+            # ``OutboxMessage`` is a FROZEN dataclass, so the dict is mutated in
+            # place rather than reassigned — which is also the honest shape: the
+            # frame's identity does not change, only a display-state key on the
+            # meta the presenter already reads.
+            if expanded:
+                meta[_EXPANDED_KEY] = True
+            else:
+                meta.pop(_EXPANDED_KEY, None)
+            entry.update()
+        except Exception:
+            logger.exception("textual chat: tool-detail expand failed")
 
     # ── #3476 ⑥: the keyboard cursor's own actions ─────────────────────────
 

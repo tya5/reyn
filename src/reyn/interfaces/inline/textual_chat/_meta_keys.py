@@ -28,6 +28,19 @@ RESULT_KIND_KEY = "_result_kind"
 #: frame's ``meta`` (carries ``result`` / ``error_message`` / ``error_kind``).
 RESULT_META_KEY = "_result"
 
+#: Present (and truthy) on a settled tool frame while the addressed-row
+#: highlight is ON it — the app stamps it in ``Highlighted`` and clears it when
+#: the highlight leaves, and the presenter renders the FULL result instead of
+#: the one-line summary while it is set (#3508).
+#:
+#: It lives on the ITEM rather than in the view because ``FlowPresenter.present``
+#: is contractually pure with respect to ``(item, width)``: "expanded" has to be
+#: part of the item's state for a re-present to be legitimate, and
+#: ``Entry.update()`` is what tells the view that state changed. A flag held in
+#: the view instead would make ``present`` return different bodies for the same
+#: item — exactly what the contract forbids.
+EXPANDED_KEY = "_expanded"
+
 #: A sentinel value for :data:`RESULT_KIND_KEY` marking a RUNNING tool row that
 #: was force-settled at the TURN BOUNDARY because no completion frame ever
 #: arrived — an orphan (#72). Distinct from a real completion frame's kind
@@ -71,6 +84,7 @@ __all__ = [
     "ELAPSED_SECS_KEY",
     "ORPHANED_RESULT_KIND",
     "RESULT_KIND_KEY",
+    "EXPANDED_KEY",
     "RESULT_META_KEY",
     "RUNNING_SINCE_KEY",
 ]
