@@ -126,9 +126,18 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # direction" applies and the fix was to add the missing emitters. The
     # difference is reachability, not observability.
     # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
-    # Emitted by RouterLoop when invoke_action or a hot list alias is executed.
+    # #3455: emitted by RouterLoop._dispatch_resolved — the single dispatch
+    # chokepoint every catalog action call funnels through, regardless of
+    # entry surface (invoke_action wrapper / bare hot-list alias / ARS-
+    # salvaged direct call / flat bare-name dispatch when universal wrappers
+    # are off). Previously emitted from a run_loop-local block gated on
+    # `if _univ_enabled:`, which meant the opt-out config (an operator
+    # setting `action_retrieval.universal_wrappers_enabled: false` in
+    # reyn.yaml) never emitted it at all even though catalog routing was
+    # happening.
     # action_name: the resolved action_name (e.g. "agent.peer__alice")
-    # source: how the routing happened ("invoke_action" | "hot_list_alias")
+    # source: how the routing happened
+    #   ("invoke_action" | "hot_list_alias" | "ars_direct")
     # outcome: "success" | "error" based on the tool result status
     # chain_id: for cross-agent tracing (P6)
     "routing_decided": frozenset({"action_name", "source", "outcome", "chain_id"}),
