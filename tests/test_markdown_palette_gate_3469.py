@@ -82,10 +82,35 @@ def _render_ansi(*, themed: bool) -> str:
         color_system="truecolor",
         width=80,
         highlight=False,
-        theme=chat_markdown_theme() if themed else None,
+        theme=_memo_cleared_theme() if themed else None,
     )
     console.print(_body_renderable("agent", _SAMPLE, ""))
     return buf.getvalue()
+
+
+def _memo_cleared_theme() -> "object":
+    """``chat_markdown_theme()`` with every Style's memoized SGR cleared.
+
+    rich (measured on 15.0.0, ``style.py`` ``_make_ansi_codes``) memoizes a
+    Style's rendered escape on FIRST render without keying it by the
+    console's ``color_system`` — and ``Style.parse`` is ``lru_cache``d
+    process-wide, so the instances in this theme are shared with every other
+    test in the same pytest process. Any earlier test that rendered the same
+    style string on a lower-colour console bakes the DOWNGRADED escape into
+    the shared instance (``#6b7280`` → bright_black ``'90'``), and this
+    gate's truecolor console then re-emits it — a false leak that flaps with
+    xdist test ordering (the #3472 CI-only red; reproduced deterministically
+    in ``test_gate_measures_the_theme_not_another_consoles_downgrade_memo``).
+    Clearing the memo (a rich-private field, acknowledged — no public reset
+    exists: ``copy()`` and ``+ Style()`` both preserve or alias it) makes the
+    gate measure what a real single-colour-system terminal process sees. A
+    REAL terminal process is unaffected by the upstream bug: it has one
+    colour system, so the memo is always computed for the system it serves.
+    """
+    theme = chat_markdown_theme()
+    for style in theme.styles.values():  # type: ignore[attr-defined]
+        style._ansi = None
+    return theme
 
 
 def test_markdown_sample_emits_only_palette_or_default_foregrounds() -> None:
@@ -141,6 +166,38 @@ def test_markdown_sample_emits_only_palette_or_default_foregrounds() -> None:
     assert not foreign, (
         f"truecolor foreground(s) outside the app palette reached the screen: "
         f"{sorted(foreign)}"
+    )
+
+
+def test_gate_measures_the_theme_not_another_consoles_downgrade_memo() -> None:
+    """Tier 2: the #3472 CI-only red, made deterministic and pinned.
+
+    rich memoizes a Style's rendered SGR on first render WITHOUT keying it by
+    colour system, and ``Style.parse`` shares instances process-wide — so a
+    LOWER-colour console anywhere in the process rendering this theme's style
+    strings poisons the shared memo with a downgraded escape (``#6b7280`` →
+    bright_black ``'90'``), which a later truecolor render re-emits verbatim.
+    That is what made this gate red only on CI, flapping with xdist ordering.
+    This test performs that poisoning DELIBERATELY, then asserts the themed
+    render still emits palette truecolor — i.e. the gate measures reyn's
+    theme, not whichever console in the process happened to render first.
+    Falsified: without ``_memo_cleared_theme``'s reset, the poisoned render
+    emits exactly the CI signature (``\\x1b[90m`` on the horizontal rule)."""
+    poison = Console(
+        file=StringIO(), force_terminal=True, color_system="standard",
+        width=80, highlight=False,
+    )
+    from reyn.interfaces.repl.renderer import CHAT_MARKDOWN_THEME_STYLES
+
+    for definition in CHAT_MARKDOWN_THEME_STYLES.values():
+        poison.print("x", style=definition)
+
+    ansi = _render_ansi(themed=True)
+    basic = _BASIC_FG.findall(ansi)
+    assert not basic, (
+        f"a poisoned cross-console Style memo leaked into the themed render: "
+        f"{basic} — the gate is measuring another console's downgrade, not "
+        "the theme"
     )
 
 
