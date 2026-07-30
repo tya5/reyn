@@ -73,8 +73,10 @@ from reyn.runtime.services import (
     InterventionCoordinator,
     InterventionHandler,
     InterventionRegistry,
+    McpGatewayInputs,
     MemoryService,
     RouterHostAdapter,
+    RouterOpContextInputs,
     SnapshotJournal,
 )
 from reyn.runtime.services.chain_manager import _PendingChain
@@ -3759,6 +3761,46 @@ class Session:
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
         )
 
+        # #3482: the 16-param op-context cluster (measured: sole reader is
+        # RouterHostAdapter.make_router_op_context) bundled into one frozen,
+        # default-free dataclass — pure output→input value object, same
+        # values/order as the flat kwargs this replaces (byte-identical).
+        _op_context_inputs = RouterOpContextInputs(
+            allowed_mcp=self._allowed_mcp,
+            base_available_skills_fn=lambda: self._available_skills,
+            budget_gateway=self._budget,
+            compact_now=self._compact_now_for_op,
+            contextual_permission=contextual_permission,  # #1827 S3 → control-IR OpContext (raw initial value, see docstring)
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c (router path)
+            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
+            multimodal_config=self._multimodal_config,
+            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
+            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
+            # Built per make_router_op_context() call. The sink is obtained from the
+            # surface's declared PresentationConsumer (orphan-impossible:
+            # OutboxPresentationRenderer is constructible ONLY inside
+            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
+            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
+            render_template_bounds=self._render_template_bounds,
+            sandbox_backend_instance=self._sandbox_backend,
+            sandbox_policy=(
+                self._sandbox_config.policy if self._sandbox_config is not None
+                else None
+            ),
+            turn_origin_fn=lambda: self._current_turn_origin,
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
+        )
+        # #3482/#3447: the 3-param mcp-gateway cluster (sole reader:
+        # RouterHostAdapter._mcp_list_via_gateway) — a real consumer-set
+        # cluster, all three arrived together in #3447's Path A fold.
+        _mcp_gateway_inputs = McpGatewayInputs(
+            mcp_connection_service=self._mcp_connection_service,
+            mcp_agent_id=self._agent.agent_id,
+            ephemeral_fn=lambda: self._ephemeral,
+        )
+
         router_host = RouterHostAdapter(
             # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
             # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
@@ -3769,23 +3811,12 @@ class Session:
             turn_budget_engine=_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
-            contextual_permission=contextual_permission,  # #1827 S3 → control-IR OpContext (raw initial value, see docstring)
-            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
-            # FP-0063 PC: the router-dispatched `embed` TOOL builds its OpContext from
-            # THIS host (RouterCallerState.op_context_factory = host.make_router_op_context),
-            # so this is the live interactive path's embedding-cost wiring. The gateway is
-            # the single recording entry point (session scope on itself; agent/project via
-            # the shared tracker it holds). Session's own _make_router_op_context serves
-            # file/MCP ops, which no embed op reaches.
-            budget_gateway=self._budget,
+            op_context_inputs=_op_context_inputs,  # #3482
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
             session_id=self._session_id,
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c (router path)
-            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
-            allowed_mcp=self._allowed_mcp,
             permission_resolver=self._perm,
             mcp_servers=self._mcp_servers,
             project_context=self._project_context,
@@ -3810,9 +3841,6 @@ class Session:
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
             live_session_id_fn=lambda: self._session_id,
-            # proposal 0060 Phase 1 (A7): a live callback (not a fixed init
-            # value) because turn_origin varies per turn.
-            turn_origin_fn=lambda: self._current_turn_origin,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
             file_write=self._file_write,
@@ -3826,19 +3854,13 @@ class Session:
             mcp_unsubscribe_resource=self._mcp_unsubscribe_resource,
             # #2597 slice ②c: prompt fetch (get).
             mcp_get_prompt=self._mcp_get_prompt,
-            # #3447: the 5 mcp_list_* callbacks (servers/tools/resources/
+            # #3447/#3482: the 5 mcp_list_* callbacks (servers/tools/resources/
             # resource_templates/prompts) were folded onto the adapter itself
             # (RouterHostAdapter.mcp_list_*) — it already duplicated
             # _mcp_servers_flat/_get_mcp_servers_for_router, so only the raw
-            # gateway-identity inputs need threading through, not a callback
-            # per listing method. ``ephemeral_fn`` is a LIVE read (not a
-            # snapshot bool) because ``self._ephemeral`` is reassigned
-            # post-construction by the registry / pipeline_executor_driver
-            # (spawn-time ephemeral flip) — see the ``_spawn_tracker``
-            # construction note above for the same hazard on session_id.
-            mcp_connection_service=self._mcp_connection_service,
-            mcp_agent_id=self._agent.agent_id,
-            ephemeral_fn=lambda: self._ephemeral,
+            # gateway-identity inputs need threading through (mcp_gateway_inputs
+            # bundle, built above), not a callback per listing method.
+            mcp_gateway_inputs=_mcp_gateway_inputs,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -3855,41 +3877,18 @@ class Session:
             ),
             action_retrieval_config=self._action_retrieval,
             available_skills=self._available_skills,  # #2548 PR-A
-            # #3196: read the BASE skill set here, not RouterHostAdapter's
-            # UX-filtered copy — swapping silently weakens the file-op
-            # skill-provenance trust gate (session-construction.md#base_available_skills_fn-reads-the-base-set-not-the-ux-filtered-copy-3196).
-            base_available_skills_fn=lambda: self._available_skills,
             # Read the injected sandbox_backend INSTANCE's .name, not the
             # config string — a mismatch silently HIDES a working exec
             # capability from discovery (#1417/FP-0034; session-construction.md#sandbox_backend-gate-reads-the-injected-instance-not-the-config-string-1417-fp-0034).
             sandbox_backend=_exec_gate_backend_name(
                 self._sandbox_backend, self._sandbox_config
             ),
-            # #187: the FS env-backend instance + container repo root + host-side
-            # state dir for the LIVE router OpContext Workspace (the registry
-            # file-dispatch factory). Same source as the chat OpContext (#1410).
+            # #187: the FS env-backend instance for the LIVE router OpContext
+            # Workspace (the registry file-dispatch factory). Same source as
+            # the chat OpContext (#1410). (workspace_base_dir/workspace_state_dir/
+            # sandbox_backend_instance/sandbox_policy/multimodal_config/
+            # render_template_bounds now live in op_context_inputs, #3482.)
             environment_backend=self._environment_backend,
-            workspace_base_dir=self._workspace_base_dir,
-            workspace_state_dir=self._workspace_state_dir,
-            # #187 exec-seam (10th defect): the exec backend INSTANCE so the LIVE
-            # router's sandboxed_exec runs in the container repo, not the host
-            # seatbelt fallback. Same instance the legacy _make_router_op_context
-            # passes (4824); chat.py injects the SAME docker backend at both FS +
-            # exec seams (#1289 single-shared-sandbox). Distinct from the D14
-            # STRING above.
-            sandbox_backend_instance=self._sandbox_backend,
-            # #1339 / sandbox-model completion: thread the operator sandbox
-            # policy so make_router_op_context resolves a concrete agent-level
-            # policy onto the router OpContext (closes the chat-factory wiring gap).
-            sandbox_policy=(
-                self._sandbox_config.policy if self._sandbox_config is not None
-                else None
-            ),
-            # Issue #364 multi-modal cluster: media-size gate config.
-            multimodal_config=self._multimodal_config,
-            # FP-0055 / #2679: operator render_template output bounds → the router
-            # OpContext (the render_template op reads ctx.render_template_bounds).
-            render_template_bounds=self._render_template_bounds,
             # #1652: reasoning config (display/continuity/recent_turns gates) +
             # the bounded prior-reasoning section renderer (reads this session's
             # history). The host exposes reasoning_display_enabled() /
@@ -3910,9 +3909,7 @@ class Session:
             # inline-size gate (STRUCTURED_INLINE_MAX_CHARS). Static per-session config,
             # not a callable (unlike the two budgets above, which read live engine state).
             offload_enabled=self._offload_config.enabled,
-            # #272/#1128 compact op: voluntary-compaction callback so the LLM-
-            # emittable `compact` control_ir op can compact chat history.
-            compact_now=self._compact_now_for_op,
+            # (``compact_now`` now lives in op_context_inputs, #3482.)
             # #272/#1128 context-size signal: live exact-token budget so the
             # router SP can show the LLM the free window (header).
             context_window_status=self.context_window_status,
@@ -3923,13 +3920,7 @@ class Session:
             # parent's operator; root/detached -> self-bound), single-sourced via
             # _make_router_intervention_bus. docs/concepts/runtime/intervention-delivery.md#the-single-construction-seam
             intervention_bus_factory=self._make_router_intervention_bus,
-            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
-            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
-            # Built per make_router_op_context() call, mirroring the intervention_bus_factory
-            # above. The sink is obtained from the surface's declared PresentationConsumer
-            # (orphan-impossible: OutboxPresentationRenderer is constructible ONLY inside
-            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
-            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
+            # (``presentation_renderer_factory`` now lives in op_context_inputs, #3482.)
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),

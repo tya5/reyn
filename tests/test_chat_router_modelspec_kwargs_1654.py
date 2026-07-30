@@ -19,7 +19,38 @@ from typing import Any
 
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
-from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services import (
+    McpGatewayInputs,
+    MemoryService,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
+
+# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
+# bundled into two frozen, default-free dataclasses. These module-level
+# constants are the "all fields unset" instances this file's tests reuse.
+_EMPTY_OP_CTX = RouterOpContextInputs(
+    allowed_mcp=None,
+    base_available_skills_fn=None,
+    budget_gateway=None,
+    compact_now=None,
+    contextual_permission=None,
+    hook_bus=None,
+    hook_dispatcher=None,
+    hot_reloader=None,
+    multimodal_config=None,
+    presentation_renderer_factory=None,
+    render_template_bounds=None,
+    sandbox_backend_instance=None,
+    sandbox_policy=None,
+    turn_origin_fn=None,
+    workspace_base_dir=None,
+    workspace_state_dir=None,
+)
+_EMPTY_MCP_GATEWAY = McpGatewayInputs(
+    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
+)
+
 
 _EFFORT = "high"     # non-default reasoning_effort
 _TEMP = 0.37         # non-default temperature
@@ -39,7 +70,7 @@ def _mk_host_with_kwargs():
     })
     return RouterHostAdapter(
         agent_name="t", agent_role="r", output_language="en",
-        allowed_mcp=None, permission_resolver=None,
+        op_context_inputs=_EMPTY_OP_CTX, permission_resolver=None,
         mcp_servers=None, project_context="", events=events, resolver=resolver,
         memory=MemoryService(agent_workspace_dir=workspace, events=events,
             file_write=_noop, file_read=_noop, file_delete=_noop, file_regenerate_index=_noop),
@@ -47,7 +78,7 @@ def _mk_host_with_kwargs():
         agent_workspace_dir=workspace,
         file_read=_noop, file_write=_noop, file_delete=_noop,
         file_regenerate_index=_noop,
-        mcp_call_tool=_noop, send_to_agent=_noop,
+        mcp_call_tool=_noop, mcp_gateway_inputs=_EMPTY_MCP_GATEWAY, send_to_agent=_noop,
         put_outbox=_noop, append_history=_noop,
         delegation_tracker=lambda: [], agent_replies_tracker=lambda: [],
         turn_budget_engine=None, environment_backend=None,

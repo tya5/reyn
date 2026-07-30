@@ -23,7 +23,38 @@ from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.chat_message import ChatMessage
-from reyn.runtime.services import MemoryService, RouterHostAdapter
+from reyn.runtime.services import (
+    McpGatewayInputs,
+    MemoryService,
+    RouterHostAdapter,
+    RouterOpContextInputs,
+)
+
+# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
+# bundled into two frozen, default-free dataclasses. These module-level
+# constants are the "all fields unset" instances this file's tests reuse.
+_EMPTY_OP_CTX = RouterOpContextInputs(
+    allowed_mcp=None,
+    base_available_skills_fn=None,
+    budget_gateway=None,
+    compact_now=None,
+    contextual_permission=None,
+    hook_bus=None,
+    hook_dispatcher=None,
+    hot_reloader=None,
+    multimodal_config=None,
+    presentation_renderer_factory=None,
+    render_template_bounds=None,
+    sandbox_backend_instance=None,
+    sandbox_policy=None,
+    turn_origin_fn=None,
+    workspace_base_dir=None,
+    workspace_state_dir=None,
+)
+_EMPTY_MCP_GATEWAY = McpGatewayInputs(
+    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
+)
+
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
@@ -39,7 +70,7 @@ def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = ""
     workspace = Path(".reyn") / "agents" / "t"
     return RouterHostAdapter(
         agent_name="t", agent_role="r", output_language="en",
-        allowed_mcp=None, permission_resolver=None,
+        op_context_inputs=_EMPTY_OP_CTX, permission_resolver=None,
         mcp_servers=None, project_context="", events=events,
         resolver=ModelResolver({}),
         memory=MemoryService(
@@ -52,6 +83,7 @@ def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = ""
         file_read=_noop, file_write=_noop, file_delete=_noop,
         file_regenerate_index=_noop,
         mcp_call_tool=_noop,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent=_noop,
         put_outbox=lambda msg: outbox.append(msg) or _noop(),
         append_history=lambda msg: history.append(msg),
