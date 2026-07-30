@@ -56,6 +56,11 @@ def test_categories_master_table_order() -> None:
     was itself retired outright in FP-0066 P1b, along with the layer-1 agent
     tools it routed to — there is no in-core-RAG category any more. See the
     module docstring's "four collapses" note.
+
+    #3465 appended ``embedding`` (the ``embed`` primitive) and ``hooks``
+    (``emit_hook_event`` / ``hooks_add``) — both were registered
+    router=allow + dispatch-wired but missing a CATEGORIES entry, the same
+    #3083-class gap the ``plugin_management`` comment below documents.
     """
     assert CATEGORIES == (
         "multi_agent",
@@ -97,6 +102,14 @@ def test_categories_master_table_order() -> None:
         # ``exec`` — runtime-gated on ``embedding.enabled`` rather than a
         # sandbox backend.
         "knowledge",
+        # #3465: ``embed`` — the raw, USER-FACING batch text->vector
+        # primitive. Registered + dispatch-wired but missing from
+        # CATEGORIES until now.
+        "embedding",
+        # #3465: ``emit_hook_event`` / ``hooks_add`` — both already declared
+        # ``ToolDefinition(category="hooks")``; registered + dispatch-wired
+        # but missing from CATEGORIES until now.
+        "hooks",
     )
 
 
@@ -187,6 +200,30 @@ def test_plugin_management_actions_reachable_via_catalog_entries() -> None:
     action_names = {item["name"] for item in entries}
     assert "install_plugin" in action_names
     assert "uninstall_plugin" in action_names
+
+
+def test_embed_and_hooks_actions_reachable_via_catalog_entries() -> None:
+    """Tier 2: ``embed`` / ``emit_hook_event`` / ``hooks_add`` appear in the
+    flat catalog payload (#3465).
+
+    Same #3083-class gap ``test_plugin_management_actions_reachable_via_catalog_entries``
+    closes: all 3 were registered router=allow with a module docstring
+    already asserting LLM-facing intent, but ``_CATEGORY_ACTIONS`` /
+    ``CATEGORIES`` never gained an entry for them, so #3464's
+    reachability gate flagged them ``DEFERRED_WIRING_BUG``. This exercises
+    the real production entry point (not a private accessor) and asserts
+    all 3 names are present in the enumerated ``tools=`` payload — the
+    advertised-surface half of the fix (route (b) membership alone would
+    make them dispatchable but not discoverable).
+    """
+    from reyn.tools.universal_catalog import catalog_entries
+
+    ctx = _make_minimal_ctx()
+    entries = catalog_entries(ctx)
+    action_names = {item["name"] for item in entries}
+    assert "embed" in action_names
+    assert "emit_hook_event" in action_names
+    assert "hooks_add" in action_names
 
 
 # ── 2. Action names carry no catalog separator (#3429) ───────────────────
