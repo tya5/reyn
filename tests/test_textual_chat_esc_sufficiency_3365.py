@@ -13,7 +13,7 @@ gate is what lets a later PR remove Tab's "back" binding with a real, not
 merely assumed, safety net; and what would immediately catch that future
 Input-vs-Esc regression by going RED.
 
-Five HAND-ENUMERATED focus states, each independently reachable and each
+Six HAND-ENUMERATED focus states, each independently reachable and each
 asserted to return to the Composer on ``Esc``:
   1. MenuBar (tab-bar row, not yet opened)
   2. Drawer content (an OptionList pane)
@@ -21,10 +21,15 @@ asserted to return to the Composer on ``Esc``:
   4. InterventionPanel — closed-set (RadioSet)
   5. InterventionPanel — free-text (Input) — the specific widget architect
      flagged as the future risk
+  6. FlowView (the conversation pane — ``can_focus=True``, reachable via
+     Textual's own Shift+Tab focus cycling). #3470's design review found
+     this region ALREADY existed outside the original hand-enumeration —
+     exactly the "6th focusable region" case the note below predicted —
+     so it is now armed here per that note's own instruction.
 
 This list is NOT derived from an exhaustive enumeration of every focusable
 widget the app can mount (co-vet note, #3365 review) — it is the set of
-regions this issue's own investigation reached. A 6th focusable region added
+regions the #3365/#3470 investigations reached. A NEW focusable region added
 later (a new drawer pane type, a new panel) is NOT automatically covered by
 this file; extending the list here is the maintainer's job when one is
 added, the same way a new call site needs its own invariant check elsewhere
@@ -244,3 +249,34 @@ async def test_esc_from_intervention_panel_input_returns_to_composer() -> None:
             f"Esc from InterventionPanel's Input did not return to Composer: {app.focused!r}"
         )
         assert transport.answered_text == [], "Esc must not deliver an answer"
+
+
+@pytest.mark.asyncio
+async def test_esc_from_conversation_pane_returns_to_composer() -> None:
+    """Tier 2b: Esc from the focused conversation pane (FlowView) -> Composer.
+
+    The 6th hand-enumerated state (see the module docstring): FlowView is
+    ``can_focus=True`` and reachable through Textual's own Shift+Tab focus
+    cycling — a route #3470's design review found already live but entirely
+    outside the original enumeration. Reached here exactly that way (a real
+    ``shift+tab`` keypress, not a programmatic ``.focus()``), so the test
+    covers the route a keyboard user actually takes."""
+    from textual_flowview import FlowView
+
+    app = TextualChatApp(transport=_Transport([]))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.query_one(Composer).focus()
+        await pilot.pause()
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert isinstance(app.focused, FlowView), (
+            f"setup: Shift+Tab did not reach the conversation pane: {app.focused!r}"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.query_one(Composer).has_focus, (
+            f"Esc from the conversation pane did not return to Composer: {app.focused!r}"
+        )
