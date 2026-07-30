@@ -305,3 +305,105 @@ async def test_the_search_hit_is_railed() -> None:
             f"a non-matching row is railed: {railed!r}"
         )
         assert _reversed_rows(flow) == []
+
+
+@pytest.mark.asyncio
+async def test_only_one_entry_is_ever_railed_even_with_search_open() -> None:
+    """Tier 2b: #3493 — two DIFFERENT rows can never both be railed.
+
+    The reachable case: open search (the hit becomes the addressed row), then
+    ``Shift+Tab`` into the pane while the bar is STILL open. Before #3493 the
+    cursor and a separate search selection were two independent positions
+    sharing one rail, so this painted a rail on each and the mark stopped
+    meaning "the row you are on". Search now moves the CURSOR, so there is one
+    position by construction rather than by a gating rule that has to stay
+    correct."""
+    app = TextualChatApp(transport=_Transport())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        for text in ("alpha match", "middle row", "newest row"):
+            app.conversation.append(OutboxMessage(kind="agent", text=text))
+        await pilot.pause()
+
+        await pilot.press("ctrl+f")
+        for ch in "alpha":
+            await pilot.press(ch)
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+        assert any("alpha match" in row for row in _railed_rows(flow)), (
+            "setup: the search hit was not railed"
+        )
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.focused is flow, "setup: Shift+Tab did not reach the pane"
+        assert app.query_one("#search-bar").display, (
+            "setup: the search bar closed, so the two-position case is not exercised"
+        )
+
+        railed = _railed_rows(flow)
+        assert not any("newest row" in row for row in railed), (
+            f"a second row is railed alongside the hit: {railed!r}"
+        )
+        assert any("alpha match" in row for row in railed), (
+            f"the addressed row lost its rail: {railed!r}"
+        )
+
+
+def _row_backgrounds(flow: FlowView) -> "dict[str, set]":
+    """Painted background colours per visible row, keyed by the row's text."""
+    out = {}
+    for y in range(flow.size.height):
+        strip = flow.render_line(y)
+        text = "".join(seg.text for seg in strip).strip()
+        if not text:
+            continue
+        out[text] = {
+            str(seg.style.bgcolor)
+            for seg in strip
+            if seg.style is not None and seg.style.bgcolor is not None
+        }
+    return out
+
+
+@pytest.mark.asyncio
+async def test_the_addressed_row_keeps_its_own_background() -> None:
+    """Tier 2b: #3496 — being addressed changes NOTHING about the row's own
+    colours; the mark is the gutter cell and nothing else.
+
+    Owner review found the opposite twice. First as reverse video, then — after
+    the CSS rule was merely REMOVED — as a near-black block ("一番下のエントリ
+    は常に真っ黒背景"; the cursor auto-arms on the newest entry, so the bottom
+    row wore it permanently). Root cause measured: Textual resolves an
+    UNDECLARED component class to a concrete style synthesised from inherited
+    values (``Style(color=#e0e0e0, bgcolor=#121212)``), and flowview applies
+    that to the addressed row — so "declare no rule" is NOT "paint nothing",
+    and neither is ``background: transparent``. ``_UnmarkedFlowView`` suppresses
+    the accessor instead.
+
+    This asserts the property the earlier tests missed: they pinned the absence
+    of REVERSE and the presence of the rail, never that the row's background
+    was left alone."""
+    app = TextualChatApp(transport=_Transport())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        for text in ("untouched row", "addressed row"):
+            app.conversation.append(OutboxMessage(kind="agent", text=text))
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+        before = _row_backgrounds(flow)
+
+        await _focus_flow(pilot, app)
+        after = _row_backgrounds(flow)
+
+        addressed = next(k for k in after if "addressed row" in k)
+        assert any(_MARK_RAIL in k for k in after), (
+            "setup: nothing is railed, so the addressed state is not exercised"
+        )
+        assert after[addressed] == before["● addressed row"], (
+            "being addressed changed the row's background: "
+            f"{before['● addressed row']!r} -> {after[addressed]!r}"
+        )
+        assert after["● untouched row"] == before["● untouched row"], (
+            "a row that is NOT addressed changed too"
+        )

@@ -655,17 +655,33 @@ second hand-rolled column:
   `FlowView(animation_fps=N)` re-invokes on each animation tick — no
   app-side timer (#3283 ①, native-blink equivalence).
   This column additionally carries the **ADDRESSED-ROW RAIL** (#3490): when an
-  entry is the keyboard cursor's row (#3476 ⑥) or the current `ctrl+f` search
-  hit (#3476 ⑤), a thin `▎` bar in `_CC_COOL` is drawn in the gutter's
-  trailing cell, down the body's whole post-wrap `height`, so one entry reads
-  as one marked block. The state glyph keeps its own `EntryState` colour —
+  entry is the ADDRESSED one, a thin `▎` bar is drawn in the gutter's trailing
+  cell, down the body's whole post-wrap `height`, so one entry reads as one
+  marked block. **There is exactly ONE addressed position** — the keyboard
+  cursor (#3476 ⑥), which is also what `ctrl+f` search moves (#3493) rather
+  than keeping a second selection of its own, so two different rows can never
+  both be marked *by construction* instead of by a gating rule that has to
+  stay correct. `FlowView(selectable=…)` is left off for the same reason:
+  native click-to-select would be a third way to move an "addressed" position
+  that carries no mark. The state glyph keeps its own `EntryState` colour —
   being addressed is a POSITION, not an outcome, so the mark must not repaint
-  the state vocabulary. The app supplies `ReynGutter(is_marked=…)`, which reads
-  `FlowView.cursor`/`.selected` live on every gutter repaint, and re-derives
-  the two affected rows' gutters via `FlowView.refresh_gutter` on each
-  `Highlighted`/`Selected` (the gutter cache is keyed on a decor revision that
-  a cursor move does not bump, so without that invalidation the rail would
-  strand on the row it was first painted on). **Why the rail is gutter CONTENT
+  the state vocabulary. The rail's colour is `_CC_TEXT` (`"default"`), so it
+  forces no colour of its own and follows the theme's foreground. A named ANSI
+  colour was tried first, to have the TERMINAL's own palette resolve it: rich
+  does keep such a colour palette-relative (the strip carries
+  `ColorType.STANDARD`), but **Textual downconverts it to truecolor at output**
+  (measured in a real terminal — `"blue"` arrived as
+  `\x1b[38;2;157;101;255]`, its theme's purple). The only true passthrough is
+  the app-wide `App.ansi_color`, which would drop the whole `_CC_*` palette to
+  16 colours, so it is deliberately not set. The app supplies
+  `ReynGutter(is_marked=…)`, which reads `FlowView.cursor` live on every gutter
+  repaint, and re-derives the affected rows' gutters via
+  `FlowView.refresh_gutter` on each `Highlighted` and on focus changes (the
+  gutter cache is keyed on a decor revision that neither a cursor move nor a
+  focus change bumps, so without that invalidation the rail would strand on
+  the row it was first painted on). The rail shows only while the pane is
+  actually being addressed — FlowView focused, or the search bar open; the
+  position persists either way. **Why the rail is gutter CONTENT
   and not a `flowview--selected`/`--cursor` component style**: flowview applies
   a component style as `Segment.apply_style(segments, style)` ==
   `style + segment.style` — a BASE *beneath* each segment's own attributes,
@@ -674,6 +690,23 @@ second hand-rolled column:
   merge (it is what #3476 ⑤/⑥ originally shipped) but inverts fg/bg into a
   near-white block over the palette, so surviving the merge is necessary and
   not sufficient.
+  **Declaring no rule is not the same as painting nothing** (#3496): Textual
+  resolves an UNDECLARED component class to a *concrete* style synthesised from
+  inherited values — measured,
+  `get_component_rich_style("flowview--cursor")` returns
+  `Style(color=#e0e0e0, bgcolor=#121212)` — and flowview applies that to the
+  addressed row, so simply deleting the rules left every segment without a
+  background of its own painted near-black (the cursor auto-arms on the newest
+  entry, so the BOTTOM row wore it permanently). `background: transparent` does
+  not help; it resolves to the inherited background rather than to "no
+  background". `_UnmarkedFlowView` (`app.py`) therefore overrides
+  `get_component_rich_style` to return an empty `Style()` for exactly those two
+  classes — the seam flowview reads the style from, needing no upstream change
+  and leaving every other component class (`flowview--sticky-header`)
+  untouched. Subclassing is not forking: Textual matches CSS type selectors
+  against base class names, so the `FlowView { … }` rules still apply. A row's
+  OWN ROW TINT survives this suppression — only the synthesised overlay is
+  dropped.
 - **ROW TINT — `Presentation.background`** (`presenter.py`): a user row and a
   FAILURE row (a `tool_call_failed` / `error` frame, or a `tool_call_completed`
   whose summary is a `✗`) carry a whole-row background that flowview paints
@@ -871,8 +904,11 @@ Two decisions worth stating because the obvious alternative is wrong:
   measured full-hydrate cost makes paying it all at once cheaper than teaching
   search a second, virtual domain.
 
-The current hit is marked by the addressed-row rail described under
-*Textual TUI gutters* above. Its keys are registered in `SEARCHBAR_KEYS`
+Search moves the **keyboard cursor** (#3493) rather than holding a selection
+of its own, so the hit is marked by the one addressed-row rail described under
+*Textual TUI gutters* above — and closing the bar keeps the cursor on the hit,
+so `Shift+Tab` back into the pane resumes navigating from what you found. Its
+keys are registered in `SEARCHBAR_KEYS`
 (`textual_chat/chrome.py`) so the Help pane sources them from where they are
 defined.
 

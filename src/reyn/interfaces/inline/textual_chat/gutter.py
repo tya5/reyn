@@ -45,7 +45,6 @@ from rich.text import Text
 from textual_flowview import EntryState
 
 from reyn.interfaces.repl.renderer import (
-    _CC_COOL,
     _CC_DIM,
     _CC_DONE,
     _CC_ERR,
@@ -96,16 +95,25 @@ _RUNNING_FRAMES = ("●", "○")
 _RUNNING_FRAME_PERIOD = 0.5
 
 #: The ADDRESSED-entry rail (#3490): a thin left-edge bar marking the keyboard
-#: cursor's row / the current search hit. One cell wide, drawn in the gutter's
-#: trailing cell so it costs no body column and doubles as the gutter/body
-#: separator on the marked row.
+#: cursor's row — which is also where search puts the cursor (#3493), so there
+#: is one addressed row and never two marks. One cell wide, drawn in the
+#: gutter's trailing cell so it costs no body column and doubles as the
+#: gutter/body separator on the marked row.
 _MARK_RAIL = "▎"
 
-#: The rail's colour — ``_CC_COOL`` (the palette's secondary accent) rather than
-#: any ``_STATE_COLOR`` member or ``_CC_ACCENT``: being addressed is a POSITION,
-#: not an outcome and not "running", so it must not collide with the state
-#: vocabulary the glyph beside it already speaks.
-_MARK_COLOR = _CC_COOL
+#: The rail's colour. A NAMED ANSI colour, not one of the ``_CC_*`` hex
+#: constants, and that is the whole point (#3493, owner directive "ターミナルの
+#: テーマ参照できるならそっち優先"): ``"blue"`` emits the palette-relative
+#: ``SGR 34``, which the TERMINAL resolves from its own theme, so the rail
+#: follows a light or dark terminal automatically. A truecolor hex emits
+#: ``38;2;r;g;b`` and looks identical on every theme — fine for content the
+#: palette owns, wrong for a bare position marker that has to sit legibly on
+#: whatever background the user chose. (``"default"`` — the terminal's plain
+#: foreground, as ``_CC_TEXT`` uses — is the even-more-neutral alternative;
+#: a palette blue is kept so the rail reads as an accent distinct from the
+#: state glyph beside it rather than as more text.) Being addressed is a
+#: POSITION, so it must not borrow the ``_STATE_COLOR`` vocabulary either.
+_MARK_COLOR = _CC_TEXT
 
 
 def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
@@ -195,7 +203,8 @@ class ReynGutter:
     non-animated amber gutter).
 
     ``is_marked`` (#3490) reports whether an entry is the ADDRESSED one — the
-    keyboard cursor's position or the current search hit. A marked entry gets
+    keyboard cursor's position, which is also where search puts it (#3493: one
+    position, so never two marked rows). A marked entry gets
     :data:`_MARK_RAIL` drawn down its whole height in the gutter's trailing
     cell, which is why the mark lives HERE rather than in a
     ``flowview--selected``/``--cursor`` component style: a component style is
