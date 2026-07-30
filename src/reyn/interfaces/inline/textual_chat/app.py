@@ -39,7 +39,6 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
-from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import ContentSwitcher, OptionList, Static
@@ -52,7 +51,11 @@ from textual_flowview import (
 )
 
 from reyn.interfaces.repl._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
-from reyn.interfaces.repl.renderer import summarize_tool_result
+from reyn.interfaces.repl.renderer import (
+    _CC_DIM,
+    chat_markdown_theme,
+    summarize_tool_result,
+)
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.frames import FrameTag
 
@@ -173,6 +176,26 @@ def _configured_gutter_visibility(config) -> "tuple[bool, bool]":
         return (bool(gutters.left), bool(gutters.right))
     except AttributeError:
         return (defaults.left, defaults.right)
+
+
+def empty_state_hint() -> "object":
+    """The conversation pane's empty-state hint (#3476 ②, flowview 0.6.0
+    ``empty=``): shown across the viewport while the model has no entries — a
+    fresh session previously opened onto a blank void above the composer
+    (owner design review). Ambient by design: dim, no colour (the palette
+    reserves colour for state), horizontally centered here, vertically placed
+    by the FlowView's ``empty_align``. The keys it names are the composer's
+    own (``COMPOSER_KEYS``' send / completion rows) phrased for a first
+    glance; the Help tab stays the exhaustive source. flowview clears it the
+    moment the first entry lands, so there is no app-side show/hide to drift.
+    """
+    from rich.text import Text
+
+    hint = Text(justify="center")
+    hint.append("reyn\n\n", style=f"bold {_CC_DIM}")
+    hint.append("Type a message to start\n", style=_CC_DIM)
+    hint.append("/ commands · : skills · Help tab for keys", style=_CC_DIM)
+    return hint
 
 
 #: Sentinel for :meth:`TextualChatApp._pane_rows`'s optional ``snap`` argument —
@@ -753,6 +776,13 @@ class TextualChatApp(App):
             # Native running-blink: FlowView owns the animation clock and
             # re-invokes the time-based ReynGutter each tick (no app-side timer).
             animation_fps=self.ANIMATION_FPS,
+            # #3476 ②: a fresh session previously opened onto a blank void
+            # above the composer (owner design review). flowview 0.6.0's
+            # empty state shows this hint across the viewport while the model
+            # has no entries and clears itself the moment the first entry
+            # lands — no app-side show/hide wiring to drift.
+            empty=empty_state_hint(),
+            empty_align="middle",
         )
         # #3352: apply the configured START state. flowview has no constructor
         # parameter for gutter visibility (both flags initialise True), so the
@@ -963,17 +993,16 @@ class TextualChatApp(App):
         return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
     def on_mount(self) -> None:
-        # #3326: tone down rich.Markdown's default inline-code style ("bold
-        # cyan on black" — rich.default_styles.DEFAULT_STYLES["markdown.code"]
-        # — measured far too loud against the rest of a reply's body). Pushed
-        # once here onto the app's own Rich console, which Textual's
-        # compositor uses to resolve every ``__rich_console__`` render
-        # (verified: this is the actual seam, not merely a plausible one) —
-        # so every agent reply's inline code gets the muted style app-wide,
-        # not just newly-composed widgets. No bold, no forced background box:
-        # a plain cyan tint distinguishes it from body text without the
-        # heavy box the default theme draws.
-        self.console.push_theme(Theme({"markdown.code": "cyan"}))
+        # #3469 (generalizing #3326's single-key fix): push the COMPLETE
+        # palette-derived markdown theme (``renderer.CHAT_MARKDOWN_THEME_STYLES``
+        # — the plain renderers' Consoles consume the same constant) onto the
+        # app's own Rich console, which Textual's compositor uses to resolve
+        # every ``__rich_console__`` render (verified on #3326: this is the
+        # actual seam, not merely a plausible one). #3326 overrode ONLY
+        # ``markdown.code``, which left every other rich default leaking —
+        # H2/H3 headings rendered in rich's "underline magenta" / "bold
+        # magenta", the one off-palette colour on the whole screen.
+        self.console.push_theme(chat_markdown_theme())
         # Phase 5 (#3273): hydrate the retained model from the PERSISTED
         # conversation log BEFORE the live frame pump starts, so a restart shows
         # the previous conversation (CC ``--resume`` parity) instead of a blank
@@ -1048,14 +1077,18 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: history projection failed")
             return
-        for msg in frames:
-            try:
-                entry = self.conversation.append(msg)
-            except Exception:
-                logger.exception(
-                    "textual chat: restore append failed for kind=%r", msg.kind
-                )
-                continue
+        # #3476 ②: batch append — ``extend`` reflows the view ONCE for the
+        # whole restored history instead of once per entry (flowview 0.6.0;
+        # the per-entry ``set_state`` calls below redraw only the gutter, no
+        # reflow). Handle creation cannot fail per-item (presentation runs at
+        # paint, not append), so the one try/except covers what the old
+        # per-item guard did.
+        try:
+            entries = self.conversation.extend(frames)
+        except Exception:
+            logger.exception("textual chat: restore batch append failed")
+            return
+        for msg, entry in zip(frames, entries):
             # Resolved, never RUNNING — mirror the completion handler's terminal
             # transition for a settled tool result (SUCCESS unless the summary
             # marks a failure); non-tool rows keep DEFAULT.

@@ -267,6 +267,7 @@ class RichChatRenderer(ChatRenderer):
         self._buffer = StringIO()
         self._console = Console(
             highlight=False, file=self._buffer, force_terminal=True,
+            theme=chat_markdown_theme(),  # #3469: palette-derived markdown styles
         )
         self._transient_active = False
 
@@ -370,6 +371,51 @@ _CC_USER_BG = "#1e222a"
 # row rendered as a solid illegible coral band, exactly when the user most needs
 # to read why something failed.
 _CC_ERR_BG = "#3a1c1a"
+
+# #3469: the COMPLETE rich-markdown style family, derived from the palette
+# above — the single place LLM-output markdown styling is decided. rich's own
+# ``DEFAULT_STYLES`` carry colours from a different world (``markdown.h2 =
+# "underline magenta"``, ``markdown.item.number = "cyan"``, …), and any
+# ``markdown.*`` key NOT overridden here resolves to that default — which is
+# how #3326's single-key fix (``markdown.code`` only) left H2/H3 headings
+# rendering in neon magenta. Structure is expressed as WEIGHT/EMPHASIS
+# (bold / italic / underline / dim), with ``_CC_COOL`` as the one accent
+# (code / links / list numbers) — matching the palette rule that colour
+# signals state, not decoration. Both chat surfaces consume this: the
+# Textual app pushes it onto its console (``textual_chat/app.py``), and the
+# plain renderers below construct their Consoles with it — one constant, no
+# per-surface drift. ``tests/test_markdown_palette_gate_3469.py`` walks a
+# rendered sample and fails if any foreground colour outside the palette
+# reaches the screen, so the NEXT rich default that leaks (a new key, a
+# changed default) goes RED instead of shipping.
+CHAT_MARKDOWN_THEME_STYLES: "dict[str, str]" = {
+    "markdown.h1": "bold underline",
+    "markdown.h2": "bold underline",
+    "markdown.h3": "bold",
+    "markdown.h4": "bold italic",
+    "markdown.h5": "italic",
+    "markdown.h6": "dim",
+    "markdown.h7": "dim italic",
+    "markdown.block_quote": f"italic {_CC_DIM}",
+    "markdown.code": _CC_COOL,
+    "markdown.code_block": _CC_COOL,
+    "markdown.item.number": _CC_COOL,
+    "markdown.list": _CC_COOL,
+    "markdown.kbd": f"bold {_CC_WARN}",
+    "markdown.link": _CC_COOL,
+    "markdown.link_url": f"underline {_CC_COOL}",
+    "markdown.table.border": _CC_DIM,
+    "markdown.table.header": "bold",
+    "markdown.hr": _CC_DIM,
+}
+
+
+def chat_markdown_theme() -> "object":
+    """The :data:`CHAT_MARKDOWN_THEME_STYLES` palette as a rich ``Theme`` —
+    built lazily so this always-loaded module keeps its import surface flat."""
+    from rich.theme import Theme
+    return Theme(CHAT_MARKDOWN_THEME_STYLES)
+
 
 # Braille spinner frames for the working indicator (bottom toolbar).
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -698,7 +744,35 @@ def _body_renderable(kind: str, text: str, body_style: str):
         # so the model's per-line output is preserved rather than collapsed to one
         # paragraph — matching how CC displays LLM output.
         return _ChatMarkdown(_harden_soft_breaks(text or ""))
+    if kind == "reasoning":
+        # #3469: reasoning text is LLM output too, but full markdown here would
+        # be over-rendering for an ambient block (headings/lists inside a dim
+        # aside read as noise). Providers do reliably emit ``**bold**`` section
+        # markers though (e.g. Gemini's "**Constructing the Output**"), and the
+        # plain-Text path was showing the raw asterisks verbatim — every turn.
+        # Convert JUST the paired bold markers into bold spans on the dim base;
+        # everything else stays literal text.
+        return _bold_marked_text(text, body_style)
     return Text(text, style=body_style)
+
+
+def _bold_marked_text(text: str, base_style: str):
+    """``**…**`` pairs → bold spans on ``base_style``; all else literal.
+
+    Deliberately NOT a markdown parse: unpaired ``**`` stays visible as-is
+    (never silently swallowed), and no other markdown syntax is interpreted."""
+    import re
+
+    from rich.text import Text
+
+    out = Text(style=base_style)
+    pos = 0
+    for m in re.finditer(r"\*\*(.+?)\*\*", text, flags=re.DOTALL):
+        out.append(text[pos:m.start()])
+        out.append(m.group(1), style="bold")
+        pos = m.end()
+    out.append(text[pos:])
+    return out
 
 
 def format_inline_message(msg: OutboxMessage):
@@ -796,6 +870,7 @@ class InlineChatRenderer(ChatRenderer):
         self._buffer = StringIO()
         self._console = Console(
             highlight=False, file=self._buffer, force_terminal=True,
+            theme=chat_markdown_theme(),  # #3469: palette-derived markdown styles
         )
         self._transient_active = False
         # True once any message has been rendered → drives the blank-line separator

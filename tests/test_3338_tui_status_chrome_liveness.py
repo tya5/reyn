@@ -867,6 +867,19 @@ async def test_inline_code_style_toned_down_from_the_loud_default(tmp_path) -> N
         assert style.bgcolor is None, (
             f"inline-code style still forces a background: {style!r}"
         )
+        # #3469: the push now carries the COMPLETE palette-derived family, not
+        # just markdown.code — pin the APP-console seam for the leak the owner
+        # review caught (H2/H3 resolving to rich's "underline magenta" / "bold
+        # magenta" defaults). The full colour discipline is gated end-to-end in
+        # test_markdown_palette_gate_3469.py; this asserts the same theme
+        # actually reached THIS console.
+        for heading in ("markdown.h2", "markdown.h3"):
+            resolved = app.console.get_style(heading)
+            assert resolved.color is None, (
+                f"{heading} still carries a colour ({resolved.color!r}) on the "
+                "app console — the palette markdown theme did not reach the "
+                "Textual seam"
+            )
 
 
 @pytest.mark.asyncio
