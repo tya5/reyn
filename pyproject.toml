@@ -71,7 +71,7 @@ dependencies = [
     # cursor, ReachedTop/ReachedBottom infinite scroll, insert_many/extend.
     # All additive; defaults unchanged (cursor=False, empty=None,
     # animate=False) — #3476 adoption arc.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@c1f4d50b3519be7ec23b15d3599789631a515ae5",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@11ac8dc97b2a1b3a87271ec6f3ba1e586a2267f8",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)

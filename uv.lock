@@ -3866,7 +3866,7 @@ requires-dist = [
     { name = "sqlite-vec", marker = "extra == 'builtin-rag'", specifier = ">=0.1.9" },
     { name = "starlette", marker = "extra == 'web'", specifier = ">=1.0,<1.3" },
     { name = "textual", specifier = ">=0.80" },
-    { name = "textual-flowview", git = "https://github.com/tya5/textual-flowview.git?rev=c1f4d50b3519be7ec23b15d3599789631a515ae5" },
+    { name = "textual-flowview", git = "https://github.com/tya5/textual-flowview.git?rev=11ac8dc97b2a1b3a87271ec6f3ba1e586a2267f8" },
     { name = "trafilatura", marker = "extra == 'fetch'", specifier = ">=1.8" },
     { name = "twine", marker = "extra == 'release'", specifier = ">=5.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.27" },
@@ -4233,8 +4233,8 @@ wheels = [
 
 [[package]]
 name = "textual-flowview"
-version = "0.6.1"
-source = { git = "https://github.com/tya5/textual-flowview.git?rev=c1f4d50b3519be7ec23b15d3599789631a515ae5#c1f4d50b3519be7ec23b15d3599789631a515ae5" }
+version = "0.8.0"
+source = { git = "https://github.com/tya5/textual-flowview.git?rev=11ac8dc97b2a1b3a87271ec6f3ba1e586a2267f8#11ac8dc97b2a1b3a87271ec6f3ba1e586a2267f8" }
 dependencies = [
     { name = "textual" },
 ]

@@ -191,7 +191,8 @@ Two ways to interact directly with the conversation history, not just the input 
 | Key | Action |
 |-----|--------|
 | `Ctrl+F` | Open the in-conversation search bar. Incremental, case-insensitive substring match; `Enter`/`↑` = older match, `Shift+Enter`/`↓` = newer, both wrapping; `Esc` closes the bar and returns focus to the input. Searching moves the same cursor `Shift+Tab` uses, and closing the bar leaves it on the match you found — so `Shift+Tab` picks up from there |
-| `Shift+Tab` | Move focus into the conversation pane itself, arming a per-entry keyboard cursor on the newest entry; `Esc` returns focus to the input |
+| `Shift+Tab` | Move focus into the conversation pane itself, arming a per-entry highlight on the newest entry; `Esc` returns focus to the input |
+| `c` | (with the conversation pane focused) Enter **copy mode** — a vim-style text cursor over the content, for selecting and copying part of a reply. `hjkl` move, `v`/`V` select, `y` yanks, `Esc` leaves; `*`/`n`/`N` search the selection. These are the library's own keys |
 
 Once the pane holds focus (via `Shift+Tab`), the cursor moves with `↑`/`↓`/`PageUp`/`PageDown`/`Home`/`End`:
 
