@@ -140,22 +140,105 @@ async def test_copy_mode_leaves_the_addressed_row_rail_alone() -> None:
         )
 
 
-@pytest.mark.asyncio
-async def test_reyn_declares_no_copy_mode_motion_bindings() -> None:
-    """Tier 2: reyn adds NO motion binding of its own — the keymap inside copy
-    mode is flowview's (owner direction). A binding added here later would
-    silently shadow an upstream key and drift from it, so the absence is the
-    thing worth asserting; ``c`` (entry) is reyn's one and only addition."""
-    keys = {
-        (b[0] if isinstance(b, tuple) else b.key) for b in TextualChatApp.BINDINGS
-    }
+def _binding_surfaces() -> "dict[str, list[str]]":
+    """Every class in the package that declares ``BINDINGS``, and the keys it
+    claims — DERIVED from the source tree, not hand-listed.
+
+    A hand-written list would reproduce, one level up, the very defect this
+    gate exists to catch: the previous version read one of the four surfaces
+    while claiming to cover reyn's keymap, and "there are only four today" is
+    exactly as weak as "only the app declares bindings today". The derivation
+    walks the AST for ``BINDINGS`` assigned in a ``ClassDef`` body, so a new
+    surface is covered the day it is written.
+
+    Keys are read in all THREE shapes Textual accepts in a BINDINGS list: a
+    bare string, a tuple whose first element is the key, and ``Binding(key,
+    ...)``. Missing a shape would make a real binding invisible here, which in
+    a gate that asserts an ABSENCE is indistinguishable from compliance.
+
+    Deliberately NOT ``Widget.__subclasses__()``: that only sees classes some
+    import has already executed, so a surface nobody imported would silently
+    read as "no violations" — the worst direction for this particular check.
+    """
+    import ast
+    import pathlib
+
+    package = pathlib.Path(__file__).resolve().parents[1] / (
+        "src/reyn/interfaces/inline/textual_chat"
+    )
+    surfaces: dict[str, list[str]] = {}
+    for path in sorted(package.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if isinstance(stmt, ast.Assign):
+                    targets = stmt.targets
+                elif isinstance(stmt, ast.AnnAssign):
+                    targets = [stmt.target]
+                else:
+                    continue
+                if not any(
+                    isinstance(t, ast.Name) and t.id == "BINDINGS" for t in targets
+                ):
+                    continue
+                keys: list[str] = []
+                for element in getattr(stmt.value, "elts", []):
+                    if isinstance(element, ast.Constant) and isinstance(
+                        element.value, str
+                    ):
+                        keys.append(element.value)
+                    elif isinstance(element, ast.Tuple) and element.elts:
+                        first = element.elts[0]
+                        if isinstance(first, ast.Constant) and isinstance(
+                            first.value, str
+                        ):
+                            keys.append(first.value)
+                    elif isinstance(element, ast.Call) and element.args:
+                        first = element.args[0]
+                        if isinstance(first, ast.Constant) and isinstance(
+                            first.value, str
+                        ):
+                            keys.append(first.value)
+                surfaces[node.name] = keys
+    return surfaces
+
+
+def test_no_reyn_surface_declares_a_copy_mode_motion_key() -> None:
+    """Tier 2: NO reyn binding surface claims a copy-mode motion key — the
+    keymap inside copy mode is flowview's (owner direction).
+
+    The surfaces are DERIVED from the tree (see :func:`_binding_surfaces`), so
+    this covers a binding surface added tomorrow. An earlier version read only
+    ``TextualChatApp.BINDINGS`` and claimed to cover reyn's keymap; the fix for
+    that must not be a hand-written list of the four that exist today, which
+    would be the same defect one level up.
+
+    ``c`` (entry into copy mode) is reyn's one and only addition."""
+    surfaces = _binding_surfaces()
+
+    # Non-vacuity: a derivation that found nothing would pass this gate while
+    # checking nothing at all.
+    assert surfaces, "no BINDINGS surface was derived — the walk is broken"
+    assert "TextualChatApp" in surfaces, (
+        f"the app's own bindings were not derived; found {sorted(surfaces)}"
+    )
+
     motions = {"h", "j", "k", "l", "w", "b", "e", "0", "$", "^", "g", "v", "V", "y",
                "n", "N", "*", "[", "]", "z"}
-    assert not (keys & motions), (
-        f"reyn declared copy-mode motion keys of its own: {sorted(keys & motions)} — "
-        "the motions belong to flowview's defaults"
+    offenders = {
+        name: sorted(set(keys) & motions)
+        for name, keys in surfaces.items()
+        if set(keys) & motions
+    }
+    assert not offenders, (
+        f"reyn surfaces declared copy-mode motion keys: {offenders} — the "
+        "motions belong to flowview's defaults and a reyn binding would shadow "
+        "them"
     )
-    assert "c" in keys, "the copy-mode entry key is missing from the app bindings"
+    assert "c" in surfaces["TextualChatApp"], (
+        "the copy-mode entry key is missing from the app bindings"
+    )
 
 
 @pytest.mark.asyncio
@@ -229,10 +312,25 @@ async def test_the_chrome_sees_both_copy_mode_edges() -> None:
             f"entering copy mode told the user nothing; pane holds: {texts!r}"
         )
 
-        flow.exit_copy_mode()
+        # Exit with the REAL key, not the public method: ``Esc`` means something
+        # in reyn too (leave the pane, close the drawer), so which side wins is
+        # itself worth pinning — a method call would pass even if the key never
+        # reached flowview.
+        await pilot.press("escape")
         await pilot.pause()
-        assert not flow.copy_mode, "setup: copy mode did not exit"
+        assert not flow.copy_mode, "a real Esc did not leave copy mode"
         texts = [e.item.text for e in app.conversation]
         assert any("copy mode off" in t for t in texts), (
             f"the exit edge was not observed; pane holds: {texts!r}"
+        )
+        assert app.focused is flow, (
+            "the first Esc left the PANE as well as copy mode — leaving a mode "
+            "and leaving the pane are two steps, not one"
+        )
+
+        # ...and the SECOND Esc is reyn's own: back to the composer.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.focused, Composer), (
+            f"the second Esc did not return to the composer: {app.focused!r}"
         )
