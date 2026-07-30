@@ -527,34 +527,18 @@ class TextualChatApp(App):
         height: 1fr;
         scrollbar-size-vertical: 0;
     }
-    /* #3476 ⑤: the current search hit (and any click-selected entry —
-       flowview applies the same class to both). flowview ships NO colour of
-       its own for this ("unstyled by default", its component-class contract),
-       so without this rule a selection is invisible. ``reverse`` — the
-       terminal-native current-hit affordance (less/vim) — rather than a
-       background wash: flowview merges a row's ``Presentation.background``
-       into every segment BEFORE applying this component style, and
-       ``apply_style`` lets segment-explicit attributes win, so a background
-       here would vanish on exactly the rows that carry a full-row backdrop
-       (user lines, failure rows). ``reverse`` is an attribute no presenter
-       segment sets, so it survives the merge on every row kind. (Upstream
-       structural gap noted on #3476: selected/cursor component styles should
-       apply with override semantics — ⑥'s keyboard cursor hits the same.) */
-    FlowView > .flowview--selected {
-        text-style: reverse;
-    }
-    /* #3476 ⑥: the keyboard cursor — the same background-merge structural gap
-       ⑤ found (see the ``flowview--selected`` rule above) applies identically
-       here (same ``Strip.apply_style`` code path), so ``reverse`` again rather
-       than a background wash. When a search hit and the cursor land on the
-       SAME entry, flowview applies ``flowview--selected`` then
-       ``flowview--cursor`` in that order (flowview's own component-application
-       order, unchanged here) — ``reverse`` on ``reverse`` is idempotent, so the
-       row simply reads as one reversed row either way, never a doubled
-       effect. */
-    FlowView > .flowview--cursor {
-        text-style: reverse;
-    }
+    /* #3490: NO ``flowview--selected`` / ``--cursor`` component style. Both
+       are deliberately left unstyled (flowview's own default) and the
+       addressed row is marked in the GUTTER instead — see ReynGutter's
+       ``is_marked``. A component style cannot do this job: flowview applies it
+       via ``Strip.apply_style``, i.e. ``style + segment.style``, so it is only
+       ever a BASE under each segment's own attributes and a background here
+       vanishes on the rows that carry a full-row ``Presentation.background``
+       (the user's own line, failure rows). ``text-style: reverse`` DOES
+       survive that merge — it is what #3476 ⑤/⑥ shipped — but inverting
+       fg/bg paints a near-white block over the palette (owner review: "白背景
+       になって気持ち悪い / 洗練されてたデザインを壊してる"), so surviving the
+       merge is necessary and not sufficient: the mark has to be CONTENT. */
     #inputrow {
         height: auto;
         max-height: 8;
@@ -830,6 +814,12 @@ class TextualChatApp(App):
         # switch), so a switch can never page in the previous session's
         # leftovers.
         self._older_frames: "list[OutboxMessage]" = []
+        # #3490: the entries the addressed-row rail is currently painted on.
+        # flowview's Highlighted/Selected report only the entry MOVED TO, so the
+        # one moved AWAY from is tracked here — it needs its gutter re-derived
+        # too, otherwise the rail is left behind on it.
+        self._marked_cursor: "Entry[OutboxMessage] | None" = None
+        self._marked_selected: "Entry[OutboxMessage] | None" = None
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -838,7 +828,13 @@ class TextualChatApp(App):
         self._flow: "FlowView[OutboxMessage]" = FlowView(
             model=self.conversation,
             presenter=self._presenter,
-            decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
+            decorator=ReynGutter(
+                frame_period=_RUNNING_FRAME_PERIOD,
+                # #3490: the addressed-row rail. Read live off the view each
+                # repaint (not pushed in on every move) so the gutter can never
+                # hold a stale copy of which entry is current.
+                is_marked=self._is_addressed_entry,
+            ),
             gutter_width=_GUTTER_WIDTH,
             # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
             # (tool rows) AND the row's turn's real prompt/completion token
@@ -1269,6 +1265,10 @@ class TextualChatApp(App):
         self._search_bar.open()
         if self._search_bar.query:
             self._search_sync(self._search_bar.query, jump=True)
+            # #3490: re-opening onto the SAME hit selects an already-selected
+            # entry, which flowview treats as a no-op (no ``Selected``), so the
+            # focus-gated rail would not come back on its own.
+            self._remark_entry(self._flow.selected)
 
     @staticmethod
     def _search_predicate(query: str):
@@ -1332,6 +1332,68 @@ class TextualChatApp(App):
         self._flow.clear_selection()
         self.query_one(Composer).focus()
 
+    # ── #3490: the addressed-row rail ──────────────────────────────────────
+
+    def _is_addressed_entry(self, entry: "Entry[OutboxMessage]") -> bool:
+        """Whether ``entry`` is the row the user is currently addressing — the
+        keyboard cursor's position (#3476 ⑥) or the live search hit (⑤).
+
+        Both answer "this is the row you are on", so they share ONE rail rather
+        than competing marks; when they coincide the row is marked once. Read by
+        :class:`ReynGutter` on every gutter repaint, so it is always the view's
+        own live state — ``_flow`` may not exist yet during ``compose``, hence
+        the guard.
+
+        Each leg is gated on its own surface actually being ACTIVE, not merely
+        on the position being remembered: the cursor's rail shows only while
+        FlowView holds focus, the hit's only while the search bar is open. The
+        positions themselves persist (leaving and re-entering the pane resumes
+        where you were — see :meth:`on_descendant_focus`), but a rail on a pane
+        nobody is addressing is permanent chrome rather than an affordance, and
+        this whole issue (#3490) is about the mark not intruding on the
+        conversation's own design when it has nothing to say."""
+        flow = getattr(self, "_flow", None)
+        if flow is None:
+            return False
+        if entry is flow.cursor and flow.has_focus:
+            return True
+        bar = getattr(self, "_search_bar", None)
+        return entry is flow.selected and bar is not None and bar.display
+
+    def _remark_entry(self, entry: "Entry[OutboxMessage] | None") -> None:
+        """Re-derive ``entry``'s gutter on the next paint.
+
+        The gutter cache is keyed on the entry's own decor revision, which a
+        cursor/selection MOVE does not bump (flowview repaints the body but has
+        no reason to think the gutter changed) — so the rail would otherwise
+        stay on the row it was first painted on. ``refresh_gutter`` is
+        flowview's public invalidation hook for exactly this."""
+        if entry is not None:
+            try:
+                self._flow.refresh_gutter(entry)
+            except Exception:
+                logger.exception("textual chat: gutter refresh failed")
+
+    def on_descendant_blur(self, event: "events.DescendantBlur") -> None:
+        """#3490: hide the cursor's rail when the pane loses focus (Esc back to
+        the composer, a Tab step onward). The cursor POSITION is kept — only
+        the mark goes, because nothing is being addressed any more."""
+        if event.widget is getattr(self, "_flow", None):
+            self._remark_entry(self._flow.cursor)
+
+    def on_flow_view_highlighted(self, event: "FlowView.Highlighted") -> None:
+        """#3490: move the rail with the keyboard cursor — repaint the row it
+        left as well as the one it arrived on."""
+        previous, self._marked_cursor = self._marked_cursor, event.entry
+        self._remark_entry(previous)
+        self._remark_entry(event.entry)
+
+    def on_flow_view_selected(self, event: "FlowView.Selected") -> None:
+        """#3490: the search hit's rail, same two-row repaint as the cursor."""
+        previous, self._marked_selected = self._marked_selected, event.entry
+        self._remark_entry(previous)
+        self._remark_entry(event.entry)
+
     # ── #3476 ⑥: the keyboard cursor's own actions ─────────────────────────
 
     def on_descendant_focus(self, event: "events.DescendantFocus") -> None:
@@ -1344,8 +1406,16 @@ class TextualChatApp(App):
         ``cursor_last`` (not ``cursor_first``) so arrival highlights the
         newest entry, matching where a resumed/live conversation's attention
         already is."""
-        if event.widget is self._flow and self._flow.cursor is None:
+        if event.widget is not self._flow:
+            return
+        if self._flow.cursor is None:
             self._flow.cursor_last()
+        else:
+            # #3490: the position was remembered from a previous visit, so no
+            # cursor MOVE happens and no ``Highlighted`` fires — but the rail is
+            # focus-gated, so the row still needs its gutter re-derived to
+            # bring the rail back.
+            self._remark_entry(self._flow.cursor)
 
     async def on_flow_view_activated(self, event: "FlowView.Activated") -> None:
         """Enter/Space on the cursor entry: copy ITS text directly.
