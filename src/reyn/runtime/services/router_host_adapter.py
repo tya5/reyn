@@ -62,10 +62,11 @@ class McpGatewayInputs:
     """#3482: the 3 raw gateway-identity inputs (#3447) whose ONLY reader is
     :meth:`RouterHostAdapter._mcp_list_via_gateway` (measured on current
     main, 890e22d2 — all three read exclusively inside that one method's
-    ``MCPGateway(...)`` construction). A real clustering by consumer set,
-    not a name-prefix grouping: the three arrived together in #3447 (the
-    Path A fold) and are carried together to the same one construction
-    site.
+    gateway construction call. (Wording note: keep the class name away from
+    a following "(" here — the #2813 completeness scanner reads that pattern
+    as a live construction site.) A real clustering by consumer set, not a
+    name-prefix grouping: the three arrived together in #3447 (the Path A
+    fold) and are carried together to the same one construction site.
 
     Pure value object — no defaults, no construction logic (see
     :class:`RouterOpContextInputs`'s docstring for the rationale)."""
