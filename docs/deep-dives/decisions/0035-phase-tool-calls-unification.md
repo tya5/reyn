@@ -24,7 +24,7 @@ Two op-invocation surfaces have diverged since reyn's early design:
 | call | `call_llm` with `tools=None, tool_choice=None`, `response_format={json_object}` (`llm/llm.py:940-941,958`) — **json-mode** | `call_llm_tools` — **native function-calling** |
 | envelope | one structured JSON `{control, artifact, control_ir:[]}`; ops are a JSON field | OpenAI `tool_calls:[{name, arguments(JSON string)}]` |
 | op shape | `ControlIROp` (also used by preprocessor/postprocessor `RunOpStep.op`, `schemas/models.py:67,87-88`) | `{name, arguments}` |
-| allowed_ops | **kind** granularity (`file`) | tool-name granularity (`file__read`) |
+| allowed_ops | **kind** granularity (`file`) | tool-name granularity (`read_file`) |
 
 The **goal** is not uniformity for its own sake: it is to make *"a plan that worked
 → a skill"* a subset-copy, not a rework (`plan steps → phase instructions +
@@ -102,7 +102,7 @@ preprocessor/postprocessor non-tool DSL steps (`iterate`/`validate`/`python`/
 LLM-emitted).
 
 **D7 — allowed_ops kind→tool-name granularity** (matches planner/chat). e.g.
-`file` → `file__read, file__write, file__edit, file__delete, file__glob, file__grep`.
+`file` → `read_file, write_file, edit_file, delete_file, glob_files, grep_files`.
 - `compiler/linter.py:_lint_allowed_ops` validates against the **universal-catalog
   tool names** instead of `ALL_OP_KINDS`.
 - 36 phases migrate; **default migration = kind → sub-tool expansion**
@@ -120,7 +120,7 @@ from-scratch** (recon, primary evidence):
   to dispatch) — execution layer, not emission. `_build_phase_tool_catalog(allowed_ops)`
   (`:42`) already builds a phase tool catalog from allowed_ops = a native-tools
   precursor. File permission is read/write-class (`permissions.py:9-10`), and D7's
-  tool-name allowed_ops map cleanly (`file__read`→`file.read`, `file__edit`→`file.write`).
+  tool-name allowed_ops map cleanly (`read_file`→`file.read`, `edit_file`→`file.write`).
   *ADR work = wire the **offer layer** (candidates passed as `tools=`) to filter on
   `allowed_ops ∩ permission-granted`; the enforce layer is untouched.*
 - **WAL / event (P6 invariant).** op-execution events are already **per-op**

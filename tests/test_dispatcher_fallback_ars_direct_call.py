@@ -1,12 +1,12 @@
 """Tier 2: dispatcher fallback — qualified-name direct-call salvage (#229).
 
-When the LLM emits a qualified action name (e.g. ``mcp__install_registry``,
-``file__edit``) as a DIRECT function call instead of wrapping it in
+When the LLM emits a qualified action name (e.g. ``mcp_install_registry``,
+``edit_file``) as a DIRECT function call instead of wrapping it in
 ``invoke_action(action_name=...)``, the name isn't in the dispatcher's
 ``tool_catalog`` (qualified names get no top-level tool slot unless they are
 hot-list aliases), so ``dispatch_tool`` would reject with ``unknown_tool``.
 The salvage (``router_loop._execute_tool`` →
-``_maybe_salvage_qualified_direct_call``) detects "qualified name not in
+``_maybe_salvage_action_direct_call``) detects "qualified name not in
 catalog", confirms it routes via ``universal_dispatch.resolve_invoke_action``,
 and rewrites the call. An audit event ``direct_alias_call_salvaged`` records
 the rewrite.
@@ -21,8 +21,8 @@ it dead-ended as ``unknown_tool: invoke_action`` under the schemes that omit it
 
 #187 STEP 1c: this salvage is now MORE load-bearing. With the ARS block removed
 from ``invoke_action.description`` (actions are enumerated only by
-``list_actions``), a sibling-tool cross-ref pointer (e.g. file__write →
-file__edit, #1420) leads the model to emit the pointed-at qualified name
+``list_actions``), a sibling-tool cross-ref pointer (e.g. write_file →
+edit_file, #1420) leads the model to emit the pointed-at qualified name
 directly; the salvage is what routes that emit to dispatch. The
 pointer → direct-emit → salvage chain is the post-removal discovery path, so
 these salvage invariants are part of STEP 1c's load-bearing surface.
@@ -51,27 +51,27 @@ class _RecordingEvents:
 
 
 class _MinimalRouterLoopShim:
-    """Just enough RouterLoop surface to call _maybe_salvage_qualified_direct_call.
+    """Just enough RouterLoop surface to call _maybe_salvage_action_direct_call.
 
-    The salvage method only consults ``self.host.events`` (for emit) and
-    ``self.chain_id`` (for audit data). No registry, no LLM, no real
-    catalog needed — the ``universal_dispatch.resolve_invoke_action``
-    call consults the global default registry which is real.
+    The salvage method only consults ``self.host.events`` (for emit),
+    ``self.chain_id`` (for audit data), and the two catalog attributes. No
+    registry, no LLM needed — the membership check reads the real, static
+    catalog table.
 
     Bind the actual ``RouterLoop`` method so this shim exercises the
     same code path the production loop uses — no duplication.
     """
 
     chain_id = "test-chain"
-    _maybe_salvage_qualified_direct_call = (
-        RouterLoop._maybe_salvage_qualified_direct_call
+    _maybe_salvage_action_direct_call = (
+        RouterLoop._maybe_salvage_action_direct_call
     )
 
     def __init__(self, catalog: "dict | None" = None) -> None:
-        # #3458: the salvage now prefers the BARE spelling when it is itself
-        # dispatchable, so the shim carries the two catalog attributes the real
-        # RouterLoop has. An empty catalog = "no bare target advertised", which
-        # is the pre-#3458 situation these first cases keep pinning.
+        # #3458/#3461: the salvage leaves a name alone when the executor can
+        # already dispatch it, so the shim carries the two catalog attributes
+        # the real RouterLoop has. An empty catalog = "not dispatchable under
+        # its own name", which is the case the first section pins.
         self._catalog = catalog or {}
         self._dispatch_catalog = None
 
@@ -84,33 +84,33 @@ class _MinimalRouterLoopShim:
 
 
 def test_salvage_rewrites_known_action_to_invoke_action() -> None:
-    """Tier 2: ``mcp__install_registry`` → ``invoke_action`` with action_name."""
+    """Tier 2: ``mcp_install_registry`` → ``invoke_action`` with action_name."""
     loop = _MinimalRouterLoopShim()
-    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
-        "mcp__install_registry", {"server_id": "postgres"},
+    new_name, new_args = loop._maybe_salvage_action_direct_call(
+        "mcp_install_registry", {"server_id": "postgres"},
     )
     assert new_name == "invoke_action"
     assert new_args == {
-        "action_name": "mcp__install_registry",
+        "action_name": "mcp_install_registry",
         "args": {"server_id": "postgres"},
     }
 
 
 def test_salvage_rewrites_static_operation_to_invoke_action() -> None:
-    """Tier 2: ``file__read`` (static op category) salvages too."""
+    """Tier 2: ``read_file`` (static op category) salvages too."""
     loop = _MinimalRouterLoopShim()
-    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
-        "file__read", {"path": "README.md"},
+    new_name, new_args = loop._maybe_salvage_action_direct_call(
+        "read_file", {"path": "README.md"},
     )
     assert new_name == "invoke_action"
-    assert new_args["action_name"] == "file__read"
+    assert new_args["action_name"] == "read_file"
 
 
 def test_salvage_with_empty_args_passes_empty_dict_through() -> None:
     """Tier 2: empty args dict survives the rewrite (= no None coercion)."""
     loop = _MinimalRouterLoopShim()
-    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
-        "file__read", {},
+    new_name, new_args = loop._maybe_salvage_action_direct_call(
+        "read_file", {},
     )
     assert new_name == "invoke_action"
     assert new_args["args"] == {}
@@ -127,7 +127,7 @@ def test_salvage_returns_unchanged_for_unknown_qualified_name() -> None:
     """
     loop = _MinimalRouterLoopShim()
     bad_name = "bogus_category__nonexistent"
-    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
+    new_name, new_args = loop._maybe_salvage_action_direct_call(
         bad_name, {"x": 1},
     )
     assert new_name == bad_name
@@ -137,7 +137,7 @@ def test_salvage_returns_unchanged_for_unknown_qualified_name() -> None:
 def test_salvage_returns_unchanged_for_malformed_qualified_name() -> None:
     """Tier 2: a malformed name without category sep → unchanged."""
     loop = _MinimalRouterLoopShim()
-    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
+    new_name, new_args = loop._maybe_salvage_action_direct_call(
         "__missing_category", {},
     )
     assert new_name == "__missing_category"
@@ -149,8 +149,8 @@ def test_salvage_returns_unchanged_for_malformed_qualified_name() -> None:
 def test_salvage_emits_audit_event_on_rewrite() -> None:
     """Tier 2: ``direct_alias_call_salvaged`` records the rewrite."""
     loop = _MinimalRouterLoopShim()
-    loop._maybe_salvage_qualified_direct_call(
-        "file__read", {"path": "x"},
+    loop._maybe_salvage_action_direct_call(
+        "read_file", {"path": "x"},
     )
     audit = [
         (t, d) for t, d in loop.host.events.events
@@ -158,7 +158,7 @@ def test_salvage_emits_audit_event_on_rewrite() -> None:
     ]
     assert audit, "expected at least one direct_alias_call_salvaged event"
     _, data = audit[0]
-    assert data["original_name"] == "file__read"
+    assert data["original_name"] == "read_file"
     assert data["rewritten_to"] == "invoke_action"
     assert data["chain_id"] == "test-chain"
 
@@ -166,7 +166,7 @@ def test_salvage_emits_audit_event_on_rewrite() -> None:
 def test_salvage_does_not_emit_audit_on_unknown_name() -> None:
     """Tier 2: garbage name → no audit event (= rewrite never happened)."""
     loop = _MinimalRouterLoopShim()
-    loop._maybe_salvage_qualified_direct_call(
+    loop._maybe_salvage_action_direct_call(
         "garbage_cat__x", {},
     )
     assert all(
@@ -175,28 +175,42 @@ def test_salvage_does_not_emit_audit_on_unknown_name() -> None:
     )
 
 
-# ── 4. #3458: the bare spelling wins when it is dispatchable ──────────────
+# ── 4. #3458/#3461/#3429: a dispatchable name is left alone ───────────────
 
 
-def test_salvage_prefers_the_bare_target_when_it_is_dispatchable() -> None:
-    """Tier 2: #3458 — ``file__read`` with ``read_file`` in the catalog salvages
-    to ``read_file`` directly, not through the ``invoke_action`` wrapper (which
-    this presentation does not advertise, so the wrapper route would dead-end)."""
-    loop = _MinimalRouterLoopShim(catalog={"read_file": object()})
-    new_name, new_args = loop._maybe_salvage_qualified_direct_call(
-        "file__read", {"path": "README.md"},
+def test_salvage_leaves_a_dispatchable_name_alone() -> None:
+    """Tier 2: #3458/#3461 — an action the executor can already dispatch is
+    returned unchanged, not wrapped.
+
+    #3461 added this arm as "if the alias's bare target is dispatchable,
+    salvage to THAT" — because a qualified call whose bare equivalent was
+    advertised would otherwise dead-end as ``unknown_tool: invoke_action``
+    under a presentation that does not advertise the wrapper. #3429 removed
+    the second spelling, so "the alias" and "its target" are one string and
+    the arm degenerates into an early return — but the CONDITION still fires:
+    CodeAct advertises nothing (``_catalog`` empty) and dispatches everything
+    (``_dispatch_catalog`` full), so a name absent from the advertised catalog
+    but present in the dispatchable one must reach the gate under its own
+    name."""
+    loop = _MinimalRouterLoopShim()
+    loop._dispatch_catalog = {"read_file": object()}
+    new_name, new_args = loop._maybe_salvage_action_direct_call(
+        "read_file", {"path": "README.md"},
     )
     assert new_name == "read_file"
     assert new_args == {"path": "README.md"}
 
 
-def test_salvage_to_bare_target_emits_audit_with_that_target() -> None:
-    """Tier 2: #3458 — the audit event names the spelling actually dispatched."""
-    loop = _MinimalRouterLoopShim(catalog={"read_file": object()})
-    loop._maybe_salvage_qualified_direct_call("file__read", {"path": "x"})
-    audit = [
-        d for t, d in loop.host.events.events
-        if t == "direct_alias_call_salvaged"
-    ]
-    assert audit and audit[0]["rewritten_to"] == "read_file"
-    assert audit[0]["original_name"] == "file__read"
+def test_salvage_emits_no_audit_when_it_left_the_name_alone() -> None:
+    """Tier 2: #3429 — no ``direct_alias_call_salvaged`` for the early return.
+
+    The event counts how often the model reached for a name the presentation
+    did not give it a row for (#229). A name the executor dispatches under its
+    own spelling is not that: nothing was rewritten, so nothing is recorded."""
+    loop = _MinimalRouterLoopShim()
+    loop._dispatch_catalog = {"read_file": object()}
+    loop._maybe_salvage_action_direct_call("read_file", {"path": "x"})
+    assert all(
+        t != "direct_alias_call_salvaged"
+        for t, _ in loop.host.events.events
+    )

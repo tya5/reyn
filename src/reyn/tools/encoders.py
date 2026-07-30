@@ -58,32 +58,52 @@ class UnencodableExposure(ValueError):
 
 
 def sanitize_identifier(name: str) -> str:
-    """A qualified action name → a valid Python identifier.
+    """An action name → a valid, CALLABLE Python identifier for the code-API.
 
-    Most names (``file__read``, ``exec__run``) already are; MCP names with
-    hyphens or dots (``web-search__search``) are not — non-identifier chars
+    Most names (``read_file``, ``web_search``) already are; MCP names with
+    hyphens or dots (``web-search.query``) are not — non-identifier chars
     become ``_``, a leading digit is prefixed, and a Python keyword is suffixed.
-    The REAL qualified name is preserved in the actions map and is what the
-    parent gate receives — the identifier is only the LLM-facing Python name."""
+    The REAL action name is preserved in the actions map and is what the parent
+    gate receives — the identifier is only the LLM-facing Python name.
+
+    A name that collides with a BANNED builtin is suffixed for the same reason
+    a keyword is, and it is not hypothetical: #3429 renamed the sandboxed-exec
+    action from ``exec__run`` to ``exec``, and safe mode rejects the AST Name
+    ``exec`` outright (dynamic code — it bypasses the import allowlist). Left
+    unsuffixed, the code-API would render ``def exec(argv)`` and every snippet
+    calling it would be refused before dispatch, i.e. the tool would be
+    advertised and uncallable from CodeAct. Only the BANNED set needs this:
+    shadowing an ordinary builtin inside the harness namespace is harmless,
+    while shadowing a banned one is a hard refusal."""
+    from reyn.core.kernel._python_allowlist import BANNED_BUILTINS
+
     s = re.sub(r"\W", "_", name)
     if not s or s[0].isdigit():
         s = "_" + s
-    if keyword.iskeyword(s):
+    if keyword.iskeyword(s) or s in BANNED_BUILTINS:
         s = s + "_"
     return s
 
 
-def build_actions_map(qualified_names: "list[str]") -> "dict[str, str]":
-    """``{python_identifier: qualified_name}`` for the direct-function code-API.
+def build_actions_map(action_names: "list[str]") -> "dict[str, str]":
+    """``{python_identifier: action_name}`` for the direct-function code-API.
 
     DETERMINISTIC (sorted) with collision-disambiguation (``_2`` / ``_3`` …) so
     that the code-API render and ``CodeActScheme.execute`` (which builds the
     harness stubs) compute the **identical** map over the same full dispatchable
     name set — the model's identifier call always matches a stub, and the stub
-    marshals the real qualified name to the parent gate."""
+    marshals the real action name to the parent gate.
+
+    The input is DEDUPLICATED first. Disambiguation exists for two DIFFERENT
+    names that sanitize to one identifier; a name that simply appears twice in
+    the dispatchable population is one action, and suffixing it would render the
+    same operation as two functions. The composition that produces such a repeat
+    (``base_tools`` + the flat catalog, which name the same tools) only became
+    possible when #3429 gave every operation one name — before it, the two rows
+    carried two different names and no repeat could occur here."""
     out: "dict[str, str]" = {}
     used: set[str] = set()
-    for qn in sorted(qualified_names):
+    for qn in sorted(set(action_names)):
         base = sanitize_identifier(qn)
         ident, n = base, 2
         while ident in used:
@@ -96,7 +116,7 @@ def build_actions_map(qualified_names: "list[str]") -> "dict[str, str]":
 def render_code_api(entries: "list[dict]", ident_by_qn: "dict[str, str]") -> str:
     """Render flat ``{name, description, parameters}`` entries as a CodeAct
     *code-API* — DIRECT function signatures the model calls by name
-    (``file__read(path=...)``), NOT a ``tool('name', ...)`` string-proxy. The
+    (``read_file(path=...)``), NOT a ``tool('name', ...)`` string-proxy. The
     function name is a selected Python identifier (``ident_by_qn[qualified]``),
     so the action name can never be a hallucinated produced string. Pure
     presentation — the model reads these signatures and writes the calls; the OS

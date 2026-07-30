@@ -86,7 +86,7 @@ def cap_tool_result_content(
         model:        Model name for ``estimate_tokens`` unit consistency.
         save_fn:      Stores the full body and returns a path-ref block with at
                       least ``"path"`` (project-relative, read back via
-                      ``file__read``) and ``"content_hash"``. In production this is
+                      ``read_file``) and ``"content_hash"``. In production this is
                       ``MediaStore.save_tool_result`` (the #385 store) — lossless.
         use_chars4:   Match the engine's token estimator (``cfg.use_chars4_estimate``)
                       so the size measurement is unit-consistent with the
@@ -102,7 +102,7 @@ def cap_tool_result_content(
     Returns:
         The original string when ``estimate_tokens(content_str) <= cap_tokens``;
         otherwise a bounded plain-text preview (head + a truncation marker naming
-        the ``file__read`` path + tail) with ``estimate_tokens(preview) <= cap_tokens``.
+        the ``read_file`` path + tail) with ``estimate_tokens(preview) <= cap_tokens``.
         The full body is always stored first — no information is lost.
     """
     if cap_tokens <= 0:
@@ -165,18 +165,18 @@ def _build_preview(
 ) -> str:
     """Build the bounded plain-text preview for an offloaded tool result (#2425 §4).
 
-    Readable head/tail around a single truncation marker naming the ``file__read`` read-back path —
+    Readable head/tail around a single truncation marker naming the ``read_file`` read-back path —
     NOT a JSON stub. The full body is always in the store first, so the head/tail preview is lossless
     overall::
 
         <head>
-        ...[truncated: <N> chars total — full body: file__read(path="<ref>")]...
+        ...[truncated: <N> chars total — full body: read_file(path="<ref>")]...
         <tail>
     """
     head = content_str[:head_chars] if head_chars > 0 else ""
     tail = content_str[-tail_chars:] if tail_chars > 0 else ""
     marker = (
         f"...[truncated: {len(content_str)} chars total — "
-        f'full body: file__read(path="{ref}")]...'
+        f'full body: read_file(path="{ref}")]...'
     )
     return f"{head}\n{marker}\n{tail}"

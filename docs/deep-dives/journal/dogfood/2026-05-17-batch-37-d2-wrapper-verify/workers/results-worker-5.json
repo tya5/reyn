@@ -112,7 +112,7 @@
       "tools_used": ["list_actions", "list_actions"],
       "tool_args_1": {"category": ["web"]},
       "tool_args_2": {"category": ["mcp.tool"]},
-      "reply_excerpt": "found web__fetch and web__search, but nothing for 'reyn web' or A2A endpoints.",
+      "reply_excerpt": "found web_fetch and web_search, but nothing for 'reyn web' or A2A endpoints.",
       "notes": "Rubric requires A2A message/send + GET /a2a/tasks/{id} description. LLM searched tools, found no reyn web action. Same failure as B35/B36. Predicted 100% refuted."
     },
     {

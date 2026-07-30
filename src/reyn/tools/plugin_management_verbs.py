@@ -64,7 +64,7 @@ _PLUGIN_SOURCE_SCHEMA: dict[str, Any] = {
         },
     ],
     "description": (
-        _plugin_management_descriptions.PARAMS["plugin_management__install"]["source"].text
+        _plugin_management_descriptions.PARAMS["install_plugin"]["source"].text
     ),
 }
 
@@ -75,7 +75,7 @@ _PLUGIN_INSTALL_PARAMETERS: dict[str, Any] = {
         "name": {
             "type": "string",
             "description": (
-                _plugin_management_descriptions.PARAMS["plugin_management__install"]["name"].text
+                _plugin_management_descriptions.PARAMS["install_plugin"]["name"].text
             ),
         },
     },
@@ -128,7 +128,7 @@ async def _handle_plugin_install(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "plugin_management__install"
+    op_ctx.actor = "install_plugin"
 
     result = await plugin_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
@@ -144,7 +144,7 @@ _PLUGIN_UNINSTALL_PARAMETERS: dict[str, Any] = {
         "name": {
             "type": "string",
             "description": (
-                _plugin_management_descriptions.PARAMS["plugin_management__uninstall"]["name"].text
+                _plugin_management_descriptions.PARAMS["uninstall_plugin"]["name"].text
             ),
         },
     },
@@ -182,13 +182,13 @@ async def _handle_plugin_uninstall(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "plugin_management__uninstall"
+    op_ctx.actor = "uninstall_plugin"
 
     result = await plugin_uninstall_handle(op, op_ctx)
     return {"status": "ok", "data": result}
 
 
-# ── plugin_management__list (#3202 symptom 3) ────────────────────────────────
+# ── list_plugins (#3202 symptom 3) ────────────────────────────────
 
 _PLUGIN_LIST_DESCRIPTION = _plugin_management_descriptions.plugin_list.text
 
@@ -231,7 +231,14 @@ PLUGIN_INSTALL = ToolDefinition(
     # kind="plugin_install" directly) — a shared name would collide at
     # declare_canonical (two different mappers claiming one source_id).
     # Mirrors the "mcp_install_local" vs "mcp_install" op-kind precedent.
-    name="plugin_management__install",
+    name="install_plugin",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PLUGIN_INSTALL_DESCRIPTION,
     parameters=_PLUGIN_INSTALL_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -245,7 +252,14 @@ PLUGIN_UNINSTALL = ToolDefinition(
     canonical=plugin_uninstall_verb_to_canonical,
     # Mirrors PLUGIN_INSTALL's naming rationale above (distinct from the
     # "plugin_uninstall" op kind).
-    name="plugin_management__uninstall",
+    name="uninstall_plugin",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PLUGIN_UNINSTALL_DESCRIPTION,
     parameters=_PLUGIN_UNINSTALL_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -257,7 +271,14 @@ PLUGIN_UNINSTALL = ToolDefinition(
 
 PLUGIN_LIST = ToolDefinition(
     canonical=plugin_list_to_canonical,
-    name="plugin_management__list",
+    name="list_plugins",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PLUGIN_LIST_DESCRIPTION,
     parameters=_PLUGIN_LIST_PARAMETERS,
     gates=ToolGates(router="allow"),

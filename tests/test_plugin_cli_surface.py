@@ -2,7 +2,7 @@
 
 The CLI is a thin adapter over the SAME typed op the LLM tool / slash surfaces
 use: it builds a real ``ToolContext`` and calls
-``invoke_tool(get_default_registry(), "plugin_management__install"/"__uninstall", ...)``
+``invoke_tool(get_default_registry(), "install_plugin"/"__uninstall", ...)``
 — the same lookup+dispatch a live chat-router LLM tool call uses. These tests
 prove:
 
@@ -154,7 +154,7 @@ def test_install_kind_threads_to_typed_source_shape(
     args = _install_args(kind, source_name, project)
     plugin_cli.run_install(args)
 
-    assert captured["name"] == "plugin_management__install"
+    assert captured["name"] == "install_plugin"
     assert captured["args"]["source"] == expected_source
     assert "name" not in captured["args"]  # no --name override supplied
 
@@ -180,7 +180,7 @@ def test_install_name_override_threads_through(tmp_path, monkeypatch) -> None:
 
 def test_uninstall_threads_name(tmp_path, monkeypatch) -> None:
     """Tier 1: `reyn plugin uninstall NAME` forwards {"name": NAME} to the
-    plugin_management__uninstall op — no extra/renamed fields."""
+    uninstall_plugin op — no extra/renamed fields."""
     captured: dict = {}
 
     async def _fake_invoke(name: str, args: dict, ctx) -> dict:
@@ -193,7 +193,7 @@ def test_uninstall_threads_name(tmp_path, monkeypatch) -> None:
     project = _project(tmp_path)
     plugin_cli.run_uninstall(_uninstall_args("myplugin", project))
 
-    assert captured["name"] == "plugin_management__uninstall"
+    assert captured["name"] == "uninstall_plugin"
     assert captured["args"] == {"name": "myplugin"}
 
 

@@ -26,7 +26,7 @@
       "file": "plan_mode.yaml",
       "verdict": "refuted",
       "plan_emitted": false,
-      "notes": "LLM called file__read 3x (invoke_action pattern) for all 3 concept docs. Good narration with 5 pillars citing principles/architecture/workspace.md. But plan tool NOT invoked — direct multi-file read pattern bypassed plan."
+      "notes": "LLM called read_file 3x (invoke_action pattern) for all 3 concept docs. Good narration with 5 pillars citing principles/architecture/workspace.md. But plan tool NOT invoked — direct multi-file read pattern bypassed plan."
     },
     {
       "id": "narr-1-mcp-search",

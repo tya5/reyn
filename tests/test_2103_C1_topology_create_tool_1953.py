@@ -53,14 +53,19 @@ def test_topology_create_is_advertised_router_allow():
 
 def test_topology_create_is_floored_default_deny():
     """Tier 2: #2081 — topology_create is in the _delegate floor (org-design is
-    restrict-floored, default-deny), AND declared bare-only in the #2111 SoT (router-only,
-    no qualified alias). RED if either floor entry is dropped."""
-    from reyn.security.permissions.capability_profile import (
-        _FLOORED_BARE_ONLY,
-        builtin_delegate_profile,
-    )
+    restrict-floored, default-deny) under the ONE name it has. RED if the floor
+    entry is dropped.
+
+    #3429: the second assertion used to be ``in _FLOORED_BARE_ONLY`` — the set
+    declaring "this floor entry deliberately has no qualified alias to derive".
+    Every entry is bare-only now, so the set is gone; the replacement guard is
+    ``test_2111_floor_alias_completeness``'s "a floored name is a REGISTERED
+    tool"."""
+    from reyn.security.permissions.capability_profile import builtin_delegate_profile
+    from reyn.tools import get_default_registry
+
     assert "topology_create" in builtin_delegate_profile().tool_deny  # floored
-    assert "topology_create" in _FLOORED_BARE_ONLY                    # alias-SoT bare-only
+    assert get_default_registry().lookup("topology_create") is not None
 
 
 # ── is_spawn_descendant: the subtree predicate backbone ─────────────────────────────

@@ -2,7 +2,7 @@
 
 Router-callable capability that exposes the FP-0017
 ``sandboxed_exec`` op_runtime handler via the universal catalog
-(``exec__run`` qualified name). #3226 Phase 3: the tool itself was
+(``exec`` qualified name). #3226 Phase 3: the tool itself was
 renamed ``sandboxed_exec`` -> ``exec`` (the surviving argv-only exec
 primitive, collapsed to the owner-directed name); the op_runtime layer
 (``SandboxedExecIROp``, ``OP_KIND_MODEL_MAP["sandboxed_exec"]``, the
@@ -154,6 +154,13 @@ from reyn.core.offload.canonical import sandboxed_exec_to_canonical  # noqa: E40
 EXEC = ToolDefinition(
     canonical=sandboxed_exec_to_canonical,
     name="exec",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_EXEC_DESCRIPTION,
     parameters=_EXEC_PARAMETERS,
     gates=ToolGates(router="allow"),

@@ -54,7 +54,7 @@ Python を書きますが、見せられる関数はカタログの**ラッパ�
 `describe_action` / `invoke_action`）と base tools だけです。呼び出しは
 
 ```python
-result = invoke_action(action_name="file__read", args={"path": "README.md"})
+result = invoke_action(action_name="read_file", args={"path": "README.md"})
 ```
 
 の形になり、code-API は**カタログと共に増えません** — `category` presentation
@@ -75,7 +75,7 @@ base tools で、**`list_actions` は含みません** — この presentation �
 
 ```python
 hits = search_actions(query="read a file")
-result = invoke_action(action_name="file__read", args={"path": "README.md"})
+result = invoke_action(action_name="read_file", args={"path": "README.md"})
 ```
 
 ★ **`tool_calls` 側の兄弟セルより 1 往復安い**というのが、この組を対称性のため

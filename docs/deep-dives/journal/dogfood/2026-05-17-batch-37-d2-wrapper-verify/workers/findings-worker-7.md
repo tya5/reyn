@@ -44,10 +44,10 @@ invoke_action description (after _enrich_invoke_action_description):
   ...
   ACTION ARG SCHEMAS (canonical keys for current hot-list actions):
     reyn.source__read: {path}
-    web__search: {max_results, query}
-    web__fetch: {max_length, url}
-    file__read: {path}
-    file__write: {content, path}
+    web_search: {max_results, query}
+    web_fetch: {max_length, url}
+    read_file: {path}
+    write_file: {content, path}
     reyn.source__list: {path}
   Use these exact key names in args when calling invoke_action.
 ```
@@ -55,13 +55,13 @@ invoke_action description (after _enrich_invoke_action_description):
 Alias types observed in routing_decided events across 37 turns:
 
 1. **reyn.source__read** — hot_list_alias path: S1 T1, T2, T4, T5; S3 T2
-2. **web__search** — hot_list_alias path: S3 T1; invoke_action path: S5 T2, S7 T4
+2. **web_search** — hot_list_alias path: S3 T1; invoke_action path: S5 T2, S7 T4
 3. **invoke_action** (surface B wrapper) — S1 T3, S5 T2, S7 T4
 
 invoke_action args correctness (B36 was N=3 arg-name mismatches):
 - S1 T3: `invoke_action(action="reyn.source__read", args={"path": "README.md"})` — CORRECT (canonical key is "path")
-- S5 T2: `invoke_action(action="web__search", args={"query": "..."})` — CORRECT
-- S7 T4: `invoke_action(action="web__search", args={"query": "..."})` — CORRECT
+- S5 T2: `invoke_action(action="web_search", args={"query": "..."})` — CORRECT
+- S7 T4: `invoke_action(action="web_search", args={"query": "..."})` — CORRECT
 
 **No arg-name mismatches observed in B37 W7 (N=3 invoke_action calls, 0 errors).**
 D2-wrapper visible = YES across 3 alias types.
@@ -139,7 +139,7 @@ Total tool_called events: 23 (across all 7 agents)
 - list_actions: 6
 - search_actions: 5
 - reyn.source__read: 4
-- web__search: 2
+- web_search: 2
 - invoke_action: 3
 - describe_action: 1
 - other: 2

@@ -22,12 +22,12 @@ from reyn.tools.scheme import dispatch_catalog_map, flat_catalog_entries
 # Fake (root-4: single shape-truth).
 _CANONICAL: list[dict] = [
     {"type": "function", "function": {
-        "name": "file__read",
+        "name": "read_file",
         "description": "Read a file.\nsecond line dropped by render",
         "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
     }},
     {"type": "function", "function": {
-        "name": "file__write",
+        "name": "write_file",
         "description": "",
         "parameters": {"type": "object", "properties": {}},
     }},
@@ -38,7 +38,7 @@ def test_flat_projection_extracts_name_and_params_from_nested() -> None:
     """Tier 2: #1618 root-1 — flat_catalog_entries pulls name/description/parameters
     out of `function.*` (the #1 fix: a consumer that read top-level `name` got '')."""
     flat = flat_catalog_entries(_CANONICAL)
-    assert [e["name"] for e in flat] == ["file__read", "file__write"]
+    assert [e["name"] for e in flat] == ["read_file", "write_file"]
     assert flat[0]["parameters"]["properties"] == {"path": {"type": "string"}}
     # every entry carries a valid (possibly empty) JSON-schema parameters object.
     assert flat[1]["parameters"] == {"type": "object", "properties": {}}
@@ -49,8 +49,8 @@ def test_dispatch_map_keys_by_function_name_value_is_canonical_entry() -> None:
     """Tier 2: #1618 root-1 — dispatch_catalog_map keys the membership gate by
     `function.name`; the value is the canonical entry (the #7 gate's tool_catalog)."""
     m = dispatch_catalog_map(_CANONICAL)
-    assert set(m) == {"file__read", "file__write"}
-    assert m["file__read"] is _CANONICAL[0]
+    assert set(m) == {"read_file", "write_file"}
+    assert m["read_file"] is _CANONICAL[0]
 
 
 def test_projections_tolerate_already_flat_entry() -> None:

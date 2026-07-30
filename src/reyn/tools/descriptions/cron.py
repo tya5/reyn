@@ -87,10 +87,10 @@ cron_disable = ToolDescription(
     purpose="Pause a cron job without deleting it, for later re-enable.",
     text=(
         "Disable a cron job without removing it. The schedule stops firing "
-        "until re-enabled via `cron__enable`. Use to pause a job temporarily."
+        "until re-enabled via `cron_enable`. Use to pause a job temporarily."
     ),
     ja=(
-        "cron ジョブを削除せずに無効化する。`cron__enable` で再度有効化"
+        "cron ジョブを削除せずに無効化する。`cron_enable` で再度有効化"
         "するまでスケジュールは停止する。一時的にジョブを止めたい場合に"
         "使う。"
     ),
@@ -163,11 +163,11 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text=(
                 "Whether the schedule fires immediately. Defaults to "
                 "true. Set false to register a paused job and enable "
-                "later via cron__enable."
+                "later via cron_enable."
             ),
             ja=(
                 "スケジュールを即座に有効化するか。デフォルト true。false に"
-                "すると一時停止状態で登録し、後で cron__enable で有効化できる。"
+                "すると一時停止状態で登録し、後で cron_enable で有効化できる。"
             ),
         ),
     },

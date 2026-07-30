@@ -5,7 +5,7 @@ execute → feed back → repeat). A **scheme** owns *how* tools are shown to th
 and *how* an LLM response becomes executed actions. Adding a competitor scheme
 (enumerate-all, CodeAct, retrieval) = implement this protocol + register by name;
 the OS never changes (P7 — the OS holds no scheme-specific concepts: no
-``qualified_name``, no ``catalog``, no "code block").
+``action_name``, no ``catalog``, no "code block").
 
 A scheme provides four things, per the locked #1593 design:
 

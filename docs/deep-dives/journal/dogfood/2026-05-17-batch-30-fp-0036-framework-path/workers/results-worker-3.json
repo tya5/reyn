@@ -48,7 +48,7 @@
       "scenario": "s2_file_glob_grep",
       "b28": "verified",
       "b30": "refuted",
-      "cause": "file__list hot-alias KeyError:'path' — wrong args for glob operation"
+      "cause": "list_directory hot-alias KeyError:'path' — wrong args for glob operation"
     },
     {
       "scenario": "s4_web_fetch_url",
@@ -80,7 +80,7 @@
       "id": "B30-NEW-1",
       "severity": "HIGH",
       "scenario": "s2_file_glob_grep",
-      "description": "file__list hot-alias receives glob args (match+filter) but expects 'path' param — KeyError:'path'"
+      "description": "list_directory hot-alias receives glob args (match+filter) but expects 'path' param — KeyError:'path'"
     },
     {
       "id": "B30-NEW-2",

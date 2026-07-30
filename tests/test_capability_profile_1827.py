@@ -35,7 +35,7 @@ def test_load_round_trip_non_default(tmp_path: Path):
         name: reviewer
         description: read + memo only
         categories: [file, validation]
-        tool_allow: [file__read]
+        tool_allow: [read_file]
         tool_deny: [memory__write, delegate_to_agent]
     """).lstrip(), encoding="utf-8")
 
@@ -44,7 +44,7 @@ def test_load_round_trip_non_default(tmp_path: Path):
     assert prof.name == "reviewer"
     assert prof.description == "read + memo only"
     assert prof.categories == ("file", "validation")
-    assert prof.tool_allow == ("file__read",)
+    assert prof.tool_allow == ("read_file",)
     assert prof.tool_deny == ("memory__write", "delegate_to_agent")
 
 
@@ -84,14 +84,14 @@ def test_resolve_enforcement_denies_via_live_gate_type():
     and an allowed one passes (visible ⊆ authorized: the resolver never grants).
     """
     prof = CapabilityProfile(
-        name="r", tool_allow=("file__read",), tool_deny=("memory__write",),
+        name="r", tool_allow=("read_file",), tool_deny=("memory__write",),
     )
     contextual, _excluded = resolve_profile(prof)
     layer = ContextualLayer(contextual)
     assert layer.allows(CapabilityAxis.TOOL, "memory__write") is False  # denied
-    assert layer.allows(CapabilityAxis.TOOL, "file__read") is True       # allowed
+    assert layer.allows(CapabilityAxis.TOOL, "read_file") is True       # allowed
     # not in the allow-list → narrowed away (allow-list semantics)
-    assert layer.allows(CapabilityAxis.TOOL, "web__search") is False
+    assert layer.allows(CapabilityAxis.TOOL, "web_search") is False
 
 
 def test_compose_union_deny_intersect_allow_union_excluded():

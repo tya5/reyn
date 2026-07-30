@@ -31,7 +31,7 @@ from __future__ import annotations
 
 # Canonical verb lexicon, reconciled against the LIVE registry census (not
 # guessed from the issue brief) — every entry below was derived by walking
-# get_default_registry().names() + universal_dispatch._OPERATION_RULES and
+# get_default_registry().names() and
 # classifying each real name; the main gate tests below re-run that walk on
 # every CI run, so lexicon/grandfather drift from the live registry surfaces
 # immediately as a test failure rather than silently going stale.
@@ -96,17 +96,19 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
         # with the layer-1 agent tool it named.
         # mcp_* family (R1 family-prefix grandfather); mcp_install is additionally
         # an orphan superseded by the install_local/_package/_registry split
-        # (2026-05-25) and not present in _OPERATION_RULES any more — flagged
+        # (2026-05-25) and not a catalog action any more — flagged
         # as dead surface, candidate for a separate retire follow-up
         "mcp_call_tool", "mcp_drop_server", "mcp_install", "mcp_install_local",
         "mcp_install_package", "mcp_install_registry", "mcp_search_registry",
         # pipeline_* family (R1 family-prefix grandfather)
         "pipeline_install_local", "pipeline_install_source", "pipeline_list",
-        # discriminated-arg legacy install group — flat names that additionally
-        # use catalog-style "__" inside a flat registry name (pre-existing;
-        # not a new mechanism, R4 grandfather)
-        "plugin_management__install", "plugin_management__list",
-        "plugin_management__uninstall",
+        # plugin_* trio: R4 grandfather for the single discriminated-arg
+        # "install" (not source-split). #3429 renamed these off the
+        # catalog-style ``plugin_management__*`` spelling onto R1's
+        # verb_object default, so their word ORDER is now compliant and only
+        # the bare "install"/"uninstall" verb needs the R4 exemption.
+        "install_plugin", "list_plugins",
+        "uninstall_plugin",
         # sole presentation_*-shaped install, predates the source-split convention
         "presentation_install_local",
         # reyn_repo_* family (R1 family-prefix grandfather)
@@ -122,20 +124,13 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
     }
 )
 
-# Grandfathered QUALIFIED (catalog "category__verb") names.
-QUALIFIED_GRANDFATHER: frozenset[str] = frozenset(
-    {
-        # R4 discriminated-arg install exception (single "install", not source-split)
-        "plugin_management__install",
-        # single-entry-category discriminated install, predates source-split;
-        # NOT an X__X violation (category "presentation_management" != verb
-        # "install") but the bare "install" verb itself is grandfathered
-        "presentation_management__install",
-        # FP-0066 P1b: "rag_operation__index_update" / "rag_operation__semantic_search"
-        # retired along with the ``rag_operation`` category and the layer-1
-        # agent tools it routed to.
-    }
-)
+# #3429 deleted the QUALIFIED half of this gate. There was a second namespace
+# of ``<category>__<verb>`` catalog names with its own structural rules (R5's
+# "no X__X"), its own grandfather set, and its own classifier; the namespace is
+# gone, so the rules that governed it are too. The property that replaces them
+# — that no name anywhere carries the separator — is
+# ``tests/test_no_qualified_tool_names_3429.py``, which derives its subject
+# from the registry rather than from a curated list.
 
 
 def _classify_flat(name: str) -> tuple[bool, str]:
@@ -156,34 +151,10 @@ def _classify_flat(name: str) -> tuple[bool, str]:
     return False, f"first token {first_token!r} not in canonical verb lexicon"
 
 
-def _classify_qualified(name: str) -> tuple[bool, str]:
-    """Return (compliant, reason) for a catalog qualified name."""
-    if name in QUALIFIED_GRANDFATHER:
-        return True, "grandfathered"
-    if "__" not in name:
-        return False, "missing '__' category/verb separator"
-    category, remainder = name.split("__", 1)
-    if category == remainder:
-        return False, f"R5 violation: X__X (category == verb == {category!r})"
-    for compound in _COMPOUND_VERBS:
-        if remainder == compound or remainder.startswith(compound + "_"):
-            return True, f"compound verb {compound!r}"
-    first_token = remainder.split("_", 1)[0]
-    if first_token in CANONICAL_VERBS:
-        return True, f"verb={first_token!r}"
-    return False, f"verb token {first_token!r} (from {remainder!r}) not in canonical verb lexicon"
-
-
 def _live_flat_names() -> list[str]:
     from reyn.tools import get_default_registry
 
     return sorted(get_default_registry().names())
-
-
-def _live_qualified_names() -> list[str]:
-    from reyn.tools.universal_dispatch import _OPERATION_RULES
-
-    return sorted(_OPERATION_RULES.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -214,27 +185,12 @@ def test_flat_registry_enumeration_is_nonempty() -> None:
     )
 
 
-def test_qualified_registry_enumeration_is_nonempty() -> None:
-    """Tier 2: vacuity guard for the catalog-qualified enumeration — same
-    sentinel-membership idiom as the flat guard above, not a size pin."""
-    names = set(_live_qualified_names())
-    sentinels = {"file__read", "mcp__list_servers", "memory_operation__forget"}
-    missing = sentinels - names
-    assert not missing, (
-        f"expected sentinel qualified name(s) {sorted(missing)} were NOT found "
-        f"in universal_dispatch._OPERATION_RULES (found {len(names)} names "
-        f"total) — the enumeration very likely failed, not that these tools "
-        f"were actually removed"
-    )
-
-
 def test_grandfather_sets_are_nonempty() -> None:
     """Tier 2: vacuity guard — an empty grandfather set would make every
     single pre-existing non-conforming name fail, which is not this gate's
     job (owner policy: no rename sweep, grandfather what predates the
     convention)."""
     assert FLAT_GRANDFATHER, "FLAT_GRANDFATHER must not be empty"
-    assert QUALIFIED_GRANDFATHER, "QUALIFIED_GRANDFATHER must not be empty"
 
 
 # ---------------------------------------------------------------------------
@@ -259,23 +215,6 @@ def test_every_flat_tool_name_fits_convention_or_is_grandfathered() -> None:
         + "; ".join(failures)
         + " — either rename to fit the convention, or add to FLAT_GRANDFATHER "
         "with a reason (only if this predates the convention intentionally)"
-    )
-
-
-def test_every_qualified_tool_name_fits_convention_or_is_grandfathered() -> None:
-    """Tier 2: OS-invariant — every catalog-qualified name either fits the
-    `category__verb` structural convention (including R5's no-X__X rule) or
-    is in the frozen grandfather allowlist with a documented reason."""
-    failures = []
-    for name in _live_qualified_names():
-        ok, reason = _classify_qualified(name)
-        if not ok:
-            failures.append(f"{name}: {reason}")
-    assert not failures, (
-        "the following qualified tool name(s) do not fit the tool-naming "
-        "convention in docs/reference/runtime/tool-naming.md and are not in "
-        "QUALIFIED_GRANDFATHER: " + "; ".join(failures) + " — either rename to "
-        "fit the convention, or add to QUALIFIED_GRANDFATHER with a reason"
     )
 
 
@@ -309,25 +248,19 @@ def test_synthetic_compliant_new_name_passes() -> None:
     ok, _ = _classify_flat("read_widget")
     assert ok, "a convention-compliant new flat name (verb_object, canonical verb) must pass"
 
-    ok, _ = _classify_qualified("widget_management__read")
-    assert ok, "a convention-compliant new qualified name (category__verb) must pass"
-
 
 def test_synthetic_noncompliant_new_name_is_rejected() -> None:
     """Tier 2: FP-guard (non-compliant side) — a synthetic NEW tool name
     that violates the convention must be rejected, proving the gate is
     load-bearing rather than vacuously accepting everything.
 
-    Two distinct violation shapes, per architect's co-vet examples:
-    (1) a 5th removal verb (`delete_widget` reads as removal-class but
-        exercises no verb outside the frozen four, so use an actual 5th
-        verb `remove_widget` to prove the removal-class closure), and
-    (2) an X__X qualified name (`widget__widget`)."""
+    The violation shape, per architect's co-vet examples: a 5th removal verb
+    (`delete_widget` reads as removal-class but exercises no verb outside the
+    frozen four, so use an actual 5th verb `remove_widget` to prove the
+    removal-class closure). The second shape this test used to carry — an X__X
+    qualified name — went with the qualified namespace (#3429)."""
     ok, reason = _classify_flat("remove_widget")
     assert not ok, f"'remove_widget' (5th removal verb 'remove') should be REJECTED, got: {reason}"
-
-    ok, reason = _classify_qualified("widget__widget")
-    assert not ok, f"'widget__widget' (R5 X__X violation) should be REJECTED, got: {reason}"
 
 
 # ---------------------------------------------------------------------------
@@ -338,14 +271,14 @@ def test_synthetic_noncompliant_new_name_is_rejected() -> None:
 
 
 def test_stripping_grandfather_makes_real_names_fail() -> None:
-    """Tier 2: load-bearing proof — if FLAT_GRANDFATHER/QUALIFIED_GRANDFATHER
+    """Tier 2: load-bearing proof — if FLAT_GRANDFATHER
     were empty, real currently-registered tool names would fail the
     convention check. This proves the gate actually constrains something
     (it is not vacuously green regardless of what the grandfather set
     contains).
 
-    Calls the REAL ``_classify_flat``/``_classify_qualified`` (via a
-    monkeypatch of the module-level grandfather globals, restored in a
+    Calls the REAL ``_classify_flat`` (via a
+    monkeypatch of the module-level grandfather global, restored in a
     ``finally``) rather than a hand-duplicated copy of the classification
     logic — a duplicated copy would silently drift out of sync with the
     real classifier (e.g. it would not know about
@@ -364,35 +297,23 @@ def test_stripping_grandfather_makes_real_names_fail() -> None:
     gate_module = sys.modules[__name__]
 
     original_flat = gate_module.FLAT_GRANDFATHER
-    original_qualified = gate_module.QUALIFIED_GRANDFATHER
     try:
         gate_module.FLAT_GRANDFATHER = frozenset()
-        gate_module.QUALIFIED_GRANDFATHER = frozenset()
         flat_failures = [n for n in _live_flat_names() if not _classify_flat(n)[0]]
-        qualified_failures = [n for n in _live_qualified_names() if not _classify_qualified(n)[0]]
     finally:
         gate_module.FLAT_GRANDFATHER = original_flat
-        gate_module.QUALIFIED_GRANDFATHER = original_qualified
 
-    # At authoring time (post lifecycle-toggle-verb promotion): 31 flat + 4
-    # qualified real names go RED with the grandfather set stripped (e.g.
-    # agent_spawn, hooks_add, mcp_call_tool, plugin_management__install,
-    # rag_operation__index_update — cron_disable/enable/register/unregister
-    # no longer need grandfather at all, since they now pass structurally
-    # via LIFECYCLE_TOGGLE_VERBS). We assert a generous lower bound rather
-    # than pinning the exact count (which would be a Tier-4 format pin) —
-    # the property under test is "load-bearing", i.e. strictly greater than
-    # zero.
+    # Real names go RED with the grandfather set stripped (e.g. agent_spawn,
+    # hooks_add, mcp_call_tool, install_plugin — cron_disable/enable/register/
+    # unregister no longer need grandfather at all, since they now pass
+    # structurally via LIFECYCLE_TOGGLE_VERBS). We assert a lower bound rather
+    # than pinning the exact count (which would be a Tier-4 format pin) — the
+    # property under test is "load-bearing", i.e. strictly greater than zero.
     assert len(flat_failures) > 0, (
         "expected at least one real flat tool name to fail WITHOUT the "
         "grandfather allowlist (proves the gate is load-bearing, not "
         "vacuous) — got zero, meaning CANONICAL_VERBS alone already covers "
         "every registered name and the grandfather set constrains nothing"
-    )
-    assert len(qualified_failures) > 0, (
-        "expected at least one real qualified tool name to fail WITHOUT the "
-        "grandfather allowlist — got zero, meaning the gate is vacuous for "
-        "qualified names"
     )
 
 

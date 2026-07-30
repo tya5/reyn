@@ -58,13 +58,18 @@ from reyn.schemas.models import ALL_OP_KINDS
 
 
 # ---------------------------------------------------------------------------
-# split_tool_name — general helper (KEPT)
-# ---------------------------------------------------------------------------
-# split_tool_name is a general utility used by op_loop + conversion paths.
 # FILE_VERB_TOOL_NAMES / op_tool_name / is_op_instance_allowed were the D7
 # file-verb-granular machinery (#1212 PR4); they are retired in #1240 Wave 2b
 # now that the coarse "file" kind is dropped and all file ops use fine kinds
 # (read_file/write_file/edit_file/delete_file/glob_files/grep_files).
+#
+# #3429 removed the last survivor, ``split_tool_name``: it stripped a ``file__``
+# prefix "for any surviving file__* tool-call names from in-flight op-loop
+# sessions", i.e. it was a back-compat shim for a spelling that no longer
+# exists, and it had ZERO call sites repo-wide (verified by grep across src /
+# tests / scripts / docs) — the comment above it claimed the opposite ("a
+# general utility used by op_loop + conversion paths"), which is how a dead
+# alias-handling branch stayed in a permission-adjacent module.
 # ---------------------------------------------------------------------------
 
 # Every name the linter / catalog may legitimately see in allowed_ops.
@@ -72,16 +77,3 @@ from reyn.schemas.models import ALL_OP_KINDS
 ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 
 
-def split_tool_name(tool_name: str) -> tuple[str, str | None]:
-    """Split a tool-name into ``(kind, verb)``.
-
-    Legacy file-verb names (``"file__read"``) → ``("file", "read")``.
-    Plain kind names (``"read_file"``, ``"web_fetch"``) → ``(name, None)``.
-
-    The ``"file__"`` prefix branch handles any surviving ``file__*`` tool-call
-    names from in-flight op-loop sessions (= backward compat during rollout).
-    New sessions emit fine kind names directly (``read_file`` etc.).
-    """
-    if tool_name.startswith("file__"):
-        return "file", tool_name[len("file__"):]
-    return tool_name, None

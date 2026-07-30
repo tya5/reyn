@@ -249,7 +249,7 @@ async def _lifespan(app: FastAPI):
             await scheduler.start()
             app.state.cron_scheduler = scheduler
             # FP-0041 #489 PR-B2: expose the scheduler to LLM-callable
-            # cron tools (= cron__register / unregister / enable /
+            # cron tools (= cron_register / unregister / enable /
             # disable) so they can apply live updates without restart.
             from reyn.runtime.cron import set_active_scheduler
             set_active_scheduler(scheduler)

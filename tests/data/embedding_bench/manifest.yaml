@@ -38,36 +38,36 @@ fixtures:
   - id: file_read_via_chat
     source: dogfood/scenarios/control_ir_ops.yaml
     prompt: "Show me the contents of `docs/concepts/architecture/principles.md`."
-    expected_action: file__read
+    expected_action: read_file
     expected_reach_path:
-      - 'file__read({path: "docs/concepts/architecture/principles.md"})'
-      - 'invoke_action({action_name: "file__read", args: {path: "docs/concepts/architecture/principles.md"}})'
+      - 'read_file({path: "docs/concepts/architecture/principles.md"})'
+      - 'invoke_action({action_name: "read_file", args: {path: "docs/concepts/architecture/principles.md"}})'
     axis: [precision, call_rate]
 
   - id: file_glob_grep_search
     source: dogfood/scenarios/control_ir_ops.yaml
     prompt: "Find all skill.md files under src/ that mention 'preprocessor'."
-    expected_action: file__grep
+    expected_action: grep_files
     expected_reach_path:
-      - 'file__glob({pattern: "src/**/skill.md"})'
-      - 'file__grep({pattern: "preprocessor", path: "src/"})'
+      - 'glob_files({pattern: "src/**/skill.md"})'
+      - 'grep_files({pattern: "preprocessor", path: "src/"})'
       - 'search_actions({query: "find files matching pattern"})'
     axis: [precision, call_rate]
 
   - id: file_list_directory
     source: dogfood/scenarios/control_ir_ops.yaml
     prompt: "src/reyn/tools/ ディレクトリの中身を教えて。"
-    expected_action: file__list
+    expected_action: list_directory
     expected_reach_path:
-      - 'file__list({path: "src/reyn/tools/"})'
+      - 'list_directory({path: "src/reyn/tools/"})'
     axis: [precision]
 
   - id: file_write_capability
     source: dogfood/scenarios/permissions_and_safety.yaml
     prompt: "Write the text 'hello' to /tmp/test.txt."
-    expected_action: file__write
+    expected_action: write_file
     expected_reach_path:
-      - 'file__write({path: "/tmp/test.txt", content: "hello"})'
+      - 'write_file({path: "/tmp/test.txt", content: "hello"})'
     axis: [precision]
 
   # ── web (2 entries) ───────────────────────────────────────────────────────
@@ -75,17 +75,17 @@ fixtures:
   - id: web_search_query
     source: dogfood/scenarios/control_ir_ops.yaml
     prompt: "Search the web for 'OpenAI Python SDK changelog 2026'."
-    expected_action: web__search
+    expected_action: web_search
     expected_reach_path:
-      - 'web__search({query: "OpenAI Python SDK changelog 2026"})'
+      - 'web_search({query: "OpenAI Python SDK changelog 2026"})'
     axis: [precision]
 
   - id: web_fetch_url
     source: dogfood/scenarios/control_ir_ops.yaml
     prompt: "Fetch and summarise https://docs.python.org/3/whatsnew/3.12.html — what are the highlights?"
-    expected_action: web__fetch
+    expected_action: web_fetch
     expected_reach_path:
-      - 'web__fetch({url: "https://docs.python.org/3/whatsnew/3.12.html"})'
+      - 'web_fetch({url: "https://docs.python.org/3/whatsnew/3.12.html"})'
     axis: [precision]
 
   # ── mcp (3 entries) ───────────────────────────────────────────────────────
@@ -93,28 +93,28 @@ fixtures:
   - id: mcp_search_registry_jp
     source: dogfood/scenarios/multi_agent_and_mcp.yaml
     prompt: "MCP レジストリで github 関連のサーバーを探して。"
-    expected_action: mcp__search_registry
+    expected_action: mcp_search_registry
     expected_reach_path:
       - 'search_actions({query: "mcp github"})'
-      - 'mcp__search_registry({text: "github"})'
+      - 'mcp_search_registry({text: "github"})'
     axis: [precision, call_rate]
 
   - id: mcp_call_tool_jp
     source: dogfood/scenarios/multi_agent_and_mcp.yaml
     prompt: "github MCP サーバーを使って最近の PR を一覧して。"
-    expected_action: mcp__call_tool
+    expected_action: mcp_call_tool
     expected_reach_path:
-      - 'mcp__list_tools({server: "github"})'
-      - 'mcp__call_tool({tool: "github__list_pulls"})'
+      - 'list_mcp_tools({server: "github"})'
+      - 'mcp_call_tool({tool: "github__list_pulls"})'
     axis: [precision, call_rate]
 
   - id: mcp_search_pdf_capability
     source: synthesized
     prompt: "PDF を扱える MCP server があるか調べて。"
-    expected_action: mcp__search_registry
+    expected_action: mcp_search_registry
     expected_reach_path:
       - 'search_actions({query: "PDF"})'
-      - 'mcp__search_registry({text: "PDF"})'
+      - 'mcp_search_registry({text: "PDF"})'
     axis: [precision, call_rate]
 
   # ── multi_agent (1 entry) ─────────────────────────────────────────────────
@@ -122,9 +122,9 @@ fixtures:
   - id: agent_delegation_simple
     source: dogfood/scenarios/multi_agent_and_mcp.yaml
     prompt: "researcher エージェントに FP-0001 の概要を要約してもらって。"
-    expected_action: multi_agent__delegate
+    expected_action: delegate_to_agent
     expected_reach_path:
-      - 'multi_agent__delegate({to: "researcher", request: "FP-0001 の概要を要約"})'
+      - 'delegate_to_agent({to: "researcher", request: "FP-0001 の概要を要約"})'
     axis: [precision]
 
   # ── multi_agent (additional 2 entries) ────────────────────────────────────
@@ -132,17 +132,17 @@ fixtures:
   - id: multi_agent_list_peers
     source: synthesized
     prompt: "他にどんなエージェントが居るか教えて。"
-    expected_action: multi_agent__list_peers
+    expected_action: list_agents
     expected_reach_path:
-      - 'multi_agent__list_peers({})'
+      - 'list_agents({})'
     axis: [precision]
 
   - id: multi_agent_describe_peer
     source: synthesized
     prompt: "researcher エージェントは何をする人なのか説明して。"
-    expected_action: multi_agent__describe_peer
+    expected_action: describe_agent
     expected_reach_path:
-      - 'multi_agent__describe_peer({name: "researcher"})'
+      - 'describe_agent({name: "researcher"})'
     axis: [precision]
 
   # ── mcp install variants (additional 2 entries) ───────────────────────────
@@ -150,17 +150,17 @@ fixtures:
   - id: mcp_install_package_pypi
     source: synthesized
     prompt: "pypi:mcp-server-time をインストールして。"
-    expected_action: mcp__install_package
+    expected_action: mcp_install_package
     expected_reach_path:
-      - 'mcp__install_package({kind: "pypi", identifier: "mcp-server-time"})'
+      - 'mcp_install_package({kind: "pypi", identifier: "mcp-server-time"})'
     axis: [precision]
 
   - id: mcp_install_local_script
     source: synthesized
     prompt: "/tmp/weather_mcp.py を MCP server として登録して。"
-    expected_action: mcp__install_local
+    expected_action: mcp_install_local
     expected_reach_path:
-      - 'mcp__install_local({name: "weather", command: "python", args: ["/tmp/weather_mcp.py"]})'
+      - 'mcp_install_local({name: "weather", command: "python", args: ["/tmp/weather_mcp.py"]})'
     axis: [precision]
 
   # FP-0066 P1b: the rag (2-entry) section — rag_recall_semantic /
@@ -175,9 +175,9 @@ fixtures:
   - id: memory_remember_shared
     source: synthesized
     prompt: "「私の好きな色は青」 という事実を覚えておいて。"
-    expected_action: memory_operation__remember_shared
+    expected_action: remember_shared
     expected_reach_path:
-      - 'memory_operation__remember_shared({content: "私の好きな色は青"})'
+      - 'remember_shared({content: "私の好きな色は青"})'
     axis: [precision]
 
 
@@ -186,9 +186,9 @@ fixtures:
   - id: reyn_repo_grep
     source: synthesized
     prompt: "reyn のソースで 'class Skill' を検索して。"
-    expected_action: reyn_repo__grep
+    expected_action: reyn_repo_grep
     expected_reach_path:
-      - 'reyn_repo__grep({pattern: "class Skill"})'
+      - 'reyn_repo_grep({pattern: "class Skill"})'
     axis: [precision]
 
   # ── discovery (call_rate-focused, 1 entry) ────────────────────────────────
@@ -196,7 +196,7 @@ fixtures:
   - id: capability_discovery_semantic
     source: synthesized
     prompt: "PDF を扱えるツールを教えて。"
-    expected_action: mcp__search_registry
+    expected_action: mcp_search_registry
     expected_reach_path:
       - 'search_actions({query: "PDF"})'
     axis: [call_rate]
@@ -222,7 +222,7 @@ fixtures:
   - id: stale_mcp_category_self_correction
     source: synthesized
     prompt: "MCP の category にあるアクションを一覧して。"
-    expected_action: mcp__list_servers
+    expected_action: list_mcp_servers
     expected_reach_path:
       # First attempt may carry the stale category name; the explicit
       # error envelope (#934) carries the legacy→current mapping inline

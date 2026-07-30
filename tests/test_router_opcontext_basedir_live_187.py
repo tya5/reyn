@@ -24,7 +24,7 @@ from tests._support.agent_session import make_session
 def test_live_op_context_roots_on_container_repo(tmp_path) -> None:
     """Tier 2: with a docker env-backend + container base_dir, the LIVE op-context
     factory (RouterHostAdapter.make_router_op_context) builds a Workspace rooted on
-    the container repo (/testbed) over the docker backend — so file__read/grep/glob/
+    the container repo (/testbed) over the docker backend — so read_file/grep/glob/
     edit resolve in-container, not on the host reyn cwd."""
     backend = DockerEnvironmentBackend(container="c1", repo_dir="/testbed")
     s = make_session(

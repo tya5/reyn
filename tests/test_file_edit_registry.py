@@ -1,6 +1,6 @@
 """Tier 2: edit_file ToolDefinition — FP-0040 (#178).
 
-Pins the router-side `edit_file` capability + `file__edit` universal-
+Pins the router-side `edit_file` capability + `edit_file` universal-
 catalog routing. The op_runtime-level edit semantics (= unique-string
 match, replace_all flag, not-found envelope) are covered separately by
 `test_op_runtime_file_not_found_suggestions.py` and the op_runtime
@@ -9,8 +9,8 @@ contract tests; this file pins the **registry adapter** layer:
   1. `edit_file` is registered in `get_default_registry()` with
      `gates(router=allow, phase=allow)`, `purity=side_effect`, and the
      `path / old_string / new_string / replace_all` schema.
-  2. `file__edit` qualified name dispatches to `edit_file` via
-     `_OPERATION_RULES`.
+  2. `edit_file` is a member of the `file` catalog category, so
+     `invoke_action(action_name="edit_file")` reaches it.
   3. End-to-end invocation through `invoke_tool` correctly flows args
      to the op_runtime edit handler, including the error branches for
      0-match and multi-match-without-replace_all.
@@ -28,7 +28,7 @@ from reyn.security.permissions.permissions import PermissionResolver
 from reyn.tools import get_default_registry
 from reyn.tools.dispatch import invoke_tool
 from reyn.tools.types import RouterCallerState, ToolContext
-from reyn.tools.universal_dispatch import _OPERATION_RULES, resolve_invoke_action
+from reyn.tools.universal_dispatch import action_names_for_category, is_known_action
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -102,24 +102,12 @@ def test_edit_file_parameters_require_path_old_new() -> None:
 # ── 2. Universal-catalog dispatch ─────────────────────────────────────────
 
 
-def test_file_edit_qualified_name_routes_to_edit_file() -> None:
-    """Tier 2: file__edit dispatches to the edit_file tool."""
-    target, _ = _OPERATION_RULES["file__edit"]
-    assert target == "edit_file"
-
-
-def test_file_edit_resolves_via_universal_dispatch() -> None:
-    """Tier 2: resolve_invoke_action finds file__edit with args passthrough."""
-    resolved = resolve_invoke_action(
-        "file__edit",
-        {"path": "x", "old_string": "a", "new_string": "b"},
-    )
-    assert resolved.target_tool_name == "edit_file"
-    assert dict(resolved.target_args) == {
-        "path": "x",
-        "old_string": "a",
-        "new_string": "b",
-    }
+def test_file_edit_is_a_file_category_action() -> None:
+    """Tier 2: edit_file is browsable under the `file` category, so
+    `list_actions(category=["file"])` surfaces it and `invoke_action` accepts
+    it."""
+    assert "edit_file" in action_names_for_category("file")
+    assert is_known_action("edit_file")
 
 
 # ── 3. End-to-end invocation through invoke_tool ──────────────────────────

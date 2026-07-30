@@ -54,13 +54,17 @@ def test_hot_list_sink_reaches_the_sessions_own_chat_events() -> None:
     sink = _EventSink()
     session._chat_events.add_subscriber(sink)
 
-    # A synthetic-but-validly-shaped (<category>__<entry>, category in
-    # CATEGORIES) usage record -- deliberately NOT a real production action
-    # name, so this fixture never reads as "here is a currently-valid
-    # action" -- reordering the compacted ranking from empty -> one entry
-    # (order always changes on the first record), which fires
-    # ActionUsageTracker's on_ranking_changed callback for real.
-    tracker.merge_compacted([("file__test_hot_list_entry", time.time())])
+    # A REAL catalog action name. #3429 changed the tracker's validity check
+    # from "structurally valid <category>__<entry>" to "is a member of
+    # KNOWN_ACTION_NAMES" (structure and identity became the same question),
+    # so the synthetic-but-validly-shaped name this fixture used to carry
+    # (``file__test_hot_list_entry``) is now silently dropped by that filter
+    # and the witness below would never fire. The record still reorders the
+    # compacted ranking from empty -> one entry (order always changes on the
+    # first record), which fires ActionUsageTracker's on_ranking_changed
+    # callback for real — the property under test is the SINK's identity
+    # binding, not the name's provenance.
+    tracker.merge_compacted([("read_file", time.time())])
 
     hot_list_events = [e for e in sink.events if e.type == "hot_list_updated"]
     assert hot_list_events, (

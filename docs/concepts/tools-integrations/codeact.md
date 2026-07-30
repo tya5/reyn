@@ -23,7 +23,7 @@ Python block in its message, and tool use happens as ordinary-looking function
 calls **inside** that snippet:
 
 ```python
-result = tool('file__read', path='README.md')
+result = tool('read_file', path='README.md')
 ```
 
 Each `tool(...)` call performs one action and returns its result (or raises if
@@ -46,13 +46,13 @@ action stays callable from the code API even though nothing is advertised.
 **What is on it:** the same set the `enumerate-all` scheme advertises over
 `tool_calls` — the base tools (`read_file`, `delegate_to_agent`, `session_spawn`,
 …) plus every action of the [universal catalog](universal-catalog.md)
-(`file__glob`, `pipeline__run`, …).
+(`glob_files`, `run_pipeline`, …).
 
 A capability the base tools already name is listed **once**, under the
-unqualified name: where the catalog's `multi_agent__delegate` and the base
+unqualified name: where the catalog's `delegate_to_agent` and the base
 `delegate_to_agent` are the same operation, only `delegate_to_agent` is written
 into the code API. The qualified spelling stays **callable** — it is in the
-dispatchable set, so `tool('multi_agent__delegate', …)` from inside a snippet is
+dispatchable set, so `tool('delegate_to_agent', …)` from inside a snippet is
 answered normally — it is simply not advertised a second time.
 
 ### Sandboxed subprocess

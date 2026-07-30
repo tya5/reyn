@@ -162,7 +162,7 @@ class Workspace:
 
     def write_file_bytes(self, path_str: str, data: bytes, *, emit: bool = True) -> str:
         """Write raw bytes into the project (#1452 — the write-side mirror of
-        ``read_file_bytes``). Used by file__edit / write to persist content
+        ``read_file_bytes``). Used by edit_file / write to persist content
         already encoded in the file's detected codec (preserving a non-UTF-8
         encoding + BOM on in-place edits). Same write-zone gating as
         ``write_file``. Raises PermissionError if denied.

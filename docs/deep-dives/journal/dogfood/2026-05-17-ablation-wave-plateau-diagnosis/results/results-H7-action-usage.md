@@ -22,7 +22,7 @@ Example from simulation (fresh session, n=16, DEFAULT_HOT_LIST_SEED=13 items):
 
 **Turn 1 tools** (no prior records):
 ```
-[file__read, file__list, reyn.source__list, web__search, web__fetch,
+[read_file, list_directory, reyn.source__list, web_search, web_fetch,
  memory.operation__remember_shared, skill__skill_builder, skill__skill_improver,
  skill__skill_importer, skill__mcp_search, skill__read_local_files,
  skill__index_docs, skill__eval]
@@ -30,7 +30,7 @@ Example from simulation (fresh session, n=16, DEFAULT_HOT_LIST_SEED=13 items):
 
 **Turn 2 tools** (after Turn 1 recorded `reyn.source__list`):
 ```
-[reyn.source__list, file__read, file__list, web__search, web__fetch,
+[reyn.source__list, read_file, list_directory, web_search, web_fetch,
  memory.operation__remember_shared, skill__skill_builder, skill__skill_improver,
  skill__skill_importer, skill__mcp_search, skill__read_local_files,
  skill__index_docs, skill__eval]
@@ -104,7 +104,7 @@ primary data). The table below uses B32 baseline vs structural prediction.
 |---|---|---|---|---|
 | long_session_v1 / scenario_1 | All 13 seeds visible across 5 turns (51/51 W7 check) | Identical (no eviction to fix) | Refuted (B23-PRE-1) | No change expected |
 | long_session_v1 / scenario_5 | All 13 seeds visible | Identical | Verified (Q2 anomaly) | No change expected |
-| long_session_v1 / scenario_7 | web__search called T1; promotes to pos 1 on T2+ | All seeds same order T2+ | Inconclusive | Marginal or no change |
+| long_session_v1 / scenario_7 | web_search called T1; promotes to pos 1 on T2+ | All seeds same order T2+ | Inconclusive | Marginal or no change |
 | chat_router_smoke / multi_turn_pronoun | No tools called (inline replies) | Identical (nothing to freeze) | Verified | No change expected |
 | plan_mode / plan_compare_two_concepts | Multi-step tool calls across turns | Minor order shift frozen | Verified | No change expected |
 

@@ -215,7 +215,7 @@ mcp_install_registry = ToolDescription(
     ),
     text=(
         "Install an MCP server from the official MCP registry by its "
-        "registry name (server_id from mcp__search_registry candidates[].name). "
+        "registry name (server_id from mcp_search_registry candidates[].name). "
         "When the server requires secret environment variables that the "
         "operator has not yet set, the call returns status='needs_secrets' "
         "with a guide explaining the `reyn secret set <KEY>` command; relay "
@@ -223,7 +223,7 @@ mcp_install_registry = ToolDescription(
     ),
     ja=(
         "公式 MCP レジストリから server_id を指定してサーバーをインストール"
-        "する（server_id は mcp__search_registry の candidates[].name から"
+        "する（server_id は mcp_search_registry の candidates[].name から"
         "得る）。サーバーがシークレット環境変数を要求し未設定の場合、"
         "status='needs_secrets' と `reyn secret set <KEY>` の案内を返す — "
         "ユーザーに伝え、設定確認後に再試行する。"
@@ -241,14 +241,14 @@ mcp_install_package = ToolDescription(
     text=(
         "Install an MCP server from a third-party package channel "
         "(npm / pypi / docker) or a GitHub repo URL. Use when the server "
-        "isn't in the official registry (= mcp__search_registry returned "
+        "isn't in the official registry (= mcp_search_registry returned "
         "no match). Secret detection works the same as install_registry "
         "for npm/pypi/docker; github URLs cannot pre-declare secrets."
     ),
     ja=(
         "サードパーティのパッケージチャネル（npm/pypi/docker）または "
         "GitHub リポジトリ URL から MCP サーバーをインストールする。公式"
-        "レジストリにない場合（mcp__search_registry が一致なしを返した"
+        "レジストリにない場合（mcp_search_registry が一致なしを返した"
         "場合）に使う。npm/pypi/docker はシークレット検出が install_"
         "registry と同様に働くが、github URL は事前宣言できない。"
     ),
@@ -284,27 +284,21 @@ mcp_call_tool = ToolDescription(
         "fallback beneath per-tool universal-catalog actions"
     ),
     purpose=(
-        "Generic fallback to call any installed MCP server's tool by "
-        "<server>__<tool> identifier when no per-tool universal-catalog "
-        "action is available."
+        "Call any installed MCP server's tool by its <server>__<tool> "
+        "identifier."
     ),
     text=(
-        "Call a tool on an installed MCP server — GENERIC FALLBACK. "
-        "PREFER the per-tool 'mcp__<server>__<tool>' actions (e.g. "
-        "'mcp__time__get_current_time') when one is listed: they take the target "
-        "tool's own parameters directly (authoritative input_schema via "
-        "describe_action), with no generic envelope. Use this generic verb only as "
-        "a fallback when no per-tool action is available. Pass the tool identifier "
-        "in <server>__<tool> form (e.g. 'time__get_current_time') as returned by "
-        "mcp__list_tools, plus the tool's own args dict."
+        "Call a tool on an installed MCP server. Pass the tool identifier in "
+        "<server>__<tool> form (e.g. 'time__get_current_time') exactly as "
+        "returned by list_mcp_tools, plus the tool's own args dict. "
+        "list_mcp_tools also returns each tool's authoritative input_schema, so "
+        "no describe round-trip is needed to build those args."
     ),
     ja=(
-        "インストール済み MCP サーバーのツールを呼び出す（汎用フォール"
-        "バック）。個別ツール専用の 'mcp__<server>__<tool>' アクションが"
-        "リストにある場合はそちらを優先する（describe_action で権威ある"
-        "入力スキーマを持つ、汎用エンベロープなし）。個別アクションが"
-        "ない場合のみこの汎用verbを使う。ツール識別子は <server>__<tool> "
-        "形式（mcp__list_tools が返す形）＋そのツール自身の引数dictを渡す。"
+        "インストール済み MCP サーバーのツールを呼び出す。ツール識別子は "
+        "list_mcp_tools が返す <server>__<tool> 形式（例 "
+        "'time__get_current_time'）＋そのツール自身の引数 dict を渡す。"
+        "各ツールの入力スキーマも list_mcp_tools が返すので、事前の照会は不要。"
     ),
 )
 
@@ -541,12 +535,12 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
     "mcp_install_registry": {
         "server_id": ParamDescription(
             text=(
-                "Registry identifier from mcp__search_registry "
+                "Registry identifier from mcp_search_registry "
                 "(= candidates[].name, "
                 "e.g. 'io.github.modelcontextprotocol/server-time')."
             ),
             ja=(
-                "mcp__search_registry から得たレジストリ識別子"
+                "mcp_search_registry から得たレジストリ識別子"
                 "（= candidates[].name、例 'io.github.modelcontextprotocol/server-time'）。"
             ),
         ),
@@ -611,11 +605,11 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text=(
                 "Short config key written under mcp.servers.<name> "
                 "(e.g. 'weather'). Used as the server prefix in "
-                "mcp__call_tool's '<server>__<tool>' identifier."
+                "mcp_call_tool's '<server>__<tool>' identifier."
             ),
             ja=(
                 "mcp.servers.<name> に書き込まれる短い設定キー（例 "
-                "'weather'）。mcp__call_tool の '<server>__<tool>' 識別子の"
+                "'weather'）。mcp_call_tool の '<server>__<tool>' 識別子の"
                 "サーバー部分として使われる。"
             ),
         ),
@@ -645,14 +639,14 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
     "mcp_call_tool": {
         "tool": ParamDescription(
             text=(
-                "<server>__<tool> identifier from mcp__list_tools "
+                "<server>__<tool> identifier from list_mcp_tools "
                 "(e.g. 'time__get_current_time')."
             ),
-            ja="mcp__list_tools から得た <server>__<tool> 識別子（例 'time__get_current_time'）。",
+            ja="list_mcp_tools から得た <server>__<tool> 識別子（例 'time__get_current_time'）。",
         ),
         "tool_args": ParamDescription(
-            text="Per-tool args dict (consult mcp__list_tools).",
-            ja="ツール毎の引数辞書（mcp__list_tools を参照）。",
+            text="Per-tool args dict (consult list_mcp_tools).",
+            ja="ツール毎の引数辞書（list_mcp_tools を参照）。",
         ),
     },
 }

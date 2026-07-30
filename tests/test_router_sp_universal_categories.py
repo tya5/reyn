@@ -123,12 +123,18 @@ def test_sp_bullets_match_categories_tuple_exactly() -> None:
     )
 
 
-def test_flag_on_describes_qualified_name_format() -> None:
-    """Tier 2: section explains <category>__<entry> qualified-name format."""
+def test_flag_on_states_that_an_action_has_one_name() -> None:
+    """Tier 2: section teaches the addressing rule.
+
+    #3429: it used to teach the ``<category>__<entry>`` qualified-name FORMAT,
+    which was the addressing rule then. The rule now is that an action has one
+    name and a category is only a browsing axis — the same slot, the same job,
+    a different fact."""
     prompt = build_system_prompt(
         **_BASE_KWARGS, tool_use_sp=_slots(universal_wrappers_enabled=True),
     )
-    assert "<category>__<entry>" in prompt
+    assert "ONE name" in prompt
+    assert "never part of the name" in prompt
 
 
 def test_flag_on_mentions_three_wrappers() -> None:

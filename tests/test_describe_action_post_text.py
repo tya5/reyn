@@ -46,16 +46,16 @@ def _make_ctx(skills=None):
     )
 
 
-def _describe(qualified_name: str, ctx: ToolContext) -> dict:
+def _describe(action_name: str, ctx: ToolContext) -> dict:
     return asyncio.run(_handle_describe_action(
-        {"action_name": qualified_name}, ctx,
+        {"action_name": action_name}, ctx,
     ))
 
 
 def test_describe_action_returns_post_text_field():
     """Tier 2: describe_action result carries a non-empty ``_post_text`` string."""
     ctx = _make_ctx()
-    out = _describe("file__read", ctx)
+    out = _describe("read_file", ctx)
     assert "_post_text" in out
     assert isinstance(out["_post_text"], str)
     assert out["_post_text"].strip()
@@ -68,20 +68,20 @@ def test_describe_action_post_text_references_reply_directive():
     the exact wording — the substring "reply" is enough to confirm intent.
     """
     ctx = _make_ctx()
-    out = _describe("web__search", ctx)
+    out = _describe("web_search", ctx)
     assert "reply" in out["_post_text"].lower()
 
 
 def test_describe_action_other_fields_unchanged_by_post_text():
     """Tier 2: adding ``_post_text`` does not displace the existing contract.
 
-    The pre-B41 fields (``qualified_name``, ``description``,
+    The pre-B41 fields (``action_name``, ``description``,
     ``input_schema``, ``metadata``) must all remain present so callers that
     consume describe_action programmatically keep working.
     """
     ctx = _make_ctx()
-    out = _describe("file__write", ctx)
-    for key in ("qualified_name", "description", "input_schema", "metadata"):
+    out = _describe("write_file", ctx)
+    for key in ("action_name", "description", "input_schema", "metadata"):
         assert key in out, f"missing field: {key}"
 
 
@@ -108,24 +108,24 @@ def _construct_tool_message_content(r: dict) -> str:
 
 def test_serialisation_strips_post_text_from_json_body():
     """Tier 2: ``_post_text`` does not leak into the JSON body."""
-    r = {"qualified_name": "x", "_post_text": "directive"}
+    r = {"action_name": "x", "_post_text": "directive"}
     content = _construct_tool_message_content(r)
     json_part, _, _ = content.partition("\n\n---\n")
     body = json.loads(json_part)
     assert "_post_text" not in body
-    assert body["qualified_name"] == "x"
+    assert body["action_name"] == "x"
 
 
 def test_serialisation_appends_post_text_outside_json():
     """Tier 2: directive is appended after the JSON body, separated by ``---``."""
-    r = {"qualified_name": "x", "_post_text": "the directive"}
+    r = {"action_name": "x", "_post_text": "the directive"}
     content = _construct_tool_message_content(r)
     assert content.endswith("\n\n---\nthe directive")
 
 
 def test_serialisation_noop_when_post_text_absent():
     """Tier 2: dict without ``_post_text`` produces pure-JSON content (no suffix)."""
-    r = {"qualified_name": "x", "description": "d"}
+    r = {"action_name": "x", "description": "d"}
     content = _construct_tool_message_content(r)
     parsed = json.loads(content)
     assert parsed == r
@@ -139,7 +139,7 @@ def test_serialisation_noop_when_post_text_non_string():
     handlers; the field type contract is ``str``, anything else falls
     through to the no-op path.
     """
-    r = {"qualified_name": "x", "_post_text": 12345}
+    r = {"action_name": "x", "_post_text": 12345}
     content = _construct_tool_message_content(r)
     parsed = json.loads(content)
     assert parsed.get("_post_text") == 12345  # Kept inside JSON (no strip)

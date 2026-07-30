@@ -24,9 +24,9 @@
       "verdict": "V",
       "b41_verdict": "V",
       "b39_verdict": "V",
-      "events_summary": "user_message_received x1, tool_called x1, web_search_started x1, web_search_completed x1, tool_returned x1, hot_list_updated x1, routing_decided x1 (action:web__search, source:hot_list_alias), compaction_check x1.",
+      "events_summary": "user_message_received x1, tool_called x1, web_search_started x1, web_search_completed x1, tool_returned x1, hot_list_updated x1, routing_decided x1 (action:web_search, source:hot_list_alias), compaction_check x1.",
       "reply_excerpt": "「冪等」（べきとう）とは、ある操作を1回行っても、複数回行っても、結果が同じであることを意味する数学用語です。英語では \"idempotence\" と言います。",
-      "notes": "Correctly explains idempotency. routing_decided emitted (web__search via hot_list_alias). no permission_denied. No direct_llm artifact (web__search path) but rubric and events pass. Stable V across B39/B41/B42."
+      "notes": "Correctly explains idempotency. routing_decided emitted (web_search via hot_list_alias). no permission_denied. No direct_llm artifact (web_search path) but rubric and events pass. Stable V across B39/B41/B42."
     },
     {
       "id": "skill_discovery_request",

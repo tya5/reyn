@@ -15,7 +15,7 @@
 All 7 scenarios REFUTED. Key failure modes:
 
 1. Inline routing (no workspace artifact for direct_llm) — S1
-2. LLM routes to web__search for factual query instead of direct_llm — S2
+2. LLM routes to web_search for factual query instead of direct_llm — S2
 3. routing_decided not emitted for skill discovery — S3
 4. skill_run_completed status="finished" vs scenario spec's "success" (spec bug) — S4
 5. Clarification loop instead of poem — S5
@@ -26,20 +26,20 @@ All 7 scenarios REFUTED. Key failure modes:
 
 ## Alias Schema Verification (B36 Key Angle)
 
-### D2-min verify: operation-category alias (web__search)
+### D2-min verify: operation-category alias (web_search)
 
 Request IDs: 5a09b070 / 35e803bf (from REYN_LLM_TRACE_DUMP)
 
-web__search parameters.properties (non-empty — D2-min CONFIRMED):
+web_search parameters.properties (non-empty — D2-min CONFIRMED):
   query: type=string
   max_results: type=integer
 
 ### D2-full verify: resource-category aliases
 
-file__read parameters.properties (non-empty — D2-full CONFIRMED):
+read_file parameters.properties (non-empty — D2-full CONFIRMED):
   path: type=string
 
-file__grep parameters.properties (non-empty — D2-full CONFIRMED):
+grep_files parameters.properties (non-empty — D2-full CONFIRMED):
   pattern: type=string
   path: type=string
   glob: type=string
@@ -48,8 +48,8 @@ file__grep parameters.properties (non-empty — D2-full CONFIRMED):
 
 ### Arg-name mismatch check
 
-- S2 web__search call: {"query": "冪等とは"} — canonical arg, NO MISMATCH
-- alias-verify web__search call: {"query": "冪等とは", "max_results": 1} — canonical args
+- S2 web_search call: {"query": "冪等とは"} — canonical arg, NO MISMATCH
+- alias-verify web_search call: {"query": "冪等とは", "max_results": 1} — canonical args
 - S4 invoke_action call: {"action_name": "skill__word_stats_demo"} — canonical
 
 arg_mismatch_recurred: NO
@@ -68,9 +68,9 @@ Root cause: LLM answered inline from context. Consistent with predicted refuted=
 
 ### S2: factual_query_direct_llm — REFUTED
 
-Events: routing_decided with action=web__search (unexpected), no permission_denied (PASS)
+Events: routing_decided with action=web_search (unexpected), no permission_denied (PASS)
 Reply: Explains idempotency correctly — rubric PASS
-Artifact: web__search not direct_llm — FAIL
+Artifact: web_search not direct_llm — FAIL
 
 Alias schema confirmed non-empty. LLM used canonical arg name "query" (no mismatch).
 Root cause: LLM treated factual query as web search candidate. Consistent with predicted refuted=0.75.
@@ -127,7 +127,7 @@ Server stable throughout.
 
 ## Key Findings
 
-1. alias schema fix D2-min/D2-full CONFIRMED: web__search, file__read, file__grep show non-empty properties
+1. alias schema fix D2-min/D2-full CONFIRMED: web_search, read_file, grep_files show non-empty properties
 2. arg-name mismatch NOT recurred: LLM used canonical arg names
 3. S4 scenario spec bug: status="finished" in runtime, "success" in scenario YAML
 4. S6 multi-turn failure: pronoun reference + possible context bleed from worktree

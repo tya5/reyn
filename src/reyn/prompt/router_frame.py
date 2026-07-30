@@ -213,7 +213,7 @@ PROJECT_CONTEXT_HEADER = "## About this project (project_context)"
 
 PROJECT_CONTEXT_PREFERENCE_NOTE = (
     "Prefer project_context (above) as the primary source when "
-    "answering questions about this project. Use `web__search` only as "
+    "answering questions about this project. Use `web_search` only as "
     "a supplementary source when project_context lacks the "
     "information needed."
 )

@@ -38,13 +38,13 @@ def test_interpret_tool_calls_to_execute() -> None:
     """Tier 2: a response WITH tool calls → Execute (the tool-round path)."""
     resp = SimpleNamespace(
         content="",
-        tool_calls=[{"id": "c1", "function": {"name": "file__read", "arguments": "{}"}}],
+        tool_calls=[{"id": "c1", "function": {"name": "read_file", "arguments": "{}"}}],
     )
     interp = UniversalCategoryScheme().interpret(resp, tool_catalog={}, ops=_FakeOps())
     assert isinstance(interp, Execute)
     # Behavior: the tool call resolved into an Execute action carrying its effective
     # name (not a count/shape pin) — the OS exclude-gates this pre-dispatch.
-    assert [a["name"] for a in interp.actions] == ["file__read"]
+    assert [a["name"] for a in interp.actions] == ["read_file"]
 
 
 def test_interpret_empty_tool_calls_to_plaintext() -> None:

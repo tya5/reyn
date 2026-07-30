@@ -10,7 +10,7 @@
   "verification_angles": {
     "c1_no_dup_func_decl": "PASS — all 9 scenarios clean",
     "routing_decided_emit": "PASS — all 9 scenarios emitted routing_decided >=1",
-    "m2_no_file_grep": "PASS — file__grep never called in any scenario"
+    "m2_no_file_grep": "PASS — grep_files never called in any scenario"
   },
   "scenarios": [
     {
@@ -31,7 +31,7 @@
     {
       "scenario_id": "file_glob_grep",
       "verdict": "verified",
-      "reason": "routing_decided + tool_executed emitted, reply present; file__grep not called (M2 confirmed)",
+      "reason": "routing_decided + tool_executed emitted, reply present; grep_files not called (M2 confirmed)",
       "routing_decided_emitted": true,
       "routing_decided_count": 1,
       "c1_regression": false,
@@ -51,7 +51,7 @@
       "routing_decided_count": 1,
       "c1_regression": false,
       "m2_no_file_grep": true,
-      "tool_names": ["web__search"],
+      "tool_names": ["web_search"],
       "event_types": ["chat_started", "chat_stopped", "compaction_check", "routing_decided", "tool_called", "tool_returned", "user_message_received", "web_search_completed", "web_search_started"],
       "llm_calls": 2,
       "elapsed_s": 7.3,
@@ -87,7 +87,7 @@
       "elapsed_s": 4.4,
       "emit_failures": ["must_emit sandboxed_exec_started >=1: got 0", "must_emit sandboxed_exec_completed >=1: got 0"],
       "not_emit_failures": [],
-      "notes": "exec__run returned 'no routing rule for category exec'. Gating logic correct. Environment limitation."
+      "notes": "exec returned 'no routing rule for category exec'. Gating logic correct. Environment limitation."
     },
     {
       "scenario_id": "lint_a_skill",

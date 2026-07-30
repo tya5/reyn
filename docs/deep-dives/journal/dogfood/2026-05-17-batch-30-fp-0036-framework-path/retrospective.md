@@ -75,7 +75,7 @@ The framework-path probe is itself an observation: live_runner works for *drivin
 - `feedback_pre_conclusion_observation_checklist.md` — the corrective applied mid-batch. Internalised better for B31.
 - `feedback_minimize_speculation.md` — stop accumulating hypotheses; one fix, one verification, one next action.
 - `feedback_iterative_replay_patch_disambiguation.md` — operational pattern for the W3 regression ablation.
-- `feedback_envelope_layer_fix.md` — applicable to §4.7 (file__write KeyError → envelope-layer handler hardening).
+- `feedback_envelope_layer_fix.md` — applicable to §4.7 (write_file KeyError → envelope-layer handler hardening).
 - `feedback_observe_before_speculate_llm.md` — passive principle; the active trigger memory above is what fired this batch.
 
 ---

@@ -76,10 +76,10 @@ def test_a_populated_channel_carries_its_entries_through_the_wire_view() -> None
     ``[]`` for every arm would satisfy that test and silently un-advertise every
     tool in production."""
     channel = encoder_for_transport(Transport.TOOL_CALLS).encode_tools(
-        Exposure(descriptors=(_descriptor("file__read"), _descriptor("web__fetch"))),
+        Exposure(descriptors=(_descriptor("read_file"), _descriptor("web_fetch"))),
     )
     names = [e["function"]["name"] for e in advertised_entries(channel)]
-    assert names == ["file__read", "web__fetch"]
+    assert names == ["read_file", "web_fetch"]
 
 
 def test_a_presentation_with_no_channel_must_name_its_dispatchable_set() -> None:

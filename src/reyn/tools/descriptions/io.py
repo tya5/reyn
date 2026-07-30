@@ -56,13 +56,13 @@ write_file = ToolDescription(
     text=(
         "Write content to a file under the agent's write scope. "
         "Creates or overwrites the WHOLE file. For a partial or surgical "
-        "change to an existing file, prefer the `file__edit` action instead of "
+        "change to an existing file, prefer the `edit_file` action instead of "
         "rewriting the whole file."
     ),
     ja=(
         "エージェントの書き込みスコープ内のファイルにコンテンツを書き込む。"
         "ファイル全体を新規作成または上書きする。既存ファイルへの部分的な"
-        "変更には、ファイル全体を書き直すのではなく file__edit を使うことを"
+        "変更には、ファイル全体を書き直すのではなく edit_file を使うことを"
         "推奨する。"
     ),
 )

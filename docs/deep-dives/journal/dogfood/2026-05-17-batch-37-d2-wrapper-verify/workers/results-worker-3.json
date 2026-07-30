@@ -14,16 +14,16 @@
   },
   "delta_vs_b36": "0V (held; hot-list seed gap caused S2/S4 regressions)",
   "d2_wrapper_visible": true,
-  "d2_wrapper_action_arg_schemas_block": "web__search: {max_results, query}, reyn.source__read: {path}, file__read: {path}, agent.peer__researcher: {request}, file__list: {path}, skill__skill_builder: {description, goal, skill_name}",
+  "d2_wrapper_action_arg_schemas_block": "web_search: {max_results, query}, reyn.source__read: {path}, read_file: {path}, agent.peer__researcher: {request}, list_directory: {path}, skill__skill_builder: {description, goal, skill_name}",
   "direct_alias_non_regress": true,
   "trace_request_id_verified": "aad92a25-7898-44c7-96ca-9f21c1cf0f87",
-  "hot_list_missing_tools": ["file__glob", "file__grep", "web__fetch"],
+  "hot_list_missing_tools": ["glob_files", "grep_files", "web_fetch"],
   "scenarios": [
     {
       "id": "file_read_via_chat",
       "agent": "dogfood-b37-3-s1",
       "verdict": "V",
-      "tool": "file__read",
+      "tool": "read_file",
       "args": {"path": "docs/concepts/principles.md"},
       "events": {"routing_decided": 1, "tool_executed": 1, "permission_granted": 1},
       "note": "Direct alias; routing_decided+tool_executed ✓; reply mentions P1-P8"
@@ -32,16 +32,16 @@
       "id": "file_glob_grep",
       "agent": "dogfood-b37-3-s2",
       "verdict": "R",
-      "tool": "file__list",
+      "tool": "list_directory",
       "args": {"path": "src/"},
       "events": {"routing_decided": 2, "tool_executed": 2, "permission_granted": 2},
-      "note": "B36 I → B37 R: file__glob/grep not in hot list; LLM used file__list; 0 matches; hot-list seed gap"
+      "note": "B36 I → B37 R: glob_files/grep not in hot list; LLM used list_directory; 0 matches; hot-list seed gap"
     },
     {
       "id": "web_search_query",
       "agent": "dogfood-b37-3-s3",
       "verdict": "V",
-      "tool": "web__search",
+      "tool": "web_search",
       "args": {"query": "OpenAI Python SDK changelog 2026"},
       "events": {"routing_decided": 1, "web_search_started": 1, "web_search_completed": 1},
       "note": "All must_emit satisfied; reply references OpenAI SDK changelog v2.30.0"
@@ -50,10 +50,10 @@
       "id": "web_fetch_url",
       "agent": "dogfood-b37-3-s4",
       "verdict": "R",
-      "tool": "web__search",
+      "tool": "web_search",
       "args": {"query": "Python 3.12 new features"},
       "events": {"routing_decided": 5, "web_search_started": 3, "web_fetch_started": 0},
-      "note": "B36 V → B37 R: web__fetch not in hot list; LLM used web__search×3; router loop exceeded (5); web_fetch_started missing"
+      "note": "B36 V → B37 R: web_fetch not in hot list; LLM used web_search×3; router loop exceeded (5); web_fetch_started missing"
     },
     {
       "id": "sandboxed_exec_simple",
@@ -103,8 +103,8 @@
   ],
   "key_findings": [
     "F1: D2-wrapper confirmed active (request_id=aad92a25): ACTION ARG SCHEMAS block in invoke_action description with 6 actions + canonical key names",
-    "F2: D2-direct baseline non-regression: file__read={path}, web__search={query,max_results}, skill__skill_builder={skill_name,description,goal} — all non-empty, matching B36",
-    "F3: Hot-list seed gap (S2/S4): file__glob, file__grep, web__fetch absent from hot list in fresh workspace. B36 had these seeded from prior usage. D2-wrapper cannot compensate for absent aliases.",
+    "F2: D2-direct baseline non-regression: read_file={path}, web_search={query,max_results}, skill__skill_builder={skill_name,description,goal} — all non-empty, matching B36",
+    "F3: Hot-list seed gap (S2/S4): glob_files, grep_files, web_fetch absent from hot list in fresh workspace. B36 had these seeded from prior usage. D2-wrapper cannot compensate for absent aliases.",
     "F4: judge_phase postprocessor schema validation failure (S8): B36 had workflow_aborted (budget); B37 has validation_error. Independent of D2-wrapper.",
     "F5: S7 routing degraded (routing_decided=0 B37 vs 1 B36): LLM answered inline instead of calling memory.entry__recall. Rubric still passes. Noted as mild regression."
   ]

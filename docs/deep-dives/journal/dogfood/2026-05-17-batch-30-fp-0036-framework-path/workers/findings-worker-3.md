@@ -28,7 +28,7 @@ Final: V=2 I=0 R=7 B=0  (ΔvsB28 = -4 verified)
 
 ### S2: file_glob_grep — REFUTED
 - Events: routing_decided ✓ but tool_executed ✗ (tool_failed: KeyError:'path')
-- Root cause: LLM used file__list hot-alias with glob params {match, filter} — file__list expects 'path'. Wrong action called.
+- Root cause: LLM used list_directory hot-alias with glob params {match, filter} — list_directory expects 'path'. Wrong action called.
 - Reply: Error message, no file paths listed. Rubric not satisfied.
 - REGRESSION vs B28 (was VERIFIED).
 
@@ -44,8 +44,8 @@ Final: V=2 I=0 R=7 B=0  (ΔvsB28 = -4 verified)
 - REGRESSION vs B28 (was VERIFIED — used invoke_action directly).
 
 ### S5: sandboxed_exec_simple — REFUTED
-- Events: routing_decided ✓ (exec__run, outcome:success), sandboxed_exec_started ✗, sandboxed_exec_completed ✗
-- Root cause: exec category hidden (no sandbox backend). LLM tried exec__run (wrong action name). Same env limitation as B28.
+- Events: routing_decided ✓ (exec, outcome:success), sandboxed_exec_started ✗, sandboxed_exec_completed ✗
+- Root cause: exec category hidden (no sandbox backend). LLM tried exec (wrong action name). Same env limitation as B28.
 - B28=INCONCLUSIVE, B30=REFUTED (stricter classification — routing_decided fires but exec events absent).
 
 ### S6: lint_a_skill — REFUTED
@@ -77,7 +77,7 @@ Final: V=2 I=0 R=7 B=0  (ΔvsB28 = -4 verified)
 
 | Scenario | B28 | B30 | Root Cause |
 |----------|-----|-----|------------|
-| S2 | VERIFIED | REFUTED | file__list hot-alias KeyError:'path' |
+| S2 | VERIFIED | REFUTED | list_directory hot-alias KeyError:'path' |
 | S4 | VERIFIED | REFUTED | plan tool bypasses routing_decided |
 | S5 | INCONCLUSIVE | REFUTED | Same env limit, now routing_decided fires but exec events absent |
 | S7 | VERIFIED | REFUTED | LLM inline reply — no catalog dispatch |
@@ -87,7 +87,7 @@ Final: V=2 I=0 R=7 B=0  (ΔvsB28 = -4 verified)
 
 ## New Issues Found
 
-- **B30-NEW-1 [HIGH]**: file__list hot-alias called with glob args → KeyError:'path' (S2)
+- **B30-NEW-1 [HIGH]**: list_directory hot-alias called with glob args → KeyError:'path' (S2)
 - **B30-NEW-2 [MED]**: plan-first routing for web_fetch bypasses routing_decided (S4)
 - **B30-NEW-3 [MED]**: recall "plan-only" inline response — no catalog dispatch, rubric fails (S7)
 - **B30-NEW-4 [MED]**: judge_output async dispatch — single-turn reply is dispatch-ack, not result (S8)

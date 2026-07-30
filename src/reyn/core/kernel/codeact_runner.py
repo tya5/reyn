@@ -88,7 +88,7 @@ class CodeActRunner:
         *,
         code: str,
         dispatch: DispatchFn,
-        actions: "dict[str, str] | None" = None,  # #1658 {identifier: qualified_name}
+        actions: "dict[str, str] | None" = None,  # #1658 {identifier: action_name}
         sandbox_backend: Any = None,
         sandbox_policy: dict | None = None,
         allowed_modules: list[str] | None = None,
@@ -129,7 +129,7 @@ class CodeActRunner:
         request = {
             "code": code,
             "control_fd": child_fd,
-            # #1658: {identifier: qualified_name} — the harness injects a gated direct-
+            # #1658: {identifier: action_name} — the harness injects a gated direct-
             # function stub per identifier (each marshals the REAL qualified name over
             # the control channel to the parent gate). Empty → no direct functions
             # (back-compat: the snippet can still use the internal tool() primitive).

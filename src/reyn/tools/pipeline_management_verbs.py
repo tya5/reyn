@@ -4,24 +4,24 @@ Router-callable pipeline management verbs under the ``pipeline_management``
 category. Mirrors ``skill_verbs.py`` as closely as possible. Exposes two
 install verbs:
 
-  - ``pipeline_management__install_local`` — register a local pipeline DSL
+  - ``pipeline_install_local`` — register a local pipeline DSL
     file into the project ``.reyn/config/pipelines.yaml``, making it available
     to sessions that load the config cascade.
 
-  - ``pipeline_management__install_source`` — fetch a pipeline from a
+  - ``pipeline_install_source`` — fetch a pipeline from a
     git/GitHub URL, install it into ``.reyn/pipelines/<name>/``, and register
     the installed copy. Requires a ``require_http_get`` gate for the source
     host + the ``require_file_write`` gate for pipelines.yaml.
 
-NOTE: ``pipeline__`` is the LAUNCH category (``pipeline__run`` / ``__list`` /
-the async + inline variants). Management operations use
-``pipeline_management__`` to keep the two planes apart. ``pipeline__<name>``
-(e.g. ``pipeline__hello``) still RESOLVES as an author-time name — it is the
-form the user guide teaches — but #3026 stopped ENUMERATING it: one action per
-registered pipeline made the LLM's tools= payload scale with the operator's
-pipelines. (The old wording here called that a "resource namespace" mirroring
-``skill__``; there is no ``skill__`` category and never has been — see
-``universal_catalog``'s module docstring on how that phantom misled #1647.)
+NOTE: ``pipeline`` is the LAUNCH category (``run_pipeline`` / ``pipeline_list``
+/ the async + inline variants); ``pipeline_management`` is the management plane,
+kept apart so a launch and a registration are never the same verb.
+
+A per-registered-pipeline action (``pipeline__<name>``) used to exist. #3026
+stopped ENUMERATING it — one action per pipeline made the LLM's tools= payload
+scale with the operator's pipelines — and #3429 stopped RESOLVING it, because
+an author-time second name for ``run_pipeline`` is still a second name. A
+pipeline is launched by ``run_pipeline{name}`` and named by ``pipeline_list``.
 
 Both verbs delegate to ``op_runtime/pipeline_install.py`` via the
 ``build_legacy_op_context`` bridge (same pattern as the skill/mcp-install
@@ -34,7 +34,7 @@ from typing import Any, Mapping
 from reyn.tools.descriptions import pipeline_management as _pipeline_management_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# ── pipeline_management__install_local ───────────────────────────────────────
+# ── pipeline_install_local ───────────────────────────────────────
 
 # Relocated to reyn.tools.descriptions.pipeline_management (Phase 3
 # tool-description package refactor — byte-identical, no LLM-facing text
@@ -69,7 +69,7 @@ async def _handle_pipeline_install_local(
     """Register a local pipeline DSL file by writing .reyn/config/pipelines.yaml.
 
     Delegates to op_runtime/pipeline_install.handle via build_legacy_op_context
-    (same bridge pattern as skill_management__install_local). The handler
+    (same bridge pattern as skill_install_local). The handler
     parses the DSL, validates the name, threat-scans the description, gates
     the config write, writes the entry, records a config generation for
     crash-recovery, emits a pipeline_installed event, and requests a
@@ -107,13 +107,13 @@ async def _handle_pipeline_install_local(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "pipeline_management__install_local"
+    op_ctx.actor = "pipeline_install_local"
 
     result = await pipeline_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
 
 
-# ── pipeline_management__install_source ──────────────────────────────────────
+# ── pipeline_install_source ──────────────────────────────────────
 
 # Relocated to reyn.tools.descriptions.pipeline_management (Phase 3
 # tool-description package refactor — byte-identical, no LLM-facing text
@@ -154,7 +154,7 @@ async def _handle_pipeline_install_source(
     """Fetch and install a pipeline from a git/GitHub URL.
 
     Delegates to op_runtime/pipeline_install.handle via build_legacy_op_context
-    (same bridge pattern as skill_management__install_source). The handler:
+    (same bridge pattern as skill_install_source). The handler:
       1. Gates require_http_get for the source host.
       2. Shallow-clones the repo to .reyn/pipelines/<name>/.
       3. Locates + parses the DSL file from the clone (root or subdir via //;
@@ -205,7 +205,7 @@ async def _handle_pipeline_install_source(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "pipeline_management__install_source"
+    op_ctx.actor = "pipeline_install_source"
 
     result = await pipeline_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
@@ -222,6 +222,13 @@ _PIPELINE_DOC_REF = "docs/reference/runtime/pipeline-dsl.md"
 PIPELINE_INSTALL_LOCAL = ToolDefinition(
     canonical=pipeline_install_verb_to_canonical,
     name="pipeline_install_local",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PIPELINE_INSTALL_LOCAL_DESCRIPTION,
     parameters=_PIPELINE_INSTALL_LOCAL_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -234,6 +241,13 @@ PIPELINE_INSTALL_LOCAL = ToolDefinition(
 PIPELINE_INSTALL_SOURCE = ToolDefinition(
     canonical=pipeline_install_verb_to_canonical,
     name="pipeline_install_source",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_PIPELINE_INSTALL_SOURCE_DESCRIPTION,
     parameters=_PIPELINE_INSTALL_SOURCE_PARAMETERS,
     gates=ToolGates(router="allow"),

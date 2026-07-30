@@ -31,12 +31,12 @@
 |---|---|---|
 | `c0d5ea8` C1 hot-list filter | duplicate function declaration (6/7 workers) | ✅ verified, 62/62 long-session turns clean |
 | `ef0a07f` H1 plan restore | plan-mode non-functional | ✅ plan tool present, plan_emitted 2/3 |
-| `bceee51` H2 #49 revert | web__fetch visibility | ✅ web__fetch in tools array even under deny |
+| `bceee51` H2 #49 revert | web_fetch visibility | ✅ web_fetch in tools array even under deny |
 | `e17f6df` H3 peer-agent fix | KeyError: 'request' | ✅ delegate dispatched, no KeyError |
 | `a8e7d34` H4 grace window | skill_run_interrupted on shutdown | ✅ partial — shutdown path verified, deeper bug remains (#52) |
 | `32b28a0` Q1 scenarios refactor | skill_run_spawned mismatch | ✅ scenarios that exercise inline ops emit routing_decided cleanly |
-| `1636584` M2 file__grep drop | UnknownActionError on hot-list use | ✅ file__grep never invoked |
-| `f5a6866` S6 seed file__list / reyn.source__list | filesystem listing catch-22 | ⏳ no scenario directly stressed this in B28; deferred to B29 verification |
+| `1636584` M2 grep_files drop | UnknownActionError on hot-list use | ✅ grep_files never invoked |
+| `f5a6866` S6 seed list_directory / reyn.source__list | filesystem listing catch-22 | ⏳ no scenario directly stressed this in B28; deferred to B29 verification |
 | `1a5be83` reyn.yaml python.safe | preprocessor permission denial | ✅ verified mid-batch by W2 |
 
 ### Where the verified-rate sits

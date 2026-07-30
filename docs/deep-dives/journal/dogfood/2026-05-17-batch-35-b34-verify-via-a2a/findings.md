@@ -9,7 +9,7 @@
 > - Aggregate V/I/R/B = **17/8/29/4** (= verified rate 29.3%, up from
 >   B33 12/58 = 20.7%).
 > - **Per-fix attribution** confirmed by 3-condition ablation: W7 +3V is
->   100% A2A driver pattern; W3 file__grep routing shift is 100% B34
+>   100% A2A driver pattern; W3 grep_files routing shift is 100% B34
 >   land; W1 -2V is verifier methodology mismatch + LLM noise (not OS
 >   regression).
 > - **Root-cause discovery (= my session's blind spot)**: B27→B35 で 4 batch
@@ -43,7 +43,7 @@
 |---|---|---|---|---|---|
 | 1 | chat_router_smoke | 2/1/4/0 | 0/1/6/0 | -2 | verifier methodology mismatch + LLM ±1V ✓ |
 | 2 | stdlib_skills_core | 0/0/9/0 | 2/2/5/0 | **+2** | W2 F2 driver fix (= A2A reply capture) ✓ |
-| 3 | control_ir_ops | 3/0/6/0 | 2/0/7/0 | -1 | file__grep routing shift attributable to B34 ✓; arg-name `dir vs path` is the residual |
+| 3 | control_ir_ops | 3/0/6/0 | 2/0/7/0 | -1 | grep_files routing shift attributable to B34 ✓; arg-name `dir vs path` is the residual |
 | 4 | permissions_and_safety | 4/3/1/0 | 3/5/0/0 | -1 | arg-normalize verified 2/2 (= R→V flow); 1V swing within LLM variance |
 | 5 | multi_agent_and_mcp | 0/2/5/0 | 2/2/3/0 | **+2** | W5 peer-agent error envelope fix verified ✓ |
 | 6 | plan_mode + fp_0011 | 1/4/2/4 | 3/4/2/2 | **+2** | W6 phase_no_progress fix verified ✓; A2A pattern improves spawn-ack narration |
@@ -70,20 +70,20 @@ Verified rate trajectory: B27 0/58 → B28 12/58 → B30 10/58 → B32 11/58 →
 
 **Primary data**: W6 s-fp11-1 events log: `[80] skill_run_failed → [81] skill_completion_injected`. Across all 5 `skill_run_failed` events in the session, every one followed by `skill_completion_injected`. B33 had this skipped on the phase-loop rollback path.
 
-### 2.4 ✅ arg-normalize (file__write text→content, drop_source source_id→source) — confirmed verified
+### 2.4 ✅ arg-normalize (write_file text→content, drop_source source_id→source) — confirmed verified
 
 **Primary data**: W4 S1 `{text, path}` → normalized → `_handle_write` reached the permission gate → `permission_denied` for `/etc/test.txt`. B33 W4 S1 had `KeyError: 'content'` aborting before the gate. S6 analogous for `drop_source` / `source_id` → `permission_denied (kind: index_drop)`.
 
-### 2.5 ⚠️ file__grep / file__glob handler — partial; routing fixed, arg-name gap surfaced
+### 2.5 ⚠️ grep_files / glob_files handler — partial; routing fixed, arg-name gap surfaced
 
 **Routing primary data (= W3 ablation)**:
-- Condition A post-B34 N=5: 3/5 → `file__glob`, 0/5 → `file__list`
-- Condition B pre-B34 N=5: 0/5 → `file__glob`, 0/5 → `file__list`, 1/5 → `file__grep` (UnknownActionError)
+- Condition A post-B34 N=5: 3/5 → `glob_files`, 0/5 → `list_directory`
+- Condition B pre-B34 N=5: 0/5 → `glob_files`, 0/5 → `list_directory`, 1/5 → `grep_files` (UnknownActionError)
 - → **B34 land is the sole cause of the routing shift** (HIGH).
 
-**B33 baseline reinterpretation**: B33 W3 S2's observed `file__list` call was a fallback after `file__grep` failed silently in pre-B34 state. The LLM's true first preference is `file__grep`; B34 makes that preference reachable.
+**B33 baseline reinterpretation**: B33 W3 S2's observed `list_directory` call was a fallback after `grep_files` failed silently in pre-B34 state. The LLM's true first preference is `grep_files`; B34 makes that preference reachable.
 
-**Residual arg-name gap**: LLM sends `dir` as the directory argument to `file__glob`, but `GLOB_FILES` schema uses `path`. This is the same root cause as `text/content` and `source_id/source`: alias schema empty. Addressed by the hot-list alias schema fix landed mid-window (§ 2.6).
+**Residual arg-name gap**: LLM sends `dir` as the directory argument to `glob_files`, but `GLOB_FILES` schema uses `path`. This is the same root cause as `text/content` and `source_id/source`: alias schema empty. Addressed by the hot-list alias schema fix landed mid-window (§ 2.6).
 
 ### 2.6 ✅ Hot-list alias schema empty (= root cause discovered mid-batch by another session)
 
@@ -119,24 +119,24 @@ Conditions (N=3 × 7 scenarios = 21 shots each):
 | B A2A isolated | stdin-pipe | post-B34 | 2/15/4/0 |
 | C code-fix isolated | A2A POST | pre-B34 (reverted) | 6/15/0/0 |
 
-**A vs C identical (V=6 both)**: B34 code fixes contribute **0V** to long_session_v1. The B34 changes (phase_no_progress / peer-agent / arg synonym / file__grep) do not touch any code path exercised by these scenarios.
+**A vs C identical (V=6 both)**: B34 code fixes contribute **0V** to long_session_v1. The B34 changes (phase_no_progress / peer-agent / arg synonym / grep_files) do not touch any code path exercised by these scenarios.
 
 **A vs B Δ=+4V**: driver pattern alone. Key mechanism: under stdin-pipe, S5 (`general_python_chain`) returned narration only (= "The tool successfully generated..."), the actual asyncio.Queue code (5000+ chars) never reached the agent reply. Under A2A POST, full skill output is captured in the reply. This is B33 W2 F2 re-confirmed on long_session.
 
-### 3.2 W3 (file__glob routing shift) — B34 land is the cause [HIGH]
+### 3.2 W3 (glob_files routing shift) — B34 land is the cause [HIGH]
 
 Conditions (N=5 each):
 
 | Condition | first-turn tool | count |
 |---|---|---|
-| A post-B34 | `file__glob` | 3/5 |
+| A post-B34 | `glob_files` | 3/5 |
 | A post-B34 | no-tool-call (inline reply) | 2/5 |
-| B pre-B34 | `file__glob` | 0/5 |
-| B pre-B34 | `file__grep` via invoke_action (UnknownActionError) | 1/5 |
+| B pre-B34 | `glob_files` | 0/5 |
+| B pre-B34 | `grep_files` via invoke_action (UnknownActionError) | 1/5 |
 | B pre-B34 | `list_actions` | 1/5 |
 | B pre-B34 | no-tool-call | 3/5 |
 
-**Attribution**: B34 file__grep / file__glob ToolDefinitions + re-seeded `DEFAULT_HOT_LIST_SEED` is the sole cause of the routing shift (HIGH).
+**Attribution**: B34 grep_files / glob_files ToolDefinitions + re-seeded `DEFAULT_HOT_LIST_SEED` is the sole cause of the routing shift (HIGH).
 
 **Synonym sub-finding**: LLM sends `dir` as the directory argument 2/5 times (= addressed by D2-min/D2-full alias schema fix, not by handler-side synonym). The `content_regex` hypothesis from B35 worker observation was **refuted** by the ablation — LLM sends `pattern` + `content_regex` together; handler uses `pattern`, ignores extra.
 
@@ -180,7 +180,7 @@ LLM routes mcp_install intent to `mcp_search` skill (= description-class collisi
 
 ### 4.5 [HIGH-routing] `list_actions(filter=<path>)` for directory listing (W2 S3, S9, W4 if any)
 
-LLM uses `list_actions` with path-shaped `filter` for directory listing tasks. `file__glob` is in the catalog post-B34 but the LLM doesn't always choose it. Reproduced from earlier batches.
+LLM uses `list_actions` with path-shaped `filter` for directory listing tasks. `glob_files` is in the catalog post-B34 but the LLM doesn't always choose it. Reproduced from earlier batches.
 
 ### 4.6 [MED-rubric] artifact assertions for inline-reply scenarios
 
@@ -199,7 +199,7 @@ Scenario YAMLs declare `{skill: direct_llm, present: true}` for scenarios where 
 | §4.2 | EventStore stale-path | `EventStore.write()` recovery + `_open_new_file()` retry |
 | §4.3 | `simple_memo_app` attractor | description audit |
 | §4.4 | mcp_install routing mistake | description audit (= 5-way: builder / improver / importer / eval / install) |
-| §4.5 | `list_actions(filter=<path>)` recurrence | envelope-layer empty-result hint (= "for filesystem listing, use file__list") OR scenarios-side audit |
+| §4.5 | `list_actions(filter=<path>)` recurrence | envelope-layer empty-result hint (= "for filesystem listing, use list_directory") OR scenarios-side audit |
 
 ### MED — follow-ups
 
@@ -210,7 +210,7 @@ Scenario YAMLs declare `{skill: direct_llm, present: true}` for scenarios where 
 ### Resolved during the batch window (= recorded for trajectory)
 
 - §4.1 hot-list alias schema empty (commits `488c15e` + `a1a5093` by another session)
-- B34's 6 fixes (= W2 F2 driver / W5 peer / W6 phase / arg-normalize / file__grep / verifier-integration) all per-fix verified.
+- B34's 6 fixes (= W2 F2 driver / W5 peer / W6 phase / arg-normalize / grep_files / verifier-integration) all per-fix verified.
 
 ---
 

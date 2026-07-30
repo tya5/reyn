@@ -6,12 +6,23 @@ audience: [human, agent]
 
 # Tool naming convention
 
-This page is the canonical record of the naming convention for tool names
-(the flat registry names an agent calls, e.g. `read_file`, and the catalog
-`category__verb` qualified names, e.g. `file__read`). It exists so a reviewer
-can check "does this new tool name fit the convention" without re-deriving
-the rule from a census each time, and so `tests/test_tool_naming_convention_gate_3223.py`
+This page is the canonical record of the naming convention for tool names —
+**the one name each tool has**, e.g. `read_file`. It exists so a reviewer can
+check "does this new tool name fit the convention" without re-deriving the rule
+from a census each time, and so `tests/test_tool_naming_convention_gate_3223.py`
 (the drift-prevention CI gate) has a human-readable rationale to point at.
+
+> **#3429 — there is no second namespace.** Until 2026-07-29 every catalog
+> action also had a `<category>__<verb>` **qualified** name (`file__read` for
+> `read_file`), and this page documented both. Two names for one operation meant
+> every subsystem that keys on a tool name had to decide whether to handle both;
+> a census of the 11 that exist found 4 with explicit two-form compensation and 7
+> without. The qualified namespace is abolished. A category survives only as the
+> browsing axis `list_actions(category=[…])` exposes.
+>
+> `tests/test_no_qualified_tool_names_3429.py` keeps it abolished: it walks the
+> live registry, the catalog's membership table, the categories tuple, and the
+> assembled `tools=` payload, and fails on any `__` in a name.
 
 **Owner-ratified policy (#3223): no rename sweep.** Every name that predates
 this convention (or intentionally sits outside it) is grandfathered by name in
@@ -43,11 +54,10 @@ the right position, and isn't a 5th removal/fetch verb."
 
 - **New flat names**: `<verb>_<object>` (e.g. `read_file`, `list_agents`,
   `search_actions`). This is the plurality pattern among current flat names.
-- **Catalog qualified names**: `<category>__<verb>` (e.g. `file__read`,
-  `mcp__list_servers`). This is the catalog's addressing *design* — object
-  (category) first, then verb — and is not in conflict with R1's flat-name
-  rule; it is a different namespace with its own internally-consistent
-  scheme.
+- **There is no second, category-prefixed form.** The `<category>__<verb>`
+  addressing design was a different namespace with its own internally-consistent
+  scheme, and #3429 removed it. A `__` in a tool name is now a convention
+  violation the gate rejects, not a different namespace.
 - **Family-prefix groups are grandfathered as a whole**: `cron_*`,
   `pipeline_*`, `skill_*`, `mcp_*` (the legacy `mcp_verbs.py` object_verb
   group), `reyn_repo_*`, and `web_*` all use `<object>_<verb>` order
@@ -66,10 +76,10 @@ each already picked one verb, and the verb choices carry real distinctions
 
 | verb | operation-class (meaning) | example tools |
 |---|---|---|
-| `delete` | irreversible filesystem delete | `delete_file`, `file__delete` |
-| `drop` | deregister from an index (entity may still exist elsewhere) | `mcp_drop_server`, `mcp__drop_server` (FP-0066 P1b retired `drop_source` / `rag_operation__drop_source`) |
-| `forget` | memory removal — the dual of `remember` | `forget_memory`, `memory_operation__forget` |
-| `uninstall` | the dual of `install` | `plugin_management__uninstall` |
+| `delete` | irreversible filesystem delete | `delete_file` |
+| `drop` | deregister from an index (entity may still exist elsewhere) | `mcp_drop_server` (FP-0066 P1b retired the RAG `drop_source`) |
+| `forget` | memory removal — the dual of `remember` | `forget_memory` |
+| `uninstall` | the dual of `install` | `uninstall_plugin` |
 
 **Why NOT unify to a single `remove` verb**: doing so would erase two things
 that carry real meaning:
@@ -126,9 +136,9 @@ removal-class table above.)
 ## R3 — fetch-one: two classes
 
 - **`read`** = fetch **content** (e.g. `read_file`, `read_mcp_resource`,
-  `memory_operation__read`).
+  `read_memory_body`).
 - **`describe`** = fetch **metadata** (e.g. `describe_agent`,
-  `describe_action`, `multi_agent__describe_peer`). This is a distinct
+  `describe_action`). This is a distinct
   operation-class from `read`, not a competing synonym for it — introspection
   and content retrieval are different things.
 
@@ -138,8 +148,8 @@ predates this convention) — grandfathered by name. **New tools must not use
 
 `remove` / `fetch` / `retrieve` are 0-count in the current census and are not
 part of the canonical verb set for new names (though `fetch` remains valid
-as the qualified-name verb for the pre-existing `web__fetch`, itself part of
-the grandfathered `web_*` family).
+as the verb of the pre-existing `web_fetch`, itself part of the grandfathered
+`web_*` family).
 
 ## load class (distinct from read — FP-0066)
 
@@ -149,10 +159,8 @@ the run). This is why `load` is a distinct operation-class from `read`:
 calling a `read_*`-named tool would misleadingly suggest the result is inert
 content, when it actually changes what's active.
 
-`load_skill` (flat) / `skill_management__load` (qualified) are canonical
-per the FP-0066 ruling — `load` is added to the canonical verb lexicon for
-this reason. (`skill_management__load_skill` would be rejected under R5 —
-see below — since it repeats the category word in the verb position.)
+`load_skill` is canonical per the FP-0066 ruling — `load` is added to the
+canonical verb lexicon for this reason.
 
 ## R4 — install: source-split is canonical
 
@@ -163,41 +171,43 @@ kind applies — a install call errs toward being unambiguous about capability
 rather than making the LLM disambiguate via a discriminated argument.
 
 **Grandfathered**: single discriminated-arg install tools that predate this
-split — `plugin_management__install` (and the legacy flat
-`plugin_management__install`/`plugin_management__uninstall`/
-`plugin_management__list` trio, which additionally uses catalog-style
-`__` inside a *flat* registry name — grandfathered as a pre-existing group),
-`presentation_management__install`, and the orphaned `mcp_install` (superseded
-by the `mcp_install_local`/`_package`/`_registry` split on 2026-05-25; not
-present in `_OPERATION_RULES` any more — flagged as dead surface, candidate
-for a separate retire follow-up, out of scope for this PR).
+split — the `install_plugin` / `uninstall_plugin` / `list_plugins` trio,
+`presentation_install_local`, and the orphaned `mcp_install` (superseded by the
+`mcp_install_local`/`_package`/`_registry` split on 2026-05-25; not a catalog
+action any more — flagged as dead surface, candidate for a separate retire
+follow-up).
 
-## R5 — single-entry categories never form `X__X`
+The plugin trio takes R1's `verb_object` default rather than the `object_verb`
+order its sibling install families use, and #3429 records why: they were
+`plugin_management__install` / `__uninstall` / `__list` — the only registry
+entries that ever carried the catalog separator inside a flat name — so there
+was no pre-existing flat `plugin_*` tool family for them to be internally
+consistent WITH. `plugin_install` / `plugin_uninstall` were also unavailable:
+those are OP KINDS, and op kinds share one canonical-declaration namespace with
+tool names, so reusing them raises a conflicting-declaration error at import.
 
-A catalog category with exactly one member must not repeat the category name
-as its own verb (`exec__exec`, `skill_management__load_skill`). Instead use
-a clean canonical action-verb for that operation-class:
+## R5 — retired with the namespace it governed (#3429)
 
-- `exec__run` (not `exec__exec`) — `exec` is the only single-entry category
-  besides `presentation_management`; `run` is the canonical verb for the
-  "execute an ephemeral subprocess" class (`spawn` is reserved for
-  long-lived entities: `agent_spawn`, `session_spawn`).
-- `knowledge__search` (FP-0066 P3c, #3247 firm §3) — another single-entry
-  category (semantic search over the operator's own skill/memory/repo
-  knowledge, flat name `search_knowledge`). `search` was already in the
-  canonical verb lexicon (`search_actions` / `mcp_search_registry`), so this
-  fits R1's `verb_object` pattern with no lexicon addition and no
-  grandfather entry needed — unlike `exec`/`load`, `knowledge` did not need
-  a new verb minted for it.
-- `skill_management__load` (not `skill_management__load_skill`).
-- `presentation_management__install` is **not** an X__X violation — the
-  category is `presentation_management`, the verb is `install`; they are not
-  equal, so no rename is needed there (verb ≠ category word by construction).
+R5 said a catalog category with exactly one member must not repeat the category
+name as its own verb (`exec__exec`, `skill_management__load_skill`), and
+prescribed a clean action-verb instead. It was a rule about how to compose the
+`<category>__<verb>` form, so it went with that form.
 
-Catalog verb differing from the registry (flat) tool name is an existing,
-accepted pattern, not a new mechanism: `file__delete` ↔ registry
-`delete_file`, `multi_agent__describe_peer` ↔ registry `describe_agent`,
-`reyn_repo__read` ↔ registry `reyn_repo_read`.
+Two of its rulings survive as ordinary R1 names and are recorded here because
+the verbs they minted are still in the lexicon:
+
+- **`exec`** — `run` was chosen as the canonical verb for the "execute an
+  ephemeral subprocess" class (`spawn` is reserved for long-lived entities:
+  `agent_spawn`, `session_spawn`). The tool itself is `exec`.
+  ★ Note for CodeAct: `exec` collides with a BANNED builtin, so
+  `encoders.sanitize_identifier` suffixes it (`exec_`) when rendering the
+  code-API. That is a rendering concern, not a second name — the gate still
+  receives `exec`.
+- **`load_skill`** — `load` is fetch + activation, a distinct operation-class
+  from `read` (see the load-class section above).
+
+A tool name that contains `__` is now a violation of R1, caught by
+`tests/test_no_qualified_tool_names_3429.py`.
 
 ## Grandfathered anomalies with no family (individual, pre-existing)
 

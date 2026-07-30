@@ -1,6 +1,6 @@
 """#1452: single-source text codec — decode/encode ladder for file ops.
 
-`file__read` / `grep` / `file__edit` / `write_file` all need to turn raw bytes
+`read_file` / `grep` / `edit_file` / `write_file` all need to turn raw bytes
 into text (and back) without (a) dumping garbled binary into context, (b)
 silently mis-decoding legacy encodings (SJIS / EUC-JP / UTF-16) to replacement
 chars, or (c) silently transcoding a non-UTF-8 file on edit. This module is the

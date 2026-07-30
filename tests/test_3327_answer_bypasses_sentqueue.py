@@ -117,7 +117,7 @@ async def _start_blocked_write_turn(
         "reyn.runtime.router_loop.call_llm_tools",
         _sequenced_llm_stub([
             _tool_call_result(
-                "file__write",
+                "write_file",
                 f'{{"path": "{out}", "content": "written ok"}}',
             ),
             _text_result(),

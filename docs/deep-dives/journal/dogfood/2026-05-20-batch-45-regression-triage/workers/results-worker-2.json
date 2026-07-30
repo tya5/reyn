@@ -58,7 +58,7 @@
         "tool_called_file__read": 1,
         "permission_denied": 0
       },
-      "verdict_reason": "Reply rubric met (explains file purpose, demonstrates understanding, no fabrication). But events_pass=false: router used direct file__read tool instead of dispatching read_local_files skill. skill_run_spawned required but count=0. Inconclusive: rubric satisfied but structural event contract not met."
+      "verdict_reason": "Reply rubric met (explains file purpose, demonstrates understanding, no fabrication). But events_pass=false: router used direct read_file tool instead of dispatching read_local_files skill. skill_run_spawned required but count=0. Inconclusive: rubric satisfied but structural event contract not met."
     },
     {
       "id": "read_local_files_multi_file",

@@ -142,7 +142,7 @@ async def test_list_actions_mcp_returns_collapsed_verb_surface_e2e() -> None:
     mcp.operation sub-categories; ``reyn mcp list`` still shows
     installed servers, but ``list_actions(category="mcp")`` now returns
     the verb actions the LLM uses to drive search / install / list /
-    call / drop. Per-server enumeration moves to mcp__list_servers.
+    call / drop. Per-server enumeration moves to list_mcp_servers.
     """
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
@@ -161,12 +161,12 @@ async def test_list_actions_mcp_returns_collapsed_verb_surface_e2e() -> None:
         router_state=rs,
     )
     result = await LIST_ACTIONS.handler({"category": ["mcp"]}, ctx)
-    qns = {it["qualified_name"] for it in result["items"]}
+    qns = {it["action_name"] for it in result["items"]}
     assert qns == {
-        "mcp__search_registry",
-        "mcp__install_registry",
-        "mcp__install_package",
-        "mcp__install_local",
-        "mcp__list_servers", "mcp__list_tools",
-        "mcp__call_tool", "mcp__drop_server",
+        "mcp_search_registry",
+        "mcp_install_registry",
+        "mcp_install_package",
+        "mcp_install_local",
+        "list_mcp_servers", "list_mcp_tools",
+        "mcp_call_tool", "mcp_drop_server",
     }

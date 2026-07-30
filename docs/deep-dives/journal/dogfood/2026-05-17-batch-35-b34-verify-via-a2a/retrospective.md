@@ -16,8 +16,8 @@
 - **A2A driver pattern is the dominant lever** for long_session_v1. W7
   ablation: A2A + post-B34 (V=6), stdin + post-B34 (V=2), A2A + pre-B34
   (V=6). Driver pattern alone = +4V; B34 code = 0V contribution.
-- **B34 file__grep / file__glob land caused the routing shift** on
-  control_ir S2. W3 ablation: 3/5 → file__glob post-B34 vs 0/5 pre-B34.
+- **B34 grep_files / glob_files land caused the routing shift** on
+  control_ir S2. W3 ablation: 3/5 → glob_files post-B34 vs 0/5 pre-B34.
 - **W1's V=0 is verifier methodology mismatch + LLM noise**, not OS
   regression. W1 ablation reproduces 4.3/7 V under B35 driver,
   consistent with the 4-batch mean (~11V). EventStore stale-path is a
@@ -29,7 +29,7 @@
 - W5 peer-agent error envelope → silent hallucination eliminated.
 - W6 phase_no_progress completion injection → 5/5 skill_run_failed
   followed by skill_completion_injected.
-- arg-normalize → file__write and drop_source permission gates reached.
+- arg-normalize → write_file and drop_source permission gates reached.
 - task #93 verifier triad → B35 framework count matches manual rubric.
 
 ---
@@ -41,10 +41,10 @@
 
 | Batch | Symptom | Treatment in this session |
 |---|---|---|
-| B33 W4 | file__write text vs content KeyError | individual synonym fix (B34) |
+| B33 W4 | write_file text vs content KeyError | individual synonym fix (B34) |
 | B33 W4 | drop_source source_id vs source KeyError | individual synonym fix (B34) |
-| B35 W3 ablation | file__glob dir vs path | "same pattern, add synonym" |
-| B35 W3 ablation | file__glob content_regex (refuted as primary) | same |
+| B35 W3 ablation | glob_files dir vs path | "same pattern, add synonym" |
+| B35 W3 ablation | glob_files content_regex (refuted as primary) | same |
 
 I treated each as a local hallucination + handler-side defensive fix.
 Cross-batch pattern recognition skipped despite N=4 ≥ threshold-3.
@@ -112,7 +112,7 @@ The +5V from B33→B35 decomposes (= ablation-grounded):
 - **W6 phase fix + A2A**: +2V on plan_mode/fp_0011
 - **W2 F2 driver fix**: +2V on stdlib
 - **W1 verifier methodology**: -2V (= measurement artifact, not OS)
-- **W3 routing shift offset by residual arg gap**: -1V net (= file__grep
+- **W3 routing shift offset by residual arg gap**: -1V net (= grep_files
   routing works, but `dir vs path` synonym pending; addressed by
   mid-batch alias schema land)
 - **W4 LLM noise**: -1V (= within ±1V variance)
@@ -179,11 +179,11 @@ In priority order (= ablation-grounded where applicable):
 3. **`mcp_install` → `mcp_search` routing collision** (= 5-way skill
    description audit: builder / improver / importer / eval / install).
 4. **`list_actions(filter=<path>)` directory-listing misuse**.
-   Envelope-layer empty-result hint pointing to file__list / file__glob.
+   Envelope-layer empty-result hint pointing to list_directory / glob_files.
 5. **B27-H4 acompletion-never-awaited** (= issue #52) still open, not
    retested.
 6. **Hot-list alias schema fix retest** (= the other session's land):
-   B36 should explicitly verify `file__glob` arg-name mismatch is
+   B36 should explicitly verify `glob_files` arg-name mismatch is
    gone, and that B34 arg-normalize handler-side defensive is now
    redundant. If redundant, consider revert for cleanliness; if still
    firing, keep as defense-in-depth.

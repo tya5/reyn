@@ -39,7 +39,7 @@ python /Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/scripts/llm_
 
 | Patch ID | Scenario | Expression | Hypothesis |
 |----------|----------|------------|------------|
-| P-M2 | S2 | `tools[5]=<file__grep definition>` | B27-M2 removed file__grep from seed; restoring it fixes S2 |
+| P-M2 | S2 | `tools[5]=<grep_files definition>` | B27-M2 removed grep_files from seed; restoring it fixes S2 |
 | P-H1 | S4 | `tools[0]--` (remove plan) | B27-H1 restored plan; plan-first routing explains S4 regression |
 
 ### Pre-conclusion 5Q checklist (applied before causal claims)
@@ -48,7 +48,7 @@ python /Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/scripts/llm_
 2. P-M2: primary data (3/3 replay calls). P-H1: primary data (3/3 replay calls + 3/3 baseline).
    S5/S7/S8: inference from source diffs + B28/B30 findings docs — downgraded to "hypothesised."
 3. Falsifying check: Is B28 S2 verified result reproducible on current HEAD? No — baseline replays
-   show invoke_action(file__list) with wrong args, consistent with B30. This supports the claim
+   show invoke_action(list_directory) with wrong args, consistent with B30. This supports the claim
    that B28 S2 was a probabilistic N=1 event, not a structurally guaranteed outcome.
 4. Observation infra: llm_replay captures the exact tools array sent to LLM (verified by reading
    trace.jsonl request bodies). The patch replaces tool index 5 in that array in-place.
@@ -62,42 +62,42 @@ python /Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/scripts/llm_
 
 **Scenario input:** "Find all skill.md files under src/ that mention 'judge_output'."
 
-**B28 result:** VERIFIED — S2 used file__glob or valid file__list args. Worker notes:
-"M2 confirmed — file__grep never called. file__glob used." (Exact tool call args not recorded.)
+**B28 result:** VERIFIED — S2 used glob_files or valid list_directory args. Worker notes:
+"M2 confirmed — grep_files never called. glob_files used." (Exact tool call args not recorded.)
 
-**B30 result:** REFUTED — invoke_action(file__list, {match:"word", filter:"src/skill.md"})
-→ KeyError:'path'. LLM called file__list with glob-style args intended for file__grep/file__glob.
+**B30 result:** REFUTED — invoke_action(list_directory, {match:"word", filter:"src/skill.md"})
+→ KeyError:'path'. LLM called list_directory with glob-style args intended for grep_files/glob_files.
 
 **Trace captured:** `/tmp/b31-ablation-work/s2/trace.jsonl` (4 lines, 2 req/resp pairs)
 - Request ID: `2852811a-5782-426b-8963-55bfd7223129`
-- Tools array: 14 items; index 5 = `file__list`
+- Tools array: 14 items; index 5 = `list_directory`
 
 **Baseline replay (no patch, N=3):**
-All 3 calls: invoke_action(file__list) with incorrect glob-style args → replicates B30 regression.
+All 3 calls: invoke_action(list_directory) with incorrect glob-style args → replicates B30 regression.
 
-**P-M2 patch (tools[5] replaced with file__grep definition, N=3):**
-All 3 calls: invoke_action(file__grep) → semantically correct tool for the task.
+**P-M2 patch (tools[5] replaced with grep_files definition, N=3):**
+All 3 calls: invoke_action(grep_files) → semantically correct tool for the task.
 Output from `/tmp/b31-ablation-work/p_m2_s2_output.json`:
-- Run 1: invoke_action, action=file__grep
-- Run 2: invoke_action, action=file__grep
-- Run 3: invoke_action, action=file__grep
+- Run 1: invoke_action, action=grep_files
+- Run 2: invoke_action, action=grep_files
+- Run 3: invoke_action, action=grep_files
 
 **Causal attribution:**
-B27-M2 (commit `1636584`) removed `file__grep` from `DEFAULT_HOT_LIST_SEED` because
+B27-M2 (commit `1636584`) removed `grep_files` from `DEFAULT_HOT_LIST_SEED` because
 `_OPERATION_RULES` in `universal_dispatch.py` has no routing rule for it
-(FP-0034 §D20 deferred). With file__grep absent from the hot-list, the LLM reaches for
-the nearest-affordance tool (`file__list`) but passes glob-style arguments that `file__list`
+(FP-0034 §D20 deferred). With grep_files absent from the hot-list, the LLM reaches for
+the nearest-affordance tool (`list_directory`) but passes glob-style arguments that `list_directory`
 doesn't support (expects `path`, not `match`/`filter`).
 
 **Why B28 was VERIFIED:** B28 W3 S2 verification was a lucky probabilistic outcome.
-The current HEAD codebase (structurally identical tools array) produces file__list-with-wrong-args
-in 3/3 fresh runs. The B28 worker note "file__glob used" suggests the LLM happened to pick a
-valid file__list or file__glob call in that single N=1 run — consistent with the LLM having
-non-zero probability of correct behavior even without file__grep. The B28 → B30 regression
+The current HEAD codebase (structurally identical tools array) produces list_directory-with-wrong-args
+in 3/3 fresh runs. The B28 worker note "glob_files used" suggests the LLM happened to pick a
+valid list_directory or glob_files call in that single N=1 run — consistent with the LLM having
+non-zero probability of correct behavior even without grep_files. The B28 → B30 regression
 is not attributable to a code change; it is the surface of a pre-existing attractor that
 B27-M2 created and B28 verified optimistically.
 
-**Confidence:** HIGH — direct primary data (3/3 baseline wrong, 3/3 with-file__grep correct).
+**Confidence:** HIGH — direct primary data (3/3 baseline wrong, 3/3 with-grep_files correct).
 The causal mechanism (absent routing rule → wrong tool selected) is structurally explained.
 Remaining uncertainty: B28 actual call sequence is not directly inspected (B28 traces deleted).
 
@@ -107,7 +107,7 @@ Remaining uncertainty: B28 actual call sequence is not directly inspected (B28 t
 
 **Scenario input:** "Fetch and summarise https://docs.python.org/3/whatsnew/3.12.html"
 
-**B28 result:** VERIFIED — invoke_action(web__fetch) directly, routing_decided emitted.
+**B28 result:** VERIFIED — invoke_action(web_fetch) directly, routing_decided emitted.
 
 **B30 result:** REFUTED — LLM chose plan tool first; plan-first routing bypasses routing_decided.
 
@@ -116,11 +116,11 @@ Remaining uncertainty: B28 actual call sequence is not directly inspected (B28 t
 - Tools array: 14 items; index 0 = `plan`
 
 **Baseline replay (no patch, N=3):**
-All 3 calls: invoke_action(web__fetch) — LLM does NOT choose plan. Replicates B28 behavior.
+All 3 calls: invoke_action(web_fetch) — LLM does NOT choose plan. Replicates B28 behavior.
 This contradicts B30 W3 finding that "LLM chose plan tool first."
 
 **P-H1 patch (tools[0] removed = plan absent, N=3):**
-All 3 calls: invoke_action(web__fetch) — identical result to baseline.
+All 3 calls: invoke_action(web_fetch) — identical result to baseline.
 Plan presence vs absence makes no difference.
 
 **Source diff analysis:**
@@ -129,7 +129,7 @@ between B28 and B30 that would alter the plan-vs-invoke_action decision for a si
 
 **Causal attribution:**
 Cannot attribute. B30 W3 S4 "plan first" behavior appears to be N=1 probabilistic noise.
-The dominant LLM behavior for this input is invoke_action(web__fetch) in both B28 (verified)
+The dominant LLM behavior for this input is invoke_action(web_fetch) in both B28 (verified)
 and current-HEAD fresh replays (3/3 invoke_action). B30 happened to produce a plan-first
 call in its single run; no structural code change explains why plan-first would become more
 likely post-B28.
@@ -241,7 +241,7 @@ change, and the failure mode (async dispatch) is outside llm_replay's probe scop
 
 | Scenario | ΔV contribution | Attributed to | Confidence |
 |----------|----------------|---------------|------------|
-| S2 | -1 (VERIFIED → REFUTED) | B27-M2 (file__grep removal) created attractor; B28 verified optimistically (N=1 lucky); not a new regression | HIGH |
+| S2 | -1 (VERIFIED → REFUTED) | B27-M2 (grep_files removal) created attractor; B28 verified optimistically (N=1 lucky); not a new regression | HIGH |
 | S4 | -1 (VERIFIED → REFUTED) | Probabilistic noise (N=1 B30 run); no structural cause found | LOW |
 | S5 | -1 (INCONCLUSIVE → REFUTED) | B28-Q2 classification tightening, not a code regression | HIGH |
 | S7 | -1 (VERIFIED → REFUTED) | Unresolved; plan.py "recall" example is candidate cause | LOW |
@@ -256,10 +256,10 @@ change, and the failure mode (async dispatch) is outside llm_replay's probe scop
 
 ### Recommended fixes
 
-1. **S2 (actionable):** Add a `file__grep` routing rule to `_OPERATION_RULES` in
-   `universal_dispatch.py` (FP-0034 §D20 deferred work), then re-add `file__grep` to
-   `DEFAULT_HOT_LIST_SEED`. Until then, the LLM will continue to misuse `file__list` for
-   glob/grep tasks. Alternatively, patch `file__list`'s tool description to explicitly exclude
+1. **S2 (actionable):** Add a `grep_files` routing rule to `_OPERATION_RULES` in
+   `universal_dispatch.py` (FP-0034 §D20 deferred work), then re-add `grep_files` to
+   `DEFAULT_HOT_LIST_SEED`. Until then, the LLM will continue to misuse `list_directory` for
+   glob/grep tasks. Alternatively, patch `list_directory`'s tool description to explicitly exclude
    glob-style parameters.
 
 2. **S7 (hypothesis):** Run a targeted patch test replacing the "recall" example in

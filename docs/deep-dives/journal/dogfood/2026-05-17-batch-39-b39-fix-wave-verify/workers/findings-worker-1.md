@@ -14,7 +14,7 @@
 | sN | Scenario ID | Verdict | Reply | Events | Artifact | Notes |
 |----|-------------|---------|-------|--------|----------|-------|
 | S1 | simple_capability_question | **V** | PASS | PASS | FAIL* | Inline reply, mentions skills. *Artifact not blocking for inline path. |
-| S2 | factual_query_direct_llm | **V** | PASS | PASS | FAIL* | Correct idempotency explanation via web__search path. |
+| S2 | factual_query_direct_llm | **V** | PASS | PASS | FAIL* | Correct idempotency explanation via web_search path. |
 | S3 | skill_discovery_request | **R** | PASS | FAIL | FAIL | routing_decided not emitted (list_actions->inline). Persistent. |
 | S4 | explicit_skill_invocation_word_stats | **R** | PASS | PASS | FAIL | REGRESSION: direct_llm chosen over word_stats_demo. |
 | S5 | catalog_routing_decided_emitted | **R** | FAIL | PASS | FAIL | Clarification asked instead of poem. Persistent attractor. |
@@ -27,7 +27,7 @@
 
 **Result: CONFIRMED WORKING**
 
-Injected correctly-formatted ghost entry: `{"qualified_name":"skill__nonexistent_xyz","ts":<ts>}` into `.reyn/state/action_usage.jsonl`.
+Injected correctly-formatted ghost entry: `{"action_name":"skill__nonexistent_xyz","ts":<ts>}` into `.reyn/state/action_usage.jsonl`.
 
 Primary evidence (web.log, stderr captured via 2>&1):
 ```
@@ -38,7 +38,7 @@ LLM inspection: requests `314f3ff2` and `3614f80d` via `dogfood_trace.py --mode 
 
 Empty-schema skills NOT misclassified: `skill__direct_llm` and `skill__read_local_files` appear correctly in ARS (Angle 2). The `b1ca51a` follow-up fix is effective.
 
-Note on injection format: `_load_from_disk` reads `qualified_name` + `ts` fields. Using legacy `action`/`score` fields was silently ignored (first injection attempt). Correct format required for ghost test to be valid.
+Note on injection format: `_load_from_disk` reads `action_name` + `ts` fields. Using legacy `action`/`score` fields was silently ignored (first injection attempt). Correct format required for ghost test to be valid.
 
 ---
 
@@ -96,7 +96,7 @@ Hypothesis: Fresh hot-list (no prior word_stats_demo usage) causes LLM to defaul
 
 Primary data: `history.jsonl` shows `[task_completed]` message containing Python code (`[x**2 for x in range(10)]` etc.), followed by agent reply with zero code — only "コード例が提示されました".
 
-Pre-conclusion checklist: Q1=1 observation, Q2=primary (history.jsonl), Q3=B38 used synchronous web__search (different path), Q4=history.jsonl is primary, Q5=N=1.
+Pre-conclusion checklist: Q1=1 observation, Q2=primary (history.jsonl), Q3=B38 used synchronous web_search (different path), Q4=history.jsonl is primary, Q5=N=1.
 
 Hypothesis: Spawn-path task_completed creates narration attractor — LLM describes what was produced rather than surfaces code content. Different from synchronous tool-result path.
 

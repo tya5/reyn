@@ -545,9 +545,8 @@ def _build_run_tool_context(
 ):
     """Build a real, standalone ``ToolContext`` for ``reyn pipe run``'s
     ``tool:`` step dispatch — routed through the SAME seam a live agent
-    session's ``ToolStep`` uses (``_make_tool_dispatch`` /
-    ``resolve_invoke_action`` / the unified ``ToolRegistry``), just without a
-    live router loop behind it.
+    session's ``ToolStep`` uses (``_make_tool_dispatch`` / the unified
+    ``ToolRegistry``), just without a live router loop behind it.
 
     Field-by-field:
       - ``events``: a real ``EventLog`` (mirrors ``reyn pipe install``).

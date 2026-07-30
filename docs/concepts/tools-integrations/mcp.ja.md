@@ -60,14 +60,14 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 | Action | 何をするか |
 |------|-----------|
-| `mcp__search_registry({text})`                              | 公式 MCP registry で新規サーバーを検索 |
-| `mcp__install_registry({server_id})`                        | 公式 MCP registry の server を install |
-| `mcp__install_package({kind, identifier, version?})`        | npm / pypi / docker / GitHub URL から install |
-| `mcp__install_local({name, command, args})`                 | local command (LLM 生成 script 等) を直接 MCP server として登録 |
-| `mcp__list_servers()`                                       | `.reyn/config/mcp.yaml` に設定された全サーバー名を返す |
-| `mcp__list_tools({server})`                                 | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
-| `mcp__call_tool({tool, tool_args})`                              | `<server>__<tool>` ID + tool の declared tool_args で tool を call |
-| `mcp__drop_server({server})`                                | install 済サーバーを config から削除 |
+| `mcp_search_registry({text})`                              | 公式 MCP registry で新規サーバーを検索 |
+| `mcp_install_registry({server_id})`                        | 公式 MCP registry の server を install |
+| `mcp_install_package({kind, identifier, version?})`        | npm / pypi / docker / GitHub URL から install |
+| `mcp_install_local({name, command, args})`                 | local command (LLM 生成 script 等) を直接 MCP server として登録 |
+| `list_mcp_servers()`                                       | `.reyn/config/mcp.yaml` に設定された全サーバー名を返す |
+| `list_mcp_tools({server})`                                 | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
+| `mcp_call_tool({tool, tool_args})`                              | `<server>__<tool>` ID + tool の declared tool_args で tool を call |
+| `mcp_drop_server({server})`                                | install 済サーバーを config から削除 |
 
 LLM router がチャット turn 内で直接これらを呼べます。 初回利用の典型 flow:
 
@@ -90,7 +90,7 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-router が自動的に `mcp__list_tools` → `mcp__call_tool` を呼び出します。 どのワークフローにも `permissions.mcp:` 宣言を書く必要はありません。 **ワークフロー作成は、 繰り返し使うワークフローを形式化したい時** (= validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
+router が自動的に `list_mcp_tools` → `mcp_call_tool` を呼び出します。 どのワークフローにも `permissions.mcp:` 宣言を書く必要はありません。 **ワークフロー作成は、 繰り返し使うワークフローを形式化したい時** (= validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
 
 ## ロール 1：MCP クライアント — Reyn が外部サーバーを呼ぶ
 

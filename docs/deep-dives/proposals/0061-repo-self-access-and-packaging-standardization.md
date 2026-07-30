@@ -253,7 +253,7 @@ superseded-pointer, D10 declined-note, held-item marks).
 | F1 catalog + part-type meta-registry + taxonomy gate | ✅ landed (#2899 + catalog) |
 | F2 SP routing model (part×role map) | ✅ landed (router_frame) |
 | F3 builtin exemplar set + through-chain (builtin tier) | ✅ landed — curated-5 **4/5** (cheat-sheet + flagship pipeline + draft_judge_revise + status_card); #5 hook exemplar = Fork-1 defer (inline in cheat-sheet, owner-overridable) |
-| F4 `presentation_management__install_*` | ✅ landed (Layer A) |
+| F4 `presentation_install_local` | ✅ landed (Layer A) |
 | Layers A/B/C backbone (provenance / SSoT / routing frame) | ✅ landed |
 
 **Enhancement (E):**

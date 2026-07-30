@@ -122,7 +122,7 @@
 
 **Turn 2 reply**: 4 Python code examples demonstrating list comprehension (even filter, doubling, if-else, nested). Coherent with turn 1.
 
-**Events**: Two user_message_received + two inline completions. Turn 2 triggered web__search (routing_decided emitted). No permission_denied. No session_restored.
+**Events**: Two user_message_received + two inline completions. Turn 2 triggered web_search (routing_decided emitted). No permission_denied. No session_restored.
 
 **Rubric**: "second reply contains Python code example demonstrating list comprehension" — PASS. "Coherent with first turn" — PASS.
 

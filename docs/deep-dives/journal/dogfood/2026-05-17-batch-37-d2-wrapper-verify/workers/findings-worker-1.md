@@ -14,13 +14,13 @@ Checked 2 LLM request payloads directly via dogfood_trace.py --mode llm-tools-sc
 **Request 10727bfb (S1, router, 06:04:18)** — invoke_action description excerpt:
 ```
 ACTION ARG SCHEMAS (canonical keys for current hot-list actions):
-  file__read: {path}
-  file__list: {path}
-  file__grep: {case_sensitive, glob, max_results, path, pattern}
-  file__glob: {path, pattern}
+  read_file: {path}
+  list_directory: {path}
+  grep_files: {case_sensitive, glob, max_results, path, pattern}
+  glob_files: {path, pattern}
   reyn.source__list: {path}
-  web__search: {max_results, query}
-  web__fetch: {max_length, url}
+  web_search: {max_results, query}
+  web_fetch: {max_length, url}
   memory.operation__remember_shared: {body, description, name, slug, type}
   skill__skill_builder: {description, goal, skill_name}
   skill__skill_improver: {_resolved_paths, case_input, case_name, ...}
@@ -30,8 +30,8 @@ Use these exact key names in args when calling invoke_action.
 **Request b806c465 (S4, router, 06:05:33)** — invoke_action description excerpt:
 ```
 ACTION ARG SCHEMAS (canonical keys for current hot-list actions):
-  web__search: {max_results, query}
-  file__read: {path}
+  web_search: {max_results, query}
+  read_file: {path}
   ...
   memory.operation__remember_shared: {body, description, name, slug, type}
 Use these exact key names in args when calling invoke_action.
@@ -42,8 +42,8 @@ D2-wrapper block CONFIRMED in both inspected requests. Directly verified: 2/18 t
 ### Angle 2: D2-min/D2-full baseline non-regression
 
 All direct hot-list tool parameters.properties non-empty (request 10727bfb):
-- file__read: [path], file__grep: [pattern,path,glob,case_sensitive,max_results]
-- web__search: [query,max_results], web__fetch: [url,max_length]
+- read_file: [path], grep_files: [pattern,path,glob,case_sensitive,max_results]
+- web_search: [query,max_results], web_fetch: [url,max_length]
 - All 10 direct hot-list tools confirmed non-empty.
 
 **D2-min/D2-full baseline CONFIRMED.**
@@ -54,12 +54,12 @@ All direct hot-list tool parameters.properties non-empty (request 10727bfb):
 
 | Request | Action name | Args | Canonical? |
 |---------|------------|------|-----------|
-| 030a8544 (S2 T2 attempt 1) | default_api.web__search | {query, max_results} | WRONG name (hallucinated) |
-| c895cce9 (S2 T2 attempt 2) | web__search | {max_results, query} | CORRECT |
+| 030a8544 (S2 T2 attempt 1) | default_api.web_search | {query, max_results} | WRONG name (hallucinated) |
+| c895cce9 (S2 T2 attempt 2) | web_search | {max_results, query} | CORRECT |
 | b806c465 (S4) | skill__word_stats_demo | {text} | CORRECT |
-| 2bf460ec (S6 T2) | default_api.web__search | {query, max_results} | WRONG name |
+| 2bf460ec (S6 T2) | default_api.web_search | {query, max_results} | WRONG name |
 
-S4 and S2-retry used canonical names. S2-first and S6 used 'default_api.web__search' — see B37-OBS-1 below.
+S4 and S2-retry used canonical names. S2-first and S6 used 'default_api.web_search' — see B37-OBS-1 below.
 
 ---
 
@@ -77,7 +77,7 @@ Reply: "Reyn エージェントです。Reyn プロジェクトのコンテキ�
 Reply: "「冪等」（べきとう）とは、ある操作を1回行っても、複数回行っても、その結果が同じであることを意味する数学用語です。...HTTPの PUT や DELETE メソッドは冪等性を持つ..."
 - Rubric (explains idempotency factually): PASS
 - permission_denied: NOT emitted; routing_decided: 3x emitted
-- Final web_search via invoke_action(web__search) succeeded with args {max_results:1, query:"冪等とは"}
+- Final web_search via invoke_action(web_search) succeeded with args {max_results:1, query:"冪等とは"}
 - Verdict: VERIFIED
 
 ### S3: skill_discovery_request — REFUTED
@@ -113,8 +113,8 @@ T2 reply: "squares = [x**2 for x in range(10)]... long_words = [word for word in
 - Rubric 1 (T2 contains Python list comp code): PASS
 - Rubric 2 (coherent with T1 topic): PASS
 - permission_denied: NOT emitted
-- T2 tool call: invoke_action(default_api.web__search) → error → agent fell back to LLM knowledge
-- routing_decided emitted (source: invoke_action, action: default_api.web__search)
+- T2 tool call: invoke_action(default_api.web_search) → error → agent fell back to LLM knowledge
+- routing_decided emitted (source: invoke_action, action: default_api.web_search)
 - Verdict: VERIFIED (reply correct despite failed tool call)
 
 ### S7: out_of_scope_graceful_decline — VERIFIED
@@ -142,21 +142,21 @@ Reply: "申し訳ありませんが、私は画像を生成する機能を持っ
 
 ---
 
-## B37-OBS-1: default_api.web__search as spurious tool in toolset
+## B37-OBS-1: default_api.web_search as spurious tool in toolset
 
 **Observation (primary data, events log + LLM trace):**
 
-Three LLM requests (d8775949/ae44217a for S3, 2bf460ec for S6 T2) received `default_api.web__search` as an actual tool definition:
-- description: "Direct alias for default_api.web__search. Use invoke_action for schema details."
+Three LLM requests (d8775949/ae44217a for S3, 2bf460ec for S6 T2) received `default_api.web_search` as an actual tool definition:
+- description: "Direct alias for default_api.web_search. Use invoke_action for schema details."
 - parameters.properties: {} (empty — D2-min issue for this alias)
 
-This is a non-canonical qualified name (valid Reyn form: `web__search`, not `default_api.web__search`).
+This is a non-canonical qualified name (valid Reyn form: `web_search`, not `default_api.web_search`).
 
 **Effect observed:**
-- S6 T2: LLM tried invoke_action(action_name='default_api.web__search') → Unknown action error → graceful fallback to LLM knowledge → correct reply
-- S2 T2 attempt 1 (request 030a8544): LLM hallucinated 'default_api.web__search' even though it was NOT in that request's toolset → error → self-corrected to canonical 'web__search'
+- S6 T2: LLM tried invoke_action(action_name='default_api.web_search') → Unknown action error → graceful fallback to LLM knowledge → correct reply
+- S2 T2 attempt 1 (request 030a8544): LLM hallucinated 'default_api.web_search' even though it was NOT in that request's toolset → error → self-corrected to canonical 'web_search'
 
-**Hypothesis:** action_usage.jsonl (hot_list) may have recorded 'default_api.web__search' from a prior session's miscall, and the hot_list construction is re-exposing this malformed name. Observation only — no source investigation performed.
+**Hypothesis:** action_usage.jsonl (hot_list) may have recorded 'default_api.web_search' from a prior session's miscall, and the hot_list construction is re-exposing this malformed name. Observation only — no source investigation performed.
 
 ---
 

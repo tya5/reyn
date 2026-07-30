@@ -28,7 +28,7 @@ class — a production tool path bypassing the ctx-factory that threads
 turn_origin). TWO DISTINCT witnesses:
 
   4. **End-to-end wiring witness**: a REAL autonomous (hook-driven) turn driven
-     through the REAL presentation_management__install tool-invocation path
+     through the REAL presentation_install_local tool-invocation path
      (PRESENTATION_INSTALL.handler → build_legacy_op_context →
      router_state.op_context_factory = the adapter's make_router_op_context,
      which threads turn_origin) → the written entry's provenance ==
@@ -264,7 +264,7 @@ async def test_valid_blueprint_installs_and_registry_accepts_it(tmp_path):
 async def test_hook_turn_through_real_tool_path_stamps_auto_improvement(tmp_path):
     """Tier 2: end-to-end wiring witness (#2903 architect co-vet, the #2887
     class) — a REAL autonomous (hook-driven) turn driven through the REAL
-    presentation_management__install tool-invocation path stamps
+    presentation_install_local tool-invocation path stamps
     provenance="auto_improvement" on the written entry.
 
     Path exercised (production, no mocks): a real Session is stamped with a

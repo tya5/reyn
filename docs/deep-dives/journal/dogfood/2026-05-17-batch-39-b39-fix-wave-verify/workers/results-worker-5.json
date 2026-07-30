@@ -119,9 +119,9 @@
       "events_pass_via": "routing_decided=1",
       "routing_decided": 1,
       "routing_source": "invoke_action",
-      "tool_attempted": "invoke_action({action_name:'web__search', args:{query:'...'}})",
+      "tool_attempted": "invoke_action({action_name:'web_search', args:{query:'...'}})",
       "tool_outcome": "error (ModuleNotFoundError: No module named 'reyn.search_backends')",
-      "reply_excerpt": "web__search ツールを使用できませんでした。ModuleNotFoundError: No module named 'reyn.search_backends'. Reyn-specific documentation や具体的なコマンドを提供してください。",
+      "reply_excerpt": "web_search ツールを使用できませんでした。ModuleNotFoundError: No module named 'reyn.search_backends'. Reyn-specific documentation や具体的なコマンドを提供してください。",
       "notes": "Events PASS (routing_decided=1 via error outcome). Rubric not met: didn't describe message/send JSON-RPC method, endpoint shape, or reyn web startup. Same as B38 prediction (100% refuted)."
     },
     {

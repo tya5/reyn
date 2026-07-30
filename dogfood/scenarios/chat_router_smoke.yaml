@@ -63,7 +63,7 @@ scenarios:
           - { type: permission_denied }
       # B49 W1-S2 fix (2026-05-22): artifact requirement removed (= same
       # pattern as #399 W1-S1/S6/S7 closure). Router may answer the
-      # factual question inline via web__search + summary without
+      # factual question inline via web_search + summary without
       # dispatching direct_llm — rubric is the verdict, not the
       # implementation path. Forcing direct_llm dispatch incentivises
       # unnecessary skill invocation.

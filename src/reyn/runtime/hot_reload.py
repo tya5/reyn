@@ -49,9 +49,9 @@ _INSTALL_SOURCE_SEAMS: "dict[str, tuple[str, ...]]" = {
     # FP-0054 PR-C already registers for operator edits to that file.
     "presentation_install": ("presentations",),
     "mcp_install": ("mcp",),
-    # mcp__install_local writes .reyn/mcp.yaml via a parallel path (tools/mcp_verbs)
+    # mcp_install_local writes .reyn/mcp.yaml via a parallel path (tools/mcp_verbs)
     # but reloads the SAME mcp seam — its distinct source label maps here too.
-    "mcp__install_local": ("mcp",),
+    "mcp_install_local": ("mcp",),
 }
 
 

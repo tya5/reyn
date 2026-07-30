@@ -11,7 +11,7 @@
       "verdict": "V",
       "reply_excerpt": "Python 3.12 introduces several key new features, including: PEP 695: Type Parameter Syntax... PEP 701: Syntactic formalization of f-strings...",
       "events_pass": true,
-      "notes": "web__fetch invoked successfully (status 200, content_length 50000, total_length 103774). No permission_denied event. Reply names PEP 695 + PEP 701 + acknowledges other improvements. permissions.web.fetch: allow injection effective."
+      "notes": "web_fetch invoked successfully (status 200, content_length 50000, total_length 103774). No permission_denied event. Reply names PEP 695 + PEP 701 + acknowledges other improvements. permissions.web.fetch: allow injection effective."
     },
     {
       "id": "sandboxed_exec_simple",

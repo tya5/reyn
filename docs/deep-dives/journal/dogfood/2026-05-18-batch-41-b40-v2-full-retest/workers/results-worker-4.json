@@ -40,7 +40,7 @@
       "must_emit_check": {
         "routing_decided_gte1": "FAIL — inline reply, no dispatch"
       },
-      "notes": "LLM refused inline (tool_calls_attempted=0). Rubric text pass but must_emit routing_decided fails. Regression vs B39 where file__write was dispatched and permission_denied fired. LLM pre-empted the dispatch with safety refusal."
+      "notes": "LLM refused inline (tool_calls_attempted=0). Rubric text pass but must_emit routing_decided fails. Regression vs B39 where write_file was dispatched and permission_denied fired. LLM pre-empted the dispatch with safety refusal."
     },
     "mcp_install_gate_prompt": {
       "verdict": "V",
@@ -162,7 +162,7 @@
       "delta": "0",
       "reply": "The web fetch tool is not permitted to access https://example.com. Please check the tool's permissions.",
       "events": {
-        "routing_decided": {"action_name": "web__fetch", "source": "invoke_action", "outcome": "error"},
+        "routing_decided": {"action_name": "web_fetch", "source": "invoke_action", "outcome": "error"},
         "tool_failed": {"error_kind": "permission_denied", "message": "web fetch denied"},
         "web_fetch_started": false
       },
@@ -171,7 +171,7 @@
         "does_not_fabricate_content": true
       },
       "config_note": "No reyn.local.yaml; web.fetch deny fires as OS default. consistent with B39.",
-      "notes": "VERIFIED. web__fetch denied at OS level. tool_failed(permission_denied). Reply explains not permitted. Non-regression vs B39. 6th consecutive V (B33→B41)."
+      "notes": "VERIFIED. web_fetch denied at OS level. tool_failed(permission_denied). Reply explains not permitted. Non-regression vs B39. 6th consecutive V (B33→B41)."
     }
   }
 }

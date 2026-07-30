@@ -127,7 +127,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # difference is reachability, not observability.
     # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
     # Emitted by RouterLoop when invoke_action or a hot list alias is executed.
-    # action_name: the resolved qualified_name (e.g. "agent.peer__alice")
+    # action_name: the resolved action_name (e.g. "agent.peer__alice")
     # source: how the routing happened ("invoke_action" | "hot_list_alias")
     # outcome: "success" | "error" based on the tool result status
     # chain_id: for cross-agent tracing (P6)

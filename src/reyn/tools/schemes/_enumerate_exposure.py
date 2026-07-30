@@ -6,7 +6,7 @@ and everything the two cells disagree about is carried in the
 ``ExposureDeviation`` they each declare rather than in two divergent code paths.
 
 Both cells expose the **same set** — the base tools plus the catalog, minus
-``mcp__call_tool`` (a zero-capability catalog wrapper whose native equivalent
+``mcp_call_tool`` (a zero-capability catalog wrapper whose native equivalent
 ``call_mcp_tool`` is already among the base tools, so leaving it in showed the
 model the same action twice in two argument shapes). They differ in exactly one
 declared value, ``applies_contextual_narrowing``, and that difference has a
@@ -18,25 +18,20 @@ on a ``tools=`` payload this transport does not have.
 **alone**, so no base tool was callable from the code-API. Nothing anywhere
 recorded that as a decision — and the docs described the cell as "the same full
 flat catalog as ``enumerate-all``", which it was not. Measured before changing
-it: ``build_tools`` can emit 33 base tools, **0** of which collide by name with a
-catalog entry (base names are unqualified, catalog names are
-``<category>__<entry>``), so ``build_actions_map`` gains 33 identifiers without
-moving any existing one; 18 of the 33 were already reachable under a qualified
-alias resolving to the *same* ``ToolDefinition`` (``read_file`` ↔ ``file__read``,
-``delegate_to_agent`` ↔ ``multi_agent__delegate``, …), and 15 — the spawn /
-topology / present / render_template / compact tools and the MCP resource+prompt
-family — had no catalog route at all and were simply unreachable from a
-code-API turn.
+it: ``build_tools`` can emit 33 base tools; 18 of the 33 were already reachable
+through the catalog under a SECOND, ``<category>__<verb>`` spelling of the same
+``ToolDefinition``, and 15 — the spawn / topology / present / render_template /
+compact tools and the MCP resource+prompt family — had no catalog route at all
+and were simply unreachable from a code-API turn.
 
-#3428 (settled after that): those 18 aliases were then advertised **twice**, in
-both cells and in both retrieval cells too. That is no longer true —
-``without_duplicate_alias_spellings`` (``reyn.tools.exposure``) drops the
-qualified spelling of any operation whose bare spelling is in the same exposed
-set, at every site where a base+catalog population is composed. #3419 shipped
-the duplication on the grounds that no measurement said duplicate rows cost
-anything; a declaration the model is shown on every turn costs its own bytes on
-every turn, which is arithmetic rather than an open measurement. Which spelling
-is kept is the measured half — see that function's docstring.
+#3428 (settled after that): those 18 operations were then advertised **twice**,
+in both cells and in both retrieval cells too. #3429 removed the second spelling
+outright, so the two rows now carry the SAME name and
+``without_duplicate_names`` (``reyn.tools.exposure``) keeps the first — at every
+site where a base+catalog population is composed. #3419 shipped the duplication
+on the grounds that no measurement said duplicate rows cost anything; a
+declaration the model is shown on every turn costs its own bytes on every turn,
+which is arithmetic rather than an open measurement.
 """
 from __future__ import annotations
 
@@ -46,12 +41,12 @@ from reyn.tools.exposure import (
     Exposure,
     ExposureDeviation,
     descriptors_from_entries,
-    without_duplicate_alias_spellings,
+    without_duplicate_names,
 )
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 _SHARED_RATIONALE_PREFIX = (
-    "Base tools + catalog. ``mcp__call_tool`` is excluded because the base tools "
+    "Base tools + catalog. ``mcp_call_tool`` is excluded because the base tools "
     "already carry its native equivalent ``call_mcp_tool``, and this scheme's "
     "contract is that it never presents wrappers. Both enumerate-all cells "
     "expose this same set (#3381); they differ only in whether the narrowing "
@@ -60,7 +55,7 @@ _SHARED_RATIONALE_PREFIX = (
 
 TOOL_CALLS_EXPOSURE_DEVIATION = ExposureDeviation(
     includes_base_tools=True,
-    excluded_names=frozenset({"mcp__call_tool"}),
+    excluded_names=frozenset({"mcp_call_tool"}),
     applies_contextual_narrowing=False,
     rationale=(
         _SHARED_RATIONALE_PREFIX
@@ -73,7 +68,7 @@ TOOL_CALLS_EXPOSURE_DEVIATION = ExposureDeviation(
 
 CONTENT_FENCE_EXPOSURE_DEVIATION = ExposureDeviation(
     includes_base_tools=True,
-    excluded_names=frozenset({"mcp__call_tool"}),
+    excluded_names=frozenset({"mcp_call_tool"}),
     applies_contextual_narrowing=True,
     rationale=(
         _SHARED_RATIONALE_PREFIX
@@ -120,7 +115,7 @@ def build_enumerate_all_exposure(
     # identifier map derived from it is an encoding, so it does not.
     dispatchable_names = tuple(n for n in (_entry_name(e) for e in entries) if n)
 
-    exposed = without_duplicate_alias_spellings(
+    exposed = without_duplicate_names(
         [e for e in entries if _entry_name(e) not in deviation.excluded_names]
     )
     if deviation.applies_contextual_narrowing:

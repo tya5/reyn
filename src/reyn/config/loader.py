@@ -538,8 +538,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
         # Pipeline registry separated from static config — same #470 invariant
         # as skills/MCP. .reyn/config/pipelines.yaml carries project-local
-        # pipeline declarations (written by the pipeline_management__install_*
-        # tools); merged LAST so it wins on name collision with operator-edited
+        # pipeline declarations (written by the pipeline_install_local /
+        # pipeline_install_source tools); merged LAST so it wins on name collision with operator-edited
         # reyn.yaml pipeline entries. Shape: {"pipelines": {"entries": {<name>:
         # {<entry>}}}} — same as the pipelines section in reyn.yaml, handled by
         # the _merge pipelines branch above. Also in _HOT_RELOAD_FILES (the

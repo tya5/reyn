@@ -29,29 +29,29 @@
       "short_id": "s1",
       "verdict": "V",
       "b42_verdict": "V",
-      "events_observed": ["routing_decided (file__read)", "tool_executed", "permission_granted"],
+      "events_observed": ["routing_decided (read_file)", "tool_executed", "permission_granted"],
       "events_missing": [],
       "events_forbidden_seen": [],
       "reply_excerpt": "The file `docs/concepts/principles.md` contains eight design principles for reyn's architecture: P1. Phase is stateless and reusable; P2. Skill defines structure and owns final output; P3. OS controls execution; ...",
-      "notes": "Consistent V vs B42. routing_decided(file__read) + tool_executed present. Reply quotes P1-P8 with descriptions. All rubric criteria met."
+      "notes": "Consistent V vs B42. routing_decided(read_file) + tool_executed present. Reply quotes P1-P8 with descriptions. All rubric criteria met."
     },
     {
       "id": "file_glob_grep",
       "short_id": "s2",
       "verdict": "I",
       "b42_verdict": "I",
-      "events_observed": ["routing_decided (file__glob)", "routing_decided (file__grep)", "tool_executed x2"],
+      "events_observed": ["routing_decided (glob_files)", "routing_decided (grep_files)", "tool_executed x2"],
       "events_missing": [],
       "events_forbidden_seen": [],
       "reply_excerpt": "I couldn't find any `skill.md` files under the `src/` directory that mention 'judge_output'.",
-      "notes": "B41 routing fix (file__glob + file__grep via hot_list_alias) maintained in B43. Rubric criterion 1 (lists at least one file path) unmet — environment premise mismatch (no skill.md under src/ contains 'judge_output'). Routing correct, structural I held."
+      "notes": "B41 routing fix (glob_files + grep_files via hot_list_alias) maintained in B43. Rubric criterion 1 (lists at least one file path) unmet — environment premise mismatch (no skill.md under src/ contains 'judge_output'). Routing correct, structural I held."
     },
     {
       "id": "web_search_query",
       "short_id": "s3",
       "verdict": "V",
       "b42_verdict": "V",
-      "events_observed": ["routing_decided (web__search)", "web_search_started", "web_search_completed"],
+      "events_observed": ["routing_decided (web_search)", "web_search_started", "web_search_completed"],
       "events_missing": [],
       "events_forbidden_seen": [],
       "reply_excerpt": "I found the following results for 'OpenAI Python SDK changelog 2026': openai-python/CHANGELOG.md at main - GitHub; Changelog - OpenAI API; OpenAI Release Notes - May 2026 ...",
@@ -62,7 +62,7 @@
       "short_id": "s4",
       "verdict": "R",
       "b42_verdict": "R",
-      "events_observed": ["routing_decided (web__fetch)", "tool_failed (invoke_action)"],
+      "events_observed": ["routing_decided (web_fetch)", "tool_failed (invoke_action)"],
       "events_missing": ["web_fetch_started"],
       "events_forbidden_seen": [],
       "reply_excerpt": "I'm sorry, but I encountered a permission error when trying to fetch the content from the provided URL. I cannot access external websites at the moment.",

@@ -289,7 +289,7 @@ retrofit; a field without a pinned source is a Phase-4 hole — Addendum A).
   `builtin/**` (Addendum A). This is plumbing, not just config-authoring. The
   named "builtin" is deliberate — `BUILTIN_HOOK_SCHEMAS`-consistent; **`stdlib`
   is abolished** (Addendum A).
-- **F4. `presentation_management__install_*`** — the LLM-authorable
+- **F4. `presentation_install_local`** (named `presentation_management__install` when this proposal was written; renamed by #3429) — the LLM-authorable
   present-view registry op, mirroring skill/pipeline install (gated,
   threat-scanned, generation-recorded). Closes the output-axis asymmetry
   (§1.7) and lets output compositions become named, catalog-discoverable
@@ -532,7 +532,7 @@ duplicate of an existing, proven seam.
 **A8. Present-view install op — mirror skill-install structure; threat is
 LOWER than `emit_hook_event`, not emit-class.** Present has no install op today
 (inline-only; `presentations.yaml` is operator-only). The new
-`presentation_management__install_*` mirrors skill-install's **structure**:
+`presentation_install_local` mirrors skill-install's **structure**:
 tool def with gates, a `file_write` permission gate on
 `.reyn/config/presentations.yaml`, `record_config_generation` after the write,
 and hot-reload of a pure addition. But the **threat-scan is asymmetric**:

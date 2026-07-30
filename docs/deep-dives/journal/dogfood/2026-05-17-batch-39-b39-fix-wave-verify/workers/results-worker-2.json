@@ -21,8 +21,8 @@
       "id": "read_local_files_explain_source",
       "verdict": "INCONCLUSIVE",
       "agent": "dogfood-b39-2-s2",
-      "key_events": ["file__read direct", "routing_decided: file__read", "correct reply content"],
-      "notes": "Correct 8-line explanation of scheduler.py via file__read direct. No skill_run_spawned for read_local_files. Inline path used."
+      "key_events": ["read_file direct", "routing_decided: read_file", "correct reply content"],
+      "notes": "Correct 8-line explanation of scheduler.py via read_file direct. No skill_run_spawned for read_local_files. Inline path used."
     },
     {
       "id": "read_local_files_multi_file",
@@ -70,7 +70,7 @@
       "id": "chained_find_then_index",
       "verdict": "REFUTED",
       "agent": "dogfood-b39-2-s9",
-      "key_events": ["T1: file__list(docs/concepts/) correct", "T2: invoke_action(rag.operation__remember_or_update_corpus) wrong action"],
+      "key_events": ["T1: list_directory(docs/concepts/) correct", "T2: invoke_action(rag.operation__remember_or_update_corpus) wrong action"],
       "notes": "T1 correct. T2 wrong action (memory-like corpus op instead of skill__index_docs). Same pattern as B38 S9."
     }
   ],

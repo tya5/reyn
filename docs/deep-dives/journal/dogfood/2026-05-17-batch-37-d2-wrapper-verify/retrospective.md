@@ -26,7 +26,7 @@
 - **D2-wrapper visible across all workers** (7/7). Each worker quoted the
   `ACTION ARG SCHEMAS:` block from `invoke_action`'s description for at
   least one request. Example (W3): `invoke_action` description carries
-  `{web__search, file__read, file__list, skill__skill_builder,
+  `{web_search, read_file, list_directory, skill__skill_builder,
   reyn.source__read, agent.peer__researcher}` with canonical keys.
 - **R-WEB-TRUSTED-PYTHON gate unblock** (W6): `narr-3` ran
   skill_builder through all 5 phases to `workflow_finished` with **0
@@ -67,7 +67,7 @@ Cross-worker same-class observations in B37:
 | Worker | Scenario | Action | Hot-list at call | LLM `args` key | Canonical |
 |---|---|---|---|---|---|
 | W2 | S1 | `rag.operation__drop_source` | absent | `source_id` | `source` |
-| W4 | S1 | `file__write` | absent | `text` | `content` |
+| W4 | S1 | `write_file` | absent | `text` | `content` |
 | W4 | S6 | `rag.operation__drop_source` | absent | **`source_name`** | `source` |
 | W5 | S3 | `agent.peer__researcher` | absent (cold) | `message` | `request` |
 
@@ -127,7 +127,7 @@ data-driven from the actual schema, or removed.
 
 | Worker | Ghost alias | Likely origin |
 |---|---|---|
-| W1 | `default_api.web__search` | qualified-name corruption in `action_usage.jsonl` |
+| W1 | `default_api.web_search` | qualified-name corruption in `action_usage.jsonl` |
 | W2 | `skill__create_skill` | renamed skill (canonical: `skill__skill_builder`), prior session persistence |
 
 `reyn agent new` does not wipe `action_usage.jsonl` at fresh-worktree
@@ -163,8 +163,8 @@ Independent of D2-wrapper. Severity: MED.
 R-WEB gate is now structurally open, but mcp_search scenarios still
 REFUTE because `mcp_search` is absent from the fresh-workspace hot
 list. Adding `mcp_search` to `DEFAULT_HOT_LIST_SEED` (= the same
-mechanism that seeded `file__list`, `reyn.source__list`,
-`skill__index_docs`, `skill__eval`, `file__grep`, `file__glob`)
+mechanism that seeded `list_directory`, `reyn.source__list`,
+`skill__index_docs`, `skill__eval`, `grep_files`, `glob_files`)
 would fully exercise the R-WEB fix.
 
 ---
@@ -245,8 +245,8 @@ state**, not LLM behavior under canonical schemas.
    cold-start gap). Specific to peer delegation; same mechanism for
    other wrappers with hardcoded examples.
 3. **DEFAULT_HOT_LIST_SEED expansion**: `mcp_search` (W6),
-   `file__write` (W4 S1), `rag.operation__drop_source` (W2 S1 / W4 S6),
-   `web__fetch` (W3 S4). Audit fresh-workspace coverage against the
+   `write_file` (W4 S1), `rag.operation__drop_source` (W2 S1 / W4 S6),
+   `web_fetch` (W3 S4). Audit fresh-workspace coverage against the
    B37 W4 / W6 misses.
 4. **Hot-list seed validation at load** (= F1): reject ghost aliases
    that don't map to current registry.

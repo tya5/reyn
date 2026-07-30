@@ -108,8 +108,8 @@ def test_three_scope_qualified_reinforcements_when_enabled() -> None:
     # Exactly 1 canonical MUST occurrence (branch-3); backtick-wrapped list_actions
     assert "`list_actions`" in on
     assert on.count("FIRST tool call MUST be `list_actions`") == 1
-    # file__edit MUST lever (satisficing-counter) carried in ①
-    assert "`file__edit`" in on
+    # edit_file MUST lever (satisficing-counter) carried in ①
+    assert "`edit_file`" in on
 
 
 def test_explicit_action_enumeration_not_generic() -> None:

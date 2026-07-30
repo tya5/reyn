@@ -1,9 +1,9 @@
-"""Tier 2: mcp__install_local schedules a hot-reload after writing config.
+"""Tier 2: mcp_install_local schedules a hot-reload after writing config.
 
 Before this fix, _handle_mcp_install_local bypassed mcp_install_handle and
 wrote .reyn/mcp.yaml directly without calling request_reload. An installed
 local server never appeared in the same session's list_mcp_servers (required
-a restart). The other verbs (mcp__install_registry / mcp__install_package)
+a restart). The other verbs (mcp_install_registry / mcp_install_package)
 route through mcp_install_handle which calls request_reload — local is now
 aligned.
 
@@ -77,12 +77,12 @@ def _run_install(
 
 
 def test_local_install_schedules_reload(tmp_path: Path) -> None:
-    """Tier 2: mcp__install_local calls request_reload — installed server visible next turn."""
+    """Tier 2: mcp_install_local calls request_reload — installed server visible next turn."""
     reloader = _FakeReloader()
     result = _run_install(reloader, tmp_path)
     assert result["status"] == "ok", f"install failed: {result}"
     assert reloader.pending is True, "request_reload must fire — server won't appear without reload"
-    assert "mcp__install_local" in reloader.sources
+    assert "mcp_install_local" in reloader.sources
 
 
 def test_local_install_no_reload_when_no_active_reloader(tmp_path: Path) -> None:

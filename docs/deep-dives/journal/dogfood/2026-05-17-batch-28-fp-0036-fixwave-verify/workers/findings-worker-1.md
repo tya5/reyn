@@ -8,14 +8,14 @@
 | B28 actual | V/I/R/B = 0/0/7/0 |
 | Δ verified | 0 |
 | C1 regression | none — B27-C1 fix confirmed working (14 unique tools across all 7 scenarios, no duplicates) |
-| routing_decided emit | 3/7 scenarios emitted routing_decided (S2 invoke_action/web__search, S4 invoke_action/word_stats_demo, S6 invoke_action/web__search) |
+| routing_decided emit | 3/7 scenarios emitted routing_decided (S2 invoke_action/web_search, S4 invoke_action/word_stats_demo, S6 invoke_action/web_search) |
 
 ## Per-scenario verdict matrix
 
 | Scenario | B27 verdict | B28 verdict | Reply | Events | Artifacts | C1 check | routing_decided | Evidence |
 |---|---|---|---|---|---|---|---|---|
 | simple_capability_question | blocked | refuted | PASS | PASS | FAIL (no direct_llm artifact) | PASS (14 unique) | N/A (not required) | LLM replied inline, no skill_run spawned |
-| factual_query_direct_llm | blocked | refuted | PASS | PASS | FAIL (no direct_llm artifact) | PASS (14 unique) | emitted (not required by scenario) | invoke_action(web__search); routing_decided source=invoke_action |
+| factual_query_direct_llm | blocked | refuted | PASS | PASS | FAIL (no direct_llm artifact) | PASS (14 unique) | emitted (not required by scenario) | invoke_action(web_search); routing_decided source=invoke_action |
 | skill_discovery_request | blocked | refuted | PASS | FAIL (routing_decided absent) | FAIL (no direct_llm artifact) | PASS (14 unique) | NOT emitted (required) | LLM called list_actions directly — routing_decided only fires for __ or invoke_action calls |
 | explicit_skill_invocation_word_stats | blocked | refuted | FAIL (skill error) | PARTIAL (spawned+routing_decided fired, skill_run_completed absent) | FAIL (no word_stats_demo output artifact) | PASS (14 unique) | emitted (source=invoke_action) | python.safe permission denied: reyn.yaml has python.pure:allow but key is python.safe |
 | catalog_routing_decided_emitted | refuted | refuted | FAIL (asked clarification instead of poem) | FAIL (routing_decided absent) | FAIL (no direct_llm artifact) | PASS (14 unique) | NOT emitted (required) | LLM replied inline with no tool call |
@@ -50,7 +50,7 @@ S5 "短い詩を書いてください" -> agent asked for theme (did not write p
 
 ## Comparison to B27 worker 1
 
-**Resolved**: B27-C1 (duplicate tools) — fixed, 0 blocked. B27-H1 (plan tool) — plan visible in all payloads. B27-H2 (web tools) — web__fetch/web__search in tool list. B27-M2 (file__grep) — absent. B27-M5 (file__list/reyn.source__list) — present.
+**Resolved**: B27-C1 (duplicate tools) — fixed, 0 blocked. B27-H1 (plan tool) — plan visible in all payloads. B27-H2 (web tools) — web_fetch/web_search in tool list. B27-M2 (grep_files) — absent. B27-M5 (list_directory/reyn.source__list) — present.
 
 **Persisting**: B27-Q1/B28-F3 (direct_llm artifact gap). B27-M1/B28-F4 (routing_decided for list_actions). S5/S7 behavioral failures (B28-F6).
 

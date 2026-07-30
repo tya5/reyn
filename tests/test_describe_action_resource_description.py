@@ -64,22 +64,22 @@ def _make_ctx(skills=None, agents=None, mcp_servers=None):
     )
 
 
-def _describe(qualified_name: str, ctx: ToolContext) -> dict:
+def _describe(action_name: str, ctx: ToolContext) -> dict:
     return asyncio.run(_handle_describe_action(
-        {"action_name": qualified_name}, ctx,
+        {"action_name": action_name}, ctx,
     ))
 
 
 # Issue #879: mcp.tool / mcp.server resource-invoke describe paths were
 # removed when the MCP surface collapsed to verb actions. The per-tool /
 # per-server description metadata is now surfaced through
-# mcp__list_tools / mcp__list_servers results directly instead of
+# list_mcp_tools / list_mcp_servers results directly instead of
 # describe_action; that flow's coverage lives in test_universal_handlers
 # (= LIST_MCP_TOOLS / LIST_MCP_SERVERS handler tests).
 #
 # Phase 1 multi_agent collapse (2026-05-25): same pattern applied to the
 # agent.peer__X resource shape. Per-peer description surfaces through
-# multi_agent__describe_peer / multi_agent__list_peers results; coverage
+# describe_agent / list_agents results; coverage
 # lives in test_universal_handlers (= DESCRIBE_AGENT / LIST_AGENTS).
 
 
@@ -89,13 +89,13 @@ def _describe(qualified_name: str, ctx: ToolContext) -> dict:
 def test_operation_describe_unchanged_by_resource_description_fix():
     """Tier 2b: operation-category actions continue to use target.description.
 
-    Regression guard: file__read, web__fetch, etc. must not be affected by
+    Regression guard: read_file, web_fetch, etc. must not be affected by
     the B42-NF-W7-1 resource-description fix — their resolution path is
     unchanged.
     """
     ctx = _make_ctx()
-    out = _describe("file__read", ctx)
-    # The file__read tool description must be non-empty and is the
+    out = _describe("read_file", ctx)
+    # The read_file tool description must be non-empty and is the
     # operation's own description (not a resource-category fallback).
     assert out["description"]
     # And it shouldn't accidentally pull from the (empty) skills list.

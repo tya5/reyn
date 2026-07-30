@@ -1,4 +1,4 @@
-"""Tier 2: #2111 — the capability FLOOR denies EVERY invocable form (bare + qualified).
+"""Tier 2: #2111/#3429 — the capability FLOOR denies every floored tool, by name.
 
 CRITICAL security regression (tui live-probe): under delegation.capability_default=deny
 a delegate called bare ``remember_shared`` → it executed → persisted to shared memory.
@@ -8,17 +8,22 @@ gate actually receives. ONE root (the shared ``_FLOORED_DENY_CLASSES``), TWO sur
 both ``builtin_untrusted_profile`` (#1827, always-on while untrusted content is live —
 the prompt-injection persistence surface) and ``builtin_delegate_profile`` (#2081).
 
-Fix: the floored classes are defined by their qualified names + the bare aliases are
-DERIVED from the invoke_action unwrap source-of-truth (``unwrapped_tool_name``) →
-complete-by-construction.
+#2111's fix was to DERIVE the bare alias from the invoke_action unwrap
+source-of-truth, so the two forms could not fall out of lockstep. #3429 removed
+the second form outright: a tool has ONE invocable name, so the floor entry IS
+the gated name and there is nothing left to derive. The derivation's job passes
+to a different guard — every floored name must be a REGISTERED tool name, so a
+typo floors nothing and is caught, rather than silently guarding a non-existent
+form while the real route stays open (the #2111 gap-class, in the opposite
+direction).
 
 Two guards:
-- completeness-invariant: every floored tool's bare AND qualified form ∈ the floor,
-  enumerated FROM the unwrap SoT (a future floored tool missing its alias → RED).
+- completeness-invariant: every floored name is in the floor AND is a live
+  registered tool (a typo → RED).
 - live-gate falsify: a REAL ContextualPermission from each floor, through the REAL
   contextual gate seam (``tool_contextually_denied`` — the exact fn router_loop +
-  op-runtime call) → each form DENIED under the floor, ALLOWED under inherit/no-floor.
-  Drop a bare alias from the floor → the gate lets it through → RED (non-tautological).
+  op-runtime call) → each name DENIED under the floor, ALLOWED under inherit/no-floor.
+  Drop a name from the floor → the gate lets it through → RED (non-tautological).
 """
 from __future__ import annotations
 
@@ -29,75 +34,54 @@ import pytest
 from reyn.runtime.registry import AgentRegistry
 from reyn.security.permissions.capability_profile import (
     _BUILTIN_UNTRUSTED_DENY,
-    _FLOORED_BARE_ONLY,
-    _FLOORED_QUALIFIED,
+    _FLOORED_TOOLS,
     builtin_untrusted_profile,
     resolve_profile,
 )
 from reyn.security.permissions.effective import tool_contextually_denied
-from reyn.tools.universal_dispatch import unwrapped_tool_name
+from reyn.tools import get_default_registry
 
 
 def _all_floored_forms() -> list[str]:
-    """Every invocable form (qualified + bare unwrapped alias) of every floored tool,
-    enumerated FROM the unwrap source-of-truth — the test's expectation is derived, not
-    hand-listed, so a new floored tool is covered automatically."""
+    """Every floored tool name, enumerated FROM the floor table itself — the
+    test's expectation is derived, not hand-listed, so a new floored tool is
+    covered automatically."""
     forms: set[str] = set()
-    for qualifieds in _FLOORED_QUALIFIED.values():
-        for q in qualifieds:
-            forms.add(q)
-            bare = unwrapped_tool_name(q)
-            if bare is not None:
-                forms.add(bare)
+    for names in _FLOORED_TOOLS.values():
+        forms |= set(names)
     return sorted(forms)
 
 
 # ── completeness-invariant (SoT-derived) ────────────────────────────────────
 
 
-def test_every_floored_tool_has_both_forms_in_the_floor() -> None:
-    """Tier 2: each floored name is in the floor — AND, for a name with an
-    invoke_action route, its bare unwrapped alias too (the live gate receives the bare
-    form; a missing alias → RED, the gap-class guard). A BARE-ONLY router tool (no
-    qualified route, e.g. session_spawn) has no alias and is floored by its own name."""
-    for cls, qualifieds in _FLOORED_QUALIFIED.items():
-        for q in qualifieds:
-            assert q in _BUILTIN_UNTRUSTED_DENY, f"{cls}: {q!r} missing from floor"
-            bare = unwrapped_tool_name(q)
-            if bare is not None:  # has an invoke_action route → its bare alias must floor too
-                assert bare in _BUILTIN_UNTRUSTED_DENY, (
-                    f"{cls}: bare alias {bare!r} of {q!r} missing from floor — the live "
-                    "gate receives the bare form (#2111 regression)"
-                )
+def test_every_floored_name_is_in_the_floor() -> None:
+    """Tier 2: each name declared in a floor class reaches the flat deny union
+    the two builtin profiles are built from."""
+    for cls, names in _FLOORED_TOOLS.items():
+        for name in names:
+            assert name in _BUILTIN_UNTRUSTED_DENY, f"{cls}: {name!r} missing from floor"
 
 
-def test_floored_entries_are_qualified_or_explicitly_bare_only() -> None:
-    """Tier 2: #2111 SoT-completeness guard (the OTHER gap direction). Every name in
-    _FLOORED_QUALIFIED either unwraps to a bare alias (a real invoke_action route, so
-    derivation covers the live-gate form) OR is in the explicit _FLOORED_BARE_ONLY
-    allowlist. This converts the prior silent ``if bare is not None`` skip into an
-    enforced check: a MALFORMED qualified entry (typo / missing _OPERATION_RULES entry
-    whose unwrap unexpectedly returns None, not declared bare-only) → RED, instead of
-    silently flooring a non-existent form and leaving the real route unguarded."""
-    for cls, qualifieds in _FLOORED_QUALIFIED.items():
-        for q in qualifieds:
-            unwraps = unwrapped_tool_name(q) is not None
-            assert unwraps or q in _FLOORED_BARE_ONLY, (
-                f"{cls}: {q!r} neither unwraps to a bare alias nor is declared in "
-                f"_FLOORED_BARE_ONLY — a malformed floor entry would guard a "
-                f"non-existent form, leaving the real route unguarded (#2111 SoT gap)"
-            )
+def test_every_floored_name_is_a_registered_tool() -> None:
+    """Tier 2: #2111's gap-class in the opposite direction, re-guarded for #3429.
 
-
-def test_bare_only_set_entries_have_no_qualified_route() -> None:
-    """Tier 2: the inverse — nothing in _FLOORED_BARE_ONLY actually unwraps. A name with
-    a real invoke_action route mis-declared bare-only would bypass the derivation that
-    keeps its bare+qualified forms in lockstep; force it back onto _FLOORED_QUALIFIED."""
-    for name in _FLOORED_BARE_ONLY:
-        assert unwrapped_tool_name(name) is None, (
-            f"{name!r} is declared bare-only but has an invoke_action route — remove it "
-            f"from _FLOORED_BARE_ONLY and let _with_unwrapped_aliases derivation cover it"
-        )
+    A floored name that no tool answers to guards nothing — the floor LOOKS
+    complete while the real route stays open. #2111 caught this by requiring
+    every entry to unwrap through the alias table; with the alias table gone,
+    the equivalent (and stricter) check is that the name is live in the
+    registry."""
+    registered = {tool.name for tool in get_default_registry()}
+    unknown = [
+        (cls, name)
+        for cls, names in _FLOORED_TOOLS.items()
+        for name in names
+        if name not in registered
+    ]
+    assert unknown == [], (
+        f"floored name(s) that are not registered tools — these deny nothing "
+        f"and leave the real route unguarded: {sorted(unknown)!r}"
+    )
 
 
 def test_session_spawn_is_floored() -> None:
@@ -109,7 +93,7 @@ def test_session_spawn_is_floored() -> None:
 
 
 def test_bare_memory_write_aliases_present() -> None:
-    """Tier 2: the exact tui-probe regression — bare memory-write aliases are denied
+    """Tier 2: the exact tui-probe regression — the memory-write tools are denied
     (the form that slipped through and persisted to shared memory)."""
     assert {"remember_shared", "remember_agent", "forget_memory"} <= _BUILTIN_UNTRUSTED_DENY
 
@@ -120,8 +104,8 @@ def test_bare_memory_write_aliases_present() -> None:
 @pytest.mark.parametrize("tool", _all_floored_forms())
 def test_untrusted_floor_denies_every_form_at_the_live_gate(tool: str) -> None:
     """Tier 2: the #1827 untrusted-content floor (auto-applied while untrusted content
-    is live) DENIES every floored form (bare + qualified) at the real contextual gate.
-    Drop a bare alias → the gate lets it through → RED."""
+    is live) DENIES every floored tool at the real contextual gate.
+    Drop a name from the floor → the gate lets it through → RED."""
     contextual, _ = resolve_profile(builtin_untrusted_profile())
     assert tool_contextually_denied(contextual, tool), (
         f"untrusted floor does NOT deny {tool!r} at the live gate (#2111)"
@@ -132,7 +116,8 @@ def test_untrusted_floor_denies_every_form_at_the_live_gate(tool: str) -> None:
 def test_delegate_floor_denies_every_form_via_real_resolution(tool: str, tmp_path: Path) -> None:
     """Tier 2: the #2081 delegate floor — through the REAL registry resolution path
     (resolved_profile_for(is_delegate=True) under deny → ContextualPermission) → the
-    real gate seam DENIES every form. (Not a hand-built profile: the production path.)"""
+    real gate seam DENIES every floored tool. (Not a hand-built profile: the
+    production path.)"""
     reg = AgentRegistry(
         project_root=tmp_path, session_factory=lambda p: None,
         delegation_capability_default="deny",
@@ -147,7 +132,7 @@ def test_delegate_floor_denies_every_form_via_real_resolution(tool: str, tmp_pat
 @pytest.mark.parametrize("tool", _all_floored_forms())
 def test_inherit_allows_every_form(tool: str, tmp_path: Path) -> None:
     """Tier 2: regression — under capability_default=inherit (the default), an unbound
-    delegate gets NO floor → the gate ALLOWS every form (the floor is what denies; a
+    delegate gets NO floor → the gate ALLOWS every name (the floor is what denies; a
     fix that over-denies under inherit would break byte-identical pre-#2081)."""
     reg = AgentRegistry(
         project_root=tmp_path, session_factory=lambda p: None,

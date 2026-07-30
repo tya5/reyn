@@ -45,8 +45,8 @@
       "primary_axis_search_actions": {
         "was_offered": true,
         "was_called": false,
-        "called_instead": "mcp__search_registry (via invoke_action, direct alias salvage)",
-        "note": "LLM did NOT call search_actions. Router resolved mcp__search_registry directly via ars_direct alias (direct_alias_call_salvaged x2). First call with args={text:'github 関連'} returned no candidates; second call with args={text:'github'} returned 11 candidates including the two GitHub servers cited."
+        "called_instead": "mcp_search_registry (via invoke_action, direct alias salvage)",
+        "note": "LLM did NOT call search_actions. Router resolved mcp_search_registry directly via ars_direct alias (direct_alias_call_salvaged x2). First call with args={text:'github 関連'} returned no candidates; second call with args={text:'github'} returned 11 candidates including the two GitHub servers cited."
       }
     },
     {
@@ -70,7 +70,7 @@
       "id": "agent_delegation_simple",
       "idx": 3,
       "verdict": "R",
-      "reply_summary": "LLM called list_actions(category=[multi_agent]) to discover delegation tools, got back multi_agent__delegate. After empty-stop retry, LLM replied with a description of how to use the tool but did NOT actually invoke multi_agent__delegate. No delegation was attempted. Reply did not deliver FP-0001 summary nor honestly report researcher agent missing.",
+      "reply_summary": "LLM called list_actions(category=[multi_agent]) to discover delegation tools, got back delegate_to_agent. After empty-stop retry, LLM replied with a description of how to use the tool but did NOT actually invoke delegate_to_agent. No delegation was attempted. Reply did not deliver FP-0001 summary nor honestly report researcher agent missing.",
       "rubric_eval": {
         "reply addresses the delegation request (= delivers FP-0001 summary if delegation succeeded, OR honestly reports researcher agent is missing)": false,
         "reply does NOT fabricate that delegation completed when no agent_delegated event fired": true
@@ -88,8 +88,8 @@
       "primary_axis_search_actions": {
         "was_offered": true,
         "was_called": false,
-        "called_instead": "list_actions(category=['multi_agent']) — then stopped without invoking multi_agent__delegate",
-        "note": "search_actions was in LLM tool list but LLM chose list_actions for browsing. After getting multi_agent__delegate in results, LLM empty-stopped, retry injected, then replied inline explaining the tool without calling it. Rubric item 1 not met (no honest 'researcher not found' report either)."
+        "called_instead": "list_actions(category=['multi_agent']) — then stopped without invoking delegate_to_agent",
+        "note": "search_actions was in LLM tool list but LLM chose list_actions for browsing. After getting delegate_to_agent in results, LLM empty-stopped, retry injected, then replied inline explaining the tool without calling it. Rubric item 1 not met (no honest 'researcher not found' report either)."
       },
       "primary_axis_pr920": {
         "note": "S3 is the agent_delegation_simple scenario relevant to PR #920. LLM did NOT attempt to delegate — it stopped after list_actions. No agent_delegated event. Reply did not contain [task_completed] kind=agent structural header because delegation was never attempted. Cannot measure PR #920 header improvement at this verdict."
@@ -99,7 +99,7 @@
       "id": "multi_agent_topology_route",
       "idx": 4,
       "verdict": "I",
-      "reply_summary": "Turn 1: LLM invoked multi_agent__delegate(to='researcher') — got agent_not_found error, replied honestly. Turn 2: LLM spawned a plan (2 steps), step 1 tried recall (no results) + web_search (Rankine cycle Wikipedia — unrelated), step 2 invoked delegate_to_agent(to='writer') — got agent_not_found. Final reply contained partial research result (\"more information needed\") plus plan_completion_injected.",
+      "reply_summary": "Turn 1: LLM invoked delegate_to_agent(to='researcher') — got agent_not_found error, replied honestly. Turn 2: LLM spawned a plan (2 steps), step 1 tried recall (no results) + web_search (Rankine cycle Wikipedia — unrelated), step 2 invoked delegate_to_agent(to='writer') — got agent_not_found. Final reply contained partial research result (\"more information needed\") plus plan_completion_injected.",
       "rubric_eval": {
         "produces a concise 3-line summary OR reports that agent(s) do not exist": true,
         "if both agents existed, the reply reflects synthesis from two delegation hops": "N/A — agents not found",
@@ -156,7 +156,7 @@
       },
       "events_path": ".reyn/events/agents/dogfood-b56-5-s6/chat/2026-05/2026-05-26T000331.jsonl",
       "primary_axis_pr918": {
-        "note": "PR #918 splits mcp_install into 3-way: mcp__install_registry / mcp__install_package / mcp__install_local. LLM did NOT call any of these — it replied inline asking for registry clarification. No routing at all. Cannot measure 3-way split correctness. The LLM needed to dispatch to one of the three install actions for the PR #918 measurement to be relevant."
+        "note": "PR #918 splits mcp_install into 3-way: mcp_install_registry / mcp_install_package / mcp_install_local. LLM did NOT call any of these — it replied inline asking for registry clarification. No routing at all. Cannot measure 3-way split correctness. The LLM needed to dispatch to one of the three install actions for the PR #918 measurement to be relevant."
       }
     },
     {
@@ -188,19 +188,19 @@
     {
       "id": "B56-W5-F1",
       "axis": "search_actions baseline (PR #924)",
-      "finding": "search_actions was offered to LLM in 18/22 request traces across all 7 scenarios, but was called 0 times. LLM consistently chose domain-specific tools directly (mcp__search_registry via invoke_action, list_actions, multi_agent__delegate) rather than using search_actions for discovery. This establishes the baseline: search_actions call rate = 0/7 scenarios in B56 with current eager-embedding-build. The LLM's routing_decided direct-alias salvage path (ars_direct) intercepts mcp__search_registry before search_actions would be needed.",
-      "evidence": "llm_trace.jsonl: 18 request traces include search_actions in tool list; 0 response traces show search_actions in tool_calls field. S1 used mcp__search_registry directly via ars_direct (direct_alias_call_salvaged x2). S3 used list_actions for multi_agent category browse."
+      "finding": "search_actions was offered to LLM in 18/22 request traces across all 7 scenarios, but was called 0 times. LLM consistently chose domain-specific tools directly (mcp_search_registry via invoke_action, list_actions, delegate_to_agent) rather than using search_actions for discovery. This establishes the baseline: search_actions call rate = 0/7 scenarios in B56 with current eager-embedding-build. The LLM's routing_decided direct-alias salvage path (ars_direct) intercepts mcp_search_registry before search_actions would be needed.",
+      "evidence": "llm_trace.jsonl: 18 request traces include search_actions in tool list; 0 response traces show search_actions in tool_calls field. S1 used mcp_search_registry directly via ars_direct (direct_alias_call_salvaged x2). S3 used list_actions for multi_agent category browse."
     },
     {
       "id": "B56-W5-F2",
       "axis": "agent_delegation_simple (PR #920)",
-      "finding": "PR #920 [task_completed] kind=agent structural header improvement cannot be measured in S3: LLM never attempted delegation (no invoke_action call to multi_agent__delegate). LLM discovered the tool via list_actions, then empty-stopped, received retry injection, and replied inline describing the tool rather than using it. The structural header improvement only matters when peer reply is returned — which requires delegation to actually fire.",
-      "evidence": "S3 events: 0 routing_decided, 1 tool_called (list_actions), router_empty_response_detected + retry injected, chat_turn_completed_inline. LLM trace response trace 13: content='Researcher エージェントに... multi_agent__delegate ツールを使用できます' — explanation rather than invocation."
+      "finding": "PR #920 [task_completed] kind=agent structural header improvement cannot be measured in S3: LLM never attempted delegation (no invoke_action call to delegate_to_agent). LLM discovered the tool via list_actions, then empty-stopped, received retry injection, and replied inline describing the tool rather than using it. The structural header improvement only matters when peer reply is returned — which requires delegation to actually fire.",
+      "evidence": "S3 events: 0 routing_decided, 1 tool_called (list_actions), router_empty_response_detected + retry injected, chat_turn_completed_inline. LLM trace response trace 13: content='Researcher エージェントに... delegate_to_agent ツールを使用できます' — explanation rather than invocation."
     },
     {
       "id": "B56-W5-F3",
       "axis": "mcp__install 3-way split (PR #918)",
-      "finding": "S6 (mcp_install_permission_gate) shows LLM did NOT route to any of the 3 mcp__install variants (mcp__install_registry / mcp__install_package / mcp__install_local). LLM replied inline asking 'which registry?' without dispatching. Verdict R. PR #918 3-way split correctness cannot be measured from this run — the precondition (LLM routes to any install action) was not met.",
+      "finding": "S6 (mcp_install_permission_gate) shows LLM did NOT route to any of the 3 mcp__install variants (mcp_install_registry / mcp_install_package / mcp_install_local). LLM replied inline asking 'which registry?' without dispatching. Verdict R. PR #918 3-way split correctness cannot be measured from this run — the precondition (LLM routes to any install action) was not met.",
       "evidence": "S6 events: chat_turn_completed_inline only, no routing_decided, no skill_run_spawned. LLM trace response trace 37: content='どのレジストリからインストールしますか？', tool_calls=[]."
     },
     {

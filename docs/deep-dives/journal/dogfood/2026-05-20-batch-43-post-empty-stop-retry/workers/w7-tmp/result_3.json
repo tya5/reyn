@@ -151,7 +151,7 @@
         }
       ],
       "tool_sequence": [
-        "web__search",
+        "web_search",
         "invoke_action",
         "search_actions",
         "invoke_action",

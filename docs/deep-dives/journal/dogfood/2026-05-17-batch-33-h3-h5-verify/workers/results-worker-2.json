@@ -53,7 +53,7 @@
       "artifacts": "refuted",
       "predicted": "refuted",
       "brier": 0.094,
-      "root_cause": "Used file__read via invoke_action directly, not invoke_skill. Reply correct."
+      "root_cause": "Used read_file via invoke_action directly, not invoke_skill. Reply correct."
     },
     {
       "id": "read_local_files_multi_file",

@@ -4,13 +4,13 @@ symptom 3), sibling of ``tests/test_builtin_registry_disk_parity.py`` for
 
 **Motivation.** ``BUILTIN_PLUGINS`` (``src/reyn/builtin/registry.py``) is
 the ONLY registry ``reyn.builtin.discovery.list_builtin_plugins`` (and
-therefore the ``plugin_management__list`` tool) enumerates -- there is NO
+therefore the ``list_plugins`` tool) enumerates -- there is NO
 directory auto-scan under ``src/reyn/builtin/plugins/`` (mirrors the
 BUILTIN_SKILLS/BUILTIN_PIPELINES discipline the sibling test's docstring
 documents, and #3196's "a directory on disk must never self-advertise a
 capability" rule). A plugin directory that ships on disk but never gets a
 ``BUILTIN_PLUGINS`` entry is therefore PERMANENTLY unreachable via
-``plugin_management__list`` -- the exact "new builtin plugin ships
+``list_plugins`` -- the exact "new builtin plugin ships
 undiscoverable" shape #3202 symptom 3 exists to close. This gate is the
 completeness check the architect's firm design calls for.
 
@@ -65,7 +65,7 @@ def test_every_builtin_plugins_entry_exists_on_disk() -> None:
 def test_every_plugin_dir_on_disk_is_registered_in_builtin_plugins() -> None:
     """Tier 2: OS invariant -- disk -> registry direction (#3202 symptom 3's
     own bug shape: a plugin directory shipped on disk but never added to
-    BUILTIN_PLUGINS is permanently invisible to plugin_management__list)."""
+    BUILTIN_PLUGINS is permanently invisible to list_plugins)."""
     disk_names = _plugin_dirs_on_disk()
     assert len(disk_names) >= 1, (
         "vacuity guard: no plugin manifest found under builtin/plugins/ -- "
@@ -74,6 +74,6 @@ def test_every_plugin_dir_on_disk_is_registered_in_builtin_plugins() -> None:
     unregistered = disk_names - set(BUILTIN_PLUGINS)
     assert not unregistered, (
         "plugin directory present on disk but missing a BUILTIN_PLUGINS "
-        f"entry -- permanently undiscoverable via plugin_management__list "
+        f"entry -- permanently undiscoverable via list_plugins "
         f"(#3202 symptom 3): {sorted(unregistered)}"
     )

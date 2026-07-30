@@ -50,7 +50,7 @@ same role class as ``skill_list`` (_EXTERNAL). ``returns_external_content
 pins the classification.
 
 **visibility (firm §6)**: the ``knowledge`` category (and therefore
-``knowledge__search`` / this tool's registry entry, reachable via
+``search_knowledge`` / this tool's registry entry, reachable via
 ``invoke_action``/hot-list) is enumerated only when ``embedding.enabled:
 true`` — ``universal_catalog._enumerate_category``'s ``"knowledge"``
 branch calls the SAME ``is_search_available`` predicate ``search_actions``

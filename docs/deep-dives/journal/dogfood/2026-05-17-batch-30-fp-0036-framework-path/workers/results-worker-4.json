@@ -25,7 +25,7 @@
       "id": "file_write_outside_cwd_denied",
       "label": "S1",
       "verdict": "inconclusive",
-      "note": "routing_decided fired, no write_file event. file__write failed on KeyError:content (arg mismatch), permission gate not reached. Reply cited missing arg, not path restriction."
+      "note": "routing_decided fired, no write_file event. write_file failed on KeyError:content (arg mismatch), permission gate not reached. Reply cited missing arg, not path restriction."
     },
     {
       "id": "mcp_install_gate_prompt",

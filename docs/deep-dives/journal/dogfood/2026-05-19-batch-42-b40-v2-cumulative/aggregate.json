@@ -74,7 +74,7 @@
     {
       "id": "NF-W7-B42-3",
       "scenario": "scenario_6_file_and_doc_lookup_chain",
-      "hypothesis": "file_and_doc_lookup_chain triggers cold-start empty-stop NOT covered by B40 v2 ARS extend. Wrapper-description gap (= file__read/file__grep description doesn't lead LLM from chain's intent).",
+      "hypothesis": "file_and_doc_lookup_chain triggers cold-start empty-stop NOT covered by B40 v2 ARS extend. Wrapper-description gap (= read_file/grep_files description doesn't lead LLM from chain's intent).",
       "verify_method": "trace-patch-replay on S6 T1 + SP/tool-description ablation."
     },
     {

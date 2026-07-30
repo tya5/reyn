@@ -124,6 +124,13 @@ from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402
 MCP_DROP_SERVER_OP = ToolDefinition(
     canonical=STRUCTURED_PASSTHROUGH,
     name="mcp_drop_server",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_MCP_DROP_SERVER_DESCRIPTION,
     parameters=_MCP_DROP_SERVER_PARAMETERS,
     gates=ToolGates(router="allow"),

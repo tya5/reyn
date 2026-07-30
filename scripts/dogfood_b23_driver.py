@@ -7,7 +7,7 @@ on the line marked `RESULT:` so a parent driver / agent can parse it.
 
 Scenarios:
 - s1: catalog discovery (list_actions -> describe_action -> invoke_action)
-- s2: routing_decided P6 event emit (invoke_action file__read)
+- s2: routing_decided P6 event emit (invoke_action read_file)
 - s3: exec visibility gating (list_actions category=["exec"])
 
 The scenario prompt is sent to `reyn chat --cui` via stdin (a single user
@@ -41,8 +41,8 @@ SCENARIOS = {
     },
     "s2": {
         "name": "routing_decided P6 event emit",
-        "prompt": "file__read を invoke_action で /etc/hostname に対して使ってください",
-        "expected_path": "invoke_action(action_name='file__read', args={'path': '/etc/hostname'}) -> routing_decided event",
+        "prompt": "read_file を invoke_action で /etc/hostname に対して使ってください",
+        "expected_path": "invoke_action(action_name='read_file', args={'path': '/etc/hostname'}) -> routing_decided event",
         "prompt_class": "P-explicit",
     },
     "s3": {

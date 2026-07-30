@@ -217,5 +217,5 @@ def test_no_store_tail_degrades_to_bounded_note(tmp_path: Path) -> None:
 
 # #1449: the read_tool_result-tool image/text ref read-back tests moved to
 # tests/test_file_read_binary_retire_rtr_1449.py — the tool is retired and the
-# same-host ref read-back is now file__read (with image → #365 media-blocks and
+# same-host ref read-back is now read_file (with image → #365 media-blocks and
 # the #1449 non-image binary guard, superseding the old "image ref → error").

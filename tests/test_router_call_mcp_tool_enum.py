@@ -341,12 +341,12 @@ def test_list_mcp_tools_includes_input_schema():
     """Tier 2: each entry in mcp_tools result carries the tool's
     declared ``inputSchema`` verbatim.
 
-    Issue #879 collapsed MCP dispatch into a single ``mcp__call_tool``
+    Issue #879 collapsed MCP dispatch into a single ``mcp_call_tool``
     verb whose ``tool`` arg takes a ``<server>__<tool>`` self-contained
     identifier. The entry name is no longer a top-level callable
     function name (= the FP-0032 shape-collision concern no longer
     applies), and the LLM needs the schema directly to construct
-    mcp__call_tool's ``args`` field without an extra describe_mcp_tool
+    mcp_call_tool's ``args`` field without an extra describe_mcp_tool
     round-trip.
     """
     class _FakeHost:

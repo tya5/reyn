@@ -70,7 +70,7 @@ Events: routing_decided x2 (PASS)
 ### S5: a2a_task_lifecycle_status_poll — REFUTED
 Events: must_emit: [] (trivially PASS); chat_turn_completed_inline emitted
 - LLM called list_actions x2 looking for HTTP tools
-- Reply: explained web__search/web__fetch tool limitations; suggested external requests library
+- Reply: explained web_search/web_fetch tool limitations; suggested external requests library
 - All 3 rubric points fail (no A2A method description, no GET /tasks/{id} mention, no reyn web instruction)
 - B29-Q2 fix confirmed: chat_turn_completed_inline emitted
 

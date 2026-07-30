@@ -232,7 +232,7 @@ def run_reyn_once_in_container(
 
     Lifecycle mirrors :func:`run_reyn_in_container` (start container, provision the
     reyn venv, teardown always), but invokes ``reyn run-once --env-backend=docker
-    --container <name> --grant-file-write --exclude-tools web__search,web__fetch``
+    --container <name> --grant-file-write --exclude-tools web_search,web_fetch``
     with the WHOLE SWE task piped to stdin as ONE message.
 
     ``reyn run-once`` reads the entire stdin as a single user turn (not the REPL's
@@ -307,11 +307,11 @@ def run_reyn_once_in_container(
             # web tools so it cannot web-search/fetch the gold PR/solution (the
             # benchmark answer) — matching SWE-agent/OpenHands (no web in-bench). The
             # exec network path is already sandbox-gated off; web is the only leak.
-            "--exclude-tools", "web__search,web__fetch",
+            "--exclude-tools", "web_search,web_fetch",
             # #1667 explicit opt-out: this is an external-repo task on /testbed, so
-            # Reyn's own repo (reyn_repo__read/list/glob/grep self-help surface)
+            # Reyn's own repo (reyn_repo_read/list/glob/grep self-help surface)
             # is irrelevant — hide the whole category at the catalog source so the
-            # weak model doesn't misselect reyn_repo__grep over file__* (it would
+            # weak model doesn't misselect reyn_repo_grep over file__* (it would
             # search Reyn's repo, never the target repo → empty patch). The interactive
             # agent keeps reyn_repo (this is per-invocation explicit, owner 明示).
             "--exclude-categories", "reyn_repo",

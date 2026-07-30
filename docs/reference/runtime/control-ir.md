@@ -339,7 +339,7 @@ so ordinary memo/replay applies.
 
 Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend`. Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
 
-The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3, catalog qualified name **`exec__run`**) — the rename is tool/qualified-name-only and does not touch this op schema, its events, or its result shape.
+The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3) — the rename is tool-name-only and does not touch this op schema, its events, or its result shape. The op kind and the tool name therefore differ, which is why `op_runtime.contextual_gate._OP_KIND_TOOLS` still bridges these two strings after #3429 removed the rest of that table.
 
 ```json
 {
@@ -621,8 +621,8 @@ Handler lifecycle:
 
 Registers a skill (from a local directory or a git/GitHub source URL) into the
 project's `skills.entries` config. Two tool surface verbs converge on the same
-`op_runtime/skill_install.py` handler: `skill_management__install_local` (local
-path) and `skill_management__install_source` (git/URL, PR-D, #2548).
+`op_runtime/skill_install.py` handler: `skill_install_local` (local
+path) and `skill_install_source` (git/URL, PR-D, #2548).
 
 Local-path example:
 ```json
@@ -702,7 +702,7 @@ a skill body is model instructions, not code to execute; there is still no
 `run_skill` op). Extracted OUT of `read_file`'s former `is_skill_body_path`
 special-case (ADR 0064 §3.5 originally called for a dedicated verb; #2971
 instead folded it into the ordinary read op — this reverses that drift).
-Tool surface: `load_skill` (flat name), qualified `skill_management__load`
+Tool surface: `load_skill`
 (ratified per the #3223 naming-convention arc).
 
 ```json
@@ -762,8 +762,8 @@ expanded/denied values) only when provenance was classified.
 
 Registers a pipeline (from a local DSL file or a git/GitHub source URL) into the
 project's `pipelines.entries` config. Two tool surface verbs converge on the same
-`op_runtime/pipeline_install.py` handler: `pipeline_management__install_local` (local
-path) and `pipeline_management__install_source` (git/URL). Mirrors `skill_install`
+`op_runtime/pipeline_install.py` handler: `pipeline_install_local` (local
+path) and `pipeline_install_source` (git/URL). Mirrors `skill_install`
 as closely as possible, reusing its generic path-safety + sandboxed git-clone helpers
 verbatim (`_safe_skill_name` / `_contained_under` / `_parse_source_spec` /
 `_source_host` / `_shallow_clone` / `_read_yaml` / `_write_yaml` /
@@ -845,7 +845,7 @@ Events emitted: `pipeline_install_threat_match`, `pipeline_install_threat_blocke
 
 Registers a named presentation template (a declarative component tree) into the
 project's `presentations.entries` config (proposal 0060 Phase 1 Layer A, A8).
-One tool surface verb: `presentation_management__install`, handled by
+One tool surface verb: `presentation_install_local`, handled by
 `op_runtime/presentation_install.py`. Mirrors `skill_install` /
 `pipeline_install`'s STRUCTURE (permission gate → config write →
 `record_config_generation` → emit event → hot-reload), but there is **no**
@@ -936,7 +936,7 @@ OS-level error; plugin_install/spawn never falls back to a runtime fetch.
 See ADR 0064 §3.11a for the interpreter-path-resolution history this
 redesign supersedes. Handled by
 `op_runtime/plugin_install.py` / `op_runtime/plugin_uninstall.py`. LLM tool
-surface: `plugin_management__install` / `plugin_management__uninstall`
+surface: `install_plugin` / `uninstall_plugin`
 (`tools/plugin_management_verbs.py`) — named distinctly from the op kind to
 avoid a canonical-declaration collision (mirrors the `mcp_install_local` vs
 `mcp_install` op-kind precedent).
@@ -947,7 +947,7 @@ ADR §3.9 (P3): the SAME typed op is also exposed as a slash command
 (`reyn plugin install builtin|local|git <SOURCE>` / `reyn plugin uninstall
 <NAME>`, `interfaces/cli/commands/plugin.py`) — both thin adapters that build
 a `ToolContext` and call `invoke_tool(get_default_registry(),
-"plugin_management__install"/"__uninstall", ...)`, the SAME lookup+dispatch a
+"install_plugin"/"__uninstall", ...)`, the SAME lookup+dispatch a
 live chat-router LLM tool call uses. No surface re-implements the security
 logic: the composite permission decl is declared once in
 `tools/plugin_management_verbs.py` (the tool wrapper), and the `{kind: "git"}`
@@ -1077,7 +1077,7 @@ higher-trust one.
    manifest capability, call `skill_install.handle` / `pipeline_install.
    handle` (each sub-op carries `plugin_id=<name>`, §3.7) for
    skills/pipelines, or write `.reyn/config/mcp.yaml` directly
-   (probe-then-commit, mirrors `mcp__install_local`) for the root
+   (probe-then-commit, mirrors `mcp_install_local`) for the root
    `.mcp.json` — a server's `command` is registered AS-IS, no
    venv-interpreter rewrite. Emit `plugin_install_registered`.
 8. Delete the `_install_state.json` marker (absence = completed) and emit

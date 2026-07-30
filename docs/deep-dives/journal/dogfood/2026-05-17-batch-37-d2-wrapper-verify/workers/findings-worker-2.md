@@ -14,8 +14,8 @@
 | Scenario | Verdict | Key observation |
 |---|---|---|
 | index_docs_basic | REFUTED | Wrong action (drop_source instead of index_docs); permission_denied x2; no skill_run_spawned |
-| read_local_files_explain_source | INCONCLUSIVE | Correct 675-char reply via file__read; no skill_run_spawned |
-| read_local_files_multi_file | INCONCLUSIVE | Correct 886-char multi-file reply via 4x file__read; no skill_run_spawned |
+| read_local_files_explain_source | INCONCLUSIVE | Correct 675-char reply via read_file; no skill_run_spawned |
+| read_local_files_multi_file | INCONCLUSIVE | Correct 886-char multi-file reply via 4x read_file; no skill_run_spawned |
 | skill_builder_web_summariser | REFUTED | skill__create_skill invoked -> ValueError; ghost alias in hot-list |
 | word_stats_demo_sentence | VERIFIED | invoke_action->skill__word_stats_demo->spawned->completed; 49-char reply |
 | word_stats_demo_multiline | VERIFIED | skill__word_stats_demo direct alias->spawned->completed; correct word_counts |
@@ -35,10 +35,10 @@ ACTION ARG SCHEMAS block present in all 35 router requests. Sample from request 
 ```
 ACTION ARG SCHEMAS (canonical keys for current hot-list actions):
   reyn.source__read: {path}
-  file__read: {path}
-  web__search: {max_results, query}
+  read_file: {path}
+  web_search: {max_results, query}
   agent.peer__researcher: {request}
-  file__list: {path}
+  list_directory: {path}
   rag.operation__drop_source: {source}
 Use these exact key names in args when calling invoke_action.
 ```
@@ -59,11 +59,11 @@ invoke_action({"action_name": "skill__word_stats_demo", "args": {"text": "The qu
 invoke_action({"action_name": "skill__direct_llm", "args": {"prompt": "...", "test_case": "..."}})
   -> action not in hot-list; no schema guidance; LLM used reasonable keys; skill ran (S7)
 
-file__read({"path": "src/reyn/cron/scheduler.py"})
-  -> ACTION ARG SCHEMAS: file__read: {path} -> canonical key used (S2)
+read_file({"path": "src/reyn/cron/scheduler.py"})
+  -> ACTION ARG SCHEMAS: read_file: {path} -> canonical key used (S2)
 
-file__list({"path": "src/reyn/op_runtime/"})
-  -> ACTION ARG SCHEMAS: file__list: {path} -> canonical key used (S3)
+list_directory({"path": "src/reyn/op_runtime/"})
+  -> ACTION ARG SCHEMAS: list_directory: {path} -> canonical key used (S3)
 ```
 
 ### Mismatch (non-canonical args):

@@ -4,7 +4,7 @@ that it is the ephemeral one.
 #3379 made advertisement and enforcement read one effective source, so "visible but
 not callable" is gone. What survived is the diagnostic half: the tab showed only the
 ENVELOPE contextual (``resolved_profile_for``), while the narrowing that actually
-denied the owner's ``exec__run`` is the ephemeral ``_untrusted`` profile, composed by
+denied the owner's ``exec`` is the ephemeral ``_untrusted`` profile, composed by
 ``Session._effective_contextual_for_turn``. An operator asking the tab "what can this
 agent do right now" got an answer to "what is configured in general" — a surface that
 looks authoritative and answers a different question.
@@ -37,7 +37,7 @@ from tests._support.agent_session import make_session
 # arm below asserts that second half rather than assuming it.
 #
 # The BARE spelling, though the profile's ``_FLOORED_QUALIFIED`` declares the
-# qualified ``multi_agent__delegate``: #3428 stopped advertising the qualified
+# qualified ``delegate_to_agent``: #3428 stopped advertising the qualified
 # spelling of an operation the base tools already name, so the qualified one is no
 # longer in the census this reads. The deny still covers both forms — the profile
 # derives every invocable spelling from ``unwrapped_tool_name`` (#2111) — which is
@@ -101,7 +101,7 @@ def test_ephemeral_narrowing_reaches_the_tool_tab_as_its_own_reason(tmp_path) ->
         "fact about a condition that clears itself"
     )
     # The narrowing is targeted, not a wipe: a read tool the profile allows stays put.
-    assert "file__read" in _tools(after, "authorized")
+    assert "read_file" in _tools(after, "authorized")
 
 
 def test_turn_context_denial_self_clears_when_the_taint_leaves_the_context(
@@ -128,31 +128,30 @@ def test_turn_context_denial_self_clears_when_the_taint_leaves_the_context(
     assert _UNTRUSTED_DENIED_TOOL in _tools(cleared, "authorized")
 
 
-def test_both_spellings_of_a_floored_tool_stay_denied(tmp_path) -> None:
-    """Tier 2: the ephemeral floor rejects the qualified spelling as well as the bare
-    one, whichever the census happens to advertise.
+def test_every_floored_tool_stays_denied_at_the_live_gate(tmp_path) -> None:
+    """Tier 2: the ephemeral floor rejects EVERY name it floors at the live gate,
+    not just the one the constant above happens to witness.
 
-    The constant above names the bare spelling because #3428 stopped advertising the
-    qualified one; a witness chosen from the census must not quietly become the only
-    spelling anything checks. What the profile actually promises is that EVERY
-    invocable form is denied (#2111, derived from ``unwrapped_tool_name`` rather than
-    hand-listed), so both are asserted against the live gate here — the seam every
-    dispatch path calls, not the advertisement."""
+    #3429 changed what "every" ranges over. This test used to enumerate the
+    witness tool's two SPELLINGS (``all_invocable_forms``), because a floor
+    written in one spelling left the other reachable and the census-chosen
+    witness must not become the only spelling anything checks. There is one
+    spelling now, so the analogous over-narrow-witness risk is the TOOL: the
+    arm enumerates the whole floor rather than re-checking the constant."""
+    from reyn.security.permissions.capability_profile import _BUILTIN_UNTRUSTED_DENY
     from reyn.security.permissions.effective import tool_contextually_denied
-    from reyn.tools.universal_dispatch import all_invocable_forms
 
     s = _session(tmp_path)
     _mark_untrusted(s)
     effective = s._effective_contextual_for_turn()
 
-    forms = all_invocable_forms(_UNTRUSTED_DENIED_TOOL)
-    assert "multi_agent__delegate" in forms, (
-        "the qualified spelling is no longer derived from the bare one, so this arm "
-        "would only re-check the spelling the constant already names"
+    assert _UNTRUSTED_DENIED_TOOL in _BUILTIN_UNTRUSTED_DENY, (
+        "the witness constant is not in the floor, so this arm would not be "
+        "checking the thing the rest of the file is about"
     )
-    for spelling in forms:
-        assert tool_contextually_denied(effective, spelling), (
-            f"{spelling} reaches the live gate while untrusted content is in context"
+    for name in sorted(_BUILTIN_UNTRUSTED_DENY):
+        assert tool_contextually_denied(effective, name), (
+            f"{name} reaches the live gate while untrusted content is in context"
         )
 
 
@@ -239,7 +238,7 @@ async def test_an_envelope_denial_keeps_its_durable_reason_while_tainted(
         "a durable envelope denial was re-attributed to the transient per-turn axis"
     )
     assert envelope_denied not in _tools(state, "denied_by_turn_context")
-    # ``multi_agent__delegate`` is not in the enumerate-all census this arm composes;
+    # ``delegate_to_agent`` is not in the enumerate-all census this arm composes;
     # ``agent_spawn`` is, and the topology profile above denies neither it nor anything
     # but ``delegate_to_agent`` — so it is ephemeral-only here.
     assert "agent_spawn" in _tools(state, "denied_by_turn_context"), (

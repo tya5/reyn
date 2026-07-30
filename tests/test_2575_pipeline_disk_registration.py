@@ -21,7 +21,7 @@ Coverage:
      startup); empty → empty.
   3. Wiring — ``from_config(config, project_root)`` builds the registry once;
      ``Session(pipeline_registry=)`` adopts it.
-  4. Surfacing + invoke — a config-loaded pipeline surfaces as ``pipeline__<name>``
+  4. Surfacing + invoke — a config-loaded pipeline is NAMED by ``pipeline_list``
      (list_actions) and runs end-to-end through the real router loop.
   5. Cross-pipeline ``call`` — a loaded pipeline whose step ``call``s ANOTHER
      loaded pipeline resolves + runs (the foundation's deferred named-callee
@@ -410,7 +410,7 @@ def test_session_without_registry_owns_empty_one(tmp_path: Path) -> None:
     assert session.pipeline_registry.names() == ()
 
 
-# ── 4. Surfacing: a config-loaded pipeline shows as pipeline__<name> ──────────
+# ── 4. Surfacing: a config-loaded pipeline is named by the pipeline_list verb ─
 
 
 class _FakeHost:
@@ -454,7 +454,7 @@ class _FakeHost:
 @pytest.mark.asyncio
 async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> None:
     """Tier 2: #3026 — a pipeline loaded from a config entry is NAMED by the
-    ``pipeline__list`` verb, not enumerated as its own ``pipeline__<name>`` action.
+    ``pipeline_list`` verb, not enumerated as its own ``pipeline__<name>`` action.
 
     This pinned the config-entry→catalog path when each registered pipeline was a
     flat-listed action; #3026 removed that enumeration (the payload must not scale
@@ -478,11 +478,11 @@ async def test_disk_loaded_pipeline_surfaces_in_list_actions(tmp_path: Path) -> 
 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
-    items = {it["qualified_name"]: it for it in result["items"]}
+    items = {it["action_name"]: it for it in result["items"]}
     assert "pipeline__hello.hello" not in items, (
         "a disk-registered pipeline must not become an enumerated action (#3026)"
     )
-    assert "pipeline__list" in items, "the verb that names it is enumerated"
+    assert "pipeline_list" in items, "the verb that names it is enumerated"
 
     # The disk-loaded pipeline's name + description reach the LLM through the
     # verb's result — the same config-entry→catalog chain, one hop later.
@@ -541,10 +541,10 @@ steps:
 
 
 _PIPELINE_LAUNCH_VERBS = (
-    "run_pipeline", "pipeline__run",
-    "run_pipeline_async", "pipeline__run_async",
-    "run_pipeline_inline", "pipeline__run_inline",
-    "run_pipeline_inline_async", "pipeline__run_inline_async",
+    "run_pipeline", "run_pipeline",
+    "run_pipeline_async", "run_pipeline_async",
+    "run_pipeline_inline", "run_pipeline_inline",
+    "run_pipeline_inline_async", "run_pipeline_inline_async",
 )
 
 
@@ -571,8 +571,7 @@ def test_loading_a_pipeline_does_not_loosen_the_floor(tmp_path: Path) -> None:
     """Tier 2: the floor is registration-INDEPENDENT — a populated registry
     (a real config-loaded pipeline) does not create a bypass. The resolved
     untrusted floor still denies the launch verbs the loaded pipeline would be
-    reached through (``pipeline__<name>`` curries to the denied run_pipeline
-    target)."""
+    reached through."""
     import reyn.security.permissions.capability_profile as cp
     from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
 
@@ -583,12 +582,11 @@ def test_loading_a_pipeline_does_not_loosen_the_floor(tmp_path: Path) -> None:
     contextual, _ = cp.resolve_profile(cp.builtin_untrusted_profile())
     layer = ContextualLayer(contextual)
 
-    # the loaded pipeline resolves (D19) to the run_pipeline target — still denied
+    # the loaded pipeline is launched through run_pipeline — still denied
     assert layer.allows(CapabilityAxis.TOOL, "run_pipeline") is False
-    assert layer.allows(CapabilityAxis.TOOL, "pipeline__run") is False
 
 
-# ── 4b. Full live loop: config-loaded pipeline invoked via pipeline__<name> ────
+# ── 4b. Full live loop: config-loaded pipeline invoked via run_pipeline ───────
 
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
@@ -610,10 +608,14 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2c: an agent launches a CONFIG-LOADED pipeline through the REAL
-    router loop via the ``pipeline__<name>`` form the enumerator advertises,
-    and its real transform output round-trips into chat history — the
-    config-entry→surface→invoke chain end-to-end (not the handler in
-    isolation)."""
+    router loop, and its real transform output round-trips into chat history —
+    the config-entry→surface→invoke chain end-to-end (not the handler in
+    isolation).
+
+    #3429: the call used to be ``invoke_action(action_name="pipeline__<name>")``
+    — an author-time spelling that curried the pipeline name out of the ACTION
+    NAME. It is now ``run_pipeline{name}``, the same effective call the curry
+    produced, and the only one."""
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
     loaded = build_pipeline_registry(_entries(("hello", "pipelines/hello.yaml")), tmp_path)
@@ -644,8 +646,8 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
             "function": {
                 "name": "invoke_action",
                 "arguments": json.dumps({
-                    "action_name": "pipeline__hello.hello",
-                    "args": {"input": {"name": "Reyn"}},
+                    "action_name": "run_pipeline",
+                    "args": {"name": "hello.hello", "input": {"name": "Reyn"}},
                 }),
             },
         }],

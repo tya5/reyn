@@ -78,7 +78,7 @@ def _delegate_result(to: str, request: str) -> LLMToolCallResult:
                 "function": {
                     "name": "invoke_action",
                     "arguments": json.dumps({
-                        "action_name": "multi_agent__delegate",
+                        "action_name": "delegate_to_agent",
                         "args": {"to": to, "request": request},
                     }),
                 },

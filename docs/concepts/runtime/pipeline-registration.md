@@ -2,7 +2,7 @@
 type: concept
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline registration, pipelines entries, register pipeline, run_pipeline, pipeline DSL, PipelineRegistry, pipeline__run, call step target, load pipeline from config, add a pipeline, pipeline_management, install a pipeline]
+search_hints: [pipeline registration, pipelines entries, register pipeline, run_pipeline, pipeline DSL, PipelineRegistry, run_pipeline, call step target, load pipeline from config, add a pipeline, pipeline_management, install a pipeline]
 ---
 
 # Pipeline registration
@@ -60,11 +60,8 @@ pipelines:
    run_pipeline(name="greetings.hello", input={name: "Reyn"})
    ```
 
-   or via the qualified catalog verb the action catalog surfaces:
-
-   ```
-   pipeline__greetings.hello({name: "Reyn"})
-   ```
+   That is the only form. (Before #3429 a per-pipeline `pipeline__<name>`
+   spelling also resolved; it was a second name for the same call.)
 
 ## Namespacing: `{entry-key}.{pipeline-name}`
 
@@ -120,7 +117,7 @@ section, later tiers winning on name collision:
 2. `reyn.yaml` — project
 3. `reyn.local.yaml` — project-local (gitignored)
 4. `.reyn/config/pipelines.yaml` — runtime-dynamic, written by the
-   `pipeline_management__install_*` tools
+   `pipeline_install_local` / `pipeline_install_source` tools
 
 Hand-editing any of the first three is a normal way to register a pipeline;
 the fourth is written automatically by the install tools below and reflects
@@ -173,7 +170,7 @@ Two chat-callable tools under the `pipeline_management` category write
 (pipeline management is a chat-driven, in-conversation flow, mirroring
 `skill_management`).
 
-### `pipeline_management__install_local`
+### `pipeline_install_local`
 
 Registers a local pipeline DSL file into `.reyn/config/pipelines.yaml`:
 
@@ -192,7 +189,7 @@ Registers a local pipeline DSL file into `.reyn/config/pipelines.yaml`:
    WAL truncation), emits a `pipeline_installed` P6 event, and requests a
    hot-reload.
 
-### `pipeline_management__install_source`
+### `pipeline_install_source`
 
 Fetches a pipeline from a git/GitHub URL and installs the clone:
 
@@ -241,7 +238,7 @@ from the current on-disk cascade.
 session's live in-memory `PipelineRegistry` object to the spawned driver as
 a spawn-local override. That is redundant with the reapply-seam rebuild
 above, and worse: it hands the driver a registry snapshot that can already
-be stale relative to disk (e.g. a concurrent `pipeline_management__install_*`
+be stale relative to disk (e.g. a concurrent `pipeline_install_*`
 landed between the calling session's own last reload and the spawn). #3097
 folded that override out — the family gate (spawn → reapply seam → fresh
 disk read) achieves the same effect without depending on the caller having a
@@ -265,9 +262,9 @@ authorized agents; it never creates a bypass of those floors. See
 [Capability profiles](capability-profile.md) and
 [Delegation policy](delegation-policy.md).
 
-The `pipeline_management__install_*` verbs (the REGISTRATION action itself,
+The `pipeline_install_local` / `pipeline_install_source` verbs (the REGISTRATION action itself,
 distinct from launching) sit on the same untrusted-content / unbound-delegate
-floor as `skill_management__install_*` and `mcp__install_*` — no registering a
+floor as the `skill_install_*` and `mcp_install_*` verbs — no registering a
 pipeline from untrusted content either.
 
 ## See also

@@ -229,8 +229,8 @@ async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Pat
     """Tier 2: OS invariant — the SAME narrowing run_agent_step builds
     (``_build_agent_step_narrowing``), spawned via ``spawn_ephemeral_session``,
     is LIVE-enforced (``registry.resolved_profile_for``) to deny
-    ``delegate_to_agent`` (+ its qualified ``multi_agent__delegate`` alias)
-    AND ``run_pipeline`` (+ its qualified ``pipeline__run`` alias, IS-1 R6 S3:
+    ``delegate_to_agent`` (+ its qualified ``delegate_to_agent`` alias)
+    AND ``run_pipeline`` (+ its qualified ``run_pipeline`` alias, IS-1 R6 S3:
     an agent step is a spawn-tree LEAF — no launching a nested pipeline)
     even when the caller's own ``capabilities`` list explicitly names them —
     ``capability_profile`` resolution is deny-always-wins
@@ -239,17 +239,17 @@ async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Pat
     delegation or pipeline-launch attempt needed to prove the gate."""
     reg = _registry(tmp_path, scripted=None)
     narrowing = _build_agent_step_narrowing(
-        ["delegate_to_agent", "run_pipeline", "file__read"]
+        ["delegate_to_agent", "run_pipeline", "read_file"]
     )
 
     sid = await spawn_ephemeral_session(reg, identity="worker", narrowing=narrowing, presentation_consumer=None, intervention_bridge=None)
     contextual, _excluded = reg.resolved_profile_for("worker", sid=sid)
 
     assert contextual is not None
-    assert {"delegate_to_agent", "multi_agent__delegate"} <= contextual.tool_deny
-    assert {"run_pipeline", "pipeline__run"} <= contextual.tool_deny
+    assert {"delegate_to_agent", "delegate_to_agent"} <= contextual.tool_deny
+    assert {"run_pipeline", "run_pipeline"} <= contextual.tool_deny
     # IS-2: the async launch is the same S3 escape hatch — denied alongside.
-    assert {"run_pipeline_async", "pipeline__run_async"} <= contextual.tool_deny
+    assert {"run_pipeline_async", "run_pipeline_async"} <= contextual.tool_deny
 
 
 def test_build_agent_step_narrowing_no_capabilities_is_restrict_only(tmp_path: Path) -> None:

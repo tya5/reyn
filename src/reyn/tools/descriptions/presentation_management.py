@@ -2,7 +2,7 @@
 Phase 1 Layer A, A8).
 
 The single install verb from ``tools/presentation_management_verbs.py`` —
-``presentation_management__install`` (register a named presentation template
+``presentation_install_local`` (register a named presentation template
 into the project config). Mirrors the ``skill`` / ``pipeline_management``
 description-package precedent (Phase 3 tool-description package refactor
 pattern), applied fresh here since present-install is a new op (no

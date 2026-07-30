@@ -1651,7 +1651,7 @@ debate primitive (= 例: 「両 agent が同時に意見を出して、 第 3 ag
 fresh `.reyn/` で `reyn chat --cui` に「教えて、reyn で何ができる?」 を投げると、 weak default model (= `gemini-2.5-flash-lite`) の reply に router-internal vocabulary が verbatim 露出する:
 
 > 「`list_actions`, `describe_action`, `invoke_action` を使って、利用可能なツールを調べたり、特定のツールの詳細情報を取得したり、ツールを実行したりできます。」
-> 「`file__read`, `file__list` などで、ローカルのファイルを読み書きしたり...」
+> 「`read_file`, `list_directory` などで、ローカルのファイルを読み書きしたり...」
 > 「`skill__skill_builder` や `skill__skill_improver` を使って、新しいスキルを作成したり...」
 
 EN 同等質問 ("What can you do?") は base model の英語 chat 訓練 prior が効いて leak rate が低い。 JA は equivalent prior が薄いため description 内の router 内部名がそのまま reply に流れる。

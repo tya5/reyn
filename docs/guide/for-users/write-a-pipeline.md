@@ -67,7 +67,7 @@ pipelines:
 ```
 
 or, equivalently, ask an agent to call
-`pipeline_management__install_local(path="pipelines/greet.yaml")`, which
+`pipeline_install_local(path="pipelines/greet.yaml")`, which
 parses the file, validates the name, and writes the same kind of entry to
 `.reyn/config/pipelines.yaml` for you. Either way the change takes effect at
 the next turn boundary via hot-reload — **no session restart needed** to pick
@@ -87,14 +87,12 @@ An agent can launch `greet` either through the plain tool call:
 run_pipeline(name="greet", input={name: "Reyn"})
 ```
 
-or the qualified catalog verb the action catalog surfaces for every
-registered pipeline:
+That is the only form. (Earlier versions also accepted a per-pipeline
+`pipeline__<name>` spelling; it was a second name for the same call and was
+removed. `pipeline_list` names the registered pipelines when the agent does not
+already know one.)
 
-```
-pipeline__greet({name: "Reyn"})
-```
-
-Both block until the pipeline finishes and return its final output — here,
+It blocks until the pipeline finishes and return its final output — here,
 the shouted greeting. Live step-progress is visible in the TUI for the
 duration of the run, and Ctrl-C stops it cleanly at the next step boundary
 rather than killing it mid-step.
@@ -194,7 +192,7 @@ replaced with plain `transform`/`tool` steps for a self-contained single-file
 version).
 
 This second pipeline would need its own `pipelines.entries` declaration (or
-`pipeline_management__install_local` call), same as step 2 above, before an
+`pipeline_install_local` call), same as step 2 above, before an
 agent can launch it.
 
 ## 5. Manage and run pipelines from the CLI directly

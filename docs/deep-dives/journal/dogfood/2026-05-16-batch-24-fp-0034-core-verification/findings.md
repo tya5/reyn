@@ -126,8 +126,8 @@ prelude 0.948 (= practice batch baseline) から **batch 23 → batch 24 で 0.4
 **Observation**: S4 「memory に何を覚えていますか」 で hot path (= direct alias) 0/3、 cold path (= list_actions(category=['memory.entry'])) 3/3。
 
 DEFAULT_HOT_LIST_SEED 10 entries:
-- file__read, file__grep
-- web__search, web__fetch
+- read_file, grep_files
+- web_search, web_fetch
 - memory.operation__remember_shared (= memory category 唯一)
 - skill__skill_builder, skill__skill_improver, skill__skill_importer
 - skill__mcp_search, skill__read_local_files

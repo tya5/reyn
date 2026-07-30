@@ -255,7 +255,7 @@ _MULTIMODAL_ON_OVERSIZE = ("ask", "allow", "deny")
 @dataclass
 class MultimodalConfig:
     """``multimodal:`` — controls how Reyn handles large binary content
-    (currently images from web__fetch / file__read / MCP servers) and
+    (currently images from web_fetch / read_file / MCP servers) and
     where multimodal artefacts live on disk.
 
     Fields:
@@ -296,7 +296,7 @@ class MultimodalConfig:
             compat for legacy / CLI-only deployments).
 
     Issue #364 lands this config + the shared ``require_media_load`` gate;
-    paths #365 (file__read binary) and #366 (user chat input image) reuse
+    paths #365 (read_file binary) and #366 (user chat input image) reuse
     them. Issue #383 PR-C extends with the storage paths.
     """
     max_bytes: int = 5_000_000

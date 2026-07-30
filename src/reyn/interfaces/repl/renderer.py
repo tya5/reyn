@@ -472,7 +472,7 @@ def _summarize_result(tool, result) -> str:
         return f"{n} {word}{'' if n == 1 else 's'}"
     if isinstance(result, dict):
         # Error always wins — a dict with "error" is a failure regardless of
-        # any other keys (e.g. file__read returns op="read", content="", error="file
+        # any other keys (e.g. read_file returns op="read", content="", error="file
         # not found: ..." for a missing file; without this guard the read branch
         # below would short-circuit to "Read 0 lines" and the error is never seen).
         error = result.get("error")

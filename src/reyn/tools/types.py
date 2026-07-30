@@ -199,7 +199,7 @@ class RouterCallerState:
     # FP-0034 Phase 2: sandbox backend name for the exec category
     # D14 visibility gate.  RouterLoop binds this from
     # ``session._sandbox_config.backend`` so ``list_actions(category=
-    # ["exec"])`` returns ``exec__run`` (#3226 Phase 3 qualified name)
+    # ["exec"])`` returns ``exec`` (#3226 Phase 3 qualified name)
     # when a real backend is configured (= not "noop" / not None).
     # ``None`` = sandbox not configured or noop backend; exec category
     # stays hidden.

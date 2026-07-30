@@ -37,7 +37,7 @@
       "c1_regression": false,
       "routing_decided_emitted": true,
       "h4_interrupted": false,
-      "root_cause": "Router used direct file__read hot-alias; skill__read_local_files not dispatched. skill_run_spawned absent.",
+      "root_cause": "Router used direct read_file hot-alias; skill__read_local_files not dispatched. skill_run_spawned absent.",
       "events_verdict": "refuted",
       "reply_verdict": "verified",
       "trace_calls": 3,

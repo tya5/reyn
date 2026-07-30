@@ -7,7 +7,7 @@ the runner don't silently break the measurement contract:
      + a non-empty fixtures list.
   2. Each fixture carries id / source / prompt / expected_action /
      expected_reach_path / axis fields with the right types.
-  3. The set of qualified_names referenced by precision-axis fixtures is
+  3. The set of action_names referenced by precision-axis fixtures is
      a subset of the static-only catalog (= what a fresh-context router
      state without dynamic skills / exec backends surfaces). This pins
      the "fresh-user" framing of the bench — fixtures that would require
@@ -57,7 +57,7 @@ async def _static_catalog() -> set[str]:
     for cat in CATEGORIES:
         page = await LIST_ACTIONS.handler({"category": [cat]}, ctx)
         for item in page.get("items", []):
-            out.add(item["qualified_name"])
+            out.add(item["action_name"])
     return out
 
 
@@ -88,7 +88,12 @@ def test_each_fixture_carries_required_fields() -> None:
         assert isinstance(fx["id"], str) and fx["id"]
         assert isinstance(fx["source"], str)
         assert isinstance(fx["prompt"], str) and fx["prompt"].strip()
-        assert isinstance(fx["expected_action"], str) and "__" in fx["expected_action"]
+        # #3429: the check used to be ``"__" in fx["expected_action"]`` — that the
+        # expected action was written in the QUALIFIED spelling. That spelling is
+        # abolished, so the field's contract is "a real catalog action name",
+        # which the subset check in section 3 below already enforces against the
+        # live catalog; here it is only required to be a non-empty string.
+        assert isinstance(fx["expected_action"], str) and fx["expected_action"]
         assert isinstance(fx["expected_reach_path"], list)
         assert all(isinstance(p, str) for p in fx["expected_reach_path"])
         assert isinstance(fx["axis"], list)

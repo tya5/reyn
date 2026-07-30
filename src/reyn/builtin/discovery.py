@@ -18,7 +18,7 @@ disjoint reads, one SSoT each:
 
 ``reyn.tools.plugin_management_verbs._handle_plugin_list`` is the tool-level
 consumer that surfaces this to the LLM through the ordinary tool-call flow
-(not an error path) -- see that module for the ``plugin_management__list``
+(not an error path) -- see that module for the ``list_plugins``
 ``ToolDefinition``.
 """
 from __future__ import annotations
@@ -45,8 +45,8 @@ def list_builtin_plugins() -> "list[dict[str, Any]]":
     ``{name, description, capabilities, install}``, derived from its own
     manifest.
 
-    ``install`` is the concrete, typed ``plugin_management__install`` call
-    for this exact entry -- ``{"tool": "plugin_management__install", "args":
+    ``install`` is the concrete, typed ``install_plugin`` call
+    for this exact entry -- ``{"tool": "install_plugin", "args":
     {"source": {"kind": "builtin", "name": <name>}}}`` -- so a caller that
     just enumerated this list already has the next call to make, without
     having to compose the ``source`` shape itself (owner firm, #3202: the
@@ -80,7 +80,7 @@ def list_builtin_plugins() -> "list[dict[str, Any]]":
                 "description": manifest.description,
                 "capabilities": sorted(manifest.capability_kinds),
                 "install": {
-                    "tool": "plugin_management__install",
+                    "tool": "install_plugin",
                     "args": {"source": {"kind": "builtin", "name": name}},
                 },
             }

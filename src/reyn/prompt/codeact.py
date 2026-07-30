@@ -41,7 +41,7 @@ CODEACT_STATIC_HEADER: list[str] = [
     "no \"I am a Reyn agent\" preamble on an action turn. Inside the block, call the "
     "available functions DIRECTLY by name and assign your final value to `result`:",
     "",
-    "    result = file__read(path=\"README.md\")",
+    "    result = read_file(path=\"README.md\")",
     "",
     "Each function returns the action's result, or raises if the action is denied / "
     "excluded / unknown. The Python standard library is available; filesystem / "

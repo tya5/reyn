@@ -36,12 +36,12 @@ reyn mcp clear-secret <SERVER> [<KEY>]
 
 | CLI | Chat verb | 備考 |
 |---|---|---|
-| `reyn mcp search <QUERY>` | `mcp__search_registry({text})` | 同じ registry API 呼び出し |
-| `reyn mcp install <SERVER_ID>` | `mcp__install_registry({server_id})` | 同じ registry 経由 install |
-| `reyn mcp install --source npm:<pkg>[@v]` / `pypi:<pkg>[==v]` / `docker:<img>[:tag]` / GitHub URL | `mcp__install_package({kind, identifier, version?})` | LLM は構造化フィールドを渡し、 ハンドラ側で source 文字列を合成 |
-| _(CLI に対応無し; `.reyn/config/mcp.yaml` を手編集)_ | `mcp__install_local({name, command, args})` | チャット専用の新サーフェス: ローカル実行可能ファイル (LLM 生成 MCP スクリプト等) を stdio サーバーとして直接登録 |
-| `reyn mcp list` | `mcp__list_servers()` | |
-| `reyn mcp remove <NAME>` | `mcp__drop_server({server})` | |
+| `reyn mcp search <QUERY>` | `mcp_search_registry({text})` | 同じ registry API 呼び出し |
+| `reyn mcp install <SERVER_ID>` | `mcp_install_registry({server_id})` | 同じ registry 経由 install |
+| `reyn mcp install --source npm:<pkg>[@v]` / `pypi:<pkg>[==v]` / `docker:<img>[:tag]` / GitHub URL | `mcp_install_package({kind, identifier, version?})` | LLM は構造化フィールドを渡し、 ハンドラ側で source 文字列を合成 |
+| _(CLI に対応無し; `.reyn/config/mcp.yaml` を手編集)_ | `mcp_install_local({name, command, args})` | チャット専用の新サーフェス: ローカル実行可能ファイル (LLM 生成 MCP スクリプト等) を stdio サーバーとして直接登録 |
+| `reyn mcp list` | `list_mcp_servers()` | |
+| `reyn mcp remove <NAME>` | `mcp_drop_server({server})` | |
 
 CLI とチャットは末端で `op_runtime/mcp_install.py` に合流するため、 permission gate、 シークレット検出、 audit event は同一です。
 

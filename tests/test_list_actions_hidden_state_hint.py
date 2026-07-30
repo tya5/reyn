@@ -232,6 +232,6 @@ def test_items_count_when_hint_absent_matches_when_present() -> None:
     assert "hint" in r_unready
     # Same items in the same order, regardless of hint state.
     assert (
-        [it["qualified_name"] for it in r_ready["items"]]
-        == [it["qualified_name"] for it in r_unready["items"]]
+        [it["action_name"] for it in r_ready["items"]]
+        == [it["action_name"] for it in r_unready["items"]]
     )

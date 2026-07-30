@@ -26,7 +26,7 @@ Servers covered:
 >
 > - filesystem ↔ `file__*` (= read / write / list / grep / glob)
 > - memory ↔ `memory_operation__*` (= remember_shared / forget)
-> - fetch ↔ `web__fetch` (= HTTP fetch with markdown extraction)
+> - fetch ↔ `web_fetch` (= HTTP fetch with markdown extraction)
 >
 > With both available, the chat router consistently picks the
 > Reyn-internal op on natural prompts (10/10 in measurement,
@@ -34,7 +34,7 @@ Servers covered:
 > agent path.
 >
 > **Extraction parity**: install `pip install reyn[fetch]`
-> to add trafilatura as the `web__fetch` HTML extractor — at that
+> to add trafilatura as the `web_fetch` HTML extractor — at that
 > point, the Reyn op matches `mcp-server-fetch`'s extraction quality
 > for content-dense pages. The MCP server's remaining advantages are
 > `start_index` pagination and robots.txt
@@ -69,10 +69,10 @@ The smoke runner `scripts/mcp_smoke.py` goes straight to
 `reyn.mcp.client.MCPClient`, bypassing the chat router. Useful for
 connectivity sanity. For agent-driven usage (= the typical end-user
 shape), the chat router calls the server via the universal
-`mcp__call_tool` / `invoke_action` dispatch.
+`mcp_call_tool` / `invoke_action` dispatch.
 
 > Each section's `reyn mcp install --source ...` shell command has an
-> equivalent chat-side verb: `mcp__install_package({kind, identifier,
+> equivalent chat-side verb: `mcp_install_package({kind, identifier,
 > version?})` (= same package channels: `npm` / `pypi` / `docker` /
 > `github`). Use whichever surface fits your workflow — both converge
 > on the same `.reyn/config/mcp.yaml` write. See
@@ -114,7 +114,7 @@ reyn chat
 > What time is it in Tokyo right now?
 ```
 
-The agent calls `mcp__call_tool({tool: "time__get_current_time", tool_args:
+The agent calls `mcp_call_tool({tool: "time__get_current_time", tool_args:
 {timezone: "Asia/Tokyo"}})` and replies in natural language. For
 multi-timezone queries ("Tokyo, NYC, London"), the agent chains 3
 calls and synthesises one answer.
@@ -153,7 +153,7 @@ reyn chat
 > Summarise the last 3 commits in this repo.
 ```
 
-The agent calls `mcp__call_tool({tool: "git__git_log", tool_args: {repo_path:
+The agent calls `mcp_call_tool({tool: "git__git_log", tool_args: {repo_path:
 "<session cwd>", max_count: 3}})` and produces a short summary.
 
 ### Tools surfaced
@@ -197,7 +197,7 @@ reyn chat
 > Use sequential-thinking to plan how to organise a personal task list.
 ```
 
-The agent emits a series of `mcp__call_tool({tool:
+The agent emits a series of `mcp_call_tool({tool:
 "sequential_thinking__sequentialthinking", args: {...}})` calls
 (typically 5-7 thoughts) and synthesises the chain into a
 natural-language plan. The server tracks the thought history
@@ -254,7 +254,7 @@ reyn chat
 > insert a row with body "first note", and show me everything in the table.
 ```
 
-The agent chains three `mcp__call_tool` calls (= `sqlite__create_table`
+The agent chains three `mcp_call_tool` calls (= `sqlite__create_table`
 → `sqlite__write_query` → `sqlite__read_query`) within one turn.
 Success rate ≈ 90% on clean history; if the agent says "I cannot list
 tables...", wipe the history (line above) and retry.
@@ -298,7 +298,7 @@ reyn chat
 > Use the everything MCP server to compute 17 plus 25.
 ```
 
-The agent calls `mcp__call_tool({tool: "everything__get-sum", tool_args:
+The agent calls `mcp_call_tool({tool: "everything__get-sum", tool_args:
 {a: 17, b: 25}})` and reports the result. Success rate ≈ 90% on clean history.
 
 > Note: explicitly mentioning "the everything MCP server" in the
@@ -342,4 +342,4 @@ requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
 | `MCP server <name> access denied` | Permission not pre-approved | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
 | `not found` errors after install | Server uses uvx (Python) but `uv` not installed | `brew install uv` |
 | Server config in YAML missing `type: stdio` or has `server-` prefix | Outdated install path | Re-install via `reyn mcp install` |
-| MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web__fetch` / `file__*` / `memory_operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |
+| MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web_fetch` / `file__*` / `memory_operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |

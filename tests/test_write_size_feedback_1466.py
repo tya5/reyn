@@ -1,4 +1,4 @@
-"""Tier 2: #1466 — file__write success includes size feedback.
+"""Tier 2: #1466 — write_file success includes size feedback.
 
 write-success result gains ``bytes_written`` (always) and
 ``previous_size_bytes`` (overwrite only). New-file writes carry only

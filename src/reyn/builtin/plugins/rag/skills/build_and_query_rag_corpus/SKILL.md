@@ -31,11 +31,11 @@ is the operator's; making the request is yours** -- install and the
 permission gate prompts them before anything reaches config.
 
 ```
-plugin_management__install(source={"kind": "builtin", "name": "rag"})
-mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
+install_plugin(source={"kind": "builtin", "name": "rag"})
+mcp_install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
-`plugin_management__install` is **register-only** (#3209) -- it does NOT
+`install_plugin` is **register-only** (#3209) -- it does NOT
 install the plugin's Python dependencies for you. Do this next, via
 `exec`, entirely from chat -- no operator keypress needed:
 
@@ -55,7 +55,7 @@ Windows: `python -m venv .venv-rag` then
 **2. Point the two registered servers at that venv** -- edit
 `.reyn/config/mcp.yaml`'s `mcp.servers.reyn_chunker.command` and
 `mcp.servers.reyn_vector_store.command` (the entries
-`plugin_management__install` just wrote) to the venv's OWN interpreter,
+`install_plugin` just wrote) to the venv's OWN interpreter,
 absolute path:
 
 ```yaml
@@ -85,17 +85,17 @@ Once installed:
    or every chunk it embeds is wasted spend. Have an API key? read
    `configure-embedding-provider.md`. No key / offline? read
    `configure-local-embedding-model.md`.
-2. **Run it.** The exact `pipeline__run` calls -- copy these param names
+2. **Run it.** The exact `run_pipeline` calls -- copy these param names
    **verbatim**, a light model has generated `corpus_path`/`db_path`
    (ingest) and other plausible-sounding names unprompted:
 
    ```
-   pipeline__run(name="rag_ingest.ingest", input={
+   run_pipeline(name="rag_ingest.ingest", input={
      "input_path": "/abs/path/to/docs",   # required; absolute; folder or one file
      "output_db": "./rag/docs.sqlite",    # required; cwd-relative, zero-config
    })
 
-   pipeline__run(name="rag_query.query", input={
+   run_pipeline(name="rag_query.query", input={
      "query_text": "how does X work?",    # required
      "db": "./rag/docs.sqlite",           # required; SAME file output_db wrote.
                                            # EXACT name "db" -- not "db_path",
@@ -129,7 +129,7 @@ Config to copy: `docs/cookbook/configs/with-builtin-rag-mcp.yaml`.
   (Case B): start the server, register it in the proxy config, point reyn
   at the proxy, and how to pick which local model to use.
 - [run-ingest-and-query-workflow.md](${CLAUDE_SKILL_DIR}/references/run-ingest-and-query-workflow.md)
-  -- the exact `pipeline__run` calls for `rag_ingest.ingest` /
+  -- the exact `run_pipeline` calls for `rag_ingest.ingest` /
   `rag_query.query`, parameter names (absolute-vs-cwd-relative path rules),
   and the `embedding_model` mismatch that silently ruins a corpus.
 - [corpus-internals-schema-tuning-and-backend-swap.md](${CLAUDE_SKILL_DIR}/references/corpus-internals-schema-tuning-and-backend-swap.md)

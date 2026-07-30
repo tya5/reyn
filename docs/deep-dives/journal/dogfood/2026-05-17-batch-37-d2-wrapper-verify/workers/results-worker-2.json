@@ -13,7 +13,7 @@
     "reply_rubric": "pass",
     "events_check": "fail",
     "artifacts_check": "fail",
-    "notes": "Correct 675-char explanation of scheduler.py (cron scheduler, async, CronJob class). Routed via file__read directly (read_local_files not in hot-list). skill_run_spawned=0."
+    "notes": "Correct 675-char explanation of scheduler.py (cron scheduler, async, CronJob class). Routed via read_file directly (read_local_files not in hot-list). skill_run_spawned=0."
   },
   {
     "scenario_id": "read_local_files_multi_file",
@@ -21,7 +21,7 @@
     "reply_rubric": "pass",
     "events_check": "fail",
     "artifacts_check": "fail",
-    "notes": "Correct 886-char overview referencing ask_user.py, context.py, embed.py. 4x file__read calls. No router loop this time (vs B36 W2 S3 loop). skill_run_spawned=0."
+    "notes": "Correct 886-char overview referencing ask_user.py, context.py, embed.py. 4x read_file calls. No router loop this time (vs B36 W2 S3 loop). skill_run_spawned=0."
   },
   {
     "scenario_id": "skill_builder_web_summariser",

@@ -24,8 +24,8 @@ keypress, and it is scoped to just this project.
 ## 1. Install (registers, does not provision deps)
 
 ```
-plugin_management__install(source={"kind": "builtin", "name": "rag"})
-mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
+install_plugin(source={"kind": "builtin", "name": "rag"})
+mcp_install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 ```
 
 No `permissions:` block to add for the mcp servers -- a server in the merged
@@ -55,7 +55,7 @@ python -m venv .venv-rag
 
 Edit `.reyn/config/mcp.yaml`'s `mcp.servers.reyn_chunker.command` and
 `mcp.servers.reyn_vector_store.command` (the two entries
-`plugin_management__install` just wrote) to your venv's own interpreter,
+`install_plugin` just wrote) to your venv's own interpreter,
 absolute path. **Do not touch `args`** -- it already holds the plugin's own
 absolute script path (e.g. `~/.reyn/plugins/rag/scripts/chunker_server.py`),
 written correctly by install; there is no `-m <module>` form to rewrite it
@@ -83,7 +83,7 @@ fetching the missing dependency at spawn time (#3060 preserved).
   silently never reaches the ingest/query step.
 - **`args` rewritten** to something like `["-m", "reyn_chunker"]` -- there
   is no such installable module; `args` is a file PATH, and the correct
-  value was already written by `plugin_management__install`. Only `command`
+  value was already written by `install_plugin`. Only `command`
   changes.
 - **`venv/` instead of `.venv-rag/`** -- the leading dot and the `-rag`
   suffix both matter (a bare `venv/` risks colliding with an unrelated venv
@@ -112,6 +112,6 @@ point `command` at the absolute path:
 
 ```bash
 python3 -m venv ./.venv-markitdown && ./.venv-markitdown/bin/pip install markitdown-mcp
-mcp__install_local(name="reyn_markitdown", args=[],
+mcp_install_local(name="reyn_markitdown", args=[],
                    command="/abs/path/to/this/project/.venv-markitdown/bin/markitdown-mcp")
 ```

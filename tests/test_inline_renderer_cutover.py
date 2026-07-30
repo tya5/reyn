@@ -182,7 +182,7 @@ def test_tool_call_completed_renders_corner_marker_and_summary() -> None:
     and the summarize_tool_result one-liner (e.g. 'Read 3 lines')."""
     out = _plain(
         "tool_call_completed", "",
-        meta={"tool": "file__read", "result": {"op": "read", "status": "ok", "content": "a\nb\nc"}},
+        meta={"tool": "read_file", "result": {"op": "read", "status": "ok", "content": "a\nb\nc"}},
     )
     assert "⎿" in out
     assert "Read 3 lines" in out

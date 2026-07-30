@@ -9,7 +9,7 @@ modified in place"; ``add_object_type`` injects ``type: object`` into any node
 without one, ``_remove_additional_properties`` deletes
 ``additionalProperties: false``). So ONE Gemini/Vertex call permanently rewrote
 reyn's canonical schema, and every later render — for ANY provider — served the
-corrupted shape: ``plugin_management__install``'s ``source`` variants lost
+corrupted shape: ``install_plugin``'s ``source`` variants lost
 ``additionalProperties`` and grew ``"type": "object"`` inside their ``kind``
 const, and ``presentation_install_local``'s untyped ``blueprint`` became
 ``type: object``. Observed as a schedule-dependent baseline-fixture failure,
@@ -55,7 +55,7 @@ from reyn.runtime.router_tools import build_tools
 from reyn.tools import get_default_registry
 from reyn.tools.types import ToolContext, parameters_for_export
 from reyn.tools.universal_catalog import _handle_describe_action
-from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
+from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES_SORTED
 
 _SENTINEL_KEY = "__injected_by_a_provider_transform__"
 
@@ -185,7 +185,7 @@ def test_describe_action_survives_in_place_mutation_of_its_input_schema() -> Non
         caller_kind="router",
         router_state=None,
     )
-    action = "plugin_management__install"
+    action = "install_plugin"
     pristine = deepcopy(asyncio.run(_handle_describe_action({"action_name": action}, ctx)))
     assert pristine["input_schema"], f"{action}: describe_action returned no input_schema"
 
@@ -215,8 +215,8 @@ def test_hot_list_alias_survives_in_place_mutation_of_its_tools_entry() -> None:
     entries to the ``tools=`` payload verbatim, so this reaches litellm on an
     ordinary turn without passing through ``render_for_router``.
     """
-    action = "plugin_management__install"
-    assert action in KNOWN_STATIC_QUALIFIED_NAMES, (
+    action = "install_plugin"
+    assert action in KNOWN_ACTION_NAMES_SORTED, (
         f"{action} is no longer an alias candidate — pick another operation "
         "alias with a nested schema, or this arm proves nothing"
     )

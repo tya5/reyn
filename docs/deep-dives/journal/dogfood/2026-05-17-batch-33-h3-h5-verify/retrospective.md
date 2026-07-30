@@ -63,7 +63,7 @@ The B33 framing — *"verified rate stable"* — is technically true. But the mo
 
 - **Honest worker reporting**: W2 F2 explicitly tagged the harness gap as a structural finding, not as an LLM regression. The aggregation flowed from primary data.
 - **Discipline held**: no "fix X caused Y" inference paragraphs in mid-batch reports. The user's discipline correction from B30 has stuck.
-- **W3 / W7 workers applied the 5Q check inline**: when S1 in W3 flipped R→V, the worker explicitly flagged "primary data shows file__read direct path, but H3 causation vs LLM variance is N=1." That's the discipline operating correctly.
+- **W3 / W7 workers applied the 5Q check inline**: when S1 in W3 flipped R→V, the worker explicitly flagged "primary data shows read_file direct path, but H3 causation vs LLM variance is N=1." That's the discipline operating correctly.
 
 ### What needs adjustment
 
@@ -97,12 +97,12 @@ In priority order, with ablation pre-conditions for each:
 1. **W2 F2 driver harness gap** (= my missed step from H3 ablation phase). Pre-ablate: capture the W2 S4/S5/S7 trace; patch `send_to_agent_impl` quiescence; re-run; measure K/N flip. Then land. **High leverage** (= probably restores 1-3 V across multiple workers).
 2. **W6 NEW-1 phase_no_progress inject gap** (= `skill_completion_injected` skipped on phase-loop rollback abort). Small patch; needs trace-side confirmation first.
 3. **W5 F2 peer-agent silent hallucination**. Handler-layer error envelope; small patch + Tier-2 test.
-4. **LLM arg-name normalization** (= `file__write` `text` vs `content`, `drop_source` `source_id` vs `source`). Envelope-layer defensive normalization.
+4. **LLM arg-name normalization** (= `write_file` `text` vs `content`, `drop_source` `source_id` vs `source`). Envelope-layer defensive normalization.
 5. **task #93 framework verifier integration**. W4 confirms it's still required: manual rubric 4V vs framework-reported 0V on the same 8 scenarios.
 
 Deferred:
 - PLAN-STEP-PATH (= partial, scenario-design heavy).
-- file__grep attractor (= choose between implement or envelope hint).
+- grep_files attractor (= choose between implement or envelope hint).
 - #52 (B27-H4 acompletion never awaited) — not retested this batch.
 
 ---

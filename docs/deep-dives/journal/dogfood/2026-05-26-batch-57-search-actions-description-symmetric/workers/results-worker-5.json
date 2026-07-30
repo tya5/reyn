@@ -48,14 +48,14 @@
       "rubric_met": true,
       "events_pass": true,
       "reply_snippet": "I am sorry, I cannot find any tools for the github MCP server.",
-      "events_observed": ["user_message_received", "tool_called (list_actions)", "tool_returned", "direct_alias_call_salvaged", "tool_called (invoke_action/mcp__list_tools)", "tool_returned", "routing_decided", "compaction_check"],
+      "events_observed": ["user_message_received", "tool_called (list_actions)", "tool_returned", "direct_alias_call_salvaged", "tool_called (invoke_action/list_mcp_tools)", "tool_returned", "routing_decided", "compaction_check"],
       "events_required": ["routing_decided >=1 OR chat_turn_completed_inline >=1 (must_emit_any)"],
       "search_actions_called": false,
       "search_actions_args": null,
       "search_actions_outcome": "not called",
       "list_actions_fired": true,
-      "tool_call_chain": ["list_actions(category=['mcp'])", "invoke_action(mcp__list_tools, server='github')"],
-      "notes": "list_actions fired with category=['mcp'], found mcp__list_tools. Invoked mcp__list_tools for github server which returned empty. routing_decided fired (source=ars_direct, outcome=success). Reply honestly reports no tools found for github server. Both rubric items met."
+      "tool_call_chain": ["list_actions(category=['mcp'])", "invoke_action(list_mcp_tools, server='github')"],
+      "notes": "list_actions fired with category=['mcp'], found list_mcp_tools. Invoked list_mcp_tools for github server which returned empty. routing_decided fired (source=ars_direct, outcome=success). Reply honestly reports no tools found for github server. Both rubric items met."
     },
     {
       "id": "agent_delegation_simple",
@@ -63,14 +63,14 @@
       "verdict": "R",
       "rubric_met": false,
       "events_pass": false,
-      "reply_snippet": "researcher エージェントに FP-0001 の概要を要約させるには、まず `multi_agent__describe_peer` ツールを使用して researcher エージェントの能力を確認する必要があります。",
+      "reply_snippet": "researcher エージェントに FP-0001 の概要を要約させるには、まず `describe_agent` ツールを使用して researcher エージェントの能力を確認する必要があります。",
       "events_observed": ["user_message_received", "tool_called (list_actions)", "tool_returned", "tool_called (describe_action)", "tool_returned", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
       "events_required": ["routing_decided (>=1)"],
       "search_actions_called": false,
       "search_actions_args": null,
       "search_actions_outcome": "not called",
       "list_actions_fired": true,
-      "tool_call_chain": ["list_actions(category=['multi_agent'])", "describe_action(multi_agent__describe_peer)"],
+      "tool_call_chain": ["list_actions(category=['multi_agent'])", "describe_action(describe_agent)"],
       "notes": "LLM called list_actions for multi_agent, then describe_action to inspect the delegation tool, but never actually invoked invoke_action to trigger delegation. routing_decided never fired. Reply explains what tools to use but does not attempt delegation. Rubric item 2 (no fabrication) met, but rubric item 1 partially met (addresses request but doesn't attempt delegation or honestly report agent missing) and events requirement not met."
     },
     {

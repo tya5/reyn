@@ -120,13 +120,13 @@ practice batch の Brier ≥ 0.6 は discipline doc § 7 quickstart で expected
 
 **Severity**: INFO (= 想定通り)
 
-**Observation**: S2 isolated run で `invoke_action(file__read, {path: /etc/hostname})` → `routing_decided` event emit:
+**Observation**: S2 isolated run で `invoke_action(read_file, {path: /etc/hostname})` → `routing_decided` event emit:
 ```json
 {
   "type": "routing_decided",
   "timestamp": "2026-05-16T19:02:27.516105+09:00",
   "data": {
-    "action_name": "file__read",
+    "action_name": "read_file",
     "source": "invoke_action",
     "outcome": "success",
     "chain_id": "9b1dfbf309cf4053a1ade8f01381e585"

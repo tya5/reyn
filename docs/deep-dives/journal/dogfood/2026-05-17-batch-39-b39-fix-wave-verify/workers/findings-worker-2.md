@@ -18,14 +18,14 @@ DeltavsB38 W2 (2/2/5/0): -1V, +1I, 0R, 0B.
 | Scenario | Verdict | Key observation |
 |---|---|---|
 | index_docs_basic | REFUTED | invoke_action(rag.operation__create_corpus) unknown action; no skill_run_spawned |
-| read_local_files_explain_source | INCONCLUSIVE | Correct reply via file__read direct; no skill_run_spawned, no read_local_files artifact |
+| read_local_files_explain_source | INCONCLUSIVE | Correct reply via read_file direct; no skill_run_spawned, no read_local_files artifact |
 | read_local_files_multi_file | REFUTED | Two list_actions calls, no file ops; reply "ファイルが見つかりませんでした" |
 | skill_builder_web_summariser | REFUTED | skill__skill_builder dispatched; skill_run_failed (phase_no_progress/workflow_aborted) |
 | word_stats_demo_sentence | VERIFIED | invoke_action(skill__word_stats_demo, {text:...}); skill_run_completed(finished); 44 chars |
 | word_stats_demo_multiline | INCONCLUSIVE | Direct wrapper (empty args) dispatched twice; stats inconsistent (0 chars + 159 chars) |
 | eval_run_direct_llm | REFUTED | LLM dispatched skill__direct_llm not skill__eval; wrong routing |
 | chat_compactor_long_session | INCONCLUSIVE | T1 reyn.source__read; T2-T5 inline; no compaction; T5 coherent routing answer |
-| chained_find_then_index | REFUTED | T1 file__list OK; T2 rag.operation__remember_or_update_corpus (wrong action) |
+| chained_find_then_index | REFUTED | T1 list_directory OK; T2 rag.operation__remember_or_update_corpus (wrong action) |
 
 ---
 

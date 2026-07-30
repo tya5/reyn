@@ -104,23 +104,23 @@ action name. No `plan_emitted` event fired in any of the 3 plan_mode runs.
 is installed correctly but never reaches the LLM. **#40 fix verification
 status: inconclusive** (= cannot e2e verify without first fixing this).
 
-### 2.3 HIGH — `web__fetch` direct expose (W4: #49 fix incomplete)
+### 2.3 HIGH — `web_fetch` direct expose (W4: #49 fix incomplete)
 
-#49 fix (commit `972dde4`) hid `web__fetch` from `list_actions` output when
-`web.fetch: deny` is configured. But `web__fetch` is *also* exposed as a
+#49 fix (commit `972dde4`) hid `web_fetch` from `list_actions` output when
+`web.fetch: deny` is configured. But `web_fetch` is *also* exposed as a
 direct router tool via section E of `build_tools()`. Per FP-0022,
 `web_fetch_allowed` gate was removed (`router_tools.py` line 538: "removed
 catalog-level gate... parameter kept for backward compat but ignored").
 
 **Primary evidence (W4 trace `web_fetch_denied_by_config`)**: request
-`4f690802` tools list contains `web__fetch`; `invoke_action(web__fetch, ...)`
+`4f690802` tools list contains `web_fetch`; `invoke_action(web_fetch, ...)`
 returned `status: ok, status_code: 200` with real network content. No
 `permission_denied` event emitted despite `web.fetch: deny` in
 `reyn.local.yaml`.
 
 **Implication**: the visibility-layer fix (#49) needs an enforcement-layer
 companion to actually block the call. Either re-introduce the `web_fetch_allowed`
-gate, or remove direct exposure of `web__fetch` from the router-tool list
+gate, or remove direct exposure of `web_fetch` from the router-tool list
 when universal wrappers are enabled.
 
 ### 2.4 HIGH — Scenario expectation drift (W1/W3/W4/W7)
@@ -145,8 +145,8 @@ update either the scenarios or the router event-emission contract.
 | 5 | `mcp_search` requires `--allow-unsafe-python` flag (S1) | preprocessor error |
 | 7 | LLM hallucinates `reyn__source__read` (= double-underscore as category sep) instead of `reyn.source__read` | scenario_1 turn-3+ tool_failed events |
 | 1 | `routing_decided` event (FP-0034 Phase 6) never emitted in any chat turn | 3/3 non-blocked event files inspected directly |
-| 3 | `file__grep` has no routing rule despite appearing in `DEFAULT_HOT_LIST_SEED` | S2 tool_failed trace |
-| 3 | `exec__run` (non-existent) called by LLM instead of `exec__sandboxed_exec`; no retry | S5 trace |
+| 3 | `grep_files` has no routing rule despite appearing in `DEFAULT_HOT_LIST_SEED` | S2 tool_failed trace |
+| 3 | `exec` (non-existent) called by LLM instead of `exec__sandboxed_exec`; no retry | S5 trace |
 
 ---
 
@@ -161,7 +161,7 @@ update either the scenarios or the router event-emission contract.
 
 - **B27-H1**: `plan` tool fully hidden by `_LEGACY_TOOL_NAMES`. Plan-mode is
   non-functional under `universal_wrappers_enabled=True` (= the default).
-- **B27-H2**: `web__fetch` direct expose despite `web.fetch: deny` (= #49 fix
+- **B27-H2**: `web_fetch` direct expose despite `web.fetch: deny` (= #49 fix
   is visibility-only; enforcement layer missing).
 - **B27-H3**: peer-agent `invoke_action` raises `KeyError: 'request'`.
 - **B27-H4**: `skill_run_completed` lifecycle: ends at `_interrupted` with
@@ -171,7 +171,7 @@ update either the scenarios or the router event-emission contract.
 
 - **B27-M1**: `routing_decided` event missing — audit completeness gap, not
   a runtime blocker.
-- **B27-M2**: `file__grep` routing rule absent.
+- **B27-M2**: `grep_files` routing rule absent.
 - **B27-M3**: `mcp_search` unsafe-python flag onboarding gap.
 - **B27-M4**: `reyn__source__read` action-name format confusion in LLM output.
 - **B27-M5**: `list_actions(filter=path)` misuse for directory listing
@@ -242,8 +242,8 @@ In priority order, drawn from §3:
 2. **B27-H1 fix** — remove `"plan"` from `_LEGACY_TOOL_NAMES`, or expose
    `plan` as a tool unconditionally. Validation: re-run worker 6's plan_mode
    set, expect `plan_emitted` in >=2/3 scenarios.
-3. **B27-H2 fix** — add enforcement-layer gate for `web__fetch` /
-   `web__search` direct expose under config-deny. Validation: re-run worker
+3. **B27-H2 fix** — add enforcement-layer gate for `web_fetch` /
+   `web_search` direct expose under config-deny. Validation: re-run worker
    4's S8, expect `permission_denied` event.
 4. **B27-Q1 design reconciliation** — read ADR-0034 / FP-0001 / FP-0034 §D
    for router-vs-skill dispatch intent, then either (a) emit a

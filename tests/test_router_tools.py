@@ -33,7 +33,7 @@ EXPECTED_TOOL_NAMES = [
     # authorization now at handler level via PermissionResolver._approve().
     "web_fetch",
     # #1449: read_tool_result (the former E3) retired — its same-host read
-    # folded into file__read; web_fetch's preview points there now.
+    # folded into read_file; web_fetch's preview points there now.
     # reyn_repo_* are always exposed (F1, F2) — they read Reyn's own
     # public OSS repo, not the user's files, so no permission gate.
     "reyn_repo_list",

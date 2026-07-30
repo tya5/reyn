@@ -37,7 +37,7 @@ _EXTERNAL = {
     # Same rationale as list_mcp_tools' server-authored descriptions.
     "skill_list",
     # #3026: pipeline descriptions are operator- or third-party-authored —
-    # pipeline_management__install_source registers them straight out of a fetched
+    # pipeline_install_source registers them straight out of a fetched
     # git repo, exactly as skill_install_source does. pipeline_list re-surfaces
     # them on every later call. Same rationale as skill_list directly above.
     "pipeline_list",
@@ -130,7 +130,7 @@ _NOT_EXTERNAL = {
     # fetch path at all (a blueprint is inline declarative data). Same
     # classification rationale as skill_install_local / pipeline_install_local.
     "presentation_install_local",
-    # ADR 0064 plugin model P2: plugin_management__install copies a plugin dir
+    # ADR 0064 plugin model P2: install_plugin copies a plugin dir
     # + registers its capabilities — returns an install status dict (name /
     # plugin_root / capabilities / registered), not fetched external content.
     # A {kind:"git"} source's cloned files are threat-scanned (via the SAME
@@ -138,17 +138,17 @@ _NOT_EXTERNAL = {
     # registration; the scan result is internal OS state, not forwarded
     # external content. Same classification rationale as skill_install_source
     # / mcp_install_package (installs, does not relay).
-    # plugin_management__uninstall returns a removal status dict (name /
+    # uninstall_plugin returns a removal status dict (name /
     # removed / copy_removed) — same "status ACK, not content" rationale as
     # mcp_drop_server.
-    "plugin_management__install", "plugin_management__uninstall",
-    # #3202 symptom 3: plugin_management__list ONLY enumerates BUILTIN_PLUGINS
+    "install_plugin", "uninstall_plugin",
+    # #3202 symptom 3: list_plugins ONLY enumerates BUILTIN_PLUGINS
     # -- reyn's own shipped plugin directories and their own reyn-authored
     # .reyn-plugin/plugin.json manifests. Unlike skill_list/pipeline_list
     # (which can surface operator/third-party text registered via a
     # {kind:"local"/"git"} install), there is no local/git listing here, so
     # no third-party text ever flows through this handler.
-    "plugin_management__list",
+    "list_plugins",
     "cron_register", "cron_unregister", "cron_enable", "cron_disable",
     # #2073 S3: hooks_add writes .reyn/hooks.yaml + schedules a reload — returns a
     # status dict (on / added / reload_scheduled / path), not external content.

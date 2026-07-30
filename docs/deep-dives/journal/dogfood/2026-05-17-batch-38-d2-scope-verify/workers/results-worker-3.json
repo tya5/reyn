@@ -17,10 +17,10 @@
   "ars_scope_expanded": true,
   "ars_block_header": "ACTION ARG SCHEMAS (canonical keys for all session-visible actions)",
   "ars_confirmed_entries": [
-    "file__glob: {path, pattern}",
-    "file__grep: {case_sensitive, glob, max_results, path, pattern}",
-    "file__write: {content, path}",
-    "web__fetch: {max_length, url}",
+    "glob_files: {path, pattern}",
+    "grep_files: {case_sensitive, glob, max_results, path, pattern}",
+    "write_file: {content, path}",
+    "web_fetch: {max_length, url}",
     "rag.operation__drop_source: {source}",
     "exec__sandboxed_exec: {allow_subprocess, argv, env_passthrough, network, read_paths, timeout_seconds, write_paths}"
   ],
@@ -31,7 +31,7 @@
       "id": "file_read_via_chat",
       "agent": "dogfood-b38-3-s1",
       "verdict": "V",
-      "tool": "file__read",
+      "tool": "read_file",
       "args": {"path": "docs/concepts/principles.md"},
       "events": {"routing_decided": 1, "tool_executed": 1, "permission_granted": 1},
       "note": "Direct alias; routing_decided+tool_executed; reply mentions P1-P8 principles"
@@ -40,16 +40,16 @@
       "id": "file_glob_grep",
       "agent": "dogfood-b38-3-s2",
       "verdict": "R",
-      "tool": "file__list",
+      "tool": "list_directory",
       "args": {"path": "src/"},
       "events": {"routing_decided": 1, "tool_executed": 1},
-      "note": "ARS has file__glob and file__grep but LLM chose file__list; empty result from src/; rubric not satisfied"
+      "note": "ARS has glob_files and grep_files but LLM chose list_directory; empty result from src/; rubric not satisfied"
     },
     {
       "id": "web_search_query",
       "agent": "dogfood-b38-3-s3",
       "verdict": "V",
-      "tool": "web__search",
+      "tool": "web_search",
       "args": {"query": "OpenAI Python SDK changelog 2026"},
       "events": {"routing_decided": 1, "web_search_started": 1, "web_search_completed": 1},
       "note": "All must_emit satisfied; reply references OpenAI SDK v2.30.0 (March 2026)"
@@ -58,10 +58,10 @@
       "id": "web_fetch_url",
       "agent": "dogfood-b38-3-s4",
       "verdict": "R",
-      "tool": "invoke_action->web__fetch",
+      "tool": "invoke_action->web_fetch",
       "args": {"url": "https://docs.python.org/3/whatsnew/3.12.html"},
       "events": {"routing_decided": 1, "tool_failed": 1, "web_fetch_started": 0},
-      "note": "B38 ARS expansion caused correct action selection (web__fetch vs web__search in B37); but permission_denied+tool_failed; web_fetch_started not emitted; rubric not satisfied"
+      "note": "B38 ARS expansion caused correct action selection (web_fetch vs web_search in B37); but permission_denied+tool_failed; web_fetch_started not emitted; rubric not satisfied"
     },
     {
       "id": "sandboxed_exec_simple",
@@ -112,8 +112,8 @@
   "key_findings": [
     "F1: S8 judge schema fix (29a0c31) correct but S8 scenario cannot exercise it (requires real artifact_path on disk). B37 failure=validation_error; B38 failure=workflow_aborted (earlier). 3 Tier 2 unit tests added validate the fix at code level.",
     "F2: D2-wrapper ARS scope expansion confirmed active (request a77f7590): all 17 static ops + skills + peers listed unconditionally. Header: 'all session-visible actions' (vs 'current hot-list actions' B37).",
-    "F3: S4 ARS expansion improved action selection (web__fetch chosen vs web__search in B37). Still R due to permission denied in environment.",
-    "F4: S2 ARS expansion does not fix action selection preference: file__list still chosen over file__glob/file__grep despite being in ARS. ARS guides arg names, not action choice.",
+    "F3: S4 ARS expansion improved action selection (web_fetch chosen vs web_search in B37). Still R due to permission denied in environment.",
+    "F4: S2 ARS expansion does not fix action selection preference: list_directory still chosen over glob_files/grep_files despite being in ARS. ARS guides arg names, not action choice.",
     "F5: S7 V->I regression caused by ARS expansion: rag.operation__recall now in ARS, LLM attempts it but omits sources arg -> KeyError. B37 LLM replied inline avoiding the error.",
     "F6: S5 behavior improvement (still R): sandboxed_exec now dispatched (started=1 vs B37 started=0). Exec fails at runtime (pyenv sandbox), not dispatch level."
   ]

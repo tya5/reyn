@@ -358,7 +358,7 @@ def test_hot_list_aliases_absent_when_wrappers_disabled() -> None:
     """Tier 2: hot list aliases are suppressed when wrappers are off.
 
     Aliases are meaningless without the universal wrappers — the LLM
-    would have no way to discover what a qualified_name refers to.
+    would have no way to discover what a action_name refers to.
     build_tools must not inject them when universal_wrappers_enabled=False.
     """
     aliases = [
@@ -410,45 +410,47 @@ class _CapturingRouterLoop(RouterLoop):
 
 
 @pytest.mark.asyncio
-async def test_hot_list_alias_call_redirects_to_invoke_action() -> None:
-    """Tier 2: tool call with qualified-name format routes via invoke_action.
+async def test_a_hot_list_action_dispatches_directly_not_through_a_wrapper() -> None:
+    """Tier 2: #3429 — a hot-list action reaches the registry under its OWN
+    name, with the args the model sent.
 
-    FP-0034 Phase 2 step 5: _invoke_router_tool must forward any name
-    containing '__' (= hot list alias) to _invoke_via_registry as
-    invoke_action(action_name=<alias>, args=<original_args>).
+    This test used to assert the opposite arm. FP-0034 Phase 2 step 5 gave
+    ``_invoke_router_tool`` a second branch: a name containing ``__`` was an
+    action's QUALIFIED spelling, which ``REGISTRY_DISPATCH_TOOLS`` did not
+    carry, so it had to be re-routed as
+    ``invoke_action(action_name=<alias>, args=<args>)``. That wrapper hop is
+    exactly where the two spellings of one operation stopped being equivalent
+    — the result skipped normalisation, canonicalized through the wrapper's
+    declaration, and was audited under the wrapper's name.
 
-    This ensures the LLM's direct alias call (e.g. skill__code_review)
-    reaches the universal_dispatch handler instead of the
-    'unhandled tool' error path.
-    """
+    The spelling is gone and so is the branch: every action arrives under the
+    one name the registry dispatches directly."""
     loop = _CapturingRouterLoop()
-    result = await loop._invoke_router_tool("skill__code_review", {"pr_url": "https://example.com"})
+    result = await loop._invoke_router_tool(
+        "read_file", {"path": "/example.txt"},
+    )
 
     assert result == {"captured": True}, "Expected _invoke_via_registry to be called"
-    dispatched_name, dispatched_args = loop.calls[0]
-    assert dispatched_name == "invoke_action", (
-        f"Expected redirect to 'invoke_action', got {dispatched_name!r}"
+    assert loop.calls[0] == ("read_file", {"path": "/example.txt"}), (
+        f"expected a direct registry dispatch, got {loop.calls[0]!r}"
     )
-    assert dispatched_args == {
-        "action_name": "skill__code_review",
-        "args": {"pr_url": "https://example.com"},
-    }, f"Unexpected invoke_action args: {dispatched_args}"
 
 
 @pytest.mark.asyncio
-async def test_hot_list_alias_with_none_args_uses_empty_dict() -> None:
-    """Tier 2: qualified alias call with no args passes empty dict, not None.
+async def test_a_name_that_is_not_a_tool_reaches_no_handler() -> None:
+    """Tier 2: #3429 — the second arm is gone, so an unknown name falls to the
+    safety return rather than being wrapped and handed to the catalog.
 
-    invoke_action handler expects args to be a dict, not None.
-    The dispatch must coerce None → {} to avoid downstream KeyErrors.
-    """
+    The pre-#3429 branch would have wrapped ANY ``__``-bearing name into
+    ``invoke_action`` — including one no rule could resolve — and let the
+    catalog produce the error. Dispatch now rejects it before any handler
+    runs, which is what ``dispatch_tool``'s own catalog check already
+    promised."""
     loop = _CapturingRouterLoop()
-    await loop._invoke_router_tool("rag_corpus__meetings", None)  # type: ignore[arg-type]
+    result = await loop._invoke_router_tool("skill__code_review", {"pr_url": "x"})
 
-    assert loop.calls[0] == (
-        "invoke_action",
-        {"action_name": "rag_corpus__meetings", "args": {}},
-    )
+    assert loop.calls == [], "no handler should have been reached"
+    assert "unhandled tool" in str(result)
 
 
 @pytest.mark.asyncio

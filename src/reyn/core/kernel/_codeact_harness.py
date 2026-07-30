@@ -93,7 +93,7 @@ def _make_tool_shim(channel: _ControlChannel):
 
     ``name`` is **positional-only** (#3041). It means "which tool to call", but
     ``**args`` carries the TARGET tool's own schema keys — and ~20 registered tools
-    (``mcp__install_local``, ``agent_spawn``, ``remember_shared``, ``pipeline__run``
+    (``mcp_install_local``, ``agent_spawn``, ``remember_shared``, ``run_pipeline``
     …) declare a parameter literally called ``name``. Without the ``/``, that key
     binds to this function's own ``name`` slot, which ``_make_action_stub`` has
     ALREADY filled positionally, and Python raises ``TypeError: got multiple values
@@ -123,12 +123,12 @@ def _make_tool_shim(channel: _ControlChannel):
     return tool
 
 
-def _make_action_stub(qualified_name: str, tool_shim: Any):
+def _make_action_stub(action_name: str, tool_shim: Any):
     """#1658: a gated DIRECT-FUNCTION stub for one action — a thin renamed wrapper of
     the ``tool`` marshalling primitive with the qualified name BAKED IN. Calling
-    ``file__read(path=...)`` marshals ``('file__read', kwargs)`` over the SAME control
+    ``read_file(path=...)`` marshals ``('read_file', kwargs)`` over the SAME control
     channel to the SAME parent gate (exclude + dispatch_tool + permission). Gating is
-    identical to the old ``tool('file__read', ...)`` proxy; only the LLM-facing surface
+    identical to the old ``tool('read_file', ...)`` proxy; only the LLM-facing surface
     changes (a selected identifier, never a produced string). Keyword args only
     (matches the proxy contract + the SP's keyword example); a positional call raises a
     clear TypeError the model self-corrects from.
@@ -139,7 +139,7 @@ def _make_action_stub(qualified_name: str, tool_shim: Any):
     this stub's "which tool" channel."""
 
     def _stub(**kwargs: Any) -> Any:
-        return tool_shim(qualified_name, **kwargs)
+        return tool_shim(action_name, **kwargs)
 
     return _stub
 
@@ -165,7 +165,7 @@ def _exec_codeact(
 
     Returns the snippet's ``result`` binding if it defines one, else None. The
     snippet affects the world ONLY through the injected action functions (#1658:
-    ``file__read(...)`` etc., each a parent-gated stub) — or the internal ``tool()``
+    ``read_file(...)`` etc., each a parent-gated stub) — or the internal ``tool()``
     primitive they wrap (kept available but NOT advertised). The restricted builtins
     block ``open`` / ``eval`` / ``__import__`` of non-allowlisted modules
     (defense-in-depth on top of the sandbox)."""
@@ -212,7 +212,7 @@ def main() -> int:
         code = str(req["code"])
         control_fd = int(req["control_fd"])
         allowed_modules = frozenset(req.get("allowed_modules") or [])
-        actions = req.get("actions") or {}  # #1658 {identifier: qualified_name}
+        actions = req.get("actions") or {}  # #1658 {identifier: action_name}
 
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=control_fd)
         channel = _ControlChannel(sock)

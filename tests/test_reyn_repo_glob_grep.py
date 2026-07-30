@@ -1,7 +1,7 @@
-"""Tier 2: reyn_repo__glob / reyn_repo__grep — FP-0038 S2 + S3.
+"""Tier 2: reyn_repo_glob / reyn_repo_grep — FP-0038 S2 + S3.
 
 Pins the §D20-completing surface for the `reyn_repo` category. The two
-new ops mirror `file__glob` / `file__grep` in shape but resolve paths
+new ops mirror `glob_files` / `grep_files` in shape but resolve paths
 against Reyn's own repo root (via `resolve_reyn_root()`), not the
 operator's workspace.
 
@@ -14,10 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.runtime.reyn_repo import glob_entries, grep_entries, resolve_reyn_root
-from reyn.tools.universal_dispatch import (
-    _OPERATION_RULES,
-    known_qualified_name_for_category,
-)
+from reyn.tools.universal_dispatch import action_names_for_category
 
 ROOT: Path = resolve_reyn_root()
 
@@ -26,29 +23,16 @@ ROOT: Path = resolve_reyn_root()
 
 
 def test_reyn_repo_category_has_four_ops() -> None:
-    """Tier 2: `reyn_repo__{list,read,glob,grep}` are all registered.
+    """Tier 2: the reyn_repo list/read/glob/grep actions are all registered.
 
     Catches the regression where §D20 surface drifts back to 2 ops.
     """
-    qns = known_qualified_name_for_category("reyn_repo")
-    assert set(qns) == {
-        "reyn_repo__list",
-        "reyn_repo__read",
-        "reyn_repo__glob",
-        "reyn_repo__grep",
+    assert set(action_names_for_category("reyn_repo")) == {
+        "reyn_repo_list",
+        "reyn_repo_read",
+        "reyn_repo_glob",
+        "reyn_repo_grep",
     }
-
-
-def test_reyn_repo_glob_routes_to_reyn_repo_glob() -> None:
-    """Tier 2: dispatch routes `reyn_repo__glob` to `reyn_repo_glob`."""
-    target, _ = _OPERATION_RULES["reyn_repo__glob"]
-    assert target == "reyn_repo_glob"
-
-
-def test_reyn_repo_grep_routes_to_reyn_repo_grep() -> None:
-    """Tier 2: dispatch routes `reyn_repo__grep` to `reyn_repo_grep`."""
-    target, _ = _OPERATION_RULES["reyn_repo__grep"]
-    assert target == "reyn_repo_grep"
 
 
 # ── 2. glob_entries — pattern match against real repo ─────────────────────

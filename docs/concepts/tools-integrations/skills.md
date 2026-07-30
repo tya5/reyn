@@ -56,9 +56,9 @@ never consulted. The two fields therefore describe **four** states, not six —
 > behavior `false` actually delivered, not the narrower thing its old
 > description promised).
 
-The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is loaded by the model at L2, on demand, via the dedicated `load_skill` op (`skill_management__load`, FP-0066 P0/#3247) — which additionally expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens in the body before returning it (see [Skill-load variable expansion](#skill-load-variable-expansion) below). The ordinary file-read op does NOT special-case `SKILL.md` — reading one with `file__read` returns its bytes byte-identical, same as any other file.
+The registry never reads `SKILL.md` itself — only `path` and `description` from the config entry populate the L1 menu and the `skill_list` result. The file is loaded by the model at L2, on demand, via the dedicated `load_skill` op (`load_skill`, FP-0066 P0/#3247) — which additionally expands invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` tokens in the body before returning it (see [Skill-load variable expansion](#skill-load-variable-expansion) below). The ordinary file-read op does NOT special-case `SKILL.md` — reading one with `read_file` returns its bytes byte-identical, same as any other file.
 
-> **On the name `file__read`, used throughout this page.** The file-read op has two spellings — the qualified catalog name `file__read` and the unqualified `read_file` — and **both always dispatch**. Which one the model is *shown* depends on the [tool-use cell](tool-use-schemes.md) and on the operator's file-permission scope: a cell that composes the base tools with the flat catalog advertises each operation once, under the unqualified spelling where the base tools supply one, so a session with a configured read scope sees `read_file` and one without sees `file__read`. This page names the op, not the advertised row.
+> **On the name `read_file`, used throughout this page.** The file-read op has two spellings — the qualified catalog name `read_file` and the unqualified `read_file` — and **both always dispatch**. Which one the model is *shown* depends on the [tool-use cell](tool-use-schemes.md) and on the operator's file-permission scope: a cell that composes the base tools with the flat catalog advertises each operation once, under the unqualified spelling where the base tools supply one, so a session with a configured read scope sees `read_file` and one without sees `read_file`. This page names the op, not the advertised row.
 
 ## Discovering and using a skill
 
@@ -66,10 +66,10 @@ There is no `run_skill` tool, by design. A skill body is *instructions for the
 model*, not code to execute, so **loading the file is the invocation**:
 
 1. **Discover** — `menu` skills are already listed in the L1 `## Skills` block.
-   For the rest, `skill_management__list` (the `skill_list` tool) returns every
+   For the rest, `skill_list` (the `skill_list` tool) returns every
    registered skill whose `visibility` is not `hidden`, with its `name`,
    `description`, and `path`.
-2. **Load** — the model calls `load_skill` (`skill_management__load`) with
+2. **Load** — the model calls `load_skill` (`load_skill`) with
    that `path` and follows the instructions for the current task.
 
 Builtin skills ship inside the installed package, physically outside any
@@ -133,7 +133,7 @@ invariant above; it needs its own caching design and stays open.
 **Collision — LOUD, never silent.** The `:` namespace structurally avoids a
 skill-vs-built-in shadow, but a same-NAME collision across `skills.entries`
 config tiers can still happen (`~/.reyn/config.yaml` vs `reyn.yaml` vs a
-`skill_management__install_*`-written `.reyn/config/skills.yaml`).
+`skill_install_*`-written `.reyn/config/skills.yaml`).
 `reyn.config.loader._merge` tags each tier while merging and records any
 name that appears under two different tier labels into
 `config.skills["_collisions"]`; the LAST tier still wins (unchanged
@@ -149,7 +149,7 @@ closest-match suggestion (prefix + fuzzy match, same algorithm as an unknown
 
 **No new permission gate.** `:name` resolves against the operator's OWN
 registered `skills.entries` — a set already declared in config or installed
-through a permission-gated `skill_management__install_*` call. Reading that
+through a permission-gated `skill_install_*` call. Reading that
 entry's `SKILL.md` for the operator grants no capability beyond what the
 operator already put there themselves (there is no LLM choosing the path),
 so `:skill` does not add a `require_file_read` gate around the read.
@@ -300,7 +300,7 @@ than a skill-specific reimplementation.
 1. `~/.reyn/config.yaml` — user-global
 2. `reyn.yaml` — project
 3. `reyn.local.yaml` — project-local (gitignored)
-4. `.reyn/config/skills.yaml` — runtime-dynamic, written by the `skill_management__install_*` tools
+4. `.reyn/config/skills.yaml` — runtime-dynamic, written by the `skill_install_local` / `skill_install_source` tools
 
 Hand-editing any of the first three is a normal way to register a skill; the fourth is written automatically by the install tools below and reflects what a session installed for itself.
 
@@ -324,12 +324,12 @@ Use `pypdf` for form-field operations...
 | Layer | What the model sees | Mechanism |
 |-------|---------------------|-----------|
 | **L1 — menu** | A dedicated `## Skills` system-prompt block, one line per enabled + auto-invoke skill: `name — description [path]`. | Built once per turn from the registry; no dedicated dispatch. |
-| **L2 — instructions** | The full `SKILL.md` body, loaded only when the model judges the current task matches an entry's description. | The dedicated `load_skill` op (`skill_management__load`, FP-0066 P0/#3247) — the body passes through invocation-time variable expansion (see [Skill-load variable expansion](#skill-load-variable-expansion)) before it reaches the model. `file__read` no longer special-cases this path. |
-| **L3 — bundled assets** | Any additional files the skill's instructions reference (templates, scripts, reference data) sitting alongside `SKILL.md`. | Ordinary `file__read`, gated by the standard permission model like any other path — **except** for a builtin or installed-plugin skill (below), where `skills/**`/`pipelines/**` content bypasses the gate the same way `SKILL.md` itself does. |
+| **L2 — instructions** | The full `SKILL.md` body, loaded only when the model judges the current task matches an entry's description. | The dedicated `load_skill` op (`load_skill`, FP-0066 P0/#3247) — the body passes through invocation-time variable expansion (see [Skill-load variable expansion](#skill-load-variable-expansion)) before it reaches the model. `read_file` no longer special-cases this path. |
+| **L3 — bundled assets** | Any additional files the skill's instructions reference (templates, scripts, reference data) sitting alongside `SKILL.md`. | Ordinary `read_file`, gated by the standard permission model like any other path — **except** for a builtin or installed-plugin skill (below), where `skills/**`/`pipelines/**` content bypasses the gate the same way `SKILL.md` itself does. |
 
 There is no dedicated "run this skill" primitive at any layer — a skill is discovered via L1, loaded via L2, and its assets are just files. The model decides relevance from the L1 description; the OS does not gate *which* skill the model may load, only *which paths* it may read/load (the standard permission model — reading inside the project root is a default; outside requires the usual declaration + approval).
 
-**Builtin/plugin body reads bypass the read-zone gate; everything else doesn't.** A builtin skill/pipeline's `path` (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE `project_root` in every deploy — the standard out-of-root gate would hard-deny them non-interactively, with no operator present to approve. `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and `reyn.plugins.body_read.read_plugin_body_bytes` (owner ruling + architect firm) short-circuit that gate for exactly this content — `load_skill` (L2, `SKILL.md` itself), `file__read` (L3, any bundled asset under `skills/`/`pipelines/`, including the `${CLAUDE_SKILL_DIR}`-referenced files described just below), and `:name` skill-invoke (`reyn.interfaces.skill_invoke.resolve_skill_body`) all route through them. The plugin bypass is gated on **install-registration**, not on the presence of a `.reyn-plugin/` marker: a plugin only qualifies once `plugin_install` has completed (source-resolve → manifest-validate → operator-permission-gated global copy → capability-register all succeeded — `reyn.core.op_runtime.plugin_install.is_registered_plugin_root`), so a hand-placed marker under `~/.reyn/plugins/` can never forge the bypass. `~/.reyn/plugins/.staging/` (pre-approval git-clone staging content) and anything outside `skills/`/`pipelines/` (`scripts/`, `requirements.txt`, `.mcp.json`) are explicitly excluded — least-privilege, mirroring the builtin bypass's own package-body-dir scoping. Enable/disable state never gates this: it is a project-local "use it or don't" toggle over content already approved once, globally, at install time.
+**Builtin/plugin body reads bypass the read-zone gate; everything else doesn't.** A builtin skill/pipeline's `path` (`reyn.builtin.registry`'s `BUILTIN_SKILLS`/`BUILTIN_PIPELINES` entries) and an installed plugin's `skills/**`/`pipelines/**` content (`~/.reyn/plugins/<name>/`, ADR 0064 §3.3) both resolve OUTSIDE `project_root` in every deploy — the standard out-of-root gate would hard-deny them non-interactively, with no operator present to approve. `reyn.builtin.docs.read_builtin_body_bytes` (#2913/#2914) and `reyn.plugins.body_read.read_plugin_body_bytes` (owner ruling + architect firm) short-circuit that gate for exactly this content — `load_skill` (L2, `SKILL.md` itself), `read_file` (L3, any bundled asset under `skills/`/`pipelines/`, including the `${CLAUDE_SKILL_DIR}`-referenced files described just below), and `:name` skill-invoke (`reyn.interfaces.skill_invoke.resolve_skill_body`) all route through them. The plugin bypass is gated on **install-registration**, not on the presence of a `.reyn-plugin/` marker: a plugin only qualifies once `plugin_install` has completed (source-resolve → manifest-validate → operator-permission-gated global copy → capability-register all succeeded — `reyn.core.op_runtime.plugin_install.is_registered_plugin_root`), so a hand-placed marker under `~/.reyn/plugins/` can never forge the bypass. `~/.reyn/plugins/.staging/` (pre-approval git-clone staging content) and anything outside `skills/`/`pipelines/` (`scripts/`, `requirements.txt`, `.mcp.json`) are explicitly excluded — least-privilege, mirroring the builtin bypass's own package-body-dir scoping. Enable/disable state never gates this: it is a project-local "use it or don't" toggle over content already approved once, globally, at install time.
 
 ## Splitting a large skill: `${CLAUDE_SKILL_DIR}` references (#3162)
 
@@ -359,7 +359,7 @@ Deeper detail on hooks and MCP:
 ```
 
 - A bare relative path (e.g. `references/foo.md`) does **not** work here —
-  reyn's `file__read` op resolves a non-absolute path against the
+  reyn's `read_file` op resolves a non-absolute path against the
   **workspace root**, not the skill's own directory
   (`src/reyn/core/op_runtime/file.py`), so it would silently miss the
   skill's own `references/` folder. `${CLAUDE_SKILL_DIR}` is an
@@ -372,7 +372,7 @@ Deeper detail on hooks and MCP:
   without having read the references yet — name each reference file for the
   question it answers, and keep the one-line "when to read this" note next
   to each link.
-- Each reference is read the same way as `SKILL.md` (ordinary `file__read`),
+- Each reference is read the same way as `SKILL.md` (ordinary `read_file`),
   so it is subject to the **same** default inline cap.
 
 `tests/test_skill_references_gate_3162.py` gates, for every shipped skill
@@ -404,7 +404,7 @@ A skill can be hidden from a single session without touching config, via the sam
 
 Two chat-callable tools under the `skill_management` category write `skills.yaml` entries — there is no `reyn skill` CLI equivalent in v1/v2 (skill management is a chat-driven, in-conversation flow).
 
-### `skill_management__install_local`
+### `skill_install_local`
 
 Registers a local skill directory (or a direct path to its `SKILL.md`) into `.reyn/config/skills.yaml`:
 
@@ -414,7 +414,7 @@ Registers a local skill directory (or a direct path to its `SKILL.md`) into `.re
 4. Gates the `skills.yaml` write through the standard `require_file_write` permission flow.
 5. Writes the entry, records a config generation (crash-recovery — survives WAL truncation), emits a `skill_installed` P6 event, and requests a hot-reload.
 
-### `skill_management__install_source`
+### `skill_install_source`
 
 Fetches a skill from a git/GitHub URL and installs the clone:
 

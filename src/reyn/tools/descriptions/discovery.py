@@ -66,13 +66,13 @@ web_fetch = ToolDescription(
         "stored under .reyn/tool-results/. url: absolute http/https URL. "
         "max_length: cap on extracted body length (default 50000). "
         "Use after web_search to load a result page; call "
-        "file__read(path) to read the full body."
+        "read_file(path) to read the full body."
     ),
     ja=(
         "単一の URL を取得する。構造化されたプレビュー（タイトル、アウト"
         "ライン、冒頭段落、リンク数など）と、本文全体への path_ref を返す。"
         "web_search の結果ページを読み込む際に使う。本文全体は "
-        "file__read(path) で読む。"
+        "read_file(path) で読む。"
     ),
 )
 
@@ -112,7 +112,7 @@ mcp_search_registry = ToolDescription(
     text=(
         "Search the official MCP registry for servers matching a "
         "natural-language capability request. Returns candidates whose "
-        "'name' field feeds mcp__install_registry. Multilingual — accepts "
+        "'name' field feeds mcp_install_registry. Multilingual — accepts "
         "queries in any language."
     ),
     ja=(
@@ -136,7 +136,7 @@ list_actions = ToolDescription(
         "function list is a curated subset; this tool reveals the rest. "
         "Filter by category: `category=[...]` array (enum-restricted, exact "
         "category match). Omit or pass [] to enumerate everything visible. "
-        "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
+        "Returns {items: [{action_name, short_description}, ...], total: int}. "
         "An empty items array means no actions match — report this honestly. "
         "WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all "
         "memory_operation actions', 'what exec actions are available?') or exact-name "
@@ -153,7 +153,7 @@ list_actions = ToolDescription(
         "exact action name, skip both and call invoke_action directly. "
         "PREFERRED OVER: Guessing action names + refusing capability requests — "
         "list_actions returns the canonical qualified names (e.g. "
-        "mcp__call_tool, multi_agent__delegate) that invoke_action and "
+        "mcp_call_tool, delegate_to_agent) that invoke_action and "
         "describe_action expect. "
         "POST_CALL: After list_actions reveals at least one matching action, you "
         "MUST follow with describe_action or invoke_action. Do NOT reply directly "
@@ -179,7 +179,7 @@ search_actions = ToolDescription(
     text=(
         "WHAT: Semantic search across available actions — multilingual, "
         "embedding-based, relevance-ranked. "
-        "Returns {items: [{qualified_name, short_description, score}, ...]}. "
+        "Returns {items: [{action_name, short_description, score}, ...]}. "
         "WHEN: PREFERRED FIRST for semantic / natural-language / free-text "
         "queries — when the user asks to find / search for / something related "
         "to / similar to / something for X / actions about Y / find ... related "
@@ -225,7 +225,7 @@ describe_action = ToolDescription(
         "or resource. Returns {description, input_schema, metadata}. "
         "WHEN: Use this before invoke_action when you need to know the exact "
         "argument shape of an action. Should be called whenever you have the "
-        "qualified_name but are unsure of the required args. "
+        "action_name but are unsure of the required args. "
         "WHEN NOT: If you already know the input schema (from a previous call or "
         "the action takes no args), skip this and call invoke_action directly. "
         "PREFERRED OVER: Guessing argument names — describe_action returns the "
@@ -392,11 +392,11 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "action_name": ParamDescription(
             text=(
                 "Qualified name of the action to describe "
-                "(e.g. 'mcp__call_tool', 'memory_operation__read')."
+                "(e.g. 'mcp_call_tool', 'read_memory_body')."
             ),
             ja=(
                 "説明対象のアクションの修飾名（例 "
-                "'mcp__call_tool', 'memory_operation__read'）。"
+                "'mcp_call_tool', 'read_memory_body'）。"
             ),
         ),
     },
