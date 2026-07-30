@@ -106,6 +106,38 @@ def _memo_cleared_theme() -> "object":
     gate measure what a real single-colour-system terminal process sees. A
     REAL terminal process is unaffected by the upstream bug: it has one
     colour system, so the memo is always computed for the system it serves.
+
+    **Upstream status — deliberately NOT reported (owner decision).** This is a
+    bug in rich, not in reyn and not in litellm: ``Style._make_ansi_codes``
+    caches the rendered SGR in ``self._ansi`` and never keys that cache by
+    ``color_system``. It is recorded here rather than filed upstream, so this
+    docstring is the only place the mechanism lives — keep it accurate.
+
+    **When can this helper go away?** Run this against the installed rich; it
+    is the whole decision, and it needs no reyn code::
+
+        from io import StringIO
+        from rich.console import Console
+        from rich.style import Style
+
+        s = Style.parse("#6b7280")
+        Console(file=StringIO(), force_terminal=True,
+                color_system="standard").print("x", style=s)
+        out = StringIO()
+        Console(file=out, force_terminal=True,
+                color_system="truecolor").print("x", style=s)
+        print(repr(out.getvalue()))
+
+    On rich 15.0.0 this prints ``'\x1b[90mx\x1b[0m\n'`` — the truecolor
+    console re-emitting the *standard* console's memoized escape, i.e. the bug
+    is present and this helper is still load-bearing. Once it prints an
+    ``\x1b[38;2;107;114;128m`` sequence instead, rich keys the memo per colour
+    system, and then: this function collapses to a plain
+    ``chat_markdown_theme()`` call, and
+    :func:`test_gate_measures_the_theme_not_another_consoles_downgrade_memo`
+    (which only guards against the poisoning, and passes either way) loses its
+    reason to exist. Do not delete either one on a version bump alone — run the
+    snippet, because the fix could land in any release.
     """
     theme = chat_markdown_theme()
     for style in theme.styles.values():  # type: ignore[attr-defined]
