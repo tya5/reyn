@@ -3396,10 +3396,12 @@ class AgentRegistry:
         """
         from reyn.security.permissions.capability_profile import (
             compose_resolved,
+            delegate_floor_origin,
             load_capability_profile,
             load_delegate_profile,
             resolve_profile,
         )
+        from reyn.security.permissions.effective import NarrowingOrigin
 
         resolved: list = []
         for topo in self.topologies_for_agent(agent):
@@ -3426,7 +3428,16 @@ class AgentRegistry:
                     f"{topo.name!r}) not found at {path} — failing closed (floor)",
                     file=sys.stderr,
                 )
-                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
+                resolved.append(resolve_profile(
+                    load_delegate_profile(self._project_root),
+                    origin=delegate_floor_origin(
+                        f"topology {topo.name!r} binds this agent to capability_profile "
+                        f"{name!r}, but that profile file is missing at {path} — the "
+                        "declared narrowing cannot be resolved, so the restrictive "
+                        "floor is applied instead of none (a purged profile must not "
+                        "widen the agent)"
+                    ),
+                ))
                 continue
             try:
                 prof = load_capability_profile(path)
@@ -3441,9 +3452,31 @@ class AgentRegistry:
                     "— failing closed (floor)",
                     file=sys.stderr,
                 )
-                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
+                resolved.append(resolve_profile(
+                    load_delegate_profile(self._project_root),
+                    origin=delegate_floor_origin(
+                        f"topology {topo.name!r} binds this agent to capability_profile "
+                        f"{name!r}, but {path.name} could not be parsed — the declared "
+                        "narrowing cannot be resolved, so the restrictive floor is "
+                        "applied instead of none"
+                    ),
+                ))
                 continue
-            resolved.append(resolve_profile(prof))
+            resolved.append(resolve_profile(prof, origin=NarrowingOrigin(
+                label=(
+                    f"the capability_profile {name!r} bound to this agent by topology "
+                    f"{topo.name!r}"
+                ),
+                cause=(
+                    "the topology declares this agent's capability surface, and this "
+                    "capability is outside it"
+                ),
+                lifts_when=(
+                    f"the operator edits {path} or rebinds the member in topology "
+                    f"{topo.name!r}. This narrowing is durable — it does not lift on "
+                    "its own"
+                ),
+            )))
 
         # #2081: an UNBOUND-by-topology delegate under delegation.capability_default=
         # deny gets the restrictive _delegate floor (a topology binding REPLACES it —
@@ -3457,7 +3490,14 @@ class AgentRegistry:
                 self._constructing_as_delegate if is_delegate is None else is_delegate
             )
             if effective_delegate and self._delegation_capability_default == "deny":
-                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
+                resolved.append(resolve_profile(
+                    load_delegate_profile(self._project_root),
+                    origin=delegate_floor_origin(
+                        "this agent is an unbound delegate (it was spawned by another "
+                        "agent's delegation and no topology binds its capabilities) "
+                        "while reyn.yaml sets `delegation.capability_default: deny`"
+                    ),
+                ))
 
         # #2103 S1a: the per-session config is an ADDITIONAL restrict-only ∩ conjunct
         # (the spawner-set, workspace-backed narrowing) — composed into the single
@@ -3466,7 +3506,18 @@ class AgentRegistry:
         if sid is not None:
             ps = self._load_per_session_capability_profile(agent, sid)
             if ps is not None:
-                resolved.append(resolve_profile(ps))
+                resolved.append(resolve_profile(ps, origin=NarrowingOrigin(
+                    label="the per-session capability narrowing for this session",
+                    cause=(
+                        "the agent that started this session narrowed it at spawn "
+                        f"time; the narrowing is recorded in this session's own "
+                        "config.yaml under .reyn/state"
+                    ),
+                    lifts_when=(
+                        "a new session is started without the narrowing (it is "
+                        "session-scoped and cannot be widened from inside)"
+                    ),
+                )))
 
         # #2103 B (agent-spawn, Decision A): cap a SPAWNED agent at ⊆ its PARENT, LIVE +
         # by construction. The parent's OWN resolved effective is composed as one more
@@ -3501,7 +3552,15 @@ class AgentRegistry:
                 # from a PRESENT-but-unrestricted parent (parent_ctx is None in the else
                 # branch → correctly skipped, no cap to impose). One seam covers every
                 # cap-drop cause (purge, name-reuse, crash, fs-delete).
-                resolved.append(resolve_profile(load_delegate_profile(self._project_root)))
+                resolved.append(resolve_profile(
+                    load_delegate_profile(self._project_root),
+                    origin=delegate_floor_origin(
+                        f"this agent was spawned by {parent!r}, whose identity is no "
+                        "longer present (purged, or the name was re-created as a "
+                        "different agent). The ⊆-parent cap cannot be verified, so the "
+                        "restrictive floor is applied rather than an unverified surface"
+                    ),
+                ))
             else:
                 parent_ctx, parent_excl = self.resolved_profile_for(parent)
                 if parent_ctx is not None:

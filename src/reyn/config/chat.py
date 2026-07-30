@@ -53,30 +53,6 @@ class LoopConfig:
             ``safety.on_limit`` checkpoint (warn → ask_user → abort) instead of
             running. A backstop only — does NOT obstruct intentional
             loop-engineering (the operator raises the cap). ``0`` = unlimited.
-        intra_turn_untrusted_narrowing:
-            #1909 (OPT-IN, default ``False``). When ``False`` (default),
-            contextual-permission narrowing for ``external_source``-tagged
-            content is resolved ONCE per turn (turn-boundary narrowing,
-            today's behavior) — an agent that touches external content
-            mid-turn does not lose capabilities until the *next* turn.
-            This is the predictable default: no mid-turn capability loss,
-            byte-identical to pre-#1909 behavior.
-
-            When ``True``, the OS re-resolves the contextual permission at
-            the top of every router-loop iteration within a turn, so
-            external content encountered in round *N* narrows dispatch in
-            round *N+1* of the *same* turn — closing the same-turn
-            injection window (the "lethal trifecta" mid-turn dispatch
-            gap). The trade-off (Product Think / operator legibility):
-            a legitimate external-content → privileged-action flow that
-            would have completed within one turn now gets narrowed
-            mid-flow and must resume next turn. Narrowing is monotonic
-            once engaged (a turn-scoped latch) — it does not un-narrow
-            mid-turn even if a later compaction evicts the tainted
-            history entry, closing a taint-laundering hole where
-            compaction could otherwise "launder" the taint away and let
-            capabilities recover within the same turn. An audit-event
-            fires the first time narrowing engages in a turn.
     """
 
     max_router_calls_per_turn: int = 3
@@ -84,7 +60,6 @@ class LoopConfig:
     max_router_iterations: int = 5
     max_tool_calls_per_turn: int = 50
     max_hook_driven_turns: int = 25
-    intra_turn_untrusted_narrowing: bool = False
 
 
 @dataclass
@@ -162,6 +137,31 @@ class OnLimitConfig:
     ask_timeout_seconds: float = 0.0
 
 
+# ``safety.threat_scan.capability_narrowing`` — the untrusted-content CAPABILITY
+# narrowing, as one ordered ladder (#3501):
+#
+# - ``off`` (default) — the narrowing never engages. An agent keeps the
+#   capabilities it started the session with, whatever enters its context.
+# - ``turn`` — while external content is live in the active context, the
+#   ``_untrusted`` profile is applied, resolved once per turn.
+# - ``iteration`` — as ``turn``, and re-resolved at every router-loop iteration, so
+#   external content arriving in round N narrows dispatch in round N+1 of the SAME
+#   turn (closes the same-turn injection window). Monotonic within a turn: a
+#   compaction that evicts the tainted entry mid-turn does not restore the
+#   capability until the turn ends, so the taint cannot be laundered away.
+#
+# ONE setting, not an enable flag plus a granularity flag (#3501): two booleans can
+# express "re-narrow every iteration, but do not narrow", which is not a state the
+# runtime has. The ladder is strictly increasing in strictness, so an operator
+# picking a level never has to reason about interaction.
+#
+# ``off`` is the default because the narrowing removes capabilities MID-SESSION for
+# a reason nothing tells the agent — the owner-reported symptom was "it worked at
+# the start of the session and then suddenly did not, and the LLM could not explain
+# why". Predictability is the default; the hardening is opted into.
+CAPABILITY_NARROWING_MODES = ("off", "turn", "iteration")
+
+
 @dataclass
 class ThreatScanConfig:
     """`safety.threat_scan:` — content-layer threat scan + fence (FP-0050 / #1822).
@@ -179,12 +179,36 @@ class ThreatScanConfig:
       ``"block"`` (default) blocks only ``severity="block"`` patterns; ``"warn"``
       makes warn-severity block too (stricter).
     - ``custom_patterns`` — operator ``(regex, id, scope, severity)`` extension.
+    - ``capability_narrowing`` — the CAPABILITY half of the same defense (the
+      ``_untrusted`` profile), one ladder of three settings. See
+      ``CAPABILITY_NARROWING_MODES`` below.
     """
     enabled: bool = True
     fail_open: bool = True
     fence_enabled: bool = True
     block_severity: str = "block"
     custom_patterns: list = field(default_factory=list)
+    capability_narrowing: str = "off"
+
+    def __post_init__(self) -> None:
+        if self.capability_narrowing not in CAPABILITY_NARROWING_MODES:
+            raise ValueError(
+                "safety.threat_scan.capability_narrowing must be one of "
+                f"{list(CAPABILITY_NARROWING_MODES)}, got "
+                f"{self.capability_narrowing!r}"
+            )
+
+    def narrowing_engaged(self) -> bool:
+        """Whether the untrusted-content capability narrowing runs at all."""
+        return self.capability_narrowing != "off"
+
+    def narrowing_per_iteration(self) -> bool:
+        """Whether the narrowing is re-resolved every router-loop iteration.
+
+        A second predicate rather than a second flag: ``iteration`` implies
+        ``turn``, so one ordered setting cannot express the contradiction "narrow
+        every iteration but do not narrow"."""
+        return self.capability_narrowing == "iteration"
 
 
 @dataclass
@@ -725,10 +749,6 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         max_hook_driven_turns=int(loop_raw.get(
             "max_hook_driven_turns", loop_defaults.max_hook_driven_turns,
         )),
-        intra_turn_untrusted_narrowing=bool(loop_raw.get(
-            "intra_turn_untrusted_narrowing",
-            loop_defaults.intra_turn_untrusted_narrowing,
-        )),
     )
     timeout = TimeoutConfig(
         llm_call_seconds=float(timeout_raw.get(
@@ -784,6 +804,13 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         fence_enabled=bool(threat_scan_raw.get("fence_enabled", ts_defaults.fence_enabled)),
         block_severity=str(threat_scan_raw.get("block_severity", ts_defaults.block_severity)),
         custom_patterns=list(custom_patterns_raw) if isinstance(custom_patterns_raw, list) else list(ts_defaults.custom_patterns),
+        # Passed through as written so ThreatScanConfig.__post_init__ rejects a typo
+        # (mirrors delegation.capability_default). A mis-typed security setting must
+        # not silently resolve to a level the operator did not ask for — in either
+        # direction: falling back to `off` would silently drop requested hardening.
+        capability_narrowing=str(threat_scan_raw.get(
+            "capability_narrowing", ts_defaults.capability_narrowing,
+        )),
     )
     spawn_raw = raw.get("spawn") or {}
     if not isinstance(spawn_raw, dict):

@@ -1402,6 +1402,7 @@ class PermissionResolver:
             ContextualLayer,
             EffectivePermission,
             ProfileLayer,
+            contextual_deny_message,
         )
 
         layers: list = [
@@ -1424,9 +1425,13 @@ class PermissionResolver:
             if contextual is not None and not ContextualLayer(contextual).allows(
                 CapabilityAxis.MCP, server
             ):
+                # #3501: same shared builder as the TOOL axis, on the MCP axis — so
+                # the two gates cannot drift into differently-informative denies for
+                # the same class of decision.
                 raise PermissionError(
-                    f"MCP server {server!r} is blocked by the active capability "
-                    f"context (delegation / topology / ephemeral narrowing)."
+                    contextual_deny_message(
+                        "MCP server", server, contextual, CapabilityAxis.MCP,
+                    )
                 )
             # 3. per-actor grant (AgentLayer) — "not declared in actor permissions"
             raise PermissionError(
@@ -1476,6 +1481,7 @@ class PermissionResolver:
             CapabilityAxis,
             ContextualLayer,
             EffectivePermission,
+            contextual_deny_message,
         )
 
         layers: list = [AgentLayer(decl)]
@@ -1490,10 +1496,14 @@ class PermissionResolver:
                 CapabilityAxis.TOOL, tool
             )
             if static_ok:
+                # #3501: name WHICH narrowing, why, and what lifts it. Listing the
+                # three candidate narrowings — as this did — is not decision-enabling:
+                # the caller still cannot tell which one fired, and an LLM handed that
+                # string cannot explain the loss or act on it.
                 raise PermissionError(
-                    f"tool {tool!r} is blocked by the active capability context "
-                    f"(delegation / topology / ephemeral narrowing). It is declared "
-                    f"in actor permissions but removed by the current context."
+                    contextual_deny_message("tool", tool, contextual)
+                    + " It IS declared in actor permissions — the static authority "
+                    "grants it; only the narrowing above removes it."
                 )
             raise PermissionError(
                 f"tool {tool!r} not declared in actor permissions. "

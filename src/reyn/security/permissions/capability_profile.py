@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from reyn.security.permissions.effective import ContextualPermission
+from reyn.security.permissions.effective import ContextualPermission, NarrowingOrigin
 from reyn.tools.universal_catalog import CATEGORIES
 
 
@@ -94,6 +94,8 @@ def load_capability_profile(path: "str | Path") -> CapabilityProfile:
 
 def resolve_profile(
     profile: CapabilityProfile,
+    *,
+    origin: "NarrowingOrigin | None" = None,
 ) -> "tuple[ContextualPermission, frozenset[str]]":
     """Resolve a profile into ``(ContextualPermission, excluded_categories)``.
 
@@ -105,6 +107,11 @@ def resolve_profile(
     Unknown category names in ``categories`` are simply not in ``CATEGORIES`` and
     so do not reduce the excluded set (they are a no-op, not an error — the loader
     is forward-compat).
+
+    ``origin`` (#3501) is the BINDING's provenance, supplied by the adapter that
+    decided to apply this profile — not read off the profile, because the same
+    profile file applied for two different reasons lifts under two different
+    conditions. It rides the resolved term so a deny site can name it.
     """
     # #3429: the TOOL axis is used verbatim. #2132 used to expand every name to
     # "all its invocable forms" here, because a tool had two spellings and the live
@@ -122,6 +129,7 @@ def resolve_profile(
             frozenset(profile.mcp_allow) if profile.mcp_allow is not None else None
         ),
         mcp_deny=frozenset(profile.mcp_deny),
+        origin=origin,
     )
     if profile.categories is None:
         excluded_categories: "frozenset[str]" = frozenset()
@@ -143,6 +151,13 @@ def compose_resolved(
     - ``excluded_categories`` → union (any profile's hide wins).
 
     Empty input → an inert ``(ContextualPermission(), ∅)``.
+
+    #3501: the flat ∩ above is what the gate evaluates, but flattening erases WHICH
+    term denied a name — the information the deny message needs. So the composed
+    value also carries ``composed_from``: the input terms, in composition order,
+    each keeping its own ``origin``. An already-composed input contributes its own
+    terms rather than itself, so the list stays one level deep and
+    ``narrowing_terms`` needs no recursion.
     """
     contexts = [c for (c, _excl) in resolved]
 
@@ -165,10 +180,14 @@ def compose_resolved(
     excluded: "set[str]" = set()
     for _c, excl in resolved:
         excluded |= set(excl)
+    terms: "list[ContextualPermission]" = []
+    for c in contexts:
+        terms.extend(c.composed_from or (c,))
     return (
         ContextualPermission(
             tool_allow=tool_allow, tool_deny=tool_deny,
             mcp_allow=mcp_allow, mcp_deny=mcp_deny,
+            composed_from=tuple(terms),
         ),
         frozenset(excluded),
     )
@@ -193,6 +212,42 @@ UNTRUSTED_META_KEY: "str" = "external_source"
 # default — an override is a *deliberate loosening*, never a tightening of the
 # floor below what the operator opts into.
 UNTRUSTED_PROFILE_NAME: "str" = "_untrusted"
+
+# The reyn.yaml key that turns this narrowing on (#3501). It is OFF by default:
+# a narrowing that engages without the operator asking removes capabilities
+# mid-session for a reason the agent cannot see, which is a predictability cost
+# paid on every session for a threat the operator may not have.
+#
+# Named here rather than imported from ``reyn.config`` (security must not depend
+# on config) — ``tests/test_3501_untrusted_narrowing_opt_in.py`` resolves this
+# dotted path against the real config objects, so a rename that misses this
+# string fails rather than shipping a deny message pointing at a key that does
+# not exist.
+UNTRUSTED_NARROWING_CONFIG_KEY: "str" = "safety.threat_scan.capability_narrowing"
+
+# The provenance the deny message reads (#3501). "Which narrowing / why / what
+# lifts it" — the untrusted narrowing has TWO lift conditions and both must be
+# stated: the taint leaving the active context (what the agent can wait out) and
+# the config key (what the operator can change). Naming only the first would tell
+# an operator who wants the capability back permanently nothing at all.
+UNTRUSTED_NARROWING_ORIGIN: "NarrowingOrigin" = NarrowingOrigin(
+    label=(
+        f"the untrusted-context capability narrowing (the {UNTRUSTED_PROFILE_NAME!r} "
+        "capability profile)"
+    ),
+    cause=(
+        "content from outside this conversation is live in the active context — at "
+        f"least one history entry carries the {UNTRUSTED_META_KEY!r} marker (an "
+        "external peer's answer, or the result of a tool that returns external "
+        "content) — so capabilities that persist, execute, install or re-delegate "
+        "are withheld while it is there"
+    ),
+    lifts_when=(
+        "that entry leaves the active context (it is compacted out), or the operator "
+        f"sets `{UNTRUSTED_NARROWING_CONFIG_KEY}: off` in reyn.yaml, or loosens "
+        f".reyn/capability_profiles/{UNTRUSTED_PROFILE_NAME}.yaml"
+    ),
+)
 
 # The built-in secure default: deny the side-effecting / persistence /
 # re-delegation / execution / install surfaces so untrusted content can be read
@@ -327,6 +382,31 @@ def load_untrusted_profile(project_root: "str | Path") -> CapabilityProfile:
 
 # The well-known auto-applied delegate-floor profile name.
 DELEGATE_PROFILE_NAME: "str" = "_delegate"
+
+
+def delegate_floor_origin(cause: str) -> "NarrowingOrigin":
+    """The provenance for a term resolved to the ``_delegate`` floor (#3501).
+
+    The floor is reached for FIVE different reasons (the default-deny policy, plus
+    four fail-closed paths: a bound profile file absent, a bound profile malformed,
+    a capping parent gone, a capping parent's name reused) and the reasons do not
+    share a remedy — a missing file is restored, a malformed one is fixed, a lost
+    parent cannot be recovered at all. So ``cause`` is per-call; the label and the
+    lift condition are shared.
+    """
+    return NarrowingOrigin(
+        label=(
+            f"the delegate capability floor (the {DELEGATE_PROFILE_NAME!r} "
+            "capability profile)"
+        ),
+        cause=cause,
+        lifts_when=(
+            "a topology `capability_profile` binding re-grants this agent (a binding "
+            f"REPLACES the floor), or .reyn/capability_profiles/{DELEGATE_PROFILE_NAME}"
+            ".yaml is loosened. Note a re-grant is still capped at the spawning "
+            "agent's own surface"
+        ),
+    )
 
 
 def builtin_delegate_profile() -> CapabilityProfile:

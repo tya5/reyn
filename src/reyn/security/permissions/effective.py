@@ -264,6 +264,33 @@ class ProfileLayer:
 
 
 @dataclass(frozen=True)
+class NarrowingOrigin:
+    """Why one contextual narrowing term exists, in the three parts a denied
+    caller needs (#3501).
+
+    A deny that only says *that* it was denied is not actionable. Three parts
+    make it actionable, and all three are required:
+
+    - ``label`` — WHICH narrowing this is, named so it can be looked up.
+    - ``cause`` — WHY it is currently active.
+    - ``lifts_when`` — WHAT would remove it (a condition, a config key, or both).
+
+    Naming several *candidate* narrowings instead of the one that fired is the
+    #3501 defect: the deny listed ``delegation / topology / ephemeral`` and left
+    the reader to guess, so the caller — an LLM, mid-turn — could not explain why
+    a capability it had been using vanished, and could not act to get it back.
+    """
+
+    label: str
+    cause: str
+    lifts_when: str
+
+    def explain(self) -> str:
+        """The three parts as one sentence-run, for embedding in a deny message."""
+        return f"{self.label}. Cause: {self.cause}. Lifts when: {self.lifts_when}"
+
+
+@dataclass(frozen=True)
 class ContextualPermission:
     """Per-session contextual narrowing (#1827) — a restrict-only ∩ term layered
     on top of the static authority (``permission.tool`` etc.). Sourced per-session
@@ -272,12 +299,24 @@ class ContextualPermission:
 
     Per-axis ``*_allow`` (None = unconstrained ⊤) ∩ ``¬*_deny``. The TOOL and MCP
     axes are enforced by :class:`ContextualLayer`.
+
+    ``origin`` / ``composed_from`` carry the PROVENANCE the deny message needs
+    (#3501). ∩-composition flattens N terms into one value, which erases which
+    term contributed a given deny — so the composed value keeps its terms, each
+    with its own :class:`NarrowingOrigin`, and :func:`attribute_deny` walks them
+    to answer "which narrowing rejected this name". A leaf term has
+    ``composed_from=()`` and IS its own single term; ``origin=None`` means a term
+    was built without provenance (nothing in ``src/`` does — see
+    ``tests/test_3501_untrusted_narrowing_opt_in.py``'s coverage arm — but a
+    hand-built term stays legal and degrades to the generic message).
     """
 
     tool_allow: "frozenset[str] | None" = None
     tool_deny: "frozenset[str]" = field(default_factory=frozenset)
     mcp_allow: "frozenset[str] | None" = None
     mcp_deny: "frozenset[str]" = field(default_factory=frozenset)
+    origin: "NarrowingOrigin | None" = None
+    composed_from: "tuple[ContextualPermission, ...]" = ()
 
 
 class ContextualLayer:
@@ -330,6 +369,72 @@ def tool_contextually_denied(
     if contextual is None:
         return False
     return not ContextualLayer(contextual).allows(CapabilityAxis.TOOL, effective_name)
+
+
+def narrowing_terms(
+    contextual: "ContextualPermission",
+) -> "tuple[ContextualPermission, ...]":
+    """The individual ∩ terms behind ``contextual`` (#3501).
+
+    A composed value reports the terms it was composed from; a leaf term reports
+    itself. ``compose_resolved`` flattens on the way in, so this is one level deep
+    by construction and needs no recursion."""
+    return contextual.composed_from or (contextual,)
+
+
+def attribute_deny(
+    contextual: "ContextualPermission | None",
+    axis: CapabilityAxis,
+    value: str,
+) -> "NarrowingOrigin | None":
+    """The origin of the FIRST term that rejects ``value`` on ``axis`` (#3501).
+
+    ``None`` when nothing rejects it, or when the rejecting term carries no
+    origin. Order is composition order, which is the order the narrowings were
+    layered — so the outermost/most-durable narrowing is reported first when
+    several deny the same name, matching the #3380 rule that the un-liftable
+    reason is the actionable one."""
+    if contextual is None:
+        return None
+    for term in narrowing_terms(contextual):
+        if not ContextualLayer(term).allows(axis, value):
+            return term.origin
+    return None
+
+
+# Fallback when a rejecting term carries no origin: name the surfaces a narrowing
+# can come from rather than asserting one of them fired. This is deliberately the
+# WEAK message — every production term attaches an origin, so reaching this text
+# means a term was constructed outside those paths.
+_UNATTRIBUTED_NARROWING = (
+    "the active capability narrowing, whose source is not recorded on the term "
+    "that rejected it. A narrowing can come from a topology capability_profile "
+    "binding, the `_delegate` floor, a per-session capability config, the "
+    "`/visibility` override, or the `_untrusted` context narrowing"
+)
+
+
+def contextual_deny_message(
+    subject: str,
+    name: str,
+    contextual: "ContextualPermission | None",
+    axis: CapabilityAxis = CapabilityAxis.TOOL,
+) -> str:
+    """The one legible contextual-deny explanation, shared by every deny site (#3501).
+
+    ``subject`` is the noun the caller uses (``"tool"`` / ``"op"`` / ``"MCP
+    server"``); ``name`` is the resolved name that was rejected. The text names
+    the narrowing that fired, why it is active, and what lifts it — the three
+    parts of :class:`NarrowingOrigin`.
+
+    One function so the router-loop gate, the ``require_tool`` gate and the
+    ``require_mcp`` gate cannot drift into three differently-informative denies
+    for the same decision. Each of the three used to build its own string, and
+    all three named the same three candidate narrowings without naming which one
+    fired."""
+    origin = attribute_deny(contextual, axis, name)
+    reason = origin.explain() if origin is not None else _UNATTRIBUTED_NARROWING
+    return f"{subject} {name!r} is not available here — blocked by {reason}."
 
 
 def _path_under(path_str: str, root: str) -> bool:
