@@ -654,6 +654,26 @@ second hand-rolled column:
   (`int(clock() / frame_period)`) that flowview's own
   `FlowView(animation_fps=N)` re-invokes on each animation tick — no
   app-side timer (#3283 ①, native-blink equivalence).
+  This column additionally carries the **ADDRESSED-ROW RAIL** (#3490): when an
+  entry is the keyboard cursor's row (#3476 ⑥) or the current `ctrl+f` search
+  hit (#3476 ⑤), a thin `▎` bar in `_CC_COOL` is drawn in the gutter's
+  trailing cell, down the body's whole post-wrap `height`, so one entry reads
+  as one marked block. The state glyph keeps its own `EntryState` colour —
+  being addressed is a POSITION, not an outcome, so the mark must not repaint
+  the state vocabulary. The app supplies `ReynGutter(is_marked=…)`, which reads
+  `FlowView.cursor`/`.selected` live on every gutter repaint, and re-derives
+  the two affected rows' gutters via `FlowView.refresh_gutter` on each
+  `Highlighted`/`Selected` (the gutter cache is keyed on a decor revision that
+  a cursor move does not bump, so without that invalidation the rail would
+  strand on the row it was first painted on). **Why the rail is gutter CONTENT
+  and not a `flowview--selected`/`--cursor` component style**: flowview applies
+  a component style as `Segment.apply_style(segments, style)` ==
+  `style + segment.style` — a BASE *beneath* each segment's own attributes,
+  with no `post_style` — so a background there is swallowed on exactly the rows
+  carrying the ROW TINT described next. `text-style: reverse` does survive that
+  merge (it is what #3476 ⑤/⑥ originally shipped) but inverts fg/bg into a
+  near-white block over the palette, so surviving the merge is necessary and
+  not sufficient.
 - **ROW TINT — `Presentation.background`** (`presenter.py`): a user row and a
   FAILURE row (a `tool_call_failed` / `error` frame, or a `tool_call_completed`
   whose summary is a `✗`) carry a whole-row background that flowview paints

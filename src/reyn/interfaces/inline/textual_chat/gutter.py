@@ -45,6 +45,7 @@ from rich.text import Text
 from textual_flowview import EntryState
 
 from reyn.interfaces.repl.renderer import (
+    _CC_COOL,
     _CC_DIM,
     _CC_DONE,
     _CC_ERR,
@@ -93,6 +94,18 @@ _RUNNING_FRAMES = ("●", "○")
 #: ``FlowView(animation_fps=1/_RUNNING_FRAME_PERIOD)`` so the decorator is
 #: re-invoked at least once per frame. ``<= 0`` freezes the blink (static frame 0).
 _RUNNING_FRAME_PERIOD = 0.5
+
+#: The ADDRESSED-entry rail (#3490): a thin left-edge bar marking the keyboard
+#: cursor's row / the current search hit. One cell wide, drawn in the gutter's
+#: trailing cell so it costs no body column and doubles as the gutter/body
+#: separator on the marked row.
+_MARK_RAIL = "▎"
+
+#: The rail's colour — ``_CC_COOL`` (the palette's secondary accent) rather than
+#: any ``_STATE_COLOR`` member or ``_CC_ACCENT``: being addressed is a POSITION,
+#: not an outcome and not "running", so it must not collide with the state
+#: vocabulary the glyph beside it already speaks.
+_MARK_COLOR = _CC_COOL
 
 
 def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
@@ -179,16 +192,31 @@ class ReynGutter:
     ``clock`` is injectable (default :func:`time.monotonic`) so a test can drive
     the frame deterministically; ``frame_period <= 0`` freezes the blink to a
     static frame 0 (the animation is additive — a frozen clock leaves a correct,
-    non-animated amber gutter)."""
+    non-animated amber gutter).
+
+    ``is_marked`` (#3490) reports whether an entry is the ADDRESSED one — the
+    keyboard cursor's position or the current search hit. A marked entry gets
+    :data:`_MARK_RAIL` drawn down its whole height in the gutter's trailing
+    cell, which is why the mark lives HERE rather than in a
+    ``flowview--selected``/``--cursor`` component style: a component style is
+    applied as a *base* under each segment's own attributes
+    (``Segment.apply_style`` = ``style + segment.style``; flowview passes no
+    ``post_style``), so a background there is swallowed on exactly the rows that
+    carry a full-row ``Presentation.background`` — the user's own line and any
+    failure row. The gutter is CONTENT, so it renders identically on every row
+    kind. Defaults to "nothing is marked", leaving the Phase-2 gutter
+    byte-identical for every caller that does not pass it."""
 
     def __init__(
         self,
         *,
         frame_period: float = _RUNNING_FRAME_PERIOD,
         clock: "Callable[[], float]" = time.monotonic,
+        is_marked: "Callable[[Entry[OutboxMessage]], bool] | None" = None,
     ) -> None:
         self._frame_period = frame_period
         self._clock = clock
+        self._is_marked = is_marked
 
     def _running_frame(self) -> str:
         """The current ``_RUNNING_FRAMES`` glyph, selected from the clock. A
@@ -208,7 +236,20 @@ class ReynGutter:
             color = kind_color
         else:
             color = _STATE_COLOR.get(state, kind_color)
-        return Text(_cell_pad_right(glyph, width), style=color)
+        if self._is_marked is None or not self._is_marked(entry):
+            return Text(_cell_pad_right(glyph, width), style=color)
+        # #3490: the addressed entry — a thin rail down the gutter's trailing
+        # cell, spanning the body's full post-wrap ``height`` so a multi-row
+        # reply reads as ONE marked block. The state glyph keeps its own
+        # EntryState colour (the mark is a POSITION, not a state, so it must
+        # not repaint the state vocabulary).
+        rail = Text()
+        for row in range(max(1, height)):
+            if row:
+                rail.append("\n")
+            rail.append(_cell_pad_right(glyph if row == 0 else "", width - 1), style=color)
+            rail.append(_MARK_RAIL, style=_MARK_COLOR)
+        return rail
 
 
 def _format_elapsed(seconds: float) -> str:
