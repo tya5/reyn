@@ -10,10 +10,18 @@ using `ansi_default`), so the fix has to happen at the root — which is why it
 reaches the whole surface rather than only the two regions named.
 
 These tests assert the RESOLVED background of each chrome region is the
-terminal's default rather than a forced colour, and that the regions which are
-*meant* to stand out (the `$panel` overlays) still carry one. A test that only
-checked the CSS declaration would have passed before the fix — the declaration
-was already `transparent`; the painted colour is the thing that was wrong.
+terminal's default rather than a forced colour. A test that only checked the
+CSS declaration would have passed before the fix — the declaration was
+already `transparent`; the painted colour is the thing that was wrong.
+
+#3505 (owner-approved, 2026-07-30) removed the non-vacuity test that used to
+live here asserting the `$panel` overlays (#drawer, #completion) still carry
+their OWN background rather than the terminal's default — under the
+`ansi-dark` theme #3505 switches to for a different fix, `$panel` itself
+resolves to `ansi_default`, so that invariant is no longer true by
+construction, not merely harder to measure. See
+`src/reyn/interfaces/inline/textual_chat/app.py`'s `on_mount` docstring for
+the full mechanism and the removal's own history note in this file.
 """
 from __future__ import annotations
 
@@ -112,43 +120,22 @@ async def test_the_root_and_menu_row_force_no_background_either() -> None:
         assert _is_terminal_default(app.query_one(MenuBar))
 
 
-@pytest.mark.asyncio
-@pytest.mark.skip(
-    reason=(
-        "#3505 (owner-approved, 2026-07-30): TextualChatApp.on_mount now sets "
-        "``self.theme = 'ansi-dark'`` to fix a DIFFERENT residue (two chrome "
-        "regions painting a concrete #0c0c0c instead of the terminal's true "
-        "default — see app.py's on_mount docstring). Side effect, measured: "
-        "under 'ansi-dark' every alpha-bearing design variable including "
-        "``$panel``/``$surface`` resolves to ``ansi_default`` instead of a "
-        "literal hex, so #drawer/#completion now ALSO take the terminal's own "
-        "background — this test's invariant ('overlays must NOT match the "
-        "terminal default') is no longer true under this theme. This is a "
-        "known, disclosed trade-off (see #3505's PR body impact table), "
-        "explicitly NOT fixed in that PR pending owner real-hardware review — "
-        "skipped rather than asserting either the now-false old invariant or "
-        "a new one the owner hasn't ratified. Un-skip (or replace) once the "
-        "owner decides whether the drawer/completion popup need an explicit "
-        "concrete background under ansi-dark (tracked as separate follow-up "
-        "work, not part of #3505)."
-    )
-)
-async def test_overlay_regions_still_carry_their_own_background() -> None:
-    """Tier 2b: non-vacuity, and a real design boundary — dropping the app's
-    ground must NOT flatten the surfaces that are supposed to read as raised.
-    The drawer and the completion popup declare ``$panel`` deliberately; if
-    this test ever goes red alongside the ones above, the change went too far
-    and the whole chrome became one undifferentiated plane.
 
-    SKIPPED under #3505 — see the skip reason above; this is no longer a
-    reliable non-vacuity signal while the app theme is 'ansi-dark', since
-    ``$panel`` itself is now an ``ansi_default``-resolving variable."""
-    app = TextualChatApp(transport=_Transport())
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        for selector in ("#drawer", "#completion"):
-            widget = app.query_one(selector)
-            assert not _is_terminal_default(widget), (
-                f"{selector} lost its own background — overlays are meant to "
-                "stand out from the terminal ground, not merge into it"
-            )
+# #3505 (owner-approved, 2026-07-30) REMOVED
+# ``test_overlay_regions_still_carry_their_own_background`` here — not skipped.
+# That test asserted a non-vacuity invariant: dropping the app's own ground
+# (#3503) must not ALSO flatten the ``$panel`` overlays (#drawer,
+# #completion) into the terminal's default. #3505 switches
+# ``TextualChatApp``'s theme to ``ansi-dark`` to fix a different residue
+# (see app.py's ``on_mount`` docstring), and under that theme ``$panel``
+# itself resolves to ``ansi_default`` instead of a literal hex — so
+# #drawer/#completion now correctly resolve to the terminal's own
+# background too, same as every other chrome region. The invariant this
+# test checked is not "true but hard to measure now" — it is permanently
+# false by construction under this theme, so there is nothing to
+# reactivate later; keeping it as a skip would misread as "pending a
+# fix." Whether the drawer/completion popup should get an explicit
+# concrete background under ``ansi-dark`` is real-hardware-review-gated,
+# owner-deferred work tracked separately, not part of #3505 — a NEW test
+# belongs with that follow-up if it lands, not a revived version of this
+# one.
