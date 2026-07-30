@@ -51,12 +51,12 @@ Direct verification of ARS block scope expansion:
 
   ACTION ARG SCHEMAS (canonical keys for all session-visible actions):
     exec__sandboxed_exec: {allow_subprocess, argv, env_passthrough, network, read_paths, timeout_seconds, write_paths}
-    file__delete: {path}
-    file__glob: {path, pattern}
-    file__grep: {case_sensitive, glob, max_results, path, pattern}
-    file__list: {path}
-    file__read: {path}
-    file__write: {content, path}
+    delete_file: {path}
+    glob_files: {path, pattern}
+    grep_files: {case_sensitive, glob, max_results, path, pattern}
+    list_directory: {path}
+    read_file: {path}
+    write_file: {content, path}
     mcp.operation__drop_server: {clear_secrets, scope, server}
     memory.operation__forget: {layer, slug}
     memory.operation__remember_agent: {body, description, name, slug, type}
@@ -65,8 +65,8 @@ Direct verification of ARS block scope expansion:
     rag.operation__recall: {embedding_model, filters, query, sources, top_k}
     reyn.source__list: {path}
     reyn.source__read: {path}
-    web__fetch: {max_length, url}
-    web__search: {max_results, query}
+    web_fetch: {max_length, url}
+    web_search: {max_results, query}
     skill__haiku: {theme}
   Use these exact key names in args when calling invoke_action.
 
@@ -74,12 +74,12 @@ Total: 17 static ops + 1 session skill = 18 ARS entries.
 
 B37 problem actions confirmed present with canonical keys:
 - rag.operation__drop_source: {source} (B37 W4 hallucinated source_id/source_name)
-- file__write: {content, path} (B37 W4 hallucinated text)
-- web__fetch: {max_length, url} (B37 W3 absent from hot-list)
-- file__glob, file__grep (B37 W3 absent from hot-list)
+- write_file: {content, path} (B37 W4 hallucinated text)
+- web_fetch: {max_length, url} (B37 W3 absent from hot-list)
+- glob_files, grep_files (B37 W3 absent from hot-list)
 
 Routing observed (8 routing_decided events across 35 turns):
-- hot_list_alias: 7 (reyn.source__read x5, file__read x1, web__search x1)
+- hot_list_alias: 7 (reyn.source__read x5, read_file x1, web_search x1)
 - invoke_action: 1 (skill__haiku, S2 T2)
 
 invoke_action S2 T2 args check (chain_id=79c7c1ed5d614b9e98db26c42555e587):
@@ -146,4 +146,4 @@ skill_run_spawned: 1
 web_search_started/completed: 1
 
 Tool sequence: reyn.source__read (x5), list_actions (x6), describe_action (x1),
-invoke_action (x1), file__read (x1), web__search (x1)
+invoke_action (x1), read_file (x1), web_search (x1)

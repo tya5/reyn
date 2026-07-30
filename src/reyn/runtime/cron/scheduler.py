@@ -166,7 +166,7 @@ class CronScheduler:
     # ── FP-0041 #489 PR-B2: live mutation API ──────────────────────────
     #
     # These methods support the LLM-callable ``cron`` action category
-    # (= ``cron__register / unregister / enable / disable`` tools).
+    # (= ``cron_register / unregister / enable / disable`` tools).
     # All mutations happen on the current event loop — the scheduler's
     # per-job tasks and the tool handlers share one asyncio loop in
     # both ``reyn web`` and ``reyn cron run``, so no lock is needed.
@@ -176,7 +176,7 @@ class CronScheduler:
 
         Idempotency: if a job with the same name exists, it is replaced
         (= the existing task is cancelled first to prevent ghost dispatch
-        from the stale schedule). Used by ``cron__register`` to swap
+        from the stale schedule). Used by ``cron_register`` to swap
         job definitions without restart.
         """
         existing_task = self._tasks.pop(job.name, None)
@@ -220,7 +220,7 @@ class CronScheduler:
         the scheduler is running), spawn the task; to disabled, cancel
         the running task. Returns True iff the job exists.
 
-        Used by ``cron__enable`` / ``cron__disable`` tools to pause /
+        Used by ``cron_enable`` / ``cron_disable`` tools to pause /
         resume jobs without removing them.
         """
         job = self._jobs.get(name)
@@ -339,7 +339,7 @@ class CronScheduler:
 
 # ── FP-0041 #489 PR-B2: active scheduler registry ──────────────────────
 #
-# Module-level singleton so LLM-callable cron tools (= ``cron__register``
+# Module-level singleton so LLM-callable cron tools (= ``cron_register``
 # / unregister / enable / disable) can reach the live scheduler in the
 # same process. Set by whoever boots the scheduler (``reyn web``
 # lifespan or ``reyn cron run`` foreground), queried by tool handlers.

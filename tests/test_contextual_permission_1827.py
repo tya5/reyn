@@ -210,11 +210,11 @@ def test_live_gate_blocks_via_explicit_contextual_all_paths():
     host = _MiniHost()
     loop = RouterLoop(
         host=host, chain_id="t", max_iterations=5,
-        contextual_permission=ContextualPermission(tool_deny=frozenset({"web__search"})),
+        contextual_permission=ContextualPermission(tool_deny=frozenset({"web_search"})),
     )
     # (a) native, (b) salvaged (= native by name), (c) direct invoke_action.
-    r_native = _exec(loop, "web__search", {"query": "gold?"})
-    r_invoke = _exec(loop, "invoke_action", {"action_name": "web__search", "query": "gold?"})
+    r_native = _exec(loop, "web_search", {"query": "gold?"})
+    r_invoke = _exec(loop, "invoke_action", {"action_name": "web_search", "query": "gold?"})
     assert r_native.get("error", {}).get("kind") == "tool_excluded"
     assert r_invoke.get("error", {}).get("kind") == "tool_excluded"
     assert host.web_search_calls == [], "excluded handler must never run (no leak)"
@@ -230,12 +230,12 @@ def test_live_gate_is_load_bearing_gated_not_unconditional():
     """
     deny_loop = RouterLoop(
         host=_MiniHost(), chain_id="t", max_iterations=5,
-        contextual_permission=ContextualPermission(tool_deny=frozenset({"web__search"})),
+        contextual_permission=ContextualPermission(tool_deny=frozenset({"web_search"})),
     )
-    assert _exec(deny_loop, "web__search", {}).get("error", {}).get("kind") == "tool_excluded"
+    assert _exec(deny_loop, "web_search", {}).get("error", {}).get("kind") == "tool_excluded"
 
     open_loop = RouterLoop(host=_MiniHost(), chain_id="t", max_iterations=5)
-    assert _exec(open_loop, "web__search", {}).get("error", {}).get("kind") != "tool_excluded"
+    assert _exec(open_loop, "web_search", {}).get("error", {}).get("kind") != "tool_excluded"
 
 
 def test_live_gate_exclude_tools_bridge_preserves_block():
@@ -247,8 +247,8 @@ def test_live_gate_exclude_tools_bridge_preserves_block():
     """
     loop = RouterLoop(
         host=_MiniHost(), chain_id="t", max_iterations=5,
-        exclude_tools={"web__search"},
+        exclude_tools={"web_search"},
     )
-    blocked = _exec(loop, "invoke_action", {"action_name": "web__search"})
+    blocked = _exec(loop, "invoke_action", {"action_name": "web_search"})
     assert blocked.get("error", {}).get("kind") == "tool_excluded"
-    assert _exec(loop, "file__read", {}).get("error", {}).get("kind") != "tool_excluded"
+    assert _exec(loop, "read_file", {}).get("error", {}).get("kind") != "tool_excluded"

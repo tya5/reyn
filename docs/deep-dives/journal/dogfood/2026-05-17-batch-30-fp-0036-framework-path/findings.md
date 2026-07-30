@@ -104,18 +104,18 @@ The cwd anchor is **necessary but not sufficient**. The plan goal + step descrip
 
 | Scenario | B28 verdict | B30 verdict | Primary observation of difference |
 |---|---|---|---|
-| S2 (file_glob_grep) | verified | refuted | LLM called `file__list` with glob-style args `{match, filter}` → `KeyError:'path'`. B28 had used `file__glob` successfully. |
-| S4 (web_fetch_url) | verified | refuted | LLM chose `plan` tool instead of `invoke_action(web__fetch)` directly. `plan` is non-catalog, so `routing_decided` never fires. |
+| S2 (file_glob_grep) | verified | refuted | LLM called `list_directory` with glob-style args `{match, filter}` → `KeyError:'path'`. B28 had used `glob_files` successfully. |
+| S4 (web_fetch_url) | verified | refuted | LLM chose `plan` tool instead of `invoke_action(web_fetch)` directly. `plan` is non-catalog, so `routing_decided` never fires. |
 | S7 (recall_indexed_source) | blocked | refuted | LLM replied inline: "recall is only available in plan steps". `chat_turn_completed_inline` fires; reply rubric does not match. |
 | S8 (judge_output_direct) | blocked | refuted | `judge_phase` dispatched asynchronously; single-turn reply is "I will notify you," not the synchronous phase JSON. Events verified (routing_decided / skill_run_spawned), reply fails. |
-| S5 (sandboxed_exec_simple) | inconclusive | refuted | Environment unchanged (= no sandbox backend), but classification shifted: `routing_decided` now fires with `exec__run/outcome:success` though no `sandboxed_exec_*` events follow. |
+| S5 (sandboxed_exec_simple) | inconclusive | refuted | Environment unchanged (= no sandbox backend), but classification shifted: `routing_decided` now fires with `exec/outcome:success` though no `sandboxed_exec_*` events follow. |
 
 **What is verified**: each of the above 5 scenarios changed verdict between B28 and B30 in the direction shown.
 
 **What is hypothesis (= NOT verified)**:
 - "B28-MED-3 cwd injection pushed the LLM toward plan-first strategy" (= S4)
 - "B28-MED-1 seed changed the LLM's understanding of recall" (= S7)
-- "B27-M2 file__grep seed drop caused the LLM to fall back to file__list with wrong args" (= S2)
+- "B27-M2 grep_files seed drop caused the LLM to fall back to list_directory with wrong args" (= S2)
 
 Each hypothesis is plausible from the change set landed between B28 and B30. None has primary-data support: the LLM's reasoning is not directly observable, and each B27/B28/B29 fix landed simultaneously in the merge wave so their effects are confounded.
 
@@ -167,7 +167,7 @@ LLM calls `search_actions(query=...)` for natural-language tool discovery. Retur
 
 **Note**: scenario environment limitation; fix scope depends on whether dogfood is to validate the `search_actions` path (= configure embedding) or to harden the LLM against the unknown_tool path (= envelope-layer hint per `feedback_envelope_layer_fix.md`).
 
-### 4.7 [HIGH-LLM-compliance] file__write KeyError 'content' (W4 S1)
+### 4.7 [HIGH-LLM-compliance] write_file KeyError 'content' (W4 S1)
 
 LLM sends `{path: ..., text: ...}` while handler reads `args["content"]`. The schema explicitly requires `content` — this is LLM schema non-compliance.
 
@@ -217,7 +217,7 @@ The trajectory is **not monotone**. B27→B28 was strict improvement; B28→B30 
 | Double/quad dispatch (§4.4) | Separate issue needed |
 | #53 root cause (§4.5) | Already filed; pinpointed in this batch |
 | search_actions attractor (§4.6) | Environment / LLM hardening decision pending |
-| file__write KeyError (§4.7) | Envelope-layer fix candidate |
+| write_file KeyError (§4.7) | Envelope-layer fix candidate |
 
 ---
 

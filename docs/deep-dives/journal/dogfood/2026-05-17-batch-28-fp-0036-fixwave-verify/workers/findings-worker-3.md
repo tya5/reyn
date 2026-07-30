@@ -14,7 +14,7 @@ Final: V=6 I=1 R=2 B=0  (delta_verified=+6 vs B27 baseline of 0)
 |-------|--------|
 | C1 (no dup func decl) | PASS — all 9 scenarios: no duplicates found in any request |
 | routing_decided emit | PASS — all 9 scenarios emitted routing_decided >=1 |
-| M2 (no file__grep) | PASS — 0 scenarios called file__grep |
+| M2 (no grep_files) | PASS — 0 scenarios called grep_files |
 
 ---
 
@@ -32,14 +32,14 @@ Final: V=6 I=1 R=2 B=0  (delta_verified=+6 vs B27 baseline of 0)
 - LLM calls: 2, elapsed: 4.5s
 - Tools: invoke_action
 - Events: routing_decided(1), tool_executed(1) — all must_emit satisfied
-- C1: True, M2: True (file__glob used, NOT file__grep)
+- C1: True, M2: True (glob_files used, NOT grep_files)
 - Reply: No matching files found (factually correct — none exist)
-- Notes: M2 confirmed — file__grep never called.
+- Notes: M2 confirmed — grep_files never called.
 
 ## S3: web_search_query — VERIFIED
 
 - LLM calls: 2, elapsed: 7.3s
-- Tools: web__search (direct hot alias)
+- Tools: web_search (direct hot alias)
 - Events: routing_decided(1), web_search_started(1), web_search_completed(1) — all satisfied
 - C1: True, M2: True
 - Notes: All web search P6 events fired correctly.
@@ -55,7 +55,7 @@ Final: V=6 I=1 R=2 B=0  (delta_verified=+6 vs B27 baseline of 0)
 ## S5: sandboxed_exec_simple — INCONCLUSIVE (environment gate)
 
 - LLM calls: 2, elapsed: 4.4s
-- Tools: invoke_action (tried exec__run, got "no routing rule for category 'exec'")
+- Tools: invoke_action (tried exec, got "no routing rule for category 'exec'")
 - Events: routing_decided(1) — sandboxed_exec_started/completed NOT emitted
 - C1: True, M2: True
 - Root cause: No sandbox backend configured (sandbox.backend not set). is_exec_available() returns False -> exec category hidden from catalog. Expected events cannot fire without sandbox backend. Gating logic works correctly.
@@ -106,8 +106,8 @@ Inspected all 9 trace files. No duplicate function names in tools array in any r
 ### routing_decided (Q1 fix)
 routing_decided count >=1 in all 9 scenarios (direct observation from events). Q1 fix confirmed for S1-S7 inline ops and S8/S9 skill scenarios.
 
-### M2 (file__grep dropped from seed)
-S2 used invoke_action with file__glob. file__grep never called. M2 fix confirmed.
+### M2 (grep_files dropped from seed)
+S2 used invoke_action with glob_files. grep_files never called. M2 fix confirmed.
 
 ---
 

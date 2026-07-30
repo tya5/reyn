@@ -167,25 +167,25 @@ def test_summarize_result_list_search_shows_count() -> None:
 
 def test_summarize_result_read_op_counts_lines() -> None:
     """Tier 2: dict with op=read and content counts newlines + 1."""
-    result = _summarize_result("file__read", {"op": "read", "content": "line1\nline2\nline3"})
+    result = _summarize_result("read_file", {"op": "read", "content": "line1\nline2\nline3"})
     assert "Read 3 lines" in result or "3 line" in result
 
 
 def test_summarize_result_read_op_singular() -> None:
     """Tier 2: single-line content uses 'line' not 'lines'."""
-    result = _summarize_result("file__read", {"op": "read", "content": "one line"})
+    result = _summarize_result("read_file", {"op": "read", "content": "one line"})
     assert "1 line" in result
 
 
 def test_summarize_result_write_op_with_path() -> None:
     """Tier 2: dict with op=write includes the path in the result."""
-    result = _summarize_result("file__write", {"op": "write", "path": "/out.txt"})
+    result = _summarize_result("write_file", {"op": "write", "path": "/out.txt"})
     assert "/out.txt" in result
 
 
 def test_summarize_result_edit_op_with_path() -> None:
     """Tier 2: dict with op=edit includes the path in the result."""
-    result = _summarize_result("file__edit", {"op": "edit", "path": "/src.py"})
+    result = _summarize_result("edit_file", {"op": "edit", "path": "/src.py"})
     assert "/src.py" in result
 
 

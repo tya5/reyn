@@ -8,7 +8,7 @@ and pass the result as ``tool_use_sp``.
 Pins:
 
 1. Backtick convention: action qualified names and tool names in the SP
-   appear backtick-wrapped (`list_actions`, `invoke_action`, `file__read`,
+   appear backtick-wrapped (`list_actions`, `invoke_action`, `read_file`,
    `skill__code_review`, etc.) so the LLM can distinguish them from prose.
 
 2. Behaviour dedup: Policy 1 (routing summary), Policy 2 (plan routing),
@@ -68,23 +68,23 @@ def test_invoke_action_backtick_wrapped_in_sp() -> None:
 
 
 def test_file_action_names_backtick_wrapped() -> None:
-    """Tier 2: #1475 — file__read and file__edit appear backtick-wrapped when
+    """Tier 2: #1475 — read_file and edit_file appear backtick-wrapped when
     discovery_mandate is on (where these names are explicitly referenced)."""
     sp = _sp(discovery_mandate=True)
-    assert "`file__edit`" in sp, "file__edit must be backtick-wrapped in SP"
+    assert "`edit_file`" in sp, "edit_file must be backtick-wrapped in SP"
 
 
 def test_action_example_backtick_wrapped() -> None:
     """Tier 2: #1475 — the action-name example in ROUTING RULE ABSOLUTE
     appears backtick-wrapped.
 
-    #3026 changed the example from ``mcp__brave__search`` to ``mcp__call_tool``:
+    #3026 changed the example from ``mcp__brave__search`` to ``mcp_call_tool``:
     the former was a per-MCP-tool action, and those are no longer enumerated, so
     the rule was illustrating itself with a name absent from the catalog it tells
     the model to invoke from. The property under test (backtick-wrapped) is
     unchanged."""
     sp = _sp()
-    assert "`mcp__call_tool`" in sp, (
+    assert "`mcp_call_tool`" in sp, (
         "the action-name example in ROUTING RULE ABSOLUTE must be backtick-wrapped"
     )
 

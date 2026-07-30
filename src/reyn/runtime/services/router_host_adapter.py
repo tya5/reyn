@@ -204,7 +204,7 @@ class RouterHostAdapter:
         # FP-0034 Phase 2: sandbox backend name for exec D14 visibility
         # gate. Passed from ``session._sandbox_config.backend`` so the
         # universal catalog ``_enumerate_category("exec")`` can decide
-        # whether to expose ``exec__run``. Default None hides
+        # whether to expose ``exec``. Default None hides
         # the exec category (= noop / no sandbox configured).
         sandbox_backend: str | None = None,
         sandbox_policy: dict | None = None,
@@ -233,7 +233,7 @@ class RouterHostAdapter:
         # off or hot_list_n == 0.
         action_usage_tracker: Any = None,
         # FP-0034 refactor: zero-arg callable returning the live (=
-        # uncompacted) tool-call ``(qualified_name, ts_epoch)`` records
+        # uncompacted) tool-call ``(action_name, ts_epoch)`` records
         # extracted from the current chat history. Combined with the
         # tracker's compacted table to produce the hot-list ranking.
         # None → router degrades to compacted-table-only ranking
@@ -300,7 +300,7 @@ class RouterHostAdapter:
         # Issue #364 multi-modal cluster: media-size gate config (reyn.yaml
         # ``multimodal:`` section). Threaded into the OpContext built by
         # ``make_router_op_context`` so router-initiated web_fetch /
-        # file__read / mcp ops consult the cap + on_oversize policy.
+        # read_file / mcp ops consult the cap + on_oversize policy.
         # ``None`` = no cap.
         multimodal_config: Any = None,
         # #2679: operator RenderTemplateBounds threaded onto the router OpContext so
@@ -916,7 +916,7 @@ class RouterHostAdapter:
         forwards this into ``RouterCallerState.sandbox_backend`` so the
         exec category D14 visibility gate in
         ``universal_catalog._enumerate_category`` can decide whether to
-        expose ``exec__run``.  ``None`` and ``"noop"`` both
+        expose ``exec``.  ``None`` and ``"noop"`` both
         hide the exec category; any other value (``"seatbelt"`` /
         ``"landlock"`` / ``"auto"``) makes it visible.
         """
@@ -944,7 +944,7 @@ class RouterHostAdapter:
         return self._action_usage_tracker
 
     def get_uncompacted_tool_call_records(self) -> list[tuple[str, float]]:
-        """Return live ``(qualified_name, ts_epoch)`` records from the
+        """Return live ``(action_name, ts_epoch)`` records from the
         current uncompacted chat history.
 
         FP-0034 refactor companion to ``get_action_usage_tracker``.
@@ -1519,10 +1519,12 @@ class RouterHostAdapter:
         or a JSON error.
 
         #3193 co-vet finding: this method flattens the ``_file_read_cb``
-        dict to a bare string — the SAME choke point ``read_file``'s
-        registry-dispatch sibling (``RouterLoop._normalise_router_tool_result``,
-        ``name == "read_file"``) already had to fix for the identical reason
-        (#3191/#3192): flattening to a string BEFORE the caller sees the dict
+        dict to a bare string — the same choke point ``read_file``'s
+        registry-dispatch sibling had to fix for the identical reason
+        (#3191/#3192; #3429 then deleted that sibling outright, routing the
+        chat path through ``file_to_canonical`` instead — this adapter method
+        is NOT on that path, see the consumer list below):
+        flattening to a string BEFORE the caller sees the dict
         silently drops any sibling key (``truncated``/``note``/
         ``_unknown_op_status``) unless this method explicitly re-attaches it.
         The #3193 classifier fix made ``_file_read_cb`` start forwarding
@@ -2110,8 +2112,8 @@ class RouterHostAdapter:
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
             # proposal 0060 Phase 1 (A7): a live callback read (varies per turn, so
             # a fixed init value would be stale — cf. live_session_id_fn).
-            # This is the router-dispatched install path (skill_management__install_*
-            # / pipeline / presentation_management__install_* → this factory), so it
+            # This is the router-dispatched install path (skill_install_*
+            # / pipeline / presentation_install_local → this factory), so it
             # is the load-bearing wiring for A9's per-handler provenance stamp.
             turn_origin=(
                 self._turn_origin_fn() if self._turn_origin_fn else None
@@ -2119,7 +2121,7 @@ class RouterHostAdapter:
             # #2761 PR-2: the per-session HotReloader so an install op (skill/pipeline)
             # can apply a pure-addition reload IMMEDIATELY (mid-turn) → the new entry is
             # resolvable this turn. This is the router-dispatched install path
-            # (skill_management__install_* / pipeline ops → build_legacy_op_context →
+            # (skill_install_* / pipeline ops → build_legacy_op_context →
             # this factory), so it is the load-bearing wiring for PR-2.
             hot_reloader=self.hot_reloader,
             # FP-0063 PC: the live router-dispatched `embed` tool resolves THIS

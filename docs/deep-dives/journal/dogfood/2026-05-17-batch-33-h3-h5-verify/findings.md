@@ -118,7 +118,7 @@ The correct framing of W2 ΔV=-1:
 
 ### 3.3 W3 / W4 / W7 ΔV=+1 each — Real OS-layer wins
 
-- **W3 S1** R→V: H3 + LLM happened to take `file__read` direct synchronous path (= primary data, not "always direct" — the worker correctly flagged N=1 routing variance vs H3 causation). The reply quoted P1-P8 content verbatim.
+- **W3 S1** R→V: H3 + LLM happened to take `read_file` direct synchronous path (= primary data, not "always direct" — the worker correctly flagged N=1 routing variance vs H3 causation). The reply quoted P1-P8 content verbatim.
 - **W4 S8** R→V: #53 fix landed cleanly. Web fetch deny enforcement now works as FP-0022 specified.
 - **W7 scenario_5** verified: asyncio.Queue producer-consumer code correct and complete in a multi-turn session. C1 multi-turn stability maintained at 37/37.
 
@@ -189,9 +189,9 @@ Aggregate: 0 V net.
 
 `recall` tool consumed by plan steps in `plan_compare_two_concepts` fails with NoneType `base_dir`. RAG index is uninitialized. Environment-level for now; if scenarios mean to exercise the recall path, they need an indexed-source precondition.
 
-### 4.6 [HIGH-LLM] `file__write` / `drop_source` arg-name mismatch (W4 F1, persistent)
+### 4.6 [HIGH-LLM] `write_file` / `drop_source` arg-name mismatch (W4 F1, persistent)
 
-LLM still sends `text` instead of `content` to `file__write`, and `source_id` instead of `source` to `rag.operation__drop_source`. The `KeyError` aborts execution before the permission gate is reached. Permission gates can never be verified end-to-end while this gap exists.
+LLM still sends `text` instead of `content` to `write_file`, and `source_id` instead of `source` to `rag.operation__drop_source`. The `KeyError` aborts execution before the permission gate is reached. Permission gates can never be verified end-to-end while this gap exists.
 
 **Fix direction** (= envelope-layer, per `feedback_envelope_layer_fix.md`):
 - defensive arg normalization at the `invoke_action` entry: detect common synonyms (`text` → `content`, `source_id` → `source`) and rewrite OR
@@ -199,11 +199,11 @@ LLM still sends `text` instead of `content` to `file__write`, and `source_id` in
 
 **Scope**: small.
 
-### 4.7 [MED-scenario] B27-M2 file__grep attractor persists (W3 S2)
+### 4.7 [MED-scenario] B27-M2 grep_files attractor persists (W3 S2)
 
-LLM keeps choosing `file__list` with glob-style args (= `{match, filter}`) → `KeyError:'path'`. B27-M2 ablation confirmed this is the post-M2 default LLM behaviour. **Fix candidates** (= same as B30-NEW-1 era proposal):
-- (a) implement `file__grep` handler (= FP-0034 §D20 follow-up)
-- (b) envelope-layer arg-hint when `file__list` is called with non-path args
+LLM keeps choosing `list_directory` with glob-style args (= `{match, filter}`) → `KeyError:'path'`. B27-M2 ablation confirmed this is the post-M2 default LLM behaviour. **Fix candidates** (= same as B30-NEW-1 era proposal):
+- (a) implement `grep_files` handler (= FP-0034 §D20 follow-up)
+- (b) envelope-layer arg-hint when `list_directory` is called with non-path args
 
 ---
 
@@ -218,7 +218,7 @@ LLM keeps choosing `file__list` with glob-style args (= `{match, filter}`) → `
 | **§4.1** | W2 F2 driver reply capture gap | Extend `send_to_agent_impl` quiescence; ablation pre-check |
 | §4.2 | W6 phase_no_progress abort | Locate inject-path branch gap; small patch |
 | §4.3 | W5 peer-agent silent hallucination | Handler-layer error envelope; Tier-2 test |
-| §4.6 | LLM arg-name mismatch (file__write / drop_source) | Envelope-layer normalization or clear error |
+| §4.6 | LLM arg-name mismatch (write_file / drop_source) | Envelope-layer normalization or clear error |
 
 ### MED — follow-ups
 
@@ -226,7 +226,7 @@ LLM keeps choosing `file__list` with glob-style args (= `{match, filter}`) → `
 |---|---|---|
 | §4.4 | PLAN-STEP-PATH residual | Planner full-path expansion |
 | §4.5 | recall NoneType base_dir | Environment precondition or graceful fallback |
-| §4.7 | file__grep attractor | (a) implement (b) envelope hint |
+| §4.7 | grep_files attractor | (a) implement (b) envelope hint |
 
 ### Existing trackers reconfirmed
 

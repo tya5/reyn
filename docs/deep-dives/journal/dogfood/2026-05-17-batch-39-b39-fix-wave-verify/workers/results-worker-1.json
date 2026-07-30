@@ -30,7 +30,7 @@
       "reply_rubric": "PASS",
       "events_pass": true,
       "artifact_pass": false,
-      "note": "Reply correctly explains idempotency ('同じ操作を何度繰り返しても、同じ結果が得られる性質'). routing_decided emitted via web__search (hot_list_alias). no permission_denied. No direct_llm artifact (web__search path), but reply rubric passes. Same judgment as B38 W1 S2 (V)."
+      "note": "Reply correctly explains idempotency ('同じ操作を何度繰り返しても、同じ結果が得られる性質'). routing_decided emitted via web_search (hot_list_alias). no permission_denied. No direct_llm artifact (web_search path), but reply rubric passes. Same judgment as B38 W1 S2 (V)."
     },
     {
       "id": "skill_discovery_request",
@@ -82,10 +82,10 @@
     "angle_1_ghost_rejection": {
       "result": true,
       "ghost_alias_injected": "skill__nonexistent_xyz",
-      "injection_format": "qualified_name + ts (correct JSONL format)",
+      "injection_format": "action_name + ts (correct JSONL format)",
       "log_evidence": "[reyn] action_usage: skipping ghost alias 'skill__nonexistent_xyz' — not found in current registry",
       "llm_requests_containing_ghost": 0,
-      "note": "First injection attempt used wrong format (action/calls/last_called/score fields) — correctly ignored. Second injection used correct format (qualified_name/ts). Ghost was loaded structurally but filtered by _filter_ghost_names_by_registry at hot-list materialization. Log message appeared in web.log (stderr captured via 2>&1). 0/N LLM requests contain skill__nonexistent_xyz in ARS or tool list."
+      "note": "First injection attempt used wrong format (action/calls/last_called/score fields) — correctly ignored. Second injection used correct format (action_name/ts). Ghost was loaded structurally but filtered by _filter_ghost_names_by_registry at hot-list materialization. Log message appeared in web.log (stderr captured via 2>&1). 0/N LLM requests contain skill__nonexistent_xyz in ARS or tool list."
     },
     "angle_1b_empty_schema_not_misclassified": {
       "result": "NOT_TESTED_AS_GHOST",
@@ -163,7 +163,7 @@
       "pre_conclusion_checklist": {
         "q1_observations_listed": "1 observation: agent reply contains no code, only description",
         "q2_primary_or_inference": "primary — history.jsonl shows agent text vs. task_completed message with actual code",
-        "q3_falsifying_data_checked": "B38 W1 S6 used web__search path (synchronous, not spawn) — different execution path, not directly comparable",
+        "q3_falsifying_data_checked": "B38 W1 S6 used web_search path (synchronous, not spawn) — different execution path, not directly comparable",
         "q4_infra_captures": "history.jsonl is primary source",
         "q5_all_N_inspected": "N=1 in B39 W1 for spawn-path task_completed narration"
       },

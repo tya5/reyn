@@ -32,21 +32,21 @@
       "verdict": "verified",
       "b28": "inconclusive",
       "b30": "verified",
-      "first_turn_tool": "web__search",
+      "first_turn_tool": "web_search",
       "note": "web_search_started/completed emitted; good reply"
     },
     "web_fetch_url": {
       "verdict": "verified",
       "b28": "verified",
       "b30": "refuted",
-      "first_turn_tool": "web__fetch",
-      "note": "RECOVERED from B30. web__fetch chosen directly (not plan); good Python 3.12 summary"
+      "first_turn_tool": "web_fetch",
+      "note": "RECOVERED from B30. web_fetch chosen directly (not plan); good Python 3.12 summary"
     },
     "sandboxed_exec_simple": {
       "verdict": "refuted",
       "b28": "inconclusive",
       "b30": "refuted",
-      "first_turn_tool": "exec__run",
+      "first_turn_tool": "exec",
       "note": "no routing rule for exec category; no sandboxed_exec events; stable failure"
     },
     "lint_a_skill": {

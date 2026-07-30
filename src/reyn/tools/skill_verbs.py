@@ -4,22 +4,22 @@
 Router-callable skill management verbs under the ``skill_management`` category.
 Exposes two install verbs, one discovery verb, and one load verb:
 
-  - ``skill_management__install_local`` — register a local skill directory
+  - ``skill_install_local`` — register a local skill directory
     (one containing a ``SKILL.md`` file) into the project
     ``.reyn/config/skills.yaml``, making it available to sessions
     that load the config cascade.
 
-  - ``skill_management__install_source`` — fetch a skill from a git/GitHub URL,
+  - ``skill_install_source`` — fetch a skill from a git/GitHub URL,
     install it into ``.reyn/skills/<name>/``, and register the installed copy.
     Requires a ``require_http_get`` gate for the source host + the
     ``require_file_write`` gate for skills.yaml.
 
-  - ``skill_management__list`` — return every registered skill whose
+  - ``skill_list`` — return every registered skill whose
     ``visibility`` is not ``hidden`` (name / description / path). Read-only,
     no permission gate: it reveals only the operator's own declarations, and
     strictly less than the L1 Skills menu already puts in the system prompt.
 
-  - ``skill_management__load`` — load a skill's SKILL.md body (invocation-time
+  - ``load_skill`` — load a skill's SKILL.md body (invocation-time
     ``${REYN_*}``/``${CLAUDE_*}``/``${env:VAR}`` expansion applied for a
     registered skill). Delegates to the dedicated ``load_skill`` op
     (``reyn.core.op_runtime.load_skill``, FP-0066 P0/#3247) — extracted OUT
@@ -52,7 +52,7 @@ dispatch, e.g. ``skill__code_review``"), and the claim propagated: #1647 cited
 ``skill__<name>`` as the precedent it was mirroring when it added one enumerated
 action per MCP tool — a phantom, and one of the two reasons that PR should not
 have landed (see ``universal_catalog``'s module docstring). Skills have never
-cost a tool per skill; ``skill_management__list`` is the whole discovery
+cost a tool per skill; ``skill_list`` is the whole discovery
 surface, and #3026 applied that same shape to corpora and pipelines.
 
 Both verbs delegate to ``op_runtime/skill_install.py`` via the
@@ -65,7 +65,7 @@ from typing import Any, Mapping
 from reyn.tools.descriptions import skill as _skill_descriptions
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# ── skill_management__install_local ──────────────────────────────────────────
+# ── skill_install_local ──────────────────────────────────────────
 
 # Relocated to reyn.tools.descriptions.skill (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
@@ -93,7 +93,7 @@ async def _handle_skill_install_local(
     """Register a local skill directory by writing .reyn/config/skills.yaml.
 
     Delegates to op_runtime/skill_install.handle via build_legacy_op_context
-    (same bridge pattern as mcp__install_local / mcp__install_registry). The
+    (same bridge pattern as mcp_install_local / mcp_install_registry). The
     handler resolves SKILL.md, threat-scans the description, gates the config
     write, writes the entry, records a config generation for crash-recovery,
     emits a skill_installed event, and requests a hot-reload.
@@ -130,13 +130,13 @@ async def _handle_skill_install_local(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "skill_management__install_local"
+    op_ctx.actor = "skill_install_local"
 
     result = await skill_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
 
 
-# ── skill_management__install_source ─────────────────────────────────────────
+# ── skill_install_source ─────────────────────────────────────────
 
 # Relocated to reyn.tools.descriptions.skill (Phase 3 tool-description
 # package refactor — byte-identical, no LLM-facing text change).
@@ -164,7 +164,7 @@ async def _handle_skill_install_source(
     """Fetch and install a skill from a git/GitHub URL.
 
     Delegates to op_runtime/skill_install.handle via build_legacy_op_context
-    (same bridge pattern as mcp__install_package). The handler:
+    (same bridge pattern as mcp_install_package). The handler:
       1. Gates require_http_get for the source host.
       2. Shallow-clones the repo to .reyn/skills/<name>/.
       3. Reads SKILL.md frontmatter from the clone (root or subdir via //).
@@ -209,7 +209,7 @@ async def _handle_skill_install_source(
 
     op_ctx = build_legacy_op_context(ctx)
     op_ctx.permission_decl = decl
-    op_ctx.actor = "skill_management__install_source"
+    op_ctx.actor = "skill_install_source"
 
     result = await skill_install_handle(op, op_ctx)
     return {"status": "ok", "data": result}
@@ -327,6 +327,13 @@ _SKILL_DOC_REF = "docs/concepts/tools-integrations/skills.md"
 SKILL_INSTALL_LOCAL = ToolDefinition(
     canonical=skill_install_verb_to_canonical,
     name="skill_install_local",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_SKILL_INSTALL_LOCAL_DESCRIPTION,
     parameters=_SKILL_INSTALL_LOCAL_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -339,6 +346,13 @@ SKILL_INSTALL_LOCAL = ToolDefinition(
 SKILL_INSTALL_SOURCE = ToolDefinition(
     canonical=skill_install_verb_to_canonical,
     name="skill_install_source",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_SKILL_INSTALL_SOURCE_DESCRIPTION,
     parameters=_SKILL_INSTALL_SOURCE_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -351,6 +365,13 @@ SKILL_INSTALL_SOURCE = ToolDefinition(
 SKILL_LIST = ToolDefinition(
     canonical=skill_list_to_canonical,
     name="skill_list",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_SKILL_LIST_DESCRIPTION,
     parameters=_SKILL_LIST_PARAMETERS,
     gates=ToolGates(router="allow"),

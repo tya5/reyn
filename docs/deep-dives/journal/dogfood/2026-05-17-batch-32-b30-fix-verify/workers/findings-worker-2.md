@@ -36,8 +36,8 @@ S1 first LLM request (`fcd032ea`, cold start, tools=17):
 ```
 skill__index_docs: PRESENT
 skill__eval: PRESENT
-Tool names: plan, list_actions, describe_action, invoke_action, file__read,
-  file__list, reyn.source__list, web__search, web__fetch,
+Tool names: plan, list_actions, describe_action, invoke_action, read_file,
+  list_directory, reyn.source__list, web_search, web_fetch,
   memory.operation__remember_shared, skill__skill_builder, skill__skill_improver,
   skill__skill_importer, skill__mcp_search, skill__read_local_files,
   skill__index_docs, skill__eval

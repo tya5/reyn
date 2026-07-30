@@ -22,7 +22,7 @@
       "outcome": "verified",
       "arg_normalize_verify": {
         "llm_invocation_path": "invoke_action",
-        "llm_args_sent": {"action_name": "file__write", "args": {"text": "hello", "path": "/etc/test.txt"}},
+        "llm_args_sent": {"action_name": "write_file", "args": {"text": "hello", "path": "/etc/test.txt"}},
         "canonical_key": "content",
         "normalize_fired": true,
         "d2_schema_visible": false
@@ -49,9 +49,9 @@
       "outcome": "inconclusive",
       "arg_normalize_verify": null,
       "events": {
-        "routing_decided": {"action_name": "exec__run", "outcome": "success"}
+        "routing_decided": {"action_name": "exec", "outcome": "success"}
       },
-      "notes": "exec__run: no routing rule for category exec; sandbox/seatbelt never reached; same exec routing gap as B35"
+      "notes": "exec: no routing rule for category exec; sandbox/seatbelt never reached; same exec routing gap as B35"
     },
     {
       "id": "credential_scope_intersection",
@@ -92,9 +92,9 @@
       "outcome": "inconclusive",
       "arg_normalize_verify": null,
       "events": {
-        "routing_decided": {"action_name": "exec__run", "outcome": "success"}
+        "routing_decided": {"action_name": "exec", "outcome": "success"}
       },
-      "notes": "exec__run: no routing rule for category exec; shell permission gate not reached; same exec gap as B35 S7"
+      "notes": "exec: no routing rule for category exec; shell permission gate not reached; same exec gap as B35 S7"
     },
     {
       "id": "web_fetch_denied_by_config",
@@ -103,11 +103,11 @@
       "events": {
         "routing_decided": [
           {"action_name": "web__get_content", "outcome": "success"},
-          {"action_name": "web__fetch", "outcome": "error"}
+          {"action_name": "web_fetch", "outcome": "error"}
         ],
         "tool_failed": {"error_kind": "permission_denied", "message": "web fetch denied by config (web.fetch: deny)"}
       },
-      "notes": "First turn: LLM hallucinated web__get_content (unknown); second turn: web__fetch denied by config; #53 VERIFIED"
+      "notes": "First turn: LLM hallucinated web__get_content (unknown); second turn: web_fetch denied by config; #53 VERIFIED"
     }
   ]
 }

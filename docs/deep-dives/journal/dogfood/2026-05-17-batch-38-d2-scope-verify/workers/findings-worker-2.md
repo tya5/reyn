@@ -17,8 +17,8 @@ DeltavsB37 W2 (2/5/2/0): 0DeltaV, -3DeltaI, +3DeltaR.
 | Scenario | Verdict | Key observation |
 |---|---|---|
 | index_docs_basic | REFUTED | LLM called operation__create_index directly (unknown tool); tool_failed; no skill_run_spawned |
-| read_local_files_explain_source | INCONCLUSIVE | Correct 1971-char reply via file__read direct; no skill_run_spawned |
-| read_local_files_multi_file | REFUTED | Reply "couldn't find any files" factually wrong; file__list ran but LLM reported failure |
+| read_local_files_explain_source | INCONCLUSIVE | Correct 1971-char reply via read_file direct; no skill_run_spawned |
+| read_local_files_multi_file | REFUTED | Reply "couldn't find any files" factually wrong; list_directory ran but LLM reported failure |
 | skill_builder_web_summariser | REFUTED | LLM hallucinated skill__create_web_article_summarizer; tool_failed |
 | word_stats_demo_sentence | VERIFIED | invoke_action→word_stats_demo→spawned→completed; 44 chars/1 line |
 | word_stats_demo_multiline | VERIFIED | invoke_action→word_stats_demo→spawned→completed; 88 chars/4 lines |
@@ -26,7 +26,7 @@ DeltavsB37 W2 (2/5/2/0): 0DeltaV, -3DeltaI, +3DeltaR.
 | chat_compactor_long_session | INCONCLUSIVE | 5 turns coherent (1766-2903 chars); inline path; no compaction triggered |
 | chained_find_then_index | REFUTED | T1 OK (file list); T2 wrong action (rag.operation__remember_shared instead of index_docs) |
 
-Regression vs B37: S3 INC→REF (file__list result ignored), S7 VER→REF (judge_phase dispatched, turn budget), S9 INC→REF (wrong action). B38 ARS code fix confirmed correct but did not improve these scenarios.
+Regression vs B37: S3 INC→REF (list_directory result ignored), S7 VER→REF (judge_phase dispatched, turn budget), S9 INC→REF (wrong action). B38 ARS code fix confirmed correct but did not improve these scenarios.
 
 ---
 
@@ -38,12 +38,12 @@ Direct invocation of _collect_all_session_ars_entries() (static-only mode) confi
 
 ```
 exec__sandboxed_exec: {allow_subprocess, argv, env_passthrough, network, read_paths, timeout_seconds, write_paths}
-file__delete: {path}
-file__glob: {path, pattern}
-file__grep: {case_sensitive, glob, max_results, path, pattern}
-file__list: {path}
-file__read: {path}
-file__write: {content, path}
+delete_file: {path}
+glob_files: {path, pattern}
+grep_files: {case_sensitive, glob, max_results, path, pattern}
+list_directory: {path}
+read_file: {path}
+write_file: {content, path}
 mcp.operation__drop_server: {clear_secrets, scope, server}
 memory.operation__forget: {layer, slug}
 memory.operation__remember_agent: {body, description, name, slug, type}
@@ -52,8 +52,8 @@ rag.operation__drop_source: {source}       <- canonical key (B37 W2 S1 used sour
 rag.operation__recall: {embedding_model, filters, query, sources, top_k}
 reyn.source__list: {path}
 reyn.source__read: {path}
-web__fetch: {max_length, url}
-web__search: {max_results, query}
+web_fetch: {max_length, url}
+web_search: {max_results, query}
 ```
 
 rag.operation__drop_source is now in ARS with canonical key `source`. ARS block header: "all session-visible actions" (was "current hot-list actions").
@@ -109,10 +109,10 @@ ARS scope expanded to cover all 17 static operations. Skill aliases with empty i
 
 Top-20 hot list (B38 actual):
 1. reyn.source__read      6. skill__word_stats_demo   11. skill__lint_index_events
-2. web__search            7. exec__sandboxed_exec     12. skill__skill_builder
-3. file__read             8. skill__judge_phase       13. rag.operation__drop_source
-4. file__list             9. web__fetch               14. rag.operation__remember_shared
-5. agent.peer__researcher 10. agent.peer__dogfood-...  15-20: skill__index_events, file__write, skill__create_web_article_summarizer, rag.operation__recall, skill__haiku, exec__run_python_code
+2. web_search            7. exec__sandboxed_exec     12. skill__skill_builder
+3. read_file             8. skill__judge_phase       13. rag.operation__drop_source
+4. list_directory             9. web_fetch               14. rag.operation__remember_shared
+5. agent.peer__researcher 10. agent.peer__dogfood-...  15-20: skill__index_events, write_file, skill__create_web_article_summarizer, rag.operation__recall, skill__haiku, exec__run_python_code
 
 Skill gap status (B38 vs B37 W2 carry-over):
 - skill__index_docs:      ABSENT from hot-list (in seed, all 20 slots full); ABSENT from ARS (empty input_schema)
@@ -140,7 +140,7 @@ F2: S1 LLM chose operation__create_index (not rag.operation__drop_source). ARS f
 
 F3: Ghost alias rank-displaced (rank 23) but not structurally rejected. B37 F3 does not manifest in B38. Underlying cause remains.
 
-F4: S3 regression — file__list returned results but LLM reply said "couldn't find any files". Behavioral regression vs B37 W2 S3.
+F4: S3 regression — list_directory returned results but LLM reply said "couldn't find any files". Behavioral regression vs B37 W2 S3.
 
 F5: S7 regression — judge_phase dispatched instead of direct_llm; skill_run_failed (turn budget exhausted). Unrelated to ARS.
 

@@ -15,11 +15,11 @@
 ### Verified — direct primary data (= `dogfood_trace.py --mode llm-tools-schema`)
 
 - **D2-min** (= operation-category alias schema): W1 confirmed
-  `web__search.parameters.properties = {query, max_results}`, non-empty.
+  `web_search.parameters.properties = {query, max_results}`, non-empty.
 - **D2-full** (= resource-category alias schema): W1/W2/W3/W5 confirmed
-  - `file__read.parameters.properties = {path}`
-  - `file__grep.parameters.properties = {pattern, path, glob, case_sensitive, max_results}`
-  - `file__glob.parameters.properties = {pattern, path}`
+  - `read_file.parameters.properties = {path}`
+  - `grep_files.parameters.properties = {pattern, path, glob, case_sensitive, max_results}`
+  - `glob_files.parameters.properties = {pattern, path}`
   - `skill__skill_builder.parameters.properties = {skill_name, description, goal}`
   - `agent.peer__researcher.parameters.properties = {request}` (= `to` field dropped)
 - **arg-name mismatch resolved on direct alias path**: W1/W2/W3 saw the

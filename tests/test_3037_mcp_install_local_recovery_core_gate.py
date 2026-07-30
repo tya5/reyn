@@ -1,11 +1,11 @@
-"""Tier 2: ``mcp__install_local`` must honour the recovery-core write-gate contract.
+"""Tier 2: ``mcp_install_local`` must honour the recovery-core write-gate contract.
 
 ``.reyn/config/`` is a recovery-core write-gate prefix (``_RECOVERY_CORE_WRITE_PREFIXES``,
 #2248 PR-C): a write there must be explicitly GATED (never silently allowed by the broad
 ``.reyn/`` default zone) and must contribute a truncation-surviving config GENERATION,
 because the directory is reconstructed from those generations.
 
-``mcp__install_local`` writes ``.reyn/config/mcp.yaml`` directly — bypassing the mcp_install
+``mcp_install_local`` writes ``.reyn/config/mcp.yaml`` directly — bypassing the mcp_install
 op — and honoured neither half:
 
 * Its permission gate read ``getattr(rs, "permission_resolver", None)`` — a field
@@ -173,7 +173,7 @@ async def test_install_local_emits_the_installed_audit_event(tmp_path):
 
 @pytest.mark.asyncio
 async def test_install_local_server_survives_wal_truncation(tmp_path):
-    """Tier 2: a server installed via ``mcp__install_local`` survives WAL truncation.
+    """Tier 2: a server installed via ``mcp_install_local`` survives WAL truncation.
 
     Truncate-falsify (the CLAUDE.md recovery-feature gate).
 
@@ -211,7 +211,7 @@ async def test_install_local_server_survives_wal_truncation(tmp_path):
 
     restored = yaml.safe_load(mcp_path.read_text(encoding="utf-8"))
     assert "B" in restored["mcp"]["servers"], (
-        "the mcp__install_local-installed server was ERASED by config reconstruction — it "
+        "the mcp_install_local-installed server was ERASED by config reconstruction — it "
         "recorded no truncation-surviving generation, so the reconstruct rewrote the file "
         "from the op-path generation that predates it"
     )
@@ -222,12 +222,12 @@ async def test_install_local_writes_under_the_factory_workspace_not_cwd(tmp_path
     """Tier 2: #3213 item 2 — project root resolves from the factory's real
     Workspace, not ``Path.cwd()``.
 
-    ``mcp__install_local`` previously resolved its project root from
+    ``mcp_install_local`` previously resolved its project root from
     ``ctx.workspace.root`` (an attribute the real ``Workspace`` never exposes —
     only ``.base_dir``, per #1442) with a silent ``Path.cwd()`` fallback. On the
     chat-router path ``ctx.workspace`` is ``None``, so every install silently fell
-    back to cwd — a DIFFERENT file than the one ``mcp__install_registry`` /
-    ``mcp__install_package`` write via the ``build_legacy_op_context`` bridge (which
+    back to cwd — a DIFFERENT file than the one ``mcp_install_registry`` /
+    ``mcp_install_package`` write via the ``build_legacy_op_context`` bridge (which
     resolve the factory's real Workspace). Two install verbs racing different files
     for the same logical ``.reyn/config/mcp.yaml`` is exactly the observed
     "install_local clobbers mcp.yaml" symptom: a later ``install_local`` read an

@@ -24,11 +24,12 @@ per-resource matrix:
     is ITSELF now retired (FP-0066 P1b: the ``rag_operation`` category and
     the layer-1 agent tool it routed to are gone) — so this name ALSO no
     longer resolves, for the same reason as ``rag_corpus__X``.
-  - The surviving AUTHOR-TIME resource name (``mcp__<server>__<tool>``,
-    resolved via ``universal_dispatch._RESOURCE_RULES`` — kept alive only
-    for names a human/DSL writes by hand, never enumerated) still describes
-    as its dispatcher target (``mcp_call_tool``), independent of
-    router_state, preserving the §D11 metadata-envelope coverage.
+  - **#3429**: the last AUTHOR-TIME resource name (``mcp__<server>__<tool>``,
+    kept resolvable for names a human/DSL wrote by hand, never enumerated)
+    is gone too — it was the qualified spelling in operator-facing clothes.
+    Describing it now returns the §D12 unknown-action envelope, and the
+    §D11 metadata-envelope coverage moves to ``mcp_call_tool``, the name
+    that actually reaches the tool.
 
 These tests use real ``ToolContext`` + ``RouterCallerState`` with a stub
 ``host`` / ``mcp_servers`` payload — no mocks of the dispatch internals.
@@ -73,14 +74,14 @@ def _make_ctx(skills=None, mcp_servers=None):
     )
 
 
-def _describe(qualified_name: str, ctx: ToolContext) -> dict:
+def _describe(action_name: str, ctx: ToolContext) -> dict:
     return asyncio.run(_handle_describe_action(
-        {"action_name": qualified_name}, ctx,
+        {"action_name": action_name}, ctx,
     ))
 
 
 # Phase 1 multi_agent collapse (2026-05-25): agent.peer__X resource shape
-# removed.  multi_agent__delegate is the operation-shape replacement and
+# removed.  delegate_to_agent is the operation-shape replacement and
 # exposes the full delegate_to_agent schema (= ``to`` + ``request``) via
 # the standard operation-category describe path; no curried-field surface.
 
@@ -116,7 +117,7 @@ def test_rag_corpus_and_retired_rag_operation_neither_resolve():
 
 # Issue #879: mcp.server__X / mcp.tool__X.Y resource-invoke describe
 # paths were removed when the MCP surface collapsed to verb actions.
-# Per-tool input schemas now travel through mcp__list_tools (= entries
+# Per-tool input schemas now travel through list_mcp_tools (= entries
 # carry the tool description) + the existing describe_mcp_tool surface
 # for richer per-tool detail.
 
@@ -125,10 +126,10 @@ def test_rag_corpus_and_retired_rag_operation_neither_resolve():
 
 
 def test_operation_category_describe_returns_target_parameters():
-    """Tier 1: Operation categories (``web__fetch``, …) are NOT remapped — their
+    """Tier 1: Operation categories (``web_fetch``, …) are NOT remapped — their
     target IS the resource so ``target.parameters`` is correct."""
     ctx = _make_ctx()
-    out = _describe("web__fetch", ctx)
+    out = _describe("web_fetch", ctx)
     schema = out["input_schema"]
     # web_fetch ToolDefinition declares url + max_length.
     assert "url" in schema["properties"]
@@ -152,13 +153,12 @@ def test_no_router_state_falls_back_for_resource_categories():
     ``test_rag_corpus_describe_drops_curried_sources_field``).
 
     The surviving generalization of "describe without router_state must not
-    crash" is ``universal_dispatch._RESOURCE_RULES`` — kept alive
-    specifically for author-time names a human or agent DSL writes by hand
-    (module docstring: ``tool: mcp__echo__ping`` in a pipeline step).
-    ``resolve_describe_action`` never takes ``ctx``/router_state at all, so
-    this resolves identically regardless of session state — describing as
-    ``mcp_call_tool``, the dispatcher target, since the per-tool schema
-    override for MCP resource names was removed in #879, not #3026.
+    crash" is ``mcp_call_tool`` — the verb an MCP tool is reached THROUGH,
+    whose ``{tool, tool_args}`` envelope is the same whatever the session
+    knows. Membership is a static table lookup that never consults
+    ``ctx``/router_state, so this describes identically regardless of session
+    state. (#3429 removed the ``mcp__<server>__<tool>`` author-time name that
+    used to stand in for this case.)
     """
     ctx = ToolContext(
         events=_FakeEvents(),
@@ -167,34 +167,35 @@ def test_no_router_state_falls_back_for_resource_categories():
         caller_kind="router",
         router_state=None,
     )
-    out = _describe("mcp__echo__ping", ctx)
+    out = _describe("mcp_call_tool", ctx)
     assert "input_schema" in out
     schema = out["input_schema"]
     props = schema.get("properties") or {}
     assert "tool" in props
-    assert out["metadata"]["target_tool_name"] == "mcp_call_tool"
+    assert out["action_name"] == "mcp_call_tool"
 
 
 @pytest.mark.parametrize("qn", [
-    # #3026: ``rag_corpus__my_docs`` no longer resolves (removed from
-    # CATEGORIES; see test_rag_corpus_describe_drops_curried_sources_field
-    # for that half). ``mcp__echo__ping`` is the surviving author-time
-    # resource name (module docstring: still resolves via
-    # ``_RESOURCE_RULES`` for pipeline-DSL / hand-typed use) that keeps this
-    # envelope coverage alive for a name whose target is a generic
-    # dispatcher rather than an operation-category verb.
-    "mcp__echo__ping",
+    # #3026 removed ``rag_corpus__my_docs``; #3429 removed the last
+    # author-time resource name (``mcp__echo__ping``). ``mcp_call_tool`` is
+    # what an MCP tool is reached through, so it carries this envelope
+    # coverage for a name whose schema is a generic dispatch envelope rather
+    # than an operation verb's own arguments.
+    "mcp_call_tool",
 ])
 def test_metadata_envelope_preserved(qn: str):
-    """Tier 1: All cases preserve the §D11 metadata envelope (qualified_name +
-    description + metadata.{target_tool_name, category, purity}); only
-    input_schema is enriched."""
+    """Tier 1: the §D11 metadata envelope (action_name + description +
+    metadata.{category, purity}) is preserved.
+
+    #3429 dropped ``metadata.target_tool_name`` from that envelope: it named
+    the tool the QUALIFIED spelling resolved to, and with one name there is
+    nothing for it to differ from."""
     ctx = _make_ctx()
     out = _describe(qn, ctx)
-    assert out["qualified_name"] == qn
+    assert out["action_name"] == qn
     assert "description" in out
     assert "input_schema" in out
     meta = out.get("metadata") or {}
-    assert "target_tool_name" in meta
+    assert "target_tool_name" not in meta
     assert "category" in meta
     assert "purity" in meta

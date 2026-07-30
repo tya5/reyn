@@ -4,7 +4,7 @@ permission intervention so the blocked router turn resumes.
 Bug reproduced (tui-coder, during #2688 real-env verification): an interactive
 file-write approval prompt (``[y]es / [j]ust this path / [r]ecursive / [N]o``)
 shown in ``--cui`` never resumed after the user answered ``y`` — indefinite
-hang, ``file__write`` never completed, no ``permission_granted`` event.
+hang, ``write_file`` never completed, no ``permission_granted`` event.
 
 Root cause: the ``--cui`` plain input loop routed EVERY typed line through
 ``submit_user_text`` → the session inbox. But a pending permission intervention
@@ -146,7 +146,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         "reyn.runtime.router_loop.call_llm_tools",
         _sequenced_llm_stub([
             _tool_call_result(
-                "file__write",
+                "write_file",
                 f'{{"path": "{out}", "content": "written ok"}}',
             ),
             _text_result(),
@@ -207,7 +207,7 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools",
         _sequenced_llm_stub([
-            _tool_call_result("file__read", f'{{"path": "{outside}"}}'),
+            _tool_call_result("read_file", f'{{"path": "{outside}"}}'),
             _text_result(),
         ]),
     )

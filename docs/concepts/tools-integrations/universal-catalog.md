@@ -15,8 +15,8 @@ the LLM a fresh tool to learn.
 The **universal action catalog** (FP-0034) replaces N per-kind discover /
 describe / invoke tools with **4 wrappers that cover every category
 uniformly**. Every action — run a workflow, delegate to a peer agent, call an
-MCP tool, read a memory, search an indexed corpus, … — is addressed by a
-single qualified name (`<category>__<entry>`) and dispatched through
+MCP tool, read a memory, search an indexed corpus, … — is addressed by its
+**one** name and dispatched through
 `invoke_action`. Discovery happens through `list_actions` and detail
 introspection through `describe_action`; semantic / natural-language
 discovery uses `search_actions` (embedding-backed).
@@ -78,14 +78,14 @@ The `mcp` category provides six verb_object actions that cover the LLM-visible s
 
 | Action | Purpose |
 |---|---|
-| `mcp__search_registry`  | Search the official MCP registry for new servers |
-| `mcp__install_registry` | Install a server from the official MCP registry |
-| `mcp__install_package`  | Install via a third-party package (npm/pypi/docker) or a GitHub repo URL |
-| `mcp__install_local`    | Register a local command (e.g. LLM-authored script) as an MCP server |
-| `mcp__list_servers`     | Enumerate installed servers |
-| `mcp__list_tools`     | Enumerate one server's tools as `<server>__<tool>` ids |
-| `mcp__call_tool`      | Call a tool by `<server>__<tool>` id with `tool_args` |
-| `mcp__drop_server`    | Remove an installed server |
+| `mcp_search_registry`  | Search the official MCP registry for new servers |
+| `mcp_install_registry` | Install a server from the official MCP registry |
+| `mcp_install_package`  | Install via a third-party package (npm/pypi/docker) or a GitHub repo URL |
+| `mcp_install_local`    | Register a local command (e.g. LLM-authored script) as an MCP server |
+| `list_mcp_servers`     | Enumerate installed servers |
+| `list_mcp_tools`     | Enumerate one server's tools as `<server>__<tool>` ids |
+| `mcp_call_tool`      | Call a tool by `<server>__<tool>` id with `tool_args` |
+| `mcp_drop_server`    | Remove an installed server |
 
 `exec` is gated by `is_exec_available()` — it only appears when a real
 sandbox backend (= not `"noop"`) is configured. The rest are always
@@ -96,58 +96,38 @@ memory, an indexed corpus, an installed MCP tool, a registered pipeline — is a
 **argument** to a verb, never an enumerated action of its own, so the number of
 actions the LLM is shown does not grow with what the operator has accumulated.
 Where collapsing a resource category removed the only surface that *named* those
-resources, a constant-count discovery verb replaces it (`memory_operation__list`,
-`mcp__list_tools`, `pipeline__list`,
-`skill_management__list`).
+resources, a constant-count discovery verb replaces it (`list_memory`,
+`list_mcp_tools`, `pipeline_list`,
+`skill_list`).
 
-## Qualified-name format
+## Action names (#3429)
 
-```
-<category>__<entry_name>
-```
+An action's name is its **flat registry tool name** — `read_file`,
+`web_search`, `mcp_call_tool` — and there is exactly one of them. A category is
+a browsing axis (`list_actions(category=["file"])`), never part of the name.
 
-The separator is **double underscore** (`__`). Categories may contain
-dots (`agent.peer`, …); entry names may
-contain anything except the `__` sequence at the boundary. The split
-rule is "first `__` after the category name" so `agent.peer__alice`
-correctly parses as (`agent.peer`, `alice`).
+**§D18 used to specify a second, qualified spelling** — `<category>__<verb>`,
+so `read_file` was also `file__read` — with a parser and a routing table
+mapping one to the other. Two names for one operation meant every subsystem
+keyed on a tool name had to decide whether to handle both; a census of the 11
+that exist found 4 with explicit two-form compensation (the permission axis'
+`_expand_tool_forms`, the op-gate's alias map, …) and 7 without (result
+normalisation, canonicalization declarations, permission-denied hints, the
+advertisement gate, the exclusive-wrapper strip list, the `routing_decided`
+audit-event, action-usage tracking). Fixing the 7 would have left the twelfth
+subsystem to flip the same coin, so the second name is what was removed.
 
-Examples:
+The naming convention for the surviving name is
+[`docs/reference/runtime/tool-naming.md`](../../reference/runtime/tool-naming.md).
+`tests/test_no_qualified_tool_names_3429.py` is the gate: it walks the live
+registry, the membership table, the categories tuple, and the assembled
+`tools=` payload, and fails on any `__` in a name. (Deletion is a state; the
+gate is the property.)
 
-| Qualified name | Parses to |
-|---|---|
-| `agent.peer__alice` | (`agent.peer`, `alice`) |
-| `mcp__call_tool` | (`mcp`, `call_tool`) |
-| `mcp__install_registry` | (`mcp`, `install_registry`) |
-| `rag_operation__semantic_search` | (`rag_operation`, `semantic_search`) |
-| `file__read` | (`file`, `read`) |
-
-### Provider portability — dots in qualified names
-
-OpenAI's native function-call API restricts tool names to
-`^[a-zA-Z0-9_-]{1,64}$` (= no `.`). Reyn's qualified names with
-dotted categories (`agent.peer`, etc.)
-therefore **work via a LiteLLM proxy** but may be rejected by direct
-OpenAI native callers.
-
-Reyn's default setup routes all providers through LiteLLM
-(`reyn.yaml: models: standard: openai/...`), so the dotted form works
-end-to-end out of the box for the bundled scenarios. Gemini /
-Anthropic / OpenAI-compatible endpoints all tolerate the `.` when
-called via LiteLLM.
-
-If you wire up a direct-OpenAI-native caller (= no LiteLLM in the
-middle), you'll need either:
-
-  - keep using a LiteLLM proxy in front (= recommended; matches the
-    Reyn default), OR
-  - migrate qualified names to use `_` everywhere (= breaking change
-    across catalog enumerators / dispatch tables / hot-list / fixtures /
-    scenarios; tracked at FP-0034 §D18 should it become real).
-
-The migration is out of scope today because no direct-OpenAI-native
-path exists in the Reyn project and the LiteLLM proxy is the canonical
-ingress.
+A useful side effect: every name now satisfies OpenAI's native function-name
+grammar `^[a-zA-Z0-9_-]{1,64}$` by construction. The dotted categories that
+once made qualified names LiteLLM-proxy-dependent are long gone, and
+`tests/test_qualified_name_provider_grammar_1456.py` pins the property.
 
 ## The 3 wrappers
 
@@ -155,18 +135,18 @@ ingress.
 
 Browses the catalogue alphabetically. `category` is a list of category
 names (omit or pass `[]` to include everything visible). `filter` is a
-case-insensitive substring match against `qualified_name` and
+case-insensitive substring match against `action_name` and
 `short_description`. `offset` / `limit` paginate. Items carry
-`qualified_name` and a short description; long descriptions are
+`action_name` and a short description; long descriptions are
 deliberately omitted so the listing stays compact.
 
 In the **weak-model landing design**, a narrowed-category result instead
 carries each item's full `description` and `input_schema` (the triple
-`qualified_name` + `description` + `input_schema`), so the common flow is
+`action_name` + `description` + `input_schema`), so the common flow is
 `list_actions` → `invoke_action` with no intervening `describe_action`. See
 [Weak-model discovery + selection reliability](#weak-model-discovery-selection-reliability).
 
-### `describe_action(action_name) → {qualified_name, description, input_schema, metadata}`
+### `describe_action(action_name) → {action_name, description, input_schema, metadata}`
 
 Returns the long description, full input schema (= the underlying
 tool's `parameters`), and metadata (`target_tool_name`, `category`,
@@ -183,7 +163,7 @@ result would be wasteful. See
 ### `invoke_action(action_name, args) → <target's result>`
 
 Dispatches to the underlying tool via the routing layer (see
-[Dispatch](#dispatch-routing-layer)). The wrapper is transparent: the
+[Membership](#membership-what-an-action-name-means)). The wrapper is transparent: the
 target handler runs with the full `ToolContext`, so permission gates,
 events, budgets, and workspace effects behave exactly as if the legacy
 tool had been called directly. On an unknown name, returns a §D12
@@ -204,52 +184,56 @@ discovery verb, then pass its id as an argument:
 
 | To … | Discover with | Then invoke |
 |---|---|---|
-| search an indexed corpus | `rag_operation__list_sources` | `rag_operation__semantic_search({sources: ["meetings"], query: "Q3 roadmap"})` |
-| read a stored memory | `memory_operation__list` | `memory_operation__read({layer: "shared", slug: "..."})` |
-| call an MCP tool | `mcp__list_tools` | `mcp__call_tool({tool: "<server>__<tool>", tool_args})` |
-| run a registered pipeline | `pipeline__list` | `pipeline__run({name: "greet", input: {...}})` |
+| read a stored memory | `list_memory` | `read_memory_body({layer: "shared", slug: "..."})` |
+| call an MCP tool | `list_mcp_tools` | `mcp_call_tool({tool: "<server>__<tool>", tool_args})` |
+| run a registered pipeline | `pipeline_list` | `run_pipeline({name: "greet", input: {...}})` |
+| search your own knowledge | — | `search_knowledge({query: "..."})` |
 
-`memory_operation__read` takes an explicit `layer` (`shared` or `agent`), so
+`read_memory_body` takes an explicit `layer` (`shared` or `agent`), so
 both memory layers are reachable through the catalog.
 
-Two **author-time** resource forms still **resolve** even though they are not
-enumerated, because a human or an agent writes them by hand: `pipeline__<name>`
-(the form the [pipeline guide](../../guide/for-users/write-a-pipeline.md)
-teaches — `pipeline__greet({name: "Reyn"})`) and `mcp__<server>__<tool>` (a
-`tool: mcp__echo__ping` step in a pipeline DSL file). Each reaches the same
-target with the same effective args as its verb counterpart; resolving a name
-the caller already typed costs zero tools, whereas enumerating one costs a tool
-per resource.
+The `<server>__<tool>` string in the MCP row is the MCP **server's** own tool
+identifier, an argument value in a namespace Reyn does not own — not a Reyn
+tool name.
 
-## Dispatch (routing layer)
+**#3429 removed the author-time exception.** Two resource forms used to
+*resolve* without being enumerated, on the reasoning that a name a human already
+typed costs zero payload: `pipeline__<name>` (which the pipeline guide taught)
+and `mcp__<server>__<tool>` (a `tool:` step in a pipeline DSL file). That
+reasoning holds for payload and is silent about naming — each was a SECOND name
+for a verb that already existed, and a second name is what every name-keyed
+subsystem has to remember to handle. A pipeline step now names the flat tool and
+passes the resource id as an ordinary argument, exactly as the table above
+shows.
 
-The qualified name → target tool name mapping lives in
-[`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn).
-It is **pure** — no I/O, no state, no live invocation. Two tables drive
-the routing:
+## Membership (what an action name means)
 
-- **`_OPERATION_RULES`** — a **closed table of full literal qualified names** →
-  `(target_tool_name, arg_transformer)`, covering every category. This is the
-  enumerated surface: it is the only table an enumerator may read, which is what
-  keeps the payload constant.
-- **`_RESOURCE_RULES`** — category → `(target_tool_name, arg_transformer)`,
-  consulted only when the full name is absent from `_OPERATION_RULES`. It holds
-  the two author-time forms (`pipeline` / `mcp`) described above, and is
-  **never** read by an enumerator.
+An **action** is a registered `ToolDefinition`, addressed by its flat registry
+name. A **category** is a browsing axis over that set. The membership table
+lives in
+[`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) and
+is **pure** — no I/O, no state, no live invocation:
 
-Routing always:
+- **`_CATEGORY_ACTIONS`** — a **closed table** of category → the flat tool names
+  that category browses. It is the only table an enumerator may read, which is
+  what keeps the payload constant.
 
-1. Splits the qualified name into (`category`, `entry_name`).
-2. Looks up the full qualified name in `_OPERATION_RULES`, falling back to
-   the category's `_RESOURCE_RULES` entry.
-3. Runs the arg transformer (e.g. `_mcp_tool_args` rewraps
-   `mcp__echo__ping({...})` as `mcp_call_tool({tool, tool_args})`).
-4. Returns a `ResolvedAction(target_tool_name, target_args)` that
-   the wrapper hands to the unified `ToolRegistry`.
+`invoke_action` then:
 
-If no rule matches, dispatch raises `UnknownActionError` carrying
-`difflib`-ranked suggestions from the known qualified-name set + any
-visible resource entries.
+1. Checks `action_name` against `KNOWN_ACTION_NAMES` (`require_known_action`).
+2. Looks the name up in the unified `ToolRegistry`.
+3. Calls that tool's own handler with the args the caller sent, unchanged.
+
+**There is no rewriting step between (1) and (3).** Until #3429 there was: the
+name arrived in a `<category>__<verb>` spelling that this layer mapped to a flat
+registry name, and two of the mappings also reshaped args (`cluster`→`path`,
+`message`→`request`) in ways no advertised schema declared — capability that
+existed only on the qualified route. The args the model sends are the args the
+handler receives, which is what "transparent wrapper" was always supposed to
+mean.
+
+If the name is not an action, dispatch raises `UnknownActionError` carrying
+`difflib`-ranked suggestions from the live, availability-aware action set.
 
 ## Error response (§D12)
 
@@ -258,15 +242,15 @@ When `invoke_action` or `describe_action` receives an unknown
 
 ```json
 {
-  "error": "Unknown action 'skil__foo'",
-  "reason": "...",
-  "suggestions": ["skill__foo", "skill__form"],
+  "error": "Unknown action 'read_fil'",
+  "reason": "not a known action name",
+  "suggestions": ["read_file", "edit_file", "delete_file"],
   "hint": "Use list_actions(category=[...]) to discover the correct name."
 }
 ```
 
-`suggestions` come from `difflib.get_close_matches` against the
-static qualified-name set merged with router-state-aware candidates.
+`suggestions` come from `difflib.get_close_matches` against the live,
+availability-aware action set.
 The hint always points back at `list_actions` so the LLM has an
 obvious recovery move.
 
@@ -307,13 +291,13 @@ catalog addresses **structurally**, so weak-model support never costs
 strong-model flexibility:
 
 1. **Satisficing** — the model invokes a visible hot-list action
-   (`file__write`) instead of discovering a better-fit one (`file__edit`),
+   (`write_file`) instead of discovering a better-fit one (`edit_file`),
    because the hot action is "good enough".
 2. **Discovery-skip** — the model does not proactively call `list_actions`;
    it guesses an action name from training priors, often malformed
-   (`file.write`, `file__read_file`).
+   (`file.write`, `file__read`).
 
-*Status: the no-names system prompt and the `file__edit` cross-reference are
+*Status: the no-names system prompt and the `edit_file` cross-reference are
 shipped; `list_actions` returning schemas and the tier-gated mandates are the
 agreed landing design (implementation in progress). Every lever below is
 patch- and live-verified against `gemini-2.5-flash-lite` at reliable N.*
@@ -334,7 +318,7 @@ This serves two ends:
   (observed 16/16 `list_actions` for an obscure, non-guessable workflow).
 
   Caveat — name-hiding forces discovery only for *unknown* actions. For
-  training-**known** concepts (`file__read` / `file__write`) the weak model
+  training-**known** concepts (`read_file` / `write_file`) the weak model
   recalls the concept and emits a malformed approximation rather than
   discovering the exact name. Known-action *selection* is handled by the
   mechanical mandate below, not by name-hiding.
@@ -342,7 +326,7 @@ This serves two ends:
 ### `list_actions` returns name + description + schema
 
 When `list_actions(category=[…])` narrows to a bounded set, each item carries
-the **full triple** — `qualified_name`, `description`, and `input_schema`:
+the **full triple** — `action_name`, `description`, and `input_schema`:
 
 - **`description`** is what lets the model *select* the right action; a model
   cannot pick an action it cannot read (the conventional role of a tool
@@ -366,8 +350,8 @@ design grounds rather than as a separately measured lever.
 
 Weak models **obey mechanical, unconditional procedural mandates** but
 **ignore reasoning-based recommendations**. A cross-reference that *explains*
-("for a partial edit, prefer `file__edit`") is ignored (0/20 followed it); an
-unconditional mandate ("edits MUST use `file__edit`, NOT `file__write`") is
+("for a partial edit, prefer `edit_file`") is ignored (0/20 followed it); an
+unconditional mandate ("edits MUST use `edit_file`, NOT `write_file`") is
 followed (edit 3 / write 1).
 
 The router therefore gates a set of mechanical system-prompt mandates on the
@@ -375,8 +359,8 @@ model tier (`router_model: light` → on; `strong` → off):
 
 - **`list_actions`-first** — the first tool call MUST be `list_actions`
   before reading, writing, or editing anything.
-- **`file__edit`-MUST** — partial / surgical edits must use `file__edit`,
-  not `file__write`.
+- **`edit_file`-MUST** — partial / surgical edits must use `edit_file`,
+  not `write_file`.
 
 Two properties make the mandate land:
 
@@ -522,8 +506,8 @@ in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
 
 ## Reference files
 
-- [`src/reyn/tools/universal_catalog.py`](https://github.com/anthropics/reyn) — `CATEGORIES`, 4 ToolDefinitions, qualified-name parser, D14 helpers, real handlers
-- [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — routing tables, `ResolvedAction`, `UnknownActionError`, `suggest_similar_names`
+- [`src/reyn/tools/universal_catalog.py`](https://github.com/anthropics/reyn) — `CATEGORIES`, 4 ToolDefinitions, D14 helpers, real handlers
+- [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — `_CATEGORY_ACTIONS` membership table, `require_known_action`, `UnknownActionError`, `suggest_similar_names`
 - [`src/reyn/runtime/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gated wrappers)
 - [`src/reyn/runtime/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
 - [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`

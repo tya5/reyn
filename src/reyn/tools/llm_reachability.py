@@ -35,22 +35,29 @@ can deliver it to the model:
       fixed arg tuple cannot tell the two apart (confirmed: doing so
       flags those as "unreachable" too, a false positive this census
       avoids).
-  (b) **Resolution via ``invoke_action``** — the name is the bare
-      dispatch target of some qualified name in
-      ``universal_dispatch._OPERATION_RULES``. ``invoke_action`` is
-      itself advertised via route (a) whenever the universal wrappers
-      are enabled, which is the shipped default
+  (b) **Dispatch via ``invoke_action``** — the name is a catalog action,
+      i.e. a member of ``universal_dispatch.KNOWN_ACTION_NAMES`` (the
+      ``_CATEGORY_ACTIONS`` membership table). #3429 abolished the
+      qualified spelling this route used to be defined through — the old
+      reading was "the bare dispatch target of some ``_OPERATION_RULES``
+      qualified name"; with one name per action, ``invoke_action``
+      dispatches a catalog member under its own name, so membership IS
+      the route. (Measured at the switch-over: the two readings produce
+      the same unreachable set — the eight tools below — so this is the
+      same route restated, not a widened or narrowed one.)
+      ``invoke_action`` is itself advertised via route (a) whenever the
+      universal wrappers are enabled, which is the shipped default
       (``ActionRetrievalConfig.universal_wrappers_enabled: bool = True``
-      in ``reyn.config.embedding``) — so resolving through it is a real,
-      always-available route in the default configuration, not a
+      in ``reyn.config.embedding``) — so dispatching through it is a
+      real, always-available route in the default configuration, not a
       hypothetical one.
 
 **"Any one route suffices" is the deliberate reading** — the issue does
 not require a SPECIFIC path, only that the model can reach the tool
 SOMEHOW. ``hot_list_aliases`` and the MCP ``tool_search_tool`` meta-tool
 are not independent THIRD routes: both are dynamically-selected SUBSETS of
-route (a)/(b)'s pool (hot-list seeds are qualified names drawn from
-``_OPERATION_RULES``; ``tool_search_tool`` wraps the same MCP-server-derived
+route (a)/(b)'s pool (hot-list seeds are catalog action names, ghost-filtered
+against ``KNOWN_ACTION_NAMES``; ``tool_search_tool`` wraps the same MCP-server-derived
 dicts route (a) already assembles) — neither can make an otherwise
 structurally-unreachable tool reachable, so neither is modeled as a
 separate route here.
@@ -118,7 +125,8 @@ UNREACHABLE_CLASSIFICATIONS: Final[frozenset[str]] = frozenset({
 _CRON_REASON = (
     "#3464: 5 cron ToolDefinitions (cron_register/_unregister/_list/_enable/"
     "_disable) are registered router=allow but reach neither build_tools()'s "
-    "direct-advertisement census nor universal_dispatch._OPERATION_RULES. "
+    "direct-advertisement census nor the catalog membership table "
+    "(universal_dispatch.KNOWN_ACTION_NAMES) that invoke_action dispatches from. "
     "Whether to (A) add a `cron` catalog category (capability grant -- the "
     "LLM could directly operate cron, an owner decision), (B) keep them "
     "intentionally CLI/internal-only, or (C) delete the dead surface is an "
@@ -130,7 +138,8 @@ _CRON_REASON = (
 _WIRING_BUG_REASON_TEMPLATE = (
     "Registered router=allow with a module docstring already asserting "
     "LLM-facing intent ({intent!r}), but never wired into build_tools() or "
-    "universal_dispatch._OPERATION_RULES -- the same 'registered but the "
+    "the catalog membership table (universal_dispatch._CATEGORY_ACTIONS) -- "
+    "the same 'registered but the "
     "routing entry was never added' mechanics as #3083. Filed as #3465 "
     "rather than fixed in #3464's PR: wiring requires touching "
     "universal_dispatch.py / router_tools.py, which #3464 was scoped to "
@@ -239,30 +248,35 @@ def compute_direct_advertisable_tool_names(*, source_text: str | None = None) ->
 
 
 def compute_invoke_action_reachable_tool_names(
-    *, operation_rules: Mapping[str, tuple] | None = None
+    *, action_names: frozenset[str] | None = None
 ) -> frozenset[str]:
-    """Derive route (b): every bare tool name ``invoke_action`` can dispatch
-    to, per ``universal_dispatch._OPERATION_RULES`` (qualified_name -> (bare
-    tool name, arg-transform)).
+    """Derive route (b): every tool name ``invoke_action`` can dispatch —
+    the catalog action set (``universal_dispatch.KNOWN_ACTION_NAMES``, built
+    from the ``_CATEGORY_ACTIONS`` membership table).
 
-    ``operation_rules`` defaults to the real table; tests pass a filtered
-    copy to strip-falsify this route independently of route (a).
+    #3429: this used to read the bare targets out of the qualified→flat
+    ``_OPERATION_RULES`` table. There is no second spelling to resolve any
+    more — ``invoke_action`` checks membership and dispatches the name as-is
+    — so the route is the membership set itself.
+
+    ``action_names`` defaults to the real table; tests pass a filtered copy
+    to strip-falsify this route independently of route (a).
     """
-    if operation_rules is None:
-        from reyn.tools.universal_dispatch import _OPERATION_RULES
+    if action_names is None:
+        from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
 
-        operation_rules = _OPERATION_RULES
-    return frozenset(bare_name for bare_name, _handler in operation_rules.values())
+        action_names = KNOWN_ACTION_NAMES
+    return frozenset(action_names)
 
 
 def compute_llm_reachable_tool_names(
     *,
     source_text: str | None = None,
-    operation_rules: Mapping[str, tuple] | None = None,
+    action_names: frozenset[str] | None = None,
 ) -> frozenset[str]:
     """Union of route (a) and route (b) — see module docstring."""
     return compute_direct_advertisable_tool_names(source_text=source_text) | (
-        compute_invoke_action_reachable_tool_names(operation_rules=operation_rules)
+        compute_invoke_action_reachable_tool_names(action_names=action_names)
     )
 
 
@@ -277,7 +291,7 @@ def compute_router_allow_tool_names() -> frozenset[str]:
 def compute_unreachable_router_allow_tool_names(
     *,
     source_text: str | None = None,
-    operation_rules: Mapping[str, tuple] | None = None,
+    action_names: frozenset[str] | None = None,
     allow_names: frozenset[str] | None = None,
 ) -> frozenset[str]:
     """``router="allow"`` tool names that are NOT reachable by either route.
@@ -289,7 +303,7 @@ def compute_unreachable_router_allow_tool_names(
     if allow_names is None:
         allow_names = compute_router_allow_tool_names()
     reachable = compute_llm_reachable_tool_names(
-        source_text=source_text, operation_rules=operation_rules
+        source_text=source_text, action_names=action_names
     )
     return allow_names - reachable
 

@@ -13,7 +13,7 @@
     "reply_rubric": "pass",
     "events_check": "fail",
     "artifacts_check": "fail",
-    "notes": "Correct 1971-char reply via file__read direct (cron scheduling, async, CronJob class, runner_fn). skill_run_spawned=0; skill_run_completed=0. read_local_files skill not dispatched (not in top-20). Rubric PASS."
+    "notes": "Correct 1971-char reply via read_file direct (cron scheduling, async, CronJob class, runner_fn). skill_run_spawned=0; skill_run_completed=0. read_local_files skill not dispatched (not in top-20). Rubric PASS."
   },
   {
     "scenario_id": "read_local_files_multi_file",
@@ -21,7 +21,7 @@
     "reply_rubric": "fail",
     "events_check": "fail",
     "artifacts_check": "fail",
-    "notes": "Reply: 'couldn't find any files in src/reyn/op_runtime/' — factually wrong. file__list was called and returned results but LLM reported failure. No skill_run_spawned. Rubric FAIL (did not describe any files, claimed error)."
+    "notes": "Reply: 'couldn't find any files in src/reyn/op_runtime/' — factually wrong. list_directory was called and returned results but LLM reported failure. No skill_run_spawned. Rubric FAIL (did not describe any files, claimed error)."
   },
   {
     "scenario_id": "skill_builder_web_summariser",

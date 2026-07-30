@@ -240,12 +240,12 @@ mcp_allow: null        # all MCP servers available
 mcp_deny: []
 tool_allow: null       # deny-list only
 tool_deny:
-  - exec__run
-  - memory_operation__remember_shared
-  - multi_agent__delegate
+  - exec
+  - remember_shared
+  - delegate_to_agent
 ```
 
-**Either spelling of a tool works, and denies both.** `multi_agent__delegate` and
+**Either spelling of a tool works, and denies both.** `delegate_to_agent` and
 `delegate_to_agent` are two names for one operation, and which of them the model
 is currently *shown* varies by [tool-use cell](../tools-integrations/tool-use-schemes.md)
 and host config. A `tool_deny` entry is therefore expanded to **every invocable

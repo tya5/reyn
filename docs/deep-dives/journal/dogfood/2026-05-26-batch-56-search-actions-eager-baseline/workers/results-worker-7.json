@@ -115,7 +115,7 @@
       "events_path": "/tmp/reyn-worktrees/b56-7/.reyn/events/agents/dogfood-b56-7-s6/chat/2026-05/2026-05-26T000851.jsonl",
       "events_pass": true,
       "rubric_items": [],
-      "notes": "No rubric in YAML. All 5 turns completed. Agent used file__glob and reyn.source__list tools. Correctly determined no formal ADR directory exists. T3 attempted source__glob (not in catalog) but recovered and continued with reyn.source__list. Final turn suggested next logical ADR (402 chars)."
+      "notes": "No rubric in YAML. All 5 turns completed. Agent used glob_files and reyn.source__list tools. Correctly determined no formal ADR directory exists. T3 attempted source__glob (not in catalog) but recovered and continued with reyn.source__list. Final turn suggested next logical ADR (402 chars)."
     },
     {
       "id": "scenario_7_concept_explanation_chain",

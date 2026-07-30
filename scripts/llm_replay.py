@@ -790,7 +790,7 @@ def _chain_enumerate_static() -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for qn in sorted(_OPERATION_RULES.keys()):
         items.append({
-            "qualified_name": qn,
+            "action_name": qn,
             "short_description": f"({qn.split('__', 1)[0]} action) {qn.split('__', 1)[-1]}",
         })
     return items
@@ -805,16 +805,16 @@ async def _exec_list_actions(args: dict) -> dict:
     if cat_filter:
         items = [
             it for it in items
-            if it["qualified_name"].split("__", 1)[0] in cat_filter
+            if it["action_name"].split("__", 1)[0] in cat_filter
         ]
     text_filter = (args.get("filter") or "").lower()
     if text_filter:
         items = [
             it for it in items
-            if text_filter in it["qualified_name"].lower()
+            if text_filter in it["action_name"].lower()
             or text_filter in it["short_description"].lower()
         ]
-    items.sort(key=lambda it: it["qualified_name"])
+    items.sort(key=lambda it: it["action_name"])
     offset = max(0, int(args.get("offset", 0) or 0))
     limit = max(1, int(args.get("limit", 20) or 20))
     total = len(items)
@@ -913,9 +913,9 @@ async def _exec_file_list(args: dict, *, cwd: Path) -> dict:
 
 async def _exec_invoke_action(action_name: str, inner_args: dict, *, cwd: Path) -> dict:
     """Route invoke_action to the chain-supported subset."""
-    if action_name in ("reyn.source__read", "file__read"):
+    if action_name in ("reyn.source__read", "read_file"):
         return await _exec_file_read(inner_args, cwd=cwd)
-    if action_name in ("reyn.source__list", "file__list"):
+    if action_name in ("reyn.source__list", "list_directory"):
         return await _exec_file_list(inner_args, cwd=cwd)
     if action_name.startswith("web__"):
         return {"status": "unavailable",
@@ -955,7 +955,7 @@ async def _exec_search_actions(args: dict) -> dict:
         return {
             "items": [
                 {
-                    "qualified_name": "reyn.source__read",
+                    "action_name": "reyn.source__read",
                     "short_description": (
                         "Read a text file from Reyn's own repository — README.md "
                         "for the canonical overview + curated map of deep-dive paths."
@@ -963,7 +963,7 @@ async def _exec_search_actions(args: dict) -> dict:
                     "score": 0.87,
                 },
                 {
-                    "qualified_name": "reyn.source__list",
+                    "action_name": "reyn.source__list",
                     "short_description": "List entries under a path inside Reyn's own repository.",
                     "score": 0.71,
                 },
@@ -1017,11 +1017,11 @@ async def _exec_chain_tool(name: str, args: dict, *, cwd: Path) -> dict:
         return await _exec_invoke_action(
             action_name, args.get("args", {}) or {}, cwd=cwd,
         )
-    if name in ("file__read", "reyn.source__read"):
+    if name in ("read_file", "reyn.source__read"):
         return await _exec_file_read(args, cwd=cwd)
-    if name in ("file__list", "reyn.source__list"):
+    if name in ("list_directory", "reyn.source__list"):
         return await _exec_file_list(args, cwd=cwd)
-    if name in ("web__search", "web__fetch"):
+    if name in ("web_search", "web_fetch"):
         return {"status": "unavailable",
                 "message": f"{name} not supported in chain replay (live web)"}
     if name in ("plan", "read_tool_result"):
@@ -1505,7 +1505,7 @@ def main() -> None:
         default=".",
         help=(
             "Repo / file root for chain-mode file reads (default: '.')."
-            " All reyn.source__read / file__read paths resolved against this."
+            " All reyn.source__read / read_file paths resolved against this."
         ),
     )
     args = parser.parse_args()

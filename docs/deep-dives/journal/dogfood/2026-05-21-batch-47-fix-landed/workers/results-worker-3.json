@@ -62,7 +62,7 @@
       "events_emitted": ["routing_decided", "tool_called", "tool_failed"],
       "events_absent": ["web_fetch_started"],
       "rubric_failed": ["mentions at least one Python 3.12 feature", "reply is a summary, not a raw HTML dump"],
-      "notes": "web__fetch tool failed with error_kind=permission_denied (tool_failed event). web_fetch_started never emitted. must_not_emit permission_denied violated (implicit via tool_failed.error_kind=permission_denied). Env-level permission block."
+      "notes": "web_fetch tool failed with error_kind=permission_denied (tool_failed event). web_fetch_started never emitted. must_not_emit permission_denied violated (implicit via tool_failed.error_kind=permission_denied). Env-level permission block."
     },
     {
       "id": "sandboxed_exec_simple",
@@ -118,9 +118,9 @@
   "new_findings": [
     {
       "id": "NF-W3-1",
-      "title": "web__fetch permission_denied blocks web-fetch scenarios",
+      "title": "web_fetch permission_denied blocks web-fetch scenarios",
       "severity": "HIGH",
-      "description": "S4 (web_fetch_url): web__fetch tool failed with error_kind=permission_denied. web_fetch_started was never emitted. This is a persistent env-level permission block that prevents all web-fetch rubric coverage. Same issue likely blocked B46 S4."
+      "description": "S4 (web_fetch_url): web_fetch tool failed with error_kind=permission_denied. web_fetch_started was never emitted. This is a persistent env-level permission block that prevents all web-fetch rubric coverage. Same issue likely blocked B46 S4."
     },
     {
       "id": "NF-W3-2",

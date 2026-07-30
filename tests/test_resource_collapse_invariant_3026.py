@@ -10,19 +10,23 @@ Pins the two halves the #3026 PR establishes for the universal catalog:
    ``n``), not a count pin — the whole point of the PR is that no fixed
    number is being pinned, growth simply has zero effect on the payload.
 
-2. **Enumeration-vs-resolution split** — author-time qualified names
-   (``pipeline__<name>``, ``mcp__<server>__<tool>``) are NOT present in the
-   enumerated ``catalog_entries`` output (they are resource entries, and
-   #3026 removed per-resource enumeration), while
-   ``universal_dispatch.resolve_invoke_action`` still RESOLVES them to their
-   target tool with the resource id curried into the args. Resolution and
-   enumeration are different concerns; this test pins that they stay split.
+2. **A resource is an ARGUMENT, never a name** — no per-resource entry
+   (``pipeline__<name>``, ``mcp__<server>__<tool>``, a memory slug, a corpus
+   name) appears in the enumerated ``catalog_entries`` output.
+
+   #3026 left half of this open: those names were not enumerated but still
+   RESOLVED, as an "author-time" spelling for a human writing a pipeline DSL
+   step. #3429 closed it — they were the qualified spelling in operator-facing
+   clothes, and the same coin-flip every name-keyed subsystem had to call. The
+   resource id now rides as an ordinary argument on the reachable verb
+   (``run_pipeline{name}``, ``mcp_call_tool{tool, tool_args}``), which is what
+   the enumerated verbs already did. Both halves are asserted below.
 """
 from __future__ import annotations
 
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import catalog_entries
-from reyn.tools.universal_dispatch import resolve_invoke_action
+from reyn.tools.universal_dispatch import is_known_action
 
 
 class _FakePipelineRegistry:
@@ -106,34 +110,26 @@ def test_catalog_entries_never_contains_per_resource_dynamic_names() -> None:
         assert f"rag_corpus__corpus{i}" not in names
 
 
-def test_pipeline_dunder_name_resolves_despite_not_being_enumerated() -> None:
-    """Tier 2: pipeline__<name> still RESOLVES though it is never enumerated.
+def test_pipeline_dunder_name_is_not_an_action() -> None:
+    """Tier 2: #3429 — ``pipeline__<name>`` is not a name the OS answers to.
 
-    Author-time names (taught in docs/guide/for-users/write-a-pipeline.md,
-    and used by a pipeline DSL ``tool:`` step) must keep routing to
-    ``run_pipeline`` with the pipeline name curried into ``target_args``,
-    even though the previous test proves this exact name is absent from
-    the enumerated catalog. This is the enumeration-vs-resolution split
-    the PR establishes: resolving a caller-supplied name costs zero tools,
-    so it is kept working, while enumerating one per pipeline is removed.
-    """
-    resolved = resolve_invoke_action("pipeline__greet", {"input": {"name": "Reyn"}})
-
-    assert resolved.target_tool_name == "run_pipeline"
-    assert resolved.target_args["name"] == "greet"
-    assert resolved.target_args["input"] == {"name": "Reyn"}
+    #3026 kept it resolvable as an author-time form (the user guide taught
+    ``pipeline__greet``, and a pipeline DSL ``tool:`` step could carry it) on the
+    reasoning that resolving a name someone already typed costs zero payload.
+    That reasoning survives the payload lens and fails the naming one: it was a
+    SECOND name for ``run_pipeline``, so every subsystem keyed on a tool name had
+    to decide whether to handle it. The capability is unchanged —
+    ``run_pipeline{name: "greet"}`` is the same call the curried form made."""
+    assert not is_known_action("pipeline__greet")
+    assert is_known_action("run_pipeline")
 
 
-def test_mcp_dunder_tool_name_resolves_despite_not_being_enumerated() -> None:
-    """Tier 2: mcp__<server>__<tool> still RESOLVES though never enumerated.
+def test_mcp_dunder_tool_name_is_not_an_action() -> None:
+    """Tier 2: #3429 — ``mcp__<server>__<tool>`` is not a name the OS answers to.
 
-    Mirrors the pipeline case for MCP: a pipeline DSL ``tool:`` step may
-    name an MCP tool directly (``tool: mcp__echo__ping``), so resolution
-    must keep working via ``_RESOURCE_RULES`` even though per-tool names
-    are no longer part of the enumerated catalog (proven above).
-    """
-    resolved = resolve_invoke_action("mcp__echo__ping", {"message": "hi"})
-
-    assert resolved.target_tool_name == "mcp_call_tool"
-    assert resolved.target_args["tool"] == "echo__ping"
-    assert resolved.target_args["tool_args"] == {"message": "hi"}
+    Mirrors the pipeline case. The MCP tool identifier itself
+    (``echo__ping``) is unchanged and still carries a ``__`` — it belongs to the
+    MCP server's namespace, not reyn's, and reaches the tool as
+    ``mcp_call_tool``'s ``tool`` ARGUMENT rather than as a reyn tool name."""
+    assert not is_known_action("mcp__echo__ping")
+    assert is_known_action("mcp_call_tool")

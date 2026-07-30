@@ -338,8 +338,8 @@ def test_router_loop_search_actions_wires_search_await_and_emits_audit(
     op_ctx = _op_ctx_for(provider, monkeypatch, log)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     items = [
-        {"qualified_name": "skill__alpha", "short_description": "Alpha skill"},
-        {"qualified_name": "skill__beta", "short_description": "Beta skill"},
+        {"action_name": "skill__alpha", "short_description": "Alpha skill"},
+        {"action_name": "skill__beta", "short_description": "Beta skill"},
     ]
     _run(idx.build(items, op_ctx, "standard"))
     assert idx.is_ready() is True
@@ -393,8 +393,8 @@ def test_universal_catalog_handler_wires_search_await_and_emits_audit(
     op_ctx = _op_ctx_for(provider, monkeypatch, log)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
     items = [
-        {"qualified_name": "skill__alpha", "short_description": "Alpha skill"},
-        {"qualified_name": "skill__beta", "short_description": "Beta skill"},
+        {"action_name": "skill__alpha", "short_description": "Alpha skill"},
+        {"action_name": "skill__beta", "short_description": "Beta skill"},
     ]
     _run(idx.build(items, op_ctx, "standard"))
     assert idx.is_ready() is True
@@ -437,7 +437,7 @@ def test_search_await_clean_state_does_not_trigger_build_at_call_site(
     provider = _FakeEmbeddingProvider()
     op_ctx = _op_ctx_for(provider, monkeypatch, log)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    items = [{"qualified_name": "skill__alpha", "short_description": "Alpha skill"}]
+    items = [{"action_name": "skill__alpha", "short_description": "Alpha skill"}]
     _run(idx.build(items, op_ctx, "standard"))
 
     ws = Workspace(events=log, base_dir=tmp_path)

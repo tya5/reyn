@@ -1,6 +1,6 @@
 """Tier 1: FP-0056 PR-H — canonical mappers for the file family, reyn_repo dev-reads, compact.
 
-The dogfood incident (2026-07-09): a doc read via ``reyn_repo__read`` was offloaded as a whole-dict
+The dogfood incident (2026-07-09): a doc read via ``reyn_repo_read`` was offloaded as a whole-dict
 ``structured`` attachment (a 600-char JSON-dict preview) instead of the readable text body, because no
 mapper covered the ``file`` results (unmapped) or the kind-less ``reyn_repo_*`` results — both took the
 whole-dict fallback. These tests pin the fix: the readable body is the ``text`` stream, never a whole-dict

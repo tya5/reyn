@@ -172,7 +172,7 @@ class ContentFenceCellScheme:
                 "(the OS per-call exclude + dispatch_tool gate)"
             )
         extra = exec_ctx.extra or {}
-        # #1658: build the {identifier: qualified_name} map over the full dispatchable
+        # #1658: build the {identifier: action_name} map over the full dispatchable
         # catalog the OS threads in (the gate's membership) using the SAME deterministic
         # ``build_actions_map`` the content_fence encoder runs → identical identifiers
         # as the SP. Sharing that one function is why the map is an encoder concern.

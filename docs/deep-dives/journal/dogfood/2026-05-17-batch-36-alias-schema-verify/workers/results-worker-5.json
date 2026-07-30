@@ -97,7 +97,7 @@
       "routing_decided": 0,
       "tools_used": ["describe_action", "list_actions"],
       "describe_action_args": {"action_name": "invoke_action"},
-      "describe_action_error": "qualified_name 'invoke_action' missing '__' separator",
+      "describe_action_error": "action_name 'invoke_action' missing '__' separator",
       "reply_excerpt": "invoke_action requires a specific format like <category>__<entry_name>",
       "notes": "LLM tried to describe 'invoke_action' as an action (missing __ separator). No A2A protocol described. Same failure mode as B35."
     },
@@ -121,7 +121,7 @@
       "tool_used": "invoke_action",
       "tool_args": {"action_name": "exec__list_cron_jobs"},
       "tool_error": "Unknown action 'exec__list_cron_jobs': no routing rule for category 'exec'",
-      "reply_excerpt": "cron ジョブを一覧表示する機能は利用できません。代わりに file__list、file__glob、reyn.source__list が提案されました。",
+      "reply_excerpt": "cron ジョブを一覧表示する機能は利用できません。代わりに list_directory、glob_files、reyn.source__list が提案されました。",
       "b35_comparison": "B35 had routing_decided=0 events_pass=false (REFUTED). B36 has routing_decided=1 events_pass=true (INCONCLUSIVE). Upgrade.",
       "notes": "routing_decided now emitted — improvement from B35. Rubric: explains unavailability but no reyn.yaml/CLI config guidance. +1V delta contribution."
     }

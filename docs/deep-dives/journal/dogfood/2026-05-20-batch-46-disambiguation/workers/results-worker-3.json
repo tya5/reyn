@@ -84,7 +84,7 @@
         "tool_failed": 1,
         "permission_denied_via_tool_failed": 1
       },
-      "notes": "web__fetch failed with error_kind=permission_denied before web_fetch_started event was emitted. Required event web_fetch_started never fired. Environment permission restriction — not a rubric/logic failure. Inconclusive."
+      "notes": "web_fetch failed with error_kind=permission_denied before web_fetch_started event was emitted. Required event web_fetch_started never fired. Environment permission restriction — not a rubric/logic failure. Inconclusive."
     },
     {
       "id": "sandboxed_exec_simple",

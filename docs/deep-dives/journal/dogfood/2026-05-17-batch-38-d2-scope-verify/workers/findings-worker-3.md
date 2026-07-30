@@ -14,10 +14,10 @@
 
 | Scenario | B37 | B38 | Key observation |
 |---|---|---|---|
-| file_read_via_chat | V | **V** | file__read; routing_decided+tool_executed; mentions P1-P8 |
-| file_glob_grep | R | **R** | LLM chose file__list (ARS has file__glob but preference unchanged) |
-| web_search_query | V | **V** | web__search; web_search_started+web_search_completed; OpenAI SDK mentioned |
-| web_fetch_url | R | **R** | ARS helped (correct action selected: web__fetch); but permission_denied+tool_failed |
+| file_read_via_chat | V | **V** | read_file; routing_decided+tool_executed; mentions P1-P8 |
+| file_glob_grep | R | **R** | LLM chose list_directory (ARS has glob_files but preference unchanged) |
+| web_search_query | V | **V** | web_search; web_search_started+web_search_completed; OpenAI SDK mentioned |
+| web_fetch_url | R | **R** | ARS helped (correct action selected: web_fetch); but permission_denied+tool_failed |
 | sandboxed_exec_simple | R | **R** | sandboxed_exec_started+completed emitted; returncode=-6 (pyenv sandbox blocked) |
 | lint_a_skill | R | **R** | ghost alias skill__lint_index_events not found; lint_completed absent |
 | recall_indexed_source | V | **I** | routing_decided=1, tried rag.operation__recall but KeyError:'sources' |
@@ -58,10 +58,10 @@ From llm-tools-schema trace (request a77f7590-464a-42bc-9638-f340698f9233, agent
 ARS block header: "ACTION ARG SCHEMAS (canonical keys for all session-visible actions)" (vs "current hot-list actions" in B37).
 
 Confirmed entries in ARS block:
-  file__glob: {path, pattern}
-  file__grep: {case_sensitive, glob, max_results, path, pattern}
-  file__write: {content, path}
-  web__fetch: {max_length, url}
+  glob_files: {path, pattern}
+  grep_files: {case_sensitive, glob, max_results, path, pattern}
+  write_file: {content, path}
+  web_fetch: {max_length, url}
   rag.operation__drop_source: {source}
   rag.operation__recall: {embedding_model, filters, query, sources, top_k}
   exec__sandboxed_exec: {allow_subprocess, argv, env_passthrough, network, read_paths, timeout_seconds, write_paths}
@@ -76,14 +76,14 @@ All 17 static ops listed unconditionally without hot-list seeding.
 B37=4V baseline; B38=2V. DeltavsB37=-1V +1I.
 
 S8: R->R (failure mode changed: validation_error -> workflow_aborted; no verdict emitted in either batch).
-S4: R->R (ARS expansion caused correct action selection - LLM now picks web__fetch not web__search - but permission denied in environment).
+S4: R->R (ARS expansion caused correct action selection - LLM now picks web_fetch not web_search - but permission denied in environment).
 S7: V->I (B37 LLM replied inline; B38 LLM tried rag.operation__recall -> KeyError:'sources').
 
 ---
 
 ## V-Angle 4: HOT_LIST_SEED expansion
 
-file__write: {content, path} and rag.operation__drop_source: {source} confirmed present in ARS block (B38 seed additions). file__glob, file__grep, web__fetch also confirmed (pre-existing seed entries now unconditionally listed via scope expansion).
+write_file: {content, path} and rag.operation__drop_source: {source} confirmed present in ARS block (B38 seed additions). glob_files, grep_files, web_fetch also confirmed (pre-existing seed entries now unconditionally listed via scope expansion).
 
 ---
 
@@ -91,11 +91,11 @@ file__write: {content, path} and rag.operation__drop_source: {source} confirmed 
 
 **F1 (S8 judge fix scope)**: B38 postprocessor schema fix changes output_schema to artifact-reference form. B37 failure was validation_error in PostprocessorExecutor; B38 failure is workflow_aborted at the judge phase (earlier, different cause). The fix is correct but the S8 scenario cannot exercise it without a real artifact_path on disk.
 
-**F2 (D2-wrapper scope expansion confirmed)**: ARS block now unconditionally lists all 17 static ops + session skills + MCP tools + peer agents. Header updated from "hot-list actions" to "all session-visible actions". No hot-list seeding required for file__glob, file__grep, web__fetch, file__write, rag.operation__drop_source arg-name guidance.
+**F2 (D2-wrapper scope expansion confirmed)**: ARS block now unconditionally lists all 17 static ops + session skills + MCP tools + peer agents. Header updated from "hot-list actions" to "all session-visible actions". No hot-list seeding required for glob_files, grep_files, web_fetch, write_file, rag.operation__drop_source arg-name guidance.
 
-**F3 (ARS expansion partially helps action selection)**: S4 shows LLM now correctly selects web__fetch (not web__search as in B37). The ARS inclusion of web__fetch improved action selection. However, permission is denied in this environment, so the rubric is still not satisfied.
+**F3 (ARS expansion partially helps action selection)**: S4 shows LLM now correctly selects web_fetch (not web_search as in B37). The ARS inclusion of web_fetch improved action selection. However, permission is denied in this environment, so the rubric is still not satisfied.
 
-**F4 (S2 residual: LLM routing preference)**: Despite file__glob and file__grep in the ARS block, S2 still routed to file__list. ARS provides arg-name schema guidance but does not alter action selection preference. LLM chose the most familiar action (file__list) over the semantically correct ones (file__glob/file__grep). Unchanged from B37.
+**F4 (S2 residual: LLM routing preference)**: Despite glob_files and grep_files in the ARS block, S2 still routed to list_directory. ARS provides arg-name schema guidance but does not alter action selection preference. LLM chose the most familiar action (list_directory) over the semantically correct ones (glob_files/grep_files). Unchanged from B37.
 
 **F5 (S7 regression V->I)**: B37 LLM answered inline "cannot use recall" - rubric passed. B38 LLM attempted rag.operation__recall (tool now in ARS with sources field) but omitted sources arg -> KeyError:'sources'. The ARS expansion caused the LLM to attempt the tool but with incomplete args.
 

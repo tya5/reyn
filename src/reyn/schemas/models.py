@@ -431,7 +431,7 @@ class LoadSkillIROp(BaseModel):
     ``skill_body_loaded`` audit-event (fails closed, never open).
 
     LLM-callable via ToolDefinition ``load_skill`` (qualified name
-    ``skill_management__load`` per the #3223 naming-convention arc —
+    ``load_skill`` per the #3223 naming-convention arc —
     ratified, not provisional).
     """
     kind: Literal["load_skill"]

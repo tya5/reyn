@@ -11,8 +11,8 @@ Thin adapter over the SAME typed op the LLM tool / CLI surfaces use (ADR 0064
 §3.9). Builds a ``ToolContext`` from this session's LIVE ``RouterHostAdapter``
 (``session.router_host.make_router_op_context`` via
 ``reyn.tools.types.build_resource_caller_state`` — the SAME factory a live
-LLM ``plugin_management__install``/``__uninstall`` tool call gets) and calls
-``invoke_tool(get_default_registry(), "plugin_management__install"/"__uninstall", ...)``
+LLM ``install_plugin``/``__uninstall`` tool call gets) and calls
+``invoke_tool(get_default_registry(), "install_plugin"/"__uninstall", ...)``
 — never re-derives the composite permission decl or the ``{kind:git}``
 run-code trust gate (``tools/plugin_management_verbs.py`` / ``require_plugin_git_run_code_trust``
 own that, exactly once). Because this session's real intervention bus is
@@ -134,7 +134,7 @@ async def plugin_cmd(session: "Session", args: str) -> None:
 
         ctx = await _build_plugin_tool_context(session)
         try:
-            result = await _invoke_plugin_tool("plugin_management__install", tool_args, ctx)
+            result = await _invoke_plugin_tool("install_plugin", tool_args, ctx)
         except PermissionError as exc:
             await reply_error(session, f"permission denied: {exc}")
             return
@@ -158,7 +158,7 @@ async def plugin_cmd(session: "Session", args: str) -> None:
         name = parts[1]
         ctx = await _build_plugin_tool_context(session)
         try:
-            result = await _invoke_plugin_tool("plugin_management__uninstall", {"name": name}, ctx)
+            result = await _invoke_plugin_tool("uninstall_plugin", {"name": name}, ctx)
         except PermissionError as exc:
             await reply_error(session, f"permission denied: {exc}")
             return

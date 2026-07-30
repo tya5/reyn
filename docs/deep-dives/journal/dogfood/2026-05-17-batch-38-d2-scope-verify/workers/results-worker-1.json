@@ -65,7 +65,7 @@
       "reply_rubric": "PASS",
       "events_pass": true,
       "artifact_pass": false,
-      "note": "Turn 1: inline explanation of list comprehension syntax. Turn 2: correct code examples (squares, even_squares) with pronoun resolved to list comprehension topic. invoke_action(web__search 'Python list comprehension example') + web__fetch (failed, graceful fallback). No permission_denied."
+      "note": "Turn 1: inline explanation of list comprehension syntax. Turn 2: correct code examples (squares, even_squares) with pronoun resolved to list comprehension topic. invoke_action(web_search 'Python list comprehension example') + web_fetch (failed, graceful fallback). No permission_denied."
     },
     {
       "id": "out_of_scope_graceful_decline",
@@ -83,7 +83,7 @@
     "description_length_chars": 3991,
     "description_length_vs_commit_claim": "commit claimed 2150->3080 (+43%); actual observed: 3991 chars (higher due to 8 peer agents enumerated)",
     "key_actions_present": {
-      "file__write": true,
+      "write_file": true,
       "rag.operation__drop_source": true,
       "agent.peer__default": true,
       "agent.peer__dogfood-b38-1-s2": true,
@@ -106,7 +106,7 @@
     "b37_obs1_default_api_web_search": "RESOLVED",
     "requests_checked": 17,
     "default_api_found": false,
-    "note": "B37-OBS-1 (default_api.web__search as spurious tool in toolset) does not appear in any of 17 B38 router LLM requests. The ghost rejection at seed load (5e05b9b) appears effective."
+    "note": "B37-OBS-1 (default_api.web_search as spurious tool in toolset) does not appear in any of 17 B38 router LLM requests. The ghost rejection at seed load (5e05b9b) appears effective."
   },
   "b38_new_findings": [
     {

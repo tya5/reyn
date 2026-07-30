@@ -121,7 +121,7 @@ batch 23 S1 で発見した **dual-intent AND-conjunction prompt 構造** の挙
 
 #### S2 — routing_decided emit (N=3 stability)
 
-- **Prompt**: 「 file__read を invoke_action で /etc/hostname に対して使ってください」 (= 同 B23 S2)
+- **Prompt**: 「 read_file を invoke_action で /etc/hostname に対して使ってください」 (= 同 B23 S2)
 - **Prompt class**: P-explicit
 - **Expected path**: invoke_action → routing_decided event → permission deny
 - **Structural pre-check**: ✓

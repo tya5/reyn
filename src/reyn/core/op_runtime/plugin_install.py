@@ -63,7 +63,7 @@ Pipeline (one-shot, no sub-phases):
    ``pipeline_install.handle`` for skills/pipelines (each op carries
    ``plugin_id=<name>``, §3.7's additive provenance field), and a
    ``require_file_write``-gated (#3088) direct ``.reyn/config/mcp.yaml``
-   write (mirrors ``mcp__install_local``'s shape, probe-then-commit) for
+   write (mirrors ``mcp_install_local``'s shape, probe-then-commit) for
    the optional root ``.mcp.json``. A server's ``command`` is registered
    AS-IS (no venv-interpreter rewrite) — whatever absolute path the
    plugin's ``.mcp.json`` names (or the operator edits in afterward,
@@ -627,7 +627,7 @@ async def _register_mcp(
     ctx: OpContext, project_root: Path,
 ) -> list[str]:
     """Register every server declared in the plugin's root ``.mcp.json``
-    into ``.reyn/config/mcp.yaml`` — mirrors ``mcp__install_local``'s shape
+    into ``.reyn/config/mcp.yaml`` — mirrors ``mcp_install_local``'s shape
     (probe-then-commit on a live per-session reloader; deferred write
     otherwise), tagged with ``plugin_id`` (§3.7) so ``plugin_uninstall`` can
     find these entries again. The write is gated by ``require_file_write``
@@ -690,7 +690,7 @@ async def _register_mcp(
                 source=f"plugin_install:{plugin_name}",
             )
         await dispatch_install_reload(
-            getattr(ctx, "hot_reloader", None), source="mcp__install_local",
+            getattr(ctx, "hot_reloader", None), source="mcp_install_local",
             is_addition=True,
         )
     return registered

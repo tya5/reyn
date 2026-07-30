@@ -33,7 +33,7 @@
       "verdict": "V",
       "b41_verdict": "V",
       "b39_verdict": "V",
-      "events_observed": ["routing_decided (file__read)", "tool_executed", "permission_granted"],
+      "events_observed": ["routing_decided (read_file)", "tool_executed", "permission_granted"],
       "events_missing": [],
       "events_forbidden_seen": [],
       "reply_excerpt": "The content of `docs/concepts/principles.md` describes Reyn's eight design principles. These principles cover stateless phases, skill structure, OS control, LLM constraints, workspace as a single source of truth, event logging for auditing, OS agnosticism to skills, and phase instructions focusing solely on domain logic.",
@@ -45,11 +45,11 @@
       "verdict": "I",
       "b41_verdict": "I",
       "b39_verdict": "R",
-      "events_observed": ["routing_decided (file__glob)", "routing_decided (file__grep)", "tool_executed x2"],
+      "events_observed": ["routing_decided (glob_files)", "routing_decided (grep_files)", "tool_executed x2"],
       "events_missing": [],
       "events_forbidden_seen": [],
       "reply_excerpt": "I couldn't find any `skill.md` files under `src/` that mention 'judge_output'.",
-      "notes": "B41 routing fix (file__glob + file__grep via hot_list_alias) maintained in B42. Rubric unmet because no skill.md under src/ actually contains 'judge_output' — environment premise mismatch. Verdict stays I (routing correct, rubric structurally unverifiable)."
+      "notes": "B41 routing fix (glob_files + grep_files via hot_list_alias) maintained in B42. Rubric unmet because no skill.md under src/ actually contains 'judge_output' — environment premise mismatch. Verdict stays I (routing correct, rubric structurally unverifiable)."
     },
     {
       "id": "web_search_query",

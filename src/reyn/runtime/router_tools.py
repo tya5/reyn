@@ -106,6 +106,46 @@ MAX_DESC_LEN_FOR_LISTING: int = 80
 #   rate_limit_class: str | None = None
 #   log_redaction: list[str] = field(default_factory=list)
 
+# ── Exclusive-wrapper strip set (#3429) ──────────────────────────────────────
+#
+# Base tools that offer a capability the catalog also offers, but under a
+# DIFFERENT ToolDefinition, so no name comparison can pair them. They have to be
+# named, and each entry says why it is superseded rather than merely similar:
+_WRAPPER_SUPERSEDED_BASE_TOOLS: frozenset[str] = frozenset({
+    # ``mcp_call_tool`` is the catalog's own definition of the same call.
+    "call_mcp_tool",
+    # #879 shipped each tool's real ``inputSchema`` verbatim in
+    # ``list_mcp_tools``' result precisely so no describe round-trip is needed.
+    "describe_mcp_tool",
+    # Spawning a sub-session is not a catalog action; it is stripped here as a
+    # deliberate surface reduction, and has been since the exclusive-wrapper
+    # mode landed. (``agent_spawn`` / ``topology_create`` are deliberately NOT
+    # stripped — the org-design surface stays reachable.)
+    "session_spawn",
+})
+
+
+def _wrapper_superseded_tool_names() -> "frozenset[str]":
+    """Every tool name the universal wrappers make redundant.
+
+    DERIVED from the catalog's own action set plus the small declared residue
+    above. #3429 replaced a hand-maintained 21-name frozenset here: that list
+    had to be edited by hand whenever a tool gained a catalog route, and a
+    forgotten edit would leave the tool advertised twice — under its own name
+    AND through ``invoke_action`` — in the mode whose whole contract is that
+    the wrappers are the only surface. Deriving it means the list cannot fall
+    behind the catalog.
+
+    (Measured before replacing it: with wrappers ON, ``build_tools`` emitted 0
+    catalog actions under either the old list or this derivation, i.e. the hand
+    list happened to cover everything ``build_tools`` actually emits today. The
+    drift it invites is the defect, not a live leak.)
+    """
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
+
+    return KNOWN_ACTION_NAMES | _WRAPPER_SUPERSEDED_BASE_TOOLS
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     """Unified spec for a chat-router tool exposed to the LLM.
@@ -535,7 +575,7 @@ def build_tools(
 
     # #1449: read_tool_result (the former E3 lazy-expand companion to web_fetch's
     # preview path) is retired. Its same-host path-ref read is covered by
-    # file__read(path) — web_fetch's preview now points there — so the router
+    # read_file(path) — web_fetch's preview now points there — so the router
     # catalog no longer surfaces a dedicated expand tool.
 
     # ── F. Reyn-source tools (always present, no permission) ────────────────
@@ -883,25 +923,14 @@ def build_tools(
                 dispatch_kind=_wrapper_def.dispatch_kind,
             ))
 
-    # ── J. Exclusive-wrapper mode: strip legacy per-kind tools when wrappers on ──
+    # ── J. Exclusive-wrapper mode: strip per-kind tools when wrappers on ──
     #
-    # When universal_wrappers_enabled=True, strip all legacy per-kind tools so
-    # the LLM surface is the universal wrappers only.  Safety: only takes effect
-    # when the wrappers are also enabled (= the LLM still has *some* addressing
-    # path).
+    # When universal_wrappers_enabled=True, strip every tool the wrappers already
+    # address so the LLM surface is the universal wrappers only.  Safety: only
+    # takes effect when the wrappers are also enabled (= the LLM still has *some*
+    # addressing path).
     if universal_wrappers_enabled:
-        _LEGACY_TOOL_NAMES = frozenset({
-            "list_agents", "describe_agent",
-            "delegate_to_agent", "session_spawn",
-            "list_mcp_servers", "list_mcp_tools",
-            "call_mcp_tool", "describe_mcp_tool",
-            "list_memory", "read_memory_body",
-            "remember_shared", "remember_agent", "forget_memory",
-            "read_file", "write_file", "delete_file", "list_directory",
-            "web_search", "web_fetch",
-            "reyn_repo_list", "reyn_repo_read",
-        })
-        specs = [s for s in specs if s.name not in _LEGACY_TOOL_NAMES]
+        specs = [s for s in specs if s.name not in _wrapper_superseded_tool_names()]
 
     # ── K. Hot list direct aliases (FP-0034 Phase 2 step 3) ─────────────────
     #

@@ -62,16 +62,16 @@ def test_narrowed_list_item_carries_description_and_schema():
     """Tier 1: a category-narrowed list_actions item carries full description + input_schema."""
     ctx = _ctx()
     items = _list(ctx, category=["file"])["items"]
-    fe = next(i for i in items if i["qualified_name"] == "file__edit")
+    fe = next(i for i in items if i["action_name"] == "edit_file")
     assert fe.get("description"), "narrowed item must carry a full description"
     assert fe.get("input_schema", {}).get("properties"), "narrowed item must carry input_schema"
 
 
 def test_static_op_and_resource_both_enriched():
-    """Tier 1: a static op (file__edit) gets its input_schema."""
+    """Tier 1: a static op (edit_file) gets its input_schema."""
     ctx = _ctx()
     file_items = _list(ctx, category=["file"])["items"]
-    fe = next(i for i in file_items if i["qualified_name"] == "file__edit")
+    fe = next(i for i in file_items if i["action_name"] == "edit_file")
     assert fe["input_schema"]["properties"], "static op must carry its parameters schema"
 
 
@@ -83,11 +83,11 @@ def test_unfiltered_browse_is_uniformly_enriched():
     input_schema via the shared _describe_one, so an unfiltered browse is as
     actionable as a narrowed one. Token-bounded by the (now-10) page limit."""
     ctx = _ctx()
-    # High limit so a known-enrichable operation action (file__read) is on the
+    # High limit so a known-enrichable operation action (read_file) is on the
     # page regardless of the default page size; enrichment is per-item.
     items = _list(ctx, limit=100)["items"]
     assert items, "expected a non-empty browse page"
-    fr = next((i for i in items if i["qualified_name"] == "file__read"), None)
+    fr = next((i for i in items if i["action_name"] == "read_file"), None)
     assert fr is not None and "input_schema" in fr, (
         "the unfiltered browse must now enrich each item (#1455 uniform enrich)"
     )
@@ -98,10 +98,10 @@ def test_list_equals_describe_by_construction():
     input_schema EQUAL describe_action's for the same action (shared _describe_one).
     Guards against future drift if either path bypasses the helper."""
     ctx = _ctx()
-    for cat, name in [("file", "file__edit")]:
+    for cat, name in [("file", "edit_file")]:
         item = next(
             i for i in _list(ctx, category=[cat])["items"]
-            if i["qualified_name"] == name
+            if i["action_name"] == name
         )
         d = _describe(ctx, name)
         assert item["description"] == d["description"], f"{name}: description must match describe_action"

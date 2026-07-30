@@ -116,7 +116,7 @@ async def test_spawn_ephemeral_session_narrowing_applied(tmp_path: Path) -> None
         "narrowing passed through spawn_ephemeral_session must be enforced on "
         "the live session (⊆-parent), not merely persisted to config.yaml"
     )
-    assert {"delete_file", "file__delete"} <= effective.tool_deny
+    assert {"delete_file", "delete_file"} <= effective.tool_deny
 
 
 @pytest.mark.asyncio

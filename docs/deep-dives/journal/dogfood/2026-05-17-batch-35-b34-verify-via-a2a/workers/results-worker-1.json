@@ -22,7 +22,7 @@
       "events_pass": true,
       "artifacts_pass": false,
       "a2a_status_ok": true,
-      "evidence_one_liner": "Reply explains idempotency (PASS); routing_decided→web__search not direct_llm; no direct_llm artifact (FAIL)"
+      "evidence_one_liner": "Reply explains idempotency (PASS); routing_decided→web_search not direct_llm; no direct_llm artifact (FAIL)"
     },
     {
       "id": "skill_discovery_request",

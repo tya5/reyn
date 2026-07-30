@@ -5,7 +5,7 @@ Tests verify that:
   2. GLOB_FILES handler returns expected file paths from real workspace files.
   3. Both ToolDefinitions have correct gates, purity, and category.
   4. Both are reachable via get_default_registry() round-trip.
-  5. Routing rules exist in _OPERATION_RULES for file__grep and file__glob.
+  5. Both are catalog actions under the ``file`` category.
 
 No MagicMock / AsyncMock. All tests use real ToolDefinition instances,
 real Workspace, real EventLog, and the fallback ToolContext path
@@ -351,22 +351,18 @@ def test_glob_files_in_registry_for_router():
     assert "glob_files" in router_names
 
 
-# ── 5. _OPERATION_RULES routing rules ────────────────────────────────────────
+# ── 5. Catalog membership ────────────────────────────────────────────────────
 
 
-def test_file_grep_routing_rule_exists():
-    """Tier 2: _OPERATION_RULES contains file__grep → grep_files."""
-    from reyn.tools.universal_dispatch import _OPERATION_RULES
+def test_file_grep_is_a_file_category_action():
+    """Tier 2: grep_files is browsable under ``file`` and invocable."""
+    from reyn.tools.universal_dispatch import action_names_for_category
 
-    assert "file__grep" in _OPERATION_RULES
-    target_name, _ = _OPERATION_RULES["file__grep"]
-    assert target_name == "grep_files"
+    assert "grep_files" in action_names_for_category("file")
 
 
-def test_file_glob_routing_rule_exists():
-    """Tier 2: _OPERATION_RULES contains file__glob → glob_files."""
-    from reyn.tools.universal_dispatch import _OPERATION_RULES
+def test_file_glob_is_a_file_category_action():
+    """Tier 2: glob_files is browsable under ``file`` and invocable."""
+    from reyn.tools.universal_dispatch import action_names_for_category
 
-    assert "file__glob" in _OPERATION_RULES
-    target_name, _ = _OPERATION_RULES["file__glob"]
-    assert target_name == "glob_files"
+    assert "glob_files" in action_names_for_category("file")

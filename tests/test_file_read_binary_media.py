@@ -1,4 +1,4 @@
-"""Tier 2: file__read binary image content (issue #365).
+"""Tier 2: read_file binary image content (issue #365).
 
 Imports the media-size gate landed in #364 and applies it to local
 image files read via ``FileIROp(op="read", path="...png")``.
@@ -156,7 +156,7 @@ def test_read_unknown_extension_takes_text_path(tmp_path, monkeypatch):
 def test_oversize_image_with_deny_returns_status_denied(tmp_path, monkeypatch):
     """Tier 2: image > cap + on_oversize=deny → status=denied, no media
     payload, file-read permission gate already passed (= shape matches
-    web__fetch denied path from #364).
+    web_fetch denied path from #364).
     """
     monkeypatch.chdir(tmp_path)
     (tmp_path / "huge.png").write_bytes(b"x" * 10_000_000)

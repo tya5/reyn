@@ -64,16 +64,16 @@ The LLM did NOT call `rag.operation__drop_source`. It misrouted to `skill__index
 
 ---
 
-## B38 Primary Verification: S1 file__write arg canonicalization
+## B38 Primary Verification: S1 write_file arg canonicalization
 
 ARS block excerpt (same trace as above):
 ```
-  file__write: {content, path}
+  write_file: {content, path}
 ```
 
 Actual tool_call args:
 ```json
-{"action_name": "file__write", "args": {"content": "hello", "path": "/etc/test.txt"}}
+{"action_name": "write_file", "args": {"content": "hello", "path": "/etc/test.txt"}}
 ```
 
 B37 baseline: `{"text": "hello", "path": "/etc/test.txt"}` (non-canonical).
@@ -83,20 +83,20 @@ B38 result: `{"content": "hello", "path": "/etc/test.txt"}` — canonical. Fix c
 
 ## Per-Scenario Results
 
-- S1 VERIFIED: file__write canonical (content). Permission gate fired. No write_file event.
+- S1 VERIFIED: write_file canonical (content). Permission gate fired. No write_file event.
 - S2 INCONCLUSIVE: list_actions mcp.server → 0 results → inline refuse. routing_decided absent.
 - S3 INCONCLUSIVE: list_actions exec → 0 results → inline refuse. routing_decided absent.
 - S4 VERIFIED: inline refuse (github_pr_reviewer not available). chat_turn_completed_inline satisfies must_emit_any.
 - S5 INCONCLUSIVE: list_actions skill → 33 results. Could not determine spec_paths. No budget gate.
 - S6 INCONCLUSIVE: skill__index_events{mode:drop} dispatched (wrong action). rag.operation__drop_source never called.
 - S7 INCONCLUSIVE: exec__sandboxed_exec substituted correctly but substitution not explained. Reply presented output without noting it used sandbox.
-- S8 VERIFIED: web__fetch → permission_denied. web.fetch:deny gate fired. #53 non-regression.
+- S8 VERIFIED: web_fetch → permission_denied. web.fetch:deny gate fired. #53 non-regression.
 
 ---
 
 ## Key Findings
 
-F1 (PRIMARY): B38 D2-scope-expansion effective for S1. file__write: {content, path} in ARS block regardless of hot-list state. LLM used canonical key. No B34 normalize needed.
+F1 (PRIMARY): B38 D2-scope-expansion effective for S1. write_file: {content, path} in ARS block regardless of hot-list state. LLM used canonical key. No B34 normalize needed.
 
 F2 (CRITICAL — S6): rag.operation__drop_source: {source} IS in ARS block (primary data confirmed). But LLM misrouted to skill__index_events — new skill-routing attractor independent of the arg-key attractor. Hallucination drift test inconclusive.
 

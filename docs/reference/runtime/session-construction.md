@@ -42,7 +42,7 @@ block):
 - `_workspace_base_dir` / `_workspace_state_dir` (#187) — the chat `OpContext`
   `Workspace`'s FS root + host-side state dir. With a container env-backend the repo lives
   *inside* the container, so `base_dir` must be the container repo root (the partner of
-  `build_environment_backend`'s backend) — otherwise `file__read`/`grep`/`glob` resolve
+  `build_environment_backend`'s backend) — otherwise `read_file`/`grep`/`glob` resolve
   against the host cwd and the agent never sees the target tree (the #187 step-3 empty-FS
   defect this param closes).
 - `_sandbox_backend` (#1200 PR-F2) — the agent's `SandboxBackend` INSTANCE for the chat exec
@@ -513,7 +513,7 @@ already set earlier in `__init__`.
 - `_skill_collisions` (#3100 Axis 4) — same-name-across-config-tiers collision map, consulted by `:skill` invocation (`reyn.interfaces.skill_invoke`) to fire a LOUD audit-event + warning instead of silently letting one skill definition shadow another.
 - `_exclude_tools` (#187) — tool names excluded for the MAIN chat `RouterLoop`, threaded to
   the loop construction below. General capability (mirrors the sub-loop `exclude_tools`,
-  `planner.py:1136`); the faithful SWE-eval excludes `web__search`/`web__fetch` so the agent
+  `planner.py:1136`); the faithful SWE-eval excludes `web_search`/`web_fetch` so the agent
   solves from the repo + issue, not a web lookup of the gold solution. #3378: this is **not**
   a separate advertisement axis — `RouterLoop` composes it into `_contextual_permission` as
   one more restrict-only ∩ term, so it reaches the LLM-visible catalog and the live
@@ -600,7 +600,7 @@ trust decision on a specific skill, discovered later if at all.
 ## Multimodal / media
 
 - `_multimodal_config` (#364) — media-size gate config plumbed through to spawned Agents
-  AND to the router host adapter (chat-router `web__fetch`/`file__read`/mcp paths).
+  AND to the router host adapter (chat-router `web_fetch`/`read_file`/mcp paths).
 - `_media_store` (#383 PR-C) — a single `MediaStore` instance per Session, constructed from
   the multimodal config's storage dirs, then threaded into spawned Agents (for control-IR
   ops invoked from sub-agents) AND into the router host adapter (for ops invoked directly

@@ -246,19 +246,19 @@ def _ts_iso_to_epoch(ts: str | None) -> float | None:
 def _extract_tool_call_records(
     messages: "list[ChatMessage]",
 ) -> list[tuple[str, float]]:
-    """Extract ``(qualified_name, ts_epoch)`` tuples from a list of
+    """Extract ``(action_name, ts_epoch)`` tuples from a list of
     ``ChatMessage`` instances.
 
     Recognises two emission shapes (mirrors ``router_loop`` recording
     semantics pre-refactor):
 
       - ``invoke_action`` tool call → ``args["action_name"]`` is the
-        qualified name; the ``args`` payload may be a JSON string per
+        action name; the ``args`` payload may be a JSON string per
         the OpenAI wire shape.
       - Any other tool call → ``function.name`` itself (a hot-list
-        alias or a universal wrapper). Wrapper names like
+        alias or a universal wrapper). Non-action names like
         ``list_actions`` are caught by the tracker's
-        ``_is_valid_qualified_name`` filter and dropped.
+        ``_is_tracked_action_name`` filter and dropped.
 
     Returns an empty list when no candidate tool_calls are present.
     """
@@ -5786,7 +5786,7 @@ class Session:
         return None
 
     def _uncompacted_tool_call_records(self) -> list[tuple[str, float]]:
-        """Return ``(qualified_name, ts_epoch)`` records from the
+        """Return ``(action_name, ts_epoch)`` records from the
         portion of history that has NOT yet been folded into a
         compactor summary.
 

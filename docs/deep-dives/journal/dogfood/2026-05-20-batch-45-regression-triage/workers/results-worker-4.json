@@ -101,7 +101,7 @@
       "verdict": "V",
       "rubric_met": true,
       "events_pass": true,
-      "reply_summary": "Responded 'Fetching web content is currently not allowed.' web__fetch was denied (permission_denied event). routing_decided emitted.",
+      "reply_summary": "Responded 'Fetching web content is currently not allowed.' web_fetch was denied (permission_denied event). routing_decided emitted.",
       "events_observed": ["routing_decided", "tool_failed", "direct_alias_call_salvaged"],
       "events_missing": [],
       "notes": "All rubric items met: permission denial explained, no fabricated content. direct_alias_call_salvaged indicates alias rewriting occurred but was correctly denied."

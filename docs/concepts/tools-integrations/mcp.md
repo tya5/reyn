@@ -60,14 +60,14 @@ If you prefer to configure a server manually (or are adding a server not in the 
 
 | Action | What it does |
 |------|--------------|
-| `mcp__search_registry({text})`                              | Search the official MCP registry for matching servers |
-| `mcp__install_registry({server_id})`                        | Install a server from the official MCP registry |
-| `mcp__install_package({kind, identifier, version?})`        | Install via a third-party package channel (npm / pypi / docker / GitHub URL) |
-| `mcp__install_local({name, command, args})`                 | Register a local command (e.g. LLM-authored script) as an MCP server |
-| `mcp__list_servers()`                                       | Returns the names of all servers configured in `.reyn/config/mcp.yaml` |
-| `mcp__list_tools({server})`                                 | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
-| `mcp__call_tool({tool, tool_args})`                              | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared tool_args |
-| `mcp__drop_server({server})`                                | Remove an installed server from the config |
+| `mcp_search_registry({text})`                              | Search the official MCP registry for matching servers |
+| `mcp_install_registry({server_id})`                        | Install a server from the official MCP registry |
+| `mcp_install_package({kind, identifier, version?})`        | Install via a third-party package channel (npm / pypi / docker / GitHub URL) |
+| `mcp_install_local({name, command, args})`                 | Register a local command (e.g. LLM-authored script) as an MCP server |
+| `list_mcp_servers()`                                       | Returns the names of all servers configured in `.reyn/config/mcp.yaml` |
+| `list_mcp_tools({server})`                                 | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
+| `mcp_call_tool({tool, tool_args})`                              | Call a tool by `<server>__<tool>` identifier (from `list_mcp_tools`) with its declared tool_args |
+| `mcp_drop_server({server})`                                | Remove an installed server from the config |
 
 The LLM router can call these directly during a chat turn. Typical first-time flow:
 
@@ -90,7 +90,7 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-The router invokes `mcp__list_tools` → `mcp__call_tool` automatically; no `permissions.mcp:` declaration in any workflow is required. **Workflow authoring is for when you want to formalize a recurring workflow** (= validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
+The router invokes `list_mcp_tools` → `mcp_call_tool` automatically; no `permissions.mcp:` declaration in any workflow is required. **Workflow authoring is for when you want to formalize a recurring workflow** (= validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
 
 ## Role 1: MCP client — Reyn calls external servers
 

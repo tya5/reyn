@@ -132,7 +132,7 @@
       "observation": "5/5 turns empty-stop from T1 onward.",
       "evidence": "Every turn returns identical canned fallback. No tool-calls attempted.",
       "hypothesis": "file_and_doc_lookup_chain triggers a cold-start attractor not covered by B40 v2 ARS extend (= which addresses skill discovery for hot-list misses). file/doc lookup may have different prompt-template surface that's still missing affordance hints.",
-      "action": "B43 priority: trace-patch-replay on S6 T1 to identify which affordance is missing for file-lookup chain. Likely a wrapper-description gap (= file__read / file__grep description doesn't lead the LLM here from the chain's intent)."
+      "action": "B43 priority: trace-patch-replay on S6 T1 to identify which affordance is missing for file-lookup chain. Likely a wrapper-description gap (= read_file / grep_files description doesn't lead the LLM here from the chain's intent)."
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 A weak model (Gemini) sometimes echoes its ``default_api`` function-calling
 namespace onto a tool name — both as a ``plan`` step-tools VALUE
-(``default_api.invoke_action`` / ``default_api.web__search``, the reported
+(``default_api.invoke_action`` / ``default_api.web_search``, the reported
 ``plan_invalid``) and, latently, as an actual function-call NAME. ``reyn`` tool
 names are dot-free (qualified use ``__``, bare verbs single underscores), so
 stripping a leading ``<namespace>.`` is safe for every provider (a no-op when
@@ -26,10 +26,10 @@ from reyn.tools.universal_catalog import strip_provider_tool_namespace
 
 @pytest.mark.parametrize("raw,expected", [
     ("default_api.invoke_action", "invoke_action"),      # bare verb under namespace
-    ("default_api.web__search", "web__search"),          # qualified under namespace
+    ("default_api.web_search", "web_search"),          # qualified under namespace
     ("invoke_action", "invoke_action"),                  # bare, no prefix → no-op
-    ("web__search", "web__search"),                      # qualified, no prefix → no-op
-    ("file__read", "file__read"),                        # dot-free legit name → untouched
+    ("web_search", "web_search"),                      # qualified, no prefix → no-op
+    ("read_file", "read_file"),                        # dot-free legit name → untouched
     ("", ""),                                            # empty → no-op
 ])
 def test_strip_provider_tool_namespace(raw, expected):
@@ -59,11 +59,11 @@ class _RecordingEvents:
 
 class _ResolveShim:
     """Minimal RouterLoop surface to exercise the real ``_resolve_tool_call`` +
-    ``_maybe_salvage_qualified_direct_call`` (bound from RouterLoop — no dup)."""
+    ``_maybe_salvage_action_direct_call`` (bound from RouterLoop — no dup)."""
 
     chain_id = "test-chain"
     _resolve_tool_call = RouterLoop._resolve_tool_call
-    _maybe_salvage_qualified_direct_call = RouterLoop._maybe_salvage_qualified_direct_call
+    _maybe_salvage_action_direct_call = RouterLoop._maybe_salvage_action_direct_call
 
     def __init__(self, catalog, dispatch_catalog=None) -> None:
         self._catalog = catalog
@@ -90,16 +90,19 @@ def test_resolve_strips_namespace_so_bare_name_hits_catalog():
     assert args == {"x": 1}
 
 
-def test_resolve_strips_namespace_then_salvages_qualified_call_name():
-    """Tier 2: ``default_api.web__search`` as a call NAME → stripped → ``web__search``
-    (not in catalog, has ``__``) → salvaged to invoke_action(action_name=...).
+def test_resolve_strips_namespace_then_salvages_action_call_name():
+    """Tier 2: ``default_api.web_search`` as a call NAME → stripped →
+    ``web_search`` (a catalog action, not advertised in this catalog) →
+    salvaged to invoke_action(action_name=...).
 
-    #3458: the bare target ``web_search`` is NOT in this catalog, so the salvage
-    keeps its ``invoke_action`` route (which this catalog does advertise)."""
+    #3458/#3461: the salvage prefers the name itself when the executor can
+    dispatch it; here neither the advertised nor the dispatchable catalog
+    carries ``web_search``, so the ``invoke_action`` route this catalog DOES
+    advertise is the right target."""
     shim = _ResolveShim(catalog={"invoke_action": object()})
-    name, args = shim._resolve_tool_call(_tc("default_api.web__search", '{"query": "q"}'))
+    name, args = shim._resolve_tool_call(_tc("default_api.web_search", '{"query": "q"}'))
     assert name == "invoke_action"
-    assert args == {"action_name": "web__search", "args": {"query": "q"}}
+    assert args == {"action_name": "web_search", "args": {"query": "q"}}
 
 
 def test_resolve_bare_name_is_unchanged():

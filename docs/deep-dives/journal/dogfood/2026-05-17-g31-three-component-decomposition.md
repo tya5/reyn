@@ -70,7 +70,7 @@ Each cell: 10 parallel `litellm.acompletion` calls via the local proxy at `local
 | **ε2** | Replace `invoke_action` description (2096 chars) with 1-line stub |
 | **ε3** | Replace `skill__code_review` in `list_actions` description |
 | **ε4** | Production-ready trim: shorten 4 wrapper descriptions + replace `skill__code_review` everywhere |
-| **H1** | Rename all tools to verb-form (`file__read` → `read_file`, etc.) |
+| **H1** | Rename all tools to verb-form (`read_file` → `read_file`, etc.) |
 | **H2** | Delete the 4 universal wrappers from tools[] |
 | **H3** | Keep only the 4 wrappers; delete 15 specific tools |
 
@@ -163,7 +163,7 @@ Strong dramatically improves G-ja (= no cyrillic attractor, 6/10 proper tool rou
    - H3 (only wrappers): px 7→2 ✅ but rt 4→9 ❌
    - ε4 (realistic description trim): **px 7→7 (=), rt 4→7 (regression)** ❌
    - ε1 (descriptions = ""): both reduced (rt 3, px 3) but not deployable
-   - H1 (verb-form rename): px 7→3 ✅ but blast radius too large (every action's qualified_name changes; fixture re-record + memory updates across sessions)
+   - H1 (verb-form rename): px 7→3 ✅ but blast radius too large (every action's action_name changes; fixture re-record + memory updates across sessions)
 
 3. **The "remove specifics → LLM enumerates more generically" pattern recurs.** Observed in β, ε2, ε3, ε4, γ' on C-en. The LLM substitutes whatever vocabulary remains in scope; removing one specific channel does not reduce total leak. Surface area is partly fungible.
 
@@ -196,7 +196,7 @@ This is the explicit "do not redo" list for future sessions. The negative result
 | **ε2** (invoke_action stub) | C-en rt 4→10 (= saturation). Removing the giant wrapper description makes LLM generate more wrapper-name text. |
 | **ε3** (replace `skill__code_review` in list_actions desc) | C-en rt 4→8 (regression). Same pattern as β. |
 | **ε4** (realistic trim + placeholder, the "production-ready" candidate) | C-en rt 4→7 (regression). px 7→7 (no improvement). **The mid-point between baseline and ε1 actively worsens metrics.** |
-| **H1** (verb-form rename, e.g. file__read → read_file) | Works on A (px 7→3) but blast radius is unacceptably large — every action's qualified_name changes, all fixtures re-record, all session memories invalidated, `category` design concept weakens. Cost/benefit fails for "just A" target. |
+| **H1** (verb-form rename, e.g. read_file → read_file) | Works on A (px 7→3) but blast radius is unacceptably large — every action's action_name changes, all fixtures re-record, all session memories invalidated, `category` design concept weakens. Cost/benefit fails for "just A" target. |
 | **H2** (delete 4 universal wrappers) | rt 4→1 ✅ but px 7→9 (= equivalent leak migrates to specific tool names). Net A+B unchanged. |
 | **H3** (keep only 4 wrappers) | px 7→2 ✅ but rt 4→9 (= equivalent leak migrates to wrapper names). Net A+B unchanged. Also loses ability to use specific tools as hot-list aliases. |
 | **ζ1** (chat-layer regex intercept) | C-en cap 10→0 ✅ but the regex itself hardcodes capability-question phrasings (= overfit relocated from SP to code; same kind of rule, different layer). Rejected on thesis. |

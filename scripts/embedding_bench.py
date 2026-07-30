@@ -2,7 +2,7 @@
 """embedding_bench.py — FP-0043 Phase 1 N=20 retrieval benchmark runner.
 
 Measures **Axis 1 (precision)** — does the embedding ranking surface
-the expected qualified_name in the top-K? — across one or more embedding
+the expected action_name in the top-K? — across one or more embedding
 classes for the bench fixtures declared in
 ``tests/data/embedding_bench/manifest.yaml``.
 
@@ -31,7 +31,7 @@ Output (table mode):
     light       openai/text-embedding-3-small        12     18     19   20
 
     misses (hit@5 fail):
-      - file_glob_grep_search                expected=file__grep            top=[...]
+      - file_glob_grep_search                expected=grep_files            top=[...]
 
 The catalog is enumerated via the production list_actions handler with
 no router state attached (= static-categories only). Dynamic categories
@@ -120,7 +120,7 @@ async def _enumerate_catalog() -> list[dict[str, Any]]:
         page = await LIST_ACTIONS.handler({"category": [cat]}, ctx)
         for item in page.get("items", []):
             items.append({
-                "qualified_name": item["qualified_name"],
+                "action_name": item["action_name"],
                 "short_description": item.get("short_description", ""),
             })
     return items
@@ -147,7 +147,7 @@ async def _run_class(
     results: list[HitResult] = []
     for f in fixtures:
         hits = await index.query(f.prompt, provider, class_name, top_k=top_k)
-        names = tuple(h["qualified_name"] for h in hits)
+        names = tuple(h["action_name"] for h in hits)
         try:
             rank = names.index(f.expected_action)
         except ValueError:
@@ -215,7 +215,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         # every fixture's expected_action appears in the catalog. Skips
         # the embedding provider call entirely (= safe to run in CI / on
         # machines without embedding credentials).
-        catalog_qns = {item["qualified_name"] for item in catalog}
+        catalog_qns = {item["action_name"] for item in catalog}
         unknown = [f for f in fixtures if f.expected_action not in catalog_qns]
         print(f"dry-run: manifest={manifest_path} sha={sha[:12]}")
         print(f"  fixtures (precision-axis): {len(fixtures)}")

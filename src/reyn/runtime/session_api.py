@@ -126,10 +126,9 @@ if TYPE_CHECKING:
 #     inline verbs get NO exemption (an ad-hoc pipeline is still non-grantable
 #     inside a pipeline). Kept in lock-step with ``pipeline_verbs.
 #     _PIPELINE_STEP_DENY_TOOLS`` (the tool-step sibling of this agent-step deny).
-# ``_expand_tool_forms`` (capability_profile.py) derives every invocable alias
-# (bare + qualified) from each name here, so listing the bare tool name is
-# sufficient — the qualified catalog form (``multi_agent__delegate`` /
-# ``pipeline__run``) is covered too.
+# #3429: each name here is the tool's ONLY invocable name, so the deny-set is
+# complete as written. It used to need ``_expand_tool_forms``
+# (capability_profile.py) to add each tool's second, catalog-qualified spelling.
 _DELEGATION_DENY_TOOLS: tuple[str, ...] = (
     "delegate_to_agent", "run_pipeline", "run_pipeline_async",
     "run_pipeline_inline", "run_pipeline_inline_async",

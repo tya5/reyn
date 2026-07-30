@@ -358,8 +358,8 @@ async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     op_runtime glob handler now sets `truncated`/`total_count`/
     `returned_count` on the result whenever the cap actually discarded
     matches, which `file_to_canonical` surfaces to the LLM as frontmatter
-    meta (and `list_directory`'s router-chat path appends as a trailing
-    note — see `_normalise_router_tool_result` in router_loop.py).
+    meta on every path (#3429 deleted the router-chat flattening that used
+    to bypass that mapper and re-append the signal as a trailing note).
 
     `absolute` (#3102) is forwarded to `FileIROp.absolute` — opt-in, default
     False (unchanged project-relative return for every existing caller). A

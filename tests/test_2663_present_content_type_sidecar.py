@@ -162,8 +162,8 @@ def test_cap_tool_result_content_type_drives_stored_ref_extension(tmp_path: Path
 
 def _ref_from(preview: str) -> str:
     import re
-    m = re.search(r'file__read\(path="([^"]+)"\)', preview)
-    assert m, f"preview must name a file__read read-back path: {preview[:200]!r}"
+    m = re.search(r'read_file\(path="([^"]+)"\)', preview)
+    assert m, f"preview must name a read_file read-back path: {preview[:200]!r}"
     return m.group(1)
 
 

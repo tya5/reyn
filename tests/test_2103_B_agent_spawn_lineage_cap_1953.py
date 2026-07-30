@@ -122,16 +122,16 @@ def test_orphaned_parent_fails_closed(tmp_path: Path) -> None:
     # parent PRESENT → C ⊆ P (denies P's exec; NOT the floor's re-delegation).
     present, _ = reg.resolved_profile_for("C", is_delegate=False)
     assert tool_contextually_denied(present, "exec")
-    assert not tool_contextually_denied(present, "multi_agent__delegate")  # P's binding only
+    assert not tool_contextually_denied(present, "delegate_to_agent")  # P's binding only
 
     # ORPHAN the parent (purge/remove its agent dir); the lineage edge persists.
     shutil.rmtree(tmp_path / ".reyn" / "agents" / "P")
     after, _ = reg.resolved_profile_for("C", is_delegate=False)
     # FAIL CLOSED: the _delegate floor applies — a floored tool P did NOT deny is now
     # denied, proving the floor was composed (not a skip → unrestricted). RED if the
-    # existence check is dropped (skip → multi_agent__delegate NOT denied).
+    # existence check is dropped (skip → delegate_to_agent NOT denied).
     assert after is not None
-    assert tool_contextually_denied(after, "multi_agent__delegate")  # floored = fail-closed
+    assert tool_contextually_denied(after, "delegate_to_agent")  # floored = fail-closed
 
 
 def test_unspawned_agent_has_no_parent_cap(tmp_path: Path) -> None:

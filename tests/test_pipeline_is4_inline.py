@@ -537,7 +537,7 @@ async def test_tool_step_dispatch_denies_inline_launch() -> None:
 
     dispatch = _make_tool_dispatch(_bare_ctx())
     for denied in ("run_pipeline_inline", "run_pipeline_inline_async",
-                   "pipeline__run_inline", "pipeline__run_inline_async"):
+                   "run_pipeline_inline", "run_pipeline_inline_async"):
         with pytest.raises(PipelineExecutionError) as exc:
             await dispatch(denied, {})
         assert "structurally denied" in str(exc.value)

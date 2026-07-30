@@ -64,7 +64,7 @@
       "events_pass": false,
       "reply_excerpt": "I am sorry, I cannot fulfill this request, as I am unable to access external websites directly due to permissions.",
       "events_emitted": ["routing_decided", "tool_called", "tool_failed"],
-      "note": "tool_failed with error_kind=permission. web_fetch_started never emitted. Structural: web__fetch permission not granted in this worktree config."
+      "note": "tool_failed with error_kind=permission. web_fetch_started never emitted. Structural: web_fetch permission not granted in this worktree config."
     },
     {
       "id": "sandboxed_exec_simple",
@@ -125,8 +125,8 @@
     },
     {
       "id": "NF-W3-2",
-      "title": "web__fetch permission failure persists (S4)",
-      "detail": "tool_failed with error_kind=permission on web__fetch in this worktree config. Same as prior batches. Structural: web__fetch not in allowed tools for this agent/worktree. R verdict unchanged across B42-B45."
+      "title": "web_fetch permission failure persists (S4)",
+      "detail": "tool_failed with error_kind=permission on web_fetch in this worktree config. Same as prior batches. Structural: web_fetch not in allowed tools for this agent/worktree. R verdict unchanged across B42-B45."
     },
     {
       "id": "NF-W3-3",

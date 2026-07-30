@@ -54,7 +54,7 @@ it, run directly as ``python <this file's path>`` (stdio transport) --
 either from a dev checkout, or (ADR 0064 P5/§3.11b, #3209) via the
 operator/LLM's OWN per-plugin venv interpreter (created per the installing
 skill's SETUP steps -- never one ``plugin_install`` provisions) once
-``plugin_management__install(source={"kind": "builtin", "name": "rag"})`` has
+``install_plugin(source={"kind": "builtin", "name": "rag"})`` has
 registered the server.
 """
 from __future__ import annotations

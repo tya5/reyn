@@ -56,7 +56,7 @@
   "d2_wrapper_verify": {
     "visible": true,
     "evidence": "LLM payload trace /tmp/b37-6-llm-trace.jsonl confirmed invoke_action.description contains ACTION ARG SCHEMAS block",
-    "schema_block_excerpt": "file__read: {path}, file__list: {path}, file__grep: {case_sensitive, glob, max_results, path, pattern}, file__glob: {path, pattern}, web__search: {max_results, query}, skill__skill_builder: {description, goal, skill_name}",
+    "schema_block_excerpt": "read_file: {path}, list_directory: {path}, grep_files: {case_sensitive, glob, max_results, path, pattern}, glob_files: {path, pattern}, web_search: {max_results, query}, skill__skill_builder: {description, goal, skill_name}",
     "note": "Canonical key names present. W3 also confirmed same block. D2-wrapper fix (561101a) is working as designed."
   },
 
@@ -193,7 +193,7 @@
     {
       "id": "B37-W6-F3",
       "severity": "INFO",
-      "description": "D2-wrapper active and visible in B37 W6: invoke_action.description contains ACTION ARG SCHEMAS with canonical key names for 10 hot-list actions including file__grep (pattern, not content_regex) and skill__skill_builder (description, goal, skill_name).",
+      "description": "D2-wrapper active and visible in B37 W6: invoke_action.description contains ACTION ARG SCHEMAS with canonical key names for 10 hot-list actions including grep_files (pattern, not content_regex) and skill__skill_builder (description, goal, skill_name).",
       "evidence": "LLM trace /tmp/b37-6-llm-trace.jsonl confirms ACTION ARG SCHEMAS block. Consistent with B37 W3 primary evidence.",
       "impact": "Positive non-regression confirmation for D2-wrapper across W3 and W6."
     },

@@ -116,7 +116,7 @@
         }
       ],
       "tool_sequence": [
-        "file__glob"
+        "glob_files"
       ],
       "empty_stop_events": 0,
       "shot": 1

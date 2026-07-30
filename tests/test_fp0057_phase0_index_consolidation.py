@@ -154,17 +154,17 @@ def _catalog_fixture() -> list[dict[str, Any]]:
         # decreasing with i (spacing 0.045 — far above float32 epsilon).
         affinity = 0.9 - i * 0.045
         items.append({
-            "qualified_name": qn,
+            "action_name": qn,
             "short_description": f"Action number {i} in category {cat}",
             "_affinity": affinity,
         })
     # Deliberate exact tie: two items share the SAME affinity as item 10,
-    # to pin stable tie-break (insertion order = qualified_name-sorted
-    # order, since build() sorts items by qualified_name before embedding).
+    # to pin stable tie-break (insertion order = action_name-sorted
+    # order, since build() sorts items by action_name before embedding).
     tie_affinity = items[10]["_affinity"]
     twin_qn = "pipeline__action_010_twin"
     items.append({
-        "qualified_name": twin_qn,
+        "action_name": twin_qn,
         "short_description": "Tied-score twin of action_010",
         "_affinity": tie_affinity,
     })
@@ -173,7 +173,7 @@ def _catalog_fixture() -> list[dict[str, Any]]:
 
 class _CraftedVectorProvider:
     """Deterministic EmbeddingProvider: returns the crafted unit vector for
-    each catalog item's qualified_name (looked up via the embed text, which
+    each catalog item's action_name (looked up via the embed text, which
     ``ActionEmbeddingIndex`` always builds as ``f"{qn}: {desc}"``), and the
     query vector [1, 0, ..., 0] for the query text."""
 
@@ -206,18 +206,18 @@ def test_topk_ranking_identical_to_pre_consolidation_oracle(
     pair's tie-break order.
     """
     items = _catalog_fixture()
-    tied_qn_a = items[10]["qualified_name"]  # "mcp__action_010"
-    tied_qn_b = items[-1]["qualified_name"]  # the deliberate twin, appended last
-    affinity_by_qn = {it["qualified_name"]: it["_affinity"] for it in items}
+    tied_qn_a = items[10]["action_name"]  # "mcp__action_010"
+    tied_qn_b = items[-1]["action_name"]  # the deliberate twin, appended last
+    affinity_by_qn = {it["action_name"]: it["_affinity"] for it in items}
     catalog_items = [
-        {"qualified_name": it["qualified_name"],
+        {"action_name": it["action_name"],
          "short_description": it["short_description"]}
         for it in items
     ]
 
     # ── oracle: run the frozen pre-consolidation algorithm directly ──
     # over the same vectors build() would have produced (sorted by
-    # qualified_name, matching the pre-consolidation insertion order).
+    # action_name, matching the pre-consolidation insertion order).
     sorted_qns = sorted(affinity_by_qn)
     oracle_vectors = {
         qn: _unit_vec_at_cosine(affinity_by_qn[qn]) for qn in sorted_qns
@@ -238,7 +238,7 @@ def test_topk_ranking_identical_to_pre_consolidation_oracle(
     _run(idx.build(catalog_items, ctx, MODEL_CLASS))
     results = _run(idx.query(QUERY_TEXT, ctx, MODEL_CLASS, top_k=top_k))
 
-    production_qns = [r["qualified_name"] for r in results]
+    production_qns = [r["action_name"] for r in results]
     production_scores = [r["score"] for r in results]
 
     assert production_qns == oracle_qns, (
@@ -253,7 +253,7 @@ def test_topk_ranking_identical_to_pre_consolidation_oracle(
         )
 
     # The deliberate tie (item 10 vs its twin) resolved in
-    # qualified_name-sorted order on BOTH sides — pin the tie-break
+    # action_name-sorted order on BOTH sides — pin the tie-break
     # explicitly, not just as an incidental consequence of the full-list
     # comparison above.
     tie_qns = {tied_qn_a, tied_qn_b}

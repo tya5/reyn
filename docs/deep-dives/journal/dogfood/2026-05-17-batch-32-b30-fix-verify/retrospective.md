@@ -37,7 +37,7 @@ Operating that for the W3 cluster:
 
 | Hypothesis in B30 journal | Ablation finding |
 |---|---|
-| "B27-M2 file__grep drop caused S2 fall-back to file__list" | ✅ CONFIRMED (HIGH, 3/3 vs 3/3) |
+| "B27-M2 grep_files drop caused S2 fall-back to list_directory" | ✅ CONFIRMED (HIGH, 3/3 vs 3/3) |
 | "B29-MED-3 cwd injection pushed LLM to plan-first on S4" | ❌ REFUTED (HIGH, probabilistic N=1 noise; plan presence makes no difference) |
 | "B28-Q2 classification shift drove S5 verdict change" | ✅ CONFIRMED (HIGH, behaviour identical, only classification rule differs) |
 | "B28-MED-1 seed reshaped LLM recall mental model on S7" | UNRESOLVED (more ablation needed) |
@@ -48,7 +48,7 @@ This batch is the first time the discipline paid back in measurable lost-time-av
 
 ### The N=1 verified bug
 
-B28 W3 reported S2 as verified. The ablation showed: with `file__grep` absent (= the post-B27-M2 state, which was already true in B28), the LLM picks `file__list` with wrong args **3/3 times**. So B28's verified outcome was a lucky single run. The attractor was always present.
+B28 W3 reported S2 as verified. The ablation showed: with `grep_files` absent (= the post-B27-M2 state, which was already true in B28), the LLM picks `list_directory` with wrong args **3/3 times**. So B28's verified outcome was a lucky single run. The attractor was always present.
 
 The implication for calibration: any verified count without N≥3 (preferably N≥5) is **calibration-grade, not shippable-grade**. The dogfood log's `outcome_prediction` bands should be recalibrated against B28+B30+B32 trajectory taken together, not against any single batch's verified count.
 
@@ -93,7 +93,7 @@ The implication for calibration: any verified count without N≥3 (preferably N�
 ## 5. Fix wave priorities for B33
 
 1. **Wipe recipe extension** (= task #98 → `reyn dogfood wipe` command, OR explicit doc + prompt-template update with wal.jsonl + history.jsonl). The structural answer is the command.
-2. **B32 §4.1 file__grep**: implement routing rule + handler, OR add envelope-layer arg-hint when `file__list` is called with non-path args.
+2. **B32 §4.1 grep_files**: implement routing rule + handler, OR add envelope-layer arg-hint when `list_directory` is called with non-path args.
 3. **B32 §4.4 skill description audit**: disambiguate `skill__eval` / `skill__skill_builder` / `skill__skill_improver` / `skill__skill_importer`. Modeled on B29's pair audit; this is a 4-way audit.
 4. **B32 §4.6 args double-serialize**: defensive JSON-string detection at the invoke_action entry. Envelope-layer.
 5. **B32 §4.2 + #52 async skill race**: router should not inject `(answered)` until spawned-this-turn skills reach terminal state.
@@ -107,4 +107,4 @@ The implication for calibration: any verified count without N≥3 (preferably N�
 
 After four batches: **OS fix waves are landing cleanly when they target structural bugs**; **scenario-design and calibration discipline are where the leverage now lives**. The ablation discipline (= `feedback_iterative_replay_patch_disambiguation.md`) is the new floor for batch retrospectives. Future batches should not ship without ablation when verdict regression is observed.
 
-Target for B33: ablation-confirmed fix for §4.1 (file__grep) + wipe recipe restructured to a command. Verified rate should clear 25% if §4.1 lands cleanly.
+Target for B33: ablation-confirmed fix for §4.1 (grep_files) + wipe recipe restructured to a command. Verified rate should clear 25% if §4.1 lands cleanly.

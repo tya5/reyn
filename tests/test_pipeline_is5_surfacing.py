@@ -21,7 +21,7 @@ This file covers:
   3. ``list_actions(category=["pipeline"])`` surfaces a registered pipeline's
      name + description.
   4. The FULL live router loop: a scripted LLM emits
-     ``invoke_action(action_name="pipeline__run", args={name, input})``;
+     ``invoke_action(action_name="run_pipeline", args={name, input})``;
      the OS drives it through the real Session → real PipelineRegistry →
      real PipelineExecutor, and the pipeline's actual output round-trips
      back into chat history.
@@ -190,12 +190,12 @@ def test_pipeline_and_agent_registry_missing_method_falls_back_to_none() -> None
 async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> None:
     """Tier 2: #3026 — list_actions(category=["pipeline"]) does NOT return one
     entry per registered pipeline; the registered pipeline is NAMED by the
-    pipeline__list verb instead.
+    pipeline_list verb instead.
 
     IS-5 enumerated ``pipeline__<name>`` per registered pipeline, so the LLM's
     tools= payload grew with the operator's pipelines. #3026 removed the
-    enumeration (the per-name action only curried ``name`` into ``pipeline__run``
-    — no capability of its own) and added ``pipeline__list`` to carry the naming
+    enumeration (the per-name action only curried ``name`` into ``run_pipeline``
+    — no capability of its own) and added ``pipeline_list`` to carry the naming
     duty in a single constant verb. Invocation by name still RESOLVES — see
     test_run_pipeline_via_d19_pipeline_name_full_live_loop."""
     from reyn.tools.types import ToolContext
@@ -221,16 +221,16 @@ async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> 
 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
-    items = {it["qualified_name"]: it for it in result["items"]}
+    items = {it["action_name"]: it for it in result["items"]}
     assert "pipeline__digest_report" not in items, (
         "a registered pipeline must not become an enumerated action (#3026)"
     )
     # #2589: the static launch verbs are surfaced; #3026 adds the list verb that
     # replaces the per-name entries as the naming surface.
     assert {
-        "pipeline__run", "pipeline__run_async",
-        "pipeline__run_inline", "pipeline__run_inline_async",
-        "pipeline__list",
+        "run_pipeline", "run_pipeline_async",
+        "run_pipeline_inline", "run_pipeline_inline_async",
+        "pipeline_list",
     } <= items.keys()
 
     # The registered pipeline's name + its OWN description are still reachable —
@@ -245,7 +245,7 @@ async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> 
 @pytest.mark.asyncio
 async def test_list_actions_pipeline_category_empty_registry_returns_static_verbs_only() -> None:
     """Tier 2: #2589/#3026 — no registered pipelines -> the static launch verbs +
-    pipeline__list, not an empty list. Post-#3026 this is the same set a POPULATED
+    pipeline_list, not an empty list. Post-#3026 this is the same set a POPULATED
     registry yields: enumeration no longer depends on registry contents at all."""
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
@@ -262,11 +262,11 @@ async def test_list_actions_pipeline_category_empty_registry_returns_static_verb
 
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
-    names = {it["qualified_name"] for it in result["items"]}
+    names = {it["action_name"] for it in result["items"]}
     assert names == {
-        "pipeline__run", "pipeline__run_async",
-        "pipeline__run_inline", "pipeline__run_inline_async",
-        "pipeline__list",
+        "run_pipeline", "run_pipeline_async",
+        "run_pipeline_inline", "run_pipeline_inline_async",
+        "pipeline_list",
     }
 
 
@@ -298,7 +298,7 @@ def test_session_agent_registry_threaded_to_adapter_accessor(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
-# 4. Full live router loop: LLM calls invoke_action("pipeline__run", ...).
+# 4. Full live router loop: LLM calls invoke_action("run_pipeline", ...).
 # ---------------------------------------------------------------------------
 
 
@@ -317,7 +317,7 @@ def _pipeline_invoke_result(name: str, seed_input: dict) -> LLMToolCallResult:
                 "function": {
                     "name": "invoke_action",
                     "arguments": json.dumps({
-                        "action_name": "pipeline__run",
+                        "action_name": "run_pipeline",
                         "args": {"name": name, "input": seed_input},
                     }),
                 },
@@ -364,7 +364,7 @@ async def test_run_pipeline_via_invoke_action_full_live_loop(
 
     Registers a real Pipeline into a real Session's production
     PipelineRegistry, scripts the LLM to emit
-    ``invoke_action(action_name="pipeline__run", args={name, input})``, and
+    ``invoke_action(action_name="run_pipeline", args={name, input})``, and
     drives one full user turn. Asserts the pipeline's REAL transform output
     (not a stub) round-trips into the tool-result chat history entry, and
     the router's second-round text reply reaches the outbox — proving the
@@ -414,109 +414,34 @@ async def test_run_pipeline_via_invoke_action_full_live_loop(
 
 
 # ---------------------------------------------------------------------------
-# 5. The D19 pipeline__<name> resource-invoke path (the scope IS-5 adds
-#    beyond IS-1's static pipeline__run verb).
+# 5. #3429: the per-pipeline name is gone; ``run_pipeline{name}`` is the launch.
+#
+# IS-5 shipped a D19 "resource-invoke" rule that let ``pipeline__<name>``
+# resolve to ``run_pipeline`` with the pipeline name curried out of the
+# qualified name. #3026 stopped ENUMERATING those names (one action per
+# registered pipeline made the payload scale with the operator's pipelines);
+# #3429 stopped RESOLVING them, because a second name for ``run_pipeline`` is a
+# second name, whoever types it. The three tests that lived here asserted the
+# curry, the no-input variant, and a live loop driving the per-name form.
+#
+# The capability is unchanged and covered above: the live-loop arm
+# ``test_run_pipeline_via_invoke_action_full_live_loop`` drives
+# ``invoke_action(action_name="run_pipeline", args={name, input})`` — the same
+# effective call the curried form produced. What is left to pin here is that
+# the removed spelling really is removed.
 # ---------------------------------------------------------------------------
 
 
-def test_d19_pipeline_name_resolves_to_run_pipeline_with_curried_args() -> None:
-    """Tier 2: OS invariant — the D19 resource-invoke rule routes
-    ``pipeline__<name>`` to the ``run_pipeline`` target, currying the pipeline
-    name from the qualified name and forwarding ``input`` unchanged. This is
-    the whole point of the IS-5 D19 addition (the enumerate-all default scheme
-    surfaces ``pipeline__<name>`` as a flat callable, so it MUST resolve) — and
-    it is EQUIVALENT to invoking the pre-existing static ``pipeline__run`` verb
-    with an explicit ``name``. Pure routing assertion (no handler invoked),
-    same discipline as ``resolve_invoke_action``'s other resource-category
-    tests."""
-    from reyn.tools.universal_dispatch import resolve_invoke_action
+def test_per_pipeline_name_is_not_an_action() -> None:
+    """Tier 2: #3429 — ``pipeline__<name>`` neither enumerates nor resolves.
 
-    seed = {"name": "world"}
+    #3026 pinned the enumeration half (a registered pipeline must not become an
+    action); this is the resolution half, which #3026 deliberately left open on
+    the reasoning that resolving an author-time name costs zero payload. That
+    reasoning is true of payload and silent about naming: the name was a second
+    spelling of ``run_pipeline``, so every subsystem keyed on a tool name had to
+    decide whether to handle it."""
+    from reyn.tools.universal_dispatch import is_known_action
 
-    # D19 per-name form: pipeline__greet, name curried from the qualified name.
-    by_name = resolve_invoke_action("pipeline__greet", {"input": seed})
-    # Static verb form: pipeline__run, name passed explicitly.
-    by_verb = resolve_invoke_action("pipeline__run", {"name": "greet", "input": seed})
-
-    assert by_name.target_tool_name == "run_pipeline"
-    assert dict(by_name.target_args) == {"name": "greet", "input": seed}
-    # The equivalence the _pipeline_run_args docstring claims: both spellings
-    # reach run_pipeline with the SAME effective args.
-    assert by_name.target_tool_name == by_verb.target_tool_name
-    assert dict(by_name.target_args) == dict(by_verb.target_args)
-
-
-def test_d19_pipeline_name_resolves_without_input_when_omitted() -> None:
-    """Tier 2: OS invariant — ``pipeline__<name>`` with no ``input`` arg
-    resolves to ``run_pipeline`` carrying only the curried ``name`` (a
-    seed-less pipeline is a valid launch; the handler treats a missing
-    ``input`` as no seed). Guards against the transformer injecting a
-    spurious empty ``input`` key."""
-    from reyn.tools.universal_dispatch import resolve_invoke_action
-
-    resolved = resolve_invoke_action("pipeline__greet", {})
-
-    assert resolved.target_tool_name == "run_pipeline"
-    assert dict(resolved.target_args) == {"name": "greet"}
-
-
-def _pipeline_by_name_invoke_result(name: str, seed_input: dict) -> LLMToolCallResult:
-    """LLMToolCallResult that makes RouterLoop call the D19 per-name form
-    ``invoke_action(action_name="pipeline__<name>", args={input})`` (the
-    resource-invoke path, distinct from the static ``pipeline__run`` verb)."""
-    return LLMToolCallResult(
-        content=None,
-        tool_calls=[
-            {
-                "id": "tc_pipeline_byname_001",
-                "type": "function",
-                "function": {
-                    "name": "invoke_action",
-                    "arguments": json.dumps({
-                        "action_name": f"pipeline__{name}",
-                        "args": {"input": seed_input},
-                    }),
-                },
-            }
-        ],
-        finish_reason="tool_calls",
-        usage=_EMPTY_USAGE,
-    )
-
-
-@pytest.mark.asyncio
-async def test_run_pipeline_via_d19_pipeline_name_full_live_loop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2c: the D19 ``pipeline__<name>`` resource-invoke path end-to-end
-    through the REAL router loop — proves the surfacing form the enumerator
-    advertises (``pipeline__<name>``, not the generic ``pipeline__run`` verb)
-    actually launches the registered pipeline and returns its real output.
-    Same harness as the ``pipeline__run`` live-loop test above; only the
-    LLM's chosen action name differs (the per-name D19 form), so this closes
-    the coverage gap on exactly the path IS-5 adds."""
-    monkeypatch.chdir(tmp_path)
-    _reg, session = _registry_backed_session(tmp_path)
-
-    session.pipeline_registry.register(
-        "greet",
-        Pipeline(
-            steps=[TransformStep(value="'hello ' + ctx.name", output="greeting")],
-            description="Greet the named recipient.",
-        ),
-    )
-
-    stub = _make_llm_stub([
-        _pipeline_by_name_invoke_result("greet", {"name": "world"}),
-        _text_result("the pipeline ran successfully"),
-    ])
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
-
-    await session._handle_user_message(
-        "please run the greet pipeline", chain_id="chain-is5-002",
-    )
-
-    tool_messages = [m for m in session.history if m.role == "tool"]
-    assert tool_messages, "expected at least one tool-result history entry"
-    # #2425 案B: the sync run_pipeline result renders as its str ``output`` (plain text).
-    assert tool_messages[-1].content == "hello world"
+    assert not is_known_action("pipeline__greet")
+    assert is_known_action("run_pipeline")

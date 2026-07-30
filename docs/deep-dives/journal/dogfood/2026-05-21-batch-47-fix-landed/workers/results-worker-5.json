@@ -81,7 +81,7 @@
       "verdict": "R",
       "rubric_pass": false,
       "events_pass": true,
-      "reply_excerpt": "Reyn のウェブ関連機能としては web__fetch と web__search が利用可能です。A2A エンドポイントへのタスク投入やステータス確認に直接対応する機能は見つかりませんでした。",
+      "reply_excerpt": "Reyn のウェブ関連機能としては web_fetch と web_search が利用可能です。A2A エンドポイントへのタスク投入やステータス確認に直接対応する機能は見つかりませんでした。",
       "events_observed": ["user_message_received", "tool_called", "tool_returned", "tool_called", "tool_returned", "tool_called", "tool_returned", "hot_list_updated", "hot_list_updated", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
       "events_required": [],
       "rubric_notes": "No must_emit events required. Reply fails all 3 rubric items: no mention of message/send JSON-RPC method, no mention of GET /a2a/tasks/{run_id}, no mention of 'reyn web must be running first'. LLM confused A2A with web tools.",
@@ -124,7 +124,7 @@
     {
       "id": "NF-W5-2",
       "title": "a2a_task_lifecycle LLM conflates A2A protocol with web fetch tools",
-      "description": "S5 (a2a_task_lifecycle_status_poll) showed LLM responding about web__fetch/web__search instead of describing the A2A JSON-RPC protocol. router_empty_response_detected fired, retry injected, but final answer still missed all 3 rubric items. The LLM has no skill/context providing A2A protocol knowledge inline.",
+      "description": "S5 (a2a_task_lifecycle_status_poll) showed LLM responding about web_fetch/web_search instead of describing the A2A JSON-RPC protocol. router_empty_response_detected fired, retry injected, but final answer still missed all 3 rubric items. The LLM has no skill/context providing A2A protocol knowledge inline.",
       "affected_scenarios": ["a2a_task_lifecycle_status_poll"],
       "severity": "MEDIUM",
       "hypothesis": "No recall_docs or A2A knowledge base available; flash-lite lacks A2A protocol knowledge in context."

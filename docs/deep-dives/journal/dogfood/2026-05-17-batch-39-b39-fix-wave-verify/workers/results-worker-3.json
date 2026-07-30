@@ -19,12 +19,12 @@
     "file_read_via_chat": {
       "verdict": "V",
       "b38": "V",
-      "note": "file__read hot_list_alias; mentions 8 principles"
+      "note": "read_file hot_list_alias; mentions 8 principles"
     },
     "file_glob_grep": {
       "verdict": "R",
       "b38": "R",
-      "note": "LLM used file__grep (improvement vs B38 file__list); 0 matches (accurate)"
+      "note": "LLM used grep_files (improvement vs B38 list_directory); 0 matches (accurate)"
     },
     "web_search_query": {
       "verdict": "V",
@@ -34,7 +34,7 @@
     "web_fetch_url": {
       "verdict": "R",
       "b38": "R",
-      "note": "web__fetch selected (ARS-guided); permission_denied"
+      "note": "web_fetch selected (ARS-guided); permission_denied"
     },
     "sandboxed_exec_simple": {
       "verdict": "R",
@@ -112,13 +112,13 @@
   },
   "ars_entries_confirmed": [
     "exec__sandboxed_exec: {allow_subprocess, argv, env_passthrough, network, read_paths, timeout_seconds, write_paths}",
-    "file__glob: {path, pattern}",
-    "file__grep: {case_sensitive, glob, max_results, path, pattern}",
-    "file__list: {path}",
-    "file__read: {path}",
-    "file__write: {content, path}",
-    "web__fetch: {max_length, url}",
-    "web__search: {max_results, query}",
+    "glob_files: {path, pattern}",
+    "grep_files: {case_sensitive, glob, max_results, path, pattern}",
+    "list_directory: {path}",
+    "read_file: {path}",
+    "write_file: {content, path}",
+    "web_fetch: {max_length, url}",
+    "web_search: {max_results, query}",
     "rag.operation__recall: {embedding_model, filters, query, sources, top_k}",
     "skill__judge_phase: {artifact_path, artifact_type, criteria, phase_name}"
   ]

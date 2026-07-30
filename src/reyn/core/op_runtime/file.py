@@ -78,7 +78,7 @@ async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> d
     Permission-gate flow: the outer ``handle`` already called
     ``require_file_read`` against ``op.path`` (= read-zone check). This
     helper additionally calls ``require_media_load`` for the multi-modal
-    size cap (= shared with web__fetch / user input). When the gate
+    size cap (= shared with web_fetch / user input). When the gate
     rejects, returns ``status="denied"`` with no media payload.
     """
     image_bytes, found = ctx.workspace.read_file_bytes(op.path)

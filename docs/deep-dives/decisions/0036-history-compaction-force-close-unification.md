@@ -84,7 +84,7 @@ chat-unaffected, P7-aligned (no chat-tool-exec baked into the loop).
 **#1240 update — op-execution seam OBVIATED (rebased PR-A, e2e flow-trace on post-catalog-axis main).**
 An interim FD1-beta detour added an `execute_phase_op` host hook (RouterLoop delegates phase tool calls to
 the host's `control_ir_executor`) because back then RouterLoop's `_invoke_router_tool` routed only chat
-`REGISTRY_DISPATCH_TOOLS` names while phase op-kinds (`file__read`/`exec`) hit "unhandled tool". The #1240
+`REGISTRY_DISPATCH_TOOLS` names while phase op-kinds (`read_file`/`exec`) hit "unhandled tool". The #1240
 catalog axis dissolved that: phase op tool NAMES are now the unified fine registry kinds (`read_file` …
 `grep_files`, `invoke_skill`, `call_mcp_tool`), which `_invoke_router_tool` already routes via its
 `REGISTRY_DISPATCH_TOOLS` registry path — vindicating FD1's "dispatch is ALREADY shared" precision. So the

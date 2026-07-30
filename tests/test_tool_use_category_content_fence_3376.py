@@ -403,7 +403,7 @@ def test_the_new_cell_interprets_a_fenced_snippet_as_a_code_block() -> None:
             self.content = content
 
     fenced = scheme.interpret(
-        _Resp('```python\nresult = invoke_action(action_name="file__read", args={})\n```'),
+        _Resp('```python\nresult = invoke_action(action_name="read_file", args={})\n```'),
         tool_catalog={},
         ops=None,
     )

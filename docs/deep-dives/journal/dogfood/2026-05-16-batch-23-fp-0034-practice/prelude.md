@@ -204,8 +204,8 @@ batch 23 目的は **wrapper-only e2e infrastructure 通過確認 + calibration*
 
 ### S2 — routing_decided P6 event (= Scenario F、 structural)
 
-**Prompt**: `「 file__read を invoke_action で /etc/hostname に対して使ってください」`
-**Expected path**: `invoke_action(action_name="file__read", args={"path":"/etc/hostname"})` → `routing_decided(action_name="file__read", source="invoke_action", outcome="success")` event emit
+**Prompt**: `「 read_file を invoke_action で /etc/hostname に対して使ってください」`
+**Expected path**: `invoke_action(action_name="read_file", args={"path":"/etc/hostname"})` → `routing_decided(action_name="read_file", source="invoke_action", outcome="success")` event emit
 
 **Structural pre-check**:
 - routing_decided event schema 登録済 (commit ed67850) ✓

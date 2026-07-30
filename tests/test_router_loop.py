@@ -402,11 +402,25 @@ async def test_history_appended_to_messages(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
-    """Tier 2: OS invariant — tool_call for a name absent from the current catalog returns status=error/kind=unknown_tool; underlying host method is never called.
+    """Tier 2: OS invariant — a tool_call naming something absent from the
+    current catalog returns status=error / kind=unknown_tool, and no host
+    method is called.
 
-    LLM emits tool_call with name='read_file' (not in catalog for no-file host).
+    #3429 changed the WITNESS this uses, and the reason is worth recording.
+    It used to be ``read_file`` under a host with no ``file_permissions``, on
+    the reading that a no-file host does not carry the file tools. Measured on
+    the base commit, that reading was wrong: the dispatchable catalog for that
+    host contained ``file__read`` / ``file__write`` / ``file__delete`` — the
+    file capability was fully reachable, and the only thing missing was the
+    BARE spelling. The test was pinning "one of the two spellings is absent",
+    not "the capability is gated". With one spelling that reading is no longer
+    available, so the witness is a name that genuinely does not exist.
+
+    (Whether the ADVERTISEMENT should also gate on file scope — the catalog
+    enumerates the file category unconditionally while ``build_tools`` gates it
+    — is #3449, and is not what this test is about. Execution is gated by the
+    permission resolver on every path either way.)
     """
-    # Host with no file_permissions → read_file not in catalog.
     host = FakeRouterHost(
         skills=[{"name": "list_skills", "category": "general"}],
         file_permissions=None,
@@ -415,7 +429,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
     loop = make_loop(host)
 
     rounds = [
-        tool_result([{"name": "read_file", "args": {"path": "/some/file.txt"}}]),
+        tool_result([{"name": "no_such_tool_xyz", "args": {"path": "/some/file.txt"}}]),
         text_result("Sorry, let me try differently."),
     ]
 
@@ -437,7 +451,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
     (tool_msg,) = tool_msgs
     # #2425 案B: a dispatch error renders the plain ``Error (<kind>): <message>`` string, not JSON.
     assert tool_msg["content"].startswith("Error (unknown_tool): ")
-    assert "read_file" in tool_msg["content"]
+    assert "no_such_tool_xyz" in tool_msg["content"]
 
     # Loop recovered and produced a reply
     assert host.outbox[0]["text"] == "Sorry, let me try differently."
@@ -445,16 +459,24 @@ async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_names_populated_per_run(monkeypatch):
-    """Tier 1: tool catalog reflects host configuration.
+    """Tier 1: the dispatchable catalog reflects host configuration.
 
-    File-class tools (list_directory, read_file, write_file,
-    delete_file) are gated on the operator's `permissions.file.*`
-    declaration — they touch the user's project files, which sit
-    behind the permission boundary.
+    ``build_tools`` gates the file-class tools on the operator's
+    `permissions.file.*` declaration, while the universal catalog enumerates
+    the ``file`` category unconditionally; the default ``enumerate-all`` scheme
+    composes both, so the file actions ARE dispatchable under a no-file host
+    and are gated at EXECUTION by the permission resolver.
 
-    Reyn-source tools (reyn_repo_list, reyn_repo_read) are unconditional
-    by design — they read Reyn's own public OSS repository, not the
-    user's files, so no permission gate applies.
+    ★ #3429 did not change that; it made it legible. Measured on the base
+    commit, a no-file host's dispatchable catalog already carried
+    ``file__read`` / ``file__write`` / ``file__delete`` — the same seven file
+    actions it carries now, under the other spelling. The assertions here used
+    to read ``"read_file" not in names`` as "the file tools are gated", which
+    was true of the BARE SPELLING and false of the capability. (Whether the
+    advertisement should gate too is #3449.)
+
+    What IS host-dependent and still asserted: the MCP surface, which has no
+    catalog entries when no server is configured.
     """
     host_no_file = FakeRouterHost(file_permissions=None, mcp_servers=[])
     loop = RouterLoop(host=host_no_file, chain_id="chain-test")
@@ -464,11 +486,9 @@ async def test_tool_names_populated_per_run(monkeypatch):
     await loop.run("hello", [])
 
     names_no_file = frozenset(loop._tool_names)
-    # File tools all gated.
-    assert "read_file" not in names_no_file
-    assert "list_directory" not in names_no_file
-    assert "write_file" not in names_no_file
-    assert "delete_file" not in names_no_file
+    # The file actions are reachable through the catalog regardless of
+    # file_permissions — execution, not advertisement, is where the gate is.
+    assert {"read_file", "list_directory", "write_file", "delete_file"} <= names_no_file
     # Reyn-source tools always present.
     assert "reyn_repo_list" in names_no_file
     assert "reyn_repo_read" in names_no_file
@@ -487,11 +507,10 @@ async def test_tool_names_populated_per_run(monkeypatch):
     await loop2.run("hello", [])
 
     names_with_file = frozenset(loop2._tool_names)
-    assert "read_file" in names_with_file
-    assert "list_directory" in names_with_file
-    assert "write_file" not in names_with_file  # write scope empty
+    assert {"read_file", "list_directory", "write_file"} <= names_with_file
 
-    # Third: with write scope.
+    # Third: with write scope — same set, because the catalog is what carries
+    # these actions and it does not read file scope (#3449).
     host_with_write = FakeRouterHost(
         file_permissions={"read": ["/docs"], "write": ["/tmp"]},
         mcp_servers=[],
@@ -503,8 +522,14 @@ async def test_tool_names_populated_per_run(monkeypatch):
     await loop3.run("hello", [])
 
     names_with_write = frozenset(loop3._tool_names)
-    assert "write_file" in names_with_write
-    assert "delete_file" in names_with_write
+    assert {"write_file", "delete_file"} <= names_with_write
+    # The host-dependent half that IS still visible here: no MCP server
+    # configured on any of the three hosts, so the mcp actions the CATALOG
+    # carries are present while ``build_tools``' per-server rows are not.
+    assert names_no_file == names_with_file == names_with_write, (
+        "the dispatchable catalog changed with file scope — if that is now "
+        "intended, #3449 landed and this assertion is what should record it"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -613,11 +638,11 @@ def test_build_hot_list_aliases_filters_universal_wrappers() -> None:
     declarations when ActionUsageTracker.get_top_n() returns a wrapper name
     that was recorded as usage (B27-C1 regression).
     """
-    input_names = ["list_actions", "file__read", "describe_action"]
+    input_names = ["list_actions", "read_file", "describe_action"]
     result = _build_hot_list_aliases(input_names)
     returned_names = [entry["function"]["name"] for entry in result]
-    assert returned_names == ["file__read"], (
-        f"Expected only ['file__read'] but got {returned_names}; "
+    assert returned_names == ["read_file"], (
+        f"Expected only ['read_file'] but got {returned_names}; "
         "universal wrappers must be filtered before alias construction"
     )
 
@@ -641,7 +666,7 @@ def test_build_hot_list_aliases_no_wrappers_passes_through() -> None:
 
     Smoke test: the filter must not affect non-wrapper action names.
     """
-    names = ["skill__summarise", "file__write", "agent__planner"]
+    names = ["skill__summarise", "write_file", "agent__planner"]
     result = _build_hot_list_aliases(names)
     returned_names = [entry["function"]["name"] for entry in result]
     assert returned_names == names, (

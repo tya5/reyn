@@ -29,7 +29,7 @@
       "score": "I",
       "events_emitted": ["chat_started", "user_message_received", "tool_called", "tool_returned", "routing_decided", "compaction_check", "chat_stopped"],
       "routing_decided_emitted": true,
-      "notes": "exec__run not routable; LLM offered sandboxed_exec; seatbelt not actually tested in single-turn"
+      "notes": "exec not routable; LLM offered sandboxed_exec; seatbelt not actually tested in single-turn"
     },
     {
       "id": "credential_scope_intersection",

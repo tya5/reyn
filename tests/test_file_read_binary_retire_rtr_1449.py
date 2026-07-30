@@ -1,8 +1,8 @@
-"""Tier 2: #1449 — file__read binary guard + read_tool_result retired.
+"""Tier 2: #1449 — read_file binary guard + read_tool_result retired.
 
-read_tool_result is retired; its same-host path-ref read folds into file__read
+read_tool_result is retired; its same-host path-ref read folds into read_file
 (refs are plain files under `.reyn/tool-results/`), its image guard is superseded
-by file__read's #365 media-blocks path, and a new binary guard replaces the
+by read_file's #365 media-blocks path, and a new binary guard replaces the
 silent garbled-decode of non-image binaries.
 
 Real Workspace + real op_runtime / registry — no mocks.
@@ -91,7 +91,7 @@ def test_plain_text_read_unchanged(tmp_path, monkeypatch):
 
 def test_tool_result_ref_path_readable_via_file_read(tmp_path, monkeypatch):
     """Tier 2: #1449 — a `.reyn/tool-results/` ref (a plain text file, as web_fetch
-    spills) is readable via file__read — the read_tool_result same-host case."""
+    spills) is readable via read_file — the read_tool_result same-host case."""
     monkeypatch.chdir(tmp_path)
     ref_dir = tmp_path / ".reyn" / "tool-results"
     ref_dir.mkdir(parents=True)
@@ -108,15 +108,15 @@ def test_read_tool_result_no_longer_registered():
     """Tier 2: #1449 — the read_tool_result tool is retired (unregistered)."""
     reg = get_default_registry()
     assert reg.lookup("read_tool_result") is None
-    # file__read (its replacement for same-host path reads) is present.
-    assert reg.lookup("file__read") is not None or reg.lookup("read_file") is not None
+    # read_file (its replacement for same-host path reads) is present.
+    assert reg.lookup("read_file") is not None or reg.lookup("read_file") is not None
 
 
 def test_web_fetch_preview_points_to_file_read():
     """Tier 2: #1449 — web_fetch's preview message tells the model to call
-    file__read(path), not the retired read_tool_result."""
+    read_file(path), not the retired read_tool_result."""
     from reyn.tools.web_fetch import WEB_FETCH
 
     desc = WEB_FETCH.description
-    assert "file__read(path)" in desc
+    assert "read_file(path)" in desc
     assert "read_tool_result" not in desc

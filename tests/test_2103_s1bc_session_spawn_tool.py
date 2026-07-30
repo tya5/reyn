@@ -82,9 +82,9 @@ async def test_spawn_session_recorded_enforces_narrowing_on_live_session(tmp_pat
         "(was None — write-wired/read-dead: config.yaml written but never re-injected)"
     )
     # #2132: BOTH invocable forms must be denied — the bare ``delete_file`` AND the native
-    # qualified ``file__delete`` the production enumerate-all catalog advertises. Asserting
+    # qualified ``delete_file`` the production enumerate-all catalog advertises. Asserting
     # only the bare form was the false-green that hid the partial enforcement.
-    assert {"delete_file", "file__delete"} <= effective.tool_deny
+    assert {"delete_file", "delete_file"} <= effective.tool_deny
 
 
 @pytest.mark.asyncio

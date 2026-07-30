@@ -1027,7 +1027,7 @@ def test_query_preflight_blocks_on_unreachable_vectorstore_with_named_remedy(
     blocked = result["named_stores"]["result"]
     assert isinstance(blocked, str)
     assert "not_configured_server" in blocked
-    assert "plugin_management__install" in blocked, (
+    assert "install_plugin" in blocked, (
         "the remedy must name a concrete fix, not just the cause"
     )
 

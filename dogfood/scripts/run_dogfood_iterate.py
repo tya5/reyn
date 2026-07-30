@@ -180,7 +180,7 @@ def parse_trace(trace_file: Path, impl_filename: str) -> dict:
                 args_blob = str(args_blob)
                 blob_l = args_blob.lower()
                 # iteration = each shell-class invocation that ran pytest.
-                # Tool surface: invoke_action(action_name="exec__run",
+                # Tool surface: invoke_action(action_name="exec",
                 # args={"argv": [..., "pytest", ...]}). Catch the direct
                 # name, the embedded action_name in args, AND the pre-#3226
                 # Phase 3 qualified/tool name ("sandboxed_exec" /
@@ -188,19 +188,19 @@ def parse_trace(trace_file: Path, impl_filename: str) -> dict:
                 if "pytest" in blob_l and (
                     "sandboxed_exec" in blob_l
                     or "sandboxed_exec" in name
-                    or "exec__run" in blob_l
-                    or "exec__run" in name
+                    or "exec" in blob_l
+                    or "exec" in name
                     or "shell" in name
                 ):
                     iterations += 1
                 elif "pytest" in name:
                     iterations += 1
                 # write = file write to the scenario's implementation file.
-                # Match both direct (file__write) and wrapped
-                # (invoke_action(action_name="file__write", ...)) surfaces.
+                # Match both direct (write_file) and wrapped
+                # (invoke_action(action_name="write_file", ...)) surfaces.
                 if impl_l in blob_l and (
-                    "file__write" in blob_l
-                    or "file__write" in name
+                    "write_file" in blob_l
+                    or "write_file" in name
                     or "write" in name
                     or "edit" in name
                     or "str_replace" in name

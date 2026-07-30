@@ -91,7 +91,7 @@ def test_composes_with_topology_binding(tmp_path: Path) -> None:
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
     # #2132: both layers AND both invocable forms of each (the gate matches the effective
     # resolved name — the qualified catalog form must be denied too, not just the bare).
-    assert {"delete_file", "file__delete", "exec", "exec__run"} \
+    assert {"delete_file", "delete_file", "exec", "exec"} \
         <= contextual.tool_deny
 
 
@@ -109,7 +109,7 @@ def test_per_session_cannot_regrant_topology_deny(tmp_path: Path) -> None:
     _write_per_session(reg, "worker", "task1", "name: s\ntool_allow: [delete_file, read_file]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
     # #2132: both invocable forms of the topology deny survive the allow-list.
-    assert {"delete_file", "file__delete"} <= contextual.tool_deny
+    assert {"delete_file", "delete_file"} <= contextual.tool_deny
 
 
 # ── #2132: per-session narrowing covers ALL invocable forms at the live gate ──
@@ -118,19 +118,19 @@ def test_per_session_cannot_regrant_topology_deny(tmp_path: Path) -> None:
 def test_2132_per_session_deny_covers_both_forms_at_the_gate(tmp_path: Path) -> None:
     """Tier 2: #2132 — a per-session ``tool_deny`` written in EITHER spelling denies BOTH
     invocable forms at the REAL contextual gate. The bypass tui found:
-    ``narrowing=[delete_file]`` must deny the native ``file__delete`` the production
+    ``narrowing=[delete_file]`` must deny the native ``delete_file`` the production
     enumerate-all catalog advertises (the gate matches the effective resolved name).
     Strip the ``_expand_tool_forms`` normalization → the unlisted form passes the gate → RED."""
     reg = _registry(tmp_path)
     _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [delete_file]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1")
     assert tool_contextually_denied(contextual, "delete_file")    # bare (specified)
-    assert tool_contextually_denied(contextual, "file__delete")   # native qualified — the gap
+    assert tool_contextually_denied(contextual, "delete_file")   # native qualified — the gap
 
     # the reverse direction: a qualified-specified deny covers the bare form too.
-    _write_per_session(reg, "worker", "task2", "name: s\ntool_deny: [file__delete]\n")
+    _write_per_session(reg, "worker", "task2", "name: s\ntool_deny: [delete_file]\n")
     contextual2, _ = reg.resolved_profile_for("worker", sid="task2")
-    assert tool_contextually_denied(contextual2, "file__delete")  # qualified (specified)
+    assert tool_contextually_denied(contextual2, "delete_file")  # qualified (specified)
     assert tool_contextually_denied(contextual2, "delete_file")   # bare — both directions
 
 

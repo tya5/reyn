@@ -1,13 +1,13 @@
-"""Tier 2: #1471 — mcp__install_package hot-list visibility + not-found guidance.
+"""Tier 2: #1471 — mcp_install_package hot-list visibility + not-found guidance.
 
 Two invariants:
 
-1. DEFAULT_HOT_LIST_SEED contains mcp__install_package — pins visibility parity
-   with mcp__install_registry (previously install_package was only reachable via
+1. DEFAULT_HOT_LIST_SEED contains mcp_install_package — pins visibility parity
+   with mcp_install_registry (previously install_package was only reachable via
    list_actions, causing plan-driven weak models to always grab install_registry).
 
-2. mcp__install_registry not-found (HTTP 404) error carries decision-enabling
-   guidance pointing to mcp__install_package — pins the LLM-visible error data
+2. mcp_install_registry not-found (HTTP 404) error carries decision-enabling
+   guidance pointing to mcp_install_package — pins the LLM-visible error data
    so the model can immediately pivot without a list_actions round-trip.
 
 No mocks. Network-doing RegistryClient is replaced via monkeypatch.setattr with
@@ -32,20 +32,20 @@ from reyn.tools.types import RouterCallerState, ToolContext
 
 
 def test_install_package_in_default_hot_list_seed() -> None:
-    """Tier 2: #1471 — mcp__install_package must be in DEFAULT_HOT_LIST_SEED.
+    """Tier 2: #1471 — mcp_install_package must be in DEFAULT_HOT_LIST_SEED.
     Regression pin: removing it would reintroduce the visibility asymmetry."""
     from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
-    assert "mcp__install_package" in DEFAULT_HOT_LIST_SEED, (
-        "mcp__install_package must be in DEFAULT_HOT_LIST_SEED for hot-list "
-        "visibility parity with mcp__install_registry"
+    assert "mcp_install_package" in DEFAULT_HOT_LIST_SEED, (
+        "mcp_install_package must be in DEFAULT_HOT_LIST_SEED for hot-list "
+        "visibility parity with mcp_install_registry"
     )
 
 
 def test_install_registry_also_in_seed() -> None:
-    """Tier 2: #1471 — mcp__install_registry must remain in seed (regression
+    """Tier 2: #1471 — mcp_install_registry must remain in seed (regression
     pin: adding install_package must not accidentally remove install_registry)."""
     from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
-    assert "mcp__install_registry" in DEFAULT_HOT_LIST_SEED
+    assert "mcp_install_registry" in DEFAULT_HOT_LIST_SEED
 
 
 def test_hot_list_n_default_is_zero() -> None:
@@ -130,7 +130,7 @@ def _make_registry_op(server_id: str) -> MCPInstallIROp:
 @pytest.mark.asyncio
 async def test_not_found_error_mentions_install_package(tmp_path, monkeypatch) -> None:
     """Tier 2: #1471 — when install_registry gets HTTP 404 (server not in
-    registry), the error data must mention mcp__install_package so the LLM can
+    registry), the error data must mention mcp_install_package so the LLM can
     immediately pivot without a list_actions round-trip."""
     import reyn.core.registry.client as _rc
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNotFound)
@@ -140,15 +140,15 @@ async def test_not_found_error_mentions_install_package(tmp_path, monkeypatch) -
 
     assert result["status"] == "error"
     error_text = result["error"]
-    assert "mcp__install_package" in error_text, (
-        f"not-found error must mention mcp__install_package; got: {error_text!r}"
+    assert "mcp_install_package" in error_text, (
+        f"not-found error must mention mcp_install_package; got: {error_text!r}"
     )
 
 
 @pytest.mark.asyncio
 async def test_not_found_error_mentions_source_param(tmp_path, monkeypatch) -> None:
     """Tier 2: #1471 — the not-found guidance must include source= so the LLM
-    knows the required parameter name for mcp__install_package."""
+    knows the required parameter name for mcp_install_package."""
     import reyn.core.registry.client as _rc
     monkeypatch.setattr(_rc, "RegistryClient", _RegistryClientNotFound)
 
@@ -157,7 +157,7 @@ async def test_not_found_error_mentions_source_param(tmp_path, monkeypatch) -> N
 
     assert result["status"] == "error"
     assert "source" in result["error"], (
-        "guidance must name the 'source=' parameter of mcp__install_package"
+        "guidance must name the 'source=' parameter of mcp_install_package"
     )
 
 
@@ -176,4 +176,4 @@ async def test_non_404_error_does_not_get_install_package_guidance(
     assert result["status"] == "error"
     error_text = result["error"]
     assert "Registry fetch failed" in error_text
-    assert "mcp__install_package" not in error_text
+    assert "mcp_install_package" not in error_text

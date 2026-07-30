@@ -21,7 +21,7 @@
     "s1_flipped": true,
     "s1_b32": "refuted",
     "s1_b33": "verified",
-    "s1_mechanism": "direct invoke_action(file__read) — synchronous, no spawn-ack race triggered",
+    "s1_mechanism": "direct invoke_action(read_file) — synchronous, no spawn-ack race triggered",
     "invoke_skill_spawn_ack_exit_observed_in": ["lint_a_skill", "judge_output_direct", "ask_user_round_trip"],
     "h3_structural_confirmed": true,
     "h3_note": "invoke_skill_spawn_ack_exit fires on all 3 spawn-path scenarios; no (answered) hallucination observed"
@@ -32,11 +32,11 @@
       "b28": "verified",
       "b30": "verified",
       "b32": "refuted",
-      "first_turn_tool": "file__read",
+      "first_turn_tool": "read_file",
       "routing_decided": true,
       "tool_executed": true,
       "invoke_skill_spawn_ack_exit": false,
-      "note": "H3 FIX FLIPPED: direct file__read path; P1-P8 content quoted verbatim in reply",
+      "note": "H3 FIX FLIPPED: direct read_file path; P1-P8 content quoted verbatim in reply",
       "brier_sq": 0.375
     },
     "file_glob_grep": {
@@ -44,11 +44,11 @@
       "b28": "verified",
       "b30": "refuted",
       "b32": "refuted",
-      "first_turn_tool": "file__list",
+      "first_turn_tool": "list_directory",
       "routing_decided": true,
       "tool_executed": false,
       "invoke_skill_spawn_ack_exit": false,
-      "note": "B27-M2 attractor persists: file__list called with {filter:...} not {path:...} -> KeyError",
+      "note": "B27-M2 attractor persists: list_directory called with {filter:...} not {path:...} -> KeyError",
       "brier_sq": 0.125
     },
     "web_search_query": {
@@ -56,7 +56,7 @@
       "b28": "inconclusive",
       "b30": "verified",
       "b32": "verified",
-      "first_turn_tool": "web__search",
+      "first_turn_tool": "web_search",
       "routing_decided": true,
       "tool_executed": false,
       "invoke_skill_spawn_ack_exit": false,
@@ -68,7 +68,7 @@
       "b28": "verified",
       "b30": "refuted",
       "b32": "verified",
-      "first_turn_tool": "web__fetch",
+      "first_turn_tool": "web_fetch",
       "routing_decided": true,
       "tool_executed": false,
       "invoke_skill_spawn_ack_exit": false,
@@ -80,11 +80,11 @@
       "b28": "inconclusive",
       "b30": "refuted",
       "b32": "refuted",
-      "first_turn_tool": "exec__run",
+      "first_turn_tool": "exec",
       "routing_decided": true,
       "tool_executed": false,
       "invoke_skill_spawn_ack_exit": false,
-      "note": "exec__run: no routing rule for category 'exec'; sandboxed_exec events absent; persistent",
+      "note": "exec: no routing rule for category 'exec'; sandboxed_exec events absent; persistent",
       "brier_sq": 0.125
     },
     "lint_a_skill": {

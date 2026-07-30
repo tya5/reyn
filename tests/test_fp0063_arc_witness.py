@@ -3,7 +3,7 @@
 Closes the gap #3119 names between the two existing RAG-turnkey test files:
 
   - ``test_fp0063_p3_rag_pipelines.py`` drives the ingest/query pipeline
-    MECHANISM end-to-end, but explicitly bypasses ``plugin_management__install``
+    MECHANISM end-to-end, but explicitly bypasses ``install_plugin``
     (its own docstring: "this file's job is the PIPELINE BEHAVIOR" — it points
     a project-local ``reyn.yaml`` straight at the plugin's shipped files) and
     has no LLM in the loop at all.
@@ -15,7 +15,7 @@ Neither witnesses "an operator hands the LLM the ``rag`` skill + a corpus, and
 the LLM DRIVES install -> register -> ingest -> query to a real retrieval
 result" — the reachable-for-purpose property
 ([[feedback-complete-means-reachable-for-purpose]]) that this file pins, for
-real, through the REAL production dispatch path (``plugin_management__install``,
+real, through the REAL production dispatch path (``install_plugin``,
 the pipeline installer's capability auto-registration, ``run_pipeline``'s
 attached-driver-session execution, the real sqlite-vec store) with the LLM's
 own DECISIONS driven through ``LLMReplay`` — this is genuinely Tier 3, not
@@ -95,7 +95,7 @@ needs no real embedding API key/network either.
 
 strip-falsify (co-vet, architect-specified in #3119, all independently
 verified while developing this test):
-  (a) drop the ``plugin_management__install`` tool_call from the fixture ->
+  (a) drop the ``install_plugin`` tool_call from the fixture ->
       ``run_pipeline`` fails immediately (`rag_ingest.ingest`/`rag_query.query`
       never registered) -- the arc's install-dependency is real, not narrated.
   (b) remove the ``FakeEmbeddingProvider`` monkeypatch -> ingest's embed call
@@ -236,7 +236,7 @@ def _prepare_local_plugin_copy(tmp_path: Path, src_root: str) -> Path:
       spawn time).
 
     Returns the prepared plugin source directory (pass as
-    ``source={"kind": "local", "path": str(...)}`` to ``plugin_management__install``).
+    ``source={"kind": "local", "path": str(...)}`` to ``install_plugin``).
     """
     import shutil
 
@@ -357,7 +357,7 @@ def _make_install_script(plugin_src: Path):
     pipeline `run_pipeline` lookup specifically."""
     return _rounds_script([
         _tool_call_response(
-            "plugin_management__install",
+            "install_plugin",
             {"source": {"kind": "local", "path": str(plugin_src)}},
             call_id="install",
         ),
@@ -370,7 +370,7 @@ def _make_ingest_query_script(project_root: Path):
     ``_make_install_script`` for why): ingest -> query -> final text."""
     return _rounds_script([
         _tool_call_response(
-            "pipeline__run",
+            "run_pipeline",
             {
                 "name": "rag_ingest.ingest",
                 "input": {
@@ -381,7 +381,7 @@ def _make_ingest_query_script(project_root: Path):
             call_id="ingest",
         ),
         _tool_call_response(
-            "pipeline__run",
+            "run_pipeline",
             {
                 "name": "rag_query.query",
                 "input": {
@@ -431,12 +431,12 @@ def _build_registry(tmp_path: Path, project_root: Path):
         project_root=project_root, interactive=False,
     )
     # Actor must match the STRING plugin_install's OpContext stamps
-    # (``ctx.actor = "plugin_management__install"``, plugin_management_verbs.py)
+    # (``ctx.actor = "install_plugin"``, plugin_management_verbs.py)
     # -- PermissionResolver's approval key is actor-scoped
     # (``f"{actor}/{kind}/{path}"``), and the pipeline/mcp sub-installs reuse
     # this SAME ctx (so the same actor covers their writes too).
     from reyn.core.op_runtime.plugin_install import plugins_root
-    _install_actor = "plugin_management__install"
+    _install_actor = "install_plugin"
     perm_resolver.session_approve_path(
         str(plugins_root()), _install_actor, "file.write", recursive=True,
     )
@@ -571,7 +571,7 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
     monkeypatch: pytest.MonkeyPatch, out_of_process_reyn: str,
 ) -> None:
     """Tier 3a: an LLM (replayed via LLMReplay at the real litellm.acompletion
-    boundary) drives plugin_management__install -> run_pipeline(rag_ingest.ingest)
+    boundary) drives install_plugin -> run_pipeline(rag_ingest.ingest)
     -> run_pipeline(rag_query.query) end-to-end through REAL reyn dispatch
     (real Session/RouterLoop, real plugin install + capability registration,
     real MCP chunker/vector-store servers, real sqlite-vec store), proxy-free
@@ -707,7 +707,7 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
         or not _INGEST_QUERY_FIXTURE_PATH.exists()
     )
 
-    # -- Turn 1: LLM drives plugin_management__install ----------------------
+    # -- Turn 1: LLM drives install_plugin ----------------------
     if generate:
         monkeypatch.setattr(
             "litellm.acompletion", _make_install_script(plugin_src), raising=False,

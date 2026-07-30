@@ -46,10 +46,10 @@ class _FakeOps:
         return Presentation(tools_channel=AdvertisedTools(entries=[{"function": {"name": "WRAPPER"}}]))
 
     def base_tools(self, available, layer_ctx) -> list[dict]:
-        return [{"function": {"name": "file__read"}}]
+        return [{"function": {"name": "read_file"}}]
 
     async def catalog_entries(self) -> list[dict]:
-        return [{"function": {"name": "git__commit"}}, {"function": {"name": "web__fetch"}}]
+        return [{"function": {"name": "git__commit"}}, {"function": {"name": "web_fetch"}}]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         return [{"tc": llm_response, "name": "git__commit", "args": {}}]
@@ -81,7 +81,7 @@ async def test_build_presentation_is_base_plus_catalog_flat() -> None:
         {"hot_list_aliases": []}, {"search_visible": False}, _FakeOps(),
     )
     names = [t["function"]["name"] for t in advertised_entries(pres.tools_channel)]
-    assert names == ["file__read", "git__commit", "web__fetch"]   # base then catalog, flat
+    assert names == ["read_file", "git__commit", "web_fetch"]   # base then catalog, flat
     assert "WRAPPER" not in names                                   # NOT via ops.present
 
 
@@ -161,7 +161,7 @@ def test_format_feedback_delegates_to_ops() -> None:
 
 @pytest.mark.asyncio
 async def test_enumerate_all_excludes_catalog_mcp_wrapper_3219() -> None:
-    """Tier 2: #3219 — enumerate-all excludes the catalog ``mcp__call_tool``
+    """Tier 2: #3219 — enumerate-all excludes the catalog ``mcp_call_tool``
     wrapper (mcp_verbs.py MCP_CALL_TOOL, a zero-capability thin adapter that
     purely splits ``<server>__<tool>`` and delegates to native
     ``call_mcp_tool``) from its flat ``tools=`` payload, so a single enumerate-all
@@ -196,7 +196,7 @@ async def test_enumerate_all_excludes_catalog_mcp_wrapper_3219() -> None:
     ]
     # Sanity: the wrapper IS present in the raw production catalog (else the
     # exclusion below would pass vacuously).
-    assert any(e["function"]["name"] == "mcp__call_tool" for e in real_catalog)
+    assert any(e["function"]["name"] == "mcp_call_tool" for e in real_catalog)
 
     real_base = build_tools(
         [], mcp_servers=[{"name": "srv", "description": "d"}], hot_list_aliases=[],
@@ -219,7 +219,7 @@ async def test_enumerate_all_excludes_catalog_mcp_wrapper_3219() -> None:
 
     # after: MCP-call action appears in exactly one shape — native, only once.
     assert names.count("call_mcp_tool") == 1
-    assert "mcp__call_tool" not in names
+    assert "mcp_call_tool" not in names
 
 
 def test_shared_catalog_entries_substrate_unchanged_by_3219() -> None:
@@ -227,7 +227,7 @@ def test_shared_catalog_entries_substrate_unchanged_by_3219() -> None:
     The shared production catalog (``universal_catalog.catalog_entries``, the same
     substrate ``RouterLoop.catalog_entries``/``SchemeOps.catalog_entries`` project
     from, which universal-category's invoke_action/describe_action/list_actions
-    resolution reads) still carries ``mcp__call_tool`` untouched — only
+    resolution reads) still carries ``mcp_call_tool`` untouched — only
     enumerate-all's own ``build_presentation`` composition filters it out, so
     universal's payload (which legitimately keeps the catalog-uniform wrapper) is
     unaffected."""
@@ -242,7 +242,7 @@ def test_shared_catalog_entries_substrate_unchanged_by_3219() -> None:
         caller_kind="router", router_state=_RS(),
     )
     entries = universal_catalog.catalog_entries(ctx)
-    assert any(e["name"] == "mcp__call_tool" for e in entries)
+    assert any(e["name"] == "mcp_call_tool" for e in entries)
 
 
 def test_default_chat_layer_resolves_to_enumerate_all() -> None:

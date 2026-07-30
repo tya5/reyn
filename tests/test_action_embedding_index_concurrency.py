@@ -106,8 +106,8 @@ class _FakeProvider:
 
 def _items() -> list[dict[str, Any]]:
     return [
-        {"qualified_name": "file__read", "short_description": "Read a file"},
-        {"qualified_name": "web__search", "short_description": "Search the web"},
+        {"action_name": "read_file", "short_description": "Read a file"},
+        {"action_name": "web_search", "short_description": "Search the web"},
     ]
 
 

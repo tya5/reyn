@@ -62,13 +62,23 @@ def _ctx(skills=None) -> ToolContext:
     )
 
 
+def _all_action_names() -> set:
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES
+
+    return set(KNOWN_ACTION_NAMES)
+
+
 def test_flat_shape_and_completeness_bar():
     """Tier 1: every entry is exactly {name, description, parameters}, parameters a dict (never None)."""
     entries = catalog_entries(_ctx())
     assert entries, "static categories alone should yield entries"
     for e in entries:
         assert set(e) == {"name", "description", "parameters"}, f"flat generic shape: {e}"
-        assert isinstance(e["name"], str) and "__" in e["name"], f"name is qualified: {e['name']}"
+        assert isinstance(e["name"], str) and e["name"], f"name is a non-empty string: {e}"
+        # #3429: the assertion here used to be ``"__" in e["name"]`` — that a
+        # catalog entry carries the QUALIFIED spelling. There is one spelling
+        # now, and the check that no name carries the separator lives in
+        # tests/test_no_qualified_tool_names_3429.py.
         assert isinstance(e["parameters"], dict), f"completeness bar (never None): {e['name']}"
         assert isinstance(e["description"], str)
 
@@ -82,9 +92,13 @@ def test_sorted_by_name():
 def test_empty_router_state_keeps_static_drops_resources():
     """Tier 1: without router_state skills, resource cats drop; static cats survive ("usable" semantics)."""
     entries = catalog_entries(_ctx(skills=[]))
+    from reyn.tools.universal_dispatch import category_of
+
     names = {e["name"] for e in entries}
-    assert any(n.startswith("file__") for n in names), "static categories survive"
-    assert not any(n.startswith("skill__") for n in names), "no skills → no skill__ entries"
+    assert any(category_of(n) == "file" for n in names), "static categories survive"
+    # A per-skill action has never existed (#3026's rule: a resource is an
+    # argument to a verb); the skill surface is the fixed skill_management verbs.
+    assert names <= set(_all_action_names()), "every entry is a known action"
 
 
 def test_single_source_invariant_vs_describe_action():
@@ -92,7 +106,7 @@ def test_single_source_invariant_vs_describe_action():
     description/input_schema (both via the shared _describe_one), by construction."""
     ctx = _ctx(skills=[_SKILL])
     by_name = {e["name"]: e for e in catalog_entries(ctx)}
-    for name in ("file__edit",):
+    for name in ("edit_file",):
         entry = by_name[name]
         described = asyncio.run(_handle_describe_action({"action_name": name}, ctx))
         # Both actions carry a real dict schema, so the completeness bar is a no-op

@@ -62,7 +62,7 @@ skills:
 あってコードではないため、**ファイルを読むこと自体が invocation** です:
 
 1. **発見** — `menu` の skill は L1 の `## Skills` に既に載っています。それ以外は
-   `skill_management__list`(`skill_list` ツール)が、`visibility` が `hidden` でない
+   `skill_list`(`skill_list` ツール)が、`visibility` が `hidden` でない
    全 skill の `name` / `description` / `path` を返します。
 2. **読む** — モデルはその `path` を通常の file-read op で読み、現在のタスクに対して
    その指示に従います。
@@ -79,7 +79,7 @@ builtin skill はインストール済みパッケージ内(= どの project roo
 1. `~/.reyn/config.yaml` — ユーザーグローバル
 2. `reyn.yaml` — プロジェクト
 3. `reyn.local.yaml` — プロジェクトローカル(gitignore 対象)
-4. `.reyn/config/skills.yaml` — ランタイム動的、`skill_management__install_*` ツールが書き込む
+4. `.reyn/config/skills.yaml` — ランタイム動的、`skill_install_local` / `skill_install_source` ツールが書き込む
 
 最初の 3 つを手編集するのが skill を登録する通常の方法です。4 つ目は下記のインストールツールが自動的に書き込むもので、セッションが自分自身のためにインストールした内容を反映します。
 
@@ -103,15 +103,15 @@ description: PDF フォームのフィールドを入力・結合・抽出する
 | レイヤー | モデルが見るもの | 機構 |
 |---------|----------------|------|
 | **L1 — メニュー** | 専用の `## Skills` システムプロンプトブロック。enabled + auto-invoke な skill ごとに 1 行: `name — description [path]`。 | 専用ディスパッチ無しで、ターンごとに 1 回構築。 |
-| **L2 — instruction** | `SKILL.md` の本文全体。モデルが現在のタスクがエントリの description に一致すると判断した時のみ読まれる。 | 専用の `load_skill` op(`skill_management__load`、FP-0066 P0/#3247)。本文はモデルに届く前に呼び出し時変数展開を通る。通常のファイル読み取り op はこの経路を特別扱いしません。 |
-| **L3 — バンドル資産** | skill の instruction が参照するその他のファイル(テンプレート、スクリプト、参照データ)。`SKILL.md` と同じ場所にある。 | 通常の `file__read`、他のパスと同様に標準パーミッションモデルでゲート。 |
+| **L2 — instruction** | `SKILL.md` の本文全体。モデルが現在のタスクがエントリの description に一致すると判断した時のみ読まれる。 | 専用の `load_skill` op(`load_skill`、FP-0066 P0/#3247)。本文はモデルに届く前に呼び出し時変数展開を通る。通常のファイル読み取り op はこの経路を特別扱いしません。 |
+| **L3 — バンドル資産** | skill の instruction が参照するその他のファイル(テンプレート、スクリプト、参照データ)。`SKILL.md` と同じ場所にある。 | 通常の `read_file`、他のパスと同様に標準パーミッションモデルでゲート。 |
 
-> **本ページで使う `file__read` という名前について。** ファイル読み取り op には修飾名
-> `file__read` と非修飾名 `read_file` の 2 つの綴りがあり、**どちらも常に dispatch されます**。
+> **本ページで使う `read_file` という名前について。** ファイル読み取り op には修飾名
+> `read_file` と非修飾名 `read_file` の 2 つの綴りがあり、**どちらも常に dispatch されます**。
 > モデルに *見せられる* のがどちらかは、[tool-use のセル](tool-use-schemes.md)と運用者の
 > file permission スコープで決まります: base tool と flat catalog を合成するセルは各操作を
 > 1 回だけ広告し、base tool が非修飾名を供給する場合はそちらを採るので、読み取りスコープを
-> 設定したセッションでは `read_file`、設定していないセッションでは `file__read` が見えます。
+> 設定したセッションでは `read_file`、設定していないセッションでは `read_file` が見えます。
 > 本ページが名指ししているのは op であって、広告される行ではありません。
 
 どのレイヤーにも「この skill を実行する」専用プリミティブはありません — skill は L1 で発見され、L2 で読み込まれ、その資産は単なるファイルです。関連性の判断はモデルが L1 の description から行います。OS がゲートするのは「どの skill を読めるか」ではなく「どのパスを読めるか」だけです(標準パーミッションモデル — プロジェクトルート内の読み取りはデフォルト、それ以外は通常の宣言 + 承認が必要)。
@@ -128,7 +128,7 @@ skill は config を触らずに、単一セッションから非表示にでき
 
 `skill_management` カテゴリ配下の 2 つの chat 呼び出し可能ツールが `skills.yaml` エントリを書き込みます — v1/v2 に `reyn skill` という CLI 相当は存在しません(skill 管理は chat 駆動の対話内フローです)。
 
-### `skill_management__install_local`
+### `skill_install_local`
 
 ローカルの skill ディレクトリ(または `SKILL.md` への直接パス)を `.reyn/config/skills.yaml` に登録します:
 
@@ -138,7 +138,7 @@ skill は config を触らずに、単一セッションから非表示にでき
 4. `skills.yaml` の書き込みを標準の `require_file_write` パーミッションフローでゲート。
 5. エントリを書き込み、config generation を記録(クラッシュリカバリ — WAL truncation を生き延びる)、`skill_installed` P6 イベントを発行、ホットリロードを要求。
 
-### `skill_management__install_source`
+### `skill_install_source`
 
 git/GitHub URL から skill を取得してクローンをインストールします:
 

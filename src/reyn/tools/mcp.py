@@ -100,7 +100,7 @@ _LIST_MCP_TOOLS_PARAMETERS: dict[str, Any] = {
 
 # #1646: the target MCP tool's OWN parameters are carried under THIS key —
 # deliberately NOT "args". The universal-scheme live path wraps this verb in
-# invoke_action(action_name="mcp__call_tool", args={...}); a nested "args" here would
+# invoke_action(action_name="mcp_call_tool", args={...}); a nested "args" here would
 # collide with invoke_action's own "args" (two same-named levels), which the LLM
 # collapsed (params flat beside server/mcp_tool_name, inner level dropped) → empty args
 # at the MCP call (owner-observed). A distinct key kills the collision by construction.
@@ -314,12 +314,12 @@ async def _handle_list_mcp_tools(
         also stripped ``inputSchema`` so the entries could not be
         mistaken for top-level callable functions.
       - Issue #879 collapsed MCP dispatch into a single
-        ``mcp__call_tool`` verb whose ``tool`` arg takes a
+        ``mcp_call_tool`` verb whose ``tool`` arg takes a
         ``<server>__<tool>`` self-contained identifier. In that
         world the entry name is **not** a callable function name in
         the router's ``tools=`` array, so the FP-0032 shape-collision
         concern no longer applies — and the LLM needs the schema
-        directly to construct ``mcp__call_tool``'s ``args`` field
+        directly to construct ``mcp_call_tool``'s ``args`` field
         without an extra ``describe_mcp_tool`` round-trip. Include
         ``inputSchema`` in each entry verbatim from the MCP server's
         declared shape.
@@ -329,13 +329,13 @@ async def _handle_list_mcp_tools(
     result = await host.mcp_list_tools(server)
     error = _mcp_list_error(result)
     if error is not None:
-        # Return without "mcp_tools" key so _normalise_router_tool_result
-        # passes the dict through verbatim rather than unwrapping it.
+        # An error envelope, returned as-is: no key the caller could mistake
+        # for a successful listing.
         return {"error": error}
     # Issue #879: rewrite each entry's ``name`` to the
     # ``<server>__<tool>`` identifier; preserve description + the
     # tool's declared ``inputSchema`` so the LLM can construct
-    # mcp__call_tool args in a single follow-up turn.
+    # mcp_call_tool args in a single follow-up turn.
     rebuilt: list[dict] = []
     for t in (result or []):
         if not isinstance(t, Mapping):

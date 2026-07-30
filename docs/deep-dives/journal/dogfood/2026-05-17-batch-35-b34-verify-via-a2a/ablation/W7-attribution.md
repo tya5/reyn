@@ -77,7 +77,7 @@ Evidence: A=6V vs B=2V under identical code. Mechanically: A2A POST's `send_to_a
 
 ### B34 code fixes Δ: 0V
 
-Evidence: A=6V, C=6V under identical driver (A2A POST) with the only difference being B34 code fixes. Zero difference. The B34 fixes (phase_no_progress inject, peer-agent-not-found error, arg synonym normalization, file__grep/glob) do not touch any code path exercised by long_session_v1 scenarios. None of the 7 scenarios exercises spawn-ack narration (covered by other workers), peer-agent dispatch, file grep/glob, or arg normalization.
+Evidence: A=6V, C=6V under identical driver (A2A POST) with the only difference being B34 code fixes. Zero difference. The B34 fixes (phase_no_progress inject, peer-agent-not-found error, arg synonym normalization, grep_files/glob) do not touch any code path exercised by long_session_v1 scenarios. None of the 7 scenarios exercises spawn-ack narration (covered by other workers), peer-agent dispatch, file grep/glob, or arg normalization.
 
 ### LLM variance: ~1V per 21 (observed in Condition B S1 shot2)
 

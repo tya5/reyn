@@ -276,7 +276,7 @@ store).
 
 A side-effecting step: dispatches `name` with `args` through the same
 qualified-action-routing-then-bare-lookup a live `invoke_action` call uses —
-so a `tool` step can name either a qualified action (`file__read`) or a bare
+so a `tool` step can name either a qualified action (`read_file`) or a bare
 registered tool name (`web_search`).
 
 ```yaml
@@ -413,7 +413,7 @@ capability-narrowed to `capabilities` (or the invoker's own profile if
 omitted) under `identity` (or the invoker's own identity if omitted).
 
 ```yaml
-- agent: {prompt: "Summarize: {ctx.doc}", capabilities: {tools: [file__read]}, schema: Summary, output: summary}
+- agent: {prompt: "Summarize: {ctx.doc}", capabilities: {tools: [read_file]}, schema: Summary, output: summary}
 ```
 
 | Key | Required | Meaning |

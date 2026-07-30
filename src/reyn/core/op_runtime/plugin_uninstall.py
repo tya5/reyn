@@ -107,7 +107,7 @@ async def handle(op: PluginUninstallIROp, ctx: OpContext) -> dict:
             for registry_kind in ("mcp", "pipelines", "skills"):
                 if removed.get(registry_kind):
                     seam_source = {
-                        "mcp": "mcp__install_local", "pipelines": "pipeline_install",
+                        "mcp": "mcp_install_local", "pipelines": "pipeline_install",
                         "skills": "skill_install",
                     }[registry_kind]
                     await dispatch_install_reload(

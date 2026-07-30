@@ -4,8 +4,8 @@ Same contract as ``tests/test_plugin_cli_surface.py`` for the slash surface:
 ``/plugin`` is a thin adapter over the SAME typed op — it builds a
 ``ToolContext`` from this session's LIVE ``RouterHostAdapter``
 (``build_resource_caller_state(session.router_host)``, i.e. the SAME factory
-a live LLM ``plugin_management__install``/``__uninstall`` tool call gets) and
-calls ``invoke_tool(get_default_registry(), "plugin_management__install"/"__uninstall", ...)``.
+a live LLM ``install_plugin``/``__uninstall`` tool call gets) and
+calls ``invoke_tool(get_default_registry(), "install_plugin"/"__uninstall", ...)``.
 
 Tests:
   1. usage-error paths (no args, unknown kind, unknown subcommand, malformed
@@ -83,7 +83,7 @@ def _make_session(
     ``sandbox_config``: the router-dispatched OpContext ALWAYS synthesizes a
     floor SandboxPolicy restricting ``write_paths`` to the workspace
     (``build_router_op_context`` / #1339 — closes a sandbox-escape gap; the
-    SAME floor a live LLM ``plugin_management__install`` tool call gets, not
+    SAME floor a live LLM ``install_plugin`` tool call gets, not
     a slash-specific restriction). A ``{kind:local}``/``{kind:git}`` install
     writes OUTSIDE the workspace (``~/.reyn/plugins/``), so exercising that
     path for real requires the operator-equivalent explicit
@@ -186,7 +186,7 @@ async def test_install_kind_threads_to_typed_source_shape(
     session = _make_session(tmp_path)
     await plugin_slash.plugin_cmd(session, cmd_args)
 
-    assert captured["name"] == "plugin_management__install"
+    assert captured["name"] == "install_plugin"
     assert captured["args"]["source"] == expected_source
     assert "name" not in captured["args"]
     assert not session.error_text(), f"unexpected error: {session.error_text()}"
@@ -213,7 +213,7 @@ async def test_install_as_name_overrides_thread_through(tmp_path, monkeypatch) -
 @pytest.mark.asyncio
 async def test_uninstall_threads_name(tmp_path, monkeypatch) -> None:
     """Tier 1: `/plugin uninstall NAME` forwards {"name": NAME} to the
-    plugin_management__uninstall op — no extra/renamed fields."""
+    uninstall_plugin op — no extra/renamed fields."""
     captured: dict = {}
 
     async def _fake_invoke(name: str, args: dict, ctx) -> dict:
@@ -226,7 +226,7 @@ async def test_uninstall_threads_name(tmp_path, monkeypatch) -> None:
     session = _make_session(tmp_path)
     await plugin_slash.plugin_cmd(session, "uninstall myplugin")
 
-    assert captured["name"] == "plugin_management__uninstall"
+    assert captured["name"] == "uninstall_plugin"
     assert captured["args"] == {"name": "myplugin"}
 
 

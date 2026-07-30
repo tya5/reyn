@@ -29,8 +29,8 @@ def test_hot_list_updated_does_not_reach_outbox() -> None:
     fwd(Event(
         type="hot_list_updated",
         data={"ranking": [
-            {"qualified_name": "file__read", "freq": 5, "last_ts": time.time()},
-            {"qualified_name": "web__search", "freq": 2, "last_ts": time.time()},
+            {"action_name": "read_file", "freq": 5, "last_ts": time.time()},
+            {"action_name": "web_search", "freq": 2, "last_ts": time.time()},
         ]},
     ))
     assert q.empty()

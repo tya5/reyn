@@ -319,7 +319,7 @@ tool_use:
 **ラッパー**（`list_actions` / `describe_action` / `invoke_action`）と base
 tools だけなので、CodeAct と違ってシステムプロンプトがカタログと共に増えません。
 呼び出しは
-`result = invoke_action(action_name="file__read", args={"path": "README.md"})`
+`result = invoke_action(action_name="read_file", args={"path": "README.md"})`
 の形になります。
 
 ```yaml
@@ -341,7 +341,7 @@ tools で、`list_actions` は**含まれません** — この presentation に
 
 ```python
 hits = search_actions(query="read a file")
-result = invoke_action(action_name="file__read", args={"path": "README.md"})
+result = invoke_action(action_name="read_file", args={"path": "README.md"})
 ```
 
 ```yaml
@@ -522,11 +522,11 @@ action_retrieval:
 
 有効時（デフォルト）、 チャット Router の `tools=` 末尾に wrapper が含まれる。 LLM は以下を呼び出し可能:
 
-- `list_actions(category=["mcp"])` → qualified name 形式(例: `mcp__call_tool`)でカテゴリ内の利用可能 action を列挙
-- `describe_action(action_name="mcp__call_tool")` → input schema を取得
-- `invoke_action(action_name="mcp__call_tool", args={...})` → 既存 handler 経由で実行
+- `list_actions(category=["mcp"])` → qualified name 形式(例: `mcp_call_tool`)でカテゴリ内の利用可能 action を列挙
+- `describe_action(action_name="mcp_call_tool")` → input schema を取得
+- `invoke_action(action_name="mcp_call_tool", args={...})` → 既存 handler 経由で実行
 
-どのカテゴリも列挙する action は固定 verb 集合 — リソース（保存済み memory / indexed corpus / MCP tool / 登録済 pipeline）は verb の引数であって action そのものではないため、 列挙される集合は蓄積量に依存しない。 リソースはカテゴリの discovery verb (`memory_operation__list`, `rag_operation__list_sources`, `mcp__list_tools`, `pipeline__list`) で discover し、 その id を引数として渡す。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
+どのカテゴリも列挙する action は固定 verb 集合 — リソース（保存済み memory / indexed corpus / MCP tool / 登録済 pipeline）は verb の引数であって action そのものではないため、 列挙される集合は蓄積量に依存しない。 リソースはカテゴリの discovery verb (`list_memory`, `rag_operation__list_sources`, `list_mcp_tools`, `pipeline_list`) で discover し、 その id を引数として渡す。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
 
 ツールレジストリ / dispatch の背景は Concepts: architecture (architecture doc removed) を参照。
 
@@ -931,7 +931,7 @@ skills:
 
 **#2971 で削除: `auto_invoke`**(misnomer — skill を自動起動する機構は無く、メニュー描画だけを制御していた。当時メニューは skill を名指す唯一の面だったため、`false` は「広告しない」ではなく到達不能を意味した)。`auto_invoke` が残った config は load 時にエラーとなり置換先を提示します: `auto_invoke: true` → `visibility: menu`、`auto_invoke: false` → `visibility: hidden`。
 
-`skills.entries` は `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ 動的な `<project>/.reyn/config/skills.yaml`(`skill_management__install_local` / `skill_management__install_source` chat ツールが書き込む)をまたいでマージされ、名前が衝突した場合は後の tier が優先します — `mcp.servers` と同じマージ形です。
+`skills.entries` は `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml` ⊕ 動的な `<project>/.reyn/config/skills.yaml`(`skill_install_local` / `skill_install_source` chat ツールが書き込む)をまたいでマージされ、名前が衝突した場合は後の tier が優先します — `mcp.servers` と同じマージ形です。
 
 登録モデル全体、3 層の露出モデル(メニュー / オンデマンド読み取り / バンドル資産)、インストールツールについては [コンセプト: Skills](../../concepts/tools-integrations/skills.md) を参照してください。
 
@@ -1158,7 +1158,7 @@ python:
 
 ## `multimodal` ブロック
 
-Reyn がバイナリメディア（`web__fetch` / `file__read` / MCP サーバー由来の画像）を扱う方法と、マルチモーダルアーティファクトのディスク上の保存先を制御します。
+Reyn がバイナリメディア（`web_fetch` / `read_file` / MCP サーバー由来の画像）を扱う方法と、マルチモーダルアーティファクトのディスク上の保存先を制御します。
 
 ```yaml
 multimodal:

@@ -23,7 +23,7 @@ confirmed defects:
    dumping the whole dict as one unreadable single-line JSON blob. Confirmed root cause #1
    of the owner-observed "the LLM has stopped reading offloaded files" symptom.
 3. **Stale read-back instruction.** `read_tool_result` was retired in #1449 (replaced by
-   `file__read(path)` — refs are plain files under `.reyn/tool-results/`), but every string
+   `read_file(path)` — refs are plain files under `.reyn/tool-results/`), but every string
    that tells the LLM how to read an offloaded body back still names the retired tool:
    `tool_result_cap.py:187` (`_offload_note`), `router_loop.py:270`, `router_loop.py:305`.
    An LLM following the instruction calls a nonexistent tool. Confirmed-stale references;
@@ -147,7 +147,7 @@ the same PR. No compat shim.
   the preview becomes **plain text**, not a JSON stub:
   ```
   <head>
-  ...[truncated: <N> chars total — full body: file__read("<ref>")]...
+  ...[truncated: <N> chars total — full body: read_file("<ref>")]...
   <tail>
   ```
 - **structured** — gated by `STRUCTURED_INLINE_MAX_CHARS` (`seam.py:30`, its own file when
@@ -156,7 +156,7 @@ the same PR. No compat shim.
   ```
   ---
   structured: offloaded
-  structured_ref: <path>       # read back via file__read
+  structured_ref: <path>       # read back via read_file
   structured_preview: |
     <first ~600 chars>
   structured_shape:            # #2656 — key names / value types / array length, deterministic,
@@ -167,7 +167,7 @@ the same PR. No compat shim.
   ```
 - Two large fields now produce **two clean offload files**; the whole-dict single-line
   blob fallback no longer exists (the code that produced it is deleted, §1).
-- **Every read-back instruction says `file__read(...)`** — fixing the three stale
+- **Every read-back instruction says `read_file(...)`** — fixing the three stale
   `read_tool_result` strings (Problem #3). This includes `tool_result_cap.py`'s
   `_offload_note` and the two `router_loop.py` media/offload notices.
 - Media blocks: unchanged — always extracted and delivered as the existing multimodal
@@ -206,14 +206,14 @@ truncation. Debug/experiment lever, not a recommended steady-state setting.
 
 ## Quick-win PR (independent, dispatch first)
 
-The three stale `read_tool_result` → `file__read` strings (Problem #3) are a tiny,
+The three stale `read_tool_result` → `read_file` strings (Problem #3) are a tiny,
 self-contained fix shippable immediately, independent of everything else in this doc, and
 plausibly deliver most of the "LLM reads offloaded files again" recovery on their own.
 Dispatch as PR-0 before the main arc.
 
 ## Suggested PR sequencing
 
-- **PR-0** — stale read-back strings → `file__read` (quick win, ships today).
+- **PR-0** — stale read-back strings → `read_file` (quick win, ships today).
 - **PR-1** — canonical mappers for all remaining op kinds + frontmatter format +
   `feedback()` generalization (trigger drops the kind-list, canonicalizes everything) +
   plain-text previews + **deletion of the legacy path** (markers, `decide_payload_field`,

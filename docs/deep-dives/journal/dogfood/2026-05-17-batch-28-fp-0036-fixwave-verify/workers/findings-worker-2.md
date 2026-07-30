@@ -13,7 +13,7 @@
 | # | Scenario ID | B27 | B28 | Delta | Root Cause |
 |---|------------|-----|-----|-------|------------|
 | 1 | index_docs_basic | R | R | = | LLM invokes nonexistent rag.operation__add_source / rag.operation__create_index instead of skill__index_docs |
-| 2 | read_local_files_explain_source | R | R | = | Router uses direct file__read hot-alias (no skill dispatch → no skill_run_spawned) |
+| 2 | read_local_files_explain_source | R | R | = | Router uses direct read_file hot-alias (no skill dispatch → no skill_run_spawned) |
 | 3 | read_local_files_multi_file | R | R | = | LLM calls list_actions(filter=...) misunderstanding tool purpose; no routing_decided |
 | 4 | skill_builder_web_summariser | I | V | +1 | Fully functional: routing_decided + skill_run_spawned + skill_run_completed all present |
 | 5 | word_stats_demo_sentence | B | R | +1(-1) | Skill spawned but preprocessor_step_failed: python.pure:allow in reyn.yaml != python.safe mode |
@@ -50,14 +50,14 @@ Probe confirmed available RAG actions: rag.operation__drop_source, rag.operation
 Attractor: LLM uses hallucinated RAG CRUD names from training data rather than catalog-discovered skill__index_docs.
 
 ### S2 — read_local_files_explain_source (R)
-Router used hot-alias file__read directly (describe_action → invoke_action file__read).
+Router used hot-alias read_file directly (describe_action → invoke_action read_file).
 File content read correctly; reply correct. BUT: no skill_run_spawned, no phase_started.
 Functional success but structural path bypassed. Scenario events requirements unmet.
 
 ### S3 — read_local_files_multi_file (R)
 LLM called list_actions(category=["file"], filter="src/reyn/op_runtime/").
 filter param filtered action names, not file paths → returned empty result.
-LLM did not use file__list (available in hot-list). No routing_decided emitted.
+LLM did not use list_directory (available in hot-list). No routing_decided emitted.
 
 ### S4 — skill_builder_web_summariser (V)
 Full chain: routing_decided → skill_run_spawned → phase_started(x5) → skill_run_completed.
@@ -88,7 +88,7 @@ llm_called event not emitted: router LLM calls don't emit llm_called (only phase
 Reply quality: good (verified on rubric). Structural events unmet.
 
 ### S9 — chained_find_then_index (R)
-Turn 1 (list files): success via file__list.
+Turn 1 (list files): success via list_directory.
 Turn 2 (index): invoke_action(rag.operation__add_document) → Unknown action.
 Same RAG attractor as S1. B27 was inconclusive; clean isolation in B28 revealed the attractor on second prompt.
 
@@ -98,7 +98,7 @@ Same RAG attractor as S1. B27 was inconclusive; clean isolation in B28 revealed 
 
 **Pattern A — RAG/index attractor (S1, S9)**: 2/2 indexing scenarios triggered nonexistent rag.operation__* names. Catalog probe confirmed skill__index_docs is available; attractor prevents its discovery.
 
-**Pattern B — read_local_files skill bypass (S2, S3)**: File reading goes through hot-alias file__read (S2) or list_actions misuse (S3). skill__read_local_files not invoked in either case.
+**Pattern B — read_local_files skill bypass (S2, S3)**: File reading goes through hot-alias read_file (S2) or list_actions misuse (S3). skill__read_local_files not invoked in either case.
 
 **Pattern C — python.safe permission config mismatch (S5, S6)**: reyn.yaml python.pure vs runtime python.safe mismatch. Consistent across both word_stats_demo scenarios.
 
@@ -114,8 +114,8 @@ Same RAG attractor as S1. B27 was inconclusive; clean isolation in B28 revealed 
 |----------|---------|-----------|
 | HIGH | reyn.yaml grants python.pure:allow but word_stats_demo requires python.safe:allow. Add python.safe:allow to reyn.yaml or change skill mode to pure. | S5, S6 |
 | HIGH | RAG indexing LLM attractor: LLM invokes nonexistent rag.operation__add_source/create_index/add_document. Seed rag.operation category pointing to skill__index_docs, or add hot-list entry. | S1, S9 |
-| MED | read_local_files skill bypassed by file__read hot-alias. Scenario expectations or routing need alignment. | S2 |
-| MED | list_actions filter param semantics: LLM treats filter as directory filter. S3 scenario should use file__list directly. | S3 |
+| MED | read_local_files skill bypassed by read_file hot-alias. Scenario expectations or routing need alignment. | S2 |
+| MED | list_actions filter param semantics: LLM treats filter as directory filter. S3 scenario should use list_directory directly. | S3 |
 | MED | eval skill not routed (skill_improver invoked instead). | S7 |
 | LOW | chat_compactor scenario design: 30k token threshold not reachable in 5-turn sessions. | S8 |
 | LOW | llm_called not emitted for router-tier LLM calls. Scenario expectations for llm_called in S5/S8 rely on phase-engine calls only. | S5, S8 |

@@ -216,7 +216,7 @@ class BuildMaterial:
     ``to_chunk_record(item, vector, resolved_model) -> ChunkRecord`` is the
     domain's item↔ChunkRecord mapping (kept OUT of the Coordinator per the
     firm's boundary principle — e.g. the action-catalog's dual-axis
-    category/qualified_name mapping, or a doc-RAG source's chunk metadata).
+    category/action_name mapping, or a doc-RAG source's chunk metadata).
     """
 
     items: list[Any]

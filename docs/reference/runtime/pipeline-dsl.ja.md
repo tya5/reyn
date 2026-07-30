@@ -197,7 +197,7 @@ FieldType     ::= "{" "type:" ("bool" | "string") "}"
 
 ### `tool`
 
-副作用を伴うステップです: `name` を `args` と共に、ライブな `invoke_action` 呼び出しと同じ「qualified action ルーティング → bare lookup」の順で dispatch します — そのため `tool` ステップは qualified action(`file__read`)にも bare な登録済みツール名(`web_search`)にも名前を付けられます。
+副作用を伴うステップです: `name` を `args` と共に、ライブな `invoke_action` 呼び出しと同じ「qualified action ルーティング → bare lookup」の順で dispatch します — そのため `tool` ステップは qualified action(`read_file`)にも bare な登録済みツール名(`web_search`)にも名前を付けられます。
 
 ```yaml
 - tool: {name: web_search, args: {query: !expr ctx.brief, limit: 5}, output: results}
@@ -284,7 +284,7 @@ args: {query: !expr ctx.brief, limit: !expr "ctx.n + 1", label: "a plain string"
 LLM 駆動の leaf ステップです: `prompt`(テンプレート文字列)が現在のコンテキストに対して補間され、`identity`(省略時は起動者自身)の下で `capabilities`(省略時は起動者自身のプロファイル)に capability を narrowing された ephemeral session の中で 1 ターンとして実行されます。
 
 ```yaml
-- agent: {prompt: "Summarize: {ctx.doc}", capabilities: {tools: [file__read]}, schema: Summary, output: summary}
+- agent: {prompt: "Summarize: {ctx.doc}", capabilities: {tools: [read_file]}, schema: Summary, output: summary}
 ```
 
 | キー | 必須 | 意味 |

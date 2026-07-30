@@ -2,8 +2,8 @@
 
 ``reyn_repo`` (Reyn's own self-help read/list/glob/grep surface) is default-IN
 for the general/interactive agent, but a foot-gun in external-repo task contexts
-(SWE-bench/eval on /testbed): the weak model misselects ``reyn_repo__grep`` over
-``file__*`` and searches Reyn's source instead of the repo. The fix is an EXPLICIT
+(SWE-bench/eval on /testbed): the weak model misselects ``reyn_repo_grep`` over
+``grep_files`` and searches Reyn's source instead of the repo. The fix is an EXPLICIT
 opt-out: the task-agent path sets ``excluded_categories={"reyn_repo"}``, threaded
 to ``RouterCallerState`` and applied at ``_enumerate_category`` — the single
 catalog source. Because ``catalog_entries`` / ``list_actions`` / ``describe`` /
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import _enumerate_category, catalog_entries
+from reyn.tools.universal_dispatch import category_of
 
 
 class _FakeEvents:
@@ -40,14 +41,17 @@ def _ctx(excluded: "frozenset[str] | set[str]" = frozenset()) -> ToolContext:
 
 
 def test_excluded_category_dropped_from_catalog_entries() -> None:
-    """Tier 2: #1667 — with excluded_categories={"reyn_repo"}, NO reyn_repo__*
-    action appears in catalog_entries (every scheme's flat list), while file__*
-    survives. This is the misselection-disappears proof."""
+    """Tier 2: #1667 — with excluded_categories={"reyn_repo"}, NO reyn_repo
+    action appears in catalog_entries (every scheme's flat list), while the file
+    actions survive. This is the misselection-disappears proof.
+
+    #3429: the category is read from the membership table rather than from a
+    name prefix — a name no longer carries its category."""
     names = {e["name"] for e in catalog_entries(_ctx(excluded={"reyn_repo"}))}
-    assert not any(n.startswith("reyn_repo__") for n in names), (
+    assert not any(category_of(n) == "reyn_repo" for n in names), (
         "excluded reyn_repo category must vanish from catalog_entries"
     )
-    assert any(n.startswith("file__") for n in names), (
+    assert any(category_of(n) == "file" for n in names), (
         "non-excluded categories (file) must remain"
     )
 
@@ -57,7 +61,7 @@ def test_unset_keeps_reyn_repo() -> None:
     reyn_repo (self-help capability preserved — the owner's default-IN). This is
     the don't-kill-the-feature proof."""
     names = {e["name"] for e in catalog_entries(_ctx())}
-    assert any(n.startswith("reyn_repo__") for n in names), (
+    assert any(category_of(n) == "reyn_repo" for n in names), (
         "with no exclusion, reyn_repo must remain (interactive self-help)"
     )
 
@@ -73,8 +77,8 @@ def test_enumerate_category_skip_is_at_the_source() -> None:
 
 def test_other_category_exclusion_is_generic() -> None:
     """Tier 2: #1667 — the mechanism is generic (P7: the excluded set is caller
-    data, not a hardcoded reyn_repo). Excluding "web" drops web__* and leaves
-    reyn_repo__*."""
+    data, not a hardcoded reyn_repo). Excluding "web" drops the web actions and
+    leaves the reyn_repo ones."""
     names = {e["name"] for e in catalog_entries(_ctx(excluded={"web"}))}
-    assert not any(n.startswith("web__") for n in names)
-    assert any(n.startswith("reyn_repo__") for n in names)
+    assert not any(category_of(n) == "web" for n in names)
+    assert any(category_of(n) == "reyn_repo" for n in names)

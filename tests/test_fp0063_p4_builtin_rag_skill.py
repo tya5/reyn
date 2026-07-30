@@ -11,7 +11,7 @@ large-window model resolved) into five smaller sibling skills. A later pass
 of #3162 folded those five back into the STANDARD Agent Skills shape (one
 skill directory = `SKILL.md` router + bundled `references/*.md` — the five
 sibling skills were never the standard form): routing + install stays in
-`SKILL.md` itself; the two `pipeline__run` calls this file pins moved to
+`SKILL.md` itself; the two `run_pipeline` calls this file pins moved to
 `references/run-ingest-and-query-workflow.md`; embedding setup moved to
 `references/configure-embedding-provider.md` /
 `references/configure-local-embedding-model.md`; schema/tuning/backend-swap
@@ -43,26 +43,26 @@ What this file pins instead, directly against the shipped plugin files:
   3. **Every pipeline global name the skill's prose tells the model to
      invoke really resolves through the REAL pipeline registry** (built
      against the plugin's own `pipelines/*.yaml`, the same files
-     `plugin_management__install`'s pipelines capability would register).
+     `install_plugin`'s pipelines capability would register).
      This is the pin that earns its place: the skill's whole job is to
      route the model to `rag_ingest.ingest` / `rag_query.query`, so a name
      that drifts from the shipped pipeline files turns the skill from
-     "help" into a `pipeline__run` failure the model cannot diagnose.
+     "help" into a `run_pipeline` failure the model cannot diagnose.
      Names are EXTRACTED from the prose, never restated — a restated
      constant would drift with the prose and never go red.
   4. **Every repo-relative doc path the skill points at exists.** A skill
      whose pointers 404 is the "reachable but useless" state.
   5. **Every qualified TOOL name the skill's prose tells the model to call
-     (`plugin_management__install(...)`, `mcp__install_local(...)`,
-     `pipeline__run(...)`, ...) really exists in the REAL enumerate-all
+     (`install_plugin(...)`, `mcp_install_local(...)`,
+     `run_pipeline(...)`, ...) really exists in the REAL enumerate-all
      catalog** (`catalog_entries(ctx)` — the single source `list_actions` /
      `describe_action` / the live `tools=` payload all agree against,
      #1455). #3090: this is the pin the repro was missing — SKILL.md
      taught `run_pipeline(...)` / `plugin_install(...)`, names that never
-     existed under enumerate-all (the real names are `pipeline__run` /
-     `plugin_management__install`); a weak model given no matching tool
+     existed under enumerate-all (the real names are `run_pipeline` /
+     `install_plugin`); a weak model given no matching tool
      looped 24x on the nearest-spelled wrong one
-     (`pipeline__run_inline`) and never recovered. Names are EXTRACTED
+     (`run_pipeline_inline`) and never recovered. Names are EXTRACTED
      from the skill's code fences, never restated, for the same
      never-goes-red reason as (3). #3092 generalized THIS pin to every
      builtin SKILL.md (`tests/test_builtin_skill_tool_name_drift_3092.py`)
@@ -85,7 +85,7 @@ import yaml
 from reyn.data.pipelines.registry import build_pipeline_registry
 from reyn.plugins.manifest import load_plugin_manifest
 from tests._support.builtin_skill_tool_names import (
-    qualified_tool_names_referenced,
+    qualified_tool_calls_referenced,
     real_catalog_tool_names,
 )
 
@@ -154,10 +154,10 @@ def test_rag_skill_frontmatter_is_well_formed_and_name_matches_dirname() -> None
 
 
 def _pipeline_names_referenced_by_the_skill() -> "set[str]":
-    """Extract every `pipeline__run(name="X.Y", ...)` target from the skill's
+    """Extract every `run_pipeline(name="X.Y", ...)` target from the skill's
     prose. Extracted, never restated: a hardcoded list here would drift with
     the prose it claims to guard and stay green while doing it."""
-    return set(re.findall(r'pipeline__run\(name="([\w.]+)"', _skill_body()))
+    return set(re.findall(r'run_pipeline\(name="([\w.]+)"', _skill_body()))
 
 
 def _plugin_pipeline_registry():
@@ -175,7 +175,7 @@ def test_every_pipeline_the_skill_names_resolves_in_the_real_registry() -> None:
     resolves through the REAL pipeline registry (built against the plugin's
     own shipped pipeline files), under that exact name (entry-key.declared-
     name namespacing). A drift here means the skill hands the model a
-    `pipeline__run` call that fails on a name it cannot debug."""
+    `run_pipeline` call that fails on a name it cannot debug."""
     referenced = _pipeline_names_referenced_by_the_skill()
     assert referenced, (
         "fixture invariant: the skill must tell the model which pipelines to run"
@@ -232,55 +232,57 @@ def test_every_doc_path_the_skill_points_at_exists() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _qualified_tool_names_referenced_by_the_skill() -> "set[str]":
-    """Extract every qualified (`category__verb`) tool-call name from the
-    skill's code fences — `plugin_management__install(...)`,
-    `mcp__install_local(...)`, `pipeline__run(...)`. Delegates to the SHARED
-    extractor (`tests/_support/builtin_skill_tool_names.py`) the #3092
-    generalized gate also uses, so this skill's own check and the
-    all-builtin-skills check can never silently diverge. See that module's
-    docstring for the REACH LIMIT (CALL-shape only, bare mentions invisible
-    by design — #3091 review found a bare `plugin_install` this gate cannot
-    see; widening to bare mentions is NOT the fix)."""
-    return qualified_tool_names_referenced(_skill_body())
+def _tool_calls_referenced_by_the_skill() -> "set[str]":
+    """Every CALL-shaped identifier in the skill's code fences that names a
+    real catalog tool — `install_plugin(...)`, `mcp_install_local(...)`,
+    `run_pipeline(...)`.
+
+    REACH LIMIT: CALL-shape only, so a bare mention without parens is
+    invisible by design (#3091 review found one this gate cannot see;
+    widening to bare mentions is NOT the fix — a bare mention can equally be
+    a legitimate internal-module reference)."""
+    import re
+
+    real_names = real_catalog_tool_names()
+    return {
+        n for n in re.findall(r"\b([a-z][a-z0-9_]*)\(", _skill_body())
+        if n in real_names
+    }
 
 
 def test_every_tool_name_the_skill_calls_exists_in_the_real_catalog() -> None:
-    """Tier 2: (#3090) every qualified tool name SKILL.md tells the model to
-    call must be a name the REAL enumerate-all catalog actually enumerates
-    (`catalog_entries(ctx)` — the single source `tools=` is built from, #1455
-    list == describe == dispatch). #3090's root cause was exactly this gap:
-    SKILL.md taught `run_pipeline(...)` / `plugin_install(...)`, names that
-    do not exist under enumerate-all (the real names are `pipeline__run` /
-    `plugin_management__install`) — a weak model given a `tools=` payload
-    with no matching entry could not find the right tool, called the
-    nearest-spelled wrong one (`pipeline__run_inline`) 24 times running, and
-    never recovered even after two explicit corrections. This test fails
-    LOUD the moment a future tool rename makes SKILL.md drift the same way
-    again."""
-    referenced = _qualified_tool_names_referenced_by_the_skill()
-    assert referenced, "fixture invariant: the skill must call qualified tools"
+    """Tier 2: (#3090/#3429) SKILL.md tells the model to call real catalog
+    tools, and never the abolished qualified spelling.
 
-    real_names = real_catalog_tool_names()
-    missing = sorted(n for n in referenced if n not in real_names)
-    assert not missing, (
-        f"SKILL.md calls tool name(s) that do not exist in the real "
-        f"enumerate-all catalog: {missing} (real catalog has: "
-        f"{sorted(n for n in real_names if '__' in n)})"
+    #3090's root cause: SKILL.md taught `pipeline__run(...)` /
+    `plugin_management__install(...)`, names that did not exist under
+    enumerate-all — a weak model given a `tools=` payload with no matching
+    entry could not find the right tool, called the nearest-spelled wrong one
+    24 times running, and never recovered even after two explicit corrections.
+
+    #3429 changed the shape of that gap rather than closing it. It used to be
+    "the skill picked the wrong one of a tool's TWO names"; with one name it
+    is "the skill named something that does not exist", of which a qualified
+    spelling is now one instance. Both halves are asserted: the skill CALLs
+    real catalog tools (fixture invariant, so the check below is not vacuous),
+    and it CALLs no qualified name at all."""
+    called = _tool_calls_referenced_by_the_skill()
+    assert called, (
+        "fixture invariant: the skill must CALL at least one real catalog "
+        "tool, or the qualified-name check below would be vacuous"
+    )
+
+    qualified = qualified_tool_calls_referenced(_skill_body())
+    assert not qualified, (
+        f"SKILL.md calls qualified tool name(s), abolished in #3429: "
+        f"{sorted(qualified)}"
     )
 
 
 def test_tool_name_catalog_check_is_not_vacuous() -> None:
-    """Tier 2: (regrounding, strip-falsify) inject a tool name into the
-    skill's prose that does NOT exist in the real catalog (the exact #3090
-    shape — `run_pipeline`) and confirm the check above actually goes RED.
-    Without this, a `real_names` set that silently matched anything (an
-    empty exclusion, a substring check, an over-permissive regex) would
-    keep the positive test green through any drift and make the whole gate
-    decorative."""
-    referenced = _qualified_tool_names_referenced_by_the_skill() | {
-        "run_pipeline__ghost",
-    }
-    real_names = real_catalog_tool_names()
-    missing = sorted(n for n in referenced if n not in real_names)
-    assert missing == ["run_pipeline__ghost"]
+    """Tier 2: (regrounding, strip-falsify) inject a qualified tool name into
+    the skill's prose and confirm the check above actually goes RED. Without
+    this, an over-permissive regex would keep the positive test green through
+    any drift and make the whole gate decorative."""
+    drifted = _skill_body() + '\nrun_pipeline__ghost(name="x")\n'
+    assert qualified_tool_calls_referenced(drifted) == {"run_pipeline__ghost"}

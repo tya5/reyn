@@ -28,11 +28,11 @@ Lifecycle
      (``.reyn/agents/<name>/action_usage.json``) or ``None`` for
      memory-only operation.
   2. ``merge_compacted(records)`` — called by the compactor sink with
-     the list of ``(qualified_name, ts)`` tuples extracted from
+     the list of ``(action_name, ts)`` tuples extracted from
      compaction candidates. Updates the table and persists.
   3. ``get_top_n(n, seed, live_records=None)`` — returns up to *n*
      qualified names, freq+recency ranked. ``live_records`` is the
-     optional list of ``(qualified_name, ts)`` extracted from the
+     optional list of ``(action_name, ts)`` extracted from the
      current uncompacted history; counts there are merged on the fly.
 
 Storage format
@@ -41,8 +41,8 @@ Storage format
 JSON object::
 
     {
-      "file__read": {"count": 12, "last_ts": 1716000000.0},
-      "mcp__call_tool": {"count": 4, "last_ts": 1716000100.0}
+      "read_file": {"count": 12, "last_ts": 1716000000.0},
+      "mcp_call_tool": {"count": 4, "last_ts": 1716000100.0}
     }
 
 Scoring
@@ -63,12 +63,21 @@ Seed semantics (§D16):
 Invalid-name filter
 -------------------
 
-Both ``merge_compacted`` and the live-scan path validate each
-qualified name through :func:`_is_valid_qualified_name` (= category
-prefix + ``__`` separator + non-empty entry). Wrapper invocations
-(``list_actions`` / ``describe_action`` / …) and stale rename
-artifacts (= bare ``read`` from before the ``file__`` prefix) are
-silently dropped — they are not legitimate hot-list candidates.
+Both ``merge_compacted`` and the live-scan path validate each name through
+:func:`_is_tracked_action_name`, which asks the catalog membership table
+whether the name is an action at all. Wrapper invocations (``list_actions`` /
+``describe_action`` / …) and stale rename artifacts are silently dropped — they
+are not legitimate hot-list candidates.
+
+#3429: this used to be a STRUCTURAL check — "does the name parse as
+``<category>__<verb>``" — which was a proxy for "is it an action", and the proxy
+had a side that the coin landed on wrong. A tool called under its flat name
+(``read_file``) contains no ``__``, failed the parse, and was dropped, so the
+hot list systematically under-counted every operation the model reached by its
+flat spelling: used, but recorded as unused, and therefore ranked below tools it
+was actually beating. Asking the membership table is not just the port of the
+old check to the surviving spelling — it is the check the old one was
+approximating.
 """
 from __future__ import annotations
 
@@ -80,72 +89,66 @@ from typing import Callable
 # OS default seed: universal file/web ops + core catalog actions.
 # Referenced by ActionRetrievalConfig when hot_list_seed="default".
 # Seed growth log:
-#   B27-M2: file__grep removed (no routing rule yet).
-#   B27-M5: file__list + reyn_source__list added (cold-start directory listing).
+#   B27-M2: grep_files removed (no routing rule yet).
+#   B27-M5: list_directory + reyn_source__list added (cold-start directory listing).
 #   B28-MED-1: index_docs op added (RAG indexing intent).
 #   B30-NEW-2: eval op added (eval discoverability).
-#   B34: file__grep + file__glob re-added (ToolDefinitions implemented).
-#   B37 W4/W6: file__write + rag_operation__drop_source added (arg-canonical
+#   B34: grep_files + glob_files re-added (ToolDefinitions implemented).
+#   B37 W4/W6: write_file + rag_operation__drop_source added (arg-canonical
 #              gap — D2-wrapper scope is hot-list-only; seeding ensures schema
 #              guidance is present at first use).
-#   #879: mcp__search_registry + mcp__install_registry added (= verb-collapse
+#   #879: mcp_search_registry + mcp_install_registry added (= verb-collapse
 #         of the previous mcp search/install actions into the mcp category, so
 #         installation requests don't require list_actions discovery first).
-#   2026-05-25 (post-#898): mcp__list_tools + mcp__call_tool added (= the
+#   2026-05-25 (post-#898): list_mcp_tools + mcp_call_tool added (= the
 #         "USE installed server" cold-start path observed missing in the
 #         5-server walkthrough). rag_operation__drop_source dropped to keep
 #         seed size constant — drop_source's B37 schema-hallucination
 #         protection is now covered by the ARS scope expansion
-#         (= ``KNOWN_STATIC_QUALIFIED_NAMES`` is always in ARS regardless of
+#         (= ``KNOWN_ACTION_NAMES`` is always in ARS regardless of
 #         hot-list per the B38 contract; see
 #         ``_collect_all_session_ars_entries``), so seed presence is no
 #         longer load-bearing for that invariant.
-#   2026-05-25 (mcp install 3-verb split): mcp__search_server →
-#         mcp__search_registry; mcp__install_server → mcp__install_registry.
-#         mcp__install_package + mcp__install_local are NOT seeded (= the
+#   2026-05-25 (mcp install 3-verb split): the old search_server verb →
+#         mcp_search_registry; the old install_server verb → mcp_install_registry.
+#         mcp_install_package + mcp_install_local are NOT seeded (= the
 #         registry path is the default surface most chat users will hit;
 #         package / local installs are niche enough that list_actions
 #         discovery is acceptable, and seeding all three would dilute the
 #         "primary path" signal the hot-list seed conveys).
 DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
-    "file__read",
-    "file__list",
-    "file__grep",
-    "file__glob",
-    "file__write",
-    # file__edit deferred — FP-0034 §D20.
-    "reyn_repo__list",
-    "web__search",
-    "web__fetch",
-    "memory_operation__remember_shared",
-    "mcp__search_registry",
-    "mcp__install_registry",
-    "mcp__install_package",   # #1471: visibility parity — install_package was only reachable via list_actions
-    "mcp__list_tools",
-    "mcp__call_tool",
+    "read_file",
+    "list_directory",
+    "grep_files",
+    "glob_files",
+    "write_file",
+    # edit_file deferred — FP-0034 §D20.
+    "reyn_repo_list",
+    "web_search",
+    "web_fetch",
+    "remember_shared",
+    "mcp_search_registry",
+    "mcp_install_registry",
+    "mcp_install_package",   # #1471: visibility parity — install_package was only reachable via list_actions
+    "list_mcp_tools",
+    "mcp_call_tool",
 )
 
 _SECONDS_PER_DAY = 86400.0
 
 
-def _is_valid_qualified_name(name: str) -> bool:
-    """Return True when *name* is a structurally valid qualified action name.
+def _is_tracked_action_name(name: str) -> bool:
+    """Return True when *name* is a catalog action, i.e. a hot-list candidate.
 
-    Validates that the name parses through
-    :func:`universal_catalog.split_qualified_name` — i.e. contains the
-    ``__`` separator, has a category portion matching the known
-    category registry, and a non-empty entry-name portion.
-
-    Wrapper invocations (``list_actions``, ``describe_action``,
-    ``search_actions``, ``invoke_action``) fail this check because they
-    are not category-prefixed. Stale rename artifacts (``read`` before
-    the ``file__`` prefix landed) also fail.
+    Membership in ``universal_dispatch.KNOWN_ACTION_NAMES`` — the closed table
+    of every action the catalog offers. Wrapper invocations (``list_actions``,
+    ``describe_action``, ``search_actions``, ``invoke_action``) are not actions
+    and fail this check, as do stale names from a rename.
     """
     try:
-        from reyn.tools.universal_catalog import split_qualified_name
-        split_qualified_name(name)
-        return True
-    except (ValueError, ImportError):
+        from reyn.tools.universal_dispatch import is_known_action
+        return is_known_action(name)
+    except ImportError:
         return False
 
 
@@ -201,7 +204,7 @@ class ActionUsageTracker:
                     continue
                 if not isinstance(last_ts, (int, float)):
                     continue
-                if not _is_valid_qualified_name(qn):
+                if not _is_tracked_action_name(qn):
                     continue
                 self._compacted[qn] = {
                     "count": int(count),
@@ -262,7 +265,7 @@ class ActionUsageTracker:
                 pass
 
     def merge_compacted(self, records: list[tuple[str, float]]) -> None:
-        """Merge a batch of ``(qualified_name, ts)`` records into the
+        """Merge a batch of ``(action_name, ts)`` records into the
         compacted table.
 
         Called by the chat-compactor sink with the tool-call records
@@ -282,7 +285,7 @@ class ActionUsageTracker:
                 continue
             if not isinstance(ts, (int, float)):
                 continue
-            if not _is_valid_qualified_name(qn):
+            if not _is_tracked_action_name(qn):
                 continue
             entry = self._compacted.get(qn)
             if entry is None:
@@ -297,7 +300,7 @@ class ActionUsageTracker:
         self._persist_table()
         if self._on_ranking_changed is not None:
             ranking = self.full_ranking()
-            current_order = [r["qualified_name"] for r in ranking]
+            current_order = [r["action_name"] for r in ranking]
             if current_order != self._prior_ranking_order:
                 self._prior_ranking_order = current_order
                 try:
@@ -311,9 +314,9 @@ class ActionUsageTracker:
         now: float | None = None,
     ) -> list[dict]:
         """Return the full freq+recency-ranked list of
-        ``{qualified_name, freq, last_ts}`` entries.
+        ``{action_name, freq, last_ts}`` entries.
 
-        ``live_records`` is the optional list of ``(qualified_name, ts)``
+        ``live_records`` is the optional list of ``(action_name, ts)``
         tuples extracted from the current uncompacted history. They are
         merged with the compacted table to produce the combined ranking.
         """
@@ -329,7 +332,7 @@ class ActionUsageTracker:
                     continue
                 if not isinstance(ts, (int, float)):
                     continue
-                if not _is_valid_qualified_name(qn):
+                if not _is_tracked_action_name(qn):
                     continue
                 e = combined.get(qn)
                 if e is None:
@@ -345,11 +348,11 @@ class ActionUsageTracker:
             age_days = max(0.0, (ref - e["last_ts"]) / _SECONDS_PER_DAY)
             score = e["count"] * (1.0 + 1.0 / (1.0 + age_days))
             scored.append((score, qn, e["count"], e["last_ts"]))
-        # Sort by score desc; break ties by qualified_name asc for
+        # Sort by score desc; break ties by action_name asc for
         # determinism.
         scored.sort(key=lambda t: (-t[0], t[1]))
         return [
-            {"qualified_name": qn, "freq": count, "last_ts": last_ts}
+            {"action_name": qn, "freq": count, "last_ts": last_ts}
             for _, qn, count, last_ts in scored
         ]
 
@@ -365,7 +368,7 @@ class ActionUsageTracker:
         if n <= 0:
             return []
         ranked = [
-            r["qualified_name"]
+            r["action_name"]
             for r in self.full_ranking(live_records=live_records)
         ]
         result: list[str] = ranked[:n]
@@ -385,5 +388,5 @@ class ActionUsageTracker:
 __all__ = [
     "DEFAULT_HOT_LIST_SEED",
     "ActionUsageTracker",
-    "_is_valid_qualified_name",
+    "_is_tracked_action_name",
 ]

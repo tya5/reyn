@@ -149,7 +149,7 @@ The live dogfood pain must not wait for the refactor:
   registration declaration anyway).
 - `compact` / `judge_output` mappers.
 - **Regression test = the incident**: doc-file read → offload → text-stream offload
-  file whose body is the readable document + `file__read` note; falsify that no
+  file whose body is the readable document + `read_file` note; falsify that no
   whole-dict structured attachment is produced for a file read.
 
 ## Sequencing

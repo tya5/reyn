@@ -13,7 +13,7 @@
     "reply_rubric": "pass",
     "events_check": "pass",
     "artifact_check": "fail",
-    "notes": "LLM routed to web__search alias (routing_decided emitted) instead of direct_llm. Alias schema non-empty (D2-min confirmed). Canonical arg 'query' used (no mismatch)."
+    "notes": "LLM routed to web_search alias (routing_decided emitted) instead of direct_llm. Alias schema non-empty (D2-min confirmed). Canonical arg 'query' used (no mismatch)."
   },
   {
     "scenario_id": "skill_discovery_request",

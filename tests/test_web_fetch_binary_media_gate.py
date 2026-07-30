@@ -1,8 +1,8 @@
-"""Tier 2: web__fetch binary image content + shared media-size gate (issue #364).
+"""Tier 2: web_fetch binary image content + shared media-size gate (issue #364).
 
 This is the first multi-modal cluster PR, so it also lands the shared
 infrastructure (= `MultimodalConfig` + `PermissionResolver.require_media_load`)
-that #365 (file__read) and #366 (user input) will reuse.
+that #365 (read_file) and #366 (user input) will reuse.
 
 What we pin:
   - Config parsing: defaults + explicit values + bad-type fallback.

@@ -1,7 +1,7 @@
 """Tier 3a: #1646 full-flow threading — MCP tool args reach the boundary non-empty.
 
 The load-bearing gate the isolated schema tests miss: drive the REAL universal-scheme
-wrapped path. The live MCP call is invoke_action(action_name="mcp__call_tool",
+wrapped path. The live MCP call is invoke_action(action_name="mcp_call_tool",
 args={tool:"<server>__<tool>", tool_args:{...}}) → resolve_invoke_action → mcp_verbs
 `_handle_mcp_call_tool` (splits the `<server>__<tool>` id, reads the renamed inner
 `tool_args`) → DELEGATES to mcp.py `_handle_call_mcp_tool` (also reads `tool_args`) →
@@ -50,7 +50,7 @@ def _ctx(host: _RecordingMCPHost) -> ToolContext:
 def _invoke_action(inner: dict, host: _RecordingMCPHost) -> dict:
     handler = get_default_registry().lookup("invoke_action").handler
     return asyncio.run(
-        handler({"action_name": "mcp__call_tool", "args": inner}, _ctx(host))
+        handler({"action_name": "mcp_call_tool", "args": inner}, _ctx(host))
     )
 
 

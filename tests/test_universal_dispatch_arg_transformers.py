@@ -1,80 +1,109 @@
-"""Tier 2: tools/universal_dispatch.py arg-transformer pure helper contracts.
+"""Tier 2: invoke_action forwards args VERBATIM — there is no transform layer.
 
-Each function maps (entry_name, args) → dict for a specific action category.
-They are pure transformations with no side effects — the routing table in
-universal_dispatch maps action names to these helpers at dispatch time.
+The file this replaces pinned ``universal_dispatch``'s per-action arg shapers.
+Two survived to #3429: ``_multi_agent_list_peers_args`` mapped a ``cluster`` arg
+onto ``list_agents``' ``path``, and ``_multi_agent_delegate_args`` renamed a
+``message`` arg to ``delegate_to_agent``'s ``request``. Neither key appeared in
+the action's advertised schema, so both were capability that existed only on the
+qualified route — a model calling the bare tool with ``cluster=`` got a
+``path``-less call, and one calling the qualified spelling got a working one.
 
-#3026 deleted the ``_semantic_search_single_source_args`` / ``_mcp_tool_args``
-(and ``_read_memory_body_args`` / ``_pipeline_run_args``) shapers along with the
-resource categories they served, so their cases are removed here rather than
-rewritten: the behaviour they pinned — currying a resource id out of the
-qualified name — is exactly what #3026 removed. The equivalent capability is now
-an ordinary argument on a verb, covered by
-``tests/test_resource_collapse_invariant_3026.py``.
+The #3429 decision was taken per-difference and independently of which NAME
+survived (see the PR body): the ADVERTISED SCHEMA is the contract, so the
+schema's behaviour is what is kept and the undeclared remap is what goes.
+``message`` was additionally documented in its own docstring as compatibility
+for "LLMs that still emit ``message`` from the pre-#882 era" — back-compat,
+which is not a reason.
+
+What is pinned here is the property that replaced them: ``invoke_action`` hands
+the handler exactly the ``args`` the caller supplied. Real registry, real
+handlers, no fakes — the assertion is on the args the handler observes.
 """
 from __future__ import annotations
 
-from reyn.tools.universal_dispatch import (
-    _multi_agent_delegate_args,
-    _multi_agent_list_peers_args,
-    _passthrough_args,
-)
+import asyncio
 
-# ── _multi_agent_list_peers_args ──────────────────────────────────────────────
+from reyn.core.events.events import EventLog
+from reyn.tools.types import RouterCallerState, ToolContext
+from reyn.tools.universal_catalog import _handle_invoke_action
 
 
-def test_multi_agent_list_peers_args_uses_cluster() -> None:
-    """Tier 2: 'cluster' arg is mapped to the 'path' key."""
-    result = _multi_agent_list_peers_args("list_peers", {"cluster": "writers"})
-    assert result == {"path": "writers"}
+def _ctx(**router_state_kwargs) -> ToolContext:
+    return ToolContext(
+        events=EventLog(),
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(**router_state_kwargs),
+    )
 
 
-def test_multi_agent_list_peers_args_uses_path_fallback() -> None:
-    """Tier 2: 'path' is used when 'cluster' is absent."""
-    result = _multi_agent_list_peers_args("list_peers", {"path": "reviewers"})
-    assert result == {"path": "reviewers"}
+def test_invoke_action_forwards_args_verbatim() -> None:
+    """Tier 2: the handler receives the caller's args unchanged — no key is
+    renamed, defaulted, or dropped between wrapper and handler."""
+    observed: list[str] = []
+
+    def _list_agents_fn(path):
+        observed.append(path)
+        return []
+
+    ctx = _ctx(list_agents_fn=_list_agents_fn)
+    asyncio.run(_handle_invoke_action(
+        {"action_name": "list_agents", "args": {"path": "writers"}}, ctx,
+    ))
+    assert observed == ["writers"]
 
 
-def test_multi_agent_list_peers_args_defaults_to_empty_string() -> None:
-    """Tier 2: no cluster or path arg → path defaults to '' (list all)."""
-    result = _multi_agent_list_peers_args("list_peers", {})
-    assert result == {"path": ""}
+def test_invoke_action_does_not_map_cluster_onto_path() -> None:
+    """Tier 2: #3429 — the undeclared ``cluster`` → ``path`` remap is gone.
+
+    ``list_agents``' schema declares ``path`` and nothing else, so a caller
+    passing ``cluster`` gets the handler's own default for the absent ``path``
+    rather than a silently-renamed argument."""
+    observed: list[str] = []
+
+    def _list_agents_fn(path):
+        observed.append(path)
+        return []
+
+    ctx = _ctx(list_agents_fn=_list_agents_fn)
+    asyncio.run(_handle_invoke_action(
+        {"action_name": "list_agents", "args": {"cluster": "writers"}}, ctx,
+    ))
+    assert observed == [""], (
+        "an undeclared 'cluster' arg was mapped onto 'path' — the transform "
+        f"layer #3429 removed is back: {observed!r}"
+    )
 
 
-# ── _multi_agent_delegate_args ────────────────────────────────────────────────
+def test_invoke_action_does_not_rename_message_to_request() -> None:
+    """Tier 2: #3429 — the undeclared ``message`` → ``request`` remap is gone.
 
+    ``delegate_to_agent``'s schema declares ``request``; ``message`` was a
+    pre-#882 compatibility alias that only the qualified spelling honoured, so
+    a ``message`` call must NOT arrive at the handler as a ``request``."""
+    observed: list[dict] = []
 
-def test_multi_agent_delegate_args_renames_message_to_request() -> None:
-    """Tier 2: 'message' key is renamed to 'request' for legacy compat."""
-    result = _multi_agent_delegate_args("delegate", {"to": "agent1", "message": "hello"})
-    assert result == {"to": "agent1", "request": "hello"}
+    async def _send_to_agent(*args, **kwargs):
+        observed.append({"args": args, "kwargs": dict(kwargs)})
+        return {"status": "ok"}
 
-
-def test_multi_agent_delegate_args_keeps_request_key() -> None:
-    """Tier 2: 'request' key passes through unchanged."""
-    result = _multi_agent_delegate_args("delegate", {"to": "agent1", "request": "world"})
-    assert result == {"to": "agent1", "request": "world"}
-
-
-def test_multi_agent_delegate_args_other_keys_pass_through() -> None:
-    """Tier 2: keys other than 'message' are carried to the output unchanged."""
-    result = _multi_agent_delegate_args("delegate", {"to": "a", "request": "r", "extra": 1})
-    assert result["extra"] == 1
-
-
-# ── _passthrough_args ─────────────────────────────────────────────────────────
-
-
-def test_passthrough_args_returns_copy_of_args() -> None:
-    """Tier 2: args are returned as-is (identity transform)."""
-    original = {"a": 1, "b": "two"}
-    result = _passthrough_args("anything", original)
-    assert result == original
-
-
-def test_passthrough_args_does_not_mutate_input() -> None:
-    """Tier 2: the original args mapping is not mutated."""
-    original = {"key": "val"}
-    result = _passthrough_args("x", original)
-    result["new_key"] = "added"
-    assert "new_key" not in original
+    ctx = _ctx(send_to_agent=_send_to_agent)
+    try:
+        asyncio.run(_handle_invoke_action(
+            {
+                "action_name": "delegate_to_agent",
+                "args": {"to": "agent1", "message": "hello"},
+            },
+            ctx,
+        ))
+    except KeyError:
+        # The handler reads its schema-declared ``request`` and does not find
+        # one, which is the observable form of "nothing renamed ``message``".
+        # (A missing REQUIRED arg surfacing as a raise is the handler's
+        # pre-existing behaviour on every route, not something #3429 changed.)
+        pass
+    assert observed == [], (
+        "delegate_to_agent was reached with a request built from 'message' — "
+        f"the transform layer #3429 removed is back: {observed!r}"
+    )

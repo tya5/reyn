@@ -19,7 +19,7 @@
   "arg_normalize_firing": false,
   "arg_normalize_note": "S1 LLM used content (canonical) directly. S6 LLM dispatched skill__index_events (wrong action, no args); rag.operation__drop_source never called, arg-normalize path not exercised.",
   "d2_wrapper_ars_block_confirmed": true,
-  "ars_file_write_entry": "file__write: {content, path}",
+  "ars_file_write_entry": "write_file: {content, path}",
   "ars_drop_source_entry": "rag.operation__drop_source: {source}",
   "s8_web_fetch_deny_verified": true,
   "s8_consecutive_batches": 5,
@@ -31,21 +31,21 @@
       "outcome": "verified",
       "arg_normalize_verify": {
         "llm_args_sent": {
-          "action_name": "file__write",
+          "action_name": "write_file",
           "args": {"path": "/etc/test.txt", "content": "hello"}
         },
         "canonical_key": "content",
         "llm_used_canonical": true,
         "normalize_fired": false,
-        "note": "LLM sent content (canonical) directly. ARS block file__write: {content, path} visible. No normalize needed."
+        "note": "LLM sent content (canonical) directly. ARS block write_file: {content, path} visible. No normalize needed."
       },
       "events": {
-        "routing_decided": {"action_name": "file__write", "outcome": "success"},
+        "routing_decided": {"action_name": "write_file", "outcome": "success"},
         "permission_denied": {"kind": "file", "path": "/etc/test.txt"},
         "write_file": false,
         "routing_source": "invoke_action"
       },
-      "notes": "VERIFIED: file__write with canonical content key. permission_denied(kind=file) fired. No write_file event. B38 canonical fix stable."
+      "notes": "VERIFIED: write_file with canonical content key. permission_denied(kind=file) fired. No write_file event. B38 canonical fix stable."
     },
     {
       "id": "mcp_install_gate_prompt",
@@ -134,11 +134,11 @@
       "outcome": "verified",
       "config": "reyn.local.yaml: permissions.web.fetch=deny",
       "events": {
-        "routing_decided": {"action_name": "web__fetch", "source": "hot_list_alias", "outcome": "error"},
+        "routing_decided": {"action_name": "web_fetch", "source": "hot_list_alias", "outcome": "error"},
         "tool_failed": {"error_kind": "permission_denied", "message": "web fetch denied"},
         "web_fetch_started": false
       },
-      "notes": "VERIFIED: web.fetch:deny gate fired. LLM called web__fetch via hot_list_alias (not invoke_action). tool_failed(permission_denied). Reply: 'fetching external URLs is not allowed'. #53 non-regression confirmed. 5th consecutive batch verified (B33→B39)."
+      "notes": "VERIFIED: web.fetch:deny gate fired. LLM called web_fetch via hot_list_alias (not invoke_action). tool_failed(permission_denied). Reply: 'fetching external URLs is not allowed'. #53 non-regression confirmed. 5th consecutive batch verified (B33→B39)."
     }
   ]
 }

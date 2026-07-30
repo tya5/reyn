@@ -151,7 +151,7 @@
       "reply_excerpt": "mcp_search スキルのエラーが発生しました。unsafe Python ステップが原因です。",
       "rubric_pass": false,
       "rubric_notes": "Misrouted howto question to mcp_search (likely ARS surface side-effect). Rubric: none of 3 items met (no message/send description, no GET /a2a/tasks/{id}, no reyn web startup explanation). R. Predicted R=1.0 — consistent.",
-      "vs_b39": "R -> R (stable, but root cause differs: B39 routed to web__search, B41 routes to mcp_search)"
+      "vs_b39": "R -> R (stable, but root cause differs: B39 routed to web_search, B41 routes to mcp_search)"
     },
     {
       "id": "mcp_install_permission_gate",

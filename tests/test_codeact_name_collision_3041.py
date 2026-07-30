@@ -6,7 +6,7 @@ parameter named ``name`` therefore had its ``name`` kwarg collide with the alrea
 filled positional slot → ``TypeError: got multiple values for argument 'name'``,
 raised in the SHIM before the parent gate ever ran. Deterministic Python argument
 binding: no LLM-side calling convention could avoid it, so ~20 tools
-(``mcp__install_local``, ``agent_spawn``, ``remember_shared``, ``pipeline__run`` …)
+(``mcp_install_local``, ``agent_spawn``, ``remember_shared``, ``run_pipeline`` …)
 were simply uncallable under CodeAct. Fix: ``def tool(name, /, **args)`` — a
 positional-only parameter cannot be filled by a keyword.
 
@@ -78,7 +78,7 @@ async def test_every_registry_tool_with_a_name_param_is_callable_under_codeact()
 async def test_target_name_arg_does_not_hijack_the_dispatch_target() -> None:
     """Tier 2: #3041 — a ``name`` ARGUMENT must not be able to redirect WHICH tool the
     gate runs. The qualified name rides a positional-only slot, so a snippet passing
-    ``name='file__read'`` to one tool still dispatches the tool it named in code.
+    ``name='read_file'`` to one tool still dispatches the tool it named in code.
 
     This is the security-relevant half of the fix: were ``name`` keyword-reachable, a
     snippet could aim the marshalling primitive at a different tool than the stub the
@@ -90,23 +90,23 @@ async def test_target_name_arg_does_not_hijack_the_dispatch_target() -> None:
         return {"status": "ok", "data": "ok"}
 
     out = await CodeActRunner().run(
-        code="result = mcp__install_local(name='file__read', command='c', args=[])",
+        code="result = mcp_install_local(name='read_file', command='c', args=[])",
         dispatch=dispatch,
-        actions={"mcp__install_local": "mcp__install_local"},
+        actions={"mcp_install_local": "mcp_install_local"},
         allow_unsandboxed=True,
     )
 
     assert out["ok"] is True, out
     # Dispatched the stub the code named, NOT the value of the 'name' argument.
     assert seen == [
-        ("mcp__install_local", {"name": "file__read", "command": "c", "args": []})
+        ("mcp_install_local", {"name": "read_file", "command": "c", "args": []})
     ]
 
 
 @pytest.mark.asyncio
 async def test_live_reported_install_call_reaches_the_gate() -> None:
     """Tier 2: #3041 — the exact call the live LLM wrote in the reported trace
-    (``mcp__install_local(name=..., command=..., args=[])``) now reaches the gate.
+    (``mcp_install_local(name=..., command=..., args=[])``) now reaches the gate.
 
     Also pins the sibling non-collision: ``args`` is the shim's ``**kwargs`` catch-all,
     which no keyword can collide with, so a tool declaring its own ``args`` parameter
@@ -119,11 +119,11 @@ async def test_live_reported_install_call_reaches_the_gate() -> None:
 
     out = await CodeActRunner().run(
         code=(
-            "result = mcp__install_local("
+            "result = mcp_install_local("
             "name='reyn_chunker', command='reyn-rag-chunker', args=[])"
         ),
         dispatch=dispatch,
-        actions={"mcp__install_local": "mcp__install_local"},
+        actions={"mcp_install_local": "mcp_install_local"},
         allow_unsandboxed=True,
     )
 
@@ -131,7 +131,7 @@ async def test_live_reported_install_call_reaches_the_gate() -> None:
     assert out["result"] == {"installed": "reyn_chunker"}
     assert seen == [
         (
-            "mcp__install_local",
+            "mcp_install_local",
             {"name": "reyn_chunker", "command": "reyn-rag-chunker", "args": []},
         )
     ]

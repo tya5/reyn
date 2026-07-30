@@ -11,7 +11,7 @@ error paths. The step-boundary live-events / Ctrl-C-cancel / crash-while-attache
 behaviors get their own file (``test_pipeline_is6_attached.py``).
 
 Real collaborators throughout — a real ``PipelineRegistry``, real ``Workspace``/
-``PermissionResolver`` (so the ``tool`` step's ``file__write`` actually writes
+``PermissionResolver`` (so the ``tool`` step's ``write_file`` actually writes
 through ``op_runtime.execute_op``, not a stub), and a real ``AgentRegistry``/
 ``Session`` for the driver-session + ``agent`` step (same real-collaborator
 discipline as ``test_pipeline_is2_driver_session.py`` — the ONLY faked
@@ -117,7 +117,7 @@ def _ctx(
 def _install_side_effect_tool(monkeypatch, out_file: Path) -> None:
     """Register a REAL side-effecting tool (direct file append, workspace-
     independent — the driver-session's ToolContext has no workspace in this bare
-    factory, so a workspace-relative tool like file__write would not resolve to
+    factory, so a workspace-relative tool like write_file would not resolve to
     this test's tmp dir). Same monkeypatch idiom as
     ``test_pipeline_is2_driver_session.py``: every lookup still goes through the
     real ``ToolRegistry.register``/``lookup`` contract."""
@@ -154,7 +154,7 @@ def _install_side_effect_tool(monkeypatch, out_file: Path) -> None:
 async def test_run_pipeline_e2e_transform_tool_agent(tmp_path: Path, monkeypatch) -> None:
     """Tier 2c: register a transform->tool->agent pipeline, invoke the reworked
     run_pipeline handler (attached driver-session) with a real host/AgentRegistry/
-    StateLog, assert the pipeline runs to completion, the tool step's file__write
+    StateLog, assert the pipeline runs to completion, the tool step's write_file
     REALLY wrote the file (op_runtime execute_op, not a stub), and the final
     output is the agent step's (scripted) reply — returned INLINE.
 

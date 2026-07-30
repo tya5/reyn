@@ -145,45 +145,62 @@ def test_file_to_canonical_glob_meta_omits_truncated_when_absent(tmp_path, monke
     assert "truncated" not in canonical["meta"]
 
 
-# ── 4b. Consumer reach: interactive chat router's list_directory alias ────────
+# ── 4b. Consumer reach: the LLM-visible list_directory body ──────────────────
+#
+# #3429 replaced the mechanism these two witnesses assert. The interactive chat
+# path used to flatten a `list_directory` dict to a bare LIST before
+# `to_canonical` ever ran (`RouterLoop._normalise_router_tool_result`), so #2998
+# had to re-append the truncation fact as a trailing pseudo-entry in that list.
+# That flattening is deleted — it existed for byte-identity with a pre-ADR-0026
+# router branch, and it was where the two spellings of one listing diverged — so
+# the chat path now reaches `file_to_canonical` like every other consumer, and
+# the `truncated` / `total_count` / `returned_count` fields ride the frontmatter
+# that section 4 above already pins on the mapper. The REQUIREMENT is unchanged:
+# the LLM must be told the listing was capped, and by how much.
 
 
-def test_normalise_router_tool_result_list_directory_appends_truncation_note():
-    """Tier 2: `RouterLoop._normalise_router_tool_result` is the exact choke point
-    that flattens a dict result to a bare list BEFORE `to_canonical` ever runs for
-    `list_directory` in the interactive chat tool-calling loop (verified by reading
-    router_loop.py: `_invoke_via_registry` calls this, and its return value is `r`
-    fed straight into the content_str builder that only calls `to_canonical` when
-    `r` is still a dict). Asserting the note is IN the returned list is asserting
-    the signal survives past this choke point to what the LLM actually sees —
-    catching "loaded truncated onto meta but this path drops meta entirely"."""
+def _llm_visible(name: str, result: dict) -> str:
+    """The `role: tool` body the LLM actually reads for ``result`` — the real
+    assembly (`to_canonical` → `build_offload_body` → `render_tool_result`),
+    with the default registry built first so the tool's canonical mapper is
+    declared (otherwise `to_canonical` takes the whole-dict fallback and this
+    would measure the fallback rather than the mapper)."""
+    from reyn.core.offload.canonical import to_canonical
+    from reyn.core.offload.seam import build_offload_body, render_tool_result
+    from reyn.tools import get_default_registry
+
+    get_default_registry()
+    canonical = to_canonical(result, source=name)
+    frontmatter, text, _media, _ct = build_offload_body(canonical, save_fn=None)
+    return render_tool_result(frontmatter, text)
+
+
+def test_llm_visible_list_directory_body_states_the_cap():
+    """Tier 2: a capped listing tells the LLM how many of how many it got, and
+    still delivers the entries themselves."""
     result = {
         "op": "glob", "status": "ok", "path": ".",
         "entries": [f"e{i}.txt" for i in range(50)],
         "matches": [f"e{i}.txt" for i in range(50)],
         "truncated": True, "total_count": 60, "returned_count": 50,
     }
-    out = RouterLoop._normalise_router_tool_result("list_directory", result)
+    out = _llm_visible("list_directory", result)
 
-    assert isinstance(out, list)
-    # All 50 real entries survive untouched, PLUS a trailing note naming both
-    # counts — the decision-enabling fact (how many of how many), not just a
-    # boolean. Checking membership + note content (not len()) so this stays a
-    # behavioral assertion, not a pinned shape.
-    assert all(e in out for e in result["entries"])
-    note_candidates = [e for e in out if e not in result["entries"]]
-    assert note_candidates, "expected a trailing truncation note appended to entries"
-    note = note_candidates[0]
-    assert "50" in note and "60" in note
+    # The decision-enabling fact — how many of how many — not just a boolean.
+    assert "truncated" in out
+    assert "60" in out and "50" in out
+    # The entries themselves still reach the LLM (the cap must not cost the data).
+    assert "e0.txt" in out and "e49.txt" in out
 
 
-def test_normalise_router_tool_result_list_directory_no_note_when_not_truncated():
-    """Tier 2: control — an untruncated result passes through unchanged (byte-
-    identical to the pre-#2998 shape — no spurious note, no shape change)."""
+def test_llm_visible_list_directory_body_states_no_cap_when_not_truncated():
+    """Tier 2: control — an uncapped listing carries no truncation claim. A
+    "always say truncated" non-fix would pass the witness above without this."""
     result = {
         "op": "glob", "status": "ok", "path": ".",
         "entries": ["a.txt", "b.txt"], "matches": ["a.txt", "b.txt"],
     }
-    out = RouterLoop._normalise_router_tool_result("list_directory", result)
+    out = _llm_visible("list_directory", result)
 
-    assert out == ["a.txt", "b.txt"]
+    assert "a.txt" in out and "b.txt" in out
+    assert "truncated" not in out

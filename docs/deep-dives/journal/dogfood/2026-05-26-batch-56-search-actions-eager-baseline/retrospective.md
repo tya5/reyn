@@ -21,7 +21,7 @@ Per B55 lesson `feedback_b55_prediction_miss_lessons`, **no pre-batch +V predict
 | W2 stdlib_skills_core | 4/7 | 4/7 | 0 | S2 R→V (router crash noise confirmed); S7 V→R (index_docs zero-chunks regression); S5/S6 carry-over R-2/R-3 still R |
 | W3 control_ir_ops | 7/9 | 7/9 | 0 | Identical distribution (S6 V hint holds, S7 I env, S9 R must_emit_any insufficient) |
 | W4 permissions_and_safety | 6/8 | 4/8 | **-2** | S1 V→I (inline reply, routing_decided not emitted), S2 V→I (mcp_install 3-way split didn't help LLM action lookup), S6 R persistent |
-| W5 multi_agent_and_mcp | 2/7 | 2/7 | 0 | **S1 R→V** (PR #918 `mcp__search_registry` rename effect confirmed); S4 V→I regression; S3/S5/S6/S7 R |
+| W5 multi_agent_and_mcp | 2/7 | 2/7 | 0 | **S1 R→V** (PR #918 `mcp_search_registry` rename effect confirmed); S4 V→I regression; S3/S5/S6/S7 R |
 | W6 plan_mode | 4/5 | **5/5** | **+1** | **First 5/5 perfect run.** S1 B55 regression confirmed as noise; W6-S3 path-fix holding |
 | W7 long_session_v1 | 7/7 | 5/7 | **-2** | S1 R (source__read attractor); S5 R (plan empty step for producer-consumer code) |
 
@@ -67,13 +67,13 @@ PR #925 (= issue #924, e2e-coder authored, sandbox_2 co-author per B55 primary e
 
 ### Axis 3 — PR #918 mcp action rename / 3-way install split
 
-- **`mcp__search_registry` rename**: W5-S1 R→V confirmed ✓. LLM uses the new action_name correctly (= no rename break).
+- **`mcp_search_registry` rename**: W5-S1 R→V confirmed ✓. LLM uses the new action_name correctly (= no rename break).
 - **mcp__install_server 3-way split**: W4-S2 still I (workspace arg missing) and W5-S6 still R (inline reply). The LLM's failure mode in B56 is NOT the old "one-verb XOR" schema problem the split solved; instead it's an earlier-stage routing failure (LLM doesn't reach the install action at all). The split's intended benefit (= structural disambiguation between registry / package / local install) doesn't materialise because the LLM never invokes any install verb.
 
 ### Axis 4 — PR #920 agent-lifecycle 3-path parity
 
 W5-S3 agent_delegation_simple was the target scenario. In B56:
-- LLM discovered `multi_agent__delegate` via list_actions
+- LLM discovered `delegate_to_agent` via list_actions
 - Then **empty-stopped without invoking** it
 - Never reached the `[task_completed] kind=agent` injection that PR #920 added
 
@@ -85,7 +85,7 @@ vs B55 (= 34/50):
 
 | Component | Effect | Detail |
 |---|---|---|
-| Fix effect — #918 rename delivered | +1 | W5-S1 R→V (mcp__search_registry resolves correctly) |
+| Fix effect — #918 rename delivered | +1 | W5-S1 R→V (mcp_search_registry resolves correctly) |
 | Fix effect — #920 lifecycle parity | 0 | LLM never reached delegation in W5-S3 |
 | Fix effect — #923 eager-build delivered (visibility) | 0 | visibility delivered but LLM didn't pick the now-visible search_actions (= Axis 2 isolation) |
 | Regression — W4 events strict on inline (S1 V→I) | -1 | Same R-5a/R-6 pattern (= events.must_emit `routing_decided` doesn't fire on inline) |

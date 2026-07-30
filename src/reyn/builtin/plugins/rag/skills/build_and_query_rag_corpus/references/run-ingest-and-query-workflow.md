@@ -5,12 +5,12 @@ Companion to the router SKILL.md (routing + install) and
 you haven't installed the `rag` plugin or confirmed an embedding provider
 yet. This file covers the two actual pipeline calls.
 
-Both steps below run through `pipeline__run` -- the launch verb for a
+Both steps below run through `run_pipeline` -- the launch verb for a
 **REGISTERED** pipeline, invoked by the name it was installed under
 (`"rag_ingest.ingest"` / `"rag_query.query"`). This is **not**
-`pipeline__run_inline` (an inline DSL definition instead of a name, for
+`run_pipeline_inline` (an inline DSL definition instead of a name, for
 defining a pipeline on the fly) -- passing `rag_ingest.ingest`'s
-`name`/`input` shape to `pipeline__run_inline` fails; it expects a
+`name`/`input` shape to `run_pipeline_inline` fails; it expects a
 `pipeline` body, not a `name`.
 
 **1. Ingest** -- `input_path` **must be absolute**; the pipeline globs it
@@ -21,7 +21,7 @@ ran `reyn` from**. A **cwd-relative `output_db` needs no config at all** --
 keep it there unless the operator wants the store elsewhere (see below).
 
 ```
-pipeline__run(name="rag_ingest.ingest", input={
+run_pipeline(name="rag_ingest.ingest", input={
   "input_path": "/abs/path/to/docs",        # a folder OR a single file
   "output_db": "./rag/docs.sqlite",         # zero-config: written under cwd
 })
@@ -43,7 +43,7 @@ exact requirement, but passing the right name the first time saves a
 round trip.
 
 ```
-pipeline__run(name="rag_query.query", input={
+run_pipeline(name="rag_query.query", input={
   "query_text": "how does X work?",
   "db": "./rag/docs.sqlite",                 # EXACT param name: "db"
   "top_k": 5,                                # default 5
@@ -53,7 +53,7 @@ pipeline__run(name="rag_query.query", input={
 **Want the store outside cwd?** A **declared deviation, not the default**:
 the operator must add a `write_paths` entry to `reyn_vector_store`'s config
 (see `docs/cookbook/configs/with-builtin-rag-mcp.yaml`) -- not something
-`mcp__install_local` can set. **Do not pass an absolute `output_db`/`db`
+`mcp_install_local` can set. **Do not pass an absolute `output_db`/`db`
 unless they already have**; relay a denial rather than retrying. The
 alternative you can act on is a cwd-relative `output_db`.
 

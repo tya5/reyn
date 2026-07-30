@@ -3,7 +3,7 @@
 Issue #366 — multi-modal cluster path 3/3.
 
 The command:
-  1. Resolves PATH relative to CWD (= same scope rule as file__read).
+  1. Resolves PATH relative to CWD (= same scope rule as read_file).
   2. Reads the bytes + infers the MIME type from the extension.
   3. Applies the shared media-size gate landed in #364
      (``PermissionResolver.require_media_load`` — 4-layer approval).
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from reyn.runtime.session import Session
 
 # Mirror op_runtime/file._IMAGE_EXTENSIONS so the slash command accepts
-# the same set #365 accepts via `file__read`.
+# the same set #365 accepts via `read_file`.
 _IMAGE_EXTENSIONS: dict[str, str] = {
     ".png":  "image/png",
     ".jpg":  "image/jpeg",

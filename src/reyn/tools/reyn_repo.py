@@ -259,6 +259,13 @@ REYN_REPO_READ = ToolDefinition(
 REYN_REPO_GLOB = ToolDefinition(
     canonical=reyn_repo_to_canonical,
     name="reyn_repo_glob",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_REYN_REPO_GLOB_DESCRIPTION,
     parameters=_REYN_REPO_GLOB_PARAMETERS,
     gates=ToolGates(router="allow"),
@@ -270,6 +277,13 @@ REYN_REPO_GLOB = ToolDefinition(
 REYN_REPO_GREP = ToolDefinition(
     canonical=reyn_repo_to_canonical,
     name="reyn_repo_grep",
+    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
+    # abolished this tool was reached only through ``invoke_action`` (the
+    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
+    # flag; with one name, an advertised action that lacks it lands on the
+    # "unhandled tool" safety return. Pinned by
+    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
+    router_dispatched=True,
     description=_REYN_REPO_GREP_DESCRIPTION,
     parameters=_REYN_REPO_GREP_PARAMETERS,
     gates=ToolGates(router="allow"),

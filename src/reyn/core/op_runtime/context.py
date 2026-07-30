@@ -217,14 +217,14 @@ class OpContext:
     default_sandbox_policy: dict | None = None
 
     # Issue #364: declarative cap on binary media size (= images from
-    # web__fetch / file__read / MCP / user input). When None, the gate
+    # web_fetch / read_file / MCP / user input). When None, the gate
     # is skipped — direct-OpContext constructions in tests stay
     # backward-compatible. Callers with a ReynConfig should pass
     # config.multimodal here.
     multimodal_config: "MultimodalConfig | None" = None
 
     # Issue #383 PR-C: flat-file storage for image binary + tool result
-    # text dumps. Tool handlers (web__fetch / file__read / mcp) save
+    # text dumps. Tool handlers (web_fetch / read_file / mcp) save
     # binary via ``ctx.media_store.save_image`` and emit path-ref blocks
     # in their op result instead of inline base64. When None, handlers
     # fall back to the pre-#383 inline shape (= backward-compat for

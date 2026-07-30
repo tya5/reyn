@@ -140,7 +140,7 @@ def test_write_file_router_render_exact_description():
 
     Frozen drift-guard: a description change must update this pin AND re-check
     replay fixtures (the rendered tools[] payload is what the LLM sees). #187
-    STEP 1 re-froze it after adding the reciprocal file__edit cross-ref.
+    STEP 1 re-froze it after adding the reciprocal edit_file cross-ref.
     """
     rendered = WRITE_FILE.render_for_router()
     expected_description = (
@@ -149,7 +149,7 @@ def test_write_file_router_render_exact_description():
         # wrapper idiom leaking into the rendered code-API catalog, P7/P8).
         "Write content to a file under the agent's write scope. "
         "Creates or overwrites the WHOLE file. For a partial or surgical "
-        "change to an existing file, prefer the `file__edit` action instead of "
+        "change to an existing file, prefer the `edit_file` action instead of "
         "rewriting the whole file."
     )
     assert rendered["function"]["description"] == expected_description
@@ -298,7 +298,7 @@ def test_write_file_constants_match_definition():
 
 
 def test_write_edit_descriptions_cross_reference_symmetrically():
-    """Tier 2: #187 STEP 1 — file__write and file__edit descriptions reciprocally
+    """Tier 2: #187 STEP 1 — write_file and edit_file descriptions reciprocally
     cross-reference each other (general sibling-cross-ref), so the LLM is pointed
     from a whole-file write toward a surgical edit and vice versa. Asserts the
     public surface (concept presence), not exact wording.
@@ -308,7 +308,7 @@ def test_write_edit_descriptions_cross_reference_symmetrically():
     # write → edit: points to the edit action (by its actionable qualified name)
     # for partial/surgical changes instead of rewriting the whole file.
     write_l = _WRITE_FILE_DESCRIPTION.lower()
-    assert "file__edit" in _WRITE_FILE_DESCRIPTION, "write desc must name the edit action"
+    assert "edit_file" in _WRITE_FILE_DESCRIPTION, "write desc must name the edit action"
     assert "edit" in write_l and "whole file" in write_l
 
     # edit → write: the existing reverse cross-ref (partial edit vs whole-file write).

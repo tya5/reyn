@@ -185,6 +185,7 @@ def _run_with_llm_sequence(
     host: _FakeRouterHost,
     llm_turns: list[LLMToolCallResult],
     monkeypatch: pytest.MonkeyPatch,
+    contextual_permission: object | None = None,
 ) -> None:
     """Drive RouterLoop.run() using a real coroutine sequence as call_llm_tools.
 
@@ -197,7 +198,11 @@ def _run_with_llm_sequence(
     async def _fake_call_llm_tools(**kwargs: object) -> LLMToolCallResult:
         return turns.pop(0)
 
-    loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5, scheme_name="universal-category")  # #1657
+    loop = RouterLoop(
+        host=host, chain_id="chain-test", max_iterations=5,
+        scheme_name="universal-category",  # #1657
+        contextual_permission=contextual_permission,
+    )
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools)
     asyncio.run(loop.run("hello", []))
 
@@ -241,34 +246,44 @@ def test_routing_decided_emitted_for_invoke_action(monkeypatch: pytest.MonkeyPat
 def test_routing_decided_outcome_error_on_tool_error(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: routing_decided outcome='error' when the tool result is an error.
 
-    Issue #229 changed the resolvable-direct-call path (= ``skill__bad``)
-    to salvage into ``invoke_action``, which under this test's fake host
-    completes with ``status="finished"``. To still exercise the
-    error-outcome assertion, use a name that does NOT resolve through
-    ``universal_dispatch`` — e.g. an unknown category — so the salvage
-    returns the name unchanged and the dispatcher's standard
-    ``unknown_tool`` error path produces the error result.
+    Driven through the PRE-DISPATCH exclude gate: a contextual narrowing that
+    denies ``read_file`` makes the call return the raw ``tool_excluded`` error
+    row that ``_excluded_result`` produces, which is the shape the outcome
+    discriminator reads.
+
+    #3429 changed the name this test uses. It was ``bogus_category__action`` —
+    an UNRESOLVABLE qualified name, whose bare ``{"error": ...}`` came from
+    ``dispatch_tool``'s unknown-tool rejection, and which reached the audit arm
+    at all only because that arm fired on any ``__``-containing call. The arm
+    now keys on catalog membership, so an unresolvable name emits nothing
+    (correctly: that is a rejected call, not a routing decision).
+
+    ★ A HANDLER-level failure is a different story and is NOT what this pins:
+    ``dispatch_tool`` wraps it as ``{"status": "ok", "data": {..., "status":
+    "error"}}``, which this discriminator reads as a success. That is a
+    pre-existing ``routing_decided`` completeness defect in #3455's family; it
+    was invisible while the only reachable error shape was the OS-level
+    rejection above, and #3429 neither introduced nor fixes it.
     """
+    from reyn.security.permissions.effective import ContextualPermission
+
     host = _FakeRouterHost(universal_wrappers_enabled=True)
 
-    # ``bogus_category__action`` has no _OPERATION_RULES or _RESOURCE_RULES
-    # match → resolve_invoke_action raises → #229 salvage is a no-op →
-    # dispatch_tool rejects with ``unknown_tool`` → tool_result carries
-    # ``status="error"`` → routing_decided.outcome="error".
     _run_with_llm_sequence(
         host,
         [
-            _tool_result([{"name": "bogus_category__action", "args": {}}]),
+            _tool_result([{"name": "read_file", "args": {"path": "/nonexistent/x"}}]),
             _text_result("done"),
         ],
         monkeypatch,
+        contextual_permission=ContextualPermission(tool_deny=frozenset({"read_file"})),
     )
 
     events = _routing_decided_events(host)
     (ev,) = events
-    assert ev["action_name"] == "bogus_category__action"
+    assert ev["action_name"] == "read_file"
     assert ev["outcome"] == "error", (
-        f"Expected outcome='error' for unknown action, got {ev['outcome']!r}"
+        f"Expected outcome='error' for an OS-rejected action, got {ev['outcome']!r}"
     )
 
 
@@ -329,35 +344,36 @@ def test_routing_decided_skipped_when_action_name_empty(monkeypatch: pytest.Monk
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name(monkeypatch: pytest.MonkeyPatch):
-    """Tier 2: a qualified name not in catalog tags ``source="ars_direct"``.
+def test_routing_decided_source_ars_direct_for_action_not_in_catalog(monkeypatch: pytest.MonkeyPatch):
+    """Tier 2: an action name not in tools[] tags ``source="ars_direct"``.
 
     Issue #241: distinguish "the alias was a real hot-list entry the LLM
     used correctly" (= name actually surfaced in tools[]) from "the LLM
-    picked a name from ARS text and called it directly" (= name appeared
+    picked a name from the ARS text and called it directly" (= name appeared
     only in invoke_action.description's ARS block). Pre-#241 the label
-    was unconditionally ``"hot_list_alias"`` for any ``__``-containing
-    direct call, regardless of catalog landing.
+    was unconditionally ``"hot_list_alias"`` for any such direct call,
+    regardless of catalog landing.
 
-    Uses ``bogus_category__action`` — unresolvable via universal_dispatch,
-    so the #229 salvage is a no-op and we still get the dispatcher's
-    standard ``unknown_tool`` error path. The label is the only thing
-    being verified here; the error outcome is incidental.
+    #3429: this used ``bogus_category__action``, which qualified as a "direct
+    catalog call" only because the arm tested for ``__``. The label under test
+    is about CATALOG LANDING, so the name has to be a real action that did not
+    land — which is what ``read_file`` is here (no hot-list tracker, so it is
+    never advertised as a row). The error outcome is incidental.
     """
     host = _FakeRouterHost(universal_wrappers_enabled=True)
     _run_with_llm_sequence(
         host,
         [
-            _tool_result([{"name": "bogus_category__action", "args": {}}]),
+            _tool_result([{"name": "read_file", "args": {"path": "/nonexistent/x"}}]),
             _text_result("done"),
         ],
         monkeypatch,
     )
     events = _routing_decided_events(host)
     (ev,) = events
-    assert ev["action_name"] == "bogus_category__action"
+    assert ev["action_name"] == "read_file"
     assert ev["source"] == "ars_direct", (
-        f"Expected source='ars_direct' for qualified name not in catalog, "
+        f"Expected source='ars_direct' for an action not in the catalog, "
         f"got {ev['source']!r}"
     )
 
@@ -365,29 +381,28 @@ def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name(monk
 def test_routing_decided_source_hot_list_alias_only_when_in_catalog(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: ``source="hot_list_alias"`` requires name to be in tools[].
 
-    Pin the discriminator: with a tracker pre-loaded for ``skill__bar``,
-    the alias IS in tools[] → ``"hot_list_alias"`` (already covered by
-    ``test_routing_decided_emitted_for_hot_list_alias``). Without a
-    tracker, the same name would tag ``"ars_direct"`` (= #241 split).
+    Pin the discriminator: with a tracker pre-loaded, the alias IS in tools[]
+    → ``"hot_list_alias"`` (covered by
+    ``test_routing_decided_emitted_for_hot_list_alias``). Without a tracker,
+    the SAME name tags ``"ars_direct"`` (= the #241 split).
     """
-    # Same skill name, same call shape, but no tracker → skill__bar NOT
-    # surfaced as a hot-list alias → NOT in tools[] / self._catalog.
+    # Same action, same call shape, but no tracker → not surfaced as a
+    # hot-list alias → NOT in tools[] / self._catalog.
     host = _FakeRouterHost(
         universal_wrappers_enabled=True,
         tracker=None,
-        skills=[{"name": "bar", "short_description": "bar skill"}],
     )
     _run_with_llm_sequence(
         host,
         [
-            _tool_result([{"name": "skill__bar", "args": {}}]),
+            _tool_result([{"name": "read_file", "args": {"path": "/nonexistent/x"}}]),
             _text_result("done"),
         ],
         monkeypatch,
     )
     events = _routing_decided_events(host)
     (ev,) = events
-    assert ev["action_name"] == "skill__bar"
+    assert ev["action_name"] == "read_file"
     assert ev["source"] == "ars_direct", (
         f"Without hot-list landing, source must be 'ars_direct' not "
         f"'hot_list_alias' (issue #241); got {ev['source']!r}"

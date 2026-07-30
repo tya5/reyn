@@ -149,7 +149,7 @@ def test_status_rows_attribute_count_to_on_disk_class_only(
     _write_index_db(
         index_dir,
         class_name="light",
-        vectors={"file__read": [0.1, 0.2], "web__search": [0.3, 0.4]},
+        vectors={"read_file": [0.1, 0.2], "web_search": [0.3, 0.4]},
     )
     rows = _collect_status_rows(tmp_path)
     by_name = {r.name: r for r in rows}
@@ -215,7 +215,7 @@ def test_rebuild_removes_index_files_when_present(
     """Tier 2: rebuild drops index.db + WAL sidecars + .build.lock."""
     monkeypatch.chdir(tmp_path)
     index_dir = _unified_index_dir(tmp_path)
-    _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
+    _write_index_db(index_dir, "standard", {"read_file": [0.1, 0.2]})
     (index_dir / ".build.lock").write_text("{}", encoding="utf-8")
     run_rebuild(Namespace(name=None))
     out = capsys.readouterr().out
@@ -266,7 +266,7 @@ def test_rebuild_known_class_name_notes_shared_cache(
     """
     monkeypatch.chdir(tmp_path)
     index_dir = _unified_index_dir(tmp_path)
-    _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
+    _write_index_db(index_dir, "standard", {"read_file": [0.1, 0.2]})
     run_rebuild(Namespace(name="standard"))
     out = capsys.readouterr().out
     assert "standard" in out
@@ -287,7 +287,7 @@ def test_clear_removes_index_dir(
     """
     monkeypatch.chdir(tmp_path)
     index_dir = _unified_index_dir(tmp_path)
-    _write_index_db(index_dir, "standard", {"file__read": [0.1, 0.2]})
+    _write_index_db(index_dir, "standard", {"read_file": [0.1, 0.2]})
 
     run_clear(Namespace())
     out = capsys.readouterr().out

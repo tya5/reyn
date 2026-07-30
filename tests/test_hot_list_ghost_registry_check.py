@@ -11,7 +11,7 @@ Names must pass BOTH structural check AND registry-existence check to enter
 the hot list.
 
 Test plan:
-  R3. valid static-op alias (in KNOWN_STATIC_QUALIFIED_NAMES) passes through.
+  R3. valid static-op alias (in KNOWN_ACTION_NAMES_SORTED) passes through.
   R4. ghost static-op (structurally valid category, not in static ops) is filtered.
   R7. mcp.tool ghost (not in mcp_tool_map) is filtered.
   R8. #3026 — a legacy DOTTED mcp.tool name is filtered regardless of
@@ -22,12 +22,12 @@ Test plan:
        tracker after the entry was deleted / after the #3026 collapse).
 
 No mocks. Uses real _filter_ghost_names_by_registry + real
-KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
+KNOWN_ACTION_NAMES_SORTED. No RouterLoop instantiation required.
 """
 from __future__ import annotations
 
 from reyn.runtime.router_loop import _filter_ghost_names_by_registry
-from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
+from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES_SORTED
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,11 +55,11 @@ def _call_filter(
 
 
 def test_r3_valid_static_op_passes_registry_check() -> None:
-    """Tier 2: a name in KNOWN_STATIC_QUALIFIED_NAMES passes registry check."""
+    """Tier 2: a name in KNOWN_ACTION_NAMES_SORTED passes registry check."""
     # Pick a known static op; verify it's still in the static set defensively.
-    static_name = "file__read"
-    assert static_name in KNOWN_STATIC_QUALIFIED_NAMES, (
-        f"{static_name!r} must be in KNOWN_STATIC_QUALIFIED_NAMES for this test to be valid."
+    static_name = "read_file"
+    assert static_name in KNOWN_ACTION_NAMES_SORTED, (
+        f"{static_name!r} must be in KNOWN_ACTION_NAMES_SORTED for this test to be valid."
     )
     result = _call_filter([static_name])
 
@@ -75,10 +75,10 @@ def test_r4_structurally_valid_nonexistent_op_filtered() -> None:
     """Tier 2: a structurally valid name not in static ops or any registry is filtered.
 
     Example: file__nonexistent_op_xyz — valid category 'file', valid separator,
-    non-empty entry; but not in KNOWN_STATIC_QUALIFIED_NAMES.
+    non-empty entry; but not in KNOWN_ACTION_NAMES_SORTED.
     """
     ghost = "file__nonexistent_op_xyz"
-    assert ghost not in KNOWN_STATIC_QUALIFIED_NAMES, (
+    assert ghost not in KNOWN_ACTION_NAMES_SORTED, (
         f"Precondition: {ghost!r} must not exist in static ops."
     )
     result = _call_filter([ghost])
@@ -90,7 +90,7 @@ def test_r4_structurally_valid_nonexistent_op_filtered() -> None:
 
 # Phase 1 multi_agent collapse (2026-05-25): agent.peer__<name> per-peer
 # hot-list alias removed.  Peers are now dispatched generically via
-# multi_agent__delegate (operation alias); the dynamic ``to`` enum is
+# delegate_to_agent (operation alias); the dynamic ``to`` enum is
 # enriched per-call from available_agents at LLM-call time, so per-peer
 # ghost filtering at hot-list-build time is no longer applicable.
 
@@ -100,7 +100,7 @@ def test_r4_structurally_valid_nonexistent_op_filtered() -> None:
 
 # Issue #879: the ``mcp.tool__<srv>.<tool>`` per-tool hot-list alias path
 # was removed when the MCP surface collapsed to verb actions. Tools are
-# now dispatched generically via ``mcp__call_tool``; per-tool ghost
+# now dispatched generically via ``mcp_call_tool``; per-tool ghost
 # filtering at the hot-list-build boundary is no longer applicable.
 
 
@@ -145,7 +145,7 @@ def test_r11_memory_entry_always_filtered_after_collapse() -> None:
     file, and this test used to pin that such an alias SURVIVES the ghost filter.
     #3026 collapsed the memory_entry category — the name no longer resolves, so
     letting it through would emit a function name the dispatcher rejects.
-    Reading a memory is now memory_operation__read (which also reaches the AGENT
+    Reading a memory is now read_memory_body (which also reaches the AGENT
     layer the alias never could). The filter needs no special case to get this
     right: with no dynamic categories left, the static op registry is the whole
     action set and a memory_entry name simply is not in it.

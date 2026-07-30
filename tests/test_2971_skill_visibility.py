@@ -377,10 +377,10 @@ def test_skill_list_is_registered_and_routed() -> None:
     — the registry (bare call) and the universal-catalog route (invoke_action).
     A tool wired to one but not the other is the "registered but LLM-invisible"
     bug class #2971 itself is an instance of."""
-    from reyn.tools.universal_dispatch import _OPERATION_RULES
+    from reyn.tools.universal_dispatch import is_known_action
 
     assert get_default_registry().lookup("skill_list") is not None
-    assert _OPERATION_RULES["skill_management__list"][0] == "skill_list"
+    assert is_known_action("skill_list")
 
 
 def test_skill_list_is_enumerated_in_its_category() -> None:
@@ -392,5 +392,5 @@ def test_skill_list_is_enumerated_in_its_category() -> None:
     """
     from reyn.tools.universal_catalog import _enumerate_static_category
 
-    names = {a["qualified_name"] for a in _enumerate_static_category("skill_management")}
-    assert "skill_management__list" in names
+    names = {a["action_name"] for a in _enumerate_static_category("skill_management")}
+    assert "skill_list" in names

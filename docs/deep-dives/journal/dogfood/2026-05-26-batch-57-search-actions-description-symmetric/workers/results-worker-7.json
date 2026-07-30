@@ -64,7 +64,7 @@
       "key_observations": [
         "No expected/rubric section. All 5 turns returned HTTP 200, non-empty replies.",
         "T4 (compare LangGraph vs Reyn async) and T5 (migration steps) both referenced both systems — cross-reference maintained.",
-        "web__search used for T1 (LangGraph) and T2 (Reyn)."
+        "web_search used for T1 (LangGraph) and T2 (Reyn)."
       ]
     },
     {
@@ -109,7 +109,7 @@
       "key_observations": [
         "No expected/rubric section. All 5 turns returned HTTP 200, non-empty replies.",
         "source__glob called 3 times but returned 'tool not available' errors — agent fell back to 'I cannot find any ADRs' responses.",
-        "T4 used file__glob as fallback after source__glob failure. T5 used reyn.source__list.",
+        "T4 used glob_files as fallback after source__glob failure. T5 used reyn.source__list.",
         "All replies non-empty despite tool failures — agent communicated failure state clearly."
       ]
     },

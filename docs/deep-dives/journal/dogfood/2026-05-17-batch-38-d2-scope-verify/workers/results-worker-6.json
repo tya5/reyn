@@ -45,7 +45,7 @@
     "ars_entries_count": 19,
     "ars_header": "ACTION ARG SCHEMAS (canonical keys for all session-visible actions)",
     "sources_confirmed": ["static_operations (KNOWN_STATIC_QUALIFIED_NAMES)", "session_skills (skill_meta_map)", "mcp_tools", "peer_agents"],
-    "sample_entries": ["exec__sandboxed_exec", "file__grep", "file__list", "web__search", "skill__mcp_search", "skill__skill_builder"],
+    "sample_entries": ["exec__sandboxed_exec", "grep_files", "list_directory", "web_search", "skill__mcp_search", "skill__skill_builder"],
     "behavioral_confirmation": "plan steps used invoke_action for file reads without arg hallucination. D2-wrapper ARS block present in tool calls.",
     "note": "router_loop._collect_all_session_ars_entries() + _enrich_invoke_action_description() confirmed in B38 code. invoke_action.description ARS header reads 'all session-visible actions' (was 'current hot-list actions' in B37)."
   },
@@ -205,8 +205,8 @@
       "id": "B38-W6-F4",
       "severity": "INFO",
       "description": "D2-wrapper scope expansion confirmed: _collect_all_session_ars_entries returns 19 entries covering static ops + session skills. ARS block header 'all session-visible actions' confirmed.",
-      "evidence": "Runtime check returned 19 entries including exec__sandboxed_exec, file__grep, web__search, skill__mcp_search, skill__skill_builder. Plan step tool calls used invoke_action for file reads without hallucinated args.",
-      "impact": "D2-wrapper now covers non-hot-listed actions (file__write, rag.operation__drop_source, agent.peer__*). B37 canonical-key hallucination gap addressed."
+      "evidence": "Runtime check returned 19 entries including exec__sandboxed_exec, grep_files, web_search, skill__mcp_search, skill__skill_builder. Plan step tool calls used invoke_action for file reads without hallucinated args.",
+      "impact": "D2-wrapper now covers non-hot-listed actions (write_file, rag.operation__drop_source, agent.peer__*). B37 canonical-key hallucination gap addressed."
     }
   ]
 }

@@ -39,11 +39,11 @@
       "short_id": "s2",
       "verdict": "I",
       "b39_verdict": "R",
-      "events_observed": ["routing_decided (file__glob)", "routing_decided (file__grep)", "tool_executed"],
+      "events_observed": ["routing_decided (glob_files)", "routing_decided (grep_files)", "tool_executed"],
       "events_missing": [],
       "events_forbidden_seen": [],
-      "reply_summary": "LLM correctly used file__glob then file__grep (hot_list_alias source). Reported no skill.md under src/ mentions judge_output.",
-      "notes": "B39 R was due to wrong tool routing (file__list vs file__glob). B41: correct file__glob + file__grep routing confirmed. Rubric unmet because no skill.md under src/ actually contains 'judge_output' — scenario premise mismatch with environment. Verdict I (routing fix confirmed, rubric unverifiable due to environment). Delta: R→I."
+      "reply_summary": "LLM correctly used glob_files then grep_files (hot_list_alias source). Reported no skill.md under src/ mentions judge_output.",
+      "notes": "B39 R was due to wrong tool routing (list_directory vs glob_files). B41: correct glob_files + grep_files routing confirmed. Rubric unmet because no skill.md under src/ actually contains 'judge_output' — scenario premise mismatch with environment. Verdict I (routing fix confirmed, rubric unverifiable due to environment). Delta: R→I."
     },
     {
       "id": "web_search_query",
@@ -128,7 +128,7 @@
       "id": "NF-W3-1",
       "severity": "LOW",
       "scenario": "file_glob_grep",
-      "description": "S2 routing fix confirmed: B41 correctly routes to file__glob + file__grep (B39 R was wrong tool). However rubric is permanently unverifiable in this environment because no skill.md under src/ contains 'judge_output'. Scenario premise should be updated to use a search term that actually exists.",
+      "description": "S2 routing fix confirmed: B41 correctly routes to glob_files + grep_files (B39 R was wrong tool). However rubric is permanently unverifiable in this environment because no skill.md under src/ contains 'judge_output'. Scenario premise should be updated to use a search term that actually exists.",
       "recommendation": "Update S2 input to search for a term that exists in skill.md files under src/ (e.g., 'entry_phase' or 'judge') to make rubric verifiable."
     },
     {

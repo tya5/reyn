@@ -244,7 +244,7 @@ FP-0034 は 6 Phase 構成。実装状態を Phase ごとに確認。
 
 FP-0034 universal mode では:
 - `reyn_src_read` → `invoke_action(action_name="reyn.source__read", ...)`
-- `web_search` → `invoke_action(action_name="web__search", ...)`
+- `web_search` → `invoke_action(action_name="web_search", ...)`
 - `invoke_skill` → `invoke_action(action_name="skill__...", ...)`
 
 計画作成時に LLM が `tools` フィールドに `["reyn_src_read"]` と入力しても、Plan Step の実行環境では `reyn_src_read` は tools= に存在しない（Section J で除外済み）。

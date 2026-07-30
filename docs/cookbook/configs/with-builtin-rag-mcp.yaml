@@ -7,7 +7,7 @@
 #
 # This file is a REFERENCE, not something you copy into reyn.yaml -- unlike
 # the pre-ADR-0064 shape, there is no "by-hand YAML" option for REGISTRATION:
-# a plugin's capabilities are registered by `plugin_management__install`, not
+# a plugin's capabilities are registered by `install_plugin`, not
 # by hand-editing `mcp.servers`/`pipelines.entries`. You DO still need one
 # hand step post-registration -- pointing the two builtin servers at your own
 # venv, below (#3209: install is register-only, it never provisions deps).
@@ -16,7 +16,7 @@
 # Install (register-only, #3209) + your own venv
 # ---------------------------------------------------------------------------
 #
-#   plugin_management__install(source={"kind": "builtin", "name": "rag"})
+#   install_plugin(source={"kind": "builtin", "name": "rag"})
 #
 # This call copies `src/reyn/builtin/plugins/rag/` to `~/.reyn/plugins/rag/`
 # and registers both MCP servers + both pipelines + the skill into your
@@ -74,7 +74,7 @@
 # The THIRD server -- markitdown, a third-party MCP server, not part of the
 # rag plugin -- is installed separately (it is not reyn's code to bundle):
 #
-#   mcp__install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
+#   mcp_install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"])
 #
 # Do NOT `pip install markitdown-mcp` beside reyn: `command: uvx` fetches it
 # into uvx's OWN isolated environment on first run, which is the point --
@@ -85,7 +85,7 @@
 #
 #   python3 -m venv ./.venv-markitdown
 #   ./.venv-markitdown/bin/pip install markitdown-mcp
-#   mcp__install_local(name="reyn_markitdown", args=[],
+#   mcp_install_local(name="reyn_markitdown", args=[],
 #                      command="/abs/path/to/this/project/.venv-markitdown/bin/markitdown-mcp")
 #
 # rag_ingest's own step-0 pre-flight (X1) probes each of the three servers
@@ -104,9 +104,9 @@
 # needs no extra config at all -- this is the zero-config default, not a
 # shortcut:
 #
-#   pipeline__run(name="rag_ingest.ingest", input={
+#   run_pipeline(name="rag_ingest.ingest", input={
 #     "input_path": "/abs/path/to/docs", "output_db": "./rag/docs.sqlite"})
-#   pipeline__run(name="rag_query.query", input={
+#   run_pipeline(name="rag_query.query", input={
 #     "query_text": "how does X work?", "db": "./rag/docs.sqlite"})
 #
 # Or, outside a chat session:
@@ -118,13 +118,13 @@
 # path in another project)? That is supported, but it is a DECLARED
 # DEVIATION from the default above, not a drop-in substitute for it: add a
 # `write_paths` entry naming that location to the `reyn_vector_store`
-# server's own config (`.reyn/config/mcp.yaml`, the entry `plugin_management__install`
+# server's own config (`.reyn/config/mcp.yaml`, the entry `install_plugin`
 # wrote) --
 #
 #   mcp:
 #     servers:
 #       reyn_vector_store:
-#         # ... plugin_management__install's own fields unchanged ...
+#         # ... install_plugin's own fields unchanged ...
 #         write_paths: ["~/reyn-rag"]
 #
 # -- then `output_db`/`db` may point anywhere under it, absolute or not.
@@ -132,7 +132,7 @@
 # the ingest fails -- so do not hand an absolute `output_db` to `rag_ingest`
 # unless this is already in place. If you do, the failure tells you: it
 # names the sandbox, the exact path refused, and this `write_paths` knob.
-# `write_paths` is not something `plugin_management__install`/`mcp__install_local` can
+# `write_paths` is not something `install_plugin`/`mcp_install_local` can
 # set -- it is a hand-edit to the registered entry.
 #
 # The RAG skill (installed alongside the plugin's other capabilities --
@@ -158,4 +158,4 @@
 # input with a default, so a drop-in replacement exposing the same tool
 # shapes needs no file edit -- just pass `vectorstore_server: "my_qdrant"`.
 # Prefer to keep your edit reusable? Promote it back as its own plugin:
-# `plugin_management__install(source={"kind": "local", "path": "..."})`.
+# `install_plugin(source={"kind": "local", "path": "..."})`.

@@ -92,19 +92,6 @@ def load_capability_profile(path: "str | Path") -> CapabilityProfile:
     )
 
 
-def _expand_tool_forms(names: "tuple[str, ...]") -> "frozenset[str]":
-    """#2132: every name PLUS all its invocable forms (bare + qualified), so a per-session
-    TOOL deny/allow covers the dual-form tool on EVERY scheme path (the gate matches the
-    effective resolved name). Derived from the ``invoke_action`` SoT — complete-by-
-    construction, bidirectional (a name written in either form expands to both)."""
-    from reyn.tools.universal_dispatch import all_invocable_forms
-
-    forms: "set[str]" = set()
-    for name in names:
-        forms |= all_invocable_forms(name)
-    return frozenset(forms)
-
-
 def resolve_profile(
     profile: CapabilityProfile,
 ) -> "tuple[ContextualPermission, frozenset[str]]":
@@ -119,18 +106,18 @@ def resolve_profile(
     so do not reduce the excluded set (they are a no-op, not an error — the loader
     is forward-compat).
     """
-    # #2132: normalize the TOOL axis to ALL invocable forms (bare AND qualified). A
-    # spawner's narrowing may name a tool in either spelling, but the live gate matches
-    # the effective resolved name (scheme-dependent), so a deny/allow of bare
-    # ``delete_file`` must also cover native ``file__delete`` (and vice versa) — else a
-    # dual-form tool (file__* / mcp__*) is reachable via the unlisted form. The per-session
-    # analogue of the #2111 floor's qualified→bare derivation, but BIDIRECTIONAL.
+    # #3429: the TOOL axis is used verbatim. #2132 used to expand every name to
+    # "all its invocable forms" here, because a tool had two spellings and the live
+    # gate matches whichever one the scheme resolved to — a deny written in the
+    # unlisted spelling left the tool reachable. That machinery is deleted with the
+    # second spelling: a tool has one name, so the name an operator writes IS the
+    # name the gate matches.
     contextual = ContextualPermission(
         tool_allow=(
-            _expand_tool_forms(profile.tool_allow)
+            frozenset(profile.tool_allow)
             if profile.tool_allow is not None else None
         ),
-        tool_deny=_expand_tool_forms(profile.tool_deny),
+        tool_deny=frozenset(profile.tool_deny),
         mcp_allow=(
             frozenset(profile.mcp_allow) if profile.mcp_allow is not None else None
         ),
@@ -209,49 +196,45 @@ UNTRUSTED_PROFILE_NAME: "str" = "_untrusted"
 
 # The built-in secure default: deny the side-effecting / persistence /
 # re-delegation / execution / install surfaces so untrusted content can be read
-# and reasoned about but cannot drive irreversible actions. Both the qualified
-# catalog names and their unwrapped aliases are denied (the live gate matches the
-# effective resolved name, which differs by scheme / invoke_action unwrap).
+# and reasoned about but cannot drive irreversible actions.
 #
 # Grouped by CLASS (#2081 S3): the runtime FLOOR is the flat union below; the
 # delegation-unsafe AUDIT (DELEGATION_AUDIT_CLASSES) derives its FLOORED classes +
 # severities from these same groups — so the floor and the audit cannot drift apart.
 #
-# #2111 (CRITICAL fix): each class is defined by its QUALIFIED (universal-catalog)
-# names; the bare/unwrapped aliases are DERIVED from the invoke_action unwrap
-# source-of-truth (``unwrapped_tool_name``) — so EVERY invocable form (bare AND
-# qualified) is denied on EVERY scheme path, COMPLETE-BY-CONSTRUCTION. (The prior
-# manual lists missed the bare memory-write + mcp-install aliases — a delegate / an
-# untrusted-content turn could call bare ``remember_shared`` and persist to shared
-# memory. Deriving kills that gap-class at the root: a new floored tool can't miss
-# its alias.) Shared by BOTH floors (builtin_untrusted_profile + builtin_delegate_
-# profile), so this closes the gap on both surfaces.
-_FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
+# #2111 (CRITICAL fix) named each class by its QUALIFIED (universal-catalog) name
+# and DERIVED the bare alias, because a tool reachable under two spellings had to be
+# denied under both and the hand-written lists had missed the bare memory-write +
+# mcp-install aliases — a delegate could call bare ``remember_shared`` and persist to
+# shared memory. #3429 removed the second spelling, so the derivation has nothing
+# left to derive: each class names the tools directly, and the gate matches those
+# names on every path. Shared by BOTH floors (builtin_untrusted_profile +
+# builtin_delegate_profile).
+_FLOORED_TOOLS: "dict[str, frozenset[str]]" = {
     # memory writes / deletes — no persistence from untrusted content
     "memory-write": frozenset({
-        "memory_operation__remember_shared",
-        "memory_operation__remember_agent",
-        "memory_operation__forget",
+        "remember_shared",
+        "remember_agent",
+        "forget_memory",
     }),
     # re-delegation — no spawning peers from untrusted content
-    "re-delegation": frozenset({"multi_agent__delegate"}),
+    "re-delegation": frozenset({"delegate_to_agent"}),
     # code execution. #3226 Phase 1: the #2593 pipeline DSL `shell` tool
     # (thin sugar over sandboxed_exec, same subprocess-exec threat surface)
     # was removed outright — it was the sole `/bin/sh -c <str>` injection
     # surface in the codebase — so it no longer needs a deny-parity entry.
     # #3226 Phase 3: the surviving tool renamed sandboxed_exec -> exec
-    # (qualified name exec__run).
-    "exec": frozenset({"exec__run"}),
+    "exec": frozenset({"exec"}),
     # MCP install — no installing servers from untrusted content
     "mcp-install": frozenset({
-        "mcp__install_registry", "mcp__install_package", "mcp__install_local",
+        "mcp_install_registry", "mcp_install_package", "mcp_install_local",
     }),
     # skill install — no registering skills from untrusted content (mirrors mcp-install).
     # PR-D adds install_source (git/GitHub fetch) — same threat surface as install_local,
     # and higher (remote fetch adds a new HTTP trust boundary).
     "skill-install": frozenset({
-        "skill_management__install_local",
-        "skill_management__install_source",
+        "skill_install_local",
+        "skill_install_source",
     }),
     # pipeline install — no registering pipelines from untrusted content
     # (mirrors skill-install exactly: a source install adds an HTTP trust
@@ -259,8 +242,8 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # narrowed identity, but the REGISTRATION action itself must not be
     # reachable from untrusted content / an unbound delegate).
     "pipeline-install": frozenset({
-        "pipeline_management__install_local",
-        "pipeline_management__install_source",
+        "pipeline_install_local",
+        "pipeline_install_source",
     }),
     # session/agent spawn — no spawning sub-sessions/agents from untrusted content / an
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model
@@ -269,65 +252,35 @@ _FLOORED_QUALIFIED: "dict[str, frozenset[str]]" = {
     # B-tool adds ``agent_spawn`` (org-design create); C1 adds ``topology_create``
     # (org-design wiring + capability-profile binding — same DoS-floor rationale: an
     # unbound delegate must not forge an org). All router-only tools with NO
-    # invoke_action route today, so BARE-ONLY (no qualified→bare unwrap alias); a
-    # future qualified route would be floored by the same _with_unwrapped_aliases
-    # derivation.
+    # invoke_action route today; they are floored by their own names, like
+    # everything else here.
     "spawn": frozenset({"session_spawn", "agent_spawn", "topology_create"}),
     # IS-1 (pipeline v0.9 R6): no launching a registered pipeline from
     # untrusted content / an unbound delegate — a pipeline step can itself
     # write / exec / delegate (bounded ⊆ the invoker per R6, but still a
     # cost-bound multi-step dispatch), so pipeline launch gets the same
     # spawn-adjacent floor as session_spawn/agent_spawn/topology_create.
-    # Has a qualified route (pipeline__run) unlike the bare-only spawn
-    # trio, so its bare alias (run_pipeline) is derived by
-    # _with_unwrapped_aliases below — no _FLOORED_BARE_ONLY entry needed.
-    # IS-2: the async launch (pipeline__run_async → run_pipeline_async) is
+    # IS-2: the async launch (``run_pipeline_async``) is
     # the SAME threat class — it additionally spawns a driver-session, so it
     # must not be floored looser than the sync verb.
-    # IS-4: the ad-hoc INLINE launches (pipeline__run_inline /
-    # pipeline__run_inline_async → run_pipeline_inline{,_async}) run an
+    # IS-4: the ad-hoc INLINE launches (``run_pipeline_inline`` /
+    # ``run_pipeline_inline_async``) run an
     # agent-GENERATED pipeline — an even STRICTER-to-trust surface than a
     # registered one (no trusted registrant chose the steps), so they belong on
-    # the SAME spawn-adjacent floor. Bare aliases are auto-derived by
-    # ``_with_unwrapped_aliases`` (both have an invoke_action route).
+    # the SAME spawn-adjacent floor.
     "pipeline-run": frozenset({
-        "pipeline__run", "pipeline__run_async",
-        "pipeline__run_inline", "pipeline__run_inline_async",
+        "run_pipeline", "run_pipeline_async",
+        "run_pipeline_inline", "run_pipeline_inline_async",
     }),
 }
 
-# Intentionally BARE-ONLY floored names: router-only tools with NO invoke_action
-# (universal-catalog) route, so ``unwrapped_tool_name`` returns None and the entry IS
-# already the sole invocable form (floored by its own name, no qualified→bare alias to
-# derive). Declared explicitly so the SoT-completeness guard distinguishes an
-# *intentional* bare-only entry from a *malformed* qualified name — a typo or a missing
-# ``_OPERATION_RULES`` entry whose unwrap silently returns None would otherwise floor a
-# non-existent form, leaving the real route UNGUARDED (the #2111 gap-class, in the
-# opposite direction). Invariant (enforced by tests/test_2111_floor_alias_completeness):
-# every name in ``_FLOORED_QUALIFIED`` either unwraps to a bare alias OR is listed here.
-_FLOORED_BARE_ONLY: "frozenset[str]" = frozenset(
-    # #3226 Phase 1: the #2593 bare-registry `shell` tool (no invoke_action
-    # qualified route) that used to sit alongside this spawn trio was removed
-    # outright — see the `"exec"` entry's comment above.
-    {"session_spawn", "agent_spawn", "topology_create"}
-)
-
-
-def _with_unwrapped_aliases(qualified: "frozenset[str]") -> "frozenset[str]":
-    """Each qualified name PLUS its bare unwrapped alias (from the invoke_action
-    source-of-truth) — every invocable form, complete-by-construction (#2111)."""
-    from reyn.tools.universal_dispatch import unwrapped_tool_name
-    forms = set(qualified)
-    for q in qualified:
-        bare = unwrapped_tool_name(q)
-        if bare is not None:
-            forms.add(bare)
-    return frozenset(forms)
-
-
-_FLOORED_DENY_CLASSES: "dict[str, frozenset[str]]" = {
-    cls: _with_unwrapped_aliases(q) for cls, q in _FLOORED_QUALIFIED.items()
-}
+# The floor names ARE the deny set: #3429 left every tool with exactly one
+# invocable name, so there is no per-class derivation step between the declaration
+# and the enforced set. ``tests/test_2111_floor_alias_completeness.py`` pins the
+# replacement invariant — every floored name is a REGISTERED tool name, so a typo
+# floors nothing and is caught rather than silently leaving the real route
+# unguarded (the #2111 gap-class, in the opposite direction).
+_FLOORED_DENY_CLASSES: "dict[str, frozenset[str]]" = dict(_FLOORED_TOOLS)
 _BUILTIN_UNTRUSTED_DENY: "frozenset[str]" = frozenset().union(*_FLOORED_DENY_CLASSES.values())
 
 
@@ -436,7 +389,7 @@ DELEGATION_AUDIT_CLASSES: "dict[str, tuple[str, frozenset[str]]]" = {
     cls: (_FLOORED_AUDIT_SEVERITY[cls], tools)
     for cls, tools in _FLOORED_DENY_CLASSES.items()
 }
-DELEGATION_AUDIT_CLASSES["destructive-fs"] = ("MED", frozenset({"delete_file", "file__delete"}))
+DELEGATION_AUDIT_CLASSES["destructive-fs"] = ("MED", frozenset({"delete_file"}))
 
 
 def profile_permits(profile: CapabilityProfile, tool: str) -> bool:

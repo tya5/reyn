@@ -101,7 +101,7 @@ Memory `feedback_iterative_replay_patch_disambiguation.md` was applied for the f
 
 | Scenario | Mid-batch B30 hypothesis | **Ablation verdict** | Confidence |
 |---|---|---|---|
-| **S2 file_glob_grep** | "B27-M2 file__grep drop made LLM fall back to file__list" | **CONFIRMED — B27-M2** | HIGH (3/3 vs 3/3) |
+| **S2 file_glob_grep** | "B27-M2 grep_files drop made LLM fall back to list_directory" | **CONFIRMED — B27-M2** | HIGH (3/3 vs 3/3) |
 | **S4 web_fetch_url** | "B29-MED-3 cwd injection pushed LLM toward plan-first" | **REFUTED — probabilistic N=1 noise** | HIGH |
 | **S5 sandboxed_exec_simple** | "B28-Q2 classification shift only" | **CONFIRMED — Q2 classification rule, no code regression** | HIGH |
 | S7 recall_indexed_source | "B28-MED-1 seed reshaped LLM RAG mental model" | UNRESOLVED — `plan.py._PLAN_DESCRIPTION` "recall" example is a candidate but unchanged B28→B30 | needs follow-up |
@@ -109,12 +109,12 @@ Memory `feedback_iterative_replay_patch_disambiguation.md` was applied for the f
 
 ### 3.2 Ablation method
 
-`P-M2` for S2: re-inject `file__grep` into the tools array of B28's S2 first-request trace via llm_replay's `--patch` syntax. N=3 calls per condition.
+`P-M2` for S2: re-inject `grep_files` into the tools array of B28's S2 first-request trace via llm_replay's `--patch` syntax. N=3 calls per condition.
 
-- **Baseline** (no patch, post-M2 tool array): 3/3 LLM choices = `invoke_action(file__list)` (= wrong args, KeyError)
-- **P-M2 patch** (file__grep present): 3/3 LLM choices = `invoke_action(file__grep)` (= correct)
+- **Baseline** (no patch, post-M2 tool array): 3/3 LLM choices = `invoke_action(list_directory)` (= wrong args, KeyError)
+- **P-M2 patch** (grep_files present): 3/3 LLM choices = `invoke_action(grep_files)` (= correct)
 
-The B28 verified outcome was a single lucky run; the underlying attractor (= file__list with wrong args when file__grep is absent) is **persistent**, not regressive.
+The B28 verified outcome was a single lucky run; the underlying attractor (= list_directory with wrong args when grep_files is absent) is **persistent**, not regressive.
 
 ### 3.3 Discipline lessons
 
@@ -128,13 +128,13 @@ The B30 retrospective said "the dogfood-discipline becomes load-bearing rather t
 
 ## 4. New findings surfaced in B32
 
-### 4.1 [HIGH-pre-existing, ablation-confirmed] file__grep absence = persistent file__list mis-call attractor (B27-M2 ablation)
+### 4.1 [HIGH-pre-existing, ablation-confirmed] grep_files absence = persistent list_directory mis-call attractor (B27-M2 ablation)
 
-§3.1 S2. Removing `file__grep` from the seed without a routing rule for it created an LLM attractor toward `file__list` with wrong args. This is the **persistent** state of S2, not a B30 regression.
+§3.1 S2. Removing `grep_files` from the seed without a routing rule for it created an LLM attractor toward `list_directory` with wrong args. This is the **persistent** state of S2, not a B30 regression.
 
 **Fix candidate**: either
-(a) implement `file__grep` routing rule + handler (= FP-0034 §D20 follow-up), OR
-(b) add an envelope-layer hint when `file__list` is called with non-path args (= "did you mean file__glob? did you mean a search tool?").
+(a) implement `grep_files` routing rule + handler (= FP-0034 §D20 follow-up), OR
+(b) add an envelope-layer hint when `list_directory` is called with non-path args (= "did you mean glob_files? did you mean a search tool?").
 
 (a) is the principled fix. (b) is the cheap fix.
 
@@ -181,7 +181,7 @@ LLM passed `args` as a JSON-encoded string `"{\"message\":\"...\"}"` instead of 
 
 ### 4.8 [MED] mcp.operation__install has no routing rule (W4 S2)
 
-`mcp.operation__install` is in scenarios' expected events but has no entry in `_OPERATION_RULES`. `skill_run_spawned` never fires. Adjacent to §4.1 (file__grep): scenarios reference qualified names that don't dispatch.
+`mcp.operation__install` is in scenarios' expected events but has no entry in `_OPERATION_RULES`. `skill_run_spawned` never fires. Adjacent to §4.1 (grep_files): scenarios reference qualified names that don't dispatch.
 
 ### 4.9 [MED-rubric] mcp_search async skill interrupted by stdin close (W2 S4/S7/S9-T2)
 
@@ -197,7 +197,7 @@ When stdin closes (= dogfood worker pipes a single user turn and exits), in-flig
 
 | ID | Source | Direction |
 |---|---|---|
-| **§4.1** | B27-M2 ablation | Implement file__grep handler (a) or add file__list arg-hint (b) |
+| **§4.1** | B27-M2 ablation | Implement grep_files handler (a) or add list_directory arg-hint (b) |
 | §4.2 | W3 S1 race | Block `(answered)` until skills terminal |
 | §4.3 | W6 spawn-ack hallucination | Envelope guard on spawn-ack language |
 | §4.4 | W7 B23-PRE-1 widening | Skill description audit (eval / builder / importer / improver class) |
@@ -230,7 +230,7 @@ When stdin closes (= dogfood worker pipes a single user turn and exits), in-flig
 
 ### What surprised us
 
-- **B28 W3 verified was lucky N=1**. The ablation evidence (= 3/3 baseline file__list, 3/3 patched file__grep) means the "regression" framing was incorrect: the persistent attractor was always present, just hidden behind a single probabilistic outcome. The implication: any verified count without N≥3 (or ideally N=5 per scenario at this point in the project) is **calibration-grade**, not **shippable-grade**.
+- **B28 W3 verified was lucky N=1**. The ablation evidence (= 3/3 baseline list_directory, 3/3 patched grep_files) means the "regression" framing was incorrect: the persistent attractor was always present, just hidden behind a single probabilistic outcome. The implication: any verified count without N≥3 (or ideally N=5 per scenario at this point in the project) is **calibration-grade**, not **shippable-grade**.
 - **The wipe recipe is leakier than it looks**. Three independent contamination surfaces (= reyn/local/, wal.jsonl, history.jsonl) all found within 3 batches. The OS architecture's stateful surfaces are richer than the operator's mental model. The `reyn dogfood wipe` command idea (= §6) addresses this gap structurally.
 
 ---
@@ -240,7 +240,7 @@ When stdin closes (= dogfood worker pipes a single user turn and exits), in-flig
 In priority order:
 
 1. **Wipe recipe extension** (= B32-NEW-FINDING-1/2 → task #98): add wal.jsonl + history.jsonl. Doc update + dispatch prompt template.
-2. **§4.1 file__grep**: pick (a) implement handler or (b) envelope hint. (a) is principled, (b) is cheap.
+2. **§4.1 grep_files**: pick (a) implement handler or (b) envelope hint. (a) is principled, (b) is cheap.
 3. **§4.4 skill description audit** (= eval / skill_builder / skill_improver / skill_importer): description disambiguation, modeled on B29 eval audit.
 4. **§4.6 args double-serialize**: envelope-layer JSON-string detection. Defensive normalization.
 5. **§4.2 race condition**: router `(answered)` injection should wait for spawned-this-turn skills to reach terminal state.

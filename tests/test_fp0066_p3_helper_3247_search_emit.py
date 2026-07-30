@@ -110,7 +110,7 @@ def test_catalog_search_actions_emits_complete_on_query_failure(
     build_provider = _FakeEmbeddingProvider()
     build_ctx = _op_ctx_for(build_provider, monkeypatch, log)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    items = [{"qualified_name": "skill__alpha", "short_description": "Alpha skill"}]
+    items = [{"action_name": "skill__alpha", "short_description": "Alpha skill"}]
     _run(idx.build(items, build_ctx, "standard"))
     assert idx.is_ready() is True
 
@@ -177,7 +177,7 @@ def test_helper_is_events_and_coordinator_none_tolerant(
     provider = _FakeEmbeddingProvider()
     op_ctx = _op_ctx_for(provider, monkeypatch, log)
     idx = ActionEmbeddingIndex(workspace_root=tmp_path)
-    items = [{"qualified_name": "skill__alpha", "short_description": "Alpha skill"}]
+    items = [{"action_name": "skill__alpha", "short_description": "Alpha skill"}]
     _run(idx.build(items, op_ctx, "standard"))
 
     async def _scenario() -> list[dict]:

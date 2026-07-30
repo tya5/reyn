@@ -6,72 +6,83 @@ control-IR op gate both call the SAME shared check
 is enforced on every tool path, bypass-impossible by construction (#1912).
 
 A contextual ``tool_deny`` is expressed in *tool* names (the chat vocabulary,
-e.g. ``exec__run``). A control-IR op has an *op kind* (e.g.
-``sandboxed_exec``). This module bridges the two: for an op kind it returns the
-contextual name-candidates = ``{kind}`` ∪ the chat-tool qualified aliases. The op
-kind itself is ALWAYS a candidate, so an un-aliased kind still gates on its own
-name — no op kind can silently bypass. ``_OP_KIND_ALIASES`` is exhaustive over
-``ALL_OP_KINDS`` (pinned by ``test_contextual_op_gate_completeness_1912``).
+e.g. ``exec``). A control-IR op has an *op kind* (e.g. ``sandboxed_exec``), and
+for most ops the two strings are the same. This module bridges the ones where
+they differ: for an op kind it returns the contextual name-candidates =
+``{kind}`` ∪ the chat-tool names that reach it. The op kind itself is ALWAYS a
+candidate, so an un-named kind still gates on its own name — no op kind can
+silently bypass. ``_OP_KIND_TOOLS`` is exhaustive over ``ALL_OP_KINDS`` (pinned
+by ``test_contextual_op_gate_completeness_1912``).
+
+#3429 shrank this table by two thirds. Every file / web op used to carry a
+qualified alias (``read_file`` → ``file__read``) purely because the chat tool had
+a second spelling; with the second spelling gone, the op kind and the tool name
+are the same string and those entries are empty. What is left is the three
+genuine op-kind ≠ tool-name cases: ``sandboxed_exec``/``exec``, the ONE
+``mcp_install`` op behind THREE source-split install tools, and nothing else.
 """
 from __future__ import annotations
 
 from reyn.security.permissions.effective import tool_contextually_denied
 
-# op kind → the chat-tool qualified aliases a contextual deny-set may use for it
-# (from the universal_dispatch _DISPATCH map). Empty when the op has no distinct
-# chat-tool qualified name (it is gated on its own kind name). Must cover every
-# entry of ``ALL_OP_KINDS`` — a missing entry would be a silent bypass.
-_OP_KIND_ALIASES: "dict[str, frozenset[str]]" = {
-    # file ops (file__* → fine-grained op kinds)
-    "read_file": frozenset({"file__read"}),
-    "write_file": frozenset({"file__write"}),
-    "delete_file": frozenset({"file__delete"}),
-    "edit_file": frozenset({"file__edit"}),
-    "glob_files": frozenset({"file__glob"}),
-    "grep_files": frozenset({"file__grep"}),
-    # web
-    "web_search": frozenset({"web__search"}),
-    "web_fetch": frozenset({"web__fetch"}),
+# op kind → the chat-tool names a contextual deny-set may use for it, when those
+# differ from the kind. Empty when the chat tool carries the same name as the op
+# kind (it is gated on that one name). Must cover every entry of ``ALL_OP_KINDS``
+# — a missing entry would be a silent bypass.
+_OP_KIND_TOOLS: "dict[str, frozenset[str]]" = {
+    # file ops — the chat tool and the op kind are the same name (#3429), so
+    # there is nothing to add: ``read_file`` gates ``read_file``.
+    "read_file": frozenset(),
+    "write_file": frozenset(),
+    "delete_file": frozenset(),
+    "edit_file": frozenset(),
+    "glob_files": frozenset(),
+    "grep_files": frozenset(),
+    # web — same-name, as above.
+    "web_search": frozenset(),
+    "web_fetch": frozenset(),
     # rag / memory-read
     # FP-0057 Phase 1: embed is the raw user-facing embedding primitive — no
-    # distinct chat-tool qualified name → gated on its own kind name only,
+    # distinct chat-tool name → gated on its own kind name only,
     # same shape as index_query.
     "embed": frozenset(),
     # FP-0066 P1b: semantic_search / index_drop no longer have a distinct
-    # chat-tool qualified name — the layer-1 agent tool + its
-    # `rag_operation__*` alias that used to expose them are retired (the OS-
-    # internal op kind itself is kept; see the retrieval redesign doc §9) →
+    # chat-tool name — the layer-1 agent tools that used to expose them are
+    # retired (the OS-internal op kind itself is kept; see the retrieval
+    # redesign doc §9) →
     # gated on their own kind name only, same shape as index_query/index_update.
     "semantic_search": frozenset(),
     "index_query": frozenset(),
     "index_drop": frozenset(),
     "index_update": frozenset(),
-    # exec (the dangerous one — both forms). #3226 Phase 3: the tool/
-    # qualified name renamed sandboxed_exec -> exec (exec__run); the op
-    # kind key here is UNCHANGED (op_runtime layer).
-    "sandboxed_exec": frozenset({"exec__run"}),
-    # mcp: the install surface is its OWN op kind (precisely gated); the generic
+    # exec — a genuine op-kind ≠ tool-name case. #3226 Phase 3 renamed the
+    # chat TOOL sandboxed_exec -> exec; the op kind key here is UNCHANGED
+    # (op_runtime layer), so both strings must gate it.
+    "sandboxed_exec": frozenset({"exec"}),
+    # mcp: the install surface is its OWN op kind, reached by three source-split
+    # chat tools (registry / package / local) — the second genuine
+    # op-kind ≠ tool-name case, and the only one-to-many one. The generic
     # ``mcp`` op (call_tool / list / …) is gated on its kind name (per-verb deny
     # is a follow-up — the built-in untrusted profile denies install, not call).
     "mcp_install": frozenset({
-        "mcp__install_registry", "mcp__install_package", "mcp__install_local",
+        "mcp_install_registry", "mcp_install_package", "mcp_install_local",
     }),
-    "mcp_drop_server": frozenset({"mcp__drop_server"}),
+    "mcp_drop_server": frozenset(),
     "mcp": frozenset(),
-    # control-IR-only ops with no distinct chat-tool qualified name → kind only.
+    # control-IR-only ops with no distinct chat-tool name → kind only.
     "compact": frozenset(),
     "ask_user": frozenset(),
     # FP-0054 PR-A: present is Tier 0 (no output gate) but still gates on its own
     # kind name under a per-session contextual narrowing (no distinct chat-tool
-    # qualified name → kind only; no silent bypass).
+    # name → kind only; no silent bypass).
     "present": frozenset(),
 }
 
 
 def op_kind_tool_names(op_kind: str) -> "frozenset[str]":
     """The contextual name-candidates for a control-IR op kind: the kind itself
-    plus its chat-tool qualified aliases."""
-    return frozenset({op_kind}) | _OP_KIND_ALIASES.get(op_kind, frozenset())
+    plus any chat-tool name that differs from it."""
+    return frozenset({op_kind}) | _OP_KIND_TOOLS.get(op_kind, frozenset())
 
 
 def op_contextually_denied(contextual: "object | None", op_kind: str) -> bool:

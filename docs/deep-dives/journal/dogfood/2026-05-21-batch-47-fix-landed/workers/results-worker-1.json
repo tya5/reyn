@@ -41,10 +41,10 @@
       "verdict": "R",
       "rubric_met": true,
       "events_pass": false,
-      "reply_summary": "Reply explains idempotency concept clearly in Japanese with examples (delete operation, e-commerce ordering, Idempotency Key). Rubric content met. However routing went to web__search (hot_list_alias) not direct_llm.",
-      "events_observed": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided(web__search)", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
-      "events_issues": "routing_decided emitted for web__search not direct_llm. No direct_llm skill spawned. Artifact direct_llm: NOT present. Regression vs B46 (was V).",
-      "artifact_check": "FAIL — routing went to web__search via hot_list_alias instead of direct_llm skill"
+      "reply_summary": "Reply explains idempotency concept clearly in Japanese with examples (delete operation, e-commerce ordering, Idempotency Key). Rubric content met. However routing went to web_search (hot_list_alias) not direct_llm.",
+      "events_observed": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided(web_search)", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
+      "events_issues": "routing_decided emitted for web_search not direct_llm. No direct_llm skill spawned. Artifact direct_llm: NOT present. Regression vs B46 (was V).",
+      "artifact_check": "FAIL — routing went to web_search via hot_list_alias instead of direct_llm skill"
     },
     {
       "id": "skill_discovery_request",
@@ -105,8 +105,8 @@
   "new_findings": [
     {
       "id": "F1",
-      "title": "S2 regression: routing to web__search via hot_list_alias instead of direct_llm",
-      "detail": "S2 (factual_query_direct_llm) was V in B46 (routed to direct_llm skill). In B47 it routed to web__search via hot_list_alias source, triggering empty-stop retry cycle. The idempotency question triggered web search rather than LLM-direct answer. This is a B47-specific regression: hot_list_n=10 may now surface web__search higher in the alias list for factual questions. Single observation (N=1); further investigation needed.",
+      "title": "S2 regression: routing to web_search via hot_list_alias instead of direct_llm",
+      "detail": "S2 (factual_query_direct_llm) was V in B46 (routed to direct_llm skill). In B47 it routed to web_search via hot_list_alias source, triggering empty-stop retry cycle. The idempotency question triggered web search rather than LLM-direct answer. This is a B47-specific regression: hot_list_n=10 may now surface web_search higher in the alias list for factual questions. Single observation (N=1); further investigation needed.",
       "scenarios_affected": ["factual_query_direct_llm"],
       "hypothesis_confidence": "HYPOTHESIS — N=1 observation, B46 was V with same prompt"
     },

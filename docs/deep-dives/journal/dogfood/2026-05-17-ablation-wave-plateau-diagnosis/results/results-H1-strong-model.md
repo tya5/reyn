@@ -64,7 +64,7 @@ appear at similar rates.
 | Scenario | B32 W3 verdict | strong-model V/I/R/B (N=3) | Δ | Notes |
 |---|---|---|---|---|
 | w3s1_file_read_via_chat | R | 0/0/3/0 | 0 | All 3: routing_decided + tool_executed emitted ✓ but (answered) race → reply is "answered/understood" not principles content; rubric ✗ |
-| w3s2_file_glob_grep | R | 0/2/1/0 | +2I | R1: file__list with wrong args (no file__grep, B27-M2 attractor) → R; R2/R3: plan mode, searched but inconclusive results |
+| w3s2_file_glob_grep | R | 0/2/1/0 | +2I | R1: list_directory with wrong args (no grep_files, B27-M2 attractor) → R; R2/R3: plan mode, searched but inconclusive results |
 | w3s3_web_search_query | I | 0/3/0/0 | +3I | All 3: routing_decided + web_search_started + web_search_completed ✓; but (answered) race → reply "Understood" not search results |
 | w3s4_web_fetch_url | R | 0/1/2/0 | +3I | All 3: web_fetch_started + web_fetch_completed ✓, reply has Python 3.12 features ✓; but routing_decided absent (plan path used) → I per strict scoring |
 | w3s5_sandboxed_exec_simple | R | 0/0/3/0 | 0 | R1: sandbox dylib blocked → error reported (not "output 4"); R2/R3: "承知いたしました" → R |
@@ -169,9 +169,9 @@ Scenarios where strong-model got V that B32 W1/W3 got R: s1, s2, s4, s5, s6
    token is injected before results return, so the LLM composes "answered"
    instead of relaying results.
 
-2. **file__grep absence (B27-M2 attractor)**: w3s2 R1 hit the same
-   file__list mis-call as B32 ablation confirmed. Stronger model = same
-   routing attractor when file__grep is absent from the seed.
+2. **grep_files absence (B27-M2 attractor)**: w3s2 R1 hit the same
+   list_directory mis-call as B32 ablation confirmed. Stronger model = same
+   routing attractor when grep_files is absent from the seed.
 
 3. **Sandbox dylib block (w3s5)**: Environment issue. Python sandbox blocked
    by OS file system sandbox. Both models fail identically.
@@ -198,7 +198,7 @@ scenarios (S1/S2/S5 in chat_router_smoke) are model-bound and clear
 substantially with gemini-2.5-flash (57% vs B32 W1 57% but from a B27 0%
 baseline). Complex async-skill scenarios (control_ir_ops W3 cluster) are
 OS-bound and show near-zero improvement — the `(answered)` race, the
-file__grep absence, and the lint/judge routing gaps persist identically
+grep_files absence, and the lint/judge routing gaps persist identically
 across model classes.
 
 - Confidence: HIGH for the OS-bound failure classes (primary data: event
@@ -214,7 +214,7 @@ across model classes.
 |---|---|---|
 | Simple factual / inline chat (S1/S2/S5) | YES — strong model 3/3V vs 0/1 flash-lite | N=3 consistent reply quality |
 | `(answered)` race (W3-S1/S3) | NO — OS bug | events show skill dispatched, reply "Understood" in 3/3 |
-| file__grep absence attractor (W3-S2) | NO — seed/routing gap | same B27-M2 pattern as ablation confirmed |
+| grep_files absence attractor (W3-S2) | NO — seed/routing gap | same B27-M2 pattern as ablation confirmed |
 | sandboxed_exec dylib block | NO — environment | same error both models |
 | lint routing gap | NO — missing routing rule | 0 lint_completed in 3/3 |
 | skill description ambiguity (W3-S8) | PARTIAL — schema clarity | strong model asks for more info vs flash-lite silent fail |

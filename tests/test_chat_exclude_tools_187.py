@@ -1,7 +1,7 @@
 """Tier 2: #187 — `reyn chat --exclude-tools` hides tools from the MAIN agent loop.
 
 #187 solves SWE with the general agent (`reyn chat` / RouterLoop). The agent has
-web__search/web__fetch and would (and did, in the smoke) web-search the gold PR =
+web_search/web_fetch and would (and did, in the smoke) web-search the gold PR =
 a leak of the benchmark answer. The faithful SWE-eval must exclude web so the
 agent solves from the issue + repo only.
 
@@ -16,7 +16,7 @@ catalog-filter behavior, not a source-string check. This file pins:
       that builds the RouterLoop's LLM-visible + dispatch catalog at
       router_loop.py:~1791);
   (b) `reyn chat` exposes `--exclude-tools`;
-  (c) the faithful SWE runner excludes web__search/web__fetch in the chat invocation.
+  (c) the faithful SWE runner excludes web_search/web_fetch in the chat invocation.
 (The MAIN-loop reach — session.py passing `exclude_tools=self._exclude_tools` to
 the main RouterLoop — is lead-reviewed code + dogfood-netted; the filter behavior
 is what a refactor could silently break, so that is unit-pinned here.)
@@ -43,27 +43,27 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
     #187 exclusion is expressed here as the ContextualPermission it becomes.
     Exercising it directly proves the web-exclusion *behavior* (refactor-robust,
     no source-string): with web excluded, the catalog the LLM sees no longer
-    contains web__search/web__fetch but still offers the repo-editing tools.
+    contains web_search/web_fetch but still offers the repo-editing tools.
     """
     from reyn.runtime.router_loop import apply_contextual_visibility
     from reyn.security.permissions.effective import ContextualPermission
 
     catalog = [
-        _tool("web__search"),
-        _tool("web__fetch"),
-        _tool("file__read"),
-        _tool("file__write"),
-        _tool("exec__run"),
+        _tool("web_search"),
+        _tool("web_fetch"),
+        _tool("read_file"),
+        _tool("write_file"),
+        _tool("exec"),
     ]
-    excluded = ContextualPermission(tool_deny=frozenset({"web__search", "web__fetch"}))
+    excluded = ContextualPermission(tool_deny=frozenset({"web_search", "web_fetch"}))
     filtered = apply_contextual_visibility(catalog, excluded)
     names = {t["function"]["name"] for t in filtered}
-    assert "web__search" not in names and "web__fetch" not in names, (
+    assert "web_search" not in names and "web_fetch" not in names, (
         "the faithful SWE catalog must hide web tools so the agent cannot "
         "web-look-up the gold solution"
     )
     # the repo-editing tools the agent actually needs survive the exclusion
-    assert {"file__read", "file__write", "exec__run"} <= names
+    assert {"read_file", "write_file", "exec"} <= names
     # no narrowing at all = no filtering (the default, non-faithful path)
     unfiltered = apply_contextual_visibility(catalog, None)
     assert {t["function"]["name"] for t in unfiltered} == {
@@ -78,8 +78,8 @@ def test_chat_parser_exposes_exclude_tools_flag() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()
     register(sub)
-    ns = parser.parse_args(["chat", "--exclude-tools", "web__search,web__fetch"])
-    assert ns.exclude_tools == "web__search,web__fetch"
+    ns = parser.parse_args(["chat", "--exclude-tools", "web_search,web_fetch"])
+    assert ns.exclude_tools == "web_search,web_fetch"
     assert parser.parse_args(["chat"]).exclude_tools is None
 
 
@@ -87,14 +87,14 @@ def test_swe_runner_excludes_web_tools_in_chat_path() -> None:
     """Tier 2: the faithful SWE chat-path invocation excludes web tools.
 
     The general agent must solve from the issue + repo, not a web lookup of the
-    gold PR. The exec network path is already sandbox-gated off; web__search /
-    web__fetch are the only internet→gold surface, so the runner excludes them.
+    gold PR. The exec network path is already sandbox-gated off; web_search /
+    web_fetch are the only internet→gold surface, so the runner excludes them.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     src = (
         Path(__file__).resolve().parent.parent / "scripts" / "swe_bench_runner.py"
     ).read_text(encoding="utf-8")
-    assert '"--exclude-tools", "web__search,web__fetch"' in src, (
-        "run_reyn_once_in_container must pass --exclude-tools web__search,web__fetch "
+    assert '"--exclude-tools", "web_search,web_fetch"' in src, (
+        "run_reyn_once_in_container must pass --exclude-tools web_search,web_fetch "
         "to reyn run-once so the agent cannot web-look-up the gold solution (faithful eval)."
     )

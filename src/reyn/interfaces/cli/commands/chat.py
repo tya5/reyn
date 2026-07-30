@@ -145,7 +145,7 @@ def register(sub) -> None:
         "--exclude-tools", dest="exclude_tools", default=None, metavar="NAMES",
         help=(
             "Comma-separated tool names to hide from the agent's LLM-visible "
-            "catalog (e.g. 'web__search,web__fetch'). The tools still exist; they "
+            "catalog (e.g. 'web_search,web_fetch'). The tools still exist; they "
             "are just not offered to the model this session."
         ),
     )
@@ -546,7 +546,7 @@ def run(args: argparse.Namespace) -> None:
             environment_backend=env_backend,
             sandbox_backend=env_backend,
             # #187: forward the env-backend's PARTNER container repo root + host-side
-            # state dir to the chat OpContext Workspace, so file__read/grep/glob/edit
+            # state dir to the chat OpContext Workspace, so read_file/grep/glob/edit
             # root on the container repo (e.g. /testbed) — not the host reyn cwd.
             # Without this the agent's file ops + the exec/diff seam disagree on the
             # FS (the #187 step-3 wrong-FS defect). None (host backend) → cwd default.

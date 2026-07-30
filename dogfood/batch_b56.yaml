@@ -26,7 +26,7 @@ batch:
 #   e2e-coder axis:
 #   - PR #918: mcp__install_server split 3-way (install_registry /
 #     install_package / install_local) + mcp__search_server →
-#     mcp__search_registry rename
+#     mcp_search_registry rename
 #   - #909: agent.peer collapse into multi_agent verb category
 #
 # Primary B56 axes:
@@ -41,7 +41,7 @@ batch:
 #      improve with structural [task_completed] kind=agent injection?
 #   3. MCP refactor effect (PR #918): new mcp__install_* verb names —
 #      do W5 mcp_install / mcp_search verdicts shift? (Note: PR #918
-#      renamed mcp__search_server → mcp__search_registry; W5 scenarios
+#      renamed mcp__search_server → mcp_search_registry; W5 scenarios
 #      don't pin specific action names in prompts so should adapt.)
 #
 # Discipline (per feedback_b55_prediction_miss_lessons):

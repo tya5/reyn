@@ -22,7 +22,7 @@ CodeAct では LLM は構造化された tool-call を返さない。 メッセ�
 Python ブロックを書き、 tool 使用はその **内部** の通常の関数呼び出しとして起きる:
 
 ```python
-result = tool('file__read', path='README.md')
+result = tool('read_file', path='README.md')
 ```
 
 各 `tool(...)` 呼び出しは 1 つの action を実行し結果を返す（action が denied /
@@ -43,14 +43,14 @@ CodeAct には JSON tool channel が **そもそも存在しない** — 「chan
 
 **何が載るか**: `enumerate-all` scheme が `tool_calls` で advertise するのと同じ
 集合 — base tool（`read_file` / `delegate_to_agent` / `session_spawn` …）と
-[universal catalog](universal-catalog.md) の全 action（`file__glob` /
-`pipeline__run` …）。
+[universal catalog](universal-catalog.md) の全 action（`glob_files` /
+`run_pipeline` …）。
 
 base tool が既に名前を持つ capability は、 非修飾名で **1 回だけ** 載る。
-catalog の `multi_agent__delegate` と base の `delegate_to_agent` は同じ操作
+catalog の `delegate_to_agent` と base の `delegate_to_agent` は同じ操作
 なので、 code API に書かれるのは `delegate_to_agent` だけ。 修飾名の方も
 **呼べる** ままである — dispatchable set には残っているので snippet 内からの
-`tool('multi_agent__delegate', …)` は通常どおり応答される — 単に 2 度目の
+`tool('delegate_to_agent', …)` は通常どおり応答される — 単に 2 度目の
 advertise をしないだけ。
 
 ### sandboxed subprocess

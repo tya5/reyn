@@ -82,10 +82,10 @@ def _run(coro: Any) -> Any:
 def test_list_actions_file_static_category() -> None:
     """Tier 2: list_actions(category=['file']) returns 7 file ops (FP-0040: +edit)."""
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _make_ctx()))
-    qns = {it["qualified_name"] for it in result["items"]}
+    qns = {it["action_name"] for it in result["items"]}
     assert qns == {
-        "file__read", "file__write", "file__delete", "file__list",
-        "file__grep", "file__glob", "file__edit",
+        "read_file", "write_file", "delete_file", "list_directory",
+        "grep_files", "glob_files", "edit_file",
     }
     assert result["total"] == 7
 
@@ -93,8 +93,8 @@ def test_list_actions_file_static_category() -> None:
 def test_list_actions_web_static_category() -> None:
     """Tier 2: list_actions(category=['web']) returns 2 web ops."""
     result = _run(LIST_ACTIONS.handler({"category": ["web"]}, _make_ctx()))
-    qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"web__search", "web__fetch"}
+    qns = {it["action_name"] for it in result["items"]}
+    assert qns == {"web_search", "web_fetch"}
 
 
 def test_list_actions_memory_operation_static_category() -> None:
@@ -104,20 +104,20 @@ def test_list_actions_memory_operation_static_category() -> None:
     pre-existing write verbs. Before #3026 the only read surface was the
     per-memory ``memory_entry__<slug>`` RESOURCE action (one LLM tool per
     stored memory + hard-coded ``layer="shared"``, so agent-layer memories
-    were unreadable through the catalog). ``memory_operation__read`` is a
+    were unreadable through the catalog). ``read_memory_body`` is a
     strict capability GAIN over what it replaces: a single fixed verb that
     takes ``layer`` + ``slug`` explicitly, reaching both layers.
     """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["memory_operation"]}, _make_ctx(),
     ))
-    qns = {it["qualified_name"] for it in result["items"]}
+    qns = {it["action_name"] for it in result["items"]}
     assert qns == {
-        "memory_operation__remember_shared",
-        "memory_operation__remember_agent",
-        "memory_operation__forget",
-        "memory_operation__list",
-        "memory_operation__read",
+        "remember_shared",
+        "remember_agent",
+        "forget_memory",
+        "list_memory",
+        "read_memory_body",
     }
 
 
@@ -133,14 +133,14 @@ def test_list_actions_mcp_static_category_returns_collapsed_surface() -> None:
     result = _run(LIST_ACTIONS.handler(
         {"category": ["mcp"]}, _make_ctx(),
     ))
-    qns = {it["qualified_name"] for it in result["items"]}
+    qns = {it["action_name"] for it in result["items"]}
     assert qns == {
-        "mcp__search_registry",
-        "mcp__install_registry",
-        "mcp__install_package",
-        "mcp__install_local",
-        "mcp__list_servers", "mcp__list_tools",
-        "mcp__call_tool", "mcp__drop_server",
+        "mcp_search_registry",
+        "mcp_install_registry",
+        "mcp_install_package",
+        "mcp_install_local",
+        "list_mcp_servers", "list_mcp_tools",
+        "mcp_call_tool", "mcp_drop_server",
     }, f"mcp enumeration drifted: got {qns}"
 
 
@@ -154,12 +154,12 @@ def test_list_actions_short_description_present() -> None:
 
 
 def test_list_actions_alphabetical_sort() -> None:
-    """Tier 2: list_actions items are alphabetically sorted by qualified_name.
+    """Tier 2: list_actions items are alphabetically sorted by action_name.
 
     Per §D11, the sort is alphabetical for pagination stability.
     """
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _make_ctx()))
-    qns = [it["qualified_name"] for it in result["items"]]
+    qns = [it["action_name"] for it in result["items"]]
     assert qns == sorted(qns)
 
 
@@ -189,11 +189,11 @@ def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
     result = _run(LIST_ACTIONS.handler(
         {"category": ["multi_agent"]}, _make_ctx(),
     ))
-    qns = {it["qualified_name"] for it in result["items"]}
+    qns = {it["action_name"] for it in result["items"]}
     assert qns == {
-        "multi_agent__list_peers",
-        "multi_agent__describe_peer",
-        "multi_agent__delegate",
+        "list_agents",
+        "describe_agent",
+        "delegate_to_agent",
     }, f"multi_agent enumeration drifted: got {qns}"
 
 
@@ -283,9 +283,9 @@ def test_search_actions_returns_ranked_items(
 ) -> None:
     """Tier 2: handler returns ranked items with score from the index."""
     items = [
-        {"qualified_name": "skill__alpha", "short_description": "Alpha skill"},
-        {"qualified_name": "skill__beta", "short_description": "Beta skill"},
-        {"qualified_name": "skill__gamma", "short_description": "Gamma skill"},
+        {"action_name": "skill__alpha", "short_description": "Alpha skill"},
+        {"action_name": "skill__beta", "short_description": "Beta skill"},
+        {"action_name": "skill__gamma", "short_description": "Gamma skill"},
     ]
     provider = _StubProvider()
     op_ctx = _op_ctx_for(provider, monkeypatch)
@@ -314,14 +314,14 @@ def test_search_actions_returns_ranked_items(
     assert "items" in result
     assert "total" in result
     for it in result["items"]:
-        assert "qualified_name" in it
+        assert "action_name" in it
         assert "score" in it
 
 
 def test_search_actions_filters_by_category(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Tier 2: category filter restricts to qualified_names in those categories.
+    """Tier 2: category filter restricts to action_names in those categories.
 
     #3026: ``memory_entry`` is no longer a valid category (dropped from
     CATEGORIES), so a ``category=["memory_entry"]`` filter would now hit the
@@ -347,11 +347,14 @@ def test_search_actions_filters_by_category(
     point) isolates the on-disk cache per test, closing the race
     structurally rather than retrying/timing-out.
     """
+    # #3429: real action names — the category filter looks each one up in the
+    # membership table, so an invented name is (correctly) filtered out and the
+    # test would pass vacuously.
     items = [
-        {"qualified_name": "memory_operation__alpha", "short_description": "Alpha"},
-        {"qualified_name": "file__read", "short_description": "Read"},
-        {"qualified_name": "memory_operation__beta", "short_description": "Beta"},
-        {"qualified_name": "file__write", "short_description": "Write"},
+        {"action_name": "list_memory", "short_description": "List memories"},
+        {"action_name": "read_file", "short_description": "Read"},
+        {"action_name": "remember_shared", "short_description": "Remember"},
+        {"action_name": "write_file", "short_description": "Write"},
     ]
     provider = _StubProvider()
     op_ctx = _op_ctx_for(provider, monkeypatch)
@@ -365,10 +368,12 @@ def test_search_actions_filters_by_category(
     result = _run(SEARCH_ACTIONS.handler(
         {"query": "x", "category": ["memory_operation"], "limit": 10}, _make_ctx(rs),
     ))
-    qns = {it["qualified_name"] for it in result["items"]}
-    # Only memory_operation__ qualified names; no file__ entries.
-    assert all(qn.startswith("memory_operation__") for qn in qns)
-    assert qns == {"memory_operation__alpha", "memory_operation__beta"}
+    from reyn.tools.universal_dispatch import category_of
+
+    names = {it["action_name"] for it in result["items"]}
+    # Only memory_operation actions; no file entries.
+    assert all(category_of(n) == "memory_operation" for n in names)
+    assert names == {"list_memory", "remember_shared"}
 
 
 def test_list_actions_legacy_rag_corpus_and_memory_entry_redirect() -> None:
@@ -406,7 +411,7 @@ def test_list_actions_pagination_offset_limit() -> None:
         {"category": ["file"], "offset": 1, "limit": 2}, _make_ctx(),
     ))
     assert page["total"] == full["total"]  # total reflects full filtered set
-    assert page["items"][0]["qualified_name"] == full["items"][1]["qualified_name"]
+    assert page["items"][0]["action_name"] == full["items"][1]["action_name"]
 
 
 def test_list_actions_unknown_category_returns_explicit_error() -> None:
@@ -496,28 +501,30 @@ def test_list_actions_empty_category_list_remains_unfiltered() -> None:
 def test_describe_action_returns_target_description_and_schema() -> None:
     """Tier 2: describe_action returns target's description + parameters."""
     result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "file__read"}, _make_ctx(),
+        {"action_name": "read_file"}, _make_ctx(),
     ))
-    assert result["qualified_name"] == "file__read"
+    assert result["action_name"] == "read_file"
     assert isinstance(result["description"], str) and result["description"]
     assert result["input_schema"]["type"] == "object"
     meta = result["metadata"]
-    assert meta["target_tool_name"] == "read_file"
+    # #3429: no ``target_tool_name`` — it named the tool the QUALIFIED spelling
+    # resolved to, and there is nothing left for it to differ from.
+    assert "target_tool_name" not in meta
     assert "category" in meta
     assert "purity" in meta
 
 
-def test_describe_action_for_collapsed_mcp_verb_routes_to_handler() -> None:
-    """Tier 2: describe of a mcp__* verb returns the handler-tool as target.
+def test_describe_action_for_collapsed_mcp_verb_returns_its_own_schema() -> None:
+    """Tier 2: describe of a collapsed mcp verb returns that tool's schema.
 
-    Issue #879 collapsed surface: mcp__list_servers' canonical target is
-    the existing list_mcp_servers handler; describe surfaces that as the
-    target_tool_name in metadata.
+    Issue #879 collapsed surface: ``list_mcp_servers`` IS the action, and
+    describe answers with its own description + schema.
     """
     result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "mcp__list_servers"}, _make_ctx(),
+        {"action_name": "list_mcp_servers"}, _make_ctx(),
     ))
-    assert result["metadata"]["target_tool_name"] == "list_mcp_servers"
+    assert result["action_name"] == "list_mcp_servers"
+    assert result["input_schema"]["type"] == "object"
 
 
 def test_describe_action_missing_action_name_returns_error() -> None:
@@ -528,7 +535,7 @@ def test_describe_action_missing_action_name_returns_error() -> None:
 
 
 def test_describe_action_unknown_returns_d12_error() -> None:
-    """Tier 2: unknown qualified_name returns §D12 error-with-suggestions."""
+    """Tier 2: unknown action_name returns §D12 error-with-suggestions."""
     result = _run(DESCRIBE_ACTION.handler(
         {"action_name": "file__reed"}, _make_ctx(),
     ))
@@ -546,13 +553,13 @@ def test_describe_action_unknown_returns_d12_error() -> None:
 def test_invoke_action_delegates_to_static_target_handler() -> None:
     """Tier 2: invoke_action calls target.handler with transformed args.
 
-    Uses ``web__search`` (= target web_search) with a router_state that
+    Uses ``web_search`` (= target web_search) with a router_state that
     routes the web_search ToolDefinition through its existing op_context
     fallback path. The test verifies the dispatcher's transparent
     delegation; full e2e of web_search itself is covered elsewhere.
     """
     # Use a category whose target is the universal_dispatch passthrough.
-    # We pick file__read because its target (read_file) handler exists.
+    # We pick read_file because its target (read_file) handler exists.
     # When ctx.router_state is None and the handler needs op_context_factory,
     # read_file falls back to its own context-build path; the test would
     # need fixtures. Instead, we verify the dispatch DECISION by
@@ -570,7 +577,7 @@ def test_invoke_action_delegates_to_static_target_handler() -> None:
         return {"ok": True, "echo": dict(args)}
 
     fake_target = ToolDefinition(
-        name="read_file",  # match the routing target for file__read
+        name="read_file",  # match the routing target for read_file
         description="fake",
         parameters={"type": "object"},
         gates=ToolGates(router="allow"),
@@ -578,16 +585,34 @@ def test_invoke_action_delegates_to_static_target_handler() -> None:
         category="io",
     )
 
-    # Build a custom registry instance and route invoke_action through it.
-    # Because the real handler uses get_default_registry() (module-level
-    # lazy lookup), we cannot easily inject a custom registry. Instead,
-    # we exercise the contract by directly calling the resolver +
-    # confirming the schema-level args produce the expected target.
-    # The end-to-end invoke is covered by Tier 3 LLMReplay in PR-5.
-    from reyn.tools.universal_dispatch import resolve_invoke_action
-    resolved = resolve_invoke_action("file__read", {"path": "x"})
-    assert resolved.target_tool_name == "read_file"
-    assert resolved.target_args == {"path": "x"}
+    # #3429: there is no resolver between the wrapper and the handler, so the
+    # contract is stated where it now lives — the named action is a catalog
+    # member AND a registered tool, which is the whole of what
+    # ``_handle_invoke_action`` checks before calling ``target.handler``.
+    from reyn.tools.universal_dispatch import is_known_action
+
+    assert is_known_action("read_file")
+    assert get_default_registry().lookup("read_file") is not None
+
+
+def test_invoke_action_refuses_a_registered_tool_outside_the_catalog() -> None:
+    """Tier 2: #3429 — ``invoke_action`` dispatches CATALOG actions, not "any
+    registered tool by name".
+
+    ``present`` / ``session_spawn`` / ``agent_spawn`` are live registered tools
+    that the catalog deliberately does not browse; ``session_spawn`` is also on
+    the exclusive-wrapper strip list, i.e. a surface reduction the wrapper mode
+    makes on purpose. A wrapper that dispatched anything the registry could
+    look up would hand every one of them back, under the one tool that mode
+    always advertises.
+
+    The membership check is what refuses them — a registry lookup alone would
+    SUCCEED here, which is why this arm exists rather than relying on the
+    lookup's own None branch."""
+    for name in ("present", "session_spawn", "agent_spawn"):
+        result = _run(INVOKE_ACTION.handler({"action_name": name}, _make_ctx()))
+        assert "error" in result, f"invoke_action dispatched non-catalog tool {name!r}"
+        assert result["action_name"] == name
 
 
 def test_invoke_action_missing_action_name_returns_error() -> None:
@@ -622,7 +647,7 @@ def test_invoke_action_unknown_category_returns_d12_error() -> None:
 
 
 def test_invoke_action_unparseable_name_returns_d12_error() -> None:
-    """Tier 2: malformed qualified_name (= no __) returns error response."""
+    """Tier 2: malformed action_name (= no __) returns error response."""
     result = _run(INVOKE_ACTION.handler(
         {"action_name": "no_separator_here"}, _make_ctx(),
     ))
@@ -666,37 +691,36 @@ def test_universal_wrappers_are_router_visible() -> None:
         assert name in router_names
 
 
-def test_describe_action_via_registry_returns_target_meta() -> None:
+def test_describe_action_via_registry_returns_tool_meta() -> None:
     """Tier 2: end-to-end registry-aware describe_action contract.
 
     Reach into the real registry (not a custom one) and verify that
-    describe_action surfaces the canonical target's metadata correctly
-    for a static qualified name.
+    describe_action surfaces the tool's own metadata.
     """
     result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "web__search"}, _make_ctx(),
+        {"action_name": "web_search"}, _make_ctx(),
     ))
-    assert result["qualified_name"] == "web__search"
-    assert result["metadata"]["target_tool_name"] == "web_search"
+    assert result["action_name"] == "web_search"
     assert result["metadata"]["category"]  # non-empty
+    assert result["metadata"]["purity"]
 
 
 # ── FP-0034 Phase 2: exec category enumeration + dispatch ─────────────────
 
 
 def test_exec_enumerable_when_sandbox_configured() -> None:
-    """Tier 2: exec__run appears in list_actions when sandbox backend is set.
+    """Tier 2: exec appears in list_actions when sandbox backend is set.
 
     D14-ext visibility gate: when RouterCallerState.sandbox_backend is a
     real backend name (not 'noop' / None), the exec category returns
-    exec__run in list_actions output.
+    exec in list_actions output.
     """
     rs = RouterCallerState(sandbox_backend="seatbelt")
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(rs),
     ))
-    qns = {it["qualified_name"] for it in result["items"]}
-    assert "exec__run" in qns
+    qns = {it["action_name"] for it in result["items"]}
+    assert "exec" in qns
     assert result["total"] == 1
     # short_description must be a non-empty string
     for item in result["items"]:
@@ -714,7 +738,7 @@ def test_exec_enumerable_when_sandbox_landlock() -> None:
         {"category": ["exec"]}, _make_ctx(rs),
     ))
     assert result["total"] == 1
-    assert result["items"][0]["qualified_name"] == "exec__run"
+    assert result["items"][0]["action_name"] == "exec"
 
 
 def test_exec_hidden_when_sandbox_noop() -> None:
@@ -757,30 +781,22 @@ def test_exec_hidden_when_no_router_state() -> None:
     assert result["total"] == 0
 
 
-def test_exec_dispatch_routes_to_exec() -> None:
-    """Tier 2: invoke_action('exec__run', ...) resolves to the exec tool.
+def test_exec_is_the_exec_categorys_only_action() -> None:
+    """Tier 2: the ``exec`` category offers exactly the ``exec`` tool.
 
-    Verifies the routing layer contract: exec__run maps to
-    the 'exec' ToolDefinition via _OPERATION_RULES (#3226 Phase 3 renamed
-    the tool sandboxed_exec -> exec; the op kind stays sandboxed_exec). The
-    actual handler invocation is covered separately; this test pins
-    the routing decision alone (pure-function layer, no I/O).
+    #3226 Phase 3 renamed the tool sandboxed_exec -> exec; the op kind stays
+    ``sandboxed_exec``, which is why ``contextual_gate`` still bridges those
+    two strings. The actual handler invocation is covered separately.
     """
-    from reyn.tools.universal_dispatch import resolve_invoke_action
-    resolved = resolve_invoke_action(
-        "exec__run",
-        {"argv": ["echo", "hello"]},
-    )
-    assert resolved.target_tool_name == "exec"
-    # passthrough transformer — args forwarded unchanged
-    assert resolved.target_args == {"argv": ["echo", "hello"]}
+    from reyn.tools.universal_dispatch import action_names_for_category
+
+    assert action_names_for_category("exec") == ("exec",)
 
 
 def test_exec_exec_in_registry() -> None:
     """Tier 2: exec ToolDefinition is in get_default_registry().
 
-    The routing layer resolves exec__run to 'exec';
-    that target must exist in the default registry so describe_action /
+    A catalog action must exist in the default registry so describe_action /
     invoke_action can find it.
     """
     registry = get_default_registry()
@@ -792,16 +808,15 @@ def test_exec_exec_in_registry() -> None:
 
 
 def test_exec_describe_action_returns_exec_schema() -> None:
-    """Tier 2: describe_action('exec__run') returns the exec schema.
+    """Tier 2: describe_action('exec') returns the exec schema.
 
     End-to-end: describe_action resolves the routing target via the
     registry and returns its description + input_schema.
     """
     result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "exec__run"}, _make_ctx(),
+        {"action_name": "exec"}, _make_ctx(),
     ))
-    assert result["qualified_name"] == "exec__run"
-    assert result["metadata"]["target_tool_name"] == "exec"
+    assert result["action_name"] == "exec"
     # argv is a required field in the exec schema
     props = result["input_schema"].get("properties", {})
     assert "argv" in props
@@ -817,7 +832,7 @@ def test_list_actions_all_categories_exec_hidden_by_default() -> None:
     """
     rs = RouterCallerState(sandbox_backend=None)
     result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
-    qns = [it["qualified_name"] for it in result["items"]]
+    qns = [it["action_name"] for it in result["items"]]
     assert not any(qn.startswith("exec__") for qn in qns), (
         f"exec__ entries should be hidden when sandbox_backend=None; got {qns}"
     )
@@ -831,5 +846,5 @@ def test_list_actions_all_categories_exec_visible_with_sandbox() -> None:
     """
     rs = RouterCallerState(sandbox_backend="seatbelt")
     result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
-    qns = [it["qualified_name"] for it in result["items"]]
-    assert "exec__run" in qns
+    qns = [it["action_name"] for it in result["items"]]
+    assert "exec" in qns

@@ -182,8 +182,8 @@ def test_a_function_entry_round_trips_through_the_descriptor_union() -> None:
     and the bare flat one the catalog-shape projection has always tolerated. A
     descriptor that normalised the second into the first would rewrite a payload
     the seam is supposed to carry unchanged."""
-    nested = _nested("file__read", description="Read a file.", properties={"path": {}})
-    flat = {"name": "file__read", "description": "Read a file.", "parameters": {"properties": {}}}
+    nested = _nested("read_file", description="Read a file.", properties={"path": {}})
+    flat = {"name": "read_file", "description": "Read a file.", "parameters": {"properties": {}}}
 
     for entry in (nested, flat):
         descriptor = descriptor_from_entry(entry)
@@ -229,7 +229,7 @@ async def test_production_cells_reach_the_descriptor_classifier() -> None:
         _nested("git__commit"),
         {"name": "flat__tool", "description": "d", "parameters": {"properties": {}}},
     ]
-    base = [_nested("file__read"), provider_native]
+    base = [_nested("read_file"), provider_native]
 
     ops = _Ops(base=base, catalog=catalog)
     pres = await EnumerateAllScheme().build_presentation(
@@ -307,7 +307,7 @@ def test_the_two_enumerate_all_cells_expose_the_same_set() -> None:
     and the excluded name must both be present in the source, otherwise
     "absent from the result" means nothing."""
     base = [_nested("delegate_to_agent")]
-    catalog = [_nested("git__commit"), _nested("mcp__call_tool")]
+    catalog = [_nested("git__commit"), _nested("mcp_call_tool")]
     ops = _Ops(base=base, catalog=catalog)
 
     def names(deviation) -> set[str]:
@@ -317,7 +317,7 @@ def test_the_two_enumerate_all_cells_expose_the_same_set() -> None:
         return {d.name for d in exposure.descriptors}
 
     assert "delegate_to_agent" in {e["function"]["name"] for e in base}
-    assert "mcp__call_tool" in {e["function"]["name"] for e in catalog}
+    assert "mcp_call_tool" in {e["function"]["name"] for e in catalog}
 
     tool_calls = names(TOOL_CALLS_EXPOSURE_DEVIATION)
     content_fence = names(CONTENT_FENCE_EXPOSURE_DEVIATION)
@@ -355,12 +355,12 @@ async def test_the_production_cells_carry_those_declarations() -> None:
     base tool is a declared function in the rendered code-API, and the excluded
     catalog wrapper is not."""
     assert TOOL_CALLS_EXPOSURE_DEVIATION.includes_base_tools is True
-    assert TOOL_CALLS_EXPOSURE_DEVIATION.excluded_names == frozenset({"mcp__call_tool"})
+    assert TOOL_CALLS_EXPOSURE_DEVIATION.excluded_names == frozenset({"mcp_call_tool"})
     assert CONTENT_FENCE_EXPOSURE_DEVIATION.includes_base_tools is True
-    assert CONTENT_FENCE_EXPOSURE_DEVIATION.excluded_names == frozenset({"mcp__call_tool"})
+    assert CONTENT_FENCE_EXPOSURE_DEVIATION.excluded_names == frozenset({"mcp_call_tool"})
 
     base = [_nested("delegate_to_agent")]
-    catalog = [_nested("git__commit"), _nested("mcp__call_tool")]
+    catalog = [_nested("git__commit"), _nested("mcp_call_tool")]
     ops = _Ops(base=base, catalog=catalog)
 
     flat_cell = await EnumerateAllScheme().build_presentation(
@@ -370,10 +370,10 @@ async def test_the_production_cells_carry_those_declarations() -> None:
 
     advertised = {e["function"]["name"] for e in advertised_entries(flat_cell.tools_channel)}
     assert "delegate_to_agent" in advertised
-    assert "mcp__call_tool" not in advertised
+    assert "mcp_call_tool" not in advertised
     assert "def delegate_to_agent(" in fence_cell.tool_use_sp
     assert "def git__commit(" in fence_cell.tool_use_sp
-    assert "def mcp__call_tool(" not in fence_cell.tool_use_sp
+    assert "def mcp_call_tool(" not in fence_cell.tool_use_sp
 
 
 @pytest.mark.asyncio
@@ -391,7 +391,7 @@ async def test_every_code_api_function_has_a_sandbox_stub_to_answer_it() -> None
     wrapper is asserted to be dispatchable-but-unrendered, which is the #1618
     root-1 contract (``tool_excluded``, not ``unknown_tool``)."""
     base = [_nested("delegate_to_agent")]
-    catalog = [_nested("git__commit"), _nested("mcp__call_tool")]
+    catalog = [_nested("git__commit"), _nested("mcp_call_tool")]
     cells = [
         get_scheme(resolve_scheme_for_transport(scheme, transport))
         for scheme, transport in valid_scheme_transport_pairs()
@@ -419,7 +419,7 @@ async def test_every_code_api_function_has_a_sandbox_stub_to_answer_it() -> None
         {"hot_list_aliases": []}, {}, _Ops(base=base, catalog=catalog),
     )
     dispatchable = {e["function"]["name"] for e in fence_cell.dispatchable_catalog}
-    assert "mcp__call_tool" in dispatchable and "delegate_to_agent" in dispatchable
+    assert "mcp_call_tool" in dispatchable and "delegate_to_agent" in dispatchable
 
 
 # ── the identifier map is the executor's map ─────────────────────────────────

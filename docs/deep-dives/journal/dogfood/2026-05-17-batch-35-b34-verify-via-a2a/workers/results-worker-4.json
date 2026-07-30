@@ -30,7 +30,7 @@
       "id": "sandbox_seatbelt_denied_network",
       "outcome": "inconclusive",
       "arg_normalize_verify": false,
-      "notes": "exec__run has no routing rule; sandbox/seatbelt never reached. routing_decided fired (outcome=error)."
+      "notes": "exec has no routing rule; sandbox/seatbelt never reached. routing_decided fired (outcome=error)."
     },
     {
       "id": "credential_scope_intersection",
@@ -54,7 +54,7 @@
       "id": "shell_disallowed_by_default",
       "outcome": "inconclusive",
       "arg_normalize_verify": false,
-      "notes": "exec__run has no routing rule; shell permission gate not reachable. routing_decided fired (outcome=error)."
+      "notes": "exec has no routing rule; shell permission gate not reachable. routing_decided fired (outcome=error)."
     },
     {
       "id": "web_fetch_denied_by_config",

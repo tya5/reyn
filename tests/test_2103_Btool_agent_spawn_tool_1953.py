@@ -46,15 +46,20 @@ def test_agent_spawn_is_dispatch_routed_and_advertised():
 
 
 def test_agent_spawn_is_floored_default_deny():
-    """Tier 2: #2081 — agent_spawn is in the _delegate floor (spawning is restrict-floored,
-    default-deny, re-grantable within parent bounds), AND declared bare-only in the #2111
-    SoT (router-only, no qualified alias). RED if the floor entry is dropped."""
-    from reyn.security.permissions.capability_profile import (
-        _FLOORED_BARE_ONLY,
-        builtin_delegate_profile,
-    )
+    """Tier 2: #2081 — agent_spawn is in the _delegate floor (spawning is
+    restrict-floored, default-deny, re-grantable within parent bounds) under the
+    ONE name it has. RED if the floor entry is dropped.
+
+    #3429: the second assertion used to be ``agent_spawn in _FLOORED_BARE_ONLY``
+    — the set declaring "this floor entry deliberately has no qualified alias to
+    derive". Every entry is bare-only now, so the set is gone; what replaces it
+    is ``test_2111_floor_alias_completeness``'s check that a floored name is a
+    REGISTERED tool (a typo floors nothing)."""
+    from reyn.security.permissions.capability_profile import builtin_delegate_profile
+    from reyn.tools import get_default_registry
+
     assert "agent_spawn" in builtin_delegate_profile().tool_deny  # floored
-    assert "agent_spawn" in _FLOORED_BARE_ONLY                    # alias-SoT bare-only
+    assert get_default_registry().lookup("agent_spawn") is not None
 
 
 @pytest.mark.asyncio

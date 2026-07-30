@@ -5,10 +5,10 @@ The previous single ``mcp__install_server`` accepted ``server_id`` XOR
 two parallel paths from a flat string surface. This was split into three
 verbs along the **source axis**:
 
-  - ``mcp__install_registry`` — official MCP registry (= ``server_id``)
-  - ``mcp__install_package``  — structured {kind, identifier, version?}
+  - ``mcp_install_registry`` — official MCP registry (= ``server_id``)
+  - ``mcp_install_package``  — structured {kind, identifier, version?}
                                 for npm / pypi / docker / github
-  - ``mcp__install_local``    — direct ``{name, command, args}`` write
+  - ``mcp_install_local``    — direct ``{name, command, args}`` write
                                 of an ``.reyn/mcp.yaml`` stdio entry
 
 This file pins the contract:
@@ -19,7 +19,7 @@ This file pins the contract:
   - ``_build_source_string`` composes the source_resolver inline string
     correctly for all 4 kinds (npm/pypi/docker/github) with and without
     version.
-  - ``mcp__install_local`` writes a structurally valid entry to a fresh
+  - ``mcp_install_local`` writes a structurally valid entry to a fresh
     ``.reyn/mcp.yaml`` (= MCPClient-loadable stdio shape).
 
 No mocks. Real ToolDefinition + real source-string composer + real yaml
@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 import yaml
 
+from reyn.tools import get_default_registry
 from reyn.tools.mcp_verbs import (
     MCP_INSTALL_LOCAL,
     MCP_INSTALL_PACKAGE,
@@ -42,7 +43,7 @@ from reyn.tools.mcp_verbs import (
     _build_source_string,
 )
 from reyn.tools.types import ToolContext
-from reyn.tools.universal_dispatch import resolve_invoke_action
+from reyn.tools.universal_dispatch import action_names_for_category
 
 
 class _FakeEvents:
@@ -103,18 +104,20 @@ def test_search_registry_required_is_text() -> None:
 
 
 @pytest.mark.parametrize(
-    "qn, target",
+    "verb",
     [
-        ("mcp__search_registry",  "mcp_search_registry"),
-        ("mcp__install_registry", "mcp_install_registry"),
-        ("mcp__install_package",  "mcp_install_package"),
-        ("mcp__install_local",    "mcp_install_local"),
+        "mcp_search_registry",
+        "mcp_install_registry",
+        "mcp_install_package",
+        "mcp_install_local",
     ],
 )
-def test_verb_routes_to_handler(qn: str, target: str) -> None:
-    """Tier 2: each new verb resolves to its dedicated handler in the registry."""
-    resolved = resolve_invoke_action(qn, {})
-    assert resolved.target_tool_name == target
+def test_verb_is_an_mcp_action_with_its_own_handler(verb: str) -> None:
+    """Tier 2: each new verb is browsable under the ``mcp`` category AND has
+    its own dedicated handler in the registry (not a shared dispatcher)."""
+    assert verb in action_names_for_category("mcp")
+    tool = get_default_registry().lookup(verb)
+    assert tool is not None and tool.handler is not None
 
 
 # ── C. _build_source_string composition (npm/pypi/docker/github) ──────────────
@@ -217,8 +220,8 @@ def test_install_registry_rejects_empty_server_id() -> None:
     msg = result["data"]["error"]
     assert "server_id is required" in msg
     # Cross-reference the two alternative verbs so the LLM can recover.
-    assert "mcp__install_package" in msg
-    assert "mcp__install_local" in msg
+    assert "mcp_install_package" in msg
+    assert "mcp_install_local" in msg
 
 
 # ── F. install_package rejects invalid kind ───────────────────────────────────

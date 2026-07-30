@@ -383,7 +383,7 @@
     {
       "id": "B44-W2-4-read_local_files_explain_source",
       "kind": "routing",
-      "summary": "read_local_files_explain_source: router selected raw file__read via hot_list_alias instead of dispatching to read_local_files skill — reply quality OK but skill artifact absent."
+      "summary": "read_local_files_explain_source: router selected raw read_file via hot_list_alias instead of dispatching to read_local_files skill — reply quality OK but skill artifact absent."
     },
     {
       "id": "B44-W2-5",
