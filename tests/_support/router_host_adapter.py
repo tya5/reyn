@@ -11,10 +11,13 @@ from pathlib import Path
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.services import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 
 
@@ -137,6 +140,18 @@ def make_adapter(
         mcp_agent_id=None,
         ephemeral_fn=None,
     )
+    send_to_agent_inputs = SendToAgentInputs(
+        send_to_agent=null_send_to_agent,
+        delegation_tracker=lambda: _delegations,
+    )
+    put_outbox_inputs = PutOutboxInputs(
+        put_outbox=null_put_outbox,
+        agent_replies_tracker=lambda: _replies,
+    )
+    live_session_id_inputs = LiveSessionIdInputs(
+        session_id=session_id,
+        live_session_id_fn=None,
+    )
 
     return RouterHostAdapter(
         agent_name=agent_name,
@@ -161,12 +176,10 @@ def make_adapter(
         file_regenerate_index=null_file_regen,
         mcp_call_tool=null_mcp_call_tool,
         mcp_gateway_inputs=mcp_gateway_inputs,
-        send_to_agent=null_send_to_agent,
-        put_outbox=null_put_outbox,
+        send_to_agent_inputs=send_to_agent_inputs,
+        put_outbox_inputs=put_outbox_inputs,
         append_history=null_append_history,
-        delegation_tracker=lambda: _delegations,
-        agent_replies_tracker=lambda: _replies,
+        live_session_id_inputs=live_session_id_inputs,
         turn_budget_engine=turn_budget_engine,
         environment_backend=environment_backend,
-        session_id=session_id,
     )

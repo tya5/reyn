@@ -359,31 +359,45 @@ so it is called out here for future edits of that closure.
 `_build_router_waist` aggregates ~40 already-constructed Session sub-components (Families
 1-5's outputs + params/early attrs set earlier in `__init__`) into `RouterHostAdapter`, the
 single object most later families read through — a byte-identical extraction (same object,
-same construction order, same ~40 args, including 3 DEFERRED per-turn lambdas —
-`live_session_id_fn`/`current_task_id_fn`/`turn_origin_fn` — kept verbatim, still closing
-over `self` and resolved at call time, not eager-ized). It stays UNMOVED, invoked at its
-original position — every dependency is already set on `self` by this point.
+same construction order, same values, including 2 DEFERRED per-turn lambdas —
+`live_session_id_inputs.live_session_id_fn`/`op_context_inputs.turn_origin_fn` — kept
+verbatim, still closing over `self` and resolved at call time, not eager-ized). It stays
+UNMOVED, invoked at its original position — every dependency is already set on `self` by
+this point.
 
-**#3482 param bundling**: `RouterHostAdapter.__init__` groups two real
-consumer-set clusters (measured by AST, not by name prefix) into frozen,
-default-free dataclasses built just before the constructor call: the
-16-field `RouterOpContextInputs` (every field's sole reader is
-`RouterHostAdapter.make_router_op_context` — includes `turn_origin_fn` from
-the paragraph above, plus `allowed_mcp`/`budget_gateway`/`compact_now`/
-`contextual_permission`/`hook_bus`/`hook_dispatcher`/`hot_reloader`/
-`multimodal_config`/`presentation_renderer_factory`/`render_template_bounds`/
-`sandbox_backend_instance`/`sandbox_policy`/`workspace_base_dir`/
-`workspace_state_dir`/`base_available_skills_fn`) and the 3-field
-`McpGatewayInputs` (`mcp_connection_service`/`mcp_agent_id`/`ephemeral_fn` —
-#3447's Path A fold, sole reader `_mcp_list_via_gateway`). Session still
-builds each field with the exact same expression as before (same object,
-same order, same call-time semantics — `turn_origin_fn`/`ephemeral_fn` are
-still live per-turn lambdas, not eager-ized); only the wire shape changed,
-from ~19 flat kwargs to 2 bundle kwargs. The remaining ~58 params stay bare
-scalars, each with a reason recorded in
-`ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS` (`router_host_adapter.py`) — bundle
-coverage is deliberately not 100% (forcing it would be a name-prefix
-grouping pressure, not a consumer-set one).
+**#3482 param bundling**: `RouterHostAdapter.__init__` groups every real
+consumer-set cluster (measured by AST, not by name prefix) into frozen,
+default-free dataclasses built just before the constructor call — five of
+them, each named after the sole consumer the measurement found:
+
+| bundle | fields | sole consumer |
+| --- | --- | --- |
+| `RouterOpContextInputs` | 16: `allowed_mcp`/`base_available_skills_fn`/`budget_gateway`/`compact_now`/`contextual_permission`/`hook_bus`/`hook_dispatcher`/`hot_reloader`/`multimodal_config`/`presentation_renderer_factory`/`render_template_bounds`/`sandbox_backend_instance`/`sandbox_policy`/`turn_origin_fn`/`workspace_base_dir`/`workspace_state_dir` | `make_router_op_context` |
+| `McpGatewayInputs` | `mcp_connection_service`/`mcp_agent_id`/`ephemeral_fn` (#3447's Path A fold) | `_mcp_list_via_gateway` |
+| `SendToAgentInputs` | `send_to_agent`/`delegation_tracker` | the `send_to_agent` method |
+| `PutOutboxInputs` | `put_outbox`/`agent_replies_tracker` | the `put_outbox` method |
+| `LiveSessionIdInputs` | `session_id`/`live_session_id_fn` | the `live_session_id` property |
+
+Session still builds each field with the exact same expression as before
+(same object, same order, same call-time semantics — `turn_origin_fn` /
+`ephemeral_fn` / `live_session_id_fn` and the two tracker lambdas are still
+live per-turn callables, not eager-ized); only the wire shape changed.
+
+The remaining bare params are bare because **no other param travels to the
+same set of destinations** — and that is not recorded anywhere as prose. It is
+COMPUTED, by `scripts/measure_router_host_adapter_consumers.py` (exact
+consumer-set equality; a member that reads an already-bundled attribute is a
+landed bundle's hub and is not counted twice), and enforced by
+`tests/test_router_host_adapter_param_gate_3482.py`, which goes RED when a
+bare param acquires an exact-match partner, when a param loses its last
+measurable consumer without being shelved in
+`ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED`, or when a written claim in either
+registry contradicts the measurement. Bundle coverage is deliberately not
+100% — forcing it would be name-prefix grouping pressure, not a consumer-set
+one. The earlier `ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS` registry of 58
+per-param prose reasons is gone: 6 of its "no shared-consumer partner" claims
+were measurably false (they are the three bundles at the bottom of the table
+above), because that gate only ever checked a reason was non-empty.
 
 ### Chat turn_budget engine — None on small context, never raise (#1092 PR-F1)
 

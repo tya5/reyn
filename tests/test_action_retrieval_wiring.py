@@ -25,9 +25,12 @@ import pytest
 from reyn.config import ActionRetrievalConfig, ReynConfig, load_config
 from reyn.runtime.router_tools import build_tools
 from reyn.runtime.services.router_host_adapter import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
@@ -100,11 +103,16 @@ def _make_adapter(
         file_regenerate_index=_noop_callable,
         mcp_call_tool=_noop_callable,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_noop_callable,
-        put_outbox=_noop_callable,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_noop_callable, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_noop_callable, agent_replies_tracker=lambda: None,
+        ),
         append_history=_noop_callable,
-        delegation_tracker=lambda: None,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
         universal_wrappers_enabled=universal_wrappers_enabled,
     )
 

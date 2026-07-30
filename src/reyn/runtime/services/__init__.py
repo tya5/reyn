@@ -12,9 +12,12 @@ from reyn.runtime.services.memory_service import MemoryService
 from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.services.router_host_adapter import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 from reyn.runtime.services.snapshot_journal import SnapshotJournal

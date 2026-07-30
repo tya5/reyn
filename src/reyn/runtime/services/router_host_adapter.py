@@ -76,6 +76,55 @@ class McpGatewayInputs:
     ephemeral_fn: "Callable[[], bool] | None"
 
 
+@dataclass(frozen=True)
+class SendToAgentInputs:
+    """#3482: the two params whose consumer set is EXACTLY
+    ``{adapter.send_to_agent, router_loop::_send_to_agent_bound}`` — the peer
+    dispatch callback and the tracker its result is appended to. One dedicated
+    method reads both and nothing else does, so they travel together.
+
+    Pure value object — no defaults, no construction logic (see
+    :class:`RouterOpContextInputs`'s docstring for the rationale)."""
+
+    send_to_agent: "Callable[..., Awaitable[None]]"
+    delegation_tracker: "Callable[[], list[dict] | None]"
+
+
+@dataclass(frozen=True)
+class PutOutboxInputs:
+    """#3482: the two params whose consumer set is EXACTLY
+    ``{adapter.put_outbox, router_loop::run_loop}`` — the raw outbox put and
+    the reply tracker the same method appends the emitted text to.
+
+    ``append_history`` deliberately stays OUT: it is read by
+    ``append_history_entry`` as well, so its consumer set is strictly larger
+    and bundling it here would be a name/locality grouping, not a measured
+    one. Pure value object — no defaults, no construction logic."""
+
+    put_outbox: "Callable[..., Awaitable[None]]"
+    agent_replies_tracker: "Callable[[], list[str] | None]"
+
+
+@dataclass(frozen=True)
+class LiveSessionIdInputs:
+    """#3482: the two params whose consumer set is EXACTLY
+    ``{adapter.live_session_id}`` — the construction-time sid and the live
+    callback that supersedes it. The property picks between them, which is why
+    neither is meaningful without the other.
+
+    ``session_id`` is ALSO read by ``make_router_op_context``, but that member
+    is an already-bundled consumer (``RouterOpContextInputs``); counting a
+    landed bundle's hub a second time manufactures equality between params
+    that in fact travel to different dedicated accessors, so it is excluded
+    from consumer sets (#3482 firm: exclude the hub by ROLE, not by a
+    param-count threshold — ``run``/``run_loop`` are turn paths, not hubs).
+
+    Pure value object — no defaults, no construction logic."""
+
+    session_id: "str | None"
+    live_session_id_fn: "Callable[[], str | None] | None"
+
+
 class RouterHostAdapter:
     """Concrete RouterLoopHost implementation extracted from Session.
 
@@ -161,37 +210,45 @@ class RouterHostAdapter:
           registry / pipeline executor (spawn-time flip), mirroring
           ``live_session_id_fn``'s same staleness hazard. ``None`` (test
           construction) behaves as never-ephemeral.
-    send_to_agent:
-        Async callback ``(*, to, request, depth, chain_id) -> None``.
-    put_outbox:
-        Async callback ``(OutboxMessage) -> None`` — the raw outbox put.
+    send_to_agent_inputs:
+        :class:`SendToAgentInputs` — the peer-dispatch callback ``(*, to,
+        request, depth, chain_id) -> None`` plus the ``list[dict] | None``
+        delegation tracker it records into (#3482 bundle: exact consumer-set
+        match on ``send_to_agent``).
+    put_outbox_inputs:
+        :class:`PutOutboxInputs` — the raw ``(OutboxMessage) -> None`` put plus
+        the ``list[str] | None`` agent-replies tracker (#3482 bundle: exact
+        consumer-set match on ``put_outbox``).
+    live_session_id_inputs:
+        :class:`LiveSessionIdInputs` — the construction-time ``session_id`` and
+        the live ``() -> str | None`` callback that supersedes it (#3482
+        bundle: exact consumer-set match on the ``live_session_id`` property).
     append_history:
         Sync callback ``(ChatMessage) -> None``.
-    delegation_tracker:
-        Zero-arg callable returning the current ``list[dict] | None``.
-    agent_replies_tracker:
-        Zero-arg callable returning the current ``list[str] | None``.
     """
 
     # RouterLoopHost Protocol attributes (non-property)
     output_language: str | None
 
-    # 77 flat params is not a Parameter-Object problem in general — grouping
-    # them was measured as a near-no-op (#3121 took Session 54 -> 45 by adding
-    # 4 objects while leaving 41 flat params in place): a param-object split
-    # only pays for itself where a REAL consumer-set cluster exists, and #3482
-    # measured exactly two: the 16-param op-context cluster and the 3-param
-    # mcp-gateway cluster below (``op_context_inputs`` / ``mcp_gateway_inputs``).
-    # The remaining ~58 stay flat scalars — collapsing e.g. the 5 mcp_call/
-    # get_prompt/read_resource/subscribe/unsubscribe callbacks into one facade
-    # fails because the Session methods they reach are 27-48 lines each with
-    # their own ephemeral/pool routing and error contract, not thin delegates
-    # (#3409 has the per-method table); each is a single-consumer wiring lane
-    # with no shared-consumer partner, not a hidden cluster. See
-    # ``ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS`` (module level, below the
-    # class) for the per-lane reasons, and
-    # ``tests/test_router_host_adapter_param_gate_3482.py`` for the AST gate
-    # that keeps every param in one of {bundle type, exception registry}.
+    # A long flat kwarg list is not a Parameter-Object problem in general —
+    # grouping by shape was measured as a near-no-op (#3121 took Session 54 ->
+    # 45 by adding 4 objects while leaving 41 flat params in place): a
+    # param-object split only pays for itself where a REAL consumer-set cluster
+    # exists. #3482 bundles every cluster the measurement finds and nothing
+    # else; the bare params that remain are bare because no OTHER param is
+    # carried to exactly the same destinations.
+    #
+    # That last sentence is NOT recorded here as prose, because prose rots
+    # unchecked: the first #3482 pass wrote 58 per-param "no shared-consumer
+    # partner" reasons into a registry whose gate only verified the reasons
+    # were non-empty, and 6 of them were measurably false. The predicate is
+    # computable, so it is COMPUTED —
+    # ``scripts/measure_router_host_adapter_consumers.py`` measures each param's
+    # consumer set and ``tests/test_router_host_adapter_param_gate_3482.py``
+    # fails the moment a bare param acquires an exact-match partner (it must
+    # become a bundle) or a written claim contradicts the measurement. Only the
+    # residue a measurement CANNOT settle is written down, in
+    # ``ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED`` / ``_BUNDLE_BLOCKED`` below.
     def __init__(
         self,
         *,
@@ -211,7 +268,6 @@ class RouterHostAdapter:
         pipeline_registry: Any = None,          # PipelineRegistry | None — IS-5
         presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
-        live_session_id_fn: "Callable[[], str | None] | None" = None,     # #2103 S1bc-exec
         agent_workspace_dir: Path,
         # File op callbacks
         file_read: Callable[..., Awaitable[dict]],
@@ -237,13 +293,19 @@ class RouterHostAdapter:
         # see the class docstring's mcp_gateway_inputs entry. These 3 raw
         # inputs (bundled #3482) replace them.
         mcp_gateway_inputs: McpGatewayInputs,
-        # Action callbacks
-        send_to_agent: Callable[..., Awaitable[None]],
-        put_outbox: Callable[..., Awaitable[None]],
+        # Action callbacks — each bundle below is one measured consumer-set
+        # cluster (#3482); ``append_history`` stays bare because its consumer
+        # set is strictly larger than ``put_outbox``'s (append_history_entry
+        # reads it too).
+        send_to_agent_inputs: SendToAgentInputs,
+        put_outbox_inputs: PutOutboxInputs,
         append_history: Callable,
-        # Tracker getters (return mutable list or None)
-        delegation_tracker: Callable[[], "list[dict] | None"],
-        agent_replies_tracker: Callable[[], "list[str] | None"],
+        # #1953 dynamic-wire + #2103 S1bc-exec: the chat session identity
+        # (``emit_hook_event`` builds the LLM's own ``llm:<session_id>:*``
+        # namespace from it — never an op field the LLM could forge) and the
+        # live callback that supersedes it for a spawned session. Bundled
+        # #3482: the ``live_session_id`` property is the exact consumer of both.
+        live_session_id_inputs: LiveSessionIdInputs,
         # FP-0034 PR-3b-iii/iv: universal catalog wrapper visibility
         # (= reyn.yaml action_retrieval.universal_wrappers_enabled).
         # Session passes True by default since PR-3b-iv flipped the
@@ -252,10 +314,6 @@ class RouterHostAdapter:
         # adapters by hand) preserve the prior tools= shape and don't
         # accidentally activate wrappers without intent.
         universal_wrappers_enabled: bool = False,
-        # #1953 dynamic-wire: the chat session identity, threaded so
-        # ``emit_hook_event`` builds the LLM's own ``llm:<session_id>:*``
-        # namespace (never an op field the LLM could forge).
-        session_id: str | None = None,
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator set
         # ``embedding.enabled: true`` (FP-0066 §7) AND Session built a
@@ -408,12 +466,14 @@ class RouterHostAdapter:
     ) -> None:
         self._op_ctx = op_context_inputs
         self._mcp_gateway = mcp_gateway_inputs
+        self._send_to_agent_in = send_to_agent_inputs
+        self._put_outbox_in = put_outbox_inputs
+        self._live_sid_in = live_session_id_inputs
         self._threat_scan = threat_scan
         # #2073 S3: exposed (public) so RouterLoop threads it onto the tool ctx, so a
         # self-reload tool reloads THIS session (per-session, not a process global).
         # (source: op_context_inputs.hot_reloader — #3482 bundle)
         self.hot_reloader = self._op_ctx.hot_reloader
-        self._session_id = session_id  # #1953 dynamic-wire: emit_hook_event's session-namespace key
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -455,7 +515,6 @@ class RouterHostAdapter:
         # the Session's copy) so a newly-registered template is visible next turn.
         self._presentation_registry = presentation_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
-        self._live_session_id_fn = live_session_id_fn      # #2103 S1bc-exec
         self._workspace_dir = Path(agent_workspace_dir)
         # File callbacks
         self._file_read_cb = file_read
@@ -471,13 +530,10 @@ class RouterHostAdapter:
         # #3447/#3482: raw inputs for the 5 mcp_list_* methods this adapter
         # implements directly (folded off Session — see class docstring),
         # bundled into mcp_gateway_inputs (single reader: _mcp_list_via_gateway).
-        # Action callbacks
-        self._send_to_agent_cb = send_to_agent
-        self._put_outbox_cb = put_outbox
+        # Action callbacks — the dispatch/outbox pairs live on their #3482
+        # bundles (``self._send_to_agent_in`` / ``self._put_outbox_in``); the
+        # ``send_to_agent`` / ``put_outbox`` methods read them there.
         self._append_history_cb = append_history
-        # Tracker getters
-        self._delegation_tracker = delegation_tracker
-        self._agent_replies_tracker = agent_replies_tracker
         # FP-0034 PR-3b-iii
         self._universal_wrappers_enabled = universal_wrappers_enabled
         # B25-S5-1
@@ -679,7 +735,8 @@ class RouterHostAdapter:
         post-construction, so the live fn wins when wired). IS-2 reads this as
         the ``run_pipeline_async`` reply address; the ``spawn_session``
         result-routing path reads the same expression."""
-        return self._live_session_id_fn() if self._live_session_id_fn else self._session_id
+        live_fn = self._live_sid_in.live_session_id_fn
+        return live_fn() if live_fn else self._live_sid_in.session_id
 
     @property
     def events(self) -> Any:
@@ -1076,11 +1133,11 @@ class RouterHostAdapter:
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None:
         """Dispatch to peer and record delegation for pending-chain registration."""
-        await self._send_to_agent_cb(
+        await self._send_to_agent_in.send_to_agent(
             to=to, request=request, depth=depth, chain_id=chain_id,
         )
         # Track delegations so callers can register _PendingChain after the loop.
-        tracker = self._delegation_tracker()
+        tracker = self._send_to_agent_in.delegation_tracker()
         if tracker is not None:
             tracker.append({"to": to, "request": request})
 
@@ -1463,7 +1520,7 @@ class RouterHostAdapter:
             from reyn.runtime.reasoning_continuity import reasoning_text
             _reasoning_display = reasoning_text(_reasoning)
             if _reasoning_display:
-                await self._put_outbox_cb(OutboxMessage(
+                await self._put_outbox_in.put_outbox(OutboxMessage(
                     kind="reasoning",
                     text=_reasoning_display,
                     meta={"chain_id": meta.get("chain_id"), "reasoning": _reasoning},
@@ -1472,7 +1529,9 @@ class RouterHostAdapter:
             {k: v for k, v in meta.items() if k != "reasoning"}
             if "reasoning" in meta else meta
         )
-        await self._put_outbox_cb(OutboxMessage(kind=kind, text=text, meta=_outbox_meta))
+        await self._put_outbox_in.put_outbox(
+            OutboxMessage(kind=kind, text=text, meta=_outbox_meta)
+        )
         # Persist agent (conversational) replies to history so the context
         # window stays coherent across turns.
         #
@@ -1504,7 +1563,7 @@ class RouterHostAdapter:
             ))
             # Capture for agent-to-agent paths that need to forward the
             # reply upstream via _send_agent_response.
-            replies = self._agent_replies_tracker()
+            replies = self._put_outbox_in.agent_replies_tracker()
             if replies is not None:
                 replies.append(text)
 
@@ -2247,7 +2306,7 @@ class RouterHostAdapter:
             contextual_permission=op_ctx.contextual_permission,  # #1827 S3
             # #1953 dynamic-wire: the REAL chat-session id, threaded so
             # emit_hook_event builds the LLM's own session-scoped namespace.
-            session_id=self._session_id,
+            session_id=self._live_sid_in.session_id,
             hook_dispatcher=op_ctx.hook_dispatcher,  # #1800 slice 5c
             hook_bus=op_ctx.hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
             # proposal 0060 Phase 1 (A7): a live callback read (varies per turn, so
@@ -2303,111 +2362,61 @@ class RouterHostAdapter:
 
 
 # ---------------------------------------------------------------------------
-# #3482 N+1 gate registries — every RouterHostAdapter.__init__ param must
-# have an annotation naming one of ROUTER_HOST_ADAPTER_BUNDLE_TYPES, or be a
-# key in ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS with a REASON (why it stays a
-# bare scalar). tests/test_router_host_adapter_param_gate_3482.py asserts
-# this by AST over the real signature — a bare `foo_fn: Callable` param
-# added tomorrow with no bundle annotation and no registry entry goes RED.
+# #3482 N+1 gate — the registries below hold ONLY what a measurement cannot
+# settle.
 #
-# The reasons below classify by CONSUMER SET (the #3482 firm's discriminator
-# — never by name prefix): most are single-consumer wiring lanes (one
-# Session collaborator → one dedicated adapter method/property), which is
-# NOT itself a defect — #3121 measured that grouping single-consumer params
-# by name-prefix alone is a near-no-op. A handful are multi-consumer (read
-# by 2+ adapter methods) but the reader SET differs per param, so they don't
-# form a cluster either. Six (the mcp call-family callbacks + mcp_servers)
-# get the specific, non-speculative reason the architect required: DECIDED
-# to stay bare, not "scheduled for a future fold" (writing a resolution date
-# for un-scheduled work is exactly the schedule/resolution conflation the
-# architect's firm forbids — see the #3482 issue thread).
+# The question "may this param stay a bare scalar?" has a computable answer:
+# is any OTHER param carried to exactly the same set of destinations? So it is
+# COMPUTED, by scripts/measure_router_host_adapter_consumers.py, and enforced
+# by tests/test_router_host_adapter_param_gate_3482.py:
+#
+#   * bare param that acquires an exact-match partner  -> RED (bundle them)
+#   * bare param with no measurable consumer           -> RED unless shelved
+#                                                         below with a reason
+#   * a shelved reason contradicted by measurement     -> RED
+#
+# The first #3482 pass instead wrote 58 per-param prose reasons, most asserting
+# "no shared-consumer partner", behind a gate that only checked the reasons
+# were non-empty. Six were measurably false (delegation_tracker/send_to_agent,
+# put_outbox/agent_replies_tracker, session_id/live_session_id_fn — each pair
+# an exact consumer-set match, now the three bundles above). A declaration's
+# EXISTENCE was standing in as the witness for its TRUTH; deriving the
+# predicate is the fix, and deleting the prose is part of the fix, because
+# prose that restates a computable fact can only rot.
 # ---------------------------------------------------------------------------
 
 ROUTER_HOST_ADAPTER_BUNDLE_TYPES: "tuple[str, ...]" = (
     "RouterOpContextInputs",
     "McpGatewayInputs",
+    "SendToAgentInputs",
+    "PutOutboxInputs",
+    "LiveSessionIdInputs",
 )
 
-_MCP_CALL_FAMILY_REASON = (
-    "Single-consumer forwarding lane (its own dedicated adapter method "
-    "reaches Session's callback) — one of 5 call-family callbacks +  "
-    "mcp_servers measured (#3482, current main 890e22d2) to each resolve "
-    "to its OWN transfer method, a different consumer set per param, not a "
-    "shared cluster. The call family is already unified on a throw contract "
-    "(#3447 correction). DECIDED: remains bare — there is no scheduled fold "
-    "and no same-consumer partner to bundle with; not a stated \"future "
-    "resolution\" (see the #3482 issue thread's schedule/resolution note)."
-)
-
-ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS: "dict[str, str]" = {
-    # --- identity ---
-    "agent_name": "Identity attribute; own accessor (agent_name/chat_id properties), no bundle partner.",
-    "agent_role": "Identity attribute; own accessor (agent_role property), no bundle partner.",
-    "output_language": "RouterLoopHost Protocol non-property attribute; read externally via host.output_language (router_loop), no adapter-internal cluster partner.",
-    "agent_workspace_dir": "Single-consumer (get_memory_index's workspace path); no bundle partner.",
-    # --- config / collaborators with their own dedicated accessor ---
-    "permission_resolver": "Multi-consumer (permission_resolver property + get_file_permissions + make_router_op_context's file-permission resolution); no single shared-consumer cluster to fold into.",
-    "mcp_servers": _MCP_CALL_FAMILY_REASON,
-    "project_context": "Single-consumer (get_project_context); no bundle partner.",
-    "events": "Multi-consumer EventLog (events property + emit() at multiple call sites across the class); no cluster partner.",
-    "resolver": "Single-consumer (resolve_model/resolve_model_spec); ModelResolver, no bundle partner.",
-    "memory": "Single-consumer (memory_path/memory_dir via MemoryService); no bundle partner.",
-    "journal": "Forward-only (stored, never read within this class or externally) — legacy SnapshotJournal handle; no current consumer, no bundle partner.",
-    "state_log": "Single-consumer (state_log property, WAL head for config generation emit); no bundle partner.",
-    "agent_registry": "Multi-consumer AgentRegistry (list_available_agents / spawn_session / get_agent_registry / session-nesting-depth checks); no single-partner cluster.",
-    "pipeline_registry": "Single-consumer (get_pipeline_registry, IS-5 run_pipeline lookup source); no bundle partner.",
-    "presentation_registry": "Multi-consumer (get_presentation_registry property + make_router_op_context); reader set differs from the 16-param op-context cluster (get_presentation_registry has no partner there), no clean fold.",
-    "record_spawned_task": "Single-consumer (#2103 S1bc-exec spawn_session path); no bundle partner.",
-    "live_session_id_fn": "Single-consumer (live_session_id property); no bundle partner.",
-    # --- file op callback family (own consumer per callback) ---
-    "file_read": "Single-consumer forwarding callback (its own adapter method); file-op family, no shared-consumer partner.",
-    "file_write": "Single-consumer forwarding callback (its own adapter method); file-op family, no shared-consumer partner.",
-    "file_delete": "Single-consumer forwarding callback (its own adapter method); file-op family, no shared-consumer partner.",
-    "file_regenerate_index": "Single-consumer forwarding callback (its own adapter method); file-op family, no shared-consumer partner.",
-    # --- mcp call family (DECIDED bare, see _MCP_CALL_FAMILY_REASON) ---
-    "mcp_call_tool": _MCP_CALL_FAMILY_REASON,
-    "mcp_read_resource": _MCP_CALL_FAMILY_REASON,
-    "mcp_subscribe_resource": _MCP_CALL_FAMILY_REASON,
-    "mcp_unsubscribe_resource": _MCP_CALL_FAMILY_REASON,
-    "mcp_get_prompt": _MCP_CALL_FAMILY_REASON,
-    # --- action callbacks / trackers (own consumer each) ---
-    "send_to_agent": "Single-consumer action callback (send_to_agent method, plus delegation_tracker fan-out); no shared-consumer partner outside its own method.",
-    "put_outbox": "Single-consumer action callback; no bundle partner.",
-    "append_history": "Single-consumer action callback; no bundle partner.",
-    "delegation_tracker": "Single-consumer tracker getter (send_to_agent's post-dispatch record); no bundle partner.",
-    "agent_replies_tracker": "Single-consumer tracker getter; no bundle partner.",
-    # --- FP-0034 universal catalog / retrieval accessors (each own getter) ---
-    "universal_wrappers_enabled": "Single-consumer (get_universal_wrappers_enabled); no bundle partner.",
-    "action_embedding_index": "Single-consumer (get_action_embedding_index); RouterLoop reads it directly via host.get_action_embedding_index(), not through make_router_op_context — not a member of the op-context cluster.",
-    "embedding_provider": "Single-consumer (get_embedding_provider); same reasoning as action_embedding_index.",
-    "embedding_model_class": "Single-consumer (get_embedding_model_class); same reasoning as action_embedding_index.",
-    "action_usage_tracker": "Single-consumer (get_action_usage_tracker); no bundle partner.",
-    "uncompacted_tool_call_records_fn": "Single-consumer (get_uncompacted_tool_call_records); no bundle partner.",
-    "action_retrieval_config": "Single-consumer (get_action_retrieval_config); no bundle partner.",
-    "available_skills": "Multi-consumer (get_available_skills property + make_router_op_context's fallback-when-no-base-fn branch); reader set differs from the op-context cluster's base_available_skills_fn, no clean fold.",
-    "eager_embedding_build": "Single-consumer (get_eager_embedding_build); no bundle partner.",
-    # --- sandbox / environment (D14 string vs FS-op instance are distinct axes) ---
-    "sandbox_backend": "Single-consumer (get_sandbox_backend, the D14 exec-visibility STRING); distinct axis from sandbox_backend_instance (op-context bundle), no partner.",
-    "environment_backend": "Multi-consumer (get_cwd / get_environment_info / make_router_op_context); reader set spans 3 methods, wider than the op-context cluster, no clean fold.",
-    # --- session-scoped safety / limits ---
-    "session_id": "Multi-consumer (live_session_id property fallback + make_router_op_context); reader set differs from the op-context cluster (live_session_id has no partner there), no clean fold.",
-    "intervention_bus_factory": "Multi-consumer (make_router_op_context + make_intervention_bus); reader set differs from the op-context cluster's own presentation_renderer_factory (make_intervention_bus has no partner there), no clean fold.",
-    "handle_chat_limit_checkpoint": "Single-consumer (_spawn_limit_checkpoint call sites within spawn_session/spawn_agent); no bundle partner.",
-    "safety_extensions": "Single-consumer (read/mutated by the same spawn-limit checkpoint call sites); no bundle partner.",
-    # --- reasoning / media / offload (own accessor pair) ---
-    "reasoning_config": "Single-consumer reasoning display/continuity accessor pair (its own dedicated methods); not read via make_router_op_context, not a member of the op-context cluster.",
-    "reasoning_continuity_section_fn": "Single-consumer (paired with reasoning_config, same dedicated accessor methods); no bundle partner.",
-    "media_store": "Multi-consumer (media_store property + make_router_op_context); reader set differs from the op-context cluster, no clean fold.",
-    "cap_tool_result": "Single-consumer (cap_tool_result method); no bundle partner.",
-    "media_followup_budget": "Single-consumer (media_followup_budget method); no bundle partner.",
-    "offload_enabled": "Single-consumer (offload_enabled property); no bundle partner.",
-    "context_window_status": "Single-consumer (context_window_status property); no bundle partner.",
-    # --- FP-0037 mcp tools cache paths ---
-    "state_dir": "Single-consumer (mcp tools cache file path resolution, _state_dir); no bundle partner.",
-    "project_root": "Single-consumer (yaml scope tier watch, _project_root); no bundle partner.",
-    # --- turn budget / cancel ---
-    "turn_budget_engine": "Multi-consumer (wrap_up_output_reserve property + set_turn_budget_engine); reader set differs from the op-context cluster, no clean fold.",
-    "turn_cancel_fn": "Single-consumer (_is_turn_cancel_requested); no bundle partner.",
-    # --- content-threat scan (widest-shared scalar in the class) ---
-    "threat_scan": "Multi-consumer (scan_tool_result / fence_tool_result / scan_for_block / get_project_context / make_router_op_context — 5 methods); the widest-shared scalar in the class, no single cluster to fold into.",
+# Bare params for which the static measurement finds NO consumer at all.
+# "Not measurable" is NOT "has no partner": a dynamic ``getattr(host, ...)``
+# read, a test-only surface, or a hole in the scan all look identical from
+# here, so the value of an entry is the part a scan CANNOT supply — what is
+# actually known about the param. The gate checks this registry against the
+# measurement in BOTH directions (a param that gains a consumer must leave,
+# and a param that loses its last consumer must be added).
+ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED: "dict[str, str]" = {
+    "journal": (
+        "Stored on self._journal and read nowhere the scan can see: no adapter "
+        "member reads it, and no host-surface read of `journal`/`_journal` "
+        "exists anywhere under src/reyn. Session wires a real SnapshotJournal "
+        "and nothing records whether the handle is kept deliberately (a "
+        "reserved surface) or was simply left behind, and code cannot "
+        "distinguish 'forgotten' from 'decided' — so it is shelved as "
+        "unmeasured rather than declared partnerless. Removing the param is a "
+        "Session-construction decision, not a #3482 measurement one."
+    ),
 }
+
+# Bare params that DO have an exact-match partner but must not be bundled, for
+# a reason no measurement can produce. Empty on purpose: every cluster the
+# measurement currently finds is bundled. An entry here is a claim the gate
+# checks — if the named param has no measured partner, the exception marker is
+# dead and goes RED (#3457's "drop the exception that never fires" arm, which
+# applies here precisely because a reason is a CLAIM, not a value).
+ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED: "dict[str, str]" = {}

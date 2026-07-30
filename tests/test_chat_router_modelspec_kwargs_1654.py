@@ -20,10 +20,13 @@ from typing import Any
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
 from reyn.runtime.services import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
@@ -78,9 +81,17 @@ def _mk_host_with_kwargs():
         agent_workspace_dir=workspace,
         file_read=_noop, file_write=_noop, file_delete=_noop,
         file_regenerate_index=_noop,
-        mcp_call_tool=_noop, mcp_gateway_inputs=_EMPTY_MCP_GATEWAY, send_to_agent=_noop,
-        put_outbox=_noop, append_history=_noop,
-        delegation_tracker=lambda: [], agent_replies_tracker=lambda: [],
+        mcp_call_tool=_noop, mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_noop, delegation_tracker=lambda: [],
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_noop, agent_replies_tracker=lambda: [],
+        ),
+        append_history=_noop,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
         turn_budget_engine=None, environment_backend=None,
     )
 
