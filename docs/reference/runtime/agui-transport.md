@@ -768,6 +768,157 @@ The **start** state is config-backed (`chat.gutters.left` / `chat.gutters.right`
 both `true` by default); a keypress is **session-scoped** and never writes back
 to `reyn.yaml`.
 
+### Textual TUI empty state — the fresh-session hint (#3476)
+
+A session with no history used to open onto a blank void above the composer
+(owner design review). The conversation pane now paints a centred hint while
+the model holds **no entries**:
+
+```
+reyn
+
+Type a message to start
+/ commands · : skills · Help tab for keys
+```
+
+This is flowview's `empty=` / `empty_align="middle"` — an EMPTY STATE the
+library itself clears the instant the first entry lands, not an app-managed
+banner. That distinction is the whole point of using it: a reyn-side
+show/hide would be a second piece of state to keep in step with the model,
+and it would drift the first time an entry arrived through a path that
+forgot to hide it. The hint is a `rich.Text` built by `empty_state_hint()`
+(`textual_chat/app.py`) in the palette's dim tone, so it reads as ambient
+guidance rather than content.
+
+The same change made restore **hydration** a single `FlowModel.extend` call
+instead of one `append` per frame: `extend` reflows the view once for the
+whole page (flowview 0.6.0), where the per-entry loop reflowed once per
+entry. The per-entry `set_state` calls that follow only repaint gutters, so
+they add no reflow.
+
+### Textual TUI lazy history paging (#3476)
+
+Restore materialises only the **newest** `_HYDRATE_PAGE_FRAMES` (200) frames
+of the projected history. The older prefix is held aside
+(`_older_frames`, oldest-first) and paged in a slice at a time as the user
+scrolls toward it:
+
+- `FlowView.ReachedTop` (edge-triggered, armed `reach_threshold=3` rows early
+  so the page is in place before the user arrives, and re-armed when the view
+  retreats from the edge) → `FlowModel.insert_many(0, page)`.
+- `insert_many` reflows **once** for the whole prepended slice and flowview
+  preserves the scroll position across it, so the row being read does not
+  move.
+- With nothing left to page in, the handler is a no-op. Live frames are
+  unaffected — they append at the bottom through the frame pump and never
+  reach this path.
+- `_older_frames` is reset by every hydrate call (initial mount AND session
+  switch), so a switch can never page in the previous session's leftovers.
+
+A restored tool frame's terminal `EntryState` is applied by ONE shared
+transition (`_apply_restored_state`) that runs on **both** the hydrate and
+the page-in path — a row that pages in lazily settles exactly as it would
+have on first paint.
+
+**This is not a performance fix, and the doc should not imply it is.** The
+view-side cost of hydrating everything at once was measured small (heights
+are lazily estimated, so a 40 000-frame `extend` costs ≈ 41 ms); paging was
+adopted as deliberate forward infrastructure for histories far beyond that,
+with the measurement recorded on the issue. What the tests pin is therefore
+the **correctness** of the paging, never a timing claim.
+
+`/copy`'s reply ring is seeded from the FULL restored history, not from the
+materialised page — what `/copy N` addresses is the history, and a reply in
+the not-yet-paged-in prefix stays reachable. The seeding walks the frames
+oldest-first with `appendleft`, the same direction the live pump uses: the
+ring is a `deque(maxlen=COPY_BUFFER_MAX)` whose index 0 must be the newest
+reply, and a `reversed()` + `append` seeding expressed that correctly only
+while the reply count stayed under the cap — past it, `append` evicts from
+the NEWEST side and silently inverts the "1 = newest" contract (#3486).
+
+### Textual TUI in-conversation search (#3476)
+
+`ctrl+f` opens a one-line search bar docked directly above the composer (the
+last chrome region before the input row; collapsed by default). The key was
+verified free against the same enumeration the gutter bindings use — no
+`TextArea` binding claims it, and `RESERVED_KEYS` reserves only `ctrl+r`/`F2`.
+
+| Key | Effect |
+|-----|--------|
+| `ctrl+f` | Open (or refocus) the bar |
+| `Enter` / `↑` | Step to an OLDER match |
+| `Shift+Enter` / `↓` | Step to a NEWER match |
+| `Esc` | Close, clear the mark, return focus to the composer |
+
+Matching is incremental: every keystroke recomputes the match set, selects the
+**newest** hit and centres it (`scroll_to_entry(align="center", animate=True)`),
+and the bar shows the hit's model-order position as `n/M`. Stepping uses
+`FlowView.find_previous` / `find_next` (model order, wrapping). The arrows map
+**spatially** — `↑` walks toward older entries, the direction the viewport
+moves — so the key pressed and the way the conversation scrolls always agree;
+`Enter` = older follows the same reasoning, since a bottom-anchored
+conversation is searched backward from now.
+
+Two decisions worth stating because the obvious alternative is wrong:
+
+- The predicate reads the **model** text (`entry.item.text`), never
+  `FlowView.entry_text()`. The latter returns the *rendered* body and is `""`
+  for an entry that has not been presented yet, which would silently exclude
+  every never-scrolled-to row from the search domain.
+- Opening the bar first materialises the **entire** lazily-held older prefix
+  (one `insert_many`). A hit that exists in the restored history but not in
+  the materialised page would otherwise read as "no results" — a lie, and the
+  measured full-hydrate cost makes paying it all at once cheaper than teaching
+  search a second, virtual domain.
+
+The current hit is marked by the addressed-row rail described under
+*Textual TUI gutters* above. Its keys are registered in `SEARCHBAR_KEYS`
+(`textual_chat/chrome.py`) so the Help pane sources them from where they are
+defined.
+
+### Textual TUI keyboard cursor (#3476)
+
+The conversation pane carries an entry-level keyboard cursor
+(`FlowView(cursor=True)`). It is reached the way that focus state was already
+reachable — Textual's own `Shift+Tab` focus cycling, with `Esc` returning to
+the composer (machine-verified by the Esc-sufficiency gate) — never a new
+focus path. While FlowView does not hold focus these keys are unaffected; the
+composer's own `PageUp`/`PageDown` scroll delegation calls actions on the view
+directly and does not depend on the cursor at all.
+
+| Key | Effect |
+|-----|--------|
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | Move the cursor (flowview's own bindings) |
+| `Enter` / `Space` | Copy the cursor entry's text to the clipboard |
+| `r` | Open `/rewind` |
+| `Esc` | Back to the composer |
+
+Arriving at the pane arms the cursor on the **newest** entry rather than
+leaving it invisible until the first arrow press: flowview's `move_cursor`
+starts from "no cursor" and only lands on an entry once a direction key moves
+it, which is a real gap for a feature whose whole point is a visible position
+indicator. A remembered position is kept across visits — leaving and
+re-entering resumes where you were.
+
+**Copy** (`FlowView.Activated`) is a direct, ring-free path: `/copy N`
+addresses one of the last `COPY_BUFFER_MAX` **agent replies** by ordinal,
+whereas the cursor points at one exact, arbitrary entry of any kind (a user
+line, a tool result), so there is no ordinal to resolve and no reason to go
+through the ring.
+
+**`r`** submits a bare `/rewind` through the ordinary submit seam — the same
+path a composer-typed `/rewind` takes, so the checkpoint picker and rewind's
+destructive-action path are untouched. It is a fast keyboard entry point,
+**not** a jump to the checkpoint belonging to the cursor's entry: the
+conversation log's `ChatMessage.seq` and the WAL seq that
+`AgentRegistry.list_rewind_points` addresses are different sequence spaces
+with no correlation wired anywhere, so a targeted jump would need new
+plumbing rather than a new binding.
+
+The cursor's position is marked by the addressed-row rail described under
+*Textual TUI gutters* above. Its keys live in `CONVERSATION_CURSOR_KEYS`
+(`textual_chat/chrome.py`) for the Help pane.
+
 ### `reyn.intervention.<kind>`
 
 An **open namespace** carried differently from the two above: it is the `toolName`
