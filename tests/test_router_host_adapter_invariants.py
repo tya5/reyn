@@ -15,10 +15,13 @@ from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.router_loop import RouterLoopHost
 from reyn.runtime.services import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 
 # ---------------------------------------------------------------------------
@@ -210,11 +213,16 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=fake_send,
-        put_outbox=_null_put_outbox,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=fake_send, delegation_tracker=lambda: tracker,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
         append_history=_null_append_history,
-        delegation_tracker=lambda: tracker,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
     )
 
     asyncio.run(adapter.send_to_agent(
@@ -281,11 +289,16 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_null_send_to_agent,
-        put_outbox=_null_put_outbox,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
         append_history=_null_append_history,
-        delegation_tracker=lambda: None,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
     )
 
     assert adapter.permission_resolver is sentinel, (
@@ -339,11 +352,16 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_null_send_to_agent,
-        put_outbox=_null_put_outbox,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
         append_history=_null_append_history,
-        delegation_tracker=lambda: None,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
         intervention_bus_factory=lambda: sentinel_bus,
     )
 
@@ -396,11 +414,16 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_null_send_to_agent,
-        put_outbox=_null_put_outbox,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
         append_history=_null_append_history,
-        delegation_tracker=lambda: None,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
     )
 
     op_ctx = adapter.make_router_op_context()

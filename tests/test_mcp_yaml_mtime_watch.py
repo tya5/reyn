@@ -25,10 +25,13 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.services import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
@@ -168,11 +171,16 @@ def _make_adapter(
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_null_send_to_agent,
-        put_outbox=_null_put_outbox,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
         append_history=_null_append_history,
-        delegation_tracker=lambda: None,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
         state_dir=state_dir,
         project_root=project_root,
     )
@@ -589,11 +597,16 @@ async def test_session_handle_user_message_calls_yaml_watch_before_reload(
         file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_null_send_to_agent,
-        put_outbox=_null_put_outbox,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
         append_history=_null_append_history,
-        delegation_tracker=lambda: None,
-        agent_replies_tracker=lambda: None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
         state_dir=state_dir,
         project_root=None,
     )

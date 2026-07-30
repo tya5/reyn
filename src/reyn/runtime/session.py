@@ -73,10 +73,13 @@ from reyn.runtime.services import (
     InterventionCoordinator,
     InterventionHandler,
     InterventionRegistry,
+    LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
     SnapshotJournal,
 )
 from reyn.runtime.services.chain_manager import _PendingChain
@@ -3739,8 +3742,10 @@ class Session:
         constructible; the sole production caller, ``__init__``, always passes
         the real constructor value.
 
-        ★ Two args are DEFERRED lambdas, NOT eager values —
-        ``live_session_id_fn`` / ``turn_origin_fn``
+        ★ Two of the values threaded in are DEFERRED lambdas, NOT eager values
+        — ``live_session_id_inputs.live_session_id_fn`` /
+        ``op_context_inputs.turn_origin_fn`` (both #3482 bundle fields; being
+        inside a frozen dataclass changes nothing about when they resolve)
         keep resolving ``self._session_id`` / ``self._current_turn_origin``
         at CALL time, not here: ``_current_turn_origin`` already carries a
         pre-turn DEFAULT at construction (``"auto_improvement"``, set at
@@ -3751,13 +3756,13 @@ class Session:
         is deferred because a spawned session's live session id can change
         AFTER this constructor runs (the cached ``self._session_id`` read
         here is stale for that case — see the inline comment above
-        ``record_spawned_task`` below). Eager-izing any of the three would
-        freeze a per-turn value at
-        construction time — the Family 3/5 deferred/eager pitfall repeated
-        here for a third and heavier family. ``record_spawned_task`` (a bound
-        method) and the two tracker lambdas ``delegation_tracker`` /
-        ``agent_replies_tracker`` are likewise kept verbatim, still closing
-        over ``self``.
+        ``record_spawned_task`` below). Eager-izing either would freeze a
+        per-turn value at construction time — the Family 3/5 deferred/eager
+        pitfall repeated here for a third and heavier family.
+        ``record_spawned_task`` (a bound method) and the two tracker lambdas
+        (``send_to_agent_inputs.delegation_tracker`` /
+        ``put_outbox_inputs.agent_replies_tracker``) are likewise kept
+        verbatim, still closing over ``self``.
 
         PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
         RouterLoopHost implementation extracted from Session. Constructed
@@ -3811,6 +3816,24 @@ class Session:
             mcp_agent_id=self._agent.agent_id,
             ephemeral_fn=lambda: self._ephemeral,
         )
+        # #3482: three more measured consumer-set clusters (sole readers:
+        # RouterHostAdapter.send_to_agent / .put_outbox / .live_session_id).
+        # Same values, same call-time semantics as the flat kwargs they
+        # replace — the trackers stay lambdas over the live Session fields and
+        # live_session_id_fn stays a deferred read (the constructor's cached
+        # session_id is stale for a spawned session).
+        _send_to_agent_inputs = SendToAgentInputs(
+            send_to_agent=self._send_to_agent,
+            delegation_tracker=lambda: self._router_loop_delegations,
+        )
+        _put_outbox_inputs = PutOutboxInputs(
+            put_outbox=self._put_outbox,
+            agent_replies_tracker=lambda: self._router_loop_agent_replies,
+        )
+        _live_session_id_inputs = LiveSessionIdInputs(
+            session_id=self._session_id,
+            live_session_id_fn=lambda: self._session_id,
+        )
 
         router_host = RouterHostAdapter(
             # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
@@ -3824,7 +3847,7 @@ class Session:
             threat_scan=self._safety.threat_scan,
             op_context_inputs=_op_context_inputs,  # #3482
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
-            session_id=self._session_id,
+            live_session_id_inputs=_live_session_id_inputs,  # #3482
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
@@ -3851,7 +3874,6 @@ class Session:
             # is stale for spawned sessions, stamped post-construction) for the non-main
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
-            live_session_id_fn=lambda: self._session_id,
             agent_workspace_dir=self.workspace_dir,
             file_read=self._file_read,
             file_write=self._file_write,
@@ -3872,11 +3894,9 @@ class Session:
             # gateway-identity inputs need threading through (mcp_gateway_inputs
             # bundle, built above), not a callback per listing method.
             mcp_gateway_inputs=_mcp_gateway_inputs,
-            send_to_agent=self._send_to_agent,
-            put_outbox=self._put_outbox,
+            send_to_agent_inputs=_send_to_agent_inputs,  # #3482
+            put_outbox_inputs=_put_outbox_inputs,  # #3482
             append_history=self._append_history,
-            delegation_tracker=lambda: self._router_loop_delegations,
-            agent_replies_tracker=lambda: self._router_loop_agent_replies,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,

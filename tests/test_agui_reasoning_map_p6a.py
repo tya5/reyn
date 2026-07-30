@@ -57,10 +57,13 @@ from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.services import (
+    LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
+    PutOutboxInputs,
     RouterHostAdapter,
     RouterOpContextInputs,
+    SendToAgentInputs,
 )
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
@@ -174,11 +177,18 @@ def _mk_host(reasoning_config, *, outbox: list, history: list) -> RouterHostAdap
         file_regenerate_index=_noop,
         mcp_call_tool=_noop,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent=_noop,
-        put_outbox=lambda msg: outbox.append(msg) or _noop(),
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_noop, delegation_tracker=lambda: [],
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=lambda msg: outbox.append(msg) or _noop(),
+            agent_replies_tracker=lambda: [],
+        ),
         append_history=lambda msg: history.append(msg),
-        delegation_tracker=lambda: [],
-        agent_replies_tracker=lambda: [], turn_budget_engine=None,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
+        turn_budget_engine=None,
         environment_backend=None,
         reasoning_config=reasoning_config,
         reasoning_continuity_section_fn=lambda: "",

@@ -1,32 +1,47 @@
-"""Tier 2: OS invariant — every RouterHostAdapter.__init__ param's annotation
-is either a registered bundle type or a reasoned scalar exception (#3482,
-mirroring #3451/#3437's AST-derived SSoT + bidirectional-gate shape).
+"""Tier 2: OS invariant — a bare ``RouterHostAdapter.__init__`` param is bare
+only because MEASUREMENT says no other param travels to the same destinations
+(#3482), never because a hand-written reason says so.
 
-The #3482 firm (issue thread, architect's re-grounded comment on current
-main 890e22d2) measured two real consumer-set clusters in RouterHostAdapter's
-77 constructor params — the 16-field op-context cluster
-(``RouterOpContextInputs``, sole reader ``make_router_op_context``) and the
-3-field mcp-gateway cluster (``McpGatewayInputs``, sole reader
-``_mcp_list_via_gateway``) — and explicitly REJECTED forcing 100% bundle
-coverage ("consumer 集合が一致するものだけを束ねる... 強制収容は接頭辞
-（形）に逃げる圧力になります"). The remaining ~58 params stay bare scalars,
-each with a reason recorded in ``ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS``.
+The first #3482 pass shipped a registry of 58 per-param prose reasons, most
+asserting "no shared-consumer partner", behind a gate that checked only that a
+reason was non-empty. Six were measurably false — the declaration's EXISTENCE
+was standing in as the witness for its TRUTH. So this gate derives the
+predicate from ``scripts/measure_router_host_adapter_consumers.py`` (exact
+consumer-set equality, already-bundled hubs not counted twice) and the module
+keeps prose ONLY for the residue a measurement cannot settle:
 
-This is NOT a param-count pin (Tier-4): the gate never compares against a
-fixed N. It asserts a STRUCTURE — every param falls into one of exactly two
-buckets, both enumerable and both non-empty — so a new bare param added
-tomorrow with neither a bundle annotation nor a registry entry goes RED at
-the exact moment it's added, not silently.
+* a bare param that acquires an exact-match partner   -> RED (bundle them)
+* a bare param with no measurable consumer            -> RED unless shelved in
+                                                         ``..._CONSUMER_UNMEASURED``
+* a shelved / blocked claim the measurement refutes    -> RED
+
+No param count is pinned (that would be a Tier-4 format pin): every arm
+asserts a STRUCTURE, so the gate fires the moment a new param is wired, not at
+the next time someone edits a number.
 """
 from __future__ import annotations
 
-import ast
+import functools
+import importlib.util
+import sys
 from pathlib import Path
 
 from reyn.runtime.services.router_host_adapter import (
+    ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED,
     ROUTER_HOST_ADAPTER_BUNDLE_TYPES,
-    ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS,
+    ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED,
     RouterHostAdapter,
+)
+
+# Phrases that assert a DERIVED predicate. The gate computes this predicate, so
+# a registry reason repeating it is either redundant or (the #3482 defect) false
+# — either way it is checked against the measurement, never trusted.
+_NO_PARTNER_CLAIM_PHRASES = (
+    "no shared-consumer partner",
+    "no bundle partner",
+    "no same-consumer partner",
+    "no partner",
+    "no cluster partner",
 )
 
 
@@ -38,106 +53,191 @@ def _repo_root() -> Path:
     raise RuntimeError("repo root not found from " + str(here))
 
 
-def _init_params() -> list[tuple[str, "str | None"]]:
-    """AST-derive {param_name: annotation_source} for RouterHostAdapter.__init__
-    from the REAL file on disk — never a hand-maintained list (the #3437/#3451
-    lesson: a hand-written enumeration silently drifts from the signature)."""
-    root = _repo_root()
-    path = root / "src" / "reyn" / "runtime" / "services" / "router_host_adapter.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "RouterHostAdapter":
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                    args = item.args
-                    out = []
-                    for a in (*args.posonlyargs, *args.args, *args.kwonlyargs):
-                        if a.arg == "self":
-                            continue
-                        ann = ast.unparse(a.annotation) if a.annotation else None
-                        out.append((a.arg, ann))
-                    return out
-    raise RuntimeError("RouterHostAdapter.__init__ not found via AST")
+def _load_measurement_module():
+    """Import scripts/measure_router_host_adapter_consumers.py.
+
+    scripts/ has no ``__init__.py`` — same loader idiom as
+    tests/test_check_pr_closing_intent.py uses for its sibling script.
+    """
+    path = _repo_root() / "scripts" / "measure_router_host_adapter_consumers.py"
+    assert path.is_file(), f"measurement script missing: {path}"
+    spec = importlib.util.spec_from_file_location("_rha_consumer_measure", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def test_bundle_type_and_exception_registries_are_non_empty() -> None:
-    """Tier 2: vacuity guard — an empty registry on either side would make
-    the completeness assertion below pass trivially (#3437's vacuity lesson:
-    a gate that can be satisfied by declaring nothing is not a gate)."""
-    assert ROUTER_HOST_ADAPTER_BUNDLE_TYPES, (
-        "ROUTER_HOST_ADAPTER_BUNDLE_TYPES is empty — the gate would vacuously "
-        "pass by finding no bundle-typed params to recognize."
+@functools.lru_cache(maxsize=1)
+def _measure():
+    """Measure once per session — every arm reads the same snapshot, and the
+    scan parses all of src/reyn (seconds, not milliseconds)."""
+    return _load_measurement_module().measure(_repo_root())
+
+
+def test_measurement_is_not_vacuous() -> None:
+    """Tier 2: vacuity guard — every other arm here is only as strong as the
+    measurement it derives from, and a silently empty measurement (parser
+    drifted off the signature, external scan matched nothing) would make all
+    of them pass by finding nothing to complain about."""
+    m = _measure()
+
+    assert m.params, "AST found zero __init__ params — the parser drifted off the signature."
+    assert m.bundle_types, (
+        "ROUTER_HOST_ADAPTER_BUNDLE_TYPES is empty — no annotation could be "
+        "recognized as a bundle, so every param would look bare."
     )
-    assert ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS, (
-        "ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS is empty — the gate would "
-        "vacuously pass by finding no exceptions either."
+    assert [p for p in m.params if p.is_bundled], (
+        "no param resolved to a bundle type — the annotation/bundle-name match broke."
     )
-    for name, reason in ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS.items():
+    assert m.bundled_consumers, (
+        "no already-bundled consumer was derived — the hub-exclusion rule went "
+        "dead, which silently re-admits the equality a landed bundle already absorbed."
+    )
+    assert [p for p in m.params if p.external_sites], (
+        "the external host-surface scan found no reader anywhere under src/reyn — "
+        "with it dead every param looks 'consumer unmeasured' and the shelf "
+        "swallows the whole signature."
+    )
+    assert [p for p in m.params if p.adapter_members], (
+        "no param resolved to an adapter member — the in-class reader scan went dead, "
+        "which erases the destination level that distinguishes append_history from put_outbox."
+    )
+
+
+def test_no_bare_param_has_an_unbundled_exact_match_partner() -> None:
+    """Tier 2: the derived N+1 arm. Two params carried to exactly the same set
+    of destinations are one bundle; if they are still bare, this fails and
+    names the pair. A param wired tomorrow into an existing lane's consumer
+    goes RED at the moment it is wired — no registry edit can silence it."""
+    m = _measure()
+    offenders = {
+        cluster: sorted(m.by_name()[cluster[0]].consumers)
+        for cluster in m.exact_match_clusters()
+        if not all(name in ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED for name in cluster)
+    }
+    assert not offenders, (
+        "These bare RouterHostAdapter.__init__ params share an EXACT consumer set "
+        "and must be one bundle (a frozen dataclass, no defaults, no construction "
+        "logic) — or, if bundling is impossible for a reason no measurement can "
+        "produce, be registered in ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED:\n"
+        + "\n".join(f"  {list(c)}\n      consumers: {cons}" for c, cons in offenders.items())
+    )
+
+
+def test_params_with_no_measurable_consumer_are_shelved_with_a_reason() -> None:
+    """Tier 2: "not measurable" is a different shelf from "has no partner", and
+    the gate keeps them from merging — in both directions, so a param that
+    gains a consumer must leave the shelf and one that loses its last consumer
+    must join it. The reason is the part a scan cannot supply."""
+    m = _measure()
+    measured_unmeasurable = set(m.unmeasured_params())
+    shelved = set(ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED)
+
+    unshelved = measured_unmeasurable - shelved
+    assert not unshelved, (
+        "These bare params have NO measurable consumer and no shelf entry: "
+        f"{sorted(unshelved)}. Add each to ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED "
+        "with what IS known (dynamic read / external surface / dead wiring under "
+        "review) — do not claim 'no partner', which is a different and stronger claim."
+    )
+    stale = shelved - measured_unmeasurable
+    assert not stale, (
+        "These params are shelved as having no measurable consumer, but the "
+        f"measurement finds one: {sorted(stale)}. The shelf entry is now false — "
+        "delete it (and bundle the param if it acquired an exact-match partner)."
+    )
+    for name, reason in ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED.items():
         assert reason and reason.strip(), (
-            f"scalar exception {name!r} has an empty reason — a registry "
-            "entry with no reason is a bare param wearing a disguise."
+            f"shelf entry {name!r} has an empty reason — an entry with no reason "
+            "is a bare param wearing a disguise, the exact #3482 defect."
         )
 
 
-def test_every_init_param_is_bundled_or_reasoned() -> None:
-    """Tier 2: every RouterHostAdapter.__init__ param (AST-derived from the
-    real file, not hand-listed) has an annotation naming a registered bundle
-    type, OR is a key in the scalar exception registry with a reason.
+def test_written_claims_agree_with_the_measurement() -> None:
+    """Tier 2: a claim contradicted by measurement goes RED (#3482 firm ④B).
 
-    RED the moment a new bare param (e.g. ``foo_fn: Callable``) is added
-    without either — the exact N+1 gate the #3482 firm required, without
-    pinning a param count (Tier-4)."""
-    params = _init_params()
-    assert params, "AST found zero __init__ params — parser drifted from the real signature."
+    Two shapes: a ``BUNDLE_BLOCKED`` entry for a param the measurement gives no
+    partner (the exception marker never fires — it is stale or was never true),
+    and any reason text asserting the derived "no partner" predicate about a
+    param that measurably HAS a partner."""
+    m = _measure()
+    by_name = m.by_name()
 
-    undeclared: list[tuple[str, "str | None"]] = []
-    for name, ann in params:
-        ann_str = ann or ""
-        if any(bundle_name in ann_str for bundle_name in ROUTER_HOST_ADAPTER_BUNDLE_TYPES):
-            continue
-        if name in ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS:
-            continue
-        undeclared.append((name, ann))
-
-    assert not undeclared, (
-        "RouterHostAdapter.__init__ has params with neither a registered bundle "
-        "annotation nor a scalar-exception registry entry — a bare param slipped "
-        "in uncovered:\n"
-        + "\n".join(f"  {n}: {a}" for n, a in undeclared)
-        + "\nEither fold it into an existing/new bundle (if it shares a consumer "
-        "with one), or add it to ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS with a "
-        "reason (current-form, not a scheduled future fold)."
+    unknown = set(ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED) | set(ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED)
+    unknown -= set(by_name)
+    assert not unknown, (
+        f"registry entries name params that do not exist in __init__: {sorted(unknown)}"
     )
 
-
-def test_scalar_exception_keys_match_real_bare_params_exactly() -> None:
-    """Tier 2: real ⊆ declared AND declared ⊆ real — the registry names
-    exactly the params that are actually bare scalars right now, no more, no
-    less. Catches BOTH a stale entry (param renamed/removed/bundled but the
-    registry key survives) and a param quietly re-annotated to a bundle type
-    while a same-named registry entry lingers unnoticed."""
-    params = _init_params()
-    bare_now = {
-        name
-        for name, ann in params
-        if not any(bundle_name in (ann or "") for bundle_name in ROUTER_HOST_ADAPTER_BUNDLE_TYPES)
+    dead_markers = {
+        name: reason
+        for name, reason in ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED.items()
+        if not m.partners_of(name)
     }
-    registered = set(ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS)
+    assert not dead_markers, (
+        "ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED claims these params have an "
+        "exact-match partner that cannot be bundled, but the measurement finds "
+        f"no partner for them: {sorted(dead_markers)}. The claim is false (or has "
+        "gone stale) — delete the entry rather than leave a marker that never fires."
+    )
 
-    stale = registered - bare_now
-    assert not stale, (
-        f"ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS has stale entries no longer "
-        f"matching a bare __init__ param: {sorted(stale)}"
+    contradicted = {}
+    for registry in (ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED, ROUTER_HOST_ADAPTER_BUNDLE_BLOCKED):
+        for name, reason in registry.items():
+            lowered = reason.lower()
+            if not any(phrase in lowered for phrase in _NO_PARTNER_CLAIM_PHRASES):
+                continue
+            partners = m.partners_of(name)
+            if partners:
+                contradicted[name] = partners
+    assert not contradicted, (
+        "These registry reasons assert that the param has no shared-consumer "
+        "partner, and the measurement exhibits one — the #3482 defect exactly: "
+        + "; ".join(f"{n} shares its consumer set with {list(p)}" for n, p in contradicted.items())
+        + ". The predicate is derived by this gate; do not restate it in prose."
     )
-    missing = bare_now - registered
-    assert not missing, (
-        f"These bare __init__ params have no scalar-exception registry entry: "
-        f"{sorted(missing)}"
-    )
+
+
+def test_every_bundle_type_is_a_real_default_free_dataclass() -> None:
+    """Tier 2: the bundle registry names real frozen dataclasses with NO field
+    defaults. A default would let a caller's silent omission absorb a wiring
+    change, which is what the byte-identical-refactor invariant forbids."""
+    import dataclasses
+
+    import reyn.runtime.services.router_host_adapter as mod
+
+    for type_name in ROUTER_HOST_ADAPTER_BUNDLE_TYPES:
+        bundle = getattr(mod, type_name, None)
+        assert bundle is not None and dataclasses.is_dataclass(bundle), (
+            f"{type_name} is in ROUTER_HOST_ADAPTER_BUNDLE_TYPES but is not a "
+            "dataclass in router_host_adapter.py"
+        )
+        fields = dataclasses.fields(bundle)
+        assert fields, f"{type_name} has no fields — an empty bundle carries nothing"
+        defaulted = [
+            f.name
+            for f in fields
+            if f.default is not dataclasses.MISSING
+            or f.default_factory is not dataclasses.MISSING  # type: ignore[misc]
+        ]
+        assert not defaulted, (
+            f"{type_name} fields have defaults ({defaulted}) — every field must be "
+            "explicit at the call site so an omitted wire cannot pass silently."
+        )
 
 
 def test_router_host_adapter_is_the_real_class_under_gate() -> None:
-    """Tier 2: sanity — RouterHostAdapter imports cleanly and is the class
-    the AST walk above is describing (import-identity check, not a private-
-    state assertion)."""
-    assert RouterHostAdapter.__name__ == "RouterHostAdapter"
+    """Tier 2: sanity — the measured file is the module the gate imports from,
+    so a green result above is about the class actually in use."""
+    m = _measure()
+    measured = {p.name for p in m.params}
+    live = set(RouterHostAdapter.__init__.__code__.co_varnames[
+        1 : RouterHostAdapter.__init__.__code__.co_argcount
+        + RouterHostAdapter.__init__.__code__.co_kwonlyargcount
+    ])
+    assert measured == live, (
+        "the AST measurement and the imported class disagree about the param set "
+        f"— only-in-AST {sorted(measured - live)}, only-in-class {sorted(live - measured)}"
+    )
