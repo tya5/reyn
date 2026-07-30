@@ -308,6 +308,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "mcp_server_installed",
     "mcp_server_removed",
     "mcp_tool_list_changed",
+    "mcp_tool_probe_degraded",
     "mcp_tools_listed",
     "memory_deleted",
     "memory_saved",

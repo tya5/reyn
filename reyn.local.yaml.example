@@ -633,6 +633,10 @@
 #     llm_call_seconds: 60.0
 #     llm_max_retries: 3
 #     chain_seconds: 60.0           # ≤0 = disable delegate-reply wait
+#     mcp_probe_seconds: 5.0        # #3475: per-server MCP tools-list probe timeout;
+#                                   # a server slower than this is cached EMPTY for the
+#                                   # session (an mcp_tool_probe_degraded audit-event
+#                                   # names why) — raise under co-located CPU load
 #   on_limit:
 #     mode: interactive             # interactive | unattended | auto_extend
 #     auto_extend_times: 1          # used when mode = auto_extend

@@ -223,3 +223,50 @@ def test_refresh_uses_atomic_write(tmp_path: Path, monkeypatch) -> None:
         ".tmp sibling file must not linger after a successful write"
     )
     assert cache_path.exists(), "cache file must exist after successful write"
+
+
+# ---------------------------------------------------------------------------
+# 6. #3475: `safety.timeout.mcp_probe_seconds` threads into `_probe_server_tools`
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_uses_configured_mcp_probe_seconds(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2: (LOAD-BEARING) `run_refresh` reads `safety.timeout.mcp_probe_seconds`
+    via the REAL config loader (`reyn.config.load_config`, not stubbed) and threads
+    the actual configured value into `_probe_server_tools`'s `per_server_timeout`
+    kwarg — the CLI side of #3475's "one source for both hardcoded 5.0 sites"
+    requirement (the runtime side is `Session._safety.timeout.mcp_probe_seconds`,
+    covered in tests/test_3475_probe_degradation_visibility_and_timeout_config.py).
+    Uses 9.5 (NOT the unchanged 5.0 default) — testing with the default value would
+    stay green even if this wiring were dead."""
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
+
+    project_root = tmp_path / "proj_timeout"
+    project_root.mkdir()
+    (project_root / "reyn.yaml").write_text(
+        "safety:\n  timeout:\n    mcp_probe_seconds: 9.5\n",
+        encoding="utf-8",
+    )
+
+    recorded: list[float] = []
+
+    async def _recording_probe(server_name, cfg, *, per_server_timeout=5.0):
+        recorded.append(per_server_timeout)
+        return server_name, []
+
+    monkeypatch.setattr(mcp_cmd, "_probe_server_tools", _recording_probe)
+    monkeypatch.setattr(
+        mcp_cmd,
+        "_all_servers_with_scope",
+        lambda root: [("s", "project", {"type": "stdio"})],
+    )
+    monkeypatch.setattr(mcp_cmd, "_get_project_root", lambda: project_root)
+
+    import argparse
+    ns = argparse.Namespace(project=None, func=mcp_cmd.run_refresh)
+    mcp_cmd.run_refresh(ns)
+
+    assert recorded == [9.5], (
+        "expected _probe_server_tools to be called with the configured "
+        f"per_server_timeout=9.5, got {recorded!r}"
+    )
