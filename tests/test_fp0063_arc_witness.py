@@ -518,6 +518,54 @@ async def _drive_one_turn(registry, prompt: str, timeout: float) -> str:
 # ---------------------------------------------------------------------------
 
 
+#: The arc's base dir. FIXED and hardcoded (NOT ``tmp_path``) on purpose: its
+#: STRING form is baked into the committed LLMReplay fixture -- both into the
+#: hashed key and into the replayed tool-call ARGUMENTS the runtime actually
+#: acts on (turn 2's ``run_pipeline`` input paths come back OUT of the fixture),
+#: so a per-run unique dir would need the fixture re-recorded on every run. See
+#: the test's own docstring for the two-part portability rationale.
+_ARC_BASE_DIR = Path("/tmp/reyn_fp0063_arc_witness_dir")  # noqa: S108 -- see above
+_ARC_LOCK_PATH = Path("/tmp/reyn_fp0063_arc_witness_dir.lock")  # noqa: S108
+
+
+@pytest.fixture
+def arc_base_dir():
+    """#3473: hand the test its base dir under a cross-process EXCLUSIVE lock.
+
+    ``_ARC_BASE_DIR`` is machine-global and the test wipes it on entry, so two
+    concurrent instances of THIS test -- a co-located suite in another worktree,
+    two CI jobs sharing a runner, a standalone run beside a full ``-n auto``
+    suite -- were not merely racing, they were deleting each other's live tree
+    (including the process CWD the test chdir's into). Measured on #3473: the
+    reported symptom, ``FileNotFoundError: '.reyn/agents/operator/state/
+    sessions/<sid>/history.jsonl'`` (a RELATIVE path -- the CWD anchor itself
+    was gone), reproduced only in the arm whose co-located load suite ALSO ran
+    this file, and never in the arm that excluded it; two bare concurrent runs
+    reproduce it in seconds as ``FileExistsError`` on the ``mkdir`` below.
+
+    The lock is mutual EXCLUSION, not a wait-and-hope: a second instance cannot
+    enter the directory at all until the first has left it, so interleaving is
+    structurally impossible rather than unlikely. (A sleep/retry here would only
+    have made "usually makes it in time" into "makes it in time more often" --
+    the shape #3473 explicitly rules out.) ``flock`` is advisory but every
+    participant is this same fixture, which is what makes advisory sufficient.
+    """
+    import fcntl
+    import shutil
+
+    fd = os.open(_ARC_LOCK_PATH, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        # Wiped + recreated so each run starts clean -- safe to do destructively
+        # ONLY because the lock above guarantees no peer is inside it right now.
+        shutil.rmtree(_ARC_BASE_DIR, ignore_errors=True)
+        _ARC_BASE_DIR.mkdir(parents=True)
+        yield _ARC_BASE_DIR
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def _install_key_normalizer(monkeypatch: pytest.MonkeyPatch, base_dir: Path) -> None:
     """Make ``LLMReplay.key`` base-dir-INDEPENDENT for this run.
 
@@ -568,7 +616,7 @@ def _install_key_normalizer(monkeypatch: pytest.MonkeyPatch, base_dir: Path) -> 
 
 @pytest.mark.asyncio
 async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
-    monkeypatch: pytest.MonkeyPatch, out_of_process_reyn: str,
+    monkeypatch: pytest.MonkeyPatch, out_of_process_reyn: str, arc_base_dir: Path,
 ) -> None:
     """Tier 3a: an LLM (replayed via LLMReplay at the real litellm.acompletion
     boundary) drives install_plugin -> run_pipeline(rag_ingest.ingest)
@@ -615,20 +663,15 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
          forms to a sentinel before the hash.
 
     Together the committed key contains no machine- or OS-specific absolute path
-    at all. (A hardcoded ``/tmp`` subdir carries a tiny collision risk under
-    parallel runners, mitigated by the wipe-and-recreate below + the unique
-    dirname; this single test uses it and runs once.)"""
+    at all. The price is that ``_ARC_BASE_DIR`` is a MACHINE-GLOBAL, fixed path
+    that this test wipes on entry -- so it is a shared mutable resource, and the
+    ``arc_base_dir`` fixture's exclusive lock (see its docstring, #3473) is what
+    makes concurrent occupancy structurally impossible rather than merely
+    unlikely."""
     import reyn.core.op_runtime.embed as embed_mod
     from reyn.runtime.services.router_host_adapter import RouterHostAdapter
 
-    # A FIXED, hardcoded /tmp base -- byte-identical STRING on macOS and Linux
-    # (unlike ``tempfile.gettempdir()``, whose value is OS-specific and was the
-    # first cut's CI-RED cause). Wiped + recreated so each run starts clean.
-    tmp_path = Path("/tmp/reyn_fp0063_arc_witness_dir")  # noqa: S108 -- see docstring
-    import shutil
-
-    shutil.rmtree(tmp_path, ignore_errors=True)
-    tmp_path.mkdir(parents=True)
+    tmp_path = arc_base_dir
 
     _install_key_normalizer(monkeypatch, tmp_path)
 
