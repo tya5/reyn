@@ -27,6 +27,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.services import LiveSessionIdInputs
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
@@ -165,7 +166,9 @@ async def test_non_main_spawn_is_now_allowed_guard_lifted(tmp_path):
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")
     host = main._router_host
-    host._live_session_id_fn = lambda: "abc12345"  # a non-main sid
+    host._live_sid_in = LiveSessionIdInputs(  # a non-main sid
+        session_id=host._live_sid_in.session_id, live_session_id_fn=lambda: "abc12345",
+    )
     result = await host.spawn_session(
         request="nested", mode="persistent", narrowing=None, chain_id="c3",
     )
