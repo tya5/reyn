@@ -103,17 +103,19 @@ the other: a model that names a tool absent from its catalog still reaches
 dispatch, which is how an excluded web tool once executed. Enforcement is the
 boundary; advertisement is the presentation that keeps the two agreeing.
 
-The agreement is re-established whenever the narrowing changes mid-turn — the
-untrusted auto-narrowing below can engage between rounds, and the round after it
-engages is advertised against the new narrowing, not the turn's opening one.
+The agreement is re-established whenever the narrowing changes mid-turn — at the
+`iteration` rung of the untrusted narrowing below, it can engage between rounds,
+and the round after it engages is advertised against the new narrowing, not the
+turn's opening one.
 
 ### The deny names which narrowing fired
 
-A capability can be narrowed by any of six things — a topology binding, the
+A capability can be narrowed by any of seven things — a topology binding, the
 `_delegate` floor, a per-session capability config, the ⊆-parent cap, the
-`/visibility` override, or the `_untrusted` context narrowing. Composition folds
-them into one ∩ term, which is what the gate evaluates and which by itself cannot
-say *which* of the six rejected a given name.
+`/visibility` override, the run's `exclude_tools` list, or the `_untrusted` context
+narrowing. Composition folds them into one ∩ term, which is what the gate
+evaluates and which by itself cannot say *which* of the seven rejected a given
+name.
 
 So each term carries a `NarrowingOrigin` — three parts, all required:
 
@@ -162,7 +164,7 @@ that worked at the start of a session, stopped working after a web fetch, and an
 agent that could not explain the loss. Predictability is the default posture and
 security hardening is opted into; a mechanism that silently changes what an agent
 can do is exactly the kind that has to be asked for. Legibility at the point of
-denial (below) is what makes the opted-in state workable rather than merely on.
+denial (above) is what makes the opted-in state workable rather than merely on.
 
 This is the CAPABILITY half of the same defense whose CONTENT half is the
 `safety.threat_scan` fence + scan — which is why the setting lives in that block
