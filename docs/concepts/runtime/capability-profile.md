@@ -170,10 +170,17 @@ and not next to the loop caps.
 
 **Profile name:** `_untrusted` (built-in deny-set; overridable via
 `.reyn/capability_profiles/_untrusted.yaml`). The two surfaces answer different
-questions and neither is a second spelling of the other: the config setting decides
-*whether* the narrowing runs, the profile file decides *what it denies when it
-runs*. This is the same split `delegation.capability_default` + `_delegate.yaml`
-already uses.
+questions: the config setting decides *whether* the narrowing runs, the profile
+file decides *what it denies when it runs*. This is the same split
+`delegation.capability_default` + `_delegate.yaml` already uses.
+
+They are not fully disjoint in *effect* — an override with an empty `tool_deny`
+neuters the narrowing just as `off` does, and is indistinguishable from outside.
+That is the pre-existing "an override is a deliberate loosening" route, not a
+second switch introduced alongside the setting, and it behaves identically on the
+delegate axis. The setting is the one an operator should reach for: it is what the
+deny message names, and turning the mechanism off is a different intent from
+declaring an empty deny-set.
 
 **Trigger (once enabled):** any history/context entry whose meta carries
 `external_source=true` (stamped by the content-fence seam at ingest). Two seams
