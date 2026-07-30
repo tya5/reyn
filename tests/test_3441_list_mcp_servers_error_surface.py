@@ -1,14 +1,16 @@
 """Tier 2: #3441 — list_mcp_servers error surface + shared error-detection helper.
 
 Bug (tools/mcp.py): unlike its 4 siblings, ``_handle_list_mcp_servers`` handed the
-LLM ``{"servers": [{"error": "cancelled"}]}`` verbatim on a Session-layer failure
-(Cancelled/MCPFault/unresolved-config — see ``Session._mcp_list_via_gateway`` /
-``_mcp_resolve_server_config``, both of which return the sentinel
-``[{"error": "..."}]`` rather than raising) — a failure disguised as a one-entry
-successful server listing. The other four ``list_mcp_*`` handlers already detected
-this sentinel, but via TWO different implementations (``_handle_list_mcp_tools``
-checked every entry `t` in its name-rewrite loop; the other three checked only
-``result[0]`` with an ``isinstance(..., Mapping)`` guard).
+LLM ``{"servers": [{"error": "cancelled"}]}`` verbatim on an adapter-layer failure
+(unresolved-config — see ``RouterHostAdapter._mcp_resolve_server_config``, which
+returns the sentinel ``[{"error": "..."}]`` rather than raising; #3447 additionally
+moved the Cancelled/MCPFault catch for a gateway-call failure up to
+``_call_mcp_list`` in this same module, reproducing the identical sentinel one
+layer up) — a failure disguised as a one-entry successful server listing. The
+other four ``list_mcp_*`` handlers already detected this sentinel, but via TWO
+different implementations (``_handle_list_mcp_tools`` checked every entry `t` in
+its name-rewrite loop; the other three checked only ``result[0]`` with an
+``isinstance(..., Mapping)`` guard).
 
 Fix: add the missing arm to ``_handle_list_mcp_servers`` AND consolidate all five
 call sites onto one shared helper, ``_mcp_list_error(result)`` — chosen to follow

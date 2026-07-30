@@ -449,10 +449,11 @@ KIND_EMIT_SEAMS: dict[str, str | None] = {
     # cased here, so it stays visible.
     "_emit": None,
     "_audit": None,
-    # ``Session._mcp_list_via_gateway(..., event_kind=...)`` — the shared MCP
-    # listing seam. The kind rides a keyword and every call site passes a
-    # literal (#3410); before that it was assembled as ``f"mcp_{noun}_listed"``,
-    # which no census could read.
+    # ``RouterHostAdapter._mcp_list_via_gateway(..., event_kind=...)`` — the
+    # shared MCP listing seam (#3447: folded off Session, same function name).
+    # The kind rides a keyword and every call site passes a literal (#3410);
+    # before that it was assembled as ``f"mcp_{noun}_listed"``, which no
+    # census could read.
     "_mcp_list_via_gateway": "event_kind",
 }
 
@@ -571,14 +572,15 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
         ),
     ),
     DynamicEmitSite(
-        module="src/reyn/runtime/session.py",
+        module="src/reyn/runtime/services/router_host_adapter.py",
         function="_mcp_list_via_gateway",
         seam="emit",
         classification="FORWARDER",
         reason=(
-            "The shared MCP listing seam. Registered with ``event_kind`` as its "
-            "kind keyword; all four ``_mcp_list_*`` call sites pass a literal "
-            "(#3410)."
+            "The shared MCP listing seam (#3447: folded off Session onto "
+            "RouterHostAdapter, byte-identical function name/seam). "
+            "Registered with ``event_kind`` as its kind keyword; all four "
+            "gateway-backed ``mcp_list_*`` call sites pass a literal (#3410)."
         ),
     ),
     DynamicEmitSite(

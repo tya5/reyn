@@ -12,9 +12,10 @@ follow-up — mirrors ``mcp_called``/``mcp_completed``/``mcp_failed``).
 Discovery (``list_resources``/``list_resource_templates``) is deliberately
 NOT an op kind here — it mirrors ``list_tools``, which bypasses the
 permission gate + op-kind machinery entirely (see
-``session.py::_mcp_list_resources``). Only the content-returning read is
-gated, matching the tools surface's own split between ungated `list_tools`
-and gated `call_tool`.
+``RouterHostAdapter.mcp_list_resources``, #3447 — folded off Session, still
+no op-kind of its own). Only the content-returning read is gated, matching
+the tools surface's own split between ungated `list_tools` and gated
+`call_tool`.
 
 Subscribe / resources/updated / on_resource_updated (slice ②b) are OUT OF
 SCOPE here.

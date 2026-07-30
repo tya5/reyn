@@ -63,12 +63,6 @@ from tests._support.router_host_adapter import (
     null_mcp_call_tool as _null_mcp_call_tool,
 )
 from tests._support.router_host_adapter import (
-    null_mcp_list_servers as _null_mcp_list_servers,
-)
-from tests._support.router_host_adapter import (
-    null_mcp_list_tools as _null_mcp_list_tools,
-)
-from tests._support.router_host_adapter import (
     null_put_outbox as _null_put_outbox,
 )
 from tests._support.router_host_adapter import (
@@ -182,8 +176,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=fake_send,
         put_outbox=_null_put_outbox,
@@ -254,8 +246,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
@@ -313,8 +303,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
@@ -371,8 +359,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         file_write=_null_file_write,
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
-        mcp_list_servers=_null_mcp_list_servers,
-        mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
