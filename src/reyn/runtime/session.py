@@ -5647,21 +5647,19 @@ class Session:
         # budget without resetting.
         self._reset_router_turn_counter()
 
-        # FP-0037 S2: yaml-triggered MCP tools cache refresh, run BEFORE the
-        # S1 disk-reload step — see docs/reference/cli/mcp.md#refresh-quick-reference
-        await self._router_host.maybe_refresh_mcp_tools_from_yaml()
-
-        # FP-0037 S1: pick up an operator-run `reyn mcp refresh` from disk —
-        # see docs/reference/cli/mcp.md#refresh-quick-reference
-        self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-
-        # FP-0037 issue #160: lazy MCP tool discovery cache. First user
-        # turn probes every configured MCP server's tool list once;
-        # subsequent turns no-op. Zero startup latency; first-turn cost
-        # is bounded by per_server_timeout (default 5s, parallel).
-        # When no MCP servers are configured this is a near-free no-op.
-        await self._router_host.ensure_mcp_tools_cached()
-
+        # #3475: the FP-0037 MCP-tools-cache priming chain (yaml refresh / disk
+        # reload / lazy probe) used to live HERE — the "user" turn kind only.
+        # `_handle_hook_message` and `InterAgentMessaging.handle_agent_request`
+        # call `_run_router_loop` directly and never ran this chain, so a
+        # session whose FIRST turn arrives as `hook` or `agent_request` (e.g. a
+        # freshly `spawn_ephemeral_session`-ed worker driven by an inbound
+        # `agent_request`) built its first `tools=` payload against an
+        # unprimed (`None`) cache — no `mcp_tool_name` enum, silently, for the
+        # rest of that session's life (the populated-guard is one-shot). The
+        # chain now lives in `_run_router_loop` itself instead — see that
+        # method's docstring for why it is the one seam every turn kind
+        # funnels through — so the ordering guarantee is structural (every
+        # first LLM call goes through this priming, not just the common case).
         try:
             await self._run_router_loop(text, chain_id)
         except StructuredOutputError:
@@ -7472,8 +7470,23 @@ class Session:
         unattributed instead of charged to the latest turn; see
         ``reyn.core.turn_scope`` for the enumeration of those paths (the
         ``/compact`` slash short-circuit and the dev/dogfood surfaces).
+
+        #3475: this is ALSO where the FP-0037 MCP-tools-cache priming chain
+        (yaml refresh / disk reload / lazy probe) runs, for the same reason —
+        it is the one place every turn kind funnels through BEFORE the first
+        LLM call of the turn. Previously only ``_handle_user_message`` ran this
+        chain, so a turn arriving as ``hook`` or ``agent_request`` (a freshly
+        spawned worker's first inbound message, e.g.) built its `tools=`
+        payload against a never-primed cache — no `mcp_tool_name` enum on
+        `call_mcp_tool`/`describe_mcp_tool`, silently, for that session's
+        entire life (`ensure_mcp_tools_cached`'s populated-guard is one-shot).
+        Running the chain here instead makes the ordering guarantee structural
+        rather than kind-dependent.
         """
         self._last_turn_chain_id = chain_id
+        await self._router_host.maybe_refresh_mcp_tools_from_yaml()
+        self._router_host.maybe_reload_mcp_tools_cache_from_disk()
+        await self._router_host.ensure_mcp_tools_cached()
         with active_turn(chain_id):
             await self._loop_driver.run_turn(user_text, chain_id)
         # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the
