@@ -14,11 +14,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from reyn.config.chat import TimeoutConfig
 from reyn.core.events.events import EventLog
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_STATE_DIR = Path(".reyn") / "state"
+
+# #3475: THE default for the MCP tools-list per-server probe timeout lives on
+# ``TimeoutConfig.mcp_probe_seconds`` (the config definition side, per #3461's
+# ``FileScopes`` precedent) — this module reads it rather than repeating the
+# literal, so it and ``interfaces/cli/commands/mcp.py``'s ``_probe_server_tools``
+# derive their own defaults from the SAME source instead of two independently
+# hardcoded ``5.0`` literals drifting apart.
+_DEFAULT_MCP_PROBE_SECONDS = TimeoutConfig().mcp_probe_seconds
 
 
 @dataclass(frozen=True)
@@ -1901,7 +1910,7 @@ class RouterHostAdapter:
         return result
 
     async def ensure_mcp_tools_cached(
-        self, *, per_server_timeout: float = 5.0,
+        self, *, per_server_timeout: float = _DEFAULT_MCP_PROBE_SECONDS,
     ) -> None:
         """Probe every configured MCP server's tool list and cache the
         results for the session lifetime.
@@ -1921,7 +1930,16 @@ class RouterHostAdapter:
         so a single slow / unreachable server does not block the others.
         Per-server timeout caps each probe; on timeout or exception the
         server is cached as an empty list (= still cached, so we don't
-        re-probe a known-broken server every turn).
+        re-probe a known-broken server every turn). #3475: that degradation
+        used to be silent — a server dropping out under co-located load left
+        no trace anywhere the operator could see. Each such case now emits an
+        `mcp_tool_probe_degraded` audit-event naming the server and the
+        reason (`timeout` / `exception`), so "this server is unreachable" is
+        an observation instead of an inference from a missing tool the model
+        never mentions. `per_server_timeout` (default `TimeoutConfig.
+        mcp_probe_seconds`, #3475) is operator-tunable via `safety.timeout.
+        mcp_probe_seconds` in reyn.yaml — the knob this audit-event tells the
+        operator to reach for.
 
         The result feeds `_get_mcp_servers_for_router` which is consumed
         by `_enumerate_category("mcp.tool")` (= list_actions visibility)
@@ -1969,8 +1987,25 @@ class RouterHostAdapter:
                 async with asyncio.timeout(per_server_timeout):
                     tools = await self.mcp_list_tools(server_name)
             except (TimeoutError, asyncio.TimeoutError):
+                # #3475: this server is cached as EMPTY for the rest of the
+                # session (no retry, by design — see the method docstring).
+                # Surface that decision — silence made the earlier #3475
+                # investigation depend on a fixture byte-diff to notice it.
+                self._events.emit(
+                    "mcp_tool_probe_degraded",
+                    server=server_name,
+                    reason="timeout",
+                    per_server_timeout=per_server_timeout,
+                )
                 return server_name, []
-            except Exception:  # noqa: BLE001 — adapter must never raise
+            except Exception as exc:  # noqa: BLE001 — adapter must never raise
+                self._events.emit(
+                    "mcp_tool_probe_degraded",
+                    server=server_name,
+                    reason="exception",
+                    per_server_timeout=per_server_timeout,
+                    detail=repr(exc),
+                )
                 return server_name, []
             # _mcp_list_tools may return [{"error": "..."}] on failure;
             # treat as empty so the cache shape stays uniform.

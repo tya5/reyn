@@ -18,8 +18,17 @@ import os
 import sys
 from pathlib import Path
 
+from reyn.config.chat import TimeoutConfig
+
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
+
+# #3475: THE default for the MCP tools-list per-server probe timeout lives on
+# ``TimeoutConfig.mcp_probe_seconds`` (config-definition side, #3461's
+# ``FileScopes`` precedent) — this module reads it rather than repeating the
+# literal, so this CLI and ``RouterHostAdapter.ensure_mcp_tools_cached`` derive
+# their own defaults from the SAME source instead of two independent ``5.0``s.
+_DEFAULT_MCP_PROBE_SECONDS = TimeoutConfig().mcp_probe_seconds
 
 # ---------------------------------------------------------------------------
 # Scope tier helpers
@@ -1171,7 +1180,7 @@ def run_clear_secret(args: argparse.Namespace) -> None:
 
 
 async def _probe_server_tools(
-    server_name: str, cfg: dict, *, per_server_timeout: float = 5.0,
+    server_name: str, cfg: dict, *, per_server_timeout: float = _DEFAULT_MCP_PROBE_SECONDS,
 ) -> tuple[str, list[dict]]:
     """Probe a single MCP server's tool list with a per-server timeout.
 
@@ -1208,7 +1217,8 @@ def run_refresh(args: argparse.Namespace) -> None:
 
     Reads the MCP server config from the 3-scope yaml cascade (user-global
     / project / project-local), probes every server's tool list in parallel
-    with a per-server 5-second timeout, and writes the result atomically to
+    with a per-server timeout (``safety.timeout.mcp_probe_seconds``, default
+    5s — #3475), and writes the result atomically to
     ``.reyn/state/mcp_tools_cache.json``.  Per-server failures print a
     warning and write an empty list for that server (= same broken-server
     behavior as the session-side lazy probe).
@@ -1218,13 +1228,18 @@ def run_refresh(args: argparse.Namespace) -> None:
     """
     import asyncio
 
-    from reyn.config import _find_project_root
+    from reyn.config import load_config
     from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
 
     if args.project:
         project_root: Path | None = Path(args.project).resolve()
     else:
         project_root = _get_project_root()
+
+    # #3475: same source of truth the session-side probe reads
+    # (`Session._safety.timeout.mcp_probe_seconds`) — one config value drives
+    # both the CLI's and the runtime's per-server probe timeout.
+    per_server_timeout = load_config(project_root).safety.timeout.mcp_probe_seconds
 
     entries = _all_servers_with_scope(project_root)
 
@@ -1245,7 +1260,7 @@ def run_refresh(args: argparse.Namespace) -> None:
 
     async def _probe_all() -> dict[str, list[dict]]:
         tasks = [
-            _probe_server_tools(name, cfg)
+            _probe_server_tools(name, cfg, per_server_timeout=per_server_timeout)
             for name, cfg in servers_flat.items()
         ]
         results = await asyncio.gather(*tasks)

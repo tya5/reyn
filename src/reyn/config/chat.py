@@ -80,11 +80,24 @@ class TimeoutConfig:
             How long a multi-agent pending chain waits for a delegate
             reply before the runtime synthesises an upstream error.
             ``0`` (or any non-positive value) disables.
+        mcp_probe_seconds:
+            #3475: per-server timeout for the MCP tools-list probe
+            (`RouterHostAdapter.ensure_mcp_tools_cached` / the CLI's
+            `reyn mcp refresh`). A server slower than this is cached as
+            an EMPTY tool list for the rest of the session (no retry —
+            see `ensure_mcp_tools_cached`'s own docstring) and an
+            `mcp_tool_probe_degraded` audit-event is emitted naming which
+            server and why. THE default (``5.0``) — the two call sites
+            derive their own defaults from this field rather than
+            repeating the literal, so raising this one number is the only
+            operator action needed to widen the budget under co-located
+            CPU load; it does not itself change the default.
     """
 
     llm_call_seconds: float = 60.0
     llm_max_retries: int = 3
     chain_seconds: float = 60.0
+    mcp_probe_seconds: float = 5.0
 
 
 ON_LIMIT_MODES = ("interactive", "unattended", "auto_extend")
@@ -759,6 +772,9 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         chain_seconds=float(timeout_raw.get(
             "chain_seconds", timeout_defaults.chain_seconds,
+        )),
+        mcp_probe_seconds=float(timeout_raw.get(
+            "mcp_probe_seconds", timeout_defaults.mcp_probe_seconds,
         )),
     )
     on_limit_defaults = OnLimitConfig()

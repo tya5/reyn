@@ -3217,7 +3217,9 @@ class Session:
         try:
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
             self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-            await self._router_host.ensure_mcp_tools_cached()
+            await self._router_host.ensure_mcp_tools_cached(
+                per_server_timeout=self._safety.timeout.mcp_probe_seconds,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("refresh_mcp_servers: turn-boundary chain raised: %r", exc)
             snapshot_after = self._router_host.mcp_tools_cache_snapshot or {}
@@ -7517,7 +7519,9 @@ class Session:
         self._last_turn_chain_id = chain_id
         await self._router_host.maybe_refresh_mcp_tools_from_yaml()
         self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-        await self._router_host.ensure_mcp_tools_cached()
+        await self._router_host.ensure_mcp_tools_cached(
+            per_server_timeout=self._safety.timeout.mcp_probe_seconds,
+        )
         with active_turn(chain_id):
             await self._loop_driver.run_turn(user_text, chain_id)
         # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the

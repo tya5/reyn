@@ -439,6 +439,7 @@ safety:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
     llm_max_retries: 3         # transient-error retries per call (--llm-max-retries)
     chain_seconds: 60          # wait for delegate reply before upstream error
+    mcp_probe_seconds: 5       # per-server MCP tools-list probe timeout (#3475)
   on_limit:
     mode: interactive          # interactive | unattended | auto_extend
     auto_extend_times: 1       # (auto_extend mode) number of auto-extensions
@@ -474,6 +475,7 @@ safety:
 | `safety.timeout.llm_call_seconds` | float (s) | `60` | `--llm-timeout` | Per-call HTTP timeout passed to LiteLLM. |
 | `safety.timeout.llm_max_retries` | int | `3` | `--llm-max-retries` | Transient-error retries per LLM call (LiteLLM exponential backoff). |
 | `safety.timeout.chain_seconds` | float (s) | `60` | — | How long a multi-agent chain waits for a delegate reply before synthesising an error. `0` = disabled. |
+| `safety.timeout.mcp_probe_seconds` | float (s) | `5` | — | Per-server timeout for the MCP tools-list probe (`ensure_mcp_tools_cached` / `reyn mcp refresh`, #3475). A server slower than this is cached as an EMPTY tool list for the session (no retry); an `mcp_tool_probe_degraded` audit-event names the server and reason (`timeout` / `exception`). Raise under co-located CPU load. |
 
 ### `safety.on_limit` fields
 
