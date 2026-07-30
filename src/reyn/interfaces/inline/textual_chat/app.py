@@ -198,6 +198,41 @@ def empty_state_hint() -> "object":
     return hint
 
 
+#: #3476 ④: restored-history page size, in display frames. Hydration appends
+#: only the newest page; older frames page in via
+#: :meth:`TextualChatApp.on_flow_view_reached_top` as the user scrolls up.
+#: 200 frames ≈ a full page-in stays well under one frame budget at the
+#: measured ~1µs/entry handle cost, while covering far more than one viewport
+#: (so a single page-in absorbs several screens of scrolling before the next).
+_HYDRATE_PAGE_FRAMES = 200
+
+
+def _apply_restored_state(msg: "OutboxMessage", entry: "Entry[OutboxMessage]") -> None:
+    """The restored-frame state transition, shared by initial hydration and
+    the #3476 ④ lazy page-in — resolved, never RUNNING: mirror the completion
+    handler's terminal transition for a settled tool result (SUCCESS unless
+    the summary marks a failure); non-tool rows keep DEFAULT."""
+    meta = msg.meta or {}
+    if msg.kind == "tool_call_started" and _RESULT_KIND_KEY in meta:
+        result_meta = meta.get(_RESULT_META_KEY) or {}
+        if meta[_RESULT_KIND_KEY] == "tool_call_failed":
+            entry.set_state(EntryState.ERROR)
+        else:
+            summary = summarize_tool_result(
+                meta.get("tool"), result_meta.get("result")
+            )
+            entry.set_state(
+                EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
+            )
+    elif msg.kind == "tool_call_completed":
+        summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
+        entry.set_state(
+            EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
+        )
+    elif msg.kind == "tool_call_failed":
+        entry.set_state(EntryState.ERROR)
+
+
 #: Sentinel for :meth:`TextualChatApp._pane_rows`'s optional ``snap`` argument —
 #: distinguishes "no snapshot passed, read a fresh one" from an explicit ``None``
 #: snapshot (pre-session), which must NOT trigger a second read.
@@ -751,6 +786,13 @@ class TextualChatApp(App):
         # dict, so it is reset explicitly on a session switch rather than by
         # :attr:`_PER_SESSION_DICT_STATE`'s uniform ``.clear()`` loop.
         self._recent_replies: "deque[str]" = deque(maxlen=COPY_BUFFER_MAX)
+        # #3476 ④: restored frames older than the hydrated tail page, oldest
+        # first — consumed from the end, one page per ReachedTop, by
+        # :meth:`on_flow_view_reached_top`. Reset by every
+        # :meth:`_hydrate_from_history` call (initial mount AND session
+        # switch), so a switch can never page in the previous session's
+        # leftovers.
+        self._older_frames: "list[OutboxMessage]" = []
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -783,6 +825,10 @@ class TextualChatApp(App):
             # lands — no app-side show/hide wiring to drift.
             empty=empty_state_hint(),
             empty_align="middle",
+            # #3476 ④: fire ReachedTop while the top edge is still a few rows
+            # away, so the next history page is in place by the time the user
+            # actually arrives at it.
+            reach_threshold=3,
         )
         # #3352: apply the configured START state. flowview has no constructor
         # parameter for gutter visibility (both flags initialise True), so the
@@ -1077,52 +1123,64 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: history projection failed")
             return
+        # #3476 ④: LAZY page split — only the newest ``_HYDRATE_PAGE_FRAMES``
+        # are appended now; the older prefix is held aside and prepended a
+        # page at a time by :meth:`on_flow_view_reached_top` as the user
+        # scrolls toward it (flowview keeps the scroll position across a
+        # prepend). Measured (#3476 issue comment): the view-side win is
+        # small at realistic history sizes — this is deliberate owner-chosen
+        # forward infrastructure, and the split costs one slice.
+        self._older_frames = frames[:-_HYDRATE_PAGE_FRAMES]
+        tail = frames[-_HYDRATE_PAGE_FRAMES:]
         # #3476 ②: batch append — ``extend`` reflows the view ONCE for the
-        # whole restored history instead of once per entry (flowview 0.6.0;
-        # the per-entry ``set_state`` calls below redraw only the gutter, no
+        # whole appended page instead of once per entry (flowview 0.6.0;
+        # the per-entry ``set_state`` calls redraw only the gutter, no
         # reflow). Handle creation cannot fail per-item (presentation runs at
         # paint, not append), so the one try/except covers what the old
         # per-item guard did.
         try:
-            entries = self.conversation.extend(frames)
+            entries = self.conversation.extend(tail)
         except Exception:
             logger.exception("textual chat: restore batch append failed")
             return
-        for msg, entry in zip(frames, entries):
-            # Resolved, never RUNNING — mirror the completion handler's terminal
-            # transition for a settled tool result (SUCCESS unless the summary
-            # marks a failure); non-tool rows keep DEFAULT.
-            meta = msg.meta or {}
-            if msg.kind == "tool_call_started" and _RESULT_KIND_KEY in meta:
-                result_meta = meta.get(_RESULT_META_KEY) or {}
-                if meta[_RESULT_KIND_KEY] == "tool_call_failed":
-                    entry.set_state(EntryState.ERROR)
-                else:
-                    summary = summarize_tool_result(
-                        meta.get("tool"), result_meta.get("result")
-                    )
-                    entry.set_state(
-                        EntryState.ERROR
-                        if summary.startswith("✗")
-                        else EntryState.SUCCESS
-                    )
-            elif msg.kind == "tool_call_completed":
-                summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
-                entry.set_state(
-                    EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
-                )
-            elif msg.kind == "tool_call_failed":
-                entry.set_state(EntryState.ERROR)
-        # #3362: seed the ``/copy`` ring from the SAME restored frames, so a
-        # reply visible in the pane after a restart / session switch is one
-        # ``/copy`` can reach. ``frames`` is oldest-first (as rendered), the ring
-        # is newest-first, hence the reversal; the ring's own ``maxlen`` bounds
-        # it, so a long history cannot grow this past ``COPY_BUFFER_MAX``. The
-        # caller clears the ring alongside ``conversation.clear()``, exactly as
-        # it does for the model this loop re-appends to.
-        for msg in reversed(frames):
+        for msg, entry in zip(tail, entries):
+            _apply_restored_state(msg, entry)
+        # #3362: seed the ``/copy`` ring from ALL restored frames — including
+        # the not-yet-paged-in older prefix (#3476 ④): what ``/copy`` can
+        # reach is the restored HISTORY, not the currently materialised page.
+        # #3486: ``appendleft`` in natural (oldest-first) order — the SAME
+        # direction the live pump uses — so index 0 is the newest reply AND
+        # ``maxlen`` evicts from the OLDEST side. The previous
+        # ``reversed(frames)`` + ``append`` expressed newest-first correctly
+        # only while the reply count stayed ≤ ``COPY_BUFFER_MAX``: past it,
+        # ``append`` evicts from the LEFT — the newest side — silently
+        # inverting the "1 = newest" contract for any restored history with
+        # more than ``COPY_BUFFER_MAX`` replies. The caller clears the ring
+        # alongside ``conversation.clear()``, exactly as it does for the
+        # model this loop re-appends to.
+        for msg in frames:
             if msg.kind == "agent":
-                self._recent_replies.append(msg.text)
+                self._recent_replies.appendleft(msg.text)
+
+    def on_flow_view_reached_top(self, event: "FlowView.ReachedTop") -> None:
+        """#3476 ④: page the next-older slice of the restored history in when
+        the user scrolls near the top. ``insert_many(0, …)`` reflows once and
+        flowview keeps the scroll position (the row being read stays put), so
+        the page lands invisibly above. Fires once per approach and re-arms on
+        retreat (flowview's edge-trigger contract); with nothing left to page
+        in this is a no-op. Live frames are unaffected — they append at the
+        bottom through the frame pump, never through this path."""
+        if not self._older_frames:
+            return
+        page = self._older_frames[-_HYDRATE_PAGE_FRAMES:]
+        try:
+            entries = self.conversation.insert_many(0, page)
+        except Exception:
+            logger.exception("textual chat: lazy history page-in failed")
+            return
+        self._older_frames = self._older_frames[:-_HYDRATE_PAGE_FRAMES]
+        for msg, entry in zip(page, entries):
+            _apply_restored_state(msg, entry)
 
     def _open_drawer(self, tab_id: "str | None") -> None:
         """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``
