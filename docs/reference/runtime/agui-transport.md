@@ -690,23 +690,26 @@ second hand-rolled column:
   merge (it is what #3476 ⑤/⑥ originally shipped) but inverts fg/bg into a
   near-white block over the palette, so surviving the merge is necessary and
   not sufficient.
-  **Declaring no rule is not the same as painting nothing** (#3496): Textual
-  resolves an UNDECLARED component class to a *concrete* style synthesised from
-  inherited values — measured,
-  `get_component_rich_style("flowview--cursor")` returns
-  `Style(color=#e0e0e0, bgcolor=#121212)` — and flowview applies that to the
-  addressed row, so simply deleting the rules left every segment without a
-  background of its own painted near-black (the cursor auto-arms on the newest
-  entry, so the BOTTOM row wore it permanently). `background: transparent` does
-  not help; it resolves to the inherited background rather than to "no
-  background". `_UnmarkedFlowView` (`app.py`) therefore overrides
-  `get_component_rich_style` to return an empty `Style()` for exactly those two
-  classes — the seam flowview reads the style from, needing no upstream change
-  and leaving every other component class (`flowview--sticky-header`)
-  untouched. Subclassing is not forking: Textual matches CSS type selectors
-  against base class names, so the `FlowView { … }` rules still apply. A row's
-  OWN ROW TINT survives this suppression — only the synthesised overlay is
-  dropped.
+  Both classes are therefore left **undeclared**, and flowview 0.6.1 honours
+  that: an undeclared component class paints nothing, because the row overlay
+  uses the *partial* component style (only the rules an app actually declared).
+  Under 0.6.0 it did not — Textual resolves an undeclared component class to a
+  *concrete* style synthesised from inherited values
+  (`get_component_rich_style("flowview--cursor")` returned
+  `Style(color=#e0e0e0, bgcolor=#121212)`), flowview painted it, and the
+  addressed row came out near-black; because the cursor auto-arms on the newest
+  entry, the BOTTOM row wore it permanently (#3496, reported upstream as
+  textual-flowview#5 and fixed in 0.6.1, which let reyn delete the subclass
+  that had been suppressing the accessor). 0.6.1 also made a *declared*
+  component background win over a row's own `Presentation.background`
+  (textual-flowview#6) — so a component style is now a viable way to mark a
+  row, and reyn still does not use one: the gutter rail leaves the
+  conversation's own colours completely alone, which is the owner-directed
+  design, not a workaround.
+  What keeps this honest is `test_the_addressed_row_keeps_its_own_background`,
+  which compares each row's painted background before and after it becomes
+  addressed — it fails whichever side disturbs the row (it is RED on 0.6.0
+  without the subclass, verified).
 - **ROW TINT — `Presentation.background`** (`presenter.py`): a user row and a
   FAILURE row (a `tool_call_failed` / `error` frame, or a `tool_call_completed`
   whose summary is a `✗`) carry a whole-row background that flowview paints
