@@ -52,7 +52,10 @@ from textual_flowview import (
     FlowView,
 )
 
-from reyn.interfaces.repl._clipboard import copy_to_clipboard_async
+from reyn.interfaces.repl._clipboard import (
+    copy_to_clipboard,
+    copy_to_clipboard_async,
+)
 from reyn.interfaces.repl._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
 from reyn.interfaces.repl.renderer import (
     _CC_DIM,
@@ -554,6 +557,16 @@ class TextualChatApp(App):
         # ctrl+q quit). The cost is TextArea's ctrl+c copy, which reyn replaces
         # with ``/copy`` and the keyboard cursor's Enter/Space copy (#3476 ⑥).
         Binding("ctrl+c", "cancel_turn", "Interrupt the running turn", priority=True),
+        # #3507: enter flowview's COPY MODE — a vim-style per-character text
+        # cursor over the rendered content, which is what finally answers "can
+        # the cursor move INSIDE an entry" (0.6.x had entry granularity only).
+        # ``c`` is upstream's own key for this in ``examples/copy_mode.py`` —
+        # reused rather than invented, and the MOTIONS are left entirely to
+        # flowview's defaults (hjkl w b e 0 $ ^ gg G v V y zz zt zb Ctrl-E
+        # Ctrl-Y Esc, plus * / n / N, live only while in copy mode) per the
+        # owner's "keep flowview's default keymap". reyn declares no motion
+        # binding of its own, so there is nothing here to drift from upstream.
+        ("c", "copy_mode", "Copy mode (vim-style text cursor)"),
     ]
 
     CSS = """
@@ -575,7 +588,7 @@ class TextualChatApp(App):
         height: 1fr;
         scrollbar-size-vertical: 0;
     }
-    /* #3496 / flowview#5: ``flowview--cursor`` / ``--selected`` are left
+    /* #3496 / flowview#5: ``flowview--highlight`` / ``--selected`` are left
        UNDECLARED on purpose — the addressed row is marked in the gutter (see
        ReynGutter's ``is_marked``), never by restyling the row. flowview 0.6.1
        honours that: an undeclared component class paints nothing, because the
@@ -883,6 +896,8 @@ class TextualChatApp(App):
         # one moved AWAY from is tracked here — it needs its gutter re-derived
         # too, otherwise the rail is left behind on it.
         self._marked_cursor: "Entry[OutboxMessage] | None" = None
+        # #3507: mirrors flowview's copy-mode state off ``CopyModeChanged``.
+        self._copy_mode = False
 
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
@@ -934,7 +949,17 @@ class TextualChatApp(App):
             # composer's own PageUp/PageDown delegation, #3470, calls
             # actions on ``self._flow`` directly and never depends on this
             # flag).
-            cursor=True,
+            highlight=True,
+            # #3507 / flowview 0.8.0 (#7): copy mode's yank writes through THIS
+            # sink instead of the default OSC 52. reyn already owns a local
+            # clipboard path (``pbcopy``/``xclip``/``wl-copy``/``xsel``) that
+            # works on macOS Terminal and through tmux, where OSC 52 silently
+            # does not — and unlike OSC 52 its result is observable, so a failed
+            # yank can be reported instead of looking like it worked. Upstream
+            # added this per-view seam for exactly this case; the alternative
+            # (overriding ``App.copy_to_clipboard``) caught every
+            # Textual-originated copy in the app to fix one widget's.
+            clipboard=self._write_clipboard,
         )
         # #3352: apply the configured START state. flowview has no constructor
         # parameter for gutter visibility (both flags initialise True), so the
@@ -1335,7 +1360,7 @@ class TextualChatApp(App):
             # #3490: re-opening onto the SAME hit moves the cursor to where it
             # already is, which flowview treats as a no-op (no ``Highlighted``),
             # so the gated rail would not come back on its own.
-            self._remark_entry(self._flow.cursor)
+            self._remark_entry(self._flow.highlighted)
 
     @staticmethod
     def _search_predicate(query: str):
@@ -1365,11 +1390,11 @@ class TextualChatApp(App):
         if not hits:
             self._search_bar.set_count(0, 0)
             return
-        current = flow.cursor
+        current = flow.highlighted
         if jump or current not in hits:
             current = hits[-1]
-            flow.cursor_to(current)
-            # ``cursor_to`` only guarantees visibility (minimal scroll); a search
+            flow.highlight_entry(current)
+            # ``highlight_entry`` only guarantees visibility (minimal scroll); a search
             # hit is centred so the context above and below it is readable.
             flow.scroll_to_entry(current, align="center", animate=True)
         self._search_bar.set_count(hits.index(current) + 1, len(hits))
@@ -1392,14 +1417,14 @@ class TextualChatApp(App):
         # Origin passed EXPLICITLY: these default to the selection, which this
         # app no longer uses (#3493 — the cursor is the single addressed position).
         target = (
-            flow.find_previous(pred, before=flow.cursor)
+            flow.find_previous(pred, before=flow.highlighted)
             if event.older
-            else flow.find_next(pred, after=flow.cursor)
+            else flow.find_next(pred, after=flow.highlighted)
         )
         if target is None:
             self._search_bar.set_count(0, 0)
             return
-        flow.cursor_to(target)
+        flow.highlight_entry(target)
         flow.scroll_to_entry(target, align="center", animate=True)
         hits = flow.find(pred)
         self._search_bar.set_count(hits.index(target) + 1, len(hits))
@@ -1410,7 +1435,7 @@ class TextualChatApp(App):
         # into the pane resumes navigating from there. The rail stops showing
         # because neither gate in :meth:`_is_addressed_entry` holds any more,
         # not because the position was thrown away.
-        self._remark_entry(self._flow.cursor)
+        self._remark_entry(self._flow.highlighted)
         self.query_one(Composer).focus()
 
     # ── #3490: the addressed-row rail ──────────────────────────────────────
@@ -1434,7 +1459,7 @@ class TextualChatApp(App):
         this whole issue (#3490) is about the mark not intruding on the
         conversation's own design when it has nothing to say."""
         flow = getattr(self, "_flow", None)
-        if flow is None or entry is not flow.cursor:
+        if flow is None or entry is not flow.highlighted:
             return False
         bar = getattr(self, "_search_bar", None)
         return flow.has_focus or (bar is not None and bar.display)
@@ -1458,7 +1483,7 @@ class TextualChatApp(App):
         the composer, a Tab step onward). The cursor POSITION is kept — only
         the mark goes, because nothing is being addressed any more."""
         if event.widget is getattr(self, "_flow", None):
-            self._remark_entry(self._flow.cursor)
+            self._remark_entry(self._flow.highlighted)
 
     def on_flow_view_highlighted(self, event: "FlowView.Highlighted") -> None:
         """#3490: move the rail with the keyboard cursor — repaint the row it
@@ -1472,23 +1497,23 @@ class TextualChatApp(App):
     def on_descendant_focus(self, event: "events.DescendantFocus") -> None:
         """Arm the keyboard cursor the moment FlowView gains focus (Shift+Tab
         landing on it, #3470), rather than leaving it invisible until the
-        first arrow press: flowview's own :meth:`~textual_flowview.FlowView.move_cursor`
+        first arrow press: flowview's own :meth:`~textual_flowview.FlowView.move_highlight`
         starts from ``cursor=None`` and only lands on an entry once a
         direction key moves it — a real but easy-to-miss affordance gap for
         a feature whose whole point is a visible position indicator.
-        ``cursor_last`` (not ``cursor_first``) so arrival highlights the
+        ``highlight_last`` (not ``highlight_first``) so arrival highlights the
         newest entry, matching where a resumed/live conversation's attention
         already is."""
         if event.widget is not self._flow:
             return
-        if self._flow.cursor is None:
-            self._flow.cursor_last()
+        if self._flow.highlighted is None:
+            self._flow.highlight_last()
         else:
             # #3490: the position was remembered from a previous visit, so no
             # cursor MOVE happens and no ``Highlighted`` fires — but the rail is
             # focus-gated, so the row still needs its gutter re-derived to
             # bring the rail back.
-            self._remark_entry(self._flow.cursor)
+            self._remark_entry(self._flow.highlighted)
 
     async def on_flow_view_activated(self, event: "FlowView.Activated") -> None:
         """Enter/Space on the cursor entry: copy ITS text directly.
@@ -1620,6 +1645,57 @@ class TextualChatApp(App):
                     text=f"interrupt failed: {type(exc).__name__}: {exc}",
                 )
             )
+
+    def _write_clipboard(self, text: str) -> bool:
+        """Copy-mode's clipboard sink: reyn's own local tool, result observable.
+
+        Synchronous by contract (flowview calls it inside ``copy_yank``), so this
+        uses the blocking helper rather than the async one — the shell-out is a
+        single short-lived subprocess. Returns whether a tool actually accepted
+        the text, which is what lets a failed yank be reported rather than
+        silently look like it worked (OSC 52, the default, cannot be
+        acknowledged at all)."""
+        try:
+            ok, _tool = copy_to_clipboard(text)
+        except Exception:
+            logger.exception("textual chat: copy-mode clipboard write failed")
+            return False
+        return ok
+
+    def action_copy_mode(self) -> None:
+        """``c``: hand the conversation pane over to flowview's copy mode.
+
+        Entering is the app's call — upstream binds the motions but not the
+        entry, since only the app knows what else that key might mean. Copy mode
+        STARTS on the highlighted entry and holds that highlight fixed while the
+        text cursor moves, so the addressed-row rail stays put and no
+        ``Highlighted`` is posted during a motion."""
+        self._flow.focus()
+        self._flow.enter_copy_mode()
+
+    def on_flow_view_copy_mode_changed(
+        self, event: "FlowView.CopyModeChanged"
+    ) -> None:
+        """Keep the chrome in step with copy mode (flowview 0.8.0, #8).
+
+        The ENTRY edge is reyn's own :meth:`action_copy_mode`, but the EXIT edge
+        happens inside the widget on ``Esc`` — before this message existed there
+        was no way to observe it without polling, so a "copy mode" hint would
+        have stayed up after the user left, which is the one state a modal
+        keymap must never be in. Both edges land here."""
+        from reyn.runtime.outbox import OutboxMessage
+
+        self._copy_mode = event.copy_mode
+        self._ingest_frame(
+            OutboxMessage(
+                kind="status",
+                text=(
+                    "copy mode — hjkl move · v/V select · y yank · Esc leave"
+                    if event.copy_mode
+                    else "copy mode off"
+                ),
+            )
+        )
 
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
