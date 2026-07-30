@@ -674,7 +674,7 @@ second hand-rolled column:
   `\x1b[38;2;157;101;255]`, its theme's purple). The only true passthrough is
   the app-wide `App.ansi_color`, which would drop the whole `_CC_*` palette to
   16 colours, so it is deliberately not set. The app supplies
-  `ReynGutter(is_marked=…)`, which reads `FlowView.cursor` live on every gutter
+  `ReynGutter(is_marked=…)`, which reads `FlowView.highlighted` live on every gutter
   repaint, and re-derives the affected rows' gutters via
   `FlowView.refresh_gutter` on each `Highlighted` and on focus changes (the
   gutter cache is keyed on a decor revision that neither a cursor move nor a
@@ -690,12 +690,14 @@ second hand-rolled column:
   merge (it is what #3476 ⑤/⑥ originally shipped) but inverts fg/bg into a
   near-white block over the palette, so surviving the merge is necessary and
   not sufficient.
-  Both classes are therefore left **undeclared**, and flowview 0.6.1 honours
+  Both classes (`flowview--selected` / `flowview--highlight`, the latter named
+  `flowview--cursor` before 0.7.0) are therefore left **undeclared**, and
+  flowview 0.6.1 onward honours
   that: an undeclared component class paints nothing, because the row overlay
   uses the *partial* component style (only the rules an app actually declared).
   Under 0.6.0 it did not — Textual resolves an undeclared component class to a
   *concrete* style synthesised from inherited values
-  (`get_component_rich_style("flowview--cursor")` returned
+  (`get_component_rich_style("flowview--highlight")` returned
   `Style(color=#e0e0e0, bgcolor=#121212)`), flowview painted it, and the
   addressed row came out near-black; because the cursor auto-arms on the newest
   entry, the BOTTOM row wore it permanently (#3496, reported upstream as
@@ -917,8 +919,10 @@ defined.
 
 ### Textual TUI keyboard cursor (#3476)
 
-The conversation pane carries an entry-level keyboard cursor
-(`FlowView(cursor=True)`). It is reached the way that focus state was already
+The conversation pane carries an entry-level **highlight**
+(`FlowView(highlight=True)`) — flowview 0.7.0's name for what 0.6.x called the
+keyboard *cursor*, renamed upstream to free "cursor" for the per-character text
+cursor of copy mode (below). It is reached the way that focus state was already
 reachable — Textual's own `Shift+Tab` focus cycling, with `Esc` returning to
 the composer (machine-verified by the Esc-sufficiency gate) — never a new
 focus path. While FlowView does not hold focus these keys are unaffected; the
@@ -957,6 +961,30 @@ plumbing rather than a new binding.
 The cursor's position is marked by the addressed-row rail described under
 *Textual TUI gutters* above. Its keys live in `CONVERSATION_CURSOR_KEYS`
 (`textual_chat/chrome.py`) for the Help pane.
+
+### Textual TUI copy mode (#3507)
+
+`c` hands the conversation pane over to flowview 0.7.0's **copy mode** — a
+per-character text cursor over the rendered content, with vim motions. This is
+what the entry-level highlight cannot do: before 0.7.0 the finest keyboard
+position was a whole entry, so selecting *part* of a long reply had no keyboard
+route at all.
+
+Everything inside copy mode is **flowview's own keymap** (`hjkl w b e 0 $ ^ gg
+G v V y zz zt zb Ctrl-E Ctrl-Y Esc`, live only while copy mode is active, and
+`*` / `n` / `N` to search the selection). reyn declares **no motion binding of
+its own** — deliberately, so the keymap cannot drift from upstream's; a test
+asserts that absence. `c` is the one key reyn adds, and it is the key
+upstream's own `examples/copy_mode.py` uses to enter.
+
+The interaction that matters for this surface: copy mode **starts on the
+highlighted entry** and holds that highlight **fixed** while the text cursor
+moves, posting no `Highlighted` during a motion. That is what keeps the
+addressed-row rail still — the rail is re-derived from `Highlighted` plus focus
+changes, so a highlight that chased the text cursor would drag the rail with
+it. `FlowView.row_count` / `row_text(y)` / `entry_at_row(y)` are the row-level
+primitives copy mode is built on, available to any consumer that needs to map
+content rows back to entries.
 
 ### `reyn.intervention.<kind>`
 
