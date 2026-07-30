@@ -555,7 +555,10 @@ already set earlier in `__init__`.
   [Capability profile § Advertisement and enforcement read one source](../../concepts/runtime/capability-profile.md#advertisement-and-enforcement-read-one-source).
   `_untrusted_contextual_cache` (#1827 S4b, context-auto) is a lazily-resolved minimal
   `_untrusted` profile `ContextualPermission`, composed into the per-turn narrowing while
-  untrusted external content is live in context; `None` until first needed.
+  untrusted external content is live in context; `None` until first needed — and it is
+  never resolved at all unless the operator opted in via
+  `safety.threat_scan.capability_narrowing` (#3501; default `off`). See
+  [Capability profile § Context-auto untrusted narrowing](../../concepts/runtime/capability-profile.md#context-auto-untrusted-narrowing-opt-in-default-off).
 - `_excluded_categories` (#1667) — catalog categories hidden at the universal-catalog
   source (e.g. `reyn_repo` on the external-repo eval path so it doesn't compete with
   `file__*` for the weak model); interactive default empty = `reyn_repo` kept.

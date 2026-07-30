@@ -46,6 +46,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.untrusted_narrowing import narrowing_on
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -83,7 +84,10 @@ def _scripted_llm(rounds: list[LLMToolCallResult]):
 
 
 def _make(tmp_path) -> Session:
-    return make_session(agent_name="test_agent")
+    # #3501: the narrowing is opt-in. The taint-STAMPING arms below are
+    # independent of it (the marker is stamped whether or not anything consumes
+    # it); the narrowing arms are not, so the whole file opts in.
+    return make_session(agent_name="test_agent", safety=narrowing_on())
 
 
 @pytest.mark.asyncio

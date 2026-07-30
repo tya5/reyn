@@ -26,6 +26,7 @@ from reyn.security.permissions.effective import (
     CapabilityAxis,
     ContextualLayer,
     ContextualPermission,
+    NarrowingOrigin,
 )
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
@@ -77,11 +78,23 @@ def test_contextual_layer_mcp_top_when_unset() -> None:
 
 def test_require_mcp_contextual_deny_blocks(tmp_path) -> None:
     """Tier 2: a contextual mcp_deny refuses a server the per-agent layer grants,
-    with the NEW decision-enabling 'active capability context' message (#2074 S4a)."""
+    with a decision-enabling message that names the narrowing (#2074 S4a, #3501).
+
+    #3501 replaced the fixed 'active capability context' phrasing — which named
+    three candidate narrowings without saying which fired — with the term's own
+    origin, so the assertion is on the origin reaching the caller.
+    """
     resolver = _make_resolver(tmp_path, config={"mcp.fs": "allow"})
     decl = PermissionDecl(mcp=["fs"], allowed_mcp=None)  # granted + no per-agent narrowing
-    ctx = ContextualPermission(mcp_deny=frozenset({"fs"}))
-    with pytest.raises(PermissionError, match="active capability context"):
+    ctx = ContextualPermission(
+        mcp_deny=frozenset({"fs"}),
+        origin=NarrowingOrigin(
+            label="the narrowing under test",
+            cause="this test applied it",
+            lifts_when="the test stops applying it",
+        ),
+    )
+    with pytest.raises(PermissionError, match="the narrowing under test"):
         _run(resolver.require_mcp(decl, "fs", _AutoDenyBus(), contextual=ctx))
 
 
