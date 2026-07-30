@@ -56,6 +56,16 @@ No mocks: real ``AgentRegistry``/``Session``/``StateLog``/``PipelineExecutor``/
 scenario is driven to a REAL outcome (an unresolvable tool step; a real
 step-boundary Ctrl-C-style cancel via ``Session.cancel_inflight``; a real
 threat-scanner block on real poisoned content), never a fabricated outcome dict.
+
+**#3450 update**: ``dispatch_tool`` itself now promotes a handler's own
+``{status: "error", error: {kind, message}}`` return to its OWN outer envelope
+(the "wrapped one layer deeper" description in point 2 above is no longer true
+for THIS shape specifically — see ``_handler_declared_error`` in
+``core/dispatch/dispatcher.py``). The raw ``dispatch_tool`` result these tests
+read is therefore single-wrapped (``r["error"]["message"]``, not
+``r["data"]["error"]["message"]``); ``feedback()``'s unwrap-before-check (point
+2) stays in place and is still load-bearing for any OTHER handler shape that
+``dispatch_tool`` does not (yet) recognize as self-declared.
 """
 from __future__ import annotations
 
@@ -189,7 +199,11 @@ async def test_run_pipeline_failed_renders_error_kind_message(tmp_path: Path) ->
 
     assert content.startswith("Error (pipeline_failed): "), content
     assert "bad_tool_step" in content
-    run_id = r["data"]["error"]["message"].split("run_id: ")[1].split(")")[0]
+    # #3450: dispatch_tool now promotes a handler's own {status:error, error:
+    # {kind, message}} return to its OWN outer envelope (single-wrap) instead
+    # of double-wrapping it as {status:ok, data:{status:error, error:{...}}} —
+    # the raw dispatch_tool result is read at r["error"], not r["data"]["error"].
+    run_id = r["error"]["message"].split("run_id: ")[1].split(")")[0]
     assert run_id.startswith("pipeline-bad_tool_step-")
     assert f"run_id: {run_id}" in content, "run_id must stay reachable for the LLM"
 
@@ -273,7 +287,8 @@ async def test_run_pipeline_cancelled_renders_error_kind_message(tmp_path: Path,
 
     assert content.startswith("Error (pipeline_cancelled): "), content
     assert "gated" in content
-    run_id = r["data"]["error"]["message"].split("run_id: ")[1].split(")")[0]
+    # #3450: single-wrap now — see the sibling assertion above.
+    run_id = r["error"]["message"].split("run_id: ")[1].split(")")[0]
     assert run_id.startswith("pipeline-gated-")
     assert f"run_id: {run_id}" in content, "run_id must stay reachable for the LLM"
 

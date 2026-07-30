@@ -374,8 +374,8 @@ exclusive per call.
 | Kind | When | Key payload |
 |------|------|-------------|
 | `tool_called` | Before invocation, after argument validation. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args`, `args_hash` |
-| `tool_returned` | The invocation returned. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args_hash`, `result` |
-| `tool_failed` | The invocation was refused or raised. | same, plus `error_kind` (`permission_denied` \| `exception` \| a validation reason) and `message` |
+| `tool_returned` | The invocation returned a value that does NOT declare an error (see `tool_failed`). | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args_hash`, `result` |
+| `tool_failed` | The invocation was refused, raised, **or returned normally with a self-declared error** (#3450 — a handler's own `{"error": ...}` / `{"error_message": ...}` / `{"error_kind": ...}` return, plain or one level under its own `{"status": "error", "data": {...}}` self-envelope, promoted to this event instead of silently wrapped as a success). | same, plus `error_kind` (`permission_denied` \| `exception` \| a validation reason \| a handler-supplied kind \| `handler_error`) and `message` |
 
 `args_hash` is a stable SHA-256 prefix over the canonical-JSON arguments — the
 correlation id that pairs a `tool_called` with its outcome across the log.

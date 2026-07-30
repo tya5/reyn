@@ -2289,9 +2289,22 @@ class RouterLoop:
                             continue  # non-catalog tool — skip
                         if not _rd_action:
                             continue
+                        # #3450: derive from the SAME source as the LLM-visible
+                        # envelope — dispatch_tool's own outer ``status`` field.
+                        # Before #3450, dispatch_tool wrapped a handler's own
+                        # (non-raising) error return as
+                        # ``{"status": "ok", "data": {...error...}}``, so this
+                        # outer-``status`` check silently recorded "success"
+                        # for a failed catalog dispatch (the #3429 arc's
+                        # measurement that broadened this issue's scope).
+                        # dispatch_tool now promotes any handler-declared
+                        # error to this SAME outer ``status`` before ``r``
+                        # is ever built, so checking it here is both simpler
+                        # and correct: ``r["status"]`` is trustworthy for
+                        # every catalog dispatch outcome, not just
+                        # dispatch_tool's own pre-dispatch synthetic errors.
                         _rd_outcome = "error" if (
-                            isinstance(r, dict)
-                            and ("error" in r or r.get("status") == "error")
+                            isinstance(r, dict) and r.get("status") == "error"
                         ) else "success"
                         host.events.emit(
                             "routing_decided",
