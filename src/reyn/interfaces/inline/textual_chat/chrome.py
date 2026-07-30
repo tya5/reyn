@@ -345,7 +345,10 @@ class Composer(TextArea):
 #: e.g. ``History`` -> ``Hist`` reads unambiguously; ``Ctx``/``Cost`` are left
 #: alone precisely because shortening either risks the two becoming
 #: indistinguishable at a glance). Most labels were already <= 4 chars and are
-#: untouched.
+#: untouched. #3469: ``Skill`` is NOT abbreviated — the #3326 4-char cut made
+#: it read as a typo ("Skil"), and the full label still packs all 13 tabs onto
+#: one row at 80 columns (measured: 79 cells used — ``History``'s 3-char
+#: saving was the one that mattered).
 _MENU_TABS: "list[tuple[str, str]]" = [
     ("model", "Model"),
     ("agent", "Agent"),
@@ -359,7 +362,7 @@ _MENU_TABS: "list[tuple[str, str]]" = [
     # ``/visibility`` or ``/hook`` that flips it); Pipe/Cron are read-only.
     ("tool", "Tool"),
     ("mcp", "MCP"),
-    ("skill", "Skil"),
+    ("skill", "Skill"),
     ("pipe", "Pipe"),
     ("hook", "Hook"),
     ("cron", "Cron"),
