@@ -394,10 +394,10 @@ measurable consumer without being shelved in
 `ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED`, or when a written claim in either
 registry contradicts the measurement. Bundle coverage is deliberately not
 100% — forcing it would be name-prefix grouping pressure, not a consumer-set
-one. The earlier `ROUTER_HOST_ADAPTER_SCALAR_EXCEPTIONS` registry of 58
-per-param prose reasons is gone: 6 of its "no shared-consumer partner" claims
-were measurably false (they are the three bundles at the bottom of the table
-above), because that gate only ever checked a reason was non-empty.
+one. Do not re-record the predicate as a per-param prose reason: a gate can
+only check that prose is non-empty, never that it is true — when this was
+tried, six such reasons were false, and they are the three bundles at the
+bottom of the table above.
 
 ### Chat turn_budget engine — None on small context, never raise (#1092 PR-F1)
 
