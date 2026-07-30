@@ -105,10 +105,22 @@ def test_markdown_sample_emits_only_palette_or_default_foregrounds() -> None:
         ]
 
     basic = _BASIC_FG.findall(ansi)
+    if basic:  # CI-only so far — have the red run report its own resolution
+        import rich
+
+        probe = Console(
+            force_terminal=True, color_system="truecolor", width=80,
+            highlight=False, theme=chat_markdown_theme(),
+        )
+        diag = (
+            f"rich={rich.__version__} color_system={probe.color_system} "
+            f"hr_style={probe.get_style('markdown.hr', default='none')!r} "
+            f"theme_hr={chat_markdown_theme().styles.get('markdown.hr')!r}"
+        )
     assert not basic, (
         f"basic/bright ANSI foreground code(s) {basic} reached the screen — "
         "a named rich default colour (magenta/cyan/...) leaked past the theme. "
-        f"Context: {_contexts(_BASIC_FG)}"
+        f"Context: {_contexts(_BASIC_FG)} Diag: {diag}"
     )
     assert not _EIGHT_BIT_FG.findall(ansi), (
         "a 256-colour foreground reached the screen — not a palette colour"
