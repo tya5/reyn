@@ -195,6 +195,27 @@ _CATEGORY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     # skill/memory/repo knowledge. Runtime-gated like ``exec`` — visible only
     # when ``embedding.enabled: true``.
     "knowledge": ("search_knowledge",),
+    # #3465: FP-0057 Phase 1's raw embedding primitive. Distinct from
+    # ``knowledge`` (search over the operator's OWN skill/memory/repo
+    # content) — ``embed`` is the USER-FACING batch text->vector primitive
+    # the agent composes into a pipeline against the user's own external MCP
+    # vector-DB tools (0066 §9's "two groups, two axes" split). Was
+    # registered router=allow with ``router_dispatched=True`` already set,
+    # but never gained a membership-table entry — the #3083-class "registered
+    # + dispatchable but catalog-invisible" gap, filed as #3465 and closed
+    # here rather than in #3464 (which discovered it) to avoid touching this
+    # module while #3463's 444-file alias-removal arc was open.
+    "embedding": ("embed",),
+    # #3465: both tools already share ``ToolDefinition(category="hooks")`` —
+    # the natural catalog boundary was already declared, just never wired.
+    # ``emit_hook_event`` publishes an LLM-authored hook-event onto this
+    # session's own HookBus (Router-only in the sense that it needs the
+    # chat-router's live ``ctx.hook_bus``/``ctx.session_id`` — it fails
+    # closed, not silently, in a context without one; that is a RUNTIME
+    # precondition, not a reason to withhold LLM-reachability). ``hooks_add``
+    # lets the agent add its own push hook (the config-hot-reload
+    # self-expansion primitive). Same #3083-class wiring gap as ``embed``.
+    "hooks": ("emit_hook_event", "hooks_add"),
 }
 
 
