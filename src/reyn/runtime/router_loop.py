@@ -2250,9 +2250,11 @@ class RouterLoop:
 
                 # #3455: routing_decided is no longer emitted here. It used to
                 # live in this loop, gated on ``if _univ_enabled:`` — which
-                # meant the DEFAULT configuration (universal wrappers off,
-                # flat bare-name tools=) never emitted it at all, even though
-                # catalog routing was happening on every dispatched call. The
+                # meant the opt-out configuration (an operator setting
+                # ``action_retrieval.universal_wrappers_enabled: false`` in
+                # reyn.yaml → flat bare-name ``tools=``, the pre-PR-3b-iv
+                # shape) never emitted it at all, even though catalog routing
+                # was happening on every dispatched call. The
                 # emit is now inside ``_dispatch_resolved`` (the #3429-census
                 # chokepoint every dispatch funnels through — invoke_action,
                 # bare hot-list alias, ARS-salvaged direct call, and the flat
@@ -2943,11 +2945,12 @@ class RouterLoop:
         ``run_loop``-local emit that lived inside ``if _univ_enabled:`` —
         a guard keyed on which ENTRY SURFACE the model used (the
         ``invoke_action`` wrapper), not on whether routing actually
-        happened. The default configuration
-        (``universal_wrappers_enabled=False`` → flat bare-name ``tools=``)
+        happened. The opt-out configuration (an operator setting
+        ``action_retrieval.universal_wrappers_enabled: false`` in
+        reyn.yaml → flat bare-name ``tools=``, the pre-PR-3b-iv shape)
         never advertises ``invoke_action`` at all, so that guard silently
-        zeroed out ``routing_decided`` for the default path even though
-        every one of its tool calls dispatches a catalog action right here.
+        zeroed out ``routing_decided`` for that path even though every one
+        of its tool calls dispatches a catalog action right here.
 
         ``surface`` (``raw_name`` if given, else ``name``) is what the model
         actually called, BEFORE the #229 salvage rewrite. This matters

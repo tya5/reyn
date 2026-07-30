@@ -544,13 +544,15 @@ def test_routing_decided_emitted_for_bare_direct_call_when_universal_wrappers_di
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Tier 2: #3455 — bare-name direct catalog dispatch emits routing_decided
-    even with ``universal_wrappers_enabled=False`` (the DEFAULT reyn.yaml
-    shape: flat bare-name ``tools=``, no ``invoke_action`` wrapper at all).
+    even with ``universal_wrappers_enabled=False`` (the opt-out shape an
+    operator gets from ``action_retrieval.universal_wrappers_enabled: false``
+    in reyn.yaml: flat bare-name ``tools=``, no ``invoke_action`` wrapper at
+    all — the production default, since PR-3b-iv, is actually ``True``).
 
     This is the actual coverage hole #3455 reports. Before the fix, the
     emit lived in ``run_loop`` inside ``if _univ_enabled:`` — with wrappers
     off that whole block was skipped unconditionally, so EVERY catalog
-    dispatch through the flat/default tool shape produced NO
+    dispatch through the flat bare-name tool shape produced NO
     ``routing_decided`` event, even though ``dispatch_tool`` ran the exact
     same real catalog dispatch it always does. The fix relocates the emit
     into ``_dispatch_resolved`` — the single chokepoint every dispatch

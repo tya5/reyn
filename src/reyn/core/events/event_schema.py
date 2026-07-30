@@ -131,8 +131,10 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # entry surface (invoke_action wrapper / bare hot-list alias / ARS-
     # salvaged direct call / flat bare-name dispatch when universal wrappers
     # are off). Previously emitted from a run_loop-local block gated on
-    # `if _univ_enabled:`, which meant the default (wrappers-off) config
-    # never emitted it at all even though catalog routing was happening.
+    # `if _univ_enabled:`, which meant the opt-out config (an operator
+    # setting `action_retrieval.universal_wrappers_enabled: false` in
+    # reyn.yaml) never emitted it at all even though catalog routing was
+    # happening.
     # action_name: the resolved action_name (e.g. "agent.peer__alice")
     # source: how the routing happened
     #   ("invoke_action" | "hot_list_alias" | "ars_direct")
