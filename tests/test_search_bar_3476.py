@@ -1,7 +1,7 @@
 """#3476 ⑤ — the ctrl+f in-conversation search bar.
 
 What these pin (all through the public surface — pressed keys, the painted
-count label via ``Static.render()``, ``FlowView.cursor``/``display`` —
+count label via ``Static.render()``, ``FlowView.highlighted``/``display`` —
 never widget internals):
 
 - ``ctrl+f`` from the composer opens the bar and focuses its query input;
@@ -115,7 +115,7 @@ def _addressed_text(app: TextualChatApp) -> "str | None":
     search moves (#3493). There is no separate selection to read."""
     from textual_flowview import FlowView
 
-    entry = app.query_one(FlowView).cursor
+    entry = app.query_one(FlowView).highlighted
     return None if entry is None else entry.item.text
 
 
@@ -253,6 +253,6 @@ async def test_escape_closes_the_bar_keeps_the_position_and_refocuses_composer()
         assert isinstance(app.focused, Composer), (
             f"focus is on {app.focused!r}, not back on the composer"
         )
-        assert app.query_one(FlowView).cursor is not None, (
+        assert app.query_one(FlowView).highlighted is not None, (
             "the found position was thrown away instead of kept on the cursor"
         )
