@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Callable
 
 from textual import events
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import ContentSwitcher, OptionList, Static
 from textual_flowview import (
@@ -519,6 +520,40 @@ class TextualChatApp(App):
         # _EDIT_KEYS`` listing only flags a completion recompute, it consumes
         # nothing), and ``chrome.RESERVED_KEYS`` reserves ctrl+r/f2 only.
         ("ctrl+f", "open_search", "Search conversation"),
+        # #3498: ctrl+c INTERRUPTS the in-flight turn — the terminal-REPL
+        # meaning of the key, and what ``ClientTransport.cancel_inflight``'s
+        # own docstring already called "the ctrl-c seam" for a seam that had
+        # no production caller from any client until now (several runtime
+        # docstrings describe cancellation as happening "on Ctrl-C"; they were
+        # describing an intent, not a wiring).
+        #
+        # ``priority=True`` is load-bearing, and the measurement is narrower
+        # than it first looks — worth writing down, because a plain binding
+        # passes the obvious tests:
+        #   * ``TextArea`` binds ``ctrl+c,super+c`` to ``copy``, but that
+        #     action is DISABLED while nothing is selected (its
+        #     ``check_action``), so with an empty selection the key falls
+        #     through and even a NON-priority app binding runs.
+        #   * With a live selection in the composer ``check_action("copy")`` is
+        #     True, the focused widget consumes the key, and a non-priority app
+        #     binding never fires (measured False). A priority binding still
+        #     wins (measured True).
+        # So the ONLY case that needs priority is "the user has text selected
+        # in the composer" — which is precisely the case the owner's
+        # unconditional-interrupt decision has to survive, and precisely what
+        # ``test_ctrl_c_interrupts_even_with_a_composer_selection`` pins.
+        # Behind both of those sits Textual's own ``App`` binding of ``ctrl+c``
+        # to ``help_quit`` — the "Press ctrl+q to quit the app" the owner saw
+        # instead of a cancel; a subclass binding overrides it (measured).
+        #
+        # Owner decision: interrupt UNCONDITIONALLY rather than only while a
+        # turn runs. With nothing in flight the call is a runtime no-op, and a
+        # key whose meaning depends on invisible state is worse than one that
+        # always means the same thing. Quitting is unaffected — ``ctrl+q``
+        # already owns it, matching the terminal convention (ctrl+c interrupt /
+        # ctrl+q quit). The cost is TextArea's ctrl+c copy, which reyn replaces
+        # with ``/copy`` and the keyboard cursor's Enter/Space copy (#3476 ⑥).
+        Binding("ctrl+c", "cancel_turn", "Interrupt the running turn", priority=True),
     ]
 
     CSS = """
@@ -1037,11 +1072,21 @@ class TextualChatApp(App):
 
     def _app_binding_help(self) -> "list[tuple[str, str]]":
         """The app's declarative ``BINDINGS`` as ``(key, description)`` pairs for
-        the Help pane — sourced from the binding table itself, not re-typed."""
+        the Help pane — sourced from the binding table itself, not re-typed.
+
+        Handles BOTH shapes Textual accepts in a ``BINDINGS`` list: the
+        3-tuple and a full :class:`~textual.binding.Binding` (needed once a
+        binding carries a flag, e.g. ``priority=True`` on ``ctrl+c``, #3498).
+        A tuple-only reader silently DROPPED such a binding — the key worked
+        but the Help pane never mentioned it, which is the single-source-of-
+        truth claim in the line above quietly failing rather than erroring."""
         out: list[tuple[str, str]] = []
         for b in self.BINDINGS:
-            if isinstance(b, tuple) and len(b) >= 3:
-                out.append((b[0], b[2]))
+            if isinstance(b, tuple):
+                if len(b) >= 3:
+                    out.append((b[0], b[2]))
+            elif getattr(b, "description", ""):
+                out.append((b.key, b.description))
         return out
 
     def _history_turns(self, *, limit: int = 12) -> "list[str]":
@@ -1532,6 +1577,31 @@ class TextualChatApp(App):
         if 0 <= event.option_index < len(cmds) and cmds[event.option_index]:
             await self._submit(cmds[event.option_index])
         self._open_drawer(None)
+
+    async def action_cancel_turn(self) -> None:
+        """ctrl+c: cooperatively interrupt the in-flight turn (#3498).
+
+        Delegates straight to the transport's ``cancel_inflight`` — the seam
+        its own contract named for this key — so local and remote clients
+        interrupt through the identical path and this app adds no cancellation
+        semantics of its own. A no-op when nothing is running (the runtime
+        side fires a per-turn event; with no turn there is nothing to fire).
+
+        Failures are contained and surfaced as a status row rather than
+        escaping: an interrupt that raises would leave the user with a turn
+        they believe they stopped."""
+        try:
+            await self._transport.cancel_inflight()
+        except Exception as exc:
+            logger.exception("textual chat: cancel_inflight failed")
+            from reyn.runtime.outbox import OutboxMessage
+
+            self._ingest_frame(
+                OutboxMessage(
+                    kind="error",
+                    text=f"interrupt failed: {type(exc).__name__}: {exc}",
+                )
+            )
 
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
