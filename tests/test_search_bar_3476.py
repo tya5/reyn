@@ -1,19 +1,20 @@
 """#3476 ⑤ — the ctrl+f in-conversation search bar.
 
 What these pin (all through the public surface — pressed keys, the painted
-count label via ``Static.render()``, ``FlowView.selected``/``display`` —
+count label via ``Static.render()``, ``FlowView.cursor``/``display`` —
 never widget internals):
 
 - ``ctrl+f`` from the composer opens the bar and focuses its query input;
-- typing searches incrementally: the NEWEST match is selected (a
+- typing searches incrementally: the cursor moves to the NEWEST match (a
   bottom-anchored conversation searches backward from now) and the ``n/M``
   count reflects the match set;
 - ``Enter``/``↑`` walk toward older matches, ``↓`` back toward newer, both
-  wrapping — positions verified against model order;
+  wrapping — positions verified against model order (search moves the keyboard
+  CURSOR, #3493: ONE addressed position, so two rows can never both be marked);
 - a match living ONLY in the lazily-held older prefix (#3476 ④) is found:
   opening search materialises the full restored history first;
-- ``Escape`` closes the bar, clears the selection, and returns focus to the
-  composer (#3365's "Esc alone owns back").
+- ``Escape`` closes the bar and returns focus to the composer (#3365's "Esc
+  alone owns back") while KEEPING the found position on the cursor.
 
 Real ``TextualChatApp`` + real minimal ``ClientTransport`` — no mocks."""
 from __future__ import annotations
@@ -109,10 +110,12 @@ def _count_text(app: TextualChatApp) -> str:
     return str(app.query_one("#search-count", Static).render())
 
 
-def _selected_text(app: TextualChatApp) -> "str | None":
+def _addressed_text(app: TextualChatApp) -> "str | None":
+    """The text of the ONE addressed entry — the keyboard cursor, which is what
+    search moves (#3493). There is no separate selection to read."""
     from textual_flowview import FlowView
 
-    entry = app.query_one(FlowView).selected
+    entry = app.query_one(FlowView).cursor
     return None if entry is None else entry.item.text
 
 
@@ -151,7 +154,7 @@ async def test_incremental_search_selects_the_newest_match_with_count() -> None:
         await pilot.pause()
         await pilot.press("ctrl+f")
         await _type(pilot, "alpha")
-        assert _selected_text(app) == "alpha two", (
+        assert _addressed_text(app) == "alpha two", (
             "incremental search did not select the newest match"
         )
         assert _count_text(app) == "2/2"
@@ -169,28 +172,28 @@ async def test_enter_walks_older_arrows_map_spatially_and_wrap() -> None:
         await pilot.pause()
         await pilot.press("ctrl+f")
         await _type(pilot, "match")
-        assert _selected_text(app) == "match new"
+        assert _addressed_text(app) == "match new"
         assert _count_text(app) == "3/3"
 
         await pilot.press("enter")
         await pilot.pause()
-        assert _selected_text(app) == "match mid", "Enter did not step older"
+        assert _addressed_text(app) == "match mid", "Enter did not step older"
         assert _count_text(app) == "2/3"
 
         await pilot.press("up")
         await pilot.pause()
-        assert _selected_text(app) == "match old", "↑ did not step older"
+        assert _addressed_text(app) == "match old", "↑ did not step older"
         assert _count_text(app) == "1/3"
 
         await pilot.press("enter")
         await pilot.pause()
-        assert _selected_text(app) == "match new", (
+        assert _addressed_text(app) == "match new", (
             "the older-walk did not wrap past the oldest match"
         )
 
         await pilot.press("down")
         await pilot.pause()
-        assert _selected_text(app) == "match old", (
+        assert _addressed_text(app) == "match old", (
             "↓ (newer) did not wrap past the newest match"
         )
 
@@ -219,7 +222,7 @@ async def test_search_finds_a_match_only_present_in_the_unpaged_prefix() -> None
         assert len(list(app.conversation)) == len(project_restored_frames(log)), (
             "search-open did not materialise the full restored history"
         )
-        selected = _selected_text(app)
+        selected = _addressed_text(app)
         assert selected is not None and "needle-in-the-prefix" in selected, (
             f"the prefix-only match was not found (selected: {selected!r})"
         )
@@ -227,10 +230,12 @@ async def test_search_finds_a_match_only_present_in_the_unpaged_prefix() -> None
 
 
 @pytest.mark.asyncio
-async def test_escape_closes_clears_selection_and_refocuses_composer() -> None:
-    """Tier 2b: Escape dismisses the bar (#3365 'Esc alone owns back') —
-    the bar hides, the search selection is cleared, focus returns to the
-    composer."""
+async def test_escape_closes_the_bar_keeps_the_position_and_refocuses_composer() -> None:
+    """Tier 2b: Escape dismisses the bar (#3365 'Esc alone owns back') — the bar
+    hides and focus returns to the composer, while the found position is KEPT on
+    the cursor (#3493) so Shift+Tab back into the pane resumes from the hit
+    rather than starting over. What stops showing is the MARK, not the position
+    (pinned in ``test_addressed_row_rail_3490.py``)."""
     from textual_flowview import FlowView
 
     app = TextualChatApp(transport=_Transport())
@@ -240,14 +245,14 @@ async def test_escape_closes_clears_selection_and_refocuses_composer() -> None:
         await pilot.pause()
         await pilot.press("ctrl+f")
         await _type(pilot, "alpha")
-        assert _selected_text(app) == "alpha", "test setup: no active search hit"
+        assert _addressed_text(app) == "alpha", "test setup: no active search hit"
 
         await pilot.press("escape")
         await pilot.pause()
         assert not app.query_one(SearchBar).display, "Escape did not hide the bar"
-        assert app.query_one(FlowView).selected is None, (
-            "the search selection survived dismissal"
-        )
         assert isinstance(app.focused, Composer), (
             f"focus is on {app.focused!r}, not back on the composer"
+        )
+        assert app.query_one(FlowView).cursor is not None, (
+            "the found position was thrown away instead of kept on the cursor"
         )
