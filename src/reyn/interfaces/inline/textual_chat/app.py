@@ -39,6 +39,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import ContentSwitcher, OptionList, Static
@@ -50,6 +51,7 @@ from textual_flowview import (
     FlowView,
 )
 
+from reyn.interfaces.repl._clipboard import copy_to_clipboard_async
 from reyn.interfaces.repl._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
 from reyn.interfaces.repl.renderer import (
     _CC_DIM,
@@ -541,6 +543,18 @@ class TextualChatApp(App):
     FlowView > .flowview--selected {
         text-style: reverse;
     }
+    /* #3476 ⑥: the keyboard cursor — the same background-merge structural gap
+       ⑤ found (see the ``flowview--selected`` rule above) applies identically
+       here (same ``Strip.apply_style`` code path), so ``reverse`` again rather
+       than a background wash. When a search hit and the cursor land on the
+       SAME entry, flowview applies ``flowview--selected`` then
+       ``flowview--cursor`` in that order (flowview's own component-application
+       order, unchanged here) — ``reverse`` on ``reverse`` is idempotent, so the
+       row simply reads as one reversed row either way, never a doubled
+       effect. */
+    FlowView > .flowview--cursor {
+        text-style: reverse;
+    }
     #inputrow {
         height: auto;
         max-height: 8;
@@ -858,6 +872,16 @@ class TextualChatApp(App):
             # clicked entry gets the same ``flowview--selected`` highlight,
             # which reads as a deliberate affordance, not a search leak.
             selectable=True,
+            # #3476 ⑥: the keyboard cursor (the visual affordance #3470
+            # deferred to this PR). Reached the SAME way #3470 already
+            # established — Shift+Tab focus-cycling into FlowView, Esc back
+            # out (#3399 gate) — never a new focus path. flowview owns
+            # ↑/↓/PageUp/PageDown/Home/End moving the cursor once FlowView
+            # has focus; while it doesn't, those keys are unaffected (the
+            # composer's own PageUp/PageDown delegation, #3470, calls
+            # actions on ``self._flow`` directly and never depends on this
+            # flag).
+            cursor=True,
         )
         # #3352: apply the configured START state. flowview has no constructor
         # parameter for gutter visibility (both flags initialise True), so the
@@ -1307,6 +1331,51 @@ class TextualChatApp(App):
         self._search_bar.hide()
         self._flow.clear_selection()
         self.query_one(Composer).focus()
+
+    # ── #3476 ⑥: the keyboard cursor's own actions ─────────────────────────
+
+    def on_descendant_focus(self, event: "events.DescendantFocus") -> None:
+        """Arm the keyboard cursor the moment FlowView gains focus (Shift+Tab
+        landing on it, #3470), rather than leaving it invisible until the
+        first arrow press: flowview's own :meth:`~textual_flowview.FlowView.move_cursor`
+        starts from ``cursor=None`` and only lands on an entry once a
+        direction key moves it — a real but easy-to-miss affordance gap for
+        a feature whose whole point is a visible position indicator.
+        ``cursor_last`` (not ``cursor_first``) so arrival highlights the
+        newest entry, matching where a resumed/live conversation's attention
+        already is."""
+        if event.widget is self._flow and self._flow.cursor is None:
+            self._flow.cursor_last()
+
+    async def on_flow_view_activated(self, event: "FlowView.Activated") -> None:
+        """Enter/Space on the cursor entry: copy ITS text directly.
+
+        A direct, ring-free path — ``/copy N`` addresses one of the last
+        ``COPY_BUFFER_MAX`` AGENT replies by ordinal; the cursor instead
+        points at one exact, arbitrary entry (any kind), so there is no
+        ordinal to resolve and no reason to go through the ring."""
+        from reyn.runtime.outbox import OutboxMessage
+
+        ok, status = await copy_to_clipboard_async(event.entry.item.text)
+        self._ingest_frame(
+            OutboxMessage(kind="status", text=status if not ok else "copied to clipboard")
+        )
+
+    async def on_key(self, event) -> None:
+        # #3476 ⑥: 'r' while the cursor has focus is a keyboard shortcut for
+        # typing bare ``/rewind`` + Enter — routed through the exact same
+        # ``_submit`` seam an ordinary submission uses, so the picker
+        # (#3362's RewindPicker) and rewind's destructive-action path are
+        # completely unchanged. NOT a per-entry jump: the conversation pane's
+        # ChatMessage.seq and the WAL seq ``list_rewind_points`` addresses are
+        # different sequence spaces with no correlation wired anywhere in the
+        # codebase today, so a specific cursor entry cannot be mapped onto a
+        # specific rewind point without new plumbing outside this PR's scope
+        # (recorded on #3476, owner-confirmed: a fast /rewind entry point is
+        # the intended integration, not a targeted jump).
+        if event.key == "r" and self.focused is self._flow:
+            event.stop()
+            await self._submit("/rewind")
 
     def _open_drawer(self, tab_id: "str | None") -> None:
         """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``
