@@ -36,6 +36,7 @@ from reyn.runtime.presentation_consumer import (
     AuditOnlyPresentationSink,
 )
 from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.services import LiveSessionIdInputs
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.runtime.session_api import run_agent_step, start_pipeline_run
 from reyn.runtime.session_buses import (
@@ -349,7 +350,9 @@ async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(
     # A live operator attached to the PARENT (the "tui" listener a mounted CUI registers).
     parent.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     host = parent._router_host
-    host._live_session_id_fn = lambda: "main"  # from_sid = the parent's real sid (resolvable)
+    host._live_sid_in = LiveSessionIdInputs(  # from_sid = the parent's real sid (resolvable)
+        session_id=host._live_sid_in.session_id, live_session_id_fn=lambda: "main",
+    )
 
     result = await host.spawn_session(
         request="help me", mode="persistent", narrowing=None, chain_id="c1",
@@ -393,7 +396,9 @@ async def _spawn_from(
     """Spawn a child session from ``spawner`` via the LLM session_spawn adapter path (so the child
     gets the adapter's BridgeToParent routing), returning ``(child_session, child_sid)``."""
     host = spawner._router_host
-    host._live_session_id_fn = lambda: spawner_sid
+    host._live_sid_in = LiveSessionIdInputs(
+        session_id=host._live_sid_in.session_id, live_session_id_fn=lambda: spawner_sid,
+    )
     r = await host.spawn_session(request="x", mode="persistent", narrowing=None, chain_id="c")
     child = reg.get_session("worker", r["sid"])
     assert child is not None
