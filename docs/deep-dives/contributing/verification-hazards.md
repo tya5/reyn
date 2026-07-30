@@ -15,7 +15,7 @@ hazard below is that root wearing a different substrate, each with a real
 not a theory, a worked example. If a hazard here can't cite a real instance
 and a measured detection, it doesn't belong in this doc.
 
-## 1. The four faces of "observation ≠ referent"
+## 1. The five faces of "observation ≠ referent"
 
 | Face | What's missing | Instance |
 |---|---|---|
@@ -23,9 +23,16 @@ and a measured detection, it doesn't belong in this doc.
 | **Environment can't witness** | A green test never ran the risky path | The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that don't exist in the pinned `landlock==1.0.0.dev5` — every call raised `AttributeError` in production for 41 days, while its own test called the shim's internals directly, bypassing the broken production entry point (#2980). |
 | **Claim has no owner** | No one on the claimed subsystem's side checks it | Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem B's behavior, with no owner on B's side to catch it wrong — "plausible and unowned" is why it survived. |
 | **Observed-target identity unverified** | Green about the wrong object | Agent worktrees share the main checkout's `.venv` (0 of 136 have their own) — in-process and subprocess-imported `reyn` are two different trees "by construction, not staleness" (#3033). Separately: the same heading anchor resolves to two different slugs on GitHub vs mkdocs — "valid" is renderer-specific (#3039). Separately again: a SHARED venv's editable install can be silently re-pointed to a DIFFERENT worktree by someone else's concurrent `uv pip install -e .` (`VIRTUAL_ENV` resolves to the parent venv from inside a worktree, so the parent's `.pth` re-links to that worktree) — a strip-falsify then measures a tree nobody touched (#3363/#3370, 2026-07-27). Central audit can't catch this: a session can only resolve its OWN `python`'s import, never another session's PATH. The fix is measurement-time self-check, not a periodic audit — `python -c "import reyn; assert reyn.__file__.startswith('$PWD/src')"` before trusting any local strip result, reading the RESOLVED path (`reyn.__file__`), not the DECLARED one (the `.pth` file's contents). CI is structurally exempt (`actions/checkout` + a fresh editable install every run leaves no other tree to point at) — only local strip results are at risk. A second axis of the same identity question, this time TEMPORAL rather than spatial: analyzing a central file (`session.py`) on a shared tree, then applying that analysis later by line number, silently broke when `main` moved underneath the analysis (+107 lines from 3 intervening merges) — the same file at two different times is as much "a different object" as two different worktrees are. Caught only because the applying agent inserted a content-based line-anchor check before applying and got 87/100 mismatches; without that check the file would have been silently corrupted. Recovery reached 381/389 sites, and the 8 unrecoverable ones all fell inside the one region a concurrent merge had actually touched — a mechanistic explanation, not randomness (2026-07-28). Line numbers are not identifiers across a moving `main`; re-anchor by content immediately before applying whenever measurement and use are separated in time. |
+| **Run doesn't support the claim** | The execution was real; the CONDITION or the FAILURE wasn't | A flake documented as *load-sensitive* passed 25/25 — run sequentially, one test, on a quiet machine: the condition was avoided, not created, and it read as "fixed" (2026-07-30). Correcting for that by running six copies of the SAME test concurrently produced 17/18 red — all `FileExistsError: agent 'operator' already exists`, six copies fighting over one workspace. That number would have contradicted a peer's bisect with an artefact of the harness. Only the third attempt — DIFFERENT tests in parallel, the actual CI shape — was evidence, and it surfaced a third failure face (`No fixture entry for model=…`) distinct from both tracked causes, redirecting a peer who was hunting a symptom that no longer reproduced. Same family, counting rather than conditions: "the residue is 2 cells" counted OCCURRENCES of an SGR escape; one had no following text and SGR runs to end of line, so the number understated it — the count was executed, the unit was never settled (#3504/#3505). |
 
 **Apply**: before trusting a green result, name what it actually observed,
-not what you're using it to conclude.
+not what you're using it to conclude. For a rate or a count, also name the
+CONDITION the symptom requires (load, parallelism, a cold cache, a specific
+terminal) and whether this run had it — "sequential and quiet" is not "under
+load" — and open the failures before they become a number: a red count says
+nothing about whether the red is yours. Parallelism must come from DIFFERENT
+tests sharing a machine; N copies of one test share its fixtures and fail on
+each other.
 
 ## 2. False-capability vs. false-prohibition — the dual, and only one is self-sealing
 
