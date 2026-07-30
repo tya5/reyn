@@ -114,6 +114,20 @@ class _ToolsHost:
         return self._result
 
 
+class _RaisingToolsHost:
+    """#3447: RouterHostAdapter.mcp_list_tools now RAISES Cancelled/MCPFault
+    instead of catching them and returning ``[{"error": ...}]`` — this Fake
+    host reproduces that raise contract so the test below exercises the
+    ACTUAL catch point (``_call_mcp_list`` in tools/mcp.py), not just the
+    ``_mcp_list_error`` sentinel-detection helper (already covered above)."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def mcp_list_tools(self, server: str):
+        raise self._exc
+
+
 class _ResourcesHost:
     def __init__(self, result):
         self._result = result
@@ -183,6 +197,34 @@ def test_list_mcp_tools_normal_result_still_rewrites_names():
     result = _run(_handle_list_mcp_tools({"server": "web-search"}, _tool_ctx(host)))
 
     assert [t["name"] for t in result["mcp_tools"]] == ["web-search__search"]
+
+
+def test_list_mcp_tools_cancelled_raise_still_surfaces_as_error_dict():
+    """Tier 2: #3447 behavior-preservation witness — RouterHostAdapter.mcp_list_tools
+    now RAISES Cancelled instead of returning ``[{"error": "cancelled"}]``
+    (the op-layer-throws fold). The LLM-visible shape must be UNCHANGED: this
+    exercises the real catch point, ``_call_mcp_list`` (tools/mcp.py), and
+    pins that it still produces the same ``{"error": "cancelled"}`` dict the
+    pre-fold in-Session catch used to."""
+    from reyn.core.cancellable import Cancelled
+
+    host = _RaisingToolsHost(Cancelled())
+    result = _run(_handle_list_mcp_tools({"server": "web-search"}, _tool_ctx(host)))
+
+    assert result == {"error": "cancelled"}
+
+
+def test_list_mcp_tools_mcpfault_raise_still_surfaces_as_error_dict():
+    """Tier 2: #3447 behavior-preservation witness — same as the Cancelled
+    case above but for MCPFault, the gateway's own fault-containment
+    exception. Pins ``{"error": str(exc)}``, byte-identical to the pre-fold
+    in-Session catch's return value."""
+    from reyn.mcp.gateway import MCPFault
+
+    host = _RaisingToolsHost(MCPFault("connection refused"))
+    result = _run(_handle_list_mcp_tools({"server": "web-search"}, _tool_ctx(host)))
+
+    assert result == {"error": "connection refused"}
 
 
 # ---------------------------------------------------------------------------
