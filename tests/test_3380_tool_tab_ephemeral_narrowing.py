@@ -31,6 +31,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.untrusted_narrowing import narrowing_on
 
 # In the census this host composes: denied by the built-in ``_untrusted`` profile
 # (a re-delegation surface), and present in the un-narrowed catalog — the control
@@ -48,10 +49,13 @@ _UNTRUSTED_DENIED_TOOL = "delegate_to_agent"
 
 
 def _session(tmp_path: Path) -> Session:
+    # #3501: the ephemeral narrowing is opt-in; a test whose subject is how it
+    # renders has to turn it on.
     return make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
+        safety=narrowing_on(),
     )
 
 
@@ -217,6 +221,7 @@ async def test_an_envelope_denial_keeps_its_durable_reason_while_tainted(
             state_log=state_log,
             registry=holder.get("reg"),
             chat_tool_use_scheme="enumerate-all",
+            safety=narrowing_on(),
         )
         s.register_intervention_listener("test")
         return s

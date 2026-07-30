@@ -5,7 +5,8 @@ a delegate called bare ``remember_shared`` → it executed → persisted to shar
 The floor's memory-write + mcp-install classes listed only the QUALIFIED catalog names
 (``memory_operation__remember_shared``), missing the bare unwrapped aliases the live
 gate actually receives. ONE root (the shared ``_FLOORED_DENY_CLASSES``), TWO surfaces:
-both ``builtin_untrusted_profile`` (#1827, always-on while untrusted content is live —
+both ``builtin_untrusted_profile`` (#1827, applied while untrusted content is live
+IF the operator opted in via ``safety.threat_scan.capability_narrowing`` — #3501 —
 the prompt-injection persistence surface) and ``builtin_delegate_profile`` (#2081).
 
 #2111's fix was to DERIVE the bare alias from the invoke_action unwrap
@@ -103,7 +104,7 @@ def test_bare_memory_write_aliases_present() -> None:
 
 @pytest.mark.parametrize("tool", _all_floored_forms())
 def test_untrusted_floor_denies_every_form_at_the_live_gate(tool: str) -> None:
-    """Tier 2: the #1827 untrusted-content floor (auto-applied while untrusted content
+    """Tier 2: the #1827 untrusted-content floor (applied while untrusted content
     is live) DENIES every floored tool at the real contextual gate.
     Drop a name from the floor → the gate lets it through → RED."""
     contextual, _ = resolve_profile(builtin_untrusted_profile())

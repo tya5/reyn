@@ -27,6 +27,16 @@ if TYPE_CHECKING:
 _MAX_FORCE_CLOSE_HANDOFFS = 1
 
 
+def _narrowing_per_iteration(safety: Any) -> bool:
+    """Whether ``safety.threat_scan.capability_narrowing`` is at the ``iteration``
+    rung (#3501). Delegates to the config object's own predicate rather than
+    comparing the string here, so the vocabulary lives in exactly one place;
+    ``getattr``-guarded because test hosts pass partial safety objects."""
+    threat_scan = getattr(safety, "threat_scan", None)
+    predicate = getattr(threat_scan, "narrowing_per_iteration", None)
+    return bool(predicate()) if callable(predicate) else False
+
+
 class RouterLoopDriver:
     """Orchestrates the per-turn router loop for one Session.
 
@@ -430,24 +440,21 @@ class RouterLoopDriver:
             response_format=self._response_format,
             schema_validate_fn=self._schema_validate_fn,
             max_schema_reprompt_attempts=self._max_schema_reprompt_attempts,
-            # #1909 (OPT-IN, default off — safety.loop.intra_turn_untrusted_
-            # narrowing): only thread the per-iteration re-resolve callable
-            # (+ its un-narrowed identity baseline) into RouterLoop when the
-            # operator has opted in. Default False → neither kwarg is passed
+            # #1909 / #3501 (OPT-IN, default off —
+            # safety.threat_scan.capability_narrowing): only thread the
+            # per-iteration re-resolve callable (+ its un-narrowed identity
+            # baseline) into RouterLoop at the TOP rung of the ladder
+            # (``iteration``). At ``off`` and ``turn`` neither kwarg is passed
             # (both stay None on the RouterLoop side) → RouterLoop's
-            # per-iteration re-resolve block is a no-op — byte-identical to
-            # pre-#1909 turn-frozen behaviour.
+            # per-iteration re-resolve block is a no-op, and the narrowing is
+            # whatever the turn-boundary resolve produced.
             **(
                 {
                     "intra_turn_contextual_for_turn_fn": self._contextual_for_turn_fn,
                     "contextual_static_baseline": self._contextual_permission,
                 }
                 if (
-                    bool(getattr(
-                        getattr(self._safety, "loop", None),
-                        "intra_turn_untrusted_narrowing",
-                        False,
-                    ))
+                    _narrowing_per_iteration(self._safety)
                     and self._contextual_for_turn_fn is not None
                 )
                 else {}

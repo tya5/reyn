@@ -301,7 +301,10 @@ class CapabilityVisibility:
             compose_resolved,
             resolve_profile,
         )
-        from reyn.security.permissions.effective import ContextualPermission
+        from reyn.security.permissions.effective import (
+            ContextualPermission,
+            NarrowingOrigin,
+        )
         from reyn.tools.universal_catalog import CATEGORIES
 
         # resolved_profile_for is documented to return (ContextualPermission | None, ...);
@@ -327,7 +330,15 @@ class CapabilityVisibility:
         )
         final_ctx, final_excl = compose_resolved([
             (base_ctx or ContextualPermission(), base_excl),
-            resolve_profile(override_profile),
+            resolve_profile(override_profile, origin=NarrowingOrigin(
+                label="the session's own `/visibility` override",
+                cause="this capability was switched off for this session by the user",
+                lifts_when=(
+                    "the user switches it back on — `/visibility` in the CUI, or the "
+                    "Tool tab toggle. It is the one narrowing the operator can flip "
+                    "live"
+                ),
+            )),
         ])
         self._contextual_permission = final_ctx
         self._excluded_categories = final_excl

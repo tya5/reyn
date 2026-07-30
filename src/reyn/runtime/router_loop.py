@@ -1098,7 +1098,7 @@ class RouterLoop:
         response_format: "dict | None" = None,  # 0062: schema-constrained answer turn; None = byte-identical (no other caller sets this)
         schema_validate_fn: "Any | None" = None,  # 0062: Callable[[Any], list[str]] — parsed-value -> validation-error strings ([] = conforming)
         max_schema_reprompt_attempts: int = 2,  # 0062 §2.1 failure-mode-(c): bounded re-prompt budget (extra attempts beyond the first)
-        intra_turn_contextual_for_turn_fn: "Any | None" = None,  # #1909 OPT-IN: () -> ContextualPermission|None, re-invoked every run() iteration. None (default) = off — self._contextual_permission stays turn-frozen (byte-identical). RouterLoopDriver only threads this when safety.loop.intra_turn_untrusted_narrowing is True.
+        intra_turn_contextual_for_turn_fn: "Any | None" = None,  # #1909 OPT-IN: () -> ContextualPermission|None, re-invoked every run() iteration. None (default) = off — self._contextual_permission stays turn-frozen. RouterLoopDriver only threads this when safety.threat_scan.capability_narrowing is "iteration" (#3501 — the top rung of the 3-value ladder off/turn/iteration; at "turn" the narrowing is resolved at the turn boundary only, so this stays None there too).
         contextual_static_baseline: "object | None" = None,  # #1909: the UN-narrowed static contextual (identity anchor) — a per-iteration resolve equal (by identity) to this means "not tainted"; anything else means the untrusted-composed profile engaged. Only consulted when intra_turn_contextual_for_turn_fn is not None.
     ):
         self.host = host
@@ -1257,8 +1257,25 @@ class RouterLoop:
         """
         if not self._exclude_tools:
             return contextual
-        from reyn.security.permissions.effective import ContextualPermission
-        bridged = ContextualPermission(tool_deny=self._exclude_tools)
+        from reyn.security.permissions.effective import (
+            ContextualPermission,
+            NarrowingOrigin,
+        )
+        bridged = ContextualPermission(
+            tool_deny=self._exclude_tools,
+            origin=NarrowingOrigin(
+                label="this run's explicit tool exclusion list",
+                cause=(
+                    "the caller that started this run listed this tool as excluded "
+                    "(the `exclude_tools` argument — a CLI flag, a phase's `gates`, or "
+                    "a pipeline step's declaration)"
+                ),
+                lifts_when=(
+                    "the run is started without that exclusion. It is fixed for the "
+                    "lifetime of this run"
+                ),
+            ),
+        )
         if contextual is None:
             return bridged
         from typing import cast
@@ -1806,13 +1823,14 @@ class RouterLoop:
                 host.events.emit("turn_cancelled", chain_id=self.chain_id)
                 _loop_cancelled = True
                 break
-            # #1909 (OPT-IN, default off): intra-turn untrusted-content
+            # #1909 / #3501 (OPT-IN, default off): intra-turn untrusted-content
             # re-narrowing. ``self._intra_turn_contextual_for_turn_fn`` is
-            # None unless ``safety.loop.intra_turn_untrusted_narrowing`` is
-            # True (RouterLoopDriver only threads it on the opt-in path) —
-            # so the default posture takes NEITHER branch here and
-            # ``self._contextual_permission`` stays the turn-frozen value
-            # set at __init__ (byte-identical to pre-#1909 behaviour).
+            # None unless ``safety.threat_scan.capability_narrowing`` is
+            # ``"iteration"`` — the top rung of the three-value ladder
+            # (off/turn/iteration); RouterLoopDriver threads it on that rung
+            # only, so both ``off`` and ``turn`` take NEITHER branch here and
+            # ``self._contextual_permission`` stays the turn-frozen value set
+            # at __init__.
             #
             # On the opt-in path: re-invoke the live history tag-scan every
             # iteration so external content spliced in round N narrows
@@ -2861,19 +2879,30 @@ class RouterLoop:
         if self._contextual_permission is not None:
             # #1912: the single shared contextual gate — identical check across
             # chat RouterLoop + op dispatch (no path bypass).
-            from reyn.security.permissions.effective import tool_contextually_denied
+            from reyn.security.permissions.effective import (
+                contextual_deny_message,
+                tool_contextually_denied,
+            )
             # #3378: the SAME unwrap the advertisement half uses (one seam).
             effective = gate_effective_tool_name(name, args)
             if effective is not None and tool_contextually_denied(
                 self._contextual_permission, effective
             ):
+                # #3501: the message the MODEL reads. It used to say only "excluded
+                # this session", which is why an agent that lost a capability
+                # mid-session could not say what had happened or what would restore
+                # it — the reason and the lift condition were nowhere on this path,
+                # only in the Tool tab the operator had to open by hand. The shared
+                # builder names the narrowing that actually fired.
                 return {
                     "status": "error",
                     "error": {
                         "kind": "tool_excluded",
                         "message": (
-                            f"tool {effective!r} is excluded this session and not "
-                            "available; do not call it (directly or via "
+                            contextual_deny_message(
+                                "tool", effective, self._contextual_permission,
+                            )
+                            + " Do not call it again this turn (directly or via "
                             "invoke_action)."
                         ),
                     },

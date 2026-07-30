@@ -2566,19 +2566,30 @@ class Session:
         cannot drift. The taint is re-derived from ``self.history`` on every call
         (never latched at turn start), so a status-bar read is as of NOW; only the
         loaded profile is cached, and a profile file does not change mid-session.
+
+        #3501: OPT-IN. This returns ``None`` — no narrowing at all — unless the
+        operator set ``safety.threat_scan.capability_narrowing`` to something other
+        than ``off``. It is the SINGLE place the opt-in is read, so the live gate,
+        the advertisement filter and the Tool tab are all engaged or all disengaged
+        by one check and cannot disagree about whether the mechanism is on.
         """
         from reyn.security.permissions.capability_profile import (
+            UNTRUSTED_NARROWING_ORIGIN,
             load_untrusted_profile,
             metas_have_untrusted,
             resolve_profile,
         )
 
+        threat_scan = getattr(self._safety, "threat_scan", None)
+        if threat_scan is None or not threat_scan.narrowing_engaged():
+            return None
         if not metas_have_untrusted(m.meta for m in self.history):
             return None
         if self._untrusted_contextual_cache is None:
             root = self._perm.project_root if self._perm is not None else Path.cwd()
             self._untrusted_contextual_cache = resolve_profile(
-                load_untrusted_profile(root)
+                load_untrusted_profile(root),
+                origin=UNTRUSTED_NARROWING_ORIGIN,
             )[0]
         return self._untrusted_contextual_cache
 

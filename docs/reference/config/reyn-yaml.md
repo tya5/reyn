@@ -435,7 +435,6 @@ safety:
     max_tool_calls_per_turn: 50 # max tool_calls honoured from ONE completion (cost-bound); 0 = unlimited
     max_hook_driven_turns: 25  # loop valve: cap hook self-continuation; resets on user turn; 0 = unlimited
     max_agent_hops: 3          # maximum delegation depth
-    intra_turn_untrusted_narrowing: false  # #1909 OPT-IN: re-narrow capability every router-loop iteration (not just once per turn) once external_source-tagged content is live; default false = today's turn-boundary-only narrowing (byte-identical)
   timeout:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
     llm_max_retries: 3         # transient-error retries per call (--llm-max-retries)
@@ -450,6 +449,7 @@ safety:
     fence_enabled: true        # structurally fence untrusted content as data
     block_severity: block      # min severity that blocks at write seams: block | warn
     custom_patterns: []        # operator [regex, id, scope, severity] extensions
+    capability_narrowing: off  # OPT-IN capability narrowing while external content is live: off | turn | iteration
   spawn:
     max_depth: 10                     # max LLM spawn-lineage chain depth (agent_spawn); 0 = unlimited
     max_children: 20                  # max fan-out: direct children per parent AND topology size; 0 = unlimited
@@ -466,7 +466,6 @@ safety:
 | `safety.loop.max_tool_calls_per_turn` | int | `50` | — | Cost-bound: maximum `tool_calls` honoured from a SINGLE LLM completion. A degenerate completion can emit thousands (observed 3451); the OS processes only the first N, drops the overflow, and appends a re-grounding notice. `0` = unlimited. |
 | `safety.loop.max_hook_driven_turns` | int | `25` | — | Loop valve: caps hook self-continuation. Each hook-originated (`kind="hook"`) turn counts 1; the counter resets on each human user turn. When the count would exceed the cap the next hook turn hits the `safety.on_limit` checkpoint (warn → ask_user → abort) instead of running — a backstop that does not obstruct intentional loop-engineering. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
-| `safety.loop.intra_turn_untrusted_narrowing` | bool | `false` | — | #1909 OPT-IN security hardening. `false` (default): contextual-permission narrowing for `external_source`-tagged content is resolved once per turn (byte-identical to pre-#1909 — no mid-turn capability loss). `true`: re-resolved every router-loop iteration, so external content encountered mid-turn narrows the very next dispatch in the SAME turn (closes the same-turn injection window), at the cost of a legitimate external→privileged flow being narrowed mid-flow and having to resume next turn. Narrowing is monotonic once engaged in a turn (a turn-scoped latch survives a later compaction evicting the tainted history entry) and emits an `untrusted_narrowing_engaged` audit-event the first time it engages in a turn. |
 
 ### `safety.timeout` fields
 
@@ -495,6 +494,7 @@ Content-layer threat defense: inspects untrusted content for prompt-injection be
 | `safety.threat_scan.fence_enabled` | bool | `true` | Structurally fence untrusted content (random-id markers + control-token strip + unicode normalization) so the LLM treats it as data, not instructions. For *which* content this applies to, see [Security: what gets structurally fenced](../../concepts/agent-engineering/security.md#what-gets-structurally-fenced). |
 | `safety.threat_scan.block_severity` | string | `block` | Minimum severity that BLOCKS at agent-write seams (memory write / skill install). `block` = only `block`-severity patterns; `warn` = warn-severity also blocks (stricter). |
 | `safety.threat_scan.custom_patterns` | list | `[]` | Operator pattern extensions, each `[regex, id, scope, severity]`. Merged into the built-in catalog for scans. |
+| `safety.threat_scan.capability_narrowing` | string | `off` | **OPT-IN** (#3501). The CAPABILITY half of the same defense: while `external_source`-tagged content is live in the active context, apply the `_untrusted` capability profile (deny memory-write / re-delegation / exec / MCP-, skill-, pipeline-install / spawn / pipeline-run). One ordered ladder, not an enable flag plus a granularity flag. `off` (default): the narrowing never engages — an agent keeps the capabilities it started the session with, whatever enters its context. `turn`: resolved at each turn boundary, so external content arriving mid-turn narrows from the NEXT turn. `iteration`: additionally re-resolved at every router-loop iteration, so content arriving in round N narrows round N+1 of the SAME turn (closes the same-turn injection window) at the cost of a legitimate external→privileged flow being narrowed mid-flow; monotonic within the turn (a turn-scoped latch survives a compaction evicting the tainted entry, so the taint cannot be laundered) and emits an `untrusted_narrowing_engaged` audit-event the first time it engages in a turn. An invalid value is rejected at config load rather than silently resolving to a level you did not ask for. |
 
 ### `safety.spawn` fields
 

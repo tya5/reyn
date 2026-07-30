@@ -9,10 +9,13 @@ run_turn`` calls ``contextual_for_turn_fn()`` once, before constructing
 narrow round *N+1*'s dispatch in the SAME turn — the same-turn injection
 window this issue names.
 
-Owner directive: UX/predictability > security — security is OPT-IN. Default
-behavior (``safety.loop.intra_turn_untrusted_narrowing=False``) must stay
-BYTE-IDENTICAL to today (turn-boundary narrowing only). Only when an operator
-opts in does the mid-turn narrowing engage, with a turn-scoped MONOTONIC
+Owner directive: UX/predictability > security — security is OPT-IN. #3501 made
+that a three-rung ladder on ONE setting,
+``safety.threat_scan.capability_narrowing``: ``off`` (the default — no narrowing
+at all, at any granularity), ``turn`` (narrowing resolved at the turn boundary
+only, so a same-turn external result does not narrow a later round of that turn),
+``iteration`` (mid-turn narrowing). This file has one arm per rung. The
+``iteration`` rung engages with a turn-scoped MONOTONIC
 LATCH: ``_effective_contextual_for_turn`` self-clears its taint once the
 tainted history entry compacts out (until-compaction scope) — a naive
 per-iteration re-scan would let an injected-content-triggered mid-turn
@@ -32,11 +35,12 @@ from typing import Any
 
 import pytest
 
-from reyn.config.chat import LoopConfig, SafetyConfig
+from reyn.config.chat import SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.untrusted_narrowing import narrowing_on
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
@@ -87,16 +91,17 @@ def _make(safety: SafetyConfig | None = None) -> Session:
 
 
 @pytest.mark.asyncio
-async def test_off_default_not_narrowed_mid_turn_same_turn(tmp_path, monkeypatch):
-    """Tier 2: OFF (default) — a same-TURN external tool-result does NOT
-    narrow a later round's dispatch in that same turn (today's behavior,
-    preserved byte-identically). ``remember_shared`` (denied by the built-in
-    ``_untrusted`` floor once narrowed) still succeeds in round 2 of the
-    SAME ``_handle_user_message`` call that dispatched the external
-    ``list_memory`` in round 1 — proving the off-path leaves
-    ``RouterLoop._contextual_permission`` turn-frozen."""
+async def test_turn_rung_not_narrowed_mid_turn_same_turn(tmp_path, monkeypatch):
+    """Tier 2: the ``turn`` rung — a same-TURN external tool-result does NOT
+    narrow a later round's dispatch in that same turn. ``remember_shared``
+    (denied by the built-in ``_untrusted`` floor once narrowed) still succeeds in
+    round 2 of the SAME ``_handle_user_message`` call that dispatched the external
+    ``list_memory`` in round 1 — proving this rung leaves
+    ``RouterLoop._contextual_permission`` turn-frozen. Contrast
+    ``test_off_rung_never_narrows`` below, where the narrowing does not engage at
+    the turn boundary either."""
     monkeypatch.chdir(tmp_path)
-    session = _make()  # SafetyConfig() default: intra_turn_untrusted_narrowing=False
+    session = _make(narrowing_on("turn"))
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools",
         _scripted_llm([
@@ -114,13 +119,13 @@ async def test_off_default_not_narrowed_mid_turn_same_turn(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_on_engages_mid_turn_and_emits_audit_event(tmp_path, monkeypatch):
     """Tier 2: ON — the SAME single-turn sequence as the off-leg above, but
-    with ``intra_turn_untrusted_narrowing=True``: round 2's ``remember_shared``
+    with ``capability_narrowing="iteration"``: round 2's ``remember_shared``
     dispatch (in the SAME ``_handle_user_message`` call, same turn, after
     round 1's external ``list_memory``) IS denied — narrowing engaged
     mid-turn. Also asserts the audit-event fires exactly once on the
     engage transition."""
     monkeypatch.chdir(tmp_path)
-    session = _make(SafetyConfig(loop=LoopConfig(intra_turn_untrusted_narrowing=True)))
+    session = _make(narrowing_on("iteration"))
     captured = []
     session.subscribe_chat_events(
         lambda ev: captured.append(ev)
@@ -177,7 +182,7 @@ async def test_on_latch_survives_mid_turn_compaction(tmp_path, monkeypatch):
     and not incidental.
     """
     monkeypatch.chdir(tmp_path)
-    session = _make(SafetyConfig(loop=LoopConfig(intra_turn_untrusted_narrowing=True)))
+    session = _make(narrowing_on("iteration"))
 
     def _simulate_mid_turn_compaction() -> None:
         session.history = [
@@ -210,3 +215,41 @@ async def test_on_latch_survives_mid_turn_compaction(tmp_path, monkeypatch):
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)
     assert "remember_shared" in str(denied_msg.content)
+
+
+@pytest.mark.asyncio
+async def test_off_rung_never_narrows_across_a_turn_boundary(tmp_path, monkeypatch):
+    """Tier 2: #3501 — at the default ``off`` rung the narrowing never engages,
+    not even at the turn boundary.
+
+    Two full turns: turn 1 dispatches an external ``list_memory`` (taint lands in
+    history), turn 2 then calls ``remember_shared``. The taint is still live in the
+    active context at turn 2's boundary resolve, which is exactly where the
+    ``turn`` rung WOULD narrow — so this arm distinguishes "off" from "turn"
+    rather than merely re-asserting the mid-turn behaviour. ``remember_shared``
+    must succeed.
+
+    Strip-falsify: delete the ``narrowing_engaged()`` check from
+    ``Session._ephemeral_contextual_for_turn`` and this test goes RED
+    (``remember_shared`` comes back ``tool_excluded``).
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make()  # default SafetyConfig -> capability_narrowing="off"
+    monkeypatch.setattr(
+        "reyn.runtime.router_loop.call_llm_tools",
+        _scripted_llm([
+            _tool_call_result([{"name": "list_memory", "args": {"path": ""}, "id": "tc_ext"}]),
+            _text_result("looked it up"),
+            _tool_call_result([{"name": "remember_shared", "args": _REMEMBER_ARGS, "id": "tc_r2"}]),
+            _text_result("done"),
+        ]),
+    )
+    await session._handle_user_message("look something up", chain_id="c1")
+    assert any((m.meta or {}).get("external_source") for m in session.history), (
+        "the external tool-result must actually have tainted history — otherwise "
+        "this test would pass even with the narrowing fully wired"
+    )
+    await session._handle_user_message("now remember it", chain_id="c2")
+
+    (msg,) = [m for m in session.history if m.tool_call_id == "tc_r2"]
+    assert "tool_excluded" not in str(msg.content)

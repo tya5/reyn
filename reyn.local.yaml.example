@@ -629,15 +629,6 @@
 #     max_tool_calls_per_turn: 50  # cost-bound: max tool_calls honoured from ONE completion; 0 = unlimited
 #     max_hook_driven_turns: 25  # #1800 loop valve: cap hook self-continuation per user turn; resets on user turn; 0 = unlimited
 #     max_agent_hops: 3
-#     # #1909 OPT-IN security hardening (default false = byte-identical to
-#     # today's turn-boundary-only narrowing, no mid-turn capability loss).
-#     # true: re-resolve contextual-permission narrowing every router-loop
-#     # iteration once external_source-tagged content is live, closing the
-#     # same-turn injection window at the cost of narrowing a legitimate
-#     # external->privileged flow mid-turn. Monotonic once engaged (a
-#     # turn-scoped latch survives a later compaction evicting the tainted
-#     # entry); emits an untrusted_narrowing_engaged audit-event on engage.
-#     intra_turn_untrusted_narrowing: false
 #   timeout:
 #     llm_call_seconds: 60.0
 #     llm_max_retries: 3
@@ -652,6 +643,24 @@
 #     fence_enabled: true           # structurally fence untrusted content as data
 #     block_severity: block         # min severity that blocks at write seams: block | warn
 #     custom_patterns: []           # operator [regex, id, scope, severity] extensions
+#     # #3501 OPT-IN: the CAPABILITY half of the same defense. While
+#     # external_source-tagged content is live in the active context, apply the
+#     # _untrusted profile (deny memory-write / re-delegation / exec / install /
+#     # spawn / pipeline-run). One ordered ladder:
+#     #   off       - default; never engages. The agent keeps the capabilities it
+#     #               started with, whatever enters its context. Predictable.
+#     #   turn      - resolved at each turn boundary, so external content arriving
+#     #               mid-turn narrows from the NEXT turn.
+#     #   iteration - additionally re-resolved every router-loop iteration, so
+#     #               content arriving in round N narrows round N+1 of the SAME
+#     #               turn (closes the same-turn injection window) at the cost of
+#     #               narrowing a legitimate external->privileged flow mid-flow.
+#     #               Monotonic within the turn (a latch survives a compaction
+#     #               evicting the tainted entry, so the taint cannot be
+#     #               laundered); emits an untrusted_narrowing_engaged
+#     #               audit-event on engage.
+#     # An invalid value is rejected at load, not silently downgraded.
+#     capability_narrowing: off
 #   spawn:                          # #2103 C3: operator bounds on the LLM spawn tree (DoS guard)
 #     max_depth: 10                 # max spawn-lineage chain depth (agent_spawn); 0 = unlimited
 #     max_children: 20              # max fan-out: direct children per parent AND topology size; 0 = unlimited
