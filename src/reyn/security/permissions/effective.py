@@ -422,8 +422,8 @@ def contextual_deny_message(
 ) -> str:
     """The one legible contextual-deny explanation, shared by every deny site (#3501).
 
-    ``subject`` is the noun the caller uses (``"tool"`` / ``"op"`` / ``"MCP
-    server"``); ``name`` is the resolved name that was rejected. The text names
+    ``subject`` is the noun the caller uses (``"tool"`` / ``"MCP server"`` are the
+    two live ones); ``name`` is the resolved name that was rejected. The text names
     the narrowing that fired, why it is active, and what lifts it — the three
     parts of :class:`NarrowingOrigin`.
 
