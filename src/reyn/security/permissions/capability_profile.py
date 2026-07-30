@@ -340,16 +340,24 @@ _BUILTIN_UNTRUSTED_DENY: "frozenset[str]" = frozenset().union(*_FLOORED_DENY_CLA
 
 
 def builtin_untrusted_profile() -> CapabilityProfile:
-    """The built-in secure default auto-applied while untrusted content is live."""
+    """The built-in deny-set applied while untrusted content is live, WHEN the
+    operator has opted in (``safety.threat_scan.capability_narrowing``, #3501)."""
     return CapabilityProfile(
         name=UNTRUSTED_PROFILE_NAME,
-        description="auto-applied while untrusted external content is in context (#1827 S4)",
+        description=(
+            "applied while untrusted external content is in context, when opted into "
+            "via safety.threat_scan.capability_narrowing (#1827 S4, #3501)"
+        ),
         tool_deny=tuple(sorted(_BUILTIN_UNTRUSTED_DENY)),
     )
 
 
 def load_untrusted_profile(project_root: "str | Path") -> CapabilityProfile:
-    """The minimal profile auto-applied while untrusted external content is live.
+    """The minimal profile applied while untrusted external content is live.
+
+    Only reached when the operator opted in (#3501) — ``Session.
+    _ephemeral_contextual_for_turn`` is the single gate, so this loader never runs
+    at the default ``off`` setting.
 
     An operator ``.reyn/capability_profiles/_untrusted.yaml`` overrides the
     built-in secure default (a deliberate loosening). A malformed override falls

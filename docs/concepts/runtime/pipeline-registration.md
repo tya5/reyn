@@ -255,7 +255,8 @@ sub-session or re-delegating: a pipeline step can itself write, execute, or
 delegate, so a pipeline launch is a cost-bound multi-step dispatch.
 
 As a result, a context narrowed by the `_untrusted` floor (untrusted external
-content is live) or the `_delegate` floor (an unbound delegate under
+content is live AND `safety.threat_scan.capability_narrowing` is enabled — it is
+off by default) or the `_delegate` floor (an unbound delegate under
 `delegation.capability_default=deny`) **cannot launch a pipeline**, whether or
 not one is registered. Loading a pipeline definition makes it available to
 authorized agents; it never creates a bypass of those floors. See
