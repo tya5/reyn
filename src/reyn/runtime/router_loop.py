@@ -1764,11 +1764,17 @@ class RouterLoop:
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
-        # _routing_decided_fired: set to True the first time routing_decided
-        #   is emitted in this turn (= invoke_action or hot_list_alias path).
+        # #3455: routing_decided is now emitted from ``_dispatch_resolved`` —
+        # the single chokepoint every catalog dispatch funnels through
+        # (invoke_action wrapper, bare hot-list alias, ARS-salvaged direct
+        # call, AND the flat/default bare-name dispatch that runs when
+        # universal wrappers are OFF, which the prior ``_univ_enabled``-gated
+        # emit never covered). An instance attribute (not a run_loop-local)
+        # because the emit site moved to a method called from multiple
+        # places; reset here so it reads "did routing happen THIS turn".
         # _tool_calls_attempted: count of tool_call rounds where the LLM
         #   invoked at least one tool (including non-catalog tools).
-        _routing_decided_fired: bool = False
+        self._routing_decided_this_turn: bool = False
         _tool_calls_attempted: int = 0
         # B42-NF-W6-1: empty-stop retry counter. The empty-stop handler
         # consults this before injecting a continuation prompt + looping,
@@ -2242,78 +2248,18 @@ class RouterLoop:
                     )
                     return self._total_usage
 
-                # FP-0034 Phase 3: routing_decided P6 event for catalog dispatch audit.
-                # Emitted independently of tracker (tracker=None is valid when
-                # hot_list_n=0, but P6 audit must fire whenever catalog routing
-                # actually happened). Guard: only when universal wrappers are on,
-                # which is the only condition under which catalog routing occurs.
-                if _univ_enabled:
-                    for tc, r in zip(tool_calls, tool_results):
-                        _rd_name = tc.get("function", {}).get("name", "")
-                        if _rd_name == "invoke_action":
-                            _rd_args = tc.get("function", {}).get("arguments", {})
-                            if isinstance(_rd_args, str):
-                                try:
-                                    import json as _json_rd
-                                    _rd_args = _json_rd.loads(_rd_args)
-                                except Exception:  # noqa: BLE001
-                                    _rd_args = {}
-                            _rd_action = (
-                                _rd_args.get("action_name", "")
-                                if isinstance(_rd_args, dict) else ""
-                            )
-                            _rd_source = "invoke_action"
-                        elif _rd_name in _KNOWN_ACTION_NAMES:
-                            # Issue #241: distinguish "real hot-list alias the
-                            # LLM correctly used" (= name actually surfaced in
-                            # tools[]) from "ARS-only direct call the salvage
-                            # path covers" (= name appeared only in the
-                            # invoke_action.description ARS block, salvaged
-                            # by PR #240). Pre-#241, both cases were tagged
-                            # ``"hot_list_alias"`` regardless, muddying the
-                            # audit chain for downstream readers (B42 W5-S6).
-                            #
-                            # #3429: the test was ``"__" in _rd_name`` — a
-                            # direct call by an action's QUALIFIED spelling, the
-                            # only way to name an action directly back then.
-                            # With one name per action the equivalent test is
-                            # membership in the action set. This does NOT touch
-                            # the ``_univ_enabled`` guard above, whose own
-                            # coverage hole is #3455.
-                            _rd_action = _rd_name
-                            if _rd_name in self._catalog:
-                                _rd_source = "hot_list_alias"
-                            else:
-                                _rd_source = "ars_direct"
-                        else:
-                            continue  # non-catalog tool — skip
-                        if not _rd_action:
-                            continue
-                        # #3450: derive from the SAME source as the LLM-visible
-                        # envelope — dispatch_tool's own outer ``status`` field.
-                        # Before #3450, dispatch_tool wrapped a handler's own
-                        # (non-raising) error return as
-                        # ``{"status": "ok", "data": {...error...}}``, so this
-                        # outer-``status`` check silently recorded "success"
-                        # for a failed catalog dispatch (the #3429 arc's
-                        # measurement that broadened this issue's scope).
-                        # dispatch_tool now promotes any handler-declared
-                        # error to this SAME outer ``status`` before ``r``
-                        # is ever built, so checking it here is both simpler
-                        # and correct: ``r["status"]`` is trustworthy for
-                        # every catalog dispatch outcome, not just
-                        # dispatch_tool's own pre-dispatch synthetic errors.
-                        _rd_outcome = "error" if (
-                            isinstance(r, dict) and r.get("status") == "error"
-                        ) else "success"
-                        host.events.emit(
-                            "routing_decided",
-                            action_name=_rd_action,
-                            source=_rd_source,
-                            outcome=_rd_outcome,
-                            chain_id=self.chain_id,
-                        )
-                        _routing_decided_fired = True  # B28-Q2: track for inline exclusivity
+                # #3455: routing_decided is no longer emitted here. It used to
+                # live in this loop, gated on ``if _univ_enabled:`` — which
+                # meant the DEFAULT configuration (universal wrappers off,
+                # flat bare-name tools=) never emitted it at all, even though
+                # catalog routing was happening on every dispatched call. The
+                # emit is now inside ``_dispatch_resolved`` (the #3429-census
+                # chokepoint every dispatch funnels through — invoke_action,
+                # bare hot-list alias, ARS-salvaged direct call, and the flat
+                # bare-name path alike), so coverage is structural rather than
+                # a property of which entry surface the model happened to
+                # use. ``self._routing_decided_this_turn`` (set there) is the
+                # B28-Q2 inline-exclusivity flag consumed below.
                 # #1608: the active scheme builds the appendable message sequence
                 # (assistant tool-call turn + per-result {role:tool, tool_call_id}
                 # messages + media follow-ups) AND persists each to history; the OS
@@ -2414,7 +2360,7 @@ class RouterLoop:
             # B28-Q2 Case A: emit chat_turn_completed_inline when no catalog
             # dispatch happened in this turn (= routing_decided never fired).
             # Mutually exclusive with routing_decided per turn (P6 audit).
-            if _univ_enabled and not _routing_decided_fired:
+            if _univ_enabled and not self._routing_decided_this_turn:
                 host.events.emit(
                     "chat_turn_completed_inline",
                     chain_id=self.chain_id,
@@ -2837,26 +2783,46 @@ class RouterLoop:
         and dispatch via the wrapper path so the user-visible behavior
         matches what the LLM intended.
         """
-        name, args = self._resolve_tool_call(tc)
+        name, args, raw_name = self._resolve_tool_call(tc)
 
         excluded = self._excluded_result(name, args)
         if excluded is not None:
+            # #3455: a pre-dispatch exclude IS a routing decision (the
+            # decision was "deny") — it never reaches ``_dispatch_resolved``,
+            # so its own emit call there would silently drop this outcome.
+            # Matches the pre-#3455 behavior (the old run_loop-local emit
+            # iterated ALL tool_results, excluded ones included).
+            self._emit_routing_decided(name, args, excluded, raw_name=raw_name)
             return excluded
-        return await self._dispatch_resolved(name, args)
+        return await self._dispatch_resolved(name, args, raw_name=raw_name)
 
-    def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict]":
-        """#1593: name + args + #229 salvage → the effective ``(name, args)``.
+    def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict, str]":
+        """#1593: name + args + #229 salvage → the effective ``(name, args)``,
+        plus (#3455) the ``raw_name`` the model actually called BEFORE any
+        salvage rewrite.
 
         **Resolution only** (no dispatch), so the scheme's ``interpret`` runs it and
         the OS exclude-gates the result BEFORE ``execute`` — preserving the #1406/#187
-        pre-dispatch order across the scheme split (byte-identical)."""
+        pre-dispatch order across the scheme split (byte-identical).
+
+        #3455: ``raw_name`` is threaded through to ``_dispatch_resolved`` so
+        ``routing_decided``'s ``source`` classification keeps reading "which
+        surface did the MODEL use" (invoke_action / a bare name) rather than
+        "what name did dispatch end up running" — the #229 salvage rewrites
+        an un-advertised bare call's EFFECTIVE name/args to ``invoke_action``
+        internally, but that rewrite is an OS routing mechanic, not a change
+        in what the model did. Losing this distinction would silently
+        reclassify every existing ``"ars_direct"``-labeled call as
+        ``"invoke_action"`` the moment the emit moved to the resolved
+        chokepoint — the #241 discriminator would break value, not shape."""
         from reyn.tools.universal_catalog import strip_provider_tool_namespace  # noqa: PLC0415
 
         # #1989: a weak model (Gemini) may echo its function-calling namespace
         # onto the call name (``default_api.invoke_action`` /
         # ``default_api.web_search``). Strip it FIRST so the catalog membership +
         # the salvage below see the plain name. Safe: reyn names are dot-free.
-        name = strip_provider_tool_namespace(tc["function"]["name"])
+        raw_name = strip_provider_tool_namespace(tc["function"]["name"])
+        name = raw_name
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):
@@ -2864,7 +2830,7 @@ class RouterLoop:
 
         if name not in self._catalog:
             name, args = self._maybe_salvage_action_direct_call(name, args)
-        return name, args
+        return name, args, raw_name
 
     def _excluded_result(self, name: str, args: dict) -> "dict | None":
         """#1406/#187: the **pre-dispatch** exclude gate. Returns the
@@ -2912,7 +2878,9 @@ class RouterLoop:
                 }
         return None
 
-    async def _dispatch_resolved(self, name: str, args: dict) -> dict:
+    async def _dispatch_resolved(
+        self, name: str, args: dict, *, raw_name: "str | None" = None,
+    ) -> dict:
         """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
         (DispatchContext / ``dispatch_tool`` — P5). The pure-OS dispatch
         half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
@@ -2924,7 +2892,17 @@ class RouterLoop:
         ``self._catalog`` (universal / enumerate / retrieval, where dispatchable =
         advertised — byte-identical). CodeAct advertises ∅ but dispatches the full
         catalog, so its gate must key on the dispatchable set, not the empty mirror
-        (the #7 "not in catalog" root)."""
+        (the #7 "not in catalog" root).
+
+        #3455: ``raw_name`` (optional) is the name the MODEL literally called,
+        before the #229 salvage rewrite — see ``_resolve_tool_call``. This is
+        the single chokepoint EVERY dispatch funnels through (native
+        Execute-round calls via ``resolve()``/``dispatch()``, the direct
+        ``_execute_tool`` test seam, and the CodeAct in-snippet ``tool()``
+        call via ``_run_codeblock_round``'s ``_os_gate`` — the latter has no
+        separate "raw" surface, so it omits ``raw_name`` and
+        ``_emit_routing_decided`` falls back to ``name``), which is what
+        makes it the right place for ``routing_decided`` (#3455)."""
         catalog = (
             self._dispatch_catalog
             if self._dispatch_catalog is not None
@@ -2951,7 +2929,74 @@ class RouterLoop:
         # source takes the deepest); a direct call has only this outer tag = the named tool.
         if isinstance(result, dict):
             result.setdefault("_canonical_source", name)
+        self._emit_routing_decided(name, args, result, raw_name=raw_name)
         return result
+
+    def _emit_routing_decided(
+        self, name: str, args: dict, result: Any, *, raw_name: "str | None" = None,
+    ) -> None:
+        """#3455: emit ``routing_decided`` at the chokepoint EVERY catalog
+        dispatch funnels through (``_dispatch_resolved`` — the #3429 census
+        finding that ``dispatch_tool`` is called from exactly this one
+        call site plus the CodeAct ``tool()`` unwrap, both of which route
+        here). Structural fix, not a widened gate: this replaces the prior
+        ``run_loop``-local emit that lived inside ``if _univ_enabled:`` —
+        a guard keyed on which ENTRY SURFACE the model used (the
+        ``invoke_action`` wrapper), not on whether routing actually
+        happened. The default configuration
+        (``universal_wrappers_enabled=False`` → flat bare-name ``tools=``)
+        never advertises ``invoke_action`` at all, so that guard silently
+        zeroed out ``routing_decided`` for the default path even though
+        every one of its tool calls dispatches a catalog action right here.
+
+        ``surface`` (``raw_name`` if given, else ``name``) is what the model
+        actually called, BEFORE the #229 salvage rewrite. This matters
+        because the salvage rewrites an un-advertised bare call's EFFECTIVE
+        ``(name, args)`` to ``invoke_action`` internally — a routing
+        mechanic, not something the model did — so classifying off the
+        POST-salvage ``name`` would relabel every existing
+        ``"ars_direct"`` call as ``"invoke_action"``, silently changing the
+        #241 discriminator's meaning the moment the emit moved here.
+
+        Source classification (unchanged from the relocated logic):
+          - ``"invoke_action"``: the model called the universal wrapper;
+            the real action name is nested in ``args["action_name"]``.
+          - ``"hot_list_alias"``: a bare catalog-action name that was
+            actually advertised in ``tools=`` (#241).
+          - ``"ars_direct"``: a bare catalog-action name NOT advertised —
+            reached only via the #229/#3429 salvage.
+          - anything else (e.g. ``delegate_to_agent``, an async peer tool):
+            not a catalog action — no routing decision to record.
+        """
+        surface = raw_name if raw_name is not None else name
+        if surface == "invoke_action":
+            action_name = (
+                args.get("action_name", "") if isinstance(args, dict) else ""
+            )
+            source = "invoke_action"
+        elif surface in _KNOWN_ACTION_NAMES:
+            action_name = surface
+            source = "hot_list_alias" if surface in self._catalog else "ars_direct"
+        else:
+            return  # non-catalog tool — no routing decision to record
+        if not action_name:
+            return
+        # #3450: derive from the SAME source as the LLM-visible envelope —
+        # dispatch_tool's own outer ``status`` field, which now promotes any
+        # handler-declared error before ``result`` is ever built (see
+        # dispatcher.py), so this check is trustworthy for every catalog
+        # dispatch outcome.
+        outcome = "error" if (
+            isinstance(result, dict) and result.get("status") == "error"
+        ) else "success"
+        self.host.events.emit(
+            "routing_decided",
+            action_name=action_name,
+            source=source,
+            outcome=outcome,
+            chain_id=self.chain_id,
+        )
+        self._routing_decided_this_turn = True
 
     # ── #1593 SchemeOps adapter ─────────────────────────────────────────────
     # The router IS the ``SchemeOps`` a *delegating* scheme calls. PR-1's
@@ -3101,8 +3146,8 @@ class RouterLoop:
         deduped = self._dedupe_tool_calls_round(llm_response.tool_calls)
         actions: list[dict] = []
         for tc in deduped:
-            name, args = self._resolve_tool_call(tc)
-            actions.append({"tc": tc, "name": name, "args": args})
+            name, args, raw_name = self._resolve_tool_call(tc)
+            actions.append({"tc": tc, "name": name, "args": args, "raw_name": raw_name})
         return actions
 
     async def dispatch(self, actions: list[dict]) -> list[dict]:
@@ -3123,7 +3168,9 @@ class RouterLoop:
         parallel latency for genuinely-independent calls."""
         results: list[dict] = []
         for a in actions:
-            results.append(await self._dispatch_resolved(a["name"], a["args"]))
+            results.append(await self._dispatch_resolved(
+                a["name"], a["args"], raw_name=a.get("raw_name"),
+            ))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
         # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
         # may be the ``invoke_action`` wrapper, so classifying there would miss
@@ -3457,6 +3504,14 @@ class RouterLoop:
         for i, a in enumerate(actions):
             ex = self._excluded_result(a["name"], a["args"])
             if ex is not None:
+                # #3455: the exclude gate IS a routing decision (outcome
+                # "error") — this action never reaches ``dispatch()`` /
+                # ``_dispatch_resolved``, so its emit call there would never
+                # see it. Mirrors the pre-#3455 behavior (the old run_loop
+                # emit iterated every tool_result, excluded ones included).
+                self._emit_routing_decided(
+                    a["name"], a["args"], ex, raw_name=a.get("raw_name"),
+                )
                 results[i] = ex
             else:
                 to_dispatch.append((i, a))
@@ -3488,6 +3543,12 @@ class RouterLoop:
         async def _os_gate(name: str, args: dict) -> dict:
             excluded = self._excluded_result(name, args)
             if excluded is not None:
+                # #3455: CodeAct's in-snippet ``tool()`` calls previously had
+                # NO routing_decided coverage at all (the old emit only ever
+                # iterated the Execute arm's tool_calls/tool_results). Now
+                # covered symmetrically with the exclude branches above:
+                # the exclude gate is itself a routing decision.
+                self._emit_routing_decided(name, args, excluded)
                 return excluded
             return await self._dispatch_resolved(name, args)
 

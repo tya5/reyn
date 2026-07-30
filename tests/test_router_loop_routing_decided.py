@@ -530,3 +530,97 @@ def test_invoke_action_description_has_no_ars_block(monkeypatch: pytest.MonkeyPa
     # The ARS block's headers (public surface the LLM saw) must be absent.
     assert "ACTION ARG SCHEMAS" not in desc
     assert "canonical keys for all session-visible actions" not in desc
+
+
+# ---------------------------------------------------------------------------
+# #3455: coverage-hole fix — routing_decided emitted at the dispatch
+# chokepoint (_dispatch_resolved) regardless of which entry surface the
+# model used, INCLUDING the flat/default bare-name dispatch shape that the
+# prior ``if _univ_enabled:``-gated emit never covered.
+# ---------------------------------------------------------------------------
+
+
+def test_routing_decided_emitted_for_bare_direct_call_when_universal_wrappers_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Tier 2: #3455 — bare-name direct catalog dispatch emits routing_decided
+    even with ``universal_wrappers_enabled=False`` (the DEFAULT reyn.yaml
+    shape: flat bare-name ``tools=``, no ``invoke_action`` wrapper at all).
+
+    This is the actual coverage hole #3455 reports. Before the fix, the
+    emit lived in ``run_loop`` inside ``if _univ_enabled:`` — with wrappers
+    off that whole block was skipped unconditionally, so EVERY catalog
+    dispatch through the flat/default tool shape produced NO
+    ``routing_decided`` event, even though ``dispatch_tool`` ran the exact
+    same real catalog dispatch it always does. The fix relocates the emit
+    into ``_dispatch_resolved`` — the single chokepoint every dispatch
+    (wrapped or bare) funnels through — so coverage no longer depends on
+    which entry surface the model used, or on the ``_univ_enabled`` flag.
+
+    Strip-falsify: commenting out the ``self._emit_routing_decided(...)``
+    call in ``RouterLoop._dispatch_resolved`` turns this RED (0 events)
+    while every other routing_decided test that uses
+    ``universal_wrappers_enabled=True`` stays unaffected — proving this
+    test is the one pinned on the new (previously-uncovered) path.
+    """
+    host = _FakeRouterHost(universal_wrappers_enabled=False)
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([{"name": "list_agents", "args": {"path": "."}}]),
+            _text_result("done"),
+        ],
+        monkeypatch,
+    )
+
+    events = _routing_decided_events(host)
+    (ev,) = events
+    assert ev["action_name"] == "list_agents"
+    assert ev["outcome"] == "success"
+    assert ev["chain_id"] == "chain-test"
+
+
+def test_routing_decided_both_entry_surfaces_no_double_emit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Tier 2: #3455 intermediate-cut witness — a bare direct call AND an
+    ``invoke_action``-wrapped call in the SAME round both drive
+    ``routing_decided`` through the real dispatch chokepoint, with the
+    correct per-call outcome, and with NO double-emit (2 dispatched tool
+    calls → exactly 2 routing_decided events, not 4 and not 0).
+
+    ``universal_wrappers_enabled=True`` here so both entry surfaces are
+    simultaneously available to the (simulated) model in one round —
+    the flat/default (wrappers-off) coverage is pinned separately above.
+    """
+    host = _FakeRouterHost(universal_wrappers_enabled=True)
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([
+                {"name": "list_agents", "args": {"path": "."}},
+                {
+                    "name": "invoke_action",
+                    "args": {"action_name": "skill_list", "args": {}},
+                },
+            ]),
+            _text_result("done"),
+        ],
+        monkeypatch,
+    )
+
+    events = _routing_decided_events(host)
+    # Behavioral (not a size pin): the MULTISET of action_names emitted must
+    # be exactly one "list_agents" + one "skill_list" — no double-emit (a
+    # dup would surface as a repeated name in this sorted list) and no
+    # missing emit (a drop would surface as a missing name).
+    assert sorted(e["action_name"] for e in events) == ["list_agents", "skill_list"]
+    by_action = {e["action_name"]: e for e in events}
+    # No tracker on this host → list_agents is not advertised as a hot-list
+    # row (same "no tracker" baseline as the existing ars_direct tests
+    # above), so the bare direct call classifies as "ars_direct" — the
+    # #229/#3429 salvage path, not "hot_list_alias".
+    assert by_action["list_agents"]["source"] == "ars_direct"
+    assert by_action["list_agents"]["outcome"] == "success"
+    assert by_action["skill_list"]["source"] == "invoke_action"
+    assert by_action["skill_list"]["outcome"] == "success"

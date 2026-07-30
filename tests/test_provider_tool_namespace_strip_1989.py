@@ -85,9 +85,10 @@ def test_resolve_strips_namespace_so_bare_name_hits_catalog():
     """Tier 2: ``default_api.invoke_action`` as a call NAME → stripped → hits the
     catalog directly (RED pre-#1989 = unknown_tool)."""
     shim = _ResolveShim(catalog={"invoke_action": object()})
-    name, args = shim._resolve_tool_call(_tc("default_api.invoke_action", '{"x": 1}'))
+    name, args, raw_name = shim._resolve_tool_call(_tc("default_api.invoke_action", '{"x": 1}'))
     assert name == "invoke_action"
     assert args == {"x": 1}
+    assert raw_name == "invoke_action"
 
 
 def test_resolve_strips_namespace_then_salvages_action_call_name():
@@ -100,13 +101,14 @@ def test_resolve_strips_namespace_then_salvages_action_call_name():
     carries ``web_search``, so the ``invoke_action`` route this catalog DOES
     advertise is the right target."""
     shim = _ResolveShim(catalog={"invoke_action": object()})
-    name, args = shim._resolve_tool_call(_tc("default_api.web_search", '{"query": "q"}'))
+    name, args, raw_name = shim._resolve_tool_call(_tc("default_api.web_search", '{"query": "q"}'))
     assert name == "invoke_action"
     assert args == {"action_name": "web_search", "args": {"query": "q"}}
+    assert raw_name == "web_search"
 
 
 def test_resolve_bare_name_is_unchanged():
     """Tier 2: a normal bare call name is unaffected (no-op strip)."""
     shim = _ResolveShim(catalog={"invoke_action": object()})
-    name, _ = shim._resolve_tool_call(_tc("invoke_action"))
+    name, _, _ = shim._resolve_tool_call(_tc("invoke_action"))
     assert name == "invoke_action"

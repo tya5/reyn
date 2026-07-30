@@ -340,9 +340,9 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `routing_decided` | Emitted by the universal action catalog dispatch path when an action wrapper (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) routes a request. | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
+| `routing_decided` | Emitted at the router's single dispatch chokepoint (`RouterLoop._dispatch_resolved`) whenever a catalog action is dispatched — via the `invoke_action` wrapper, a bare hot-list-alias tool call, an ARS-salvaged direct call, or (#3455) the flat/default bare-name dispatch path used when universal wrappers are off. | `action_name: str`; `source: str` — `"invoke_action"` \| `"hot_list_alias"` \| `"ars_direct"`; `outcome: str` — `"success"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
 
-**Notes:** enables auditing the wrapper-only routing path. Cross-correlate with `chain_id` across the action's downstream events.
+**Notes:** enables auditing catalog-action routing regardless of which entry surface the model used (#3455: previously gated on the `invoke_action` wrapper surface, so the default flat bare-name configuration never emitted this event at all). Cross-correlate with `chain_id` across the action's downstream events.
 
 ## User interaction
 
