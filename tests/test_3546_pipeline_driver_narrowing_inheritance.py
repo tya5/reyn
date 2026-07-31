@@ -53,6 +53,14 @@ observes it reach ``/session new`` — ``Session._handle_user_message`` short-ci
 all — and spawn. The pre-measurement guess ("slash is operator-initiated, so it is out of
 scope") is false.
 
+★ Enumerating the primitive immediately paid for itself: measuring the CRASH-RECOVERY
+sites (``restore_all`` / ``_rewake_pipeline_runs``), which reach ``spawn_session``
+directly and had never been counted, found that a re-woken session was reborn OUTSIDE
+its own persisted per-session narrowing — resolvable on the operator's status bar,
+un-enforced in the RouterLoop. #3561 fixes that in ``spawn_session`` itself. That is the
+concrete answer to "does a seam with no inheritance channel matter": it did, and the
+shape check would never have asked.
+
 Every enumerated site is accounted for today — a state this file records but does not
 enforce, since a NEW site may register an ``unmeasured_reason`` and stay green here.
 ``/session new``'s missing inheritance is a real, declared gap (#3562), not a
@@ -579,22 +587,32 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             "behavioural shape this file measures elsewhere (a denied capability's side "
             "effect not happening) has no subject here: with no spawner session there "
             "is no narrowing whose loss could be observed. #3561 recorded this rather "
-            "than inventing a measurement whose green would mean nothing."
+            "than inventing a measurement whose green would mean nothing. What this "
+            "site DOES now get from the primitive — the sid's own persisted narrowing, "
+            "applied at construction — is measured at the recovery sites below, which "
+            "exercise the same injection in the primitive."
         ),
     ),
     ("reyn/runtime/registry.py", "restore_all"): _SiteDeclaration(
         parent_layers=(
-            "NOT an inheritance from a spawner at all — a RE-ATTACHMENT to the child's "
-            "own durable layer. Crash recovery re-creates a session that already "
-            "existed, under the SAME sid, and the #2103-S1a narrowing lives in "
+            "NOT an inheritance from a spawner — a RE-ATTACHMENT to the child's own "
+            "durable layer. Crash recovery re-creates a session that already existed, "
+            "under the SAME sid, and the #2103-S1a narrowing lives in "
             "``<state>/sessions/<enc(sid)>/config.yaml``, keyed by that sid. The "
-            "primitive's per-session path re-key is what restores the resolution path; "
-            "there is no value to pass. The name-keyed layers ride along as everywhere "
-            "else. That this actually survives — rather than the re-woken session being "
-            "reborn wide — is the measurement named below, not an assumption."
+            "name-keyed layers ride along as everywhere else. "
+            "★ This site is why the gate had to widen: enumerating it is what got the "
+            "claim MEASURED, and it was false. The layer was resolvable but not "
+            "ENFORCED — the factory resolves an envelope with ``sid=None``, so the live "
+            "``_contextual_permission`` the RouterLoop reads never saw the file, and a "
+            "re-woken narrowed session executed a denied tool for real. #3561 moved the "
+            "``#2126`` re-resolve-and-inject into ``spawn_session`` itself, where the "
+            "sid becomes known, closing it for every direct caller of the primitive at "
+            "once. What the site inherits is now a property of the primitive, which is "
+            "the reason the primitive belongs on this list at all."
         ),
         measured_by=(
-            f"{_S3561}::test_recovery_recreated_session_keeps_its_persisted_narrowing",
+            f"{_S3561}::test_recovery_recreated_session_is_still_inside_its_persisted_narrowing",
+            f"{_S3561}::test_the_witness_tool_runs_when_nothing_narrows_it",
         ),
     ),
     ("reyn/runtime/registry.py", "_rewake_pipeline_runs"): _SiteDeclaration(
@@ -603,12 +621,14 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             "crash-recovery re-creation, re-entering under the work order's "
             "``driver_sid``, so the driver-session's own persisted narrowing (written "
             "when ``_spawn_pipeline_driver_session`` first spawned it through "
-            "``spawn_session_recorded``) is resolved from disk by sid rather than "
-            "passed. Measured by the same behavioural leg, which drives the shared "
-            "``spawn_session``-under-an-existing-sid path both arms use."
+            "``spawn_session_recorded``) is resolved from disk by sid and, since #3561, "
+            "injected into the live envelope by the primitive both arms share. Measured "
+            "by the same behavioural pair, which drives that shared "
+            "``spawn_session``-under-an-existing-sid path."
         ),
         measured_by=(
-            f"{_S3561}::test_recovery_recreated_session_keeps_its_persisted_narrowing",
+            f"{_S3561}::test_recovery_recreated_session_is_still_inside_its_persisted_narrowing",
+            f"{_S3561}::test_the_witness_tool_runs_when_nothing_narrows_it",
         ),
     ),
     ("reyn/interfaces/slash/session.py", "session_cmd"): _SiteDeclaration(
