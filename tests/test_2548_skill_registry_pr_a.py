@@ -121,6 +121,68 @@ def test_build_skill_registry_description_truncated_to_one_line() -> None:
     assert entries[0].description == "first line"
 
 
+def test_an_over_cap_description_is_cut_on_a_word_boundary_and_says_so() -> None:
+    """Tier 1: a description longer than the cap is cut at the last WORD
+    boundary that fits and ends in an ellipsis — never mid-word, never silently.
+
+    #3545 was filed against the ``:`` completion popup ("the popup is losing
+    text"); the popup was rendering every character it was handed and the cut
+    had happened here, at load. A cut that lands mid-word with no marker is
+    indistinguishable on screen from a broken renderer, which is what sent that
+    report to the wrong layer.
+
+    The assertions are on the CUT's properties, not on a length or a literal:
+    what survives must be a prefix of what was supplied (nothing invented), the
+    character following it in the source must be a space (a whole word), the
+    marker must be there, and the whole thing must still respect the bound.
+    """
+    from reyn.data.skills.registry import _DESC_ELLIPSIS, _DESC_MAX
+
+    source = " ".join(f"word{i:03d}" for i in range(1, 80))
+    assert len(source) > _DESC_MAX, (
+        "test setup: the description must exceed the cap for a cut to happen"
+    )
+
+    entries = build_skill_registry(
+        {"entries": {"sk": {"path": "skills/sk/SKILL.md", "description": source}}}
+    )
+    got = entries[0].description
+
+    assert got.endswith(_DESC_ELLIPSIS), (
+        f"a cut description carries no marker, so it reads as a render fault: {got!r}"
+    )
+    assert len(got) <= _DESC_MAX, (
+        f"the ellipsis was added to the budget instead of taken out of it: {len(got)}"
+    )
+    kept = got[: -len(_DESC_ELLIPSIS)]
+    assert source.startswith(kept), (
+        f"the kept text is not a prefix of the supplied description: {kept!r}"
+    )
+    assert source[len(kept)] == " ", (
+        f"the cut landed inside a word: {source[len(kept) - 6:len(kept) + 6]!r}"
+    )
+
+
+def test_a_description_within_the_cap_is_left_exactly_as_supplied() -> None:
+    """Tier 1: the cap only fires when it must — an under-cap description keeps
+    every character and gains no marker.
+
+    The non-vacuity half of the cut test above: an unconditional ellipsis would
+    satisfy every assertion there while corrupting the common case.
+    """
+    from reyn.data.skills.registry import _DESC_ELLIPSIS, _DESC_MAX
+
+    source = "Review a pull request against the team's checklist"
+    assert len(source) < _DESC_MAX, "test setup: this must be under the cap"
+
+    entries = build_skill_registry(
+        {"entries": {"sk": {"path": "skills/sk/SKILL.md", "description": source}}}
+    )
+
+    assert entries[0].description == source
+    assert _DESC_ELLIPSIS not in entries[0].description
+
+
 # ── cross-tier _merge union ───────────────────────────────────────────────────
 
 

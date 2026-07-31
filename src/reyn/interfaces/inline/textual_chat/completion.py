@@ -96,6 +96,24 @@ and no ``CompleterFn``). Such a menu shows the header ALONE: appending
 :data:`NO_MATCH_ROW` there would claim the user's argument matched nothing when
 nothing was ever offered to match against.
 
+Row wrapping
+------------
+A skill description is long enough to wrap at any realistic terminal width, and
+Textual's own wrap returns every continuation line to column 0 — which made
+three skill rows read as six (#3545). :func:`hanging_indent_rows` therefore
+re-wraps each row here, with :data:`WRAP_INDENT` on the continuations, and the
+result stays ONE option carrying embedded newlines so every OPTION index
+(highlight, :attr:`CompletionState.row_offset`, :meth:`CompletionPopup.selected`)
+keeps meaning one candidate. The wrap needs a width, which a never-laid-out
+widget does not have, so :meth:`CompletionPopup.on_resize` re-runs it — see
+that method for why the first ``sync`` alone is not enough.
+
+The same report also read as text being LOST mid-word. It was, but not here:
+``skills.entries.<name>.description`` is capped at load
+(``reyn.data.skills.registry._truncate_description``), and this module renders
+every character it is handed. That cap now cuts on a word boundary and says so
+with an ellipsis, so the two failures stay distinguishable on screen.
+
 **Security.** Candidate rows AND the usage header reach the terminal through
 :func:`~reyn.interfaces.inline.textual_chat.presenter._neutralized_label` and the
 shared ``Content``-literal wrap
@@ -108,6 +126,7 @@ exactly the untrusted-text case that boundary exists for.
 from __future__ import annotations
 
 import re
+import textwrap
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -159,6 +178,21 @@ _SKILL_TOKEN_MIDLINE_RE = re.compile(
 #: outcome for discoverability — the user cannot tell a typo'd command from a
 #: completion feature that is not working.
 NO_MATCH_ROW = "no matches"
+
+#: Columns a WRAPPED continuation line is indented by (#3545).
+#:
+#: Every row opens its own token hard against column 0 — ``:name``, ``/name``,
+#: :data:`USAGE_ROW_PREFIX`'s ``↳`` — so ANY indent at all is enough to make a
+#: continuation unmistakably subordinate; the reported symptom was three skill
+#: rows reading as six because the continuations also began at column 0. Two
+#: columns rather than the label's own width: the label width varies per row
+#: (``:reactive_orchestration_plugins`` is 31 columns), so aligning to it would
+#: both shift per row and eat the width the wrapped text needs.
+#:
+#: SPACING, never colour. #3536/#3537 removed fixed dark hex constants because
+#: they are invisible on a transparent terminal background, and a dim style
+#: would be exactly that class of fix re-introduced here.
+WRAP_INDENT = "  "
 
 #: Prefix of the argument-stage usage header row (#3364). The ``↳`` chrome and
 #: the ``usage:`` word are the POPUP's, not the command's — ``SlashCommand.usage``
@@ -469,6 +503,41 @@ def compute_completion(
     )
 
 
+def hanging_indent_rows(rows: "Sequence[str]", width: int) -> "list[str]":
+    """``rows`` re-wrapped to ``width`` with :data:`WRAP_INDENT` on every
+    continuation line (#3545).
+
+    Wrapping is done HERE rather than left to the ``OptionList``'s own because
+    Textual's wrap has no hanging-indent notion — it returns every continuation
+    to column 0, which is the whole of the reported defect. Each row stays ONE
+    option carrying embedded newlines, never one option per visual line: the
+    highlight, :attr:`CompletionState.row_offset` and
+    :meth:`CompletionPopup.selected` all index OPTIONS, so splitting a wrapped
+    candidate into several would make ``↓`` walk half a description.
+
+    Returns ``rows`` untouched when ``width`` is not yet known (a widget that
+    has never been laid out reports ``0``) or is too narrow to hold the indent
+    plus a character — the caller re-runs this on ``Resize``, and until then
+    Textual's own wrap is a strictly better fallback than a crash or a
+    one-character column.
+    """
+    if width <= len(WRAP_INDENT) + 1:
+        return list(rows)
+    out: "list[str]" = []
+    for row in rows:
+        lines = textwrap.wrap(
+            row,
+            width=width,
+            subsequent_indent=WRAP_INDENT,
+            # ``--`` is an em-dash stand-in throughout the builtin skill
+            # descriptions, not a hyphenated word, so a break inside one reads
+            # as a stray ``-`` at the edge.
+            break_on_hyphens=False,
+        )
+        out.append("\n".join(lines) if lines else row)
+    return out
+
+
 class CompletionPopup(OptionList, can_focus=False):
     """The candidate menu, drawn directly above the input row.
 
@@ -497,6 +566,11 @@ class CompletionPopup(OptionList, can_focus=False):
         # The (kind, token_start) identity of the token an Esc dismissed, or
         # None when nothing is dismissed. See :meth:`sync` for the re-arm rule.
         self._dismissed: "tuple[str, int] | None" = None
+        # The width the mounted options were wrapped for, or -1 when nothing is
+        # mounted. Read by :meth:`on_resize` to skip the rebuild when the width
+        # did not actually change — without it, a rebuild that alters this
+        # auto-height widget's height re-enters Resize and never settles.
+        self._wrapped_at: int = -1
 
     def sync(self, state: CompletionState) -> None:
         """Show ``state``, unless it completes a token the user already dismissed.
@@ -521,11 +595,7 @@ class CompletionPopup(OptionList, can_focus=False):
         self._state = state
         self.display = state.is_open
         if changed:
-            self.clear_options()
-            # The SHARED ``Content``-literal wrap, never a re-derived one: an
-            # ``OptionList`` markup-parses a bare ``str`` (#3302), and ``/image``
-            # candidates are filesystem names.
-            self.add_options(option_content_rows(rows))
+            self._mount_rows(rows)
             # A new row set always re-seats the highlight on its first CANDIDATE
             # row (past the usage header, when there is one): a stale index would
             # point at a row from the previous keystroke's list, and a highlight
@@ -539,6 +609,41 @@ class CompletionPopup(OptionList, can_focus=False):
                 self.highlighted = 0
             else:
                 self.highlighted = None
+
+    def _wrap_width(self) -> int:
+        """The column count a row may occupy — the scrollable content region, so
+        the vertical scrollbar a >10-row menu grows is already subtracted. One
+        column too many and Textual re-wraps the overflow itself, at column 0,
+        which is the defect back again on exactly the long menus that need the
+        indent most."""
+        return self.scrollable_content_region.width
+
+    def _mount_rows(self, rows: "list[str]") -> None:
+        """Wrap ``rows`` for the current width and mount them as the options.
+
+        The SHARED ``Content``-literal wrap, never a re-derived one: an
+        ``OptionList`` markup-parses a bare ``str`` (#3302), and ``/image``
+        candidates are filesystem names.
+        """
+        width = self._wrap_width()
+        self.clear_options()
+        self.add_options(option_content_rows(hanging_indent_rows(rows, width)))
+        self._wrapped_at = width
+
+    def on_resize(self) -> None:
+        """Re-wrap the mounted rows when the width changes under them.
+
+        The FIRST :meth:`sync` of a session runs while this widget is still
+        ``display: none`` and therefore zero-wide, so the wrap it performs is
+        the no-op fallback; the layout that follows delivers the real width
+        here. Without this the indent would never appear at all on the first
+        menu, and a terminal resize would leave a menu wrapped for the old
+        width until the next keystroke happened to change the row set.
+        """
+        if self._state.is_open and self._wrap_width() != self._wrapped_at:
+            keep = self.highlighted
+            self._mount_rows(self._state.rows())
+            self.highlighted = keep
 
     def dismiss_current(self) -> None:
         """Close the menu and remember the token it was showing, so typing more
@@ -556,6 +661,7 @@ class CompletionPopup(OptionList, can_focus=False):
     def _reset(self) -> None:
         self._state = NO_COMPLETION
         self.clear_options()
+        self._wrapped_at = -1
         self.display = False
 
     @property
@@ -617,7 +723,12 @@ class CompletionPopup(OptionList, can_focus=False):
         """The rows currently displayed — the public read a test asserts
         displayed content through (mirrors ``SentQueue.rendered_texts``). Taken
         off the MOUNTED options rather than recomputed, so it cannot claim
-        content the widget never actually mounted."""
+        content the widget never actually mounted.
+
+        One entry per OPTION, not per visual line: a row wrapped by
+        :func:`hanging_indent_rows` comes back with its embedded newlines and
+        :data:`WRAP_INDENT` still in it, which is what lets a test see both that
+        the text survived and that the continuation is indented."""
         return [
             str(self.get_option_at_index(i).prompt)
             for i in range(self.option_count)
@@ -633,8 +744,10 @@ __all__ = [
     "NO_MATCH_ROW",
     "SKILL_MIN_CHARS",
     "USAGE_ROW_PREFIX",
+    "WRAP_INDENT",
     "CompletionCandidate",
     "CompletionPopup",
     "CompletionState",
     "compute_completion",
+    "hanging_indent_rows",
 ]
