@@ -359,12 +359,15 @@ def tool_contextually_denied(
     ``effective_name``. ``contextual is None`` → not denied (⊤), so an
     un-narrowed path is byte-identical to pre-#1827.
 
-    **Measured callers** (#3513, ``src/`` enumeration): the RouterLoop
-    enforcement gate ``_excluded_result`` (chat and phase are the same code) and
-    its advertisement filter, plus the three exposure/fence schemes
+    **Measured callers** (#3513, ``src/`` enumeration; #3546 adds the last one):
+    the RouterLoop enforcement gate ``_excluded_result`` (chat and phase are the
+    same code) and its advertisement filter, the three exposure/fence schemes
     (``_category_exposure``, ``_enumerate_exposure``,
-    ``retrieval_content_fence``). Those paths share this one function, so they
-    cannot disagree about what a narrowing means.
+    ``retrieval_content_fence``), and the pipeline tool-step dispatch
+    (``tools/pipeline_verbs._make_tool_dispatch``). Those paths share this one
+    function, so they cannot disagree about what a narrowing means. This is an
+    enumeration of who calls it — NOT a claim that every path which executes a
+    capability calls it.
 
     ⚠️ This docstring used to claim that **every** tool-dispatch path calls this
     function — naming "control-IR op dispatch" as one of them — and concluded
@@ -372,9 +375,12 @@ def tool_contextually_denied(
     ``core/op_runtime/contextual_gate``, whose own two consumers
     (``control_ir_executor`` / ``preprocessor_executor``) were deleted as whole
     files in #2434; the orphaned wrapper had no ``src/`` caller and was deleted
-    in #3513. **Whether op dispatch needs contextual narrowing, and whether it is
-    covered some other way, is unmeasured — see #3546.** Do not restore an
-    exhaustiveness claim here without an enumeration that supports it.
+    in #3513. #3546 measured ONE of the paths that claim left open — the pipeline
+    tool-step dispatch, which executed a narrowing-denied tool's real side effect
+    and now calls this function. **The op-dispatch axis itself (control-IR ops,
+    whose own contextual gating rides ``OpContext.contextual_permission`` rather
+    than this predicate) is still unmeasured.** Do not restore an exhaustiveness
+    claim here without an enumeration that supports it.
 
     Callers pass the **effective resolved name** (``invoke_action`` already
     unwrapped to ``action_name``) so the same name vocabulary reaches the

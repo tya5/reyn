@@ -68,9 +68,14 @@ because no registry ever reached the executor):
 Tool steps dispatch through the SAME ``_make_tool_dispatch`` the sync
 ``run_pipeline`` tool uses (``reyn.tools.pipeline_verbs``), fed a
 ``ToolContext`` built from THIS session's own host adapter (events /
-permission_resolver / resolver / state_log — the session's narrowed
-permission context, ⊆ the invoker's since the driver-session is spawned under
-the invoker's identity). #2567: ``router_state`` is a real
+permission_resolver / resolver / state_log), plus (#3546) the session's LIVE
+``contextual_permission`` — the TOOL-axis narrowing, passed explicitly because
+this dispatch runs outside any ``RouterLoop`` and so neither RouterLoop
+TOOL-axis gate is in the path. This module used to describe that context as
+"⊆ the invoker's since the driver-session is spawned under the invoker's
+identity"; identity carries only the NAME-keyed layers of the envelope, and
+the sid-keyed per-session narrowing was measurably absent (see
+``session_api._spawn_pipeline_driver_session``, step 1). #2567: ``router_state`` is a real
 ``RouterCallerState`` built via ``reyn.tools.types.build_resource_caller_state``
 — the shared host-derived-fields factory extracted from
 ``RouterLoop._build_router_caller_state`` — so tool steps that resolve through
@@ -346,7 +351,16 @@ class PipelineExecutorDriver:
             state_log=getattr(host, "state_log", None),
             agent_name=getattr(host, "agent_name", None),  # #2088: scope-aware hooks_add
         )
-        return _make_tool_dispatch(ctx)
+        # #3546: the driver-session's LIVE contextual narrowing — read off the
+        # bound Session (public accessor), NOT off ``host``, whose own
+        # ``contextual_permission`` is the raw value frozen at construction
+        # (``Session._build_router_waist``) and therefore predates the spawn-time
+        # ``apply_per_session_narrowing`` that installs the inherited narrowing.
+        # ``bind_session`` sets ``_session`` and ``_router_host`` together, so the
+        # host guard above already covers this read.
+        return _make_tool_dispatch(
+            ctx, contextual_permission=self._session.contextual_permission,
+        )
 
     async def _finish(
         self, *, status: str, output: Any = None, error: "str | None" = None,
