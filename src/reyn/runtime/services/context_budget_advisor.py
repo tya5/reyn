@@ -214,7 +214,12 @@ class ContextBudgetAdvisor:
         Derived from engine budgets; falls back to max_input_tokens.
         """
         from reyn.runtime.services.tool_result_cap import compute_cap_tokens
-        return compute_cap_tokens(self._get_effective_trigger())
+        cfg = self._offload_config
+        return compute_cap_tokens(
+            self._get_effective_trigger(),
+            ceil_tokens=cfg.cap_ceil_tokens,
+            alpha=cfg.cap_alpha,
+        )
 
     def cap_tool_result(self, content_str: str, *, content_type: "str | None" = None) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
@@ -237,6 +242,7 @@ class ContextBudgetAdvisor:
         from reyn.runtime.services.tool_result_cap import cap_tool_result_content
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        cfg = self._offload_config
         return cap_tool_result_content(
             content_str,
             cap_tokens=self.per_turn_cap_tokens(),
@@ -245,6 +251,9 @@ class ContextBudgetAdvisor:
             use_chars4=use_chars4,
             events=self._events,
             content_type=content_type,
+            max_inline_bytes=cfg.max_inline_bytes,
+            preview_head_chars=cfg.preview_head_chars,
+            preview_tail_chars=cfg.preview_tail_chars,
         )
 
     def media_followup_budget(self, tool_content: str) -> "int | None":

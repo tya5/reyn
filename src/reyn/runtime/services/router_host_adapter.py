@@ -446,6 +446,8 @@ class RouterHostAdapter:
         # build_offload_body's structured inline-size gate. Default False = offload
         # off unless the operator opts in via ``offload.enabled: true``.
         offload_enabled: bool = False,
+        offload_structured_inline_max_chars: int | None = None,
+        offload_structured_preview_chars: int | None = None,
         # (``compact_now`` moved into ``op_context_inputs`` #3482.)
         # #272/#1128 context-size signal: callable () -> {free_window,
         # effective_trigger} (exact tokens) for the OS-injected SP header.
@@ -601,6 +603,8 @@ class RouterHostAdapter:
         self._media_followup_budget = media_followup_budget
         # tool-result-schema-redesign §5: structured-offload gate flag.
         self._offload_enabled = offload_enabled
+        self._offload_structured_inline_max_chars = offload_structured_inline_max_chars
+        self._offload_structured_preview_chars = offload_structured_preview_chars
         # #1470: per-turn cancel event set by RouterLoopDriver._set_cancel_event.
         # None until RouterLoopDriver registers itself at construction time.
         self._cancel_event: asyncio.Event | None = None
@@ -737,6 +741,19 @@ class RouterHostAdapter:
         opted in, normal offload behaviour.
         """
         return self._offload_enabled
+
+    @property
+    def offload_structured_inline_max_chars(self) -> "int | None":
+        """Operator-tuned size at which a STRUCTURED result goes to its own ref
+        (#3580, ``offload.structured_inline_max_chars``). ``None`` = the caller keeps
+        the shipped default, so a host built without the field behaves as before."""
+        return self._offload_structured_inline_max_chars
+
+    @property
+    def offload_structured_preview_chars(self) -> "int | None":
+        """Operator-tuned amount of a structured result kept inline beside its ref
+        (#3580, ``offload.structured_preview_chars``). ``None`` = shipped default."""
+        return self._offload_structured_preview_chars
 
     @property
     def chat_id(self) -> str:

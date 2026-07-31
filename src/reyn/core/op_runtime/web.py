@@ -441,53 +441,6 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         content = sliced
         next_start = None
 
-    # #385 PoC: when MediaStore is available, route the (potentially
-    # large) extracted text through ``.reyn/tool-results/`` and return a
-    # preview + path-ref instead of inlining the full body. The LLM then
-    # decides whether the preview is enough or to call ``read_tool_result``
-    # for full content. Backward-compat: when ``ctx.media_store is None``
-    # (= legacy callers / tests), fall through to the pre-PoC inline shape.
-    if ctx.media_store is not None and content:
-        saved_block = ctx.media_store.save_tool_result(
-            content,
-            mime_type=(content_type or "text/plain"),
-            chain_id=ctx.run_id or "",
-            tool="web_fetch",
-            seq=1,
-        )
-        preview = _generate_web_fetch_preview(
-            raw, extracted_text=content, content_type=content_type,
-        )
-        ctx.events.emit(
-            "web_fetch_completed",
-            url=op.url,
-            status_code=response.status_code,
-            content_length=len(content),
-            truncated=truncated,
-            extractor=extractor_name,
-            start_index=op.start_index,
-            total_length=total_length,
-            stored_as="path_ref",
-            path=saved_block.get("path"),
-        )
-        return {
-            "kind": "web_fetch",
-            "url": op.url,
-            "status": "ok",
-            "status_code": response.status_code,
-            "content_type": content_type,
-            "content": "",
-            "preview": preview,
-            "path_ref": saved_block,
-            "truncated": truncated,
-            "extractor": extractor_name,
-            "media_blocks": [],
-            "start_index": op.start_index,
-            "next_start": next_start,
-            "total_length": total_length,
-            "stored_as": "path_ref",
-        }
-
     ctx.events.emit(
         "web_fetch_completed",
         url=op.url,
