@@ -138,7 +138,7 @@ def test_an_over_cap_description_is_cut_on_a_word_boundary_and_says_so() -> None
     """
     from reyn.data.skills.registry import _DESC_ELLIPSIS, _DESC_MAX
 
-    source = " ".join(f"word{i:03d}" for i in range(1, 80))
+    source = " ".join(f"word{i:03d}" for i in range(1, 400))
     assert len(source) > _DESC_MAX, (
         "test setup: the description must exceed the cap for a cut to happen"
     )
@@ -181,6 +181,46 @@ def test_a_description_within_the_cap_is_left_exactly_as_supplied() -> None:
 
     assert entries[0].description == source
     assert _DESC_ELLIPSIS not in entries[0].description
+
+
+def test_a_real_builtin_description_reaches_the_registry_intact() -> None:
+    """Tier 1: the longest description reyn itself ships survives the cap with
+    every character present (#3550).
+
+    The bound is the Agent Skills specification's own maximum for the
+    ``description`` frontmatter field (1024 chars), so a skill that conforms to
+    the standard reyn calls ``SKILL.md`` an instance of is never cut. Before
+    #3550 the cap was 200 and this exact literal — the one shipped in
+    ``BUILTIN_SKILLS``, not a synthetic string — lost 58% of itself, including
+    the whole "Read this BEFORE ..." clause the standard requires a description
+    to carry ("what the skill does AND when to use it").
+
+    Anchored to the real registry rather than a fixture literal so the test
+    tracks what actually reaches the model: shortening the shipped description
+    below the old cap would make a constant-pinning test pass while this one
+    keeps measuring the real thing.
+    """
+    from reyn.builtin.registry import BUILTIN_SKILLS
+    from reyn.data.skills.registry import _DESC_ELLIPSIS
+
+    name = "reactive_orchestration_plugins"
+    source = BUILTIN_SKILLS[name]["description"]
+
+    entries = build_skill_registry(
+        {"entries": {name: {"path": "skills/x/SKILL.md", "description": source}}}
+    )
+    got = entries[0].description
+
+    assert got == source, (
+        "a description reyn itself ships is being cut before it reaches the "
+        f"model — {len(source) - len(got)} characters lost: {got!r}"
+    )
+    assert _DESC_ELLIPSIS not in got, "an uncut description must carry no marker"
+    # The clause the old 200-char cap removed: presence of the trailing sentence
+    # is what distinguishes "survived" from "happened to fit under some cap".
+    assert source.split(". ")[-1] in got, (
+        "the description's closing clause did not survive the cap"
+    )
 
 
 # ── cross-tier _merge union ───────────────────────────────────────────────────

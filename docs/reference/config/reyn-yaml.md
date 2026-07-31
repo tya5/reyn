@@ -1557,7 +1557,7 @@ skills:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `path` | string | required | Path to `SKILL.md`, or its containing directory. |
-| `description` | string | `""` | One-line summary shown in the model-facing `## Skills` menu (first line only, 200-char cap). |
+| `description` | string | `""` | One-line summary shown in the model-facing `## Skills` menu (first line only, 1024-char cap — the [Agent Skills specification](https://agentskills.io/specification)'s maximum for `description`; #3550). |
 | `enabled` | bool | `true` | `false` removes the entry from the registry entirely. Dominates `visibility`. |
 | `visibility` | enum | `menu` | Which surface names the skill: `menu` (in the `## Skills` system-prompt menu) \| `on_demand` (not in the menu, but returned by the `skill_list` tool — no standing token cost) \| `hidden` (no model-facing surface at all). |
 

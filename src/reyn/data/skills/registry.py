@@ -40,10 +40,21 @@ from dataclasses import dataclass
 from typing import Any
 
 # Maximum characters to keep from a skill description (one-line cap), ELLIPSIS
-# INCLUDED — ``skills.entries.<name>.description`` is arbitrary operator/config
-# text that reaches the system prompt and the ``skill_list`` result, so the bound
-# is what keeps that standing token cost finite.
-_DESC_MAX = 200
+# INCLUDED. The NUMBER comes from the Agent Skills specification
+# (https://agentskills.io/specification), which makes ``description`` a REQUIRED
+# frontmatter field of at most **1024 characters** — reyn calls ``SKILL.md`` an
+# industry-standard file, so the cap it enforces is the standard's cap, not a
+# reyn-chosen one (#3550, owner decision "標準に合わせてください").
+#
+# The cost consideration that picked the previous 200 is still true and still
+# the reason this is a BOUND at all rather than unbounded:
+# ``skills.entries.<name>.description`` is arbitrary operator/config text that
+# reaches the system prompt (for ``visibility: menu`` skills) and the
+# ``skill_list`` result, so an uncapped field is unbounded standing token cost.
+# It is no longer what SELECTS the number — 1024 is the largest description the
+# standard permits, so anything a standard-conformant skill can declare now
+# survives intact, and the bound still holds against non-conformant input.
+_DESC_MAX = 1024
 
 # Appended when the cap actually CUTS, so the loss is legible on every surface
 # the description reaches. A bare ``[:200]`` slice lands mid-word and reads as a

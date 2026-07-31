@@ -28,7 +28,7 @@ skills:
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
 | `path` | string | required | Path to `SKILL.md` (or its containing directory). Project-root-relative or absolute. |
-| `description` | string | `""` | One-line summary shown in the L1 menu. Truncated to the first line, capped at 200 characters — a description over the cap is cut at the last word boundary that fits and ends in `…` (ellipsis included in the 200), so a capped description is distinguishable from a rendering fault on every surface it reaches (#3545). |
+| `description` | string | `""` | One-line summary shown in the L1 menu. Truncated to the first line, capped at **1024 characters** — the [Agent Skills specification](https://agentskills.io/specification)'s own maximum for the `description` frontmatter field, so every standard-conformant description survives intact (#3550). A description over the cap is cut at the last word boundary that fits and ends in `…` (ellipsis included in the 1024), so a capped description is distinguishable from a rendering fault on every surface it reaches (#3545). |
 | `enabled` | bool | `true` | `false` removes the entry from the registry entirely (not just hidden). Dominates `visibility`. |
 | `visibility` | enum | `menu` | Which discovery surface the skill reaches: `menu` \| `on_demand` \| `hidden`. See below. |
 
