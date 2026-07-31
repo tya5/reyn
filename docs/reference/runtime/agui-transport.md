@@ -776,6 +776,18 @@ second hand-rolled column:
   and the per-turn buckets are in-memory state a restart does not rehydrate —
   so a restored row's right gutter is blank, never a reconstructed value.
 
+  Both labels are painted with `_CC_AMBIENT` (`"dim"`, i.e. SGR 2) rather than
+  a colour, so the TERMINAL's theme decides their shade (#3536). They had used
+  the fixed mid-grey `_CC_DIM` (`#6b7280`), which on a transparent terminal
+  background left them unreadable — its contrast is whatever shows through.
+  This applies HERE and not to `_CC_DIM` generally: a terminal-chosen
+  foreground is only safe over a terminal-chosen background, and these labels
+  ride solely on rows the presenter does not tint (`agent`,
+  `tool_call_started`). On a tinted row (`_CC_USER_BG` / `_CC_ERR_BG`, fixed
+  dark hex) the same substitution would be dark-on-dark for a light-terminal
+  user, and the row-contrast gate would stop measuring the pairing entirely —
+  it only inspects segments whose foreground is concrete.
+
   The column is a fixed width derived in terminal **cells**
   (`rich.cells.cell_len`, the measure Textual's own compositor applies) from
   the widest label each family can emit — not from a character count. The two
