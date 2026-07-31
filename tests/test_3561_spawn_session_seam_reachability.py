@@ -57,6 +57,20 @@ was alive at all: an earlier run of these legs had every arm "denied", including
 un-narrowed one, because the write gate — not the narrowing — was refusing everything.
 The control is permanent for that reason.
 
+★ **The third claim (#3564) is the truncate-falsify witness CLAUDE.md's recovery-feature
+gate asks for.** #3561 changed a crash-recovery path and carried no truncate leg. The
+exemption is real — the narrowing's reconstruction source is the per-session
+``config.yaml``, not a WAL-event, so "WAL-event-derived state that isn't snapshot-backed"
+does not describe it — but an exemption recorded as an ABSENCE is indistinguishable from a
+forgotten test to the next auditor. The two legs below rewrite the WAL past the
+``session_spawned`` record that carried the narrowing (the WAL's only copy of it), then
+restore, and observe the narrowing still enforced. Expected GREEN: this is the proof of
+the exemption, not a retraction of it. The truncation is asserted to have removed that
+record — a no-op rewrite would witness nothing — and the un-narrowed twin
+(``test_a_truncated_wal_still_lets_the_witness_tool_run_when_nothing_narrows_it``) is
+there because after a rewrite, "the file is absent" could otherwise be explained by the
+truncation having broken recovery outright rather than by the narrowing holding.
+
 The completeness half of the gate — which sites exist, how they are resolved, and
 what each declares — lives in
 ``tests/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is what its
@@ -329,6 +343,59 @@ async def _spawn_and_persist(
     return sid
 
 
+async def _truncate_past_the_spawn_record(reg: AgentRegistry, sid: str) -> None:
+    """Rewrite the WAL keeping only entries ABOVE ``sid``'s ``session_spawned`` record —
+    the WAL's one carrier of the spawn-time narrowing — and prove the rewrite really
+    removed it.
+
+    The proof is the point (#3564): a truncate leg whose truncation dropped nothing is
+    green for a reason that has nothing to do with what it claims to measure. So this
+    asserts the record was present before, that something was dropped, and that its seq is
+    gone afterwards — read through ``last_truncate_stats`` and a re-read of the file, both
+    public.
+
+    The floor is ``spawn_seq + 1`` rather than "everything": entries ABOVE the spawn
+    record carry the session's stranded inbox state, which is ``restore_all``'s own
+    precondition for re-creating the session at all (see :func:`_spawn_and_persist`).
+    Dropping those would leave nothing to restore and the leg would measure nothing.
+    """
+    log = reg.state_log
+    assert log is not None
+    before = list(log.iter_from(0))
+    spawn_seqs = [
+        int(e["seq"]) for e in before
+        if e.get("kind") == "session_spawned" and e.get("sid") == sid
+    ]
+    assert spawn_seqs, (
+        "no session_spawned record for this sid is in the WAL, so there is nothing "
+        "preceding the narrowing to truncate past and the leg would witness nothing"
+    )
+    spawn_seq = max(spawn_seqs)
+    assert any(int(e["seq"]) > spawn_seq for e in before), (
+        "the session_spawned record is the WAL's highest entry, and the rewrite never "
+        "drops the highest seq (it would let the next _scan_max_seq re-issue used seqs) "
+        "— so the truncation below would keep the very record it must remove"
+    )
+
+    await log.truncate_below(spawn_seq + 1)
+    await log.flush()  # the rewrite is fire-and-forget; this is its barrier.
+
+    stats = log.last_truncate_stats
+    assert stats["dropped"] > 0, (
+        f"the WAL rewrite dropped nothing ({stats!r}) — a no-op truncation proves "
+        "nothing about what survives one"
+    )
+    surviving = {int(e["seq"]) for e in log.iter_from(0)}
+    assert spawn_seq not in surviving, (
+        f"the session_spawned record (seq={spawn_seq}) survived the rewrite, so the "
+        "restore below still has the WAL's copy of the narrowing available to it"
+    )
+    assert min(surviving) > spawn_seq, (
+        f"entries at or below the spawn record survived ({stats!r}) — the truncation "
+        "did not reach past the point the narrowing was established"
+    )
+
+
 @pytest.mark.asyncio
 async def test_the_witness_tool_runs_when_nothing_narrows_it(
     tmp_path: Path, monkeypatch,
@@ -405,4 +472,100 @@ async def test_recovery_recreated_session_is_still_inside_its_persisted_narrowin
         "a session re-created by crash recovery executed a tool its own persisted "
         "per-session narrowing denies — the sid-keyed #2103-S1a layer was resolvable "
         f"but not enforced after the restart (written: {_written(tmp_path, out_name)!r})"
+    )
+
+
+# ── the truncate-falsify witness (#3564) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_wal_still_lets_the_witness_tool_run_when_nothing_narrows_it(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: the POSITIVE CONTROL for the truncate leg below — after the WAL is
+    rewritten past the session's spawn record, an UN-narrowed recovery-recreated session
+    still reaches its ``write_file`` handler and puts a file on disk.
+
+    Without this twin, the absence asserted below would have a second available
+    explanation: that truncating the WAL broke recovery (or the turn, or the write path)
+    outright, so nothing wrote for reasons unrelated to any narrowing. Here the same
+    rewrite happens and the file DOES land.
+    """
+    monkeypatch.chdir(tmp_path)
+    out_name = _out_name()
+    scripted = _WritesOnceLLM(out_name)
+    reg = _registry(tmp_path, scripted)
+    sid = await _spawn_and_persist(reg, tmp_path, narrowing=None)
+
+    await _truncate_past_the_spawn_record(reg, sid)
+
+    restarted = _registry(tmp_path, scripted)
+    await restarted.restore_all()
+    recovered = restarted.get_session("worker", sid)
+    assert recovered is not None, (
+        "crash recovery did not re-create the spawned session after the WAL rewrite — "
+        "the leg below would then be asserting an absence caused by a broken restore"
+    )
+
+    await _drive_one_turn(recovered)
+
+    assert scripted.turns >= 2, (
+        f"the recovered session never finished a turn (turns={scripted.turns}) after the "
+        "WAL rewrite, so the absence below would say nothing about the narrowing"
+    )
+    assert _written(tmp_path, out_name), (
+        "with the WAL truncated past its spawn record and nothing narrowing it, the "
+        "witness tool still did not execute — an absence in the narrowed leg would then "
+        "be attributable to the truncation rather than to the narrowing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_persisted_narrowing_survives_a_wal_truncation_past_its_spawn_record(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: the per-session narrowing enforced on a recovery-recreated session
+    survives a WAL rewrite that drops the ``session_spawned`` record carrying it.
+
+    CLAUDE.md's recovery-feature gate asks any PR that changes a reconstruction path for
+    exactly this shape: set X → truncate past X's WAL-events → reconstruct → assert X
+    survives. #3561 changed one (``restore_all`` / ``_rewake_pipeline_runs`` now re-enter
+    the narrowing at ``spawn_session``) and carried no such leg, on the judgement that the
+    rule's target — WAL-event-derived state with no snapshot behind it — does not describe
+    this state: the reconstruction source is the sid's ``config.yaml`` under the
+    per-session state dir, which a WAL rewrite cannot touch. ★ That judgement was recorded
+    only as the ABSENCE of a test, which reads identically to a forgotten one. This leg is
+    the judgement made checkable; GREEN is the expected and correct result.
+
+    The rewrite is not decoration: :func:`_truncate_past_the_spawn_record` asserts the
+    ``session_spawned`` entry existed and that its seq is gone afterwards, so the restore
+    below genuinely has no WAL copy of the narrowing left to read. The witness is again
+    the real ``write_file`` side effect — not ``capability_visibility_state()``, which
+    re-resolves per read and was green on the broken code #3561 fixed.
+    """
+    monkeypatch.chdir(tmp_path)
+    out_name = _out_name()
+    scripted = _WritesOnceLLM(out_name)
+    reg = _registry(tmp_path, scripted)
+    sid = await _spawn_and_persist(reg, tmp_path, narrowing={"tool_deny": [_DENIED_TOOL]})
+
+    await _truncate_past_the_spawn_record(reg, sid)
+
+    restarted = _registry(tmp_path, scripted)
+    await restarted.restore_all()
+    recovered = restarted.get_session("worker", sid)
+    assert recovered is not None, (
+        "crash recovery did not re-create the spawned session after the WAL rewrite"
+    )
+
+    await _drive_one_turn(recovered)
+
+    assert scripted.turns >= 1, (
+        "the recovered session never took a turn, so the absence below is vacuous"
+    )
+    assert not _written(tmp_path, out_name), (
+        "a session re-created after the WAL was truncated past its spawn record executed "
+        "a tool its persisted per-session narrowing denies — the config.yaml-backed "
+        "#2103-S1a layer did NOT survive the rewrite, which is the failure mode the "
+        f"recovery-feature gate exists to catch (written: {_written(tmp_path, out_name)!r})"
     )
