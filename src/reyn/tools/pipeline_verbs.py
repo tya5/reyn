@@ -48,7 +48,14 @@ all statically decidable over the parsed ``Pipeline`` + its ``SchemaRegistry``:
      declaration, its topology ``capability_profile`` bindings, and the #2081
      ``_delegate`` floor all resolve from the agent NAME, so a same-identity
      child re-derives them unchanged. An ``agent`` step additionally narrows
-     RESTRICT-ONLY (``_build_agent_step_narrowing``).
+     RESTRICT-ONLY (``_build_agent_step_narrowing``) — which #3553 had to make
+     true rather than merely restate: that function used to build the worker's
+     WHOLE narrowing from the step's own ``capabilities`` plus the delegation
+     deny, so a step declaring no ``capabilities`` handed its worker no allow
+     restriction at all, losing the invoker's SID-keyed one for the same reason
+     the driver-session did. It now composes the invoker's mapping in
+     (``capability_profile.compose_narrowing_mappings``: denies union, allows
+     intersect, an absent allow key is ⊤).
      ⚠️ This check used to claim the whole envelope followed from identity ("⊆
      by construction, no runtime re-check needed"). It does not: the #2103-S1a
      per-session narrowing is keyed by SID, not by identity, so a fresh
