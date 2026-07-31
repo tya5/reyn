@@ -45,6 +45,7 @@ from rich.text import Text
 from textual_flowview import EntryState
 
 from reyn.interfaces.repl.renderer import (
+    _CC_AMBIENT,
     _CC_DIM,
     _CC_DONE,
     _CC_ERR,
@@ -450,7 +451,7 @@ class ReynTimingGutter:
         return _format_elapsed(final) if isinstance(final, (int, float)) else ""
 
     def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
-        return Text(_cell_pad_left(self.label(entry), width), style=_CC_DIM)
+        return Text(_cell_pad_left(self.label(entry), width), style=_CC_AMBIENT)
 
 
 class ReynTurnUsageGutter:
@@ -558,7 +559,7 @@ class ReynTurnUsageGutter:
         )
 
     def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
-        return Text(_cell_pad_left(self.label(entry), width), style=_CC_DIM)
+        return Text(_cell_pad_left(self.label(entry), width), style=_CC_AMBIENT)
 
 
 class ReynRightGutter:
@@ -614,7 +615,7 @@ class ReynRightGutter:
         ]
         label = " ".join(parts)
         if self._is_marked is None or not self._is_marked(entry):
-            return Text(_cell_pad_left(label, width), style=_CC_DIM)
+            return Text(_cell_pad_left(label, width), style=_CC_AMBIENT)
         # The addressed entry: the rail in this gutter's LEADING cell, spanning
         # the body's full post-wrap ``height`` so a multi-row reply reads as ONE
         # marked block. The labels keep their own dim styling — being addressed
@@ -625,5 +626,5 @@ class ReynRightGutter:
             if row:
                 rail.append("\n")
             rail.append(_MARK_RAIL, style=_MARK_COLOR)
-            rail.append(_cell_pad_left(label if row == 0 else "", width - 1), style=_CC_DIM)
+            rail.append(_cell_pad_left(label if row == 0 else "", width - 1), style=_CC_AMBIENT)
         return rail
