@@ -19,6 +19,12 @@ import sys
 from pathlib import Path
 
 from reyn.config.chat import TimeoutConfig
+from reyn.runtime.services.mcp_cache_file import (
+    ProbeOutcome,
+    ToolsAnswered,
+    ToolsUnknown,
+    answered_only,
+)
 
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
@@ -1181,13 +1187,20 @@ def run_clear_secret(args: argparse.Namespace) -> None:
 
 async def _probe_server_tools(
     server_name: str, cfg: dict, *, per_server_timeout: float = _DEFAULT_MCP_PROBE_SECONDS,
-) -> tuple[str, list[dict]]:
+) -> "tuple[str, ProbeOutcome]":
     """Probe a single MCP server's tool list with a per-server timeout.
 
-    Returns ``(server_name, tools)`` where ``tools`` is empty on failure.
-    This module-level helper is the single probe implementation shared by
-    ``run_refresh`` (CLI) and ``RouterHostAdapter.ensure_mcp_tools_cached``
-    (session), satisfying the FP-0037 S1 "avoid code duplication" requirement.
+    Returns ``(server_name, outcome)`` — ``ToolsAnswered`` when the server
+    replied (``tools == []`` meaning it really exposes none), ``ToolsUnknown``
+    when the probe timed out, faulted, or came back as an error entry.
+
+    #3520: this helper is shared by ``run_refresh`` (CLI) and
+    ``RouterHostAdapter.maybe_refresh_mcp_tools_from_yaml`` (session), and both
+    write the SAME file (``.reyn/state/mcp_tools_cache.json``). That sharing is
+    why the distinction has to live here rather than at either call site: if
+    this returned ``[]`` for a failed probe, one ``reyn mcp refresh`` against a
+    slow server would persist "no tools" for every session that later warm-starts
+    from the file — reintroducing the exact defect through the CLI door.
     """
     import asyncio
 
@@ -1201,13 +1214,15 @@ async def _probe_server_tools(
     try:
         async with asyncio.timeout(per_server_timeout):
             raw = await MCPGateway(agent_id=None).list_tools(server_name, cfg)
-    except (TimeoutError, asyncio.TimeoutError, MCPFault):
-        return server_name, []
-    cleaned = [
-        t for t in (raw or [])
-        if isinstance(t, dict) and "error" not in t and t.get("name")
-    ]
-    return server_name, cleaned
+    except (TimeoutError, asyncio.TimeoutError):
+        return server_name, ToolsUnknown(reason="timeout")
+    except MCPFault as fault:
+        return server_name, ToolsUnknown(reason="exception", detail=repr(fault))
+    entries = list(raw or [])
+    if any(isinstance(t, dict) and "error" in t for t in entries):
+        return server_name, ToolsUnknown(reason="exception", detail=repr(entries))
+    cleaned = [t for t in entries if isinstance(t, dict) and t.get("name")]
+    return server_name, ToolsAnswered(tools=cleaned)
 
 
 def run_refresh(args: argparse.Namespace) -> None:
@@ -1218,10 +1233,15 @@ def run_refresh(args: argparse.Namespace) -> None:
     Reads the MCP server config from the 3-scope yaml cascade (user-global
     / project / project-local), probes every server's tool list in parallel
     with a per-server timeout (``safety.timeout.mcp_probe_seconds``, default
-    5s — #3475), and writes the result atomically to
-    ``.reyn/state/mcp_tools_cache.json``.  Per-server failures print a
-    warning and write an empty list for that server (= same broken-server
-    behavior as the session-side lazy probe).
+    5s — #3475), and writes the ANSWERS atomically to
+    ``.reyn/state/mcp_tools_cache.json``.
+
+    #3520: a server whose probe did not answer is reported as a warning and
+    OMITTED from the file — it is not written as an empty list. Writing it
+    would have recorded the failure to measure as the measurement, and since
+    sessions warm-start from this file, that record survives restarts: every
+    later session would be told the server has no tools and would never look
+    again. Omitted means each session live-probes it on its next turn.
 
     Active ``reyn chat`` sessions will pick up the new cache on their next
     turn boundary via ``maybe_reload_mcp_tools_cache_from_disk``.
@@ -1258,32 +1278,29 @@ def run_refresh(args: argparse.Namespace) -> None:
     # Build a flat {name: cfg} dict (local > project > user dedup already done).
     servers_flat = {name: cfg for name, _scope, cfg in entries}
 
-    async def _probe_all() -> dict[str, list[dict]]:
+    async def _probe_all() -> "list[tuple[str, ProbeOutcome]]":
         tasks = [
             _probe_server_tools(name, cfg, per_server_timeout=per_server_timeout)
             for name, cfg in servers_flat.items()
         ]
-        results = await asyncio.gather(*tasks)
-        return dict(results)
+        return list(await asyncio.gather(*tasks))
 
-    results = asyncio.run(_probe_all())
+    outcomes = asyncio.run(_probe_all())
 
-    # Warn on failures (= empty result for servers that had content before).
-    total_tools = 0
-    warned = False
-    for server_name, tools in results.items():
-        if tools:
-            total_tools += len(tools)
-        else:
-            # Only warn if the server has a non-trivial config (= might have tools).
-            cfg = servers_flat.get(server_name, {})
-            if cfg:
-                print(
-                    f"warning: {server_name}: probe failed or returned no tools "
-                    "(timeout / connection error — writing empty list)",
-                    file=sys.stderr,
-                )
-                warned = True
+    # #3520: warn per UNANSWERED probe. The old condition was `if not tools`,
+    # which also fired for a server that answered "zero tools" — the same
+    # collapse the type now prevents, in the operator-facing text.
+    unanswered = [name for name, outcome in outcomes if isinstance(outcome, ToolsUnknown)]
+    for server_name in unanswered:
+        print(
+            f"warning: {server_name}: probe did not answer "
+            "(timeout / connection error) — omitted from the cache; "
+            "sessions will re-probe it",
+            file=sys.stderr,
+        )
+
+    results = answered_only(outcomes)
+    total_tools = sum(len(entry.tools) for entry in results.values())
 
     state_dir = (
         project_root / ".reyn" / "state"
@@ -1295,9 +1312,11 @@ def run_refresh(args: argparse.Namespace) -> None:
 
     n_servers = len(results)
     print(f"Probed {n_servers} server(s); wrote {total_tools} tool entries to {cache_path}")
-    if warned:
+    if unanswered:
         print(
-            "One or more servers failed. Active sessions will see an empty tool list "
-            "for those servers. Re-run 'reyn mcp refresh' after fixing the issue.",
+            "One or more servers did not answer. They are absent from the cache, "
+            "so active sessions will live-probe them on their next turn rather "
+            "than treating them as tool-less. Re-run 'reyn mcp refresh' after "
+            "fixing the issue to restore zero-latency warm-start.",
             file=sys.stderr,
         )

@@ -475,7 +475,7 @@ safety:
 | `safety.timeout.llm_call_seconds` | float (s) | `60` | `--llm-timeout` | Per-call HTTP timeout passed to LiteLLM. |
 | `safety.timeout.llm_max_retries` | int | `3` | `--llm-max-retries` | Transient-error retries per LLM call (LiteLLM exponential backoff). |
 | `safety.timeout.chain_seconds` | float (s) | `60` | — | How long a multi-agent chain waits for a delegate reply before synthesising an error. `0` = disabled. |
-| `safety.timeout.mcp_probe_seconds` | float (s) | `5` | — | Per-server timeout for the MCP tools-list probe (`ensure_mcp_tools_cached` / `reyn mcp refresh`, #3475). A server slower than this is cached as an EMPTY tool list for the session (no retry); an `mcp_tool_probe_degraded` audit-event names the server and reason (`timeout` / `exception`). Raise under co-located CPU load. |
+| `safety.timeout.mcp_probe_seconds` | float (s) | `5` | — | Per-server timeout for the MCP tools-list probe (`ensure_mcp_tools_cached` / `reyn mcp refresh`, #3475). A server slower than this is **not cached at all** (#3520 — a timed-out probe produced no answer, so nothing is stored; it used to be stored as an empty tool list, which the model read as "this server has no tools" for the rest of the session and across restarts) and is re-probed on the next turn; an `mcp_tool_probe_degraded` audit-event names the server and reason (`timeout` / `exception`). Raise under co-located CPU load — that is also how you stop paying a re-probe every turn on a legitimately slow server. |
 
 ### `safety.on_limit` fields
 
