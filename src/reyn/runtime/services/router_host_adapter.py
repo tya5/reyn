@@ -2037,12 +2037,16 @@ class RouterHostAdapter:
                 )
                 return server_name, ToolsUnknown(reason="exception", detail=repr(exc))
             # mcp_list_tools may return [{"error": "..."}] instead of raising.
-            # #3520: that is the same non-answer as the two except-arms above
-            # wearing a different shape, so it maps to UNKNOWN too — reporting
-            # an error is not reporting an empty catalog. Entries missing a
-            # `name` are unusable and dropped from an otherwise real answer.
-            raw = list(tools or [])
-            if any(isinstance(t, dict) and "error" in t for t in raw):
+            # #3520: an error sentinel and NO usable tool is the same non-answer
+            # as the two except-arms above wearing a different shape — reporting
+            # an error is not reporting an empty catalog — so it maps to UNKNOWN
+            # too. A response that carries real tools alongside a stray error
+            # entry DID measure something, so it stays an answer with the
+            # unusable entries dropped; only a wholly unusable error response is
+            # a non-answer.
+            raw = [t for t in (tools or []) if isinstance(t, dict)]
+            cleaned = [t for t in raw if "error" not in t and t.get("name")]
+            if not cleaned and any("error" in t for t in raw):
                 self._events.emit(
                     "mcp_tool_probe_degraded",
                     server=server_name,
@@ -2051,7 +2055,6 @@ class RouterHostAdapter:
                     detail=repr(raw),
                 )
                 return server_name, ToolsUnknown(reason="exception", detail=repr(raw))
-            cleaned = [t for t in raw if isinstance(t, dict) and t.get("name")]
             return server_name, ToolsAnswered(tools=cleaned)
 
         results = await asyncio.gather(

@@ -59,7 +59,13 @@ _EMPTY_MCP_GATEWAY = McpGatewayInputs(
     mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
 )
 
-from reyn.runtime.services.mcp_cache_file import cache_file_path, read_cache, write_cache
+from reyn.runtime.services.mcp_cache_file import (
+    ToolsAnswered,
+    ToolsUnknown,
+    cache_file_path,
+    read_cache,
+    write_cache,
+)
 
 # ---------------------------------------------------------------------------
 # Null callbacks (same shape as test_mcp_cache_warm_start.py)
@@ -123,9 +129,9 @@ class _CountingProbe:
 
     async def __call__(
         self, server_name: str, cfg: dict, *, per_server_timeout: float = 5.0
-    ) -> tuple[str, list[dict]]:
+    ) -> "tuple[str, ToolsAnswered]":
         self.calls.append(server_name)
-        return server_name, list(self._tools.get(server_name, []))
+        return server_name, ToolsAnswered(tools=list(self._tools.get(server_name, [])))
 
 
 # ---------------------------------------------------------------------------
@@ -436,18 +442,25 @@ async def test_yaml_mtime_watch_handles_yaml_creation_mid_session(
 async def test_yaml_mtime_watch_probe_failure_does_not_raise(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Tier 2: when _probe_server_tools raises on one server, the watch method
-    swallows the error (probe helper itself must return [] on failure per S1
-    contract), and maybe_refresh_mcp_tools_from_yaml returns without raising."""
+    """Tier 2: when the probe does not answer for a server, the watch method
+    swallows it (the probe helper itself never raises) and
+    maybe_refresh_mcp_tools_from_yaml returns without raising.
+
+    #3520: it also must not write that non-answer to the cache file. The yaml
+    path is the third writer of the shared cache file (after the runtime probe
+    and `reyn mcp refresh`), so a `[]` written here would be just as permanent
+    — a yaml edit while a server happened to be slow would cost that server its
+    tools for every session that later warm-starts from the file.
+    """
     import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project_failprobe"
     reyn_yaml = project_root / "reyn.yaml"
     _write_reyn_yaml(reyn_yaml, {"bad_srv": {"command": "mcp-bad"}})
 
-    # Probe stub that always returns an empty list (= _probe_server_tools
-    # failure behavior per S1 contract: errors → []).
-    class _AlwaysEmptyProbe:
+    # Probe stub that never answers (= _probe_server_tools failure behavior:
+    # timeout / fault → ToolsUnknown).
+    class _AlwaysUnknownProbe:
         calls: list[str]
 
         def __init__(self) -> None:
@@ -455,11 +468,11 @@ async def test_yaml_mtime_watch_probe_failure_does_not_raise(
 
         async def __call__(
             self, server_name: str, cfg: dict, *, per_server_timeout: float = 5.0
-        ) -> tuple[str, list[dict]]:
+        ) -> "tuple[str, ToolsUnknown]":
             self.calls.append(server_name)
-            return server_name, []
+            return server_name, ToolsUnknown(reason="timeout")
 
-    fail_probe = _AlwaysEmptyProbe()
+    fail_probe = _AlwaysUnknownProbe()
     noop_probe = _CountingProbe()  # for adapter's mcp_list_tools (unused here)
     monkeypatch.setattr(mcp_cmd, "_probe_server_tools", fail_probe)
 
@@ -482,14 +495,15 @@ async def test_yaml_mtime_watch_probe_failure_does_not_raise(
     # Must NOT raise
     await adapter.maybe_refresh_mcp_tools_from_yaml()
 
-    # The probe was invoked and returned [] per the S1 contract.
+    # The probe was invoked and reported a non-answer.
     assert "bad_srv" in fail_probe.calls, "probe must be invoked even on failure path"
-    # Cache file is written with an empty tools list for bad_srv.
+    # #3520: the cache file must NOT gain a bad_srv entry from a non-answer.
     cache_path = cache_file_path(state_dir)
-    assert cache_path.exists(), "cache must be written even when probe returns []"
-    on_disk = read_cache(cache_path)
-    assert on_disk is not None
-    assert on_disk.get("bad_srv") == [], "failed probe must produce empty list in cache"
+    on_disk = read_cache(cache_path) if cache_path.exists() else None
+    assert on_disk is None or "bad_srv" not in on_disk, (
+        "an unanswered probe must not reach the on-disk cache — writing it "
+        f"would survive a restart; got {on_disk!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

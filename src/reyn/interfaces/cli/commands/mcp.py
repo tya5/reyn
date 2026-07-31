@@ -1218,10 +1218,14 @@ async def _probe_server_tools(
         return server_name, ToolsUnknown(reason="timeout")
     except MCPFault as fault:
         return server_name, ToolsUnknown(reason="exception", detail=repr(fault))
-    entries = list(raw or [])
-    if any(isinstance(t, dict) and "error" in t for t in entries):
+    # #3520: an error sentinel with no usable tool alongside it is a non-answer
+    # (the gateway told us it failed, not that the catalog is empty). A response
+    # that carries real tools DID measure something, so a stray error entry only
+    # costs that entry.
+    entries = [t for t in (raw or []) if isinstance(t, dict)]
+    cleaned = [t for t in entries if "error" not in t and t.get("name")]
+    if not cleaned and any("error" in t for t in entries):
         return server_name, ToolsUnknown(reason="exception", detail=repr(entries))
-    cleaned = [t for t in entries if isinstance(t, dict) and t.get("name")]
     return server_name, ToolsAnswered(tools=cleaned)
 
 

@@ -7,7 +7,9 @@ Pins the contract for `ensure_mcp_tools_cached()`:
   - When no MCP servers are configured, the cache becomes `{}` (= still
     not None, so the no-op branch fires next time).
   - Per-server timeout caps slow probes; on timeout / exception the
-    server is cached as `[]` (= no retries, no cascading failures).
+    server is left UNCACHED (#3520: a non-answer is not a result — an empty
+    list would claim the server has no tools, so the entry is absent instead
+    and the next turn re-probes it).
   - `_get_mcp_servers_for_router` includes `tools` field only when the
     cache for that server is populated.
 
@@ -237,15 +239,20 @@ async def test_idempotent_second_call_no_probe(tmp_path):
     )
 
 
-# ── 4. Timeout — slow server cached as empty, doesn't block others ────────
+# ── 4. Timeout — slow server left UNKNOWN, doesn't block others ───────────
 
 
 @pytest.mark.asyncio
 async def test_slow_server_times_out_and_others_proceed(tmp_path):
-    """Tier 2: a server slower than per_server_timeout is cached as [];
+    """Tier 2: a server slower than per_server_timeout gets NO cache entry;
     other servers are not affected.
 
-    Verifies parallel + per-server timeout discipline.
+    Verifies parallel + per-server timeout discipline. #3520 changed the
+    timed-out server's outcome from "cached as []" to "not cached": the probe
+    measured nothing, and an empty list is the answer "this server exposes no
+    tools", which is a different claim. The observable difference is the
+    absence of the ``tools`` key — that is what keeps the server's tools out
+    of the `mcp_tool_name` enum without asserting they do not exist.
     """
     async def _probe(server: str) -> list[dict]:
         if server == "slow":
@@ -263,17 +270,19 @@ async def test_slow_server_times_out_and_others_proceed(tmp_path):
     assert listing["fast"]["tools"] == [
         {"name": "fast_tool", "description": ""}
     ]
-    assert listing["slow"]["tools"] == [], (
-        "slow server must be reported as empty tools list, not retain leaked tools"
+    assert "tools" not in listing["slow"], (
+        "a timed-out probe must leave the server WITHOUT a tools key — an "
+        "empty list would assert 'this server has no tools', which the probe "
+        f"never established; got {listing['slow']!r}"
     )
 
 
-# ── 5. Exception — broken server cached as empty, doesn't propagate ────────
+# ── 5. Exception — broken server left UNKNOWN, doesn't propagate ──────────
 
 
 @pytest.mark.asyncio
-async def test_probe_exception_cached_as_empty(tmp_path):
-    """Tier 2: probe exception is caught and the server is cached as [].
+async def test_probe_exception_leaves_the_server_unknown(tmp_path):
+    """Tier 2: a probe exception is caught and the server gets NO cache entry.
     Adapter must never raise from ensure_mcp_tools_cached().
     """
     async def _probe(server: str) -> list[dict]:
@@ -292,17 +301,25 @@ async def test_probe_exception_cached_as_empty(tmp_path):
     assert listing["good"]["tools"] == [
         {"name": "good_tool", "description": ""}
     ]
-    assert listing["broken"]["tools"] == []
+    assert "tools" not in listing["broken"], (
+        "a raising probe measured nothing, so the server must carry no tools "
+        f"key; got {listing['broken']!r}"
+    )
 
 
-# ── 6. Error-shape entries (= [{"error": "..."}]) are filtered ────────────
+# ── 6. Error-shape entries (= [{"error": "..."}]) are a NON-ANSWER ─────────
 
 
 @pytest.mark.asyncio
-async def test_error_shape_entries_are_filtered(tmp_path):
-    """Tier 2: when _mcp_list_tools_cb returns [{"error": "..."}] (= the
-    contract for "connection failed but didn't raise"), the cache excludes
-    error sentinels.
+async def test_error_shape_entries_are_treated_as_unknown(tmp_path):
+    """Tier 2: when mcp_list_tools returns [{"error": "..."}] (= the contract
+    for "connection failed but didn't raise"), the server is left UNKNOWN.
+
+    #3520: this is the third spelling of the same non-answer — the first two
+    being TimeoutError and a raised exception. It used to be filtered down to
+    ``[]``, which turned "the server told us it is broken" into "the server
+    told us it has no tools". Reporting an error is not reporting an empty
+    catalog, so it gets the same treatment as the other two.
     """
     async def _probe(server: str) -> list[dict]:
         return [{"error": "server unreachable"}]
@@ -314,9 +331,45 @@ async def test_error_shape_entries_are_filtered(tmp_path):
     )
     await adapter.ensure_mcp_tools_cached()
     listing = adapter.get_mcp_servers()
-    assert listing[0]["tools"] == [], (
-        "error sentinels from _mcp_list_tools must be filtered, "
-        "leaving an empty list (= same shape as timeout / exception cases)"
+    assert "tools" not in listing[0], (
+        "an error sentinel is a non-answer and must leave the server without "
+        f"a tools key; got {listing[0]!r}"
+    )
+
+
+# ── 6b. A genuine zero-tool answer IS cached, and is not re-probed ─────────
+
+
+@pytest.mark.asyncio
+async def test_answered_zero_tools_is_a_real_answer_and_is_not_reprobed(tmp_path):
+    """Tier 2: a server that answers with zero tools is cached and not re-probed.
+
+    #3520's guard is per-server "does this server have an ANSWER", so the
+    empty-but-real answer has to be on the answer side of that line. If it
+    landed on the unknown side, every configured tool-less server would be
+    re-probed on every turn — a different defect, and the one the issue's firm
+    explicitly warns against trading for.
+    """
+    probe_calls: list[str] = []
+
+    async def _probe(server: str) -> list[dict]:
+        probe_calls.append(server)
+        return []
+
+    adapter = _make_adapter_with_mcp(
+        tmp_path=tmp_path,
+        mcp_servers={"empty": {}},
+        mcp_list_tools_cb=_probe,
+    )
+    await adapter.ensure_mcp_tools_cached()
+    listing = {s["name"]: s for s in adapter.get_mcp_servers()}
+    assert listing["empty"]["tools"] == [], (
+        "an answered-zero server must carry an empty tools list (= the answer)"
+    )
+    calls_after_first = list(probe_calls)
+    await adapter.ensure_mcp_tools_cached()
+    assert probe_calls == calls_after_first, (
+        "an answered-zero server must not be re-probed on the next turn"
     )
 
 
@@ -423,6 +476,7 @@ async def test_timeout_does_not_leak_cancel_scope_error_on_async_exit_stack(tmp_
         f"entered={entered_tasks!r} exited={exited_tasks!r}"
     )
     listing = {s["name"]: s for s in adapter.get_mcp_servers()}
-    assert listing["slow"]["tools"] == [], (
-        "slow server must be cached as [] after timeout"
+    assert "tools" not in listing["slow"], (
+        "#3520: a timed-out slow server must be left unanswered (no tools key), "
+        "not recorded as having zero tools"
     )
