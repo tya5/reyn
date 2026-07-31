@@ -42,12 +42,35 @@ The argument stage also carries the command's :attr:`~reyn.interfaces.slash.
 SlashCommand.usage` line as a non-selectable HEADER row (#3364) — see
 :func:`_usage_header`.
 
-``:`` triggers only when the token STARTS the input or FOLLOWS WHITESPACE, and
-only once at least :data:`SKILL_MIN_CHARS` characters follow the colon. Both
-gates are required, not either/or: a colon is far too common in ordinary prose
-to trigger on, and the word-boundary rule alone still fires on ``note: x`` while
-the length rule alone still fires on ``http://xx``. Together they keep
-``http://x``, ``12:30``, ``ratio:2`` and ``note: see below`` quiet.
+``:`` triggers only when the token STARTS the input or FOLLOWS WHITESPACE — the
+word-boundary gate, and the one that carries the prose-quieting weight. Measured
+against the four counterexamples this section used to name (#3541): ``http://x``,
+``12:30``, ``ratio:2`` and ``note: see below`` are ALL rejected by the boundary
+rule alone, because every one of them has a non-space character immediately
+before the colon (in ``note:`` the colon follows ``e``, so neither ``^`` nor
+``\s`` matches). The section previously claimed the boundary rule alone "still
+fires on ``note: x``" and that the length rule alone "still fires on
+``http://xx``"; direct evaluation falsifies both — the first because of the ``e``,
+the second because ``//`` is not in the name character class.
+
+A LENGTH gate of :data:`SKILL_MIN_CHARS` characters after the colon therefore
+survives only MID-LINE, and only for the case the boundary rule genuinely cannot
+see: a colon that really does start a word inside prose, i.e. a trailing ``word
+:`` or ``see :`` where the user is punctuating rather than invoking. No measured
+threat is on record for it; it is kept because mid-line is where an unwanted
+menu costs the most and offers the least.
+
+At LINE START there is no such case — no counterexample has anything before the
+colon to be ambiguous about — so ``^:`` fires with ZERO characters typed and
+lists every available skill, exactly as ``/`` does (#3541: the asymmetry was an
+owner-reported bug, not a design). ``:``, ``:a`` and ``:ab`` all open the menu;
+``hello :`` and ``hello :a`` stay quiet while ``hello :ab`` opens it.
+
+Two separate patterns express this rather than one two-alternative regex, so
+each keeps its name in group **1** — ``compute_completion`` derives
+``prefix_len`` from ``len(match.group(1))`` and ``token_start`` from
+``match.start(1)``, and a shifted group number would corrupt the accepted text
+silently instead of raising.
 
 A newline anywhere disables completion entirely — neither namespace is
 multi-line (the rule both retired completers applied).
@@ -107,18 +130,28 @@ KIND_ARGUMENT = "argument"
 KIND_SKILL = "skill"
 KIND_NONE = ""
 
-#: How many characters must follow ``:`` before the skill menu opens. See the
-#: module docstring's trigger rules for why this is required ALONGSIDE the
-#: word-boundary gate rather than instead of it.
+#: How many characters must follow a MID-LINE ``:`` before the skill menu opens.
+#: Does NOT apply at line start (#3541) — see the module docstring's trigger
+#: rules, which record that the word-boundary gate alone already rejects every
+#: counterexample on file, so this is a prose guard for the un-measured trailing
+#: ``word :`` case, not the rule keeping ``http://x``/``12:30`` quiet.
 SKILL_MIN_CHARS = 2
 
-#: The LAST ``:name`` token of the line. Three constraints, all load-bearing:
-#: it must start the input or follow whitespace (``(?:^|\s)`` — never mid-word,
-#: so ``http://x`` stays quiet), it must carry at least :data:`SKILL_MIN_CHARS`
-#: name characters, and nothing may follow it (``$`` — once a space follows a
-#: resolved ``:name`` the user is past completing IT; a further stacked
-#: ``:name2`` matches on its own).
-_SKILL_TOKEN_RE = re.compile(rf"(?:^|\s):([A-Za-z0-9_-]{{{SKILL_MIN_CHARS},}})$")
+#: The LINE-INITIAL ``:name`` token. No length floor: nothing precedes the colon,
+#: so there is no prose case to be ambiguous with, and a bare ``:`` opens the
+#: full skill list the way a bare ``/`` opens the full command list. Nothing may
+#: follow the name (``$`` — once a space follows a resolved ``:name`` the user is
+#: past completing IT).
+_SKILL_TOKEN_LINE_START_RE = re.compile(r"^:([A-Za-z0-9_-]*)$")
+
+#: The LAST ``:name`` token when it follows WHITESPACE mid-line. Same anchoring,
+#: plus the :data:`SKILL_MIN_CHARS` floor so a trailing ``word :`` in prose does
+#: not open a menu. Kept as its OWN pattern rather than a second alternative in
+#: the line-start one so that the name stays group 1 in both — see the module
+#: docstring's closing note on ``prefix_len``/``token_start``.
+_SKILL_TOKEN_MIDLINE_RE = re.compile(
+    rf"\s:([A-Za-z0-9_-]{{{SKILL_MIN_CHARS},}})$"
+)
 
 #: Shown as the sole row when a namespace IS readable but nothing matched. The
 #: menu deliberately stays OPEN in that case: a silent close is
@@ -412,7 +445,12 @@ def compute_completion(
         )
     if skills is None:
         return NO_COMPLETION
-    match = _SKILL_TOKEN_RE.search(text)
+    # Line start first: it is the strictly more permissive rule, and the two
+    # patterns cannot both match the same text (one requires ``^:``, the other a
+    # whitespace before the colon).
+    match = _SKILL_TOKEN_LINE_START_RE.match(text) or _SKILL_TOKEN_MIDLINE_RE.search(
+        text
+    )
     if match is None:
         return NO_COMPLETION
     from reyn.interfaces.skill_invoke import skill_invoke_completions

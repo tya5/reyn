@@ -137,9 +137,11 @@ or not you see the banner.
 
 #### Completing `/` commands and `:` skills
 
-Type `/` at the start of the input to open the command menu, or `:` followed by
-at least two characters (at the start of a word) to open the skill menu. Once a
-command's name is settled by a space, the menu switches to completing that
+Type `/` at the start of the input to open the command menu, or `:` at the start
+of the input to open the skill menu — both list everything with nothing else
+typed. A `:` **later in the line** needs to start a word and be followed by at
+least two characters, so an ordinary `12:30` or `http://x` never opens a menu.
+Once a command's name is settled by a space, the menu switches to completing that
 command's **argument** — so `/model ` lists your configured model classes and
 `/image ` lists matching files.
 
