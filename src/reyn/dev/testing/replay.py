@@ -15,7 +15,8 @@ Three shapes share one file, distinguished by ``"kind"`` (absent/``"completion"`
 ``"environment"`` = a captured environment snapshot, #3473)::
 
     {"key": "<sha256>", "kind": "completion", "model": "openai/gemini-2.5-flash-lite",
-     "prompt_preview": "...", "preconditions": {...}, "response": {...}}
+     "prompt_preview": "...", "preconditions": {...}, "key_components": {...},
+     "response": {...}}
 
     {"key": "<sha256>", "kind": "embedding", "model": "openai/text-embedding-3-small",
      "prompt_preview": "...", "response": {...}}
@@ -34,6 +35,11 @@ Three shapes share one file, distinguished by ``"kind"`` (absent/``"completion"`
 - ``preconditions`` (completion, #3473) ``{precondition name: observed value}``
   — the environment imprints scrubbed out of that call's key, recorded so
   they can be CHECKED instead of hashed.
+- ``key_components`` (completion, #3473) the per-component fingerprint
+  (``model`` / per-message digests / per-tool-name digests / ``tool_choice``)
+  a later cache miss is attributed against — see
+  ``reyn.dev.testing.replay_key_diff``. One-way digests: enough to say WHICH
+  component moved, never enough to reconstruct the payload.
 - ``response``  ``litellm.ModelResponse.model_dump()`` (completion) or
   ``litellm.EmbeddingResponse.model_dump()`` (embedding), serialised to dict.
   On replay the dict is reconstructed as the matching litellm response type.
@@ -82,6 +88,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from reyn.dev.testing.replay_key_diff import explain_miss, fingerprint
 from reyn.dev.testing.replay_preconditions import (
     EnvironmentPrecondition,
     ReplayRequest,
@@ -156,6 +163,9 @@ class LLMReplay:
         # key → {precondition name: observed imprint} (completion entries).
         # A key absent from this map was recorded before #3473.
         self._entry_preconditions: dict[str, dict] = {}
+        # Per-component key fingerprints of the recorded completion entries —
+        # what a miss is attributed against (#3473).
+        self._fingerprints: list[dict] = []
         # key → serialised ModelResponse dict (kind="completion")
         self._records: dict[str, dict] = {}
         # key → serialised EmbeddingResponse dict (kind="embedding")
@@ -282,6 +292,9 @@ class LLMReplay:
                     recorded = entry.get("preconditions")
                     if isinstance(recorded, dict):
                         self._entry_preconditions[entry["key"]] = recorded
+                    components = entry.get("key_components")
+                    if isinstance(components, dict):
+                        self._fingerprints.append(components)
             except Exception:
                 # Skip corrupt lines — fixture is a test artifact; silent skip
                 # is acceptable (same policy as BudgetLedger).
@@ -385,7 +398,7 @@ class LLMReplay:
         stream = bool(kwargs.get("stream"))
 
         if self.mode == "replay":
-            response = self._replay(key, model, messages, observed)
+            response = self._replay(key, model, messages, observed, request)
         else:
             # record mode: always fetch/store the WHOLE response — strip
             # ``stream``/``stream_options`` from the forwarded call so the
@@ -395,7 +408,7 @@ class LLMReplay:
                 k: v for k, v in kwargs.items() if k not in ("stream", "stream_options")
             }
             response = await self._record(
-                key, model, messages, record_kwargs, observed,
+                key, model, messages, record_kwargs, observed, request,
             )
 
         if stream:
@@ -544,24 +557,40 @@ class LLMReplay:
         return response
 
     def _replay(
-        self, key: str, model: str, messages: list[dict], observed: dict[str, Any],
+        self,
+        key: str,
+        model: str,
+        messages: list[dict],
+        observed: dict[str, Any],
+        request: ReplayRequest,
     ) -> Any:
         """Return a reconstructed ``ModelResponse`` from the fixture.
 
-        #3473: two distinct diagnoses, reported distinctly. A key miss is
-        "this conversation was never recorded". A key hit whose recorded
-        environment differs from ``observed`` is "this conversation WAS
-        recorded, on a differently-equipped machine" — that one raises
-        :class:`PreconditionMismatch` naming what differed, because a fixture
+        #3473: three distinct diagnoses, reported distinctly. A key miss is
+        "this conversation was never recorded" — and it now carries a
+        per-component attribution (``replay_key_diff``) naming WHICH of the
+        key's four components moved, because a report scoped to the cause
+        someone already suspects can confirm that cause but never reject it.
+        A key hit whose recorded environment differs from ``observed`` is
+        "this conversation WAS recorded, on a differently-equipped machine" —
+        that one raises :class:`PreconditionMismatch`, because a fixture
         replayed under different tooling would answer as if the model had
-        been offered capabilities it was not.
+        been offered capabilities it was not. A hit with a matching
+        environment is served.
         """
         if key not in self._records:
             preview = self._prompt_preview(messages)
+            attribution = explain_miss(
+                fingerprint(
+                    request.model, request.messages, request.tools, request.tool_choice,
+                ),
+                self._fingerprints,
+            )
             raise MissingFixture(
                 f"No fixture entry for model={model!r}.\n"
                 f"Prompt preview: {preview!r}\n"
                 f"Fixture: {self.fixture_path}\n"
+                f"{attribution}\n"
                 f"This run's environment preconditions: {observed!r}\n"
                 f"Re-run with REYN_LLM_RECORD=1 to record new fixtures."
             )
@@ -613,6 +642,7 @@ class LLMReplay:
         messages: list[dict],
         extra_kwargs: dict,
         observed: dict[str, Any],
+        request: ReplayRequest,
     ) -> Any:
         """Call the real LLM, save the response, and return it."""
         response = await self._original_acompletion(
@@ -632,6 +662,13 @@ class LLMReplay:
             # when non-empty would make new empty entries indistinguishable
             # from old unchecked ones.
             "preconditions": observed,
+            # #3473: the per-component fingerprint a later miss is attributed
+            # against. Taken over the RAW request, not the scrubbed key input —
+            # on a miss the reader wants everything that moved, including what
+            # the key deliberately ignores.
+            "key_components": fingerprint(
+                request.model, request.messages, request.tools, request.tool_choice,
+            ),
             "response": response_dict,
         }
         self._records[key] = response_dict
