@@ -25,6 +25,15 @@ widget; the hazards they add are the header's two structural risks: an
 informational row silently becoming the Tab target (an off-by-one accept), and
 an informational row claiming keys the user still needs.
 
+#3545 added the row-WRAP tests at the end, on the same grounds and against the
+same widget: a skill description does not fit on one line, and the two ways that
+can go wrong are invisible to a "the menu opened" assertion — text silently lost
+between the source and the mounted option, and a continuation line landing at
+column 0 where the next candidate's own ``:name`` starts, so three rows read as
+six. The third test there is the structural one: indenting by mounting each
+visual line as its OWN option would satisfy both of the first two while breaking
+``↓``, the highlight and the Tab accept.
+
 Real ``TextualChatApp`` + real ``ClientTransport`` + real ``Session`` (via the
 shared ``tests._support.agent_session.make_session``) + real ``SkillEntry``
 dataclasses, and real suppliers throughout — no mocks, no hand-rolled
@@ -50,6 +59,7 @@ from reyn.interfaces.inline.textual_chat.completion import (
     KIND_SKILL,
     NO_MATCH_ROW,
     USAGE_ROW_PREFIX,
+    WRAP_INDENT,
     CompletionPopup,
     compute_completion,
 )
@@ -1216,3 +1226,225 @@ async def test_a_usage_only_hint_does_not_claim_the_navigation_keys(
         assert composer.text.startswith("/model ") and composer.text != "/model ", (
             f"Tab no longer accepts a real candidate either: {composer.text!r}"
         )
+
+
+# ── #3545: a wrapped row keeps its text and its indent ──────────────────────
+
+
+def _wrapping_skill_entries():
+    """Real ``SkillEntry`` dataclasses whose descriptions are long enough to
+    WRAP at the harness's terminal width — the condition #3545 was reported
+    under, and the one the short ``/`` summaries never reach."""
+    return [
+        SkillEntry(
+            name="draft_review",
+            description=(
+                "Draft an artifact, self-review it against your own checklist "
+                "via a schema-validated agent step, and revise on failure"
+            ),
+            path="a.md",
+        ),
+        SkillEntry(
+            name="draft_publish",
+            description=(
+                "Publish a reviewed artifact to its destination and record the "
+                "hand-off in the audit trail for later reconstruction"
+            ),
+            path="b.md",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_wrapped_skill_row_keeps_its_whole_description(tmp_path) -> None:
+    """Tier 2b: a skill description too long for one line survives INTACT into
+    the option the widget actually mounted (#3545).
+
+    The report read as text being lost by the popup, so the assertion is the
+    value a losing build cannot produce: the FULL description, character for
+    character, recovered from the mounted row by undoing the wrap. Reading it
+    off ``rendered_rows`` (the mounted options) rather than off
+    ``CompletionState`` is what makes that a claim about the widget instead of
+    about a formatter it might not call.
+
+    The wrap itself is asserted as a precondition rather than assumed — a row
+    that happened to fit on one line would satisfy every "text survived" check
+    while testing nothing about wrapping.
+    """
+    entries = _wrapping_skill_entries()
+    session = _real_session(tmp_path, skills=entries)
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("colon")
+        await pilot.pause()
+
+        assert popup.is_open, "typing : did not open the skill menu"
+        rows = popup.rendered_rows()
+        assert any("\n" in row for row in rows), (
+            f"test setup: no row wrapped at this width, so the defect's "
+            f"condition was never reached: {rows}"
+        )
+        for entry in entries:
+            row = next((r for r in rows if r.startswith(f":{entry.name}")), None)
+            assert row is not None, f"{entry.name} is missing from the menu: {rows}"
+            unwrapped = row.replace("\n" + WRAP_INDENT, " ")
+            assert entry.description in unwrapped, (
+                f"the description was lost between the source and the mounted "
+                f"row — mounted {unwrapped!r}, expected to contain "
+                f"{entry.description!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_a_wrapped_row_indents_its_continuation_lines(tmp_path) -> None:
+    """Tier 2b: every continuation line of a wrapped row is indented, so a
+    wrapped candidate cannot read as an extra candidate (#3545).
+
+    The reported symptom was three skill rows reading as six because Textual's
+    own wrap returns each continuation to column 0 — exactly where the NEXT
+    candidate's ``:name`` starts. The assertion is therefore about the column a
+    continuation begins at, not about how the row is spelled: it must not start
+    where a fresh row would.
+    """
+    entries = _wrapping_skill_entries()
+    session = _real_session(tmp_path, skills=entries)
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("colon")
+        await pilot.pause()
+
+        assert popup.is_open, "typing : did not open the skill menu"
+        continuations = [
+            line
+            for row in popup.rendered_rows()
+            for line in row.split("\n")[1:]
+        ]
+        assert continuations, (
+            f"test setup: nothing wrapped, so there is no continuation to "
+            f"check: {popup.rendered_rows()}"
+        )
+        for line in continuations:
+            assert line.startswith(WRAP_INDENT), (
+                f"a continuation line starts at column 0, where the next "
+                f"candidate's own token starts: {line!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_one_wrapped_candidate_stays_one_selectable_option(tmp_path) -> None:
+    """Tier 2b: wrapping a row must not split it into several OPTIONS — ``↓``
+    from the first candidate lands on the second candidate, not on the first
+    one's second line (#3545).
+
+    The cheap way to indent a continuation is to mount it as its own row, and
+    every visual assertion above would pass under it while ``↓``, the highlight
+    and the Tab accept all silently walked half a description.
+    """
+    entries = _wrapping_skill_entries()
+    session = _real_session(tmp_path, skills=entries)
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("colon")
+        await pilot.pause()
+
+        candidates = popup.state().candidates
+        assert {c.value for c in candidates} == {e.name for e in entries}, (
+            f"test setup: ↓ needs both wrapping candidates on offer: "
+            f"{candidates}"
+        )
+
+        def _highlighted_row() -> str:
+            return popup.rendered_rows()[popup.highlighted]
+
+        assert popup.selected() is candidates[0], (
+            f"test setup: the menu did not open on its first candidate: "
+            f"{popup.selected()}"
+        )
+        await pilot.press("down")
+        await pilot.pause()
+        assert popup.selected() is candidates[1], (
+            f"↓ from a wrapped candidate did not reach the NEXT candidate: "
+            f"{popup.selected()}"
+        )
+        # The row the user SEES highlighted has to be the candidate Tab would
+        # accept. Mounting each visual line as its own option keeps the two
+        # assertions above passing — ``selected()`` indexes the candidate
+        # tuple, not the option list — while the highlight sits on some other
+        # candidate's continuation line.
+        assert _highlighted_row().startswith(popup.selected().label), (
+            f"the highlighted row is not the candidate that would be accepted "
+            f"— highlighted {_highlighted_row()!r}, accept target "
+            f"{popup.selected().label!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_open_menu_re_wraps_when_the_terminal_width_changes(tmp_path) -> None:
+    """Tier 2b: a menu that is already open re-wraps for the new width when the
+    terminal is resized under it (#3545).
+
+    The wrap is computed against a width, so it goes stale the moment the width
+    moves; a menu is open exactly while the user is typing, which is also when
+    nothing else would rebuild it. Asserted on the invariant rather than on the
+    resulting line lengths: whatever the width, the text is still whole and the
+    continuations are still indented.
+    """
+    entries = _wrapping_skill_entries()
+    session = _real_session(tmp_path, skills=entries)
+    transport = RecordingTransport()
+    app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        popup = app.query_one(CompletionPopup)
+        composer = app.query_one(Composer)
+        composer.focus()
+        await pilot.pause()
+
+        await pilot.press("colon")
+        await pilot.pause()
+        assert popup.is_open, "typing : did not open the skill menu"
+        before = popup.rendered_rows()
+
+        await pilot.resize_terminal(70, 30)
+        await pilot.pause()
+
+        after = popup.rendered_rows()
+        assert after != before, (
+            f"the menu kept the wrap it was built with at the old width: "
+            f"{after}"
+        )
+        for entry in entries:
+            row = next((r for r in after if r.startswith(f":{entry.name}")), None)
+            assert row is not None, f"{entry.name} vanished on resize: {after}"
+            assert entry.description in row.replace("\n" + WRAP_INDENT, " "), (
+                f"the re-wrap lost text: {row!r}"
+            )
+            for line in row.split("\n")[1:]:
+                assert line.startswith(WRAP_INDENT), (
+                    f"the re-wrap dropped the continuation indent: {line!r}"
+                )

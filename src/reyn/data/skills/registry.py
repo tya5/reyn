@@ -39,8 +39,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-# Maximum characters to keep from a skill description (one-line cap).
+# Maximum characters to keep from a skill description (one-line cap), ELLIPSIS
+# INCLUDED — ``skills.entries.<name>.description`` is arbitrary operator/config
+# text that reaches the system prompt and the ``skill_list`` result, so the bound
+# is what keeps that standing token cost finite.
 _DESC_MAX = 200
+
+# Appended when the cap actually CUTS, so the loss is legible on every surface
+# the description reaches. A bare ``[:200]`` slice lands mid-word and reads as a
+# rendering fault rather than as a cap — #3545 was reported as "the completion
+# popup is losing text" when the popup was faithfully rendering every character
+# it was handed and the cut had happened here, at load.
+_DESC_ELLIPSIS = "…"
 
 # The visibility axis (#2971), ordered widest-reach → narrowest. This tuple is
 # the single source of truth: the loader's validation error renders it, and
@@ -76,11 +86,25 @@ class SkillEntry:
 
 
 def _truncate_description(desc: str) -> str:
-    """Keep only the first line, capped to _DESC_MAX chars."""
+    """Keep only the first line, capped to :data:`_DESC_MAX` chars.
+
+    A cut lands on a WORD boundary and carries :data:`_DESC_ELLIPSIS`. Both are
+    about making the cap SAY SO: the description is the text a model decides
+    relevance from and the text the ``:``-completion popup lists, and a bare
+    slice hands both a truncated final word with nothing to distinguish "the
+    author wrote this much" from "something downstream broke". The ellipsis is
+    inside the budget, not added to it, so the bound this function exists to
+    enforce still holds exactly.
+    """
     first_line = (desc.splitlines()[0] if desc else "").strip()
-    if len(first_line) > _DESC_MAX:
-        return first_line[:_DESC_MAX]
-    return first_line
+    if len(first_line) <= _DESC_MAX:
+        return first_line
+    head = first_line[: _DESC_MAX - len(_DESC_ELLIPSIS)]
+    # Back up to the last space so the visible text ends on a whole word; a
+    # single unbroken run longer than the cap has no boundary to find, and is
+    # cut where it falls rather than dropped to empty.
+    kept = head.rsplit(" ", 1)[0] if " " in head else head
+    return kept.rstrip() + _DESC_ELLIPSIS
 
 
 def _entry_from_config(name: str, raw: Any) -> SkillEntry | None:
