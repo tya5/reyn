@@ -40,6 +40,21 @@ the ``_llm_caller`` test seam) to the REAL ``call_llm_tools`` -> real
 ``litellm.acompletion``, intercepted by the REAL ``LLMReplay`` Fake -- the
 literal Tier 2c -> Tier 3 upgrade path testing.md's own Tier 3 section names.
 
+#3520 re-keyed ``turn2_ingest_query.jsonl`` (regenerated via
+``REYN_FP0063_ARC_WITNESS_GENERATE=1``; the prompts and the authored responses
+are byte-identical, only the hashed keys moved, and ``turn1_install.jsonl``
+regenerated unchanged). Turn 1 installs a plugin that registers two MCP
+servers; the tools cache's populated-guard used to be one-shot, so those
+servers were never probed and turn 2's ``tools=`` carried no
+``mcp_tool_name`` entries for them — the model was not told about capabilities
+the install had just given it (the shape #3512 reported). #3520 made the guard
+per-server, so turn 2 now probes them and their tools reach the payload; that
+payload is part of ``LLMReplay.key``'s hashed input, hence the new keys.
+MEASURED, not inferred: with the fix, turn 2's server→tools projection is
+``{reyn_markitdown: [convert_to_markdown], reyn_chunker: [chunk],
+reyn_vector_store: [upsert, query, list_metadata, delete]}`` against turn 1's
+``{reyn_markitdown: [convert_to_markdown]}``.
+
 Why the fixture responses are AUTHORED, not live-recorded (disclosed, not
 silently passed off as a live LLM transcript -- same disclosure norm as this
 plugin's markitdown-mcp stub substitution below): this sandbox's LLM
