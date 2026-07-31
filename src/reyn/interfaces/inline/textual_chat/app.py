@@ -252,9 +252,13 @@ _UNSET: object = object()
 #: proxy that packs many SSE events into one read); repainting at that rate spends
 #: the loop re-presenting and re-rendering an O(body) markdown body far more often
 #: than a terminal can show. 1/30 s is the knee of the measured curve on the real
-#: TUI path (2000 deltas / 60 KB reply): render work 1825 ms → 990 ms and the worst
-#: single loop block 118 ms → 96 ms, while going on to 1/20 s bought a further ~5%
-#: for 50% more latency. It is a REPAINT budget only — the accumulated text is
+#: TUI path (2000 deltas / 60 KB reply, textual-flowview v0.9.0): ``set_item``
+#: 1979 → 75 and ``present`` 1908 → 72 with wall-clock 16.1 s → 3.3 s, while going
+#: on to 1/20 s bought a further ~5% for 50% more latency. (Those present/wall
+#: figures are against the drain's unconditional suspension point already being
+#: in place — see ``transport/drain.py``: with it and without this budget, every
+#: delta buys its own present, which is what the 1908 is.) It is a REPAINT budget
+#: only — the accumulated text is
 #: never gated by it (see :class:`_StreamingReply`), and no deferral outlives it
 #: (:meth:`TextualChatApp._schedule_streaming_catchup`).
 _STREAM_REPAINT_MIN_INTERVAL = 1 / 30
@@ -2704,8 +2708,8 @@ class TextualChatApp(App):
         window repaints everything collected since, and a catch-up timer
         (:meth:`_schedule_streaming_catchup`) bounds the wait when no such
         delta follows. Measured on the real TUI path (2000 deltas, 60 KB
-        reply): ``set_item`` 1979 → 53, ``present`` 89 → 37, total on-loop
-        render work 1825 ms → 990 ms, with the full text unchanged.
+        reply, textual-flowview v0.9.0): ``set_item`` 1979 → 75, ``present``
+        1908 → 72, wall-clock 16.1 s → 3.3 s, with the full text unchanged.
 
         This entry is finalized (and popped from
         :attr:`_streaming_replies`) by the terminal completion frame in
