@@ -1886,7 +1886,14 @@ class TextualChatApp(App):
         The SAME entry is updated in place (churn-zero, #3299 P2 §4) to a
         ``✓ answered: <label>`` record
         (:meth:`ReynPresenter._present_intervention_pending` reads the
-        ``_answer_label`` meta key). The entry's :class:`EntryState` goes to
+        ``_answer_label`` meta key). #3540: this is the LOCAL-panel half of the
+        settle — the answer's own broadcast comes back as an
+        ``intervention_answer_submitted`` event and stamps the SAME key on the
+        SAME entry (:meth:`_handle_intervention_answer_event`), which is what
+        settles an answer this panel never saw (`/answer`, an A2A peer, AG-UI
+        HITL). Both writes are idempotent in render terms, so the local path
+        keeps its immediate feedback without producing a second entry. The
+        entry's :class:`EntryState` goes to
         ``DEFAULT`` — not ``SUCCESS``/``ERROR`` (an intervention answer is
         neither an outcome to celebrate nor a failure, the #3296
         don't-fabricate-a-classification lesson) and not ``RUNNING`` (would
@@ -2511,28 +2518,83 @@ class TextualChatApp(App):
             text = _neutralized_label(str(item.get("text", "")))
             self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
 
-    def _handle_intervention_answer_event(self, event) -> None:
-        """Render an ``intervention_answer_submitted`` chat-event as a flow
-        entry (#3300 — the last outbox `kind="user"` broadcast site,
-        ``InterventionHandler.deliver_answer_to``, migrated to a chat-event).
+    def _announced_intervention_entry(self, iv_id: str) -> "Entry[OutboxMessage] | None":
+        """The flow entry ``InterventionHandler.announce`` produced for
+        intervention ``iv_id``, or ``None`` when this surface never saw the
+        announce (#3540).
 
-        Unlike ``user_submitted`` (which stages in the sent-queue region
-        first, :meth:`_handle_user_submitted_event`), an intervention answer
-        has no queue/dispatch lifecycle to stage through — it renders
-        straight to the flow, same as before this event-ify (when it arrived
-        as a DISPLAY frame). The payload carries RAW text; this is the
-        surface's OWN neutralize-at-render-boundary call (the SAME
-        ``_neutralized_label`` seam :meth:`_handle_turn_started_event` uses
-        for the analogous ``user_submitted`` promotion), so a control/ESC
-        byte in an answer (free-text or an LLM-derived choice label) cannot
-        reach this TTY.
+        The correlation surface is the ENTRY's own ``meta["intervention_id"]``
+        (put there by the handler's ``_iv_meta``), NOT :attr:`_pending_ivs`:
+        :meth:`_resolve_intervention` POPS the pending map the moment the TUI
+        panel delivers an answer, which is BEFORE the resulting
+        ``intervention_answer_submitted`` event comes back round the transport
+        — a lookup keyed on the pending map would miss exactly the common
+        case. The entry itself is never popped, so it is a stable key at any
+        point in the answer's lifecycle."""
+        for entry in self.conversation:
+            item = entry.item
+            if item.kind != "intervention":
+                continue
+            if (item.meta or {}).get("intervention_id") == iv_id:
+                return entry
+        return None
+
+    def _handle_intervention_answer_event(self, event) -> None:
+        """Fold an ``intervention_answer_submitted`` chat-event into the flow
+        entry that ASKED the question (#3300 — the last outbox `kind="user"`
+        broadcast site, ``InterventionHandler.deliver_answer_to``, migrated to
+        a chat-event; #3540 — the fold).
+
+        #3540: the answer belongs to a question that ALREADY has a flow entry
+        (``announce``'s ``kind="intervention"`` row), so appending it as its own
+        ``kind="user"`` row left an answered intervention rendering as TWO
+        entries live where the SAME session reloaded rendered ONE (``restore.py``'s
+        ratified self-contained Q→A shape, #3299 P4). This reads the
+        ``intervention_id`` the event has always carried, finds that entry, and
+        settles it IN PLACE by stamping ``_answer_label`` — the same churn-zero
+        write :meth:`_resolve_intervention` makes for the local-panel path, and
+        the same meta key the restore projection writes, so live and restore
+        now produce the SAME entry sequence for the same answered intervention.
+
+        The branch is on ENTRY PRESENCE, never on delivery route: `/answer`, an
+        A2A peer and the AG-UI HITL path all deliver through the one
+        ``deliver_answer_to`` funnel and all of them saw the announce, so one
+        entry-keyed lookup covers every funnel uniformly (a TUI-local
+        suppression would have lost the answers that never touch the panel).
+
+        FALLBACK — no matching entry: append the bare answer exactly as
+        before. That leg is what a thin client which ATTACHED AFTER the
+        announce sees, and a bare answer line is the correct render there:
+        it has no question row to fold into. It is also the leg the payload's
+        RAW text is neutralized on (:func:`_neutralized_label`, the SAME seam
+        :meth:`_handle_turn_started_event` uses for ``user_submitted``). The
+        fold leg stamps the RAW label instead — deliberately, because
+        ``ReynPresenter._present_intervention_pending`` neutralizes
+        ``_answer_label`` at ITS render call site (the ONE boundary the
+        restored path already relies on), so pre-stripping here would make
+        live and restore differ in the stored bytes for no gain.
+
+        Note the ANSWERER's attribution meta (``actor``/``auth_user_id``) is
+        not merged onto the folded entry: that entry's ``actor`` is the ASKING
+        run's, and history's own answered record keeps no answerer identity
+        either — so merging would both overwrite a live field and put live
+        ahead of what restore can ever reproduce. The fallback leg carries the
+        attribution meta unchanged, as it always did.
         """
         from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
 
         data = event.data or {}
-        text = _neutralized_label(str(data.get("text", "")))
+        raw_text = str(data.get("text", ""))
+        iv_id = data.get("intervention_id")
+        entry = self._announced_intervention_entry(iv_id) if iv_id else None
+        if entry is not None:
+            meta = entry.item.meta or {}
+            entry.set_item(replace(entry.item, meta={**meta, "_answer_label": raw_text}))
+            return
         meta = dict(data.get("meta") or {})
-        self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+        self._ingest_frame(
+            OutboxMessage(kind="user", text=_neutralized_label(raw_text), meta=meta)
+        )
 
     def _handle_session_halted_event(self, event) -> None:
         """#2280: the durability-halt observability surface. ``session_halted``
@@ -2872,10 +2934,16 @@ class TextualChatApp(App):
         once, on the first frame (:meth:`_seed_queue_view`). A single frame's
         failure must not kill the pump, so ingest is guarded.
 
-        #3300 (event-ify the intervention-answer echo): ``intervention_answer_submitted``
-        (:meth:`_handle_intervention_answer_event`) renders straight to the
-        flow, unlike ``user_submitted`` — an intervention answer was never a
-        queued inbox item, so there is no sent-queue stage to promote through.
+        #3300 (event-ify the intervention-answer echo) / #3540 (the fold):
+        ``intervention_answer_submitted``
+        (:meth:`_handle_intervention_answer_event`) never stages in the
+        sent-queue the way ``user_submitted`` does — an intervention answer was
+        never a queued inbox item, so there is no promotion step. It does not
+        append a row of its own either: it SETTLES the ``kind="intervention"``
+        entry its ``intervention_id`` identifies, in place, so an answered
+        intervention is ONE Q→A entry (the shape ``restore.py`` already
+        projects). Only an answer with no matching entry — a client attached
+        after the announce — still appends a bare ``kind="user"`` row.
 
         #3310 N2: ``session_attached`` (:meth:`_handle_session_attached_event`)
         is the switch-reset BARRIER — everything on this stream before it

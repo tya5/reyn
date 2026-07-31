@@ -82,10 +82,17 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         # chat-event, following the ``user_submitted`` precedent exactly.
         # Carries RAW text (the answer's display text: the raw answer, or the
         # matched choice's label) + ``intervention_id`` + attribution ``meta``;
-        # each surface's event→display handler neutralizes at render time (see
+        # each surface neutralizes at ITS render boundary (see
         # ``reyn.interfaces.repl.renderer.intervention_answer_display_message``
         # / ``reyn.interfaces.inline.textual_chat.app.
-        # TextualChatApp._handle_intervention_answer_event``).
+        # TextualChatApp._handle_intervention_answer_event``). #3540: the
+        # Textual surface FOLDS the answer into the ``kind="intervention"``
+        # entry ``intervention_id`` identifies rather than appending a row of
+        # its own, so for that (now normal) leg the render boundary is
+        # ``ReynPresenter._present_intervention_pending``'s ``_answer_label``
+        # neutralization — the SAME one the restored Q→A entry passes through;
+        # the handler's own ``_neutralized_label`` call still covers the
+        # no-matching-entry fallback.
         "intervention_answer_submitted",
         # #3300 P3 (Y-server): cancel-by-id for an UNDISPATCHED (queued) user
         # message — the server-authoritative removal signal (never a
