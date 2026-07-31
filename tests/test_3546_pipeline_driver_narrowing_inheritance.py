@@ -1,6 +1,6 @@
 """Tier 2: OS invariant — a pipeline driver-session is born with the invoker's
-per-session capability narrowing, and every ``spawn_session_recorded`` call site
-declares one.
+per-session capability narrowing, and every spawn call site declares one — and
+(#3553) declares which of its spawner's envelope layers that narrowing composes.
 
 #3546. ``AgentRegistry.spawn_session_recorded`` is the single seam at which a new
 permission envelope is BORN. Two of its three call sites pass ``narrowing=``
@@ -15,6 +15,20 @@ places that might have re-checked: call seams are unbounded (a new dispatch path
 can be added at any time), whereas the sites where an envelope is born are
 bounded and AST-enumerable. That is what ``test_every_spawn_site_passes_narrowing``
 pins.
+
+#3553 widened that gate twice, because passing SOME ``narrowing=`` value turned out
+to be satisfiable by a value that is not a function of the parent at all — which is
+what the ``agent`` step's own spawn was doing one level down, green here the whole
+time. The enumeration now also covers ``spawn_ephemeral_session`` (the forwarder,
+so the site that DECIDES the agent-step value is inside the gate rather than one
+hop outside it), and every enumerated site must declare in ``_SITE_PARENT_LAYERS``
+which layers of its spawner's envelope its value composes, plus the behavioural
+test that measures the claim. ⚠️ That declaration is an INTENT record: a site whose
+prose and code disagree stays green. It is the index of the per-site behavioural
+tests, not a substitute for them — see ``_SiteDeclaration``. Enumerating the sites
+also surfaced a THIRD member of this fix-class (the ``session_spawn`` tool's spawn
+passes its LLM's requested narrowing, never its spawner's), declared as such and
+filed as #3556 rather than fixed on a guess.
 
 Scope of what this fix carries (the layers a session's live capability envelope
 is composed from — enumerated, not assumed):
@@ -57,6 +71,7 @@ alone.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -269,18 +284,115 @@ async def test_pipeline_driver_session_inherits_invoker_narrowing(
 
 # ── the completeness gate: every place an envelope is BORN ────────────────────
 
-#: ``(module path relative to src/, enclosing function name)`` for a
-#: ``spawn_session_recorded`` call site that legitimately must NOT pass
-#: ``narrowing=``, with the reason. Empty today: all production call sites pass
-#: it. A new site either passes ``narrowing=`` or is registered here with a
-#: reason a reviewer can weigh — the #3484 ``*_UNMEASURED`` idiom.
+#: ``(module path relative to src/, enclosing function name)`` for a spawn call
+#: site that legitimately must NOT pass ``narrowing=``, with the reason. Empty
+#: today: all production call sites pass it. A new site either passes
+#: ``narrowing=`` or is registered here with a reason a reviewer can weigh — the
+#: #3484 ``*_UNMEASURED`` idiom.
 _NARROWING_EXEMPT_SITES: "dict[tuple[str, str], str]" = {}
 
-_SPAWN_SEAM = "spawn_session_recorded"
+#: The seams at which a child session's permission envelope is decided: the
+#: recorded spawn primitive, plus the one wrapper that forwards a caller's value
+#: into it. Both are enumerated because a site that only calls the WRAPPER
+#: (``run_agent_step``) still decides the value, and counting the primitive alone
+#: would leave that decision outside the gate — which is how #3553 stayed invisible
+#: to the #3546 version of this gate for as long as it did.
+_SPAWN_SEAMS: "tuple[str, ...]" = ("spawn_session_recorded", "spawn_ephemeral_session")
+
+
+@dataclass(frozen=True)
+class _SiteDeclaration:
+    """What a spawn site claims about the value it passes as ``narrowing=``.
+
+    ⚠️ **This is an INTENT record, not a behaviour record.** Nothing here reads the
+    site's implementation; a site whose ``parent_layers`` prose and whose code
+    disagree stays green in this file forever. That is the exact limit the #3554
+    version of this gate had in a different spelling — it pinned that a site passes
+    SOME value, which #3553 satisfied while passing a value that was not a function
+    of the parent at all. Widening the pin from "passes a value" to "declares which
+    parent layers the value composes" moves the failure from silent to *stated*; it
+    does not make it detected.
+
+    ``measured_by`` is what closes that: the behavioural half. It names the tests
+    that drive the site for real and observe a denied capability's side effect NOT
+    happening, so the registry doubles as an index of those tests and a site with an
+    empty index is visibly unmeasured rather than invisibly so.
+    """
+
+    #: Which layers of the SPAWNER's envelope the value passed here composes.
+    parent_layers: str
+    #: ``"tests/<file>.py::<test function>"`` for each behavioural measurement of
+    #: this site. Empty only when ``unmeasured_reason`` says why.
+    measured_by: "tuple[str, ...]" = ()
+    #: Why this site has no behavioural measurement, when it has none.
+    unmeasured_reason: str = ""
+
+
+_S3546 = "tests/test_3546_pipeline_driver_narrowing_inheritance.py"
+_S3553 = "tests/test_3553_agent_step_worker_narrowing_inheritance.py"
+
+#: Every spawn site in ``src/``, with the parent layers its ``narrowing=`` value
+#: composes and the behavioural test that measures that claim. A site missing from
+#: this table fails ``test_every_spawn_site_declares_its_parent_layers`` — the
+#: completeness half. See ``_SiteDeclaration`` for why that half is not sufficient.
+_SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
+    ("reyn/runtime/session_api.py", "_spawn_pipeline_driver_session"): _SiteDeclaration(
+        parent_layers=(
+            "the invoker's #2103-S1a sid-keyed narrowing, VERBATIM "
+            "(registry.per_session_narrowing) — this site imposes nothing of its own, "
+            "so there is nothing to compose it with. The name-keyed layers (the "
+            "agent's permissions declaration, topology capability_profile bindings, "
+            "the #2081 _delegate floor) ride along for free because the driver shares "
+            "the invoker's identity; the #2285 /visibility toggle and the #1827-S4b "
+            "ephemeral untrusted-context narrowing are deliberately not carried — see "
+            "this module's docstring, layers 3 and 4."
+        ),
+        measured_by=(f"{_S3546}::test_narrowed_invoker_pipeline_tool_step",),
+    ),
+    ("reyn/runtime/session_api.py", "run_agent_step"): _SiteDeclaration(
+        parent_layers=(
+            "the invoker's #2103-S1a sid-keyed narrowing COMPOSED with this agent "
+            "step's own narrowing (the structural delegation deny + the step's "
+            "capabilities allow-list), via capability_profile."
+            "compose_narrowing_mappings: deny keys union, allow keys intersect, an "
+            "absent allow key is ⊤. Same name-keyed / not-carried layers as the "
+            "pipeline driver site above (#3553)."
+        ),
+        measured_by=(
+            f"{_S3553}::test_worker_without_capabilities_inherits_invoker_allow_list",
+            f"{_S3553}::test_worker_with_capabilities_inherits_invoker_deny_list",
+        ),
+    ),
+    ("reyn/runtime/session_api.py", "spawn_ephemeral_session"): _SiteDeclaration(
+        parent_layers=(
+            "NONE of its own — a thin forwarder that hands its caller's ``narrowing`` "
+            "straight to the primitive. The deciding site is whoever calls IT, which "
+            "is why this gate enumerates that seam too."
+        ),
+        unmeasured_reason=(
+            "there is no value of its own to measure; its callers are declared and "
+            "measured individually."
+        ),
+    ),
+    ("reyn/runtime/services/router_host_adapter.py", "spawn_session"): _SiteDeclaration(
+        parent_layers=(
+            "🔴 NONE — the value is the ``session_spawn`` tool argument, i.e. whatever "
+            "the spawning session's LLM asked for. The spawner's OWN #2103-S1a "
+            "sid-keyed narrowing is not a term, so this is the third site of the "
+            "#3546 / #3553 fix-class and it is still open: #3556."
+        ),
+        unmeasured_reason=(
+            "#3556 — reachability is unmeasured (code-trace only), and whether this "
+            "seam is even supposed to be restrict-only against its spawner has not "
+            "been confirmed against the design prose. Filed rather than fixed in "
+            "#3553 so the fix is not a guess."
+        ),
+    ),
+}
 
 
 def _spawn_call_sites() -> "list[tuple[str, str, int]]":
-    """Every ``spawn_session_recorded`` CALL in ``src/`` as
+    """Every CALL of a ``_SPAWN_SEAMS`` function in ``src/`` as
     ``(relative module path, enclosing function, keywords-present marker)``.
 
     An AST walk, not a regex: the same keyword inside a docstring or a comment is
@@ -304,7 +416,7 @@ def _spawn_call_sites() -> "list[tuple[str, str, int]]":
             name = func.attr if isinstance(func, ast.Attribute) else (
                 func.id if isinstance(func, ast.Name) else None
             )
-            if name != _SPAWN_SEAM:
+            if name not in _SPAWN_SEAMS:
                 continue
             has_narrowing = any(kw.arg == "narrowing" for kw in node.keywords) or any(
                 kw.arg is None for kw in node.keywords  # **kwargs forwarding
@@ -318,21 +430,23 @@ def _spawn_call_sites() -> "list[tuple[str, str, int]]":
 
 
 def test_spawn_seam_call_sites_are_findable() -> None:
-    """Tier 2: instrument check — the AST walk finds the seam's known call sites.
+    """Tier 2: instrument check — the AST walk finds the seams' known call sites.
 
     A completeness gate that silently found NOTHING would pass for the wrong
-    reason, so the gate's own search is witnessed against two sites it must see:
-    the pipeline driver spawn and the ``session_spawn`` tool's spawn.
+    reason, so the gate's own search is witnessed against three sites it must see:
+    the pipeline driver spawn, the ``session_spawn`` tool's spawn, and (#3553) the
+    agent-step spawn, which reaches the primitive only through the wrapper.
     """
     sites = _spawn_call_sites()
     functions = {(mod, fn) for mod, fn, _ in sites}
     assert ("reyn/runtime/session_api.py", "_spawn_pipeline_driver_session") in functions
+    assert ("reyn/runtime/session_api.py", "run_agent_step") in functions
     assert any(mod == "reyn/runtime/services/router_host_adapter.py" for mod, _ in functions)
 
 
 def test_every_spawn_site_passes_narrowing() -> None:
-    """Tier 2: every place a new permission envelope is BORN
-    (``spawn_session_recorded``) declares the narrowing the child inherits.
+    """Tier 2: every place a new permission envelope is BORN declares the narrowing
+    the child inherits.
 
     Counted at the place that should inherit, not at the places that might have
     re-checked — the latter set is unbounded, this one is enumerable. A site that
@@ -344,8 +458,63 @@ def test_every_spawn_site_passes_narrowing() -> None:
         if not has and (mod, fn) not in _NARROWING_EXEMPT_SITES
     ]
     assert not missing, (
-        "spawn_session_recorded call site(s) do not pass narrowing=, so the "
-        "spawned session's permission envelope is born wider than its spawner's: "
+        "spawn call site(s) do not pass narrowing=, so the spawned session's "
+        "permission envelope is born wider than its spawner's: "
         f"{missing!r}. Pass narrowing=, or register the site in "
         "_NARROWING_EXEMPT_SITES with the reason it must not."
     )
+
+
+def test_every_spawn_site_declares_its_parent_layers() -> None:
+    """Tier 2: (#3553) every spawn site declares WHICH of its spawner's envelope
+    layers the value it passes composes.
+
+    The #3546 gate above pins that a site passes SOME ``narrowing=`` value, which is
+    satisfiable by a value that is not a function of the parent at all — exactly what
+    ``run_agent_step`` did. This half makes the composition a stated property of each
+    site. ⚠️ Stated, not verified: see ``_SiteDeclaration``.
+    """
+    undeclared = [
+        (mod, fn) for mod, fn, _ in _spawn_call_sites()
+        if (mod, fn) not in _SITE_PARENT_LAYERS
+    ]
+    assert not undeclared, (
+        "spawn call site(s) do not declare which layers of the spawner's permission "
+        f"envelope their narrowing= value composes: {undeclared!r}. Add an entry to "
+        "_SITE_PARENT_LAYERS naming the layers AND the behavioural test that measures "
+        "them (or the reason there is none)."
+    )
+
+
+def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
+    """Tier 2: (#3553) the declaration registry doubles as an INDEX OF TESTS — each
+    site names either the behavioural test(s) that measure its composition or the
+    reason it has none, and each named test exists.
+
+    This is the join between the gate's two halves. The completeness half records
+    intent and cannot fail on a wrong implementation; the semantic half is per-site
+    behavioural and cannot enumerate. Requiring every declared site to point at a
+    real test is what stops the intent record from being the only thing a new site
+    ever gets — a stale name (a renamed or deleted test) fails here rather than
+    quietly leaving the site unmeasured.
+    """
+    tests_root = Path(__file__).resolve().parent
+    for (mod, fn), decl in sorted(_SITE_PARENT_LAYERS.items()):
+        assert decl.parent_layers.strip(), f"{mod}::{fn} declares no parent layers"
+        assert decl.measured_by or decl.unmeasured_reason.strip(), (
+            f"{mod}::{fn} names neither a behavioural test nor a reason it has none"
+        )
+        for ref in decl.measured_by:
+            path_part, _, test_name = ref.partition("::")
+            path = tests_root.parent / path_part
+            assert path.is_file(), f"{mod}::{fn} names a missing test file: {ref}"
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            defined = {
+                node.name for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            assert test_name in defined, (
+                f"{mod}::{fn} names a behavioural test that does not exist: {ref}. "
+                "A renamed or deleted measurement must not leave the site silently "
+                "declared-but-unmeasured."
+            )

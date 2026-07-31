@@ -1661,6 +1661,20 @@ class Session:
         return self._agent.agent_id
 
     @property
+    def session_id(self) -> str:
+        """This session's LIVE sid — the second half of the ``(agent, sid)`` key
+        every per-session workspace surface is keyed by (``config.yaml`` narrowing,
+        snapshot, state dir).
+
+        A live read, not the construction-time value: ``spawn_session_recorded``
+        re-keys a spawned session AFTER constructing it (``session._session_id =
+        new_sid``), so anything caching the constructor's ``session_id`` argument is
+        stale for exactly the sessions that were spawned programmatically. #3553
+        added it because ``run_agent_step`` holds its invoker as a whole ``Session``
+        and needs that key to look the invoker's own narrowing back up."""
+        return self._session_id
+
+    @property
     def model(self) -> str:
         return self._model_override if self._model_override is not None else self._agent.model
 
