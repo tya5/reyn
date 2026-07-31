@@ -52,6 +52,7 @@ from reyn.interfaces.transport.agui.surface import (
     monotonic,
     surface_registry,
 )
+from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
@@ -372,7 +373,7 @@ class _SessionFrameSource:
             # the emitter would then encode + serialize the whole burst without
             # the server's event loop running anything else (other connections'
             # writes, the fail-close driver's timers).
-            await asyncio.sleep(0)
+            await suspend_between_frames()
             yield frame
             if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
                 return

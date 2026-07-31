@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, AsyncIterator
 
 from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
@@ -146,7 +147,7 @@ class InProcessTransport(ClientTransport):
             # offer and needs no time-based escape hatch to bound it. It also
             # leaves the terminal check below exactly where it was — no batch
             # can ever straddle ``__end__``.
-            await asyncio.sleep(0)
+            await suspend_between_frames()
             yield frame
             if frame.tag is FrameTag.DISPLAY and frame.message.kind == "__end__":
                 return

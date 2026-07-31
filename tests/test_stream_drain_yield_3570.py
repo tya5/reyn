@@ -28,14 +28,19 @@ display path the registry forwarder feeds). No mocks.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 from pathlib import Path
 
 import pytest
 from textual.message import Message
 
+import reyn.interfaces.transport as transport_pkg
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.transport.agui.client import AgUiTransport
+from reyn.interfaces.transport.agui.endpoint import _SessionFrameSource
+from reyn.interfaces.transport.agui.protocol import encode_frame, to_sse
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, FrameTag
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
@@ -234,3 +239,178 @@ async def test_the_stream_still_terminates_at_the_end_frame(tmp_path) -> None:
         assert isinstance(seen[0], (DisplayFrame, EventFrame))
     finally:
         await registry.shutdown()
+
+
+async def _suspension_gaps_while_draining(frames, *, count: int) -> "list[int]":
+    """Drain ``count`` frames while a co-running task counts its own turns, and
+    return the counter's advance BETWEEN consecutive frames.
+
+    A gap of 0 means the loop never came back between those two frames — the
+    starvation this issue is about. Sampling happens INSIDE the drain, so no
+    ``sleep`` in a test body can inflate the reading (a co-task left spinning
+    across a polling wait would report health the drain never had)."""
+    counter = [0]
+    stop = asyncio.Event()
+
+    async def co_task() -> None:
+        while not stop.is_set():
+            counter[0] += 1
+            await asyncio.sleep(0)
+
+    runner = asyncio.create_task(co_task())
+    samples: "list[int]" = []
+    try:
+        async for _frame in frames:
+            samples.append(counter[0])
+            if len(samples) >= count:
+                break
+    finally:
+        stop.set()
+        await runner
+    return [b - a for a, b in zip(samples, samples[1:])]
+
+
+@pytest.mark.asyncio
+async def test_the_agui_client_drain_suspends_between_frames_of_one_read(
+    tmp_path,
+) -> None:
+    """Tier 2: ★the SECOND ``ClientTransport`` — ``AgUiTransport`` — returns to
+    the loop between frames of a buffered SSE read, not only between reads.
+
+    Its starvation has a different source from ``InProcessTransport``'s: no
+    queue is involved. ``async for raw in self._sse_lines`` awaits a line
+    iterator that, over an already-buffered read, produces every line without
+    suspending, and one decoded block can carry MANY frames through an inner
+    ``for`` loop with no await of its own (a MESSAGES_SNAPSHOT reconnect
+    carries the whole backlog that way). Enumerating the three implementations
+    and patching each was the easy half; this is the half that says the patch
+    is load-bearing HERE and not just in the site that happened to have a test.
+
+    Real wire bytes (the production ``encode_frame`` + ``to_sse``) through the
+    real ``AgUiTransport``.
+
+    Strip-falsify (PR body): dropping the suspension from
+    ``AgUiTransport.frames`` makes every gap 0 — the whole SSE buffer is
+    decoded and delivered without the loop running anything else."""
+    count = 60
+    sse = "".join(
+        to_sse(encode_frame(DisplayFrame(OutboxMessage(kind="agent", text=f"r{i}"))))
+        for i in range(count)
+    )
+
+    async def _lines():
+        for line in sse.split("\n"):
+            yield line
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_lines(), _noop_send)
+    gaps = await _suspension_gaps_while_draining(transport.frames(), count=count)
+
+    starved = [g for g in gaps if g == 0]
+    assert gaps, "test setup: no frames were decoded from the SSE buffer"
+    assert len(starved) < len(gaps) // 10, (
+        f"{len(starved)} of {len(gaps)} consecutive frames were delivered with "
+        "the event loop running nothing in between — the AG-UI client drain "
+        "starves the loop for a whole buffered read"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_server_frame_source_suspends_between_frames_of_a_burst(
+    tmp_path,
+) -> None:
+    """Tier 2: ★the THIRD site — the AG-UI endpoint's per-connection frame
+    source — returns to the loop between frames too.
+
+    Not a ``ClientTransport`` (it is the server's own fan-out), but the same
+    ``asyncio.Queue`` + synchronous ``put_nowait`` shape, and its consumer
+    encodes and serializes every frame onto a socket. Starving there holds the
+    SERVER's loop: other connections' writes and the fail-close driver's timers
+    stop for the burst, which is a strictly wider blast radius than one TUI.
+
+    Real ``Session`` + real ``_SessionFrameSource``; the burst is emitted
+    through the production chat-event channel, so the queue fills exactly the
+    way a streamed reply fills it.
+
+    Strip-falsify (PR body): dropping the suspension makes every gap 0."""
+    count = 60
+    registry, _transport, _app = await _build(tmp_path)
+    session = registry.attached_session()
+    source = _SessionFrameSource(session, registry=registry, agent_name="default")
+    source.start()
+    try:
+        for i in range(count + 5):
+            session.router_host.events.emit(
+                "agent_delta", text=f"d{i}", chain_id="chain"
+            )
+        gaps = await _suspension_gaps_while_draining(source.frames(), count=count)
+
+        starved = [g for g in gaps if g == 0]
+        assert gaps, "test setup: the burst never reached the source's queue"
+        assert len(starved) < len(gaps) // 10, (
+            f"{len(starved)} of {len(gaps)} consecutive frames were delivered "
+            "with the event loop running nothing in between — the server-side "
+            "drain starves the server's loop for the whole burst"
+        )
+    finally:
+        source.close()
+        await registry.shutdown()
+
+
+def test_every_frame_drain_in_the_transport_package_pairs_yields_with_a_suspension() -> None:
+    """Tier 2: ★the CLASS gate — every ``frames()`` drain in the transport
+    package pairs each ``yield`` with a call to
+    :func:`~reyn.interfaces.transport.drain.suspend_between_frames`.
+
+    Three sites fixed by hand is a fact about today; a FOURTH transport is
+    where the defect gets reimported, by an author who never read this issue.
+    The enumeration is over the PACKAGE's source (every ``async def frames``
+    under ``reyn/interfaces/transport``), not over ``ClientTransport``
+    subclasses, because the server-side source is one of the three sites and is
+    not a subclass — a subclass-only enumeration would have declared complete
+    coverage while missing it.
+
+    ★What this gate can and cannot see: it is a pairing count (a suspension per
+    ``yield``), not a path analysis — it catches "a yield was added without a
+    suspension point", which is the reimport shape, and it cannot prove a
+    suspension is reached on every branch. The behavioural gates above are what
+    say the suspension actually fires; this one says a new site cannot quietly
+    skip having one.
+
+    Non-vacuous: the scan must find the three known drains by name, so a
+    broken scanner reports its own breakage instead of passing empty."""
+    package = Path(transport_pkg.__file__).parent
+    found: "dict[str, tuple[int, int]]" = {}
+    for path in sorted(package.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef) or node.name != "frames":
+                continue
+            yields = sum(1 for n in ast.walk(node) if isinstance(n, ast.Yield))
+            suspensions = sum(
+                1
+                for n in ast.walk(node)
+                if isinstance(n, ast.Await)
+                and isinstance(n.value, ast.Call)
+                and getattr(n.value.func, "id", getattr(n.value.func, "attr", None))
+                == "suspend_between_frames"
+            )
+            found[f"{path.relative_to(package)}::{node.name}"] = (yields, suspensions)
+
+    known = {"in_process.py::frames", "agui/client.py::frames", "agui/endpoint.py::frames"}
+    assert known <= set(found), (
+        f"the drain scan did not see {sorted(known - set(found))} — it found "
+        f"{sorted(found)}. The scanner is broken (a moved/renamed drain, a parse "
+        "failure), so its silence about the rest means nothing"
+    )
+    unpaired = {
+        site: counts for site, counts in found.items() if counts[1] < counts[0]
+    }
+    assert not unpaired, (
+        f"frame drain(s) yielding without a paired suspension point: {unpaired} "
+        "(site -> (yields, suspensions)). A drain that yields more often than it "
+        "suspends can hand a burst to its consumer with the event loop never "
+        "running in between — see reyn.interfaces.transport.drain"
+    )

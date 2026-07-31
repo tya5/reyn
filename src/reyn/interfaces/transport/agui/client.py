@@ -41,6 +41,7 @@ from reyn.interfaces.transport.agui.protocol import (
 )
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import DisplayFrame, Frame
 
 
@@ -142,7 +143,7 @@ class AgUiTransport(ClientTransport):
                         # buffered read returns without suspending either. Without
                         # this line whether the loop breathes is a function of how
                         # much the server packed into one block.
-                        await asyncio.sleep(0)
+                        await suspend_between_frames()
                         yield frame
                         if (
                             isinstance(frame, DisplayFrame)
@@ -155,7 +156,7 @@ class AgUiTransport(ClientTransport):
         # Flush a trailing block with no terminal blank line.
         if block:
             for frame in self._consume_block(block):
-                await asyncio.sleep(0)  # #3570, same reason as the loop above
+                await suspend_between_frames()  # #3570, same reason as above
                 yield frame
 
     # -- send side ----------------------------------------------------------
