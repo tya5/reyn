@@ -3,7 +3,12 @@
 Handler logic (one-shot, no sub-phases):
   1. Fetch server.json via RegistryClient
   2. Check runtime command availability (npx / uvx / docker / dnx)
-  3. Gate via PermissionResolver.require_mcp_install (ADR-0029)
+  3. Gate via PermissionResolver.require_file_write (the config file it
+     mutates) + require_http_get (the registry host it fetched from). The
+     bool-axis ``require_mcp_install`` this line used to name was removed by
+     the #571 permission-collapse arc (Phase 5) and no longer exists on
+     ``PermissionResolver``; per-server granularity is enforced at call time
+     by the ``permissions.mcp`` gate instead.
   4. Prompt for secret env vars via intervention_bus; persist with secrets.store
   5. Reload (#2761 PR-3): a PURE ADDITION on a live per-session reloader takes the
      IMMEDIATE mid-turn path — PROBE the server (spawn/connect + list_tools) FIRST,
@@ -21,8 +26,8 @@ Scope → file mapping:
 
 This is a P5 exception: reyn.yaml lives outside the workspace, so the OS
 handler writes it directly (same pattern as `reyn config set`). The action
-is gated behind require_mcp_install permission (ADR-0029) and recorded via
-event (P6), which preserves the audit trail.
+is gated behind the uniform file-write + http-get permission axes (see step
+3) and recorded via event (P6), which preserves the audit trail.
 """
 from __future__ import annotations
 

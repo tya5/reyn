@@ -10,7 +10,9 @@ bare-name path (a pipeline ``tool: mcp_install`` step resolves through
 The handler delegates to op_runtime.mcp_install.handle, which performs:
   1. Registry fetch (RegistryClient.get_server)
   2. runtimeHint existence check
-  3. Permission gate (PermissionResolver.require_mcp_install / ADR-0029)
+  3. Permission gate (PermissionResolver.require_file_write on the config
+     file + require_http_get on the registry host — the bool-axis
+     ``require_mcp_install`` was removed by the #571 arc, Phase 5)
   4. Secret env vars prompt + secrets.store persistence
   5. reyn.yaml / reyn.local.yaml write (scope-dependent)
   6. mcp_server_installed event emit (P6)

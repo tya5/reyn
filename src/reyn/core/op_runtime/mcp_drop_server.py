@@ -7,8 +7,10 @@ matching secret env keys from ~/.reyn/secrets.env.
 Handler logic (one-shot, no sub-phases):
   1. Resolve scope — explicit (op.scope) or auto-detect by walking
      local → project → user tiers for the first match.
-  2. Gate via PermissionResolver.require_mcp_drop_server (mirrors
-     require_mcp_install but uses a distinct decl field).
+  2. Gate via PermissionResolver.require_file_write over the scope's config
+     file (mirrors mcp_install). The bool-axis ``require_mcp_drop_server``
+     this line used to name was removed by the #571 permission-collapse arc
+     (Phase 5) and no longer exists on ``PermissionResolver``.
   3. Capture the server's env block so we know which secret keys to
      clean up (= `${KEY}` references inside the entry).
   4. Remove the entry from yaml, prune empty `mcp.servers` / `mcp`
@@ -24,7 +26,7 @@ Scope → file mapping mirrors mcp_install:
 
 This is a P5 exception: reyn.yaml lives outside the workspace, so the
 OS handler writes it directly (same pattern as mcp_install). The
-action is gated behind require_mcp_drop_server (FP-0034 §D23) and
+action is gated behind the uniform file-write axis (see step 2) and
 recorded via event (P6), preserving the audit trail.
 """
 from __future__ import annotations
@@ -162,7 +164,8 @@ async def handle(
 
     Raises:
         ValueError: when ``op.server`` is empty.
-        PermissionError: when require_mcp_drop_server gate denies the op.
+        PermissionError: when the file-write gate on the scope's config file
+            denies the op.
         FileNotFoundError-equivalent: when ``op.server`` is not present in
             any scope (returned as a ``{status: "not_found"}`` dict, not
             an exception — the LLM should be able to retry or move on).

@@ -25,10 +25,13 @@ the ``mcp`` module precedent from Phase 2 (mixed ``category`` values,
 grouped by feature).
 
 ``ALL`` aggregates every bucket's descriptions into one
-``dict[str, ToolDescription]`` keyed by a package-unique entry name (NOT
-always the bare tool name — e.g. ``semantic_search_hide_legacy`` shares
-``tool_name="semantic_search"`` with the ``semantic_search`` entry, since it
-is an alternate, currently-unwired description variant for that same tool).
+``dict[str, ToolDescription]`` keyed by a package-unique entry name. The key
+is ALLOWED to differ from the record's ``tool_name`` — that is what makes two
+description variants for one tool expressible. Read the key as an entry id,
+never as a tool name. (The example this docstring used to give, a
+``semantic_search`` / ``semantic_search_hide_legacy`` pair, was retired along
+with the agent-facing RAG tools in FP-0066 P1b (#3257) — the shape is still
+supported, the illustration was not replaced.)
 """
 from __future__ import annotations
 
