@@ -1356,7 +1356,8 @@ async def test_one_wrapped_candidate_stays_one_selectable_option(tmp_path) -> No
     every visual assertion above would pass under it while ``↓``, the highlight
     and the Tab accept all silently walked half a description.
     """
-    session = _real_session(tmp_path, skills=_wrapping_skill_entries())
+    entries = _wrapping_skill_entries()
+    session = _real_session(tmp_path, skills=entries)
     transport = RecordingTransport()
     app = TextualChatApp(transport=transport, read_model=SessionReadModel(session))
 
@@ -1371,8 +1372,8 @@ async def test_one_wrapped_candidate_stays_one_selectable_option(tmp_path) -> No
         await pilot.pause()
 
         candidates = popup.state().candidates
-        assert len(candidates) >= 2, (
-            f"test setup: need two candidates for ↓ to mean anything: "
+        assert {c.value for c in candidates} == {e.name for e in entries}, (
+            f"test setup: ↓ needs both wrapping candidates on offer: "
             f"{candidates}"
         )
 
