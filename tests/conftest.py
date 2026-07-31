@@ -293,9 +293,11 @@ def _isolate_rich_style_ansi_memo():
     rich 15.0.0 — a bug in rich, deliberately NOT reported upstream, see
     ``tests/test_markdown_palette_gate_3469.py``'s ``_memo_cleared_theme`` for
     the owner decision and the runnable "is it still there?" snippet). Because
-    ``Style.parse`` is ``lru_cache``d and ``rich.default_styles.DEFAULT_STYLES``
-    is a module global, those Style instances are shared by every test in the
-    pytest process: whichever console renders a given style string FIRST bakes
+    ``Style.parse`` AND ``Style._add`` (which ``Style.__add__`` delegates to,
+    i.e. the combined style a Console actually renders) are ``lru_cache``d, and
+    ``rich.default_styles.DEFAULT_STYLES`` is a module global, those Style
+    instances are shared by every test in the pytest process: whichever console
+    renders a given style string FIRST bakes
     its colour system into the shared instance, and every later console —
     whatever colour system IT asked for — re-emits that escape verbatim.
 
@@ -303,8 +305,8 @@ def _isolate_rich_style_ansi_memo():
     system reyn's own renderers get. ``RichChatRenderer`` / ``InlineChatRenderer``
     construct ``Console(force_terminal=True, ...)`` with colour detection left to
     rich, which is correct for production. Under CI's environment (no ``TERM``,
-    no ``COLORTERM``) that detects **standard**, so any of the ~15 test files
-    that drive those renderers memoizes ``_CC_DIM`` (``#6b7280``) as
+    no ``COLORTERM``) that detects **standard**, so any test that drives one of
+    those two renderers memoizes ``_CC_DIM`` (``#6b7280``) as
     bright-black ``'90'``; a later test that explicitly asks for truecolor then
     measures ``'\\x1b[90m…'`` and goes red (measured: #3571 / #3575, byte-identical
     to a local repro with ``TERM``/``COLORTERM`` unset, running
@@ -320,9 +322,9 @@ def _isolate_rich_style_ansi_memo():
     became the second victim. Resetting here instead is leaker-agnostic: every
     test starts from an unmemoized rich, so no test can observe another's colour
     system. ``_ansi`` is a rich-private field and there is no public reset
-    (``copy()`` and ``+ Style()`` both preserve or alias it), so the two globals
-    are restored directly — if a rich upgrade renames either, this fixture
-    raises here rather than silently stopping.
+    (``copy()`` and ``+ Style()`` both preserve or alias it), so rich's caches
+    and defaults are restored directly — and a rich upgrade that removes them
+    makes this fixture raise here rather than silently become a no-op.
 
     Same shape as ``_isolate_budget_limit_context`` above, for the same reason.
     """
