@@ -42,7 +42,17 @@ is composed from — enumerated, not assumed):
 ``test_narrowed_invoker_pipeline_tool_step`` is the reachability witness the
 architect set as the acceptance condition: it drives the REAL ``run_pipeline``
 tool handler from a REAL narrowed session and observes whether the denied tool's
-own side effect happens.
+own side effect happens. Measured on the unfixed code: the side effect HAPPENED,
+so the gap is reachable, not latent.
+
+That witness needs BOTH halves of the fix, which is itself a measurement: with
+the spawn seam alone the driver-session carries the narrowing and the tool still
+ran, because ``pipeline_verbs._make_tool_dispatch`` is the one tool-dispatch path
+that executes outside a ``RouterLoop`` — so neither the RouterLoop advertisement
+filter nor its ``_excluded_result`` call-time gate was in the path to read it.
+Each half is strip-falsifiable on its own: removing ``narrowing=`` REDs this test
+plus the two envelope tests below; removing the dispatch consumer REDs this test
+alone.
 """
 from __future__ import annotations
 
