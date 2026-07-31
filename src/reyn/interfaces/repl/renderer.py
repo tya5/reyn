@@ -341,7 +341,31 @@ class RichChatRenderer(ChatRenderer):
 # to signal STATE — error (red), needs-action (amber), done (green), ambient/low
 # (dim) — so a coloured glyph always means "something to notice".
 _CC_TEXT = "default"    # terminal default fg — normal text + markers (no forced colour)
-_CC_DIM = "#6b7280"     # low-importance / ambient
+_CC_DIM = "#6b7280"     # low-importance / ambient, as a COLOUR (see _CC_AMBIENT)
+# The same "low-importance" role expressed as an ATTRIBUTE rather than a colour
+# (#3536). ``dim`` emits SGR 2 and forces no colour, so the terminal's own theme
+# decides the shade — the owner's standing direction (#3525) and the only form
+# that survives a TRANSPARENT terminal background, which is what made the right
+# gutter's labels unreadable: a fixed mid-grey has whatever contrast the user's
+# desktop happens to give it.
+#
+# ★ This does NOT replace _CC_DIM, and the split is forced by measurement, not
+# taste. _CC_DIM is still required wherever a real COLOUR is:
+#
+# - ``prompt_toolkit`` rejects an attribute outright — ``fg:dim`` raises
+#   ``ValueError: Wrong color format 'dim'`` (measured), so the repl status bar
+#   needs a colour value.
+# - On a row that carries a TINT (``_CC_USER_BG`` / ``_CC_ERR_BG``, both fixed
+#   dark hex), terminal-default ink would be dark-on-dark on a LIGHT terminal,
+#   and #3367's contrast gate cannot even see the pairing: it skips any segment
+#   whose foreground is not concrete. Making a foreground terminal-relative
+#   while its background stays a fixed hex trades a measurable guarantee for an
+#   unmeasurable one.
+#
+# So this is used where the row carries NO tint — measured: ``agent`` and
+# ``tool_call_started`` rows have ``background=None``, and those are exactly the
+# rows the right gutter's token / elapsed labels ride on.
+_CC_AMBIENT = "dim"
 _CC_DONE = "#7ee787"    # green — completion
 _CC_ERR = "#f97066"     # red — failure
 _CC_WARN = "#e3b341"    # amber — an intervention that needs the user to act
