@@ -65,6 +65,7 @@ what each declares — lives in
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -228,9 +229,21 @@ async def test_model_output_reaches_slash_dispatch_and_spawns_a_session(
 
 # ── the recovery site: the sid-keyed layer must survive re-creation ──────────
 
-#: The file the witness tool writes. Relative, so it lands wherever the session's
-#: workspace resolves it and ``rglob`` finds it either way.
-_OUT_NAME = "p3561_out.txt"
+def _out_name() -> str:
+    """A witness filename unique to ONE test run.
+
+    Not decoration. The witness is searched for across the whole per-worker tmp tree,
+    not just this test's ``tmp_path``, because a session's workspace does not
+    necessarily resolve where the test's cwd points — and an earlier version of these
+    legs went green on BROKEN code for exactly that reason: run after a sibling test in
+    the same process, the denied write landed under the sibling's directory, so
+    ``tmp_path.rglob`` found nothing and the absence read as a denial. Unique name plus
+    wide search means a write that happens ANYWHERE is attributed to the run that
+    caused it, and the leg fails as it should. (Run alone, the same test failed — which
+    is how the discrepancy surfaced. A gate that only fires in a cold process is not a
+    gate.)
+    """
+    return f"p3561_out_{uuid.uuid4().hex}.txt"
 
 
 class _WritesOnceLLM:
@@ -244,7 +257,8 @@ class _WritesOnceLLM:
     denied, so every leg asserts the turn happened before reading the filesystem.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, out_name: str) -> None:
+        self.out_name = out_name
         self.turns = 0
 
     async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
@@ -256,7 +270,7 @@ class _WritesOnceLLM:
                     "id": "c3561", "type": "function",
                     "function": {
                         "name": _DENIED_TOOL,
-                        "arguments": '{"path": "%s", "content": "ran"}' % _OUT_NAME,
+                        "arguments": '{"path": "%s", "content": "ran"}' % self.out_name,
                     },
                 }],
                 finish_reason="tool_calls",
@@ -267,10 +281,11 @@ class _WritesOnceLLM:
         )
 
 
-def _written(tmp_path: Path) -> "list[str]":
-    """Every on-disk copy of the witness file — the side effect itself, never a
-    status string."""
-    return sorted(str(p) for p in tmp_path.rglob(_OUT_NAME))
+def _written(tmp_path: Path, out_name: str) -> "list[str]":
+    """Every on-disk copy of the witness file — the side effect itself, never a status
+    string — searched from the per-worker tmp ROOT, not from this test's own directory.
+    See :func:`_out_name` for why the wider search is the point."""
+    return sorted(str(p) for p in tmp_path.parent.rglob(out_name))
 
 
 async def _drive_one_turn(session: Session) -> None:
@@ -329,7 +344,8 @@ async def test_the_witness_tool_runs_when_nothing_narrows_it(
     only readable next to one that observes it happening.
     """
     monkeypatch.chdir(tmp_path)
-    scripted = _WritesOnceLLM()
+    out_name = _out_name()
+    scripted = _WritesOnceLLM(out_name)
     reg = _registry(tmp_path, scripted)
     sid = await _spawn_and_persist(reg, tmp_path, narrowing=None)
 
@@ -344,7 +360,7 @@ async def test_the_witness_tool_runs_when_nothing_narrows_it(
         f"the recovered session never finished a turn (turns={scripted.turns}) — the "
         "leg below would then be asserting an absence caused by nothing running"
     )
-    assert _written(tmp_path), (
+    assert _written(tmp_path, out_name), (
         "the witness tool did not execute even with nothing narrowing it, so an "
         "absence observed in the narrowed leg would say nothing about the narrowing"
     )
@@ -370,7 +386,8 @@ async def test_recovery_recreated_session_is_still_inside_its_persisted_narrowin
     nothing carried in memory.
     """
     monkeypatch.chdir(tmp_path)
-    scripted = _WritesOnceLLM()
+    out_name = _out_name()
+    scripted = _WritesOnceLLM(out_name)
     reg = _registry(tmp_path, scripted)
     sid = await _spawn_and_persist(reg, tmp_path, narrowing={"tool_deny": [_DENIED_TOOL]})
 
@@ -384,8 +401,8 @@ async def test_recovery_recreated_session_is_still_inside_its_persisted_narrowin
     assert scripted.turns >= 1, (
         "the recovered session never took a turn, so the absence below is vacuous"
     )
-    assert not _written(tmp_path), (
+    assert not _written(tmp_path, out_name), (
         "a session re-created by crash recovery executed a tool its own persisted "
         "per-session narrowing denies — the sid-keyed #2103-S1a layer was resolvable "
-        f"but not enforced after the restart (written: {_written(tmp_path)!r})"
+        f"but not enforced after the restart (written: {_written(tmp_path, out_name)!r})"
     )
