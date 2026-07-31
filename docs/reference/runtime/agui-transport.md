@@ -654,10 +654,9 @@ second hand-rolled column:
   (`int(clock() / frame_period)`) that flowview's own
   `FlowView(animation_fps=N)` re-invokes on each animation tick — no
   app-side timer (#3283 ①, native-blink equivalence).
-  This column additionally carries the **ADDRESSED-ROW RAIL** (#3490): when an
-  entry is the ADDRESSED one, a thin `▎` bar is drawn in the gutter's trailing
-  cell, down the body's whole post-wrap `height`, so one entry reads as one
-  marked block. **There is exactly ONE addressed position** — the keyboard
+  The **ADDRESSED-ROW RAIL** (#3490) is drawn in the RIGHT gutter, described
+  below — this column carried it until #3526 moved it on the owner's
+  instruction. **There is exactly ONE addressed position** — the keyboard
   cursor (#3476 ⑥), which is also what `ctrl+f` search moves (#3493) rather
   than keeping a second selection of its own, so two different rows can never
   both be marked *by construction* instead of by a gating rule that has to
@@ -673,8 +672,15 @@ second hand-rolled column:
   (measured in a real terminal — `"blue"` arrived as
   `\x1b[38;2;157;101;255]`, its theme's purple). The only true passthrough is
   the app-wide `App.ansi_color`, which would drop the whole `_CC_*` palette to
-  16 colours, so it is deliberately not set. The app supplies
-  `ReynGutter(is_marked=…)`, which reads `FlowView.highlighted` live on every gutter
+  16 colours, so it is deliberately not set. Since #3526 the bar is a thin `▏`
+  (U+258F) in the RIGHT gutter's LEADING cell — the edge facing the body, so it
+  stays as near the text as that side allows — spanning the body's whole
+  post-wrap `height` so one entry reads as one marked block. Both the old and
+  new positions cost no body column (each gutter is a fixed-width band) and both
+  double as a divider; what differs is DISTANCE, since the right margin is a
+  place most lines stop short of, unlike the line start the left rail met. The
+  app supplies
+  `ReynRightGutter(is_marked=…)`, which reads `FlowView.highlighted` live on every gutter
   repaint, and re-derives the affected rows' gutters via
   `FlowView.refresh_gutter` on each `Highlighted` and on focus changes (the
   gutter cache is keyed on a decor revision that neither a cursor move nor a
