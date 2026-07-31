@@ -10,26 +10,62 @@ in a test are intercepted at a single, stable point each.
 
 Fixture format (JSONL, one call per line)
 -----------------------------------------
-Two shapes share one file, distinguished by ``"kind"`` (absent/``"completion"``
-= legacy acompletion entries predating #3451; ``"embedding"`` = aembedding)::
+Three shapes share one file, distinguished by ``"kind"`` (absent/``"completion"``
+= legacy acompletion entries predating #3451; ``"embedding"`` = aembedding;
+``"environment"`` = a captured environment snapshot, #3473)::
 
     {"key": "<sha256>", "kind": "completion", "model": "openai/gemini-2.5-flash-lite",
-     "prompt_preview": "...", "response": {...}}
+     "prompt_preview": "...", "preconditions": {...}, "key_components": {...},
+     "response": {...}}
 
     {"key": "<sha256>", "kind": "embedding", "model": "openai/text-embedding-3-small",
      "prompt_preview": "...", "response": {...}}
 
+    {"kind": "environment", "name": "mcp_catalog", "value": {...}}
+
 - ``key`` (completion) SHA-256 hex of ``model + canonical_json(messages)``
   (legacy, no tools) or ``model + canonical_json(messages) +
   canonical_json(tools) + tool_choice`` when tools/tool_choice are present
-  (PR35+).
+  (PR35+) — with every registered environment precondition's imprint SCRUBBED
+  out of ``tools`` first, so the key is the SCENARIO (see below).
 - ``key`` (embedding) SHA-256 hex of ``"embed|" + model + canonical_json(input)``
   — a distinct namespace (the ``"embed|"`` prefix) from the completion key so
   the two kinds can never collide even though they share one fixture file.
 - ``model`` / ``prompt_preview``  human-readable grep aids; not used for lookup.
+- ``preconditions`` (completion, #3473) ``{precondition name: observed value}``
+  — the environment imprints scrubbed out of that call's key, recorded so
+  they can be CHECKED instead of hashed.
+- ``key_components`` (completion, #3473) the per-component fingerprint
+  (``model`` / per-message digests / per-tool-name digests / ``tool_choice``)
+  a later cache miss is attributed against — see
+  ``reyn.dev.testing.replay_key_diff``. One-way digests: enough to say WHICH
+  component moved, never enough to reconstruct the payload.
 - ``response``  ``litellm.ModelResponse.model_dump()`` (completion) or
   ``litellm.EmbeddingResponse.model_dump()`` (embedding), serialised to dict.
   On replay the dict is reconstructed as the matching litellm response type.
+
+Environment preconditions (#3473)
+---------------------------------
+A replay key contains the SCENARIO; the ENVIRONMENT is a checked PRECONDITION,
+not a key component. ``reyn.dev.testing.replay_preconditions`` owns that
+framework and its module docstring owns the rationale; the three touchpoints
+here are:
+
+1. :meth:`LLMReplay.key` scrubs each precondition's imprint out of ``tools``
+   before hashing (a no-op, hence key-preserving, on a payload where the
+   imprint is absent).
+2. Record mode stores the imprint per entry plus one ``"environment"`` line
+   per precondition that captured a snapshot; replay mode compares the
+   imprints and raises :class:`PreconditionMismatch` NAMING the difference.
+3. :meth:`install` injects the captured snapshots, so replay runs against the
+   environment the fixture was captured under rather than whatever this
+   machine happens to produce under load.
+
+A pre-#3473 entry carries no ``preconditions`` field. It is served only when
+this run's imprint is empty — i.e. only when the key it was recorded under is
+byte-identical to the key computed now. Serving it under a non-empty
+environment would be replaying a response recorded against different tooling,
+which is the failure this whole mechanism exists to make impossible.
 
 Record mode
 -----------
@@ -48,14 +84,35 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from reyn.dev.testing.replay_key_diff import explain_miss, fingerprint
+from reyn.dev.testing.replay_preconditions import (
+    EnvironmentPrecondition,
+    ReplayRequest,
+    default_preconditions,
+)
 
 if TYPE_CHECKING:
     pass
 
 class MissingFixture(Exception):
     """Raised in replay mode when no fixture entry matches the call."""
+
+
+class PreconditionMismatch(MissingFixture):
+    """A fixture entry EXISTS for this scenario, but the environment differs.
+
+    #3473: the two are genuinely different diagnoses — "this conversation was
+    never recorded" versus "this conversation was recorded, under a different
+    machine state" — and collapsing them into one message is what made #3473
+    take three sessions to attribute. Subclassing keeps existing
+    ``except MissingFixture`` handlers (``reyn.dev.dogfood.replay``) working
+    and, because the message names the difference, makes their logs strictly
+    more informative than before.
+    """
 
 
 class LLMReplay:
@@ -80,11 +137,35 @@ class LLMReplay:
         a cache miss.
         ``"record"`` — call the real LLM/embedding provider and append to
         the fixture file.
+    preconditions:
+        Environment preconditions (#3473) — the values kept OUT of the key
+        and checked instead. Defaults to
+        ``replay_preconditions.default_preconditions()``. Pass an explicit
+        tuple to point one at a non-default location (e.g. a session whose
+        state dir is not CWD-relative), or ``()`` to disable checking
+        entirely — which also disables scrubbing, so ``()`` reproduces the
+        pre-#3473 key exactly.
     """
 
-    def __init__(self, fixture_path: Path, mode: Literal["replay", "record"]) -> None:
+    def __init__(
+        self,
+        fixture_path: Path,
+        mode: Literal["replay", "record"],
+        preconditions: "Sequence[EnvironmentPrecondition] | None" = None,
+    ) -> None:
         self.fixture_path = fixture_path
         self.mode = mode
+        self._preconditions: tuple[EnvironmentPrecondition, ...] = tuple(
+            default_preconditions() if preconditions is None else preconditions
+        )
+        # precondition name → captured environment snapshot (kind="environment")
+        self._environment: dict[str, Any] = {}
+        # key → {precondition name: observed imprint} (completion entries).
+        # A key absent from this map was recorded before #3473.
+        self._entry_preconditions: dict[str, dict] = {}
+        # Per-component key fingerprints of the recorded completion entries —
+        # what a miss is attributed against (#3473).
+        self._fingerprints: list[dict] = []
         # key → serialised ModelResponse dict (kind="completion")
         self._records: dict[str, dict] = {}
         # key → serialised EmbeddingResponse dict (kind="embedding")
@@ -104,8 +185,18 @@ class LLMReplay:
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: str | None = None,
+        preconditions: "Sequence[EnvironmentPrecondition] | None" = None,
     ) -> str:
         """Return the SHA-256 cache key for an acompletion call.
+
+        #3473: the key is the SCENARIO. Every environment precondition's
+        imprint is scrubbed out of ``tools`` before hashing, so a value that
+        varies with the machine rather than the conversation cannot turn a
+        replay into a `MissingFixture`. What is scrubbed is not discarded —
+        it is recorded and checked (see the module docstring). Scrubbing is a
+        no-op on a payload carrying no imprint, so a fixture recorded on a
+        machine where the environment never materialised keeps its key
+        byte-identical.
 
         Backward compatibility (Option A):
         - When ``tools`` is None/empty *and* ``tool_choice`` is None/empty,
@@ -118,6 +209,15 @@ class LLMReplay:
         ``sort_keys=True`` + ``ensure_ascii=False`` gives a stable
         serialisation regardless of insertion order.
         """
+        request = ReplayRequest(
+            model=model, messages=messages, tools=tools, tool_choice=tool_choice,
+        )
+        for precondition in (
+            default_preconditions() if preconditions is None else preconditions
+        ):
+            request = precondition.scrub(request)
+        model, messages = request.model, request.messages
+        tools, tool_choice = request.tools, request.tool_choice
         messages_json = json.dumps(messages, sort_keys=True, ensure_ascii=False)
         h = hashlib.sha256()
         if tools or tool_choice:
@@ -171,7 +271,9 @@ class LLMReplay:
         """Load existing fixture into ``self._records``/``self._embed_records``
         (no-op if absent). ``entry["kind"]`` routes each line; entries predating
         #3451 have no ``"kind"`` key and default to ``"completion"`` (the only
-        kind that existed before aembedding coverage was added)."""
+        kind that existed before aembedding coverage was added). #3473 adds the
+        ``"environment"`` kind (a captured snapshot, keyed by precondition name
+        rather than by a call) and the per-entry ``"preconditions"`` field."""
         if not self.fixture_path.exists():
             return
         for raw_line in self.fixture_path.read_text(encoding="utf-8").splitlines():
@@ -180,10 +282,19 @@ class LLMReplay:
                 continue
             try:
                 entry = json.loads(raw_line)
-                if entry.get("kind", "completion") == "embedding":
+                kind = entry.get("kind", "completion")
+                if kind == "embedding":
                     self._embed_records[entry["key"]] = entry["response"]
+                elif kind == "environment":
+                    self._environment[str(entry["name"])] = entry["value"]
                 else:
                     self._records[entry["key"]] = entry["response"]
+                    recorded = entry.get("preconditions")
+                    if isinstance(recorded, dict):
+                        self._entry_preconditions[entry["key"]] = recorded
+                    components = entry.get("key_components")
+                    if isinstance(components, dict):
+                        self._fingerprints.append(components)
             except Exception:
                 # Skip corrupt lines — fixture is a test artifact; silent skip
                 # is acceptable (same policy as BudgetLedger).
@@ -194,12 +305,27 @@ class LLMReplay:
 
         Appends new entries; existing entries are not rewritten.  The
         fixture directory is created automatically.
+
+        #3473: in RECORD mode each precondition is asked to :meth:`capture` the
+        live environment here — at the END of recording, when whatever
+        populated it (an MCP probe, a catalog refresh) has had the whole
+        recorded run to do so. The snapshots are written as ``"environment"``
+        lines and are what a later replay injects. A replay-mode flush
+        captures nothing: it would append this machine's environment to a
+        committed fixture, which is the opposite of the guarantee.
         """
-        if not self._pending:
+        captured = [
+            {"kind": "environment", "name": precondition.name, "value": snapshot}
+            for precondition, snapshot in (
+                (p, p.capture()) for p in self._preconditions
+            )
+            if snapshot is not None
+        ] if self.mode == "record" else []
+        if not self._pending and not captured:
             return
         self.fixture_path.parent.mkdir(parents=True, exist_ok=True)
         with self.fixture_path.open("a", encoding="utf-8") as fh:
-            for entry in self._pending:
+            for entry in [*captured, *self._pending]:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         self._pending.clear()
 
@@ -207,8 +333,22 @@ class LLMReplay:
 
     def install(self) -> None:
         """Replace ``litellm.acompletion`` AND ``litellm.aembedding`` with this
-        instance's handlers (#3451 — both boundaries, one Fake)."""
+        instance's handlers (#3451 — both boundaries, one Fake).
+
+        #3473: in replay mode this first INJECTS every captured environment
+        snapshot, so the run's environment is the fixture's environment by
+        construction rather than by luck. Injection is a direct write of the
+        recorded value — never a wait, a retry or a widened deadline, all of
+        which only make "in time today" more likely instead of removing the
+        dependence on timing.
+        """
         import litellm
+
+        if self.mode == "replay":
+            for precondition in self._preconditions:
+                snapshot = self._environment.get(precondition.name)
+                if snapshot is not None:
+                    precondition.inject(snapshot)
 
         self._original_acompletion = litellm.acompletion
         litellm.acompletion = self._handle  # type: ignore[attr-defined]
@@ -249,11 +389,18 @@ class LLMReplay:
         """
         tools: list[dict] | None = kwargs.get("tools")
         tool_choice: str | None = kwargs.get("tool_choice")
-        key = self.key(model, messages, tools=tools, tool_choice=tool_choice)
+        key = self.key(
+            model, messages, tools=tools, tool_choice=tool_choice,
+            preconditions=self._preconditions,
+        )
+        request = ReplayRequest(
+            model=model, messages=messages, tools=tools, tool_choice=tool_choice,
+        )
+        observed = {p.name: p.observe(request) for p in self._preconditions}
         stream = bool(kwargs.get("stream"))
 
         if self.mode == "replay":
-            response = self._replay(key, model, messages)
+            response = self._replay(key, model, messages, observed, request)
         else:
             # record mode: always fetch/store the WHOLE response — strip
             # ``stream``/``stream_options`` from the forwarded call so the
@@ -262,7 +409,9 @@ class LLMReplay:
             record_kwargs = {
                 k: v for k, v in kwargs.items() if k not in ("stream", "stream_options")
             }
-            response = await self._record(key, model, messages, record_kwargs)
+            response = await self._record(
+                key, model, messages, record_kwargs, observed, request,
+            )
 
         if stream:
             return self._synthetic_stream(response)
@@ -409,22 +558,105 @@ class LLMReplay:
         self._pending.append(entry)
         return response
 
-    def _replay(self, key: str, model: str, messages: list[dict]) -> Any:
-        """Return a reconstructed ``ModelResponse`` from the fixture."""
+    def _replay(
+        self,
+        key: str,
+        model: str,
+        messages: list[dict],
+        observed: dict[str, Any],
+        request: ReplayRequest,
+    ) -> Any:
+        """Return a reconstructed ``ModelResponse`` from the fixture.
+
+        #3473: three distinct diagnoses, reported distinctly. A key miss is
+        "this conversation was never recorded" — and it now carries a
+        per-component attribution (``replay_key_diff``) naming WHICH of the
+        key's four components moved, because a report scoped to the cause
+        someone already suspects can confirm that cause but never reject it.
+        A key hit whose recorded environment differs from ``observed`` is
+        "this conversation WAS recorded, on a differently-equipped machine" —
+        that one raises :class:`PreconditionMismatch`, because a fixture
+        replayed under different tooling would answer as if the model had
+        been offered capabilities it was not. A hit with a matching
+        environment is served.
+        """
         if key not in self._records:
             preview = self._prompt_preview(messages)
+            attribution = explain_miss(
+                fingerprint(
+                    request.model, request.messages, request.tools, request.tool_choice,
+                ),
+                self._fingerprints,
+            )
             raise MissingFixture(
                 f"No fixture entry for model={model!r}.\n"
                 f"Prompt preview: {preview!r}\n"
                 f"Fixture: {self.fixture_path}\n"
+                f"{attribution}\n"
+                f"This run's environment preconditions: {observed!r}\n"
                 f"Re-run with REYN_LLM_RECORD=1 to record new fixtures."
             )
+        self._check_preconditions(key, model, messages, observed)
         import litellm
 
         return litellm.ModelResponse(**self._records[key])
 
+    def _check_preconditions(
+        self, key: str, model: str, messages: list[dict], observed: dict[str, Any],
+    ) -> None:
+        """Raise :class:`PreconditionMismatch` if this run's environment differs."""
+        recorded = self._entry_preconditions.get(key)
+        for precondition in self._preconditions:
+            actual = observed.get(precondition.name)
+            if recorded is None:
+                # A pre-#3473 entry records no imprint, so there is nothing to
+                # compare against. An empty imprint is still safe to serve —
+                # scrubbing was a no-op, so this key IS the key it was recorded
+                # under. A non-empty one is not: the response would be replayed
+                # against tooling the recording never saw. Reported as
+                # "not recorded", never as "captured empty" — the two are
+                # different claims and only one of them was observed.
+                if actual == precondition.absent_value():
+                    continue
+                raise PreconditionMismatch(
+                    f"Fixture precondition unverifiable: {precondition.name!r} — "
+                    f"this entry predates environment-precondition recording "
+                    f"(#3473) and this run's environment is not empty, so there "
+                    f"is nothing to check it against.\n"
+                    f"Expected (captured): NOT RECORDED\n"
+                    f"Actual   (this run): {actual!r}\n"
+                    f"Model: {model!r}\n"
+                    f"Prompt preview: {self._prompt_preview(messages)!r}\n"
+                    f"Fixture: {self.fixture_path}\n"
+                    f"Serving it would replay a response recorded against "
+                    f"unknown tooling. Re-record with REYN_LLM_RECORD=1."
+                )
+            expected = recorded.get(precondition.name, precondition.absent_value())
+            if actual == expected:
+                continue
+            raise PreconditionMismatch(
+                f"Fixture precondition mismatch: {precondition.name!r} — this "
+                f"fixture entry was captured under a different environment.\n"
+                f"{precondition.describe_mismatch(expected, actual)}\n"
+                f"Expected (captured): {expected!r}\n"
+                f"Actual   (this run): {actual!r}\n"
+                f"Model: {model!r}\n"
+                f"Prompt preview: {self._prompt_preview(messages)!r}\n"
+                f"Fixture: {self.fixture_path}\n"
+                f"The conversation matched — only the environment did not, so "
+                f"this is NOT a missing recording. Either restore the recorded "
+                f"environment (an injected snapshot does this automatically when "
+                f"the fixture carries one) or re-record with REYN_LLM_RECORD=1."
+            )
+
     async def _record(
-        self, key: str, model: str, messages: list[dict], extra_kwargs: dict
+        self,
+        key: str,
+        model: str,
+        messages: list[dict],
+        extra_kwargs: dict,
+        observed: dict[str, Any],
+        request: ReplayRequest,
     ) -> Any:
         """Call the real LLM, save the response, and return it."""
         response = await self._original_acompletion(
@@ -438,6 +670,19 @@ class LLMReplay:
             "kind": "completion",
             "model": model,
             "prompt_preview": preview,
+            # #3473: what was scrubbed out of the key, kept so replay can check
+            # it. Recorded unconditionally (including the empty imprint) — an
+            # absent field is what marks a pre-#3473 entry, so writing one only
+            # when non-empty would make new empty entries indistinguishable
+            # from old unchecked ones.
+            "preconditions": observed,
+            # #3473: the per-component fingerprint a later miss is attributed
+            # against. Taken over the RAW request, not the scrubbed key input —
+            # on a miss the reader wants everything that moved, including what
+            # the key deliberately ignores.
+            "key_components": fingerprint(
+                request.model, request.messages, request.tools, request.tool_choice,
+            ),
             "response": response_dict,
         }
         self._records[key] = response_dict

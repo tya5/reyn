@@ -140,16 +140,47 @@ Commit the fixture file alongside the test.
 
 ### Keep the inputs deterministic
 
-The fixture key is the SHA-256 of the exact `(model, messages, tools,
-tool_choice)` that `call_llm_tools` sends to litellm. **Every byte of the
-serialised inputs contributes to the key.** Two consequences:
+The fixture key is the SHA-256 of the `(model, messages, tools, tool_choice)`
+that `call_llm_tools` sends to litellm — **the scenario**. Every byte of those
+inputs contributes to the key EXCEPT the parts a registered *environment
+precondition* declares as environment-derived (#3473; see below). Two
+consequences:
 
 - Build `messages` and `tools` from stable, literal values. Do **not** inject
   volatile data (timestamps, UUIDs, `datetime.now()`, random ids) into the
   prompt — the key would change every run and no fixture would ever match.
-- Because the key is a pure function of the inputs, two tests that pass the
+- Because the key is a pure function of the scenario, two tests that pass the
   *same* `(model, messages, tools, tool_choice)` share one fixture file. Reuse
   a fixture across tests that exercise the same call.
+
+### Environment-derived inputs are preconditions, not key components
+
+Some of what reaches the wire describes the MACHINE, not the conversation. The
+canonical case is the MCP tool catalog: `RouterHostAdapter` probes each
+configured MCP server with a deadline and the answer becomes the `server` /
+`mcp_tool_name` enums of the MCP tool schemas, so under load the same
+conversation can send a different `tools=` payload.
+
+While such a value is hashed into the key, an environment wobble is
+indistinguishable from a different conversation — the fixture "goes missing"
+and the report cannot say why. So `reyn.dev.testing.replay_preconditions`
+takes it out of the key and, instead:
+
+- records the value next to each fixture entry at capture time and **checks**
+  it at replay time, failing with `PreconditionMismatch` that NAMES the
+  difference (never the bare "no fixture entry");
+- captures a snapshot of the live environment into the fixture and **injects**
+  it before replay, so the run's environment is the fixture's environment by
+  construction. Injection is a direct write, never a sleep / longer deadline /
+  retry — those only widen the window in which the environment happens to come
+  out right.
+
+You get this for free: `LLMReplay` applies `default_preconditions()` unless
+told otherwise. When a NEW environment-derived value starts reaching the
+payload (another dynamic catalog, a model list, a feature-flag-driven tool
+set), implement `EnvironmentPrecondition` and add it to
+`default_preconditions()` — the fixture format, the mismatch report and the
+injection step already carry it.
 
 ### Assert on structure, not wording
 
@@ -184,8 +215,12 @@ unnecessary re-records.
 
 `LLMReplay` raises `MissingFixture` in replay mode when the call's key matches
 no fixture entry. That is the mechanism that catches accidental prompt drift —
-if someone changes the messages or tool catalog the OS sends, the key changes,
-no fixture matches, and the test fails loudly rather than passing on stale data.
+if someone changes the messages or the SET OF TOOLS the OS sends, the key
+changes, no fixture matches, and the test fails loudly rather than passing on
+stale data. (The MCP tool *catalog* — which servers answered and with what
+tools — is the one part of `tools` that is NOT in the key; a change there
+surfaces as `PreconditionMismatch` instead. See
+[Environment-derived inputs are preconditions, not key components](#environment-derived-inputs-are-preconditions-not-key-components).)
 
 ```python
 from reyn.dev.testing.replay import MissingFixture
@@ -204,12 +239,21 @@ The drift test re-uses the same fixture file as the happy path. Different
 `messages` produce a different SHA-256 key, which is not in the fixture, so
 `MissingFixture` is raised.
 
+The raised message attributes itself across all four key components (#3473):
+it says which of `model` / `messages` / `tools` / `tool_choice` differs, which
+message index, and which tool name — so an unexpected drift can be read
+straight off the failure instead of bisected. Entries recorded before #3473
+carry no fingerprint; the report says attribution is unavailable rather than
+claiming everything matched.
+
 ---
 
 ## Step 4: Update fixtures after intentional input changes
 
-When you intentionally change the messages or tool catalog, the fixture key
+When you intentionally change the messages or the set of tools, the fixture key
 changes and replay mode raises `MissingFixture`. This is expected and correct.
+An intentional change to the MCP catalog instead raises `PreconditionMismatch`;
+re-recording is the same fix, and it also refreshes the captured snapshot.
 
 Re-record by deleting the fixture and running with `REYN_LLM_RECORD=1`:
 
@@ -232,8 +276,8 @@ Commit the new fixture alongside the change. Reviewers can diff the
 > **Warning — `-k` filtered runs exclude replay tests.** If your local test run uses
 > `-k some_keyword` that does not match replay test names, replay tests are silently
 > skipped and the run appears green. This masks broken fixtures until CI runs the
-> full suite. Always run the full replay suite after any change to the tool catalog
-> or LLM-call boundaries.
+> full suite. Always run the full replay suite after any change to the set of
+> tools or the LLM-call boundaries.
 
 ---
 
