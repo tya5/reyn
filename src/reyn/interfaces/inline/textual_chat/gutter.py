@@ -94,12 +94,34 @@ _RUNNING_FRAMES = ("●", "○")
 #: re-invoked at least once per frame. ``<= 0`` freezes the blink (static frame 0).
 _RUNNING_FRAME_PERIOD = 0.5
 
-#: The ADDRESSED-entry rail (#3490): a thin left-edge bar marking the keyboard
-#: cursor's row — which is also where search puts the cursor (#3493), so there
-#: is one addressed row and never two marks. One cell wide, drawn in the
-#: gutter's trailing cell so it costs no body column and doubles as the
-#: gutter/body separator on the marked row.
-_MARK_RAIL = "▎"
+#: The ADDRESSED-entry rail (#3490): a thin bar marking the keyboard cursor's
+#: row — which is also where search puts the cursor (#3493), so there is one
+#: addressed row and never two marks. One cell wide.
+#:
+#: Drawn in the RIGHT gutter's LEADING cell (#3526, owner directive
+#: "flowview ハイライトの左ガターのラインだけど、右ガターのラインに変更して").
+#: It was previously the LEFT gutter's TRAILING cell, and that position was
+#: load-bearing for two reasons — the record of what the move keeps and what
+#: it gives up:
+#:
+#: - **costs no body column** — KEPT. The right gutter is a fixed
+#:   :data:`RIGHT_GUTTER_WIDTH` column band, so spending its leading cell takes
+#:   nothing from the body, exactly as the left gutter's trailing cell did.
+#: - **doubles as the gutter/body separator on the marked row** — CHANGED, not
+#:   lost. On the left it divided the state glyph from the body; on the right it
+#:   divides the body from the elapsed/token labels. Same job, other edge. What
+#:   genuinely differs is DISTANCE from the text: the left rail sat against the
+#:   start of every line, while the right rail sits at the body's right margin,
+#:   which most lines stop well short of. That is inherent to the side the owner
+#:   asked for and is why the glyph hugs the body-facing edge of its cell.
+#:
+#: ``▏`` (U+258F, LEFT ONE EIGHTH BLOCK) rather than the former ``▎``
+#: (U+258E, three-eighths): both hug the left edge of their cell, which on the
+#: right gutter is the edge FACING the body, so the bar stays adjacent to the
+#: text instead of drifting toward the labels. The thinner weight is deliberate
+#: — at the body's ragged right margin a heavier bar reads as a border around
+#: the pane rather than as a marker on a row.
+_MARK_RAIL = "▏"
 
 #: The rail's colour. A NAMED ANSI colour, not one of the ``_CC_*`` hex
 #: constants, and that is the whole point (#3493, owner directive "ターミナルの
@@ -202,30 +224,18 @@ class ReynGutter:
     static frame 0 (the animation is additive — a frozen clock leaves a correct,
     non-animated amber gutter).
 
-    ``is_marked`` (#3490) reports whether an entry is the ADDRESSED one — the
-    keyboard cursor's position, which is also where search puts it (#3493: one
-    position, so never two marked rows). A marked entry gets
-    :data:`_MARK_RAIL` drawn down its whole height in the gutter's trailing
-    cell, which is why the mark lives HERE rather than in a
-    ``flowview--selected``/``--cursor`` component style: a component style is
-    applied as a *base* under each segment's own attributes
-    (``Segment.apply_style`` = ``style + segment.style``; flowview passes no
-    ``post_style``), so a background there is swallowed on exactly the rows that
-    carry a full-row ``Presentation.background`` — the user's own line and any
-    failure row. The gutter is CONTENT, so it renders identically on every row
-    kind. Defaults to "nothing is marked", leaving the Phase-2 gutter
-    byte-identical for every caller that does not pass it."""
+    This gutter carries STATE only. The addressed-row rail lived here until
+    #3526 moved it to the right gutter on the owner's instruction — see
+    :class:`ReynRightGutter`, which now owns ``is_marked``."""
 
     def __init__(
         self,
         *,
         frame_period: float = _RUNNING_FRAME_PERIOD,
         clock: "Callable[[], float]" = time.monotonic,
-        is_marked: "Callable[[Entry[OutboxMessage]], bool] | None" = None,
     ) -> None:
         self._frame_period = frame_period
         self._clock = clock
-        self._is_marked = is_marked
 
     def _running_frame(self) -> str:
         """The current ``_RUNNING_FRAMES`` glyph, selected from the clock. A
@@ -245,20 +255,7 @@ class ReynGutter:
             color = kind_color
         else:
             color = _STATE_COLOR.get(state, kind_color)
-        if self._is_marked is None or not self._is_marked(entry):
-            return Text(_cell_pad_right(glyph, width), style=color)
-        # #3490: the addressed entry — a thin rail down the gutter's trailing
-        # cell, spanning the body's full post-wrap ``height`` so a multi-row
-        # reply reads as ONE marked block. The state glyph keeps its own
-        # EntryState colour (the mark is a POSITION, not a state, so it must
-        # not repaint the state vocabulary).
-        rail = Text()
-        for row in range(max(1, height)):
-            if row:
-                rail.append("\n")
-            rail.append(_cell_pad_right(glyph if row == 0 else "", width - 1), style=color)
-            rail.append(_MARK_RAIL, style=_MARK_COLOR)
-        return rail
+        return Text(_cell_pad_right(glyph, width), style=color)
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -553,16 +550,33 @@ class ReynRightGutter:
     ``clock`` and ``usage_lookup`` are passed straight through to the two halves
     (see their docstrings); both are injectable so a test can drive the live
     elapsed value and the per-turn lookup deterministically with real
-    collaborators."""
+    collaborators.
+
+    ``is_marked`` (#3490, moved here from :class:`ReynGutter` by #3526) reports
+    whether an entry is the ADDRESSED one — the keyboard cursor's position,
+    which is also where search puts it (#3493: one position, so never two marked
+    rows). A marked entry gets :data:`_MARK_RAIL` drawn down its whole post-wrap
+    height, which is why the mark lives in a GUTTER at all rather than in a
+    ``flowview--selected``/``--highlight`` component style — a reason unchanged
+    by the move to this side: a component style is applied as a *base* under
+    each segment's own attributes (``Segment.apply_style`` =
+    ``style + segment.style``; flowview passes no ``post_style``), so a
+    background there is swallowed on exactly the rows that carry a full-row
+    ``Presentation.background`` — the user's own line and any failure row. A
+    gutter is CONTENT, so it renders identically on every row kind. Defaults to
+    "nothing is marked", leaving the right gutter byte-identical for every
+    caller that does not pass it."""
 
     def __init__(
         self,
         *,
         clock: "Callable[[], float]" = time.monotonic,
         usage_lookup: "Callable[[str], dict | None] | None" = None,
+        is_marked: "Callable[[Entry[OutboxMessage]], bool] | None" = None,
     ) -> None:
         self._timing = ReynTimingGutter(clock=clock)
         self._turn_usage = ReynTurnUsageGutter(usage_lookup=usage_lookup)
+        self._is_marked = is_marked
 
     def decorate(self, entry: "Entry[OutboxMessage]", width: int, height: int) -> RenderableType:
         parts = [
@@ -570,4 +584,18 @@ class ReynRightGutter:
             for label in (self._timing.label(entry), self._turn_usage.label(entry))
             if label
         ]
-        return Text(_cell_pad_left(" ".join(parts), width), style=_CC_DIM)
+        label = " ".join(parts)
+        if self._is_marked is None or not self._is_marked(entry):
+            return Text(_cell_pad_left(label, width), style=_CC_DIM)
+        # The addressed entry: the rail in this gutter's LEADING cell, spanning
+        # the body's full post-wrap ``height`` so a multi-row reply reads as ONE
+        # marked block. The labels keep their own dim styling — being addressed
+        # is a POSITION, so it must not repaint the metadata vocabulary beside
+        # it, exactly as it did not repaint the state glyph on the left.
+        rail = Text()
+        for row in range(max(1, height)):
+            if row:
+                rail.append("\n")
+            rail.append(_MARK_RAIL, style=_MARK_COLOR)
+            rail.append(_cell_pad_left(label if row == 0 else "", width - 1), style=_CC_DIM)
+        return rail
