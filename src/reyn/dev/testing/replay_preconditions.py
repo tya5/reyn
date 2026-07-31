@@ -49,8 +49,28 @@ from __future__ import annotations
 
 import copy
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class ReplayRequest:
+    """The completion request a precondition inspects — the whole key input.
+
+    Typed rather than a loose kwargs dict so a precondition can reach any part
+    of the payload an environment might imprint on. The motivating instance
+    (#3473) lives in ``tools``, but the SAME test file already carries a
+    hand-rolled precursor that scrubs an environment-derived base directory
+    out of ``messages``, so restricting the protocol to ``tools`` would have
+    excluded the very next case.
+    """
+
+    model: str
+    messages: list[dict] = field(default_factory=list)
+    tools: list[dict] | None = None
+    tool_choice: str | None = None
+
 
 #: The MCP schema properties `_enrich_router_schema` injects enums into.
 #: These two names are MCP-specific across reyn's whole tool surface
@@ -74,8 +94,8 @@ class EnvironmentPrecondition(ABC):
     name: str
 
     @abstractmethod
-    def scrub(self, tools: list[dict] | None) -> list[dict] | None:
-        """Return ``tools`` with this environment's imprint removed.
+    def scrub(self, request: ReplayRequest) -> ReplayRequest:
+        """Return ``request`` with this environment's imprint removed.
 
         Must not mutate the input. Must be a no-op (returning an equal value)
         when the imprint is absent, so that fixtures recorded on a machine
@@ -83,8 +103,8 @@ class EnvironmentPrecondition(ABC):
         """
 
     @abstractmethod
-    def observe(self, tools: list[dict] | None) -> Any:
-        """Return this environment's imprint on ``tools`` as a JSON-able value.
+    def observe(self, request: ReplayRequest) -> Any:
+        """Return this environment's imprint on ``request`` as a JSON-able value.
 
         This is exactly what :meth:`scrub` removes — the pair is what makes
         "taken out of the key" and "checked as a precondition" the same set.
@@ -166,10 +186,10 @@ class MCPCatalogPrecondition(EnvironmentPrecondition):
         # chdirs into its project between the two.
         return Path(".reyn") / "state"
 
-    def scrub(self, tools: list[dict] | None) -> list[dict] | None:
-        if not tools:
-            return tools
-        scrubbed = copy.deepcopy(tools)
+    def scrub(self, request: ReplayRequest) -> ReplayRequest:
+        if not request.tools:
+            return request
+        scrubbed = copy.deepcopy(request.tools)
         for tool in scrubbed:
             properties = _mcp_schema_properties(tool)
             if properties is None:
@@ -178,12 +198,12 @@ class MCPCatalogPrecondition(EnvironmentPrecondition):
                 prop = properties.get(prop_name)
                 if isinstance(prop, dict):
                     prop.pop("enum", None)
-        return scrubbed
+        return replace(request, tools=scrubbed)
 
-    def observe(self, tools: list[dict] | None) -> dict[str, list[str]]:
+    def observe(self, request: ReplayRequest) -> dict[str, list[str]]:
         servers: list[str] = []
         tool_names: list[str] = []
-        for tool in tools or []:
+        for tool in request.tools or []:
             properties = _mcp_schema_properties(tool)
             if properties is None:
                 continue

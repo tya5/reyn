@@ -619,11 +619,15 @@ def _install_key_normalizer(monkeypatch: pytest.MonkeyPatch, base_dir: Path) -> 
 
     def _patched_key(
         model: str, messages: list, tools: "list | None" = None,
-        tool_choice: "str | None" = None,
+        tool_choice: "str | None" = None, **kwargs: Any,
     ) -> str:
+        # ``**kwargs`` forwards ``preconditions`` (#3473) unchanged: this wrap
+        # owns ONE key input (the base-dir strings) and must stay transparent
+        # to every other, or it silently disables them.
         return _orig_key(
             model, _scrub(messages),
             tools=_scrub(tools) if tools else tools, tool_choice=tool_choice,
+            **kwargs,
         )
 
     monkeypatch.setattr(_replay_mod.LLMReplay, "key", staticmethod(_patched_key))

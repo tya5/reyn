@@ -84,6 +84,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from reyn.dev.testing.replay_preconditions import (
     EnvironmentPrecondition,
+    ReplayRequest,
     default_preconditions,
 )
 
@@ -198,10 +199,15 @@ class LLMReplay:
         ``sort_keys=True`` + ``ensure_ascii=False`` gives a stable
         serialisation regardless of insertion order.
         """
+        request = ReplayRequest(
+            model=model, messages=messages, tools=tools, tool_choice=tool_choice,
+        )
         for precondition in (
             default_preconditions() if preconditions is None else preconditions
         ):
-            tools = precondition.scrub(tools)
+            request = precondition.scrub(request)
+        model, messages = request.model, request.messages
+        tools, tool_choice = request.tools, request.tool_choice
         messages_json = json.dumps(messages, sort_keys=True, ensure_ascii=False)
         h = hashlib.sha256()
         if tools or tool_choice:
@@ -372,7 +378,10 @@ class LLMReplay:
             model, messages, tools=tools, tool_choice=tool_choice,
             preconditions=self._preconditions,
         )
-        observed = {p.name: p.observe(tools) for p in self._preconditions}
+        request = ReplayRequest(
+            model=model, messages=messages, tools=tools, tool_choice=tool_choice,
+        )
+        observed = {p.name: p.observe(request) for p in self._preconditions}
         stream = bool(kwargs.get("stream"))
 
         if self.mode == "replay":
