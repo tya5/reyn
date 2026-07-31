@@ -224,6 +224,26 @@ class ReynGutter:
     static frame 0 (the animation is additive — a frozen clock leaves a correct,
     non-animated amber gutter).
 
+    ``is_streaming`` (#3530) reports whether an entry is an agent reply still
+    RECEIVING chunks, and makes its marker blink with the same frames. The owner
+    asked to be able to tell "waiting for the next chunk" from "the end
+    arrived", and a streamed reply cannot answer that from its text alone —
+    prose simply stops, whether because the model paused or because it finished.
+
+    ★ The answer is READ, never inferred: the app's ``_streaming_replies`` map
+    holds a record per in-flight ``chain_id`` and the TERMINAL COMPLETION FRAME
+    pops it. So "still streaming" is the presence of that record, and no
+    "nothing arrived for N seconds" heuristic is involved — a slow model and a
+    finished one are distinguishable facts here, not a timing guess.
+
+    Blinking (rather than a distinct glyph) is what makes the two states read as
+    one: an entry that is streaming animates and the SAME marker goes still when
+    the terminal frame lands, so the transition is the information. It reuses
+    ``EntryState.RUNNING``'s frames deliberately — the pane already teaches
+    "blinking marker == working" on tool rows — but keeps the entry's own kind
+    COLOUR rather than RUNNING's amber, because amber is this gutter's
+    needs-you/at-risk vocabulary and a reply arriving normally is neither.
+
     This gutter carries STATE only. The addressed-row rail lived here until
     #3526 moved it to the right gutter on the owner's instruction — see
     :class:`ReynRightGutter`, which now owns ``is_marked``."""
@@ -233,9 +253,11 @@ class ReynGutter:
         *,
         frame_period: float = _RUNNING_FRAME_PERIOD,
         clock: "Callable[[], float]" = time.monotonic,
+        is_streaming: "Callable[[Entry[OutboxMessage]], bool] | None" = None,
     ) -> None:
         self._frame_period = frame_period
         self._clock = clock
+        self._is_streaming = is_streaming
 
     def _running_frame(self) -> str:
         """The current ``_RUNNING_FRAMES`` glyph, selected from the clock. A
@@ -253,6 +275,12 @@ class ReynGutter:
             color = _CC_WARN
         elif state is EntryState.DEFAULT:
             color = kind_color
+            # #3530: a reply still receiving chunks blinks in its OWN colour.
+            # Checked after the RUNNING branch so a genuine EntryState is never
+            # overridden by it, and only on DEFAULT rows, which is where a
+            # streamed agent reply lives.
+            if self._is_streaming is not None and self._is_streaming(entry):
+                glyph = self._running_frame()
         else:
             color = _STATE_COLOR.get(state, kind_color)
         return Text(_cell_pad_right(glyph, width), style=color)
