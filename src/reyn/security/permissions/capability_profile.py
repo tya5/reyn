@@ -193,6 +193,77 @@ def compose_resolved(
     )
 
 
+#: The narrowing-MAPPING keys :func:`load_capability_profile` reads as an
+#: ALLOW-shaped axis — a value stays reachable only if EVERY term lists it, and an
+#: ABSENT key is ⊤ (no restriction on that axis), never the empty set. ``categories``
+#: belongs here and not with the denies: it is the KEEP-VISIBLE set, so intersecting
+#: it is what ``compose_resolved`` expresses as "union the excluded categories".
+_NARROWING_ALLOW_KEYS: "tuple[str, ...]" = ("tool_allow", "mcp_allow", "categories")
+
+#: The narrowing-MAPPING keys read as a DENY-shaped axis — any term's deny wins, so
+#: they compose by union. An absent key is the empty set.
+_NARROWING_DENY_KEYS: "tuple[str, ...]" = ("tool_deny", "mcp_deny")
+
+
+def compose_narrowing_mappings(
+    parent: "dict | None", child: "dict | None",
+) -> "dict | None":
+    """Compose two RAW narrowing MAPPINGS, most-restrictive-wins (#3553).
+
+    The mapping-level sibling of :func:`compose_resolved`, and derived from the same
+    two rules rather than from a fresh judgement: **union of denials, intersection
+    of allows**, applied uniformly to every axis. It exists because the sid-keyed
+    #2103-S1a layer is carried between sessions as the raw ``config.yaml`` mapping
+    (``AgentRegistry.per_session_narrowing`` → ``spawn_session_recorded(narrowing=)``),
+    so a spawner that ALSO imposes a narrowing of its own has to combine the two
+    BEFORE the child's file is written — there is no later seam where the child could
+    still see its parent's mapping.
+
+    The three cases are each uniquely determined, so composing is not a policy choice:
+
+    - parent-only key — the child does not constrain that axis, so the parent's value
+      stands (allow: ``parent ∩ ⊤ = parent``; deny: ``parent ∪ ∅ = parent``).
+    - child-only key — symmetrically the child's value stands. ⚠️ This is the case an
+      absent ALLOW key must NOT be read as the empty set: reading it as ∅ would make a
+      childless axis deny everything, and reading the PARENT's absence as ∅ would make
+      the composition unable to widen back — both are wrong for the same reason.
+    - both — deny keys union, allow keys intersect.
+
+    A key in neither table is one :func:`load_capability_profile` does not read, so it
+    cannot change either session's live envelope whichever value survives; the child's
+    is taken. That "cannot change" holds only while the two tables cover every axis
+    field of :class:`CapabilityProfile`, which is why a test pins exactly that — a new
+    axis added to the loader without being added here would start being silently
+    dropped from an inherited narrowing.
+
+    ``None`` / empty on either side returns the other unchanged (nothing to inherit,
+    or nothing to impose), so the inert case stays byte-identical.
+    """
+    if not parent:
+        return dict(child) if child else None
+    if not child:
+        return dict(parent)
+    out: dict = dict(parent)
+    for key, value in child.items():
+        if key in _NARROWING_DENY_KEYS:
+            base = _as_tuple(parent.get(key)) or ()
+            extra = _as_tuple(value) or ()
+            seen = set(base)
+            out[key] = list(base) + [v for v in extra if v not in seen]
+        elif key in _NARROWING_ALLOW_KEYS:
+            theirs = _as_tuple(value)
+            mine = _as_tuple(parent[key]) if key in parent else None
+            if mine is None or theirs is None:
+                # ⊤ on one side ⇒ the other side verbatim.
+                out[key] = list(theirs if mine is None else mine)
+            else:
+                keep = set(mine)
+                out[key] = [v for v in theirs if v in keep]
+        else:
+            out[key] = value
+    return out
+
+
 # ── #1827 S4: context-auto untrusted-source narrowing ───────────────────────
 #
 # Defense-in-depth with the #1862 content-fence: while untrusted external content

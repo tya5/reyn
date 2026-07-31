@@ -409,8 +409,9 @@ an R1 expression — see below.
 
 An LLM-driven leaf step: `prompt` (a template string) is interpolated against
 the current context and run as one turn in an ephemeral session,
-capability-narrowed to `capabilities` (or the invoker's own profile if
-omitted) under `identity` (or the invoker's own identity if omitted).
+capability-narrowed to `capabilities` **composed with** the invoker's own
+per-session narrowing — never instead of it — under `identity` (or the
+invoker's own identity if omitted).
 
 ```yaml
 - agent: {prompt: "Summarize: {ctx.doc}", capabilities: {tools: [read_file]}, schema: Summary, output: summary}
@@ -420,7 +421,7 @@ omitted) under `identity` (or the invoker's own identity if omitted).
 |-----|----------|---------|
 | `prompt` | yes | A template string — `{ctx.dotted.path}` / `{pipe}` references are interpolated (values only, no operators — this is string interpolation, not an R1 expression). |
 | `identity` | no | The agent identity to run under. Defaults to the run's invoker. A **registered** pipeline may name any identity; an **inline, agent-generated** pipeline may only name the invoker's own identity — naming another agent's identity is rejected by the static-analysis gate as a capability escalation (see [Ad-hoc inline launch](#ad-hoc-inline-launch)). |
-| `capabilities` | no | `{tools: [NAME*]}` — narrows the ephemeral session's tool surface. Restrict-only: a pipeline step can never exceed the invoker's own envelope. |
+| `capabilities` | no | `{tools: [NAME*]}` — narrows the ephemeral session's tool surface. Restrict-only: a pipeline step can never exceed the invoker's own envelope. The two narrowings are composed most-restrictive-wins — denies union, allow-lists intersect, and an omitted allow-list means "no restriction from this side", so omitting `capabilities` leaves the invoker's own allow-list in force rather than clearing it. |
 | `schema` | no | Same `verify: schema` semantics as `tool`, applied to the parsed JSON reply. |
 | `output` | no | Named store to write the result to. |
 

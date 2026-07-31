@@ -170,7 +170,9 @@ async def spawn_ephemeral_session(
     )
 
 
-def _build_agent_step_narrowing(capabilities: "list[str] | None") -> dict:
+def _build_agent_step_narrowing(
+    capabilities: "list[str] | None", parent_narrowing: "dict | None" = None,
+) -> "dict | None":
     """The per-session narrowing an ``agent`` step spawns under.
 
     ``tool_deny`` always includes ``_DELEGATION_DENY_TOOLS`` — a v1
@@ -179,12 +181,35 @@ def _build_agent_step_narrowing(capabilities: "list[str] | None") -> dict:
     (``profile_permits``: ``in_allow and tool not in tool_deny``), so even a
     ``capabilities`` list that names a delegation tool is denied at the live
     gate. ``tool_allow`` is set only when the caller passes an explicit
-    ``capabilities`` list — omitting it (``None``) leaves the agent's normal
-    envelope untouched (restrict-only narrowing, never a re-grant)."""
+    ``capabilities`` list.
+
+    ``parent_narrowing`` (#3553) is the INVOKER's own sid-keyed #2103-S1a mapping
+    (``AgentRegistry.per_session_narrowing``), composed in through
+    ``capability_profile.compose_narrowing_mappings`` (deny ∪, allow ∩, absent
+    allow = ⊤). ⚠️ This docstring used to say that omitting ``capabilities``
+    "leaves the agent's normal envelope untouched (restrict-only narrowing, never
+    a re-grant)". That was true only against the AGENT's own declaration, which is
+    name-keyed and therefore re-derived on the worker for free — and false against
+    the INVOKER, which is what a reader checks it for: the worker is born under a
+    FRESH sid, so before #3553 the invoker's sid-keyed narrowing resolved to
+    nothing on it and the two keys built here were the child's WHOLE envelope. An
+    invoker narrowed to ``tool_allow: [A]`` therefore handed a ``capabilities``-less
+    agent step a worker with no allow-list at all — a widening, not a restriction,
+    and measured (``tests/test_3553_agent_step_worker_narrowing_inheritance.py``) as
+    a denied tool's real side effect happening inside an agent step. The
+    composition, not this function's own two keys, is what makes the claim true now,
+    and only for the layers ``per_session_narrowing`` carries — see
+    ``run_agent_step``'s call site for which layers those are.
+
+    Returns ``None`` when there is nothing to impose at all, which cannot happen
+    today (``_DELEGATION_DENY_TOOLS`` is non-empty) but keeps the return type the
+    same as the composition's."""
+    from reyn.security.permissions.capability_profile import compose_narrowing_mappings
+
     narrowing: dict[str, Any] = {"tool_deny": list(_DELEGATION_DENY_TOOLS)}
     if capabilities is not None:
         narrowing["tool_allow"] = list(capabilities)
-    return narrowing
+    return compose_narrowing_mappings(parent_narrowing, narrowing)
 
 
 async def run_agent_step(
@@ -266,7 +291,27 @@ async def run_agent_step(
             "(no registry to validate against)."
         )
 
-    narrowing = _build_agent_step_narrowing(capabilities)
+    # #3553: the leaf worker is a NEW permission envelope, born under a FRESH sid, so
+    # the invoker's sid-keyed #2103-S1a narrowing does not reach it by identity the way
+    # the name-keyed layers do (the agent's own ``permissions`` declaration, its topology
+    # ``capability_profile`` bindings, the #2081 ``_delegate`` floor — all re-derived from
+    # the agent NAME by ``resolved_profile_for``). It has to be read back off the invoker
+    # and composed with this step's own narrowing, or a ``capabilities``-less agent step
+    # hands the worker a strictly WIDER envelope than the session that asked for it. This
+    # is the same seam #3546/#3554 closed one level up, for the pipeline driver-session
+    # that is typically the ``invoker_session`` here; the two layers the sibling site
+    # deliberately does NOT carry are unchanged (the #2285 in-memory ``/visibility``
+    # toggle and the #1827-S4b ephemeral untrusted-context narrowing, which
+    # ``Session._ephemeral_contextual_for_turn`` re-derives per turn from the session's
+    # OWN history and so is not an inheritable value at all).
+    parent_narrowing = (
+        registry.per_session_narrowing(
+            invoker_session.agent_name, invoker_session.session_id,
+        )
+        if invoker_session is not None
+        else None
+    )
+    narrowing = _build_agent_step_narrowing(capabilities, parent_narrowing)
     # #2769 (refines #2706/#2710 P3-item3): an agent-step's user-reaching capabilities route to the
     # pipeline INVOKER when one is threaded in (``BridgeToParent(invoker_session)`` — the driver
     # session), so ``ask_user`` / permission / ``safety.limit`` / elicitation AND ``present`` reach
