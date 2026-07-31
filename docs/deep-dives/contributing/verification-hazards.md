@@ -68,9 +68,25 @@ anywhere to be found — absence isn't a string you can search for. #3037's
 invented `permission_resolver` field required an AST diff against
 `RouterCallerState.__dataclass_fields__`, not a grep, to surface at all.
 
+A third way zero can lie even when the thing WOULD leave a trace: the search
+tool itself silently fails to find it. A hardcoded-color census reported
+"only 2 violations," compounding two independent defects: it searched for
+the CSS `property: #hex` shape only, never the Python color constants that
+were the real majority of the usage; and a follow-up attempt to grep for
+those constants directly ALSO returned zero, because `git grep -E` is POSIX
+ERE, which does not understand `\s` — so even a known hit
+(`_CC_DIM = "#6b7280"`) went unfound. The true count was 8 constants across
+66 call sites, one of them (`_CC_DIM`) a live candidate for a real
+"gutter text invisible" bug an owner had already reported (#3525, 2026-07-31).
+Neither zero was distinguishable from a real zero without recognizing the
+query itself was narrow, then broken.
+
 **Apply**: before trusting a "zero hits" result, ask whether the thing you're
 checking for would leave a positive trace if present, or only an absence —
-only the first kind makes zero a real answer.
+only the first kind makes zero a real answer. Then calibrate the instrument
+itself: run the same query against one KNOWN hit before trusting a null
+result on the rest, and prefer `-P`/PCRE or a portable class like
+`[[:space:]]` over ERE metacharacters that vary by grep flavor.
 
 ## 4. Census vs. structure — extrapolation dies on use, not on review
 
