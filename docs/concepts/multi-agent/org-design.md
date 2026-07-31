@@ -82,6 +82,15 @@ sub-session capabilities beyond your own. Example:
 {"tool_deny": ["exec"]}
 ```
 
+Restrict-only is enforced, not assumed: whatever you pass is **composed**
+with the spawning session's own per-session narrowing before the child is
+constructed — denies union, allow-lists intersect, and an axis you say
+nothing about keeps the spawner's restriction on it. So omitting
+`narrowing` entirely gives the sub-session the spawner's envelope, never a
+wider one. (The composition covers the sid-keyed per-session layer; the
+agent-level layers need no carrying, since the sub-session runs under the
+same agent identity.)
+
 Both modes are rewind-safe: a session spawned after a rewind cut is
 dropped during rewind reconstruction.
 

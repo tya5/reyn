@@ -159,12 +159,16 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "narrowing": ParamDescription(
             text=(
                 "Optional per-session capability narrowing (restrict-only, cannot "
-                "widen your envelope): a capability_profile subset, e.g. "
+                "widen your envelope — your OWN per-session narrowing is composed "
+                "in whatever you write here, denies union and allow-lists "
+                "intersect): a capability_profile subset, e.g. "
                 "{\"tool_deny\": [\"exec\"]}."
             ),
             ja=(
                 "任意のセッション単位の権限絞り込み（restrict-only、自分の"
-                "権限範囲を広げることはできない）: capability_profile の"
+                "権限範囲を広げることはできない——ここに何を書いても自分自身の"
+                "セッション単位の絞り込みが合成される。deny は和、allow は積）: "
+                "capability_profile の"
                 "サブセット、例 {\"tool_deny\": [\"exec\"]}。"
             ),
         ),

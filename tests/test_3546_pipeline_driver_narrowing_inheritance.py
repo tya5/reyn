@@ -27,8 +27,12 @@ test that measures the claim. ⚠️ That declaration is an INTENT record: a sit
 prose and code disagree stays green. It is the index of the per-site behavioural
 tests, not a substitute for them — see ``_SiteDeclaration``. Enumerating the sites
 also surfaced a THIRD member of this fix-class (the ``session_spawn`` tool's spawn
-passes its LLM's requested narrowing, never its spawner's), declared as such and
-filed as #3556 rather than fixed on a guess.
+passed its LLM's requested narrowing, never its spawner's), declared as such and
+filed as #3556 rather than fixed on a guess; #3556 then composed the spawner's layer
+in and replaced that site's ``unmeasured_reason`` with the two behavioural legs in
+``tests/test_3556_session_spawn_narrowing_inheritance.py``. Every enumerated site is
+measured today — a state this file records but does not enforce, since a NEW site may
+register an ``unmeasured_reason`` and stay green here.
 
 Scope of what this fix carries (the layers a session's live capability envelope
 is composed from — enumerated, not assumed):
@@ -330,6 +334,7 @@ class _SiteDeclaration:
 
 _S3546 = "tests/test_3546_pipeline_driver_narrowing_inheritance.py"
 _S3553 = "tests/test_3553_agent_step_worker_narrowing_inheritance.py"
+_S3556 = "tests/test_3556_session_spawn_narrowing_inheritance.py"
 
 #: Every spawn site in ``src/``, with the parent layers its ``narrowing=`` value
 #: composes and the behavioural test that measures that claim. A site missing from
@@ -376,16 +381,19 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
     ),
     ("reyn/runtime/services/router_host_adapter.py", "spawn_session"): _SiteDeclaration(
         parent_layers=(
-            "🔴 NONE — the value is the ``session_spawn`` tool argument, i.e. whatever "
-            "the spawning session's LLM asked for. The spawner's OWN #2103-S1a "
-            "sid-keyed narrowing is not a term, so this is the third site of the "
-            "#3546 / #3553 fix-class and it is still open: #3556."
+            "the spawner's #2103-S1a sid-keyed narrowing COMPOSED with the "
+            "``session_spawn`` tool argument (i.e. whatever the spawning session's LLM "
+            "asked for), via capability_profile.compose_narrowing_mappings: deny keys "
+            "union, allow keys intersect, an absent allow key is ⊤ — the same rule as "
+            "the agent-step site above, because ``narrowing`` sits where that site's "
+            "``capabilities`` sits (an argument the spawner imposes on the child). Same "
+            "name-keyed / not-carried layers as the two sites above (#3556). Until "
+            "#3556 the LLM's argument was the WHOLE value, which made the tool's own "
+            "parameter description — 'restrict-only, cannot widen your envelope' — false."
         ),
-        unmeasured_reason=(
-            "#3556 — reachability is unmeasured (code-trace only), and whether this "
-            "seam is even supposed to be restrict-only against its spawner has not "
-            "been confirmed against the design prose. Filed rather than fixed in "
-            "#3553 so the fix is not a guess."
+        measured_by=(
+            f"{_S3556}::test_spawner_deny_survives_an_llm_requested_allow_list",
+            f"{_S3556}::test_spawner_allow_list_survives_an_llm_requested_narrowing",
         ),
     ),
 }
