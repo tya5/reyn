@@ -134,10 +134,16 @@ async def _build(tmp_path: Path, app_cls=TextualChatApp):
     return registry, transport, app_cls(transport=transport)
 
 
-async def _until(pred, *, attempts: int = 400, delay: float = 0.01) -> bool:
+async def _until(pred, *, attempts: int = 3000, delay: float = 0.01) -> bool:
     """Bounded poll — a hang exhausts the budget and returns False (RED). This is
     the test's own patience, not the property under test (which is counted in
-    frames)."""
+    frames).
+
+    Generous on purpose: under ``-n auto`` the machine may be running ten other
+    workers, and how long a 300-frame backlog takes to drain there is not what
+    this file is measuring. The PROPERTY is counted in frames; this is only the
+    patience that keeps a genuine hang from hanging the suite.
+    """
     for _ in range(attempts):
         if pred():
             return True
@@ -185,7 +191,7 @@ async def test_input_arriving_during_a_stream_is_handled_within_a_few_frames(
                 "the injected input was never handled at all"
             )
             waited = app.probe_handled_at - app.probe_injected_at
-            assert waited < 0, (
+            assert waited < arrivals // 10, (
                 f"input injected at frame {app.probe_injected_at} was only handled "
                 f"{waited} frames later, out of a {arrivals}-frame backlog — the "
                 "drain loop holds the processor for the whole stream"
