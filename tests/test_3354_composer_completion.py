@@ -315,29 +315,92 @@ def test_skill_completion_surfaces_each_candidates_description():
 @pytest.mark.parametrize(
     "text,should_trigger,why",
     [
+        (":", True, "a bare line-initial colon lists everything, like a bare /"),
+        (":r", True, "one char at line start is enough — no length gate there"),
         (":re", True, "colon at input start with 2+ chars"),
         ("run :re", True, "colon after whitespace with 2+ chars"),
-        (":r", False, "1 char fails the length gate"),
-        (":", False, "bare colon fails the length gate"),
+        ("run :", False, "mid-line keeps the length gate"),
+        ("run :r", False, "mid-line keeps the length gate at 1 char"),
         ("http://xx", False, "colon mid-word fails the word-boundary gate"),
         ("12:30", False, "a time fails the word-boundary gate"),
         ("ratio:20", False, "colon mid-word fails the word-boundary gate"),
         ("note: se", False, "a space after the colon is not a skill token"),
+        ("note: x", False, "colon follows `e`, so the word boundary rejects it"),
+        ("http://x", False, "colon mid-word fails the word-boundary gate"),
+        ("ratio:2", False, "colon mid-word fails the word-boundary gate"),
+        ("note: see below", False, "colon follows `e`, and a space follows it"),
     ],
 )
-def test_skill_trigger_requires_word_boundary_and_minimum_length(
+def test_skill_trigger_is_word_boundary_plus_a_midline_only_length_gate(
     text, should_trigger, why,
 ):
-    """Tier 2b: the ``:`` trigger needs BOTH gates, not either.
+    """Tier 1: the ``:`` trigger contract after #3541 — the word boundary is
+    unconditional, the length gate applies MID-LINE only.
 
-    The two are independently load-bearing and this table shows each catching a
-    case the other misses: ``http://xx`` passes the length gate and is caught
-    only by the word boundary; ``:r`` passes the word boundary and is caught
-    only by the length gate. A colon is far too common in prose for one gate."""
+    The five counterexamples the module docstring names (``http://x``,
+    ``12:30``, ``ratio:2``, ``note: see below``, ``note: x``) are all here and
+    all stay quiet: each has a non-space character immediately before its colon,
+    so the WORD-BOUNDARY rule alone rejects them and dropping the length gate at
+    line start cannot revive any of them. ``run :`` / ``run :r`` are the
+    mid-line half — the case no counterexample covers, where the floor is kept.
+    """
     state = compute_completion(text, skills=_skill_entries())
     triggered = state.kind != KIND_NONE
     assert triggered is should_trigger, (
         f"{text!r}: expected trigger={should_trigger} ({why}), got kind={state.kind!r}"
+    )
+
+
+def test_bare_line_initial_colon_offers_every_invocable_skill():
+    """Tier 1: ``:`` with nothing after it opens the menu on the FULL invocable
+    list — the owner-reported symmetry with a bare ``/`` (#3541).
+
+    Asserting the candidate SET, not just that the menu opened: a trigger that
+    fired while passing the wrong prefix through would still be `is_open` but
+    would offer nothing."""
+    state = compute_completion(":", skills=_skill_entries())
+
+    assert state.kind == KIND_SKILL, "a bare `:` did not open the skill menu"
+    assert {c.value for c in state.candidates} == {"review", "refactor"}, (
+        f"a bare `:` must offer every invocable skill; got "
+        f"{[c.value for c in state.candidates]}"
+    )
+
+
+@pytest.mark.parametrize(
+    "text,expected_prefix_len,expected_token_start",
+    [
+        (":", 0, 1),
+        (":r", 1, 1),
+        (":re", 2, 1),
+        ("run :re", 2, 5),
+        ("a b :ref", 3, 5),
+    ],
+)
+def test_skill_token_offsets_hold_on_both_the_line_start_and_midline_branches(
+    text, expected_prefix_len, expected_token_start,
+):
+    """Tier 1: ``prefix_len`` and ``token_start`` are the ACCEPT contract — the
+    composer replaces exactly ``prefix_len`` characters ending at the cursor and
+    keys its sticky dismissal on ``token_start``.
+
+    Both branches are covered because they are matched by two different
+    patterns: a shape that folded them into one two-alternative regex would
+    shift the capture-group number, and a wrong ``token_start`` corrupts the
+    accepted text silently rather than raising."""
+    state = compute_completion(text, skills=_skill_entries())
+
+    assert state.kind == KIND_SKILL, f"{text!r} did not trigger"
+    assert state.prefix_len == expected_prefix_len, (
+        f"{text!r}: prefix_len must cover the typed name without the sigil"
+    )
+    assert state.token_start == expected_token_start, (
+        f"{text!r}: token_start must point at the first name character, i.e. "
+        f"just past the `:`"
+    )
+    assert text[state.token_start:] == text[len(text) - state.prefix_len:], (
+        f"{text!r}: token_start and prefix_len disagree about which characters "
+        f"the accept path would replace"
     )
 
 
