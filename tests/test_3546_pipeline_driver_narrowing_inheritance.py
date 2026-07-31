@@ -30,9 +30,42 @@ also surfaced a THIRD member of this fix-class (the ``session_spawn`` tool's spa
 passed its LLM's requested narrowing, never its spawner's), declared as such and
 filed as #3556 rather than fixed on a guess; #3556 then composed the spawner's layer
 in and replaced that site's ``unmeasured_reason`` with the two behavioural legs in
-``tests/test_3556_session_spawn_narrowing_inheritance.py``. Every enumerated site is
-measured today — a state this file records but does not enforce, since a NEW site may
-register an ``unmeasured_reason`` and stay green here.
+``tests/test_3556_session_spawn_narrowing_inheritance.py``.
+
+#3561 widened it a third time, on the axis the first two widenings had in common. Both
+earlier gates decided membership by SHAPE — #3554's by whether a site spelled
+``narrowing=`` (which #3556 satisfied while passing a value that was no function of its
+parent), and the enumeration itself by whether a callee's NAME was on a list. Neither
+question is the one that matters. ``AgentRegistry.spawn_session`` — the sync primitive
+that ``spawn_session_recorded`` itself calls, and that four other sites call directly —
+was outside the gate because it takes no ``narrowing`` argument at all, i.e. it failed
+the shape check in the opposite direction. "It cannot inherit" is not "it need not
+inherit": an API with no inheritance channel is an unmet requirement. The criterion is
+REACHABILITY — can a narrowed subject cause this to run — and it is now listed, with the
+walk resolving calls by RECEIVER so ``spawn_session`` the registry primitive is not
+conflated with the two other functions of that name (see ``_Seam``).
+
+Reachability is measured, not assumed:
+``tests/test_3561_spawn_session_seam_reachability.py`` drives an agent step whose prompt
+is a previous agent step's MODEL OUTPUT, on a session narrowed to one capability, and
+observes it reach ``/session new`` — ``Session._handle_user_message`` short-circuits to
+``_maybe_handle_slash`` before the router turn, so the reaching turn makes no LLM call at
+all — and spawn. The pre-measurement guess ("slash is operator-initiated, so it is out of
+scope") is false.
+
+★ Enumerating the primitive immediately paid for itself: measuring the CRASH-RECOVERY
+sites (``restore_all`` / ``_rewake_pipeline_runs``), which reach ``spawn_session``
+directly and had never been counted, found that a re-woken session was reborn OUTSIDE
+its own persisted per-session narrowing — resolvable on the operator's status bar,
+un-enforced in the RouterLoop. #3561 fixes that in ``spawn_session`` itself. That is the
+concrete answer to "does a seam with no inheritance channel matter": it did, and the
+shape check would never have asked.
+
+Every enumerated site is accounted for today — a state this file records but does not
+enforce, since a NEW site may register an ``unmeasured_reason`` and stay green here.
+``/session new``'s missing inheritance is a real, declared gap (#3562), not a
+measurement gap: its declaration says so, and its measurement asserts the reachability
+only, so closing #3562 does not turn it red.
 
 Scope of what this fix carries (the layers a session's live capability envelope
 is composed from — enumerated, not assumed):
@@ -75,6 +108,7 @@ alone.
 from __future__ import annotations
 
 import ast
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,6 +118,7 @@ import yaml
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.session_api import spawn_ephemeral_session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 from reyn.tools.pipeline_verbs import _handle_run_pipeline
@@ -289,19 +324,115 @@ async def test_pipeline_driver_session_inherits_invoker_narrowing(
 # ── the completeness gate: every place an envelope is BORN ────────────────────
 
 #: ``(module path relative to src/, enclosing function name)`` for a spawn call
-#: site that legitimately must NOT pass ``narrowing=``, with the reason. Empty
-#: today: all production call sites pass it. A new site either passes
-#: ``narrowing=`` or is registered here with a reason a reviewer can weigh — the
-#: #3484 ``*_UNMEASURED`` idiom.
-_NARROWING_EXEMPT_SITES: "dict[tuple[str, str], str]" = {}
+#: site that does NOT pass ``narrowing=``, with the reason. A new site either
+#: passes ``narrowing=`` or is registered here with a reason a reviewer can weigh
+#: — the #3484 ``*_UNMEASURED`` idiom.
+#:
+#: #3561 filled it, for one reason only: every entry calls
+#: ``AgentRegistry.spawn_session``, whose signature HAS no ``narrowing`` parameter.
+#: That is deliberately recorded as an unmet requirement, not as a merit-based
+#: exemption — "the API cannot take one" would be a shape argument, and this arc has
+#: been slipped past on the shape axis twice already. What each site's child envelope
+#: is actually decided by is stated in ``_SITE_PARENT_LAYERS``, individually.
+#: ``test_narrowing_exempt_sites_have_no_narrowing_channel`` reads the LIVE signature,
+#: so the day a ``narrowing`` channel is added to the primitive, every entry here goes
+#: RED and has to be revisited rather than quietly outliving its reason.
+_UNMET_NO_NARROWING_CHANNEL = (
+    "calls AgentRegistry.spawn_session, which has no narrowing parameter (#3561): an "
+    "UNMET REQUIREMENT recorded so the gate counts the site, not an exemption on the "
+    "merits. See this site's _SITE_PARENT_LAYERS entry for what decides its child's "
+    "envelope instead."
+)
+_NARROWING_EXEMPT_SITES: "dict[tuple[str, str], str]" = {
+    ("reyn/runtime/registry.py", "spawn_session_recorded"): _UNMET_NO_NARROWING_CHANNEL,
+    ("reyn/runtime/registry.py", "resolve_session"): _UNMET_NO_NARROWING_CHANNEL,
+    ("reyn/runtime/registry.py", "restore_all"): _UNMET_NO_NARROWING_CHANNEL,
+    ("reyn/runtime/registry.py", "_rewake_pipeline_runs"): _UNMET_NO_NARROWING_CHANNEL,
+    ("reyn/interfaces/slash/session.py", "session_cmd"): _UNMET_NO_NARROWING_CHANNEL,
+}
+
+@dataclass(frozen=True)
+class _Seam:
+    """A function at which a child session's permission envelope is decided,
+    named by its DEFINITION SITE rather than by its name (#3561).
+
+    The #3553 version of this gate matched call sites by NAME alone, which is
+    sound only while a name has exactly one definition in ``src/``. It does not
+    for ``spawn_session``: ``AgentRegistry.spawn_session`` (the primitive),
+    ``RouterHostAdapter.spawn_session`` (the ``session_spawn`` tool's adapter) and
+    ``RouterLoop``'s host-protocol call all spell the same six characters, and a
+    name match conflates them — it reports the ``router_loop.py`` host call as a
+    site of the registry primitive, which it is not.
+
+    ``receivers`` is how a call is RESOLVED: the key is
+    ``(calling module, ast.unparse(receiver expression))`` — ``""`` for a bare-name
+    call — and the value says whether that call is THIS seam. An unlisted receiver
+    is an error, not a guess: the instrument refuses to attribute a call it cannot
+    resolve, so a new call site with an unfamiliar receiver REDs
+    ``test_spawn_seam_receivers_are_all_resolvable`` instead of being silently
+    counted or silently skipped.
+
+    ``receivers=None`` declares the name unambiguous — pinned, not assumed, by
+    ``test_unambiguous_seam_names_have_exactly_one_definition``, which REDs the
+    moment a second ``def`` of that name appears anywhere in ``src/``.
+    """
+
+    #: The attribute / function name as it appears at a call site.
+    name: str
+    #: The real function object — imported, not named by string, so a rename
+    #: raises at collection time and ``inspect.signature`` reads the live
+    #: parameter list (``test_narrowing_exempt_sites_have_no_narrowing_channel``).
+    func: object
+    #: Module (relative to ``src/``) the seam is defined in.
+    module: str
+    #: ``(calling module, receiver expr) -> is-this-seam``. ``None`` ⇒ the name
+    #: has exactly one definition in ``src/`` and every call of it resolves here.
+    receivers: "dict[tuple[str, str], bool] | None" = None
+
 
 #: The seams at which a child session's permission envelope is decided: the
-#: recorded spawn primitive, plus the one wrapper that forwards a caller's value
-#: into it. Both are enumerated because a site that only calls the WRAPPER
-#: (``run_agent_step``) still decides the value, and counting the primitive alone
-#: would leave that decision outside the gate — which is how #3553 stayed invisible
-#: to the #3546 version of this gate for as long as it did.
-_SPAWN_SEAMS: "tuple[str, ...]" = ("spawn_session_recorded", "spawn_ephemeral_session")
+#: recorded spawn primitive, the one wrapper that forwards a caller's value into
+#: it, and (#3561) the SYNC primitive under both. The wrapper is enumerated
+#: because a site that only calls it (``run_agent_step``) still decides the value,
+#: and counting the primitive alone would leave that decision outside the gate —
+#: which is how #3553 stayed invisible to the #3546 version of this gate for as
+#: long as it did.
+#:
+#: ``AgentRegistry.spawn_session`` joined the list in #3561 on a REACHABILITY
+#: criterion, not a shape one. It takes no ``narrowing`` argument, and "it cannot
+#: take one, so it is out of scope" is the same shape argument that let #3556
+#: through this gate inverted: #3556 passed BECAUSE it spelled ``narrowing=``,
+#: while passing a value that was not a function of its parent. A seam with no
+#: inheritance channel is an UNMET REQUIREMENT, not an exemption — so it is listed,
+#: and each of its sites states what actually decides its child's envelope.
+_SPAWN_SEAMS: "tuple[_Seam, ...]" = (
+    _Seam(
+        name="spawn_session_recorded",
+        func=AgentRegistry.spawn_session_recorded,
+        module="reyn/runtime/registry.py",
+    ),
+    _Seam(
+        name="spawn_ephemeral_session",
+        func=spawn_ephemeral_session,
+        module="reyn/runtime/session_api.py",
+    ),
+    _Seam(
+        name="spawn_session",
+        func=AgentRegistry.spawn_session,
+        module="reyn/runtime/registry.py",
+        receivers={
+            # ``self`` inside registry.py IS the AgentRegistry.
+            ("reyn/runtime/registry.py", "self"): True,
+            # ``reg = session._registry`` — the AgentRegistry the REPL session holds.
+            ("reyn/interfaces/slash/session.py", "reg"): True,
+            # ``self.host`` is a RouterLoopHost (RouterHostAdapter in production):
+            # a DIFFERENT ``spawn_session``, taking chain_id/mode/request. Its own
+            # enclosing function ``router_host_adapter.spawn_session`` is already an
+            # enumerated site of the ``spawn_session_recorded`` seam, one hop down.
+            ("reyn/runtime/router_loop.py", "self.host"): False,
+        },
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -321,20 +452,39 @@ class _SiteDeclaration:
     that drive the site for real and observe a denied capability's side effect NOT
     happening, so the registry doubles as an index of those tests and a site with an
     empty index is visibly unmeasured rather than invisibly so.
+
+    #3561 split the "no measurement" case in two, because the two were not the same
+    thing wearing one field. A FORWARDER has no value of its own to measure and its
+    callers do — that is a claim about the call graph, so it is now
+    ``measured_via_callers``, a typed list the AST checks against the call graph it
+    actually finds (``test_forwarder_exemptions_name_their_real_callers``). The old
+    spelling was the prose "there is no value of its own to measure; a thin
+    forwarder…" — a JUDGEMENT, which stays green whether or not it is still true, and
+    in particular stays green when a second caller appears that nobody measured.
+    ``unmeasured_reason`` keeps only the genuinely-unmeasured case.
     """
 
     #: Which layers of the SPAWNER's envelope the value passed here composes.
     parent_layers: str
     #: ``"tests/<file>.py::<test function>"`` for each behavioural measurement of
-    #: this site. Empty only when ``unmeasured_reason`` says why.
+    #: this site. Empty only when ``measured_via_callers`` or ``unmeasured_reason``
+    #: says why.
     measured_by: "tuple[str, ...]" = ()
-    #: Why this site has no behavioural measurement, when it has none.
+    #: (#3561) For a FORWARDER — a site that decides no value of its own — every
+    #: site that calls it, each of which must itself be enumerated and must resolve
+    #: (transitively, through its own forwarders) to a non-empty ``measured_by``.
+    #: Checked against the call graph the AST walk finds, so the exemption cannot
+    #: outlive its justification: a new, unmeasured caller REDs the gate.
+    measured_via_callers: "tuple[tuple[str, str], ...]" = ()
+    #: Why this site has no behavioural measurement, when it has none and is not a
+    #: forwarder either.
     unmeasured_reason: str = ""
 
 
 _S3546 = "tests/test_3546_pipeline_driver_narrowing_inheritance.py"
 _S3553 = "tests/test_3553_agent_step_worker_narrowing_inheritance.py"
 _S3556 = "tests/test_3556_session_spawn_narrowing_inheritance.py"
+_S3561 = "tests/test_3561_spawn_session_seam_reachability.py"
 
 #: Every spawn site in ``src/``, with the parent layers its ``narrowing=`` value
 #: composes and the behavioural test that measures that claim. A site missing from
@@ -374,10 +524,11 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             "straight to the primitive. The deciding site is whoever calls IT, which "
             "is why this gate enumerates that seam too."
         ),
-        unmeasured_reason=(
-            "there is no value of its own to measure; its callers are declared and "
-            "measured individually."
-        ),
+        # #3561: was the prose "there is no value of its own to measure; a thin
+        # forwarder…" — a judgement no test could check, and one that would have
+        # stayed green if a SECOND, unmeasured caller had appeared. The claim is now
+        # the call graph itself.
+        measured_via_callers=(("reyn/runtime/session_api.py", "run_agent_step"),),
     ),
     ("reyn/runtime/services/router_host_adapter.py", "spawn_session"): _SiteDeclaration(
         parent_layers=(
@@ -396,20 +547,160 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             f"{_S3556}::test_spawner_allow_list_survives_an_llm_requested_narrowing",
         ),
     ),
+    # ── #3561: the sites of the SYNC primitive ``AgentRegistry.spawn_session`` ──
+    # None of these can pass ``narrowing=`` — the primitive has no such parameter.
+    # That is recorded in ``_NARROWING_EXEMPT_SITES`` as an unmet requirement rather
+    # than an exemption on the merits, and each entry below says what DOES decide the
+    # child's envelope, because "it cannot inherit" is not the same claim as "it has
+    # nothing to inherit".
+    ("reyn/runtime/registry.py", "spawn_session_recorded"): _SiteDeclaration(
+        parent_layers=(
+            "NONE of its own — this is the recorded seam itself, calling the sync "
+            "primitive and then writing its OWN ``narrowing`` argument to the child's "
+            "sid-keyed ``config.yaml`` (the #2103-S1a layer) a few statements later. "
+            "The value is therefore decided by whoever calls IT, which is why all "
+            "three of those callers are enumerated sites in their own right."
+        ),
+        measured_via_callers=(
+            ("reyn/runtime/session_api.py", "spawn_ephemeral_session"),
+            ("reyn/runtime/session_api.py", "_spawn_pipeline_driver_session"),
+            ("reyn/runtime/services/router_host_adapter.py", "spawn_session"),
+        ),
+    ),
+    ("reyn/runtime/registry.py", "resolve_session"): _SiteDeclaration(
+        parent_layers=(
+            "NONE, and there is no spawner SESSION here to take them from: this is the "
+            "inbound-transport get-or-spawn for a ``<transport>:<native_id>`` "
+            "conversation key (a2a / mcp / cron / webhook / web), entered from a "
+            "transport frame. The child gets the agent's NAME-keyed layers only (the "
+            "agent's permissions declaration, topology capability_profile bindings, the "
+            "#2081 _delegate floor), identical to every other session of that agent. "
+            "⚠ Not a closed question: ``Session._cross_session_hook_put`` reaches this "
+            "with a hook-config ``target_session_id`` of the form ``transport:native``, "
+            "so a SESSION can be upstream of it after all — but the session it reaches "
+            "through is one of its OWN agent's, whose name-keyed envelope it already "
+            "shares, so there is no per-session layer to carry across. A cross-AGENT "
+            "variant would change that answer; there is none today."
+        ),
+        unmeasured_reason=(
+            "the claim is about the ABSENCE of a per-session layer to inherit, and the "
+            "behavioural shape this file measures elsewhere (a denied capability's side "
+            "effect not happening) has no subject here: with no spawner session there "
+            "is no narrowing whose loss could be observed. #3561 recorded this rather "
+            "than inventing a measurement whose green would mean nothing. What this "
+            "site DOES now get from the primitive — the sid's own persisted narrowing, "
+            "applied at construction — is measured at the recovery sites below, which "
+            "exercise the same injection in the primitive."
+        ),
+    ),
+    ("reyn/runtime/registry.py", "restore_all"): _SiteDeclaration(
+        parent_layers=(
+            "NOT an inheritance from a spawner — a RE-ATTACHMENT to the child's own "
+            "durable layer. Crash recovery re-creates a session that already existed, "
+            "under the SAME sid, and the #2103-S1a narrowing lives in "
+            "``<state>/sessions/<enc(sid)>/config.yaml``, keyed by that sid. The "
+            "name-keyed layers ride along as everywhere else. "
+            "★ This site is why the gate had to widen: enumerating it is what got the "
+            "claim MEASURED, and it was false. The layer was resolvable but not "
+            "ENFORCED — the factory resolves an envelope with ``sid=None``, so the live "
+            "``_contextual_permission`` the RouterLoop reads never saw the file, and a "
+            "re-woken narrowed session executed a denied tool for real. #3561 moved the "
+            "``#2126`` re-resolve-and-inject into ``spawn_session`` itself, where the "
+            "sid becomes known, closing it for every direct caller of the primitive at "
+            "once. What the site inherits is now a property of the primitive, which is "
+            "the reason the primitive belongs on this list at all."
+        ),
+        measured_by=(
+            f"{_S3561}::test_recovery_recreated_session_is_still_inside_its_persisted_narrowing",
+            f"{_S3561}::test_the_witness_tool_runs_when_nothing_narrows_it",
+        ),
+    ),
+    ("reyn/runtime/registry.py", "_rewake_pipeline_runs"): _SiteDeclaration(
+        parent_layers=(
+            "Same as ``restore_all`` above — the pipeline-driver arm of the same "
+            "crash-recovery re-creation, re-entering under the work order's "
+            "``driver_sid``, so the driver-session's own persisted narrowing (written "
+            "when ``_spawn_pipeline_driver_session`` first spawned it through "
+            "``spawn_session_recorded``) is resolved from disk by sid and, since #3561, "
+            "injected into the live envelope by the primitive both arms share. Measured "
+            "by the same behavioural pair, which drives that shared "
+            "``spawn_session``-under-an-existing-sid path."
+        ),
+        measured_by=(
+            f"{_S3561}::test_recovery_recreated_session_is_still_inside_its_persisted_narrowing",
+            f"{_S3561}::test_the_witness_tool_runs_when_nothing_narrows_it",
+        ),
+    ),
+    ("reyn/interfaces/slash/session.py", "session_cmd"): _SiteDeclaration(
+        parent_layers=(
+            "NONE — and unlike the two recovery sites, this one has something it could "
+            "inherit and does not. ``/session new`` opens a session under the ATTACHED "
+            "agent with no ``config.yaml`` of its own and nothing carried from the "
+            "invoking session, so the child's #2103-S1a layer is empty however narrow "
+            "its invoker is. This is the arc's open gap, filed as #3562; it is declared "
+            "HERE rather than left off the list, because a site the gate does not "
+            "enumerate is a site the gate does not count. "
+            "#3561 measured that it is REACHABLE FROM MODEL OUTPUT, which is the fact "
+            "that decides it is in scope: an agent step whose prompt is a previous "
+            "agent step's model output, run on a session narrowed to a single "
+            "capability, reaches this site and spawns — no operator in the path, no LLM "
+            "call on the reaching turn (``Session._handle_user_message`` short-circuits "
+            "to ``_maybe_handle_slash`` before the router runs). The measurement below "
+            "asserts the REACHABILITY only, never that the child is un-narrowed, so it "
+            "stays green when #3562 closes the gap."
+        ),
+        measured_by=(
+            f"{_S3561}::test_model_output_reaches_slash_dispatch_and_spawns_a_session",
+        ),
+    ),
 }
 
 
-def _spawn_call_sites() -> "list[tuple[str, str, int]]":
-    """Every CALL of a ``_SPAWN_SEAMS`` function in ``src/`` as
-    ``(relative module path, enclosing function, keywords-present marker)``.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+
+
+@dataclass(frozen=True)
+class _CallSite:
+    """One resolved call of one seam."""
+
+    module: str          # relative to ``src/``
+    function: str        # enclosing function ("<module>" at module level)
+    seam: str            # the resolved seam's ``name``
+    has_narrowing: bool  # an explicit ``narrowing=`` kwarg, or ``**kwargs`` forwarding
+
+    @property
+    def key(self) -> "tuple[str, str]":
+        return (self.module, self.function)
+
+
+#: Every ``(calling module, receiver expr)`` this run saw for a seam that needs
+#: resolution but that ``_Seam.receivers`` does not answer. Populated by
+#: :func:`_spawn_call_sites` and asserted empty by
+#: ``test_spawn_seam_receivers_are_all_resolvable`` — an unresolvable receiver must
+#: not be silently counted (a false site) OR silently skipped (a missed site).
+_UNRESOLVED_RECEIVERS: "set[tuple[str, str, str]]" = set()
+
+
+def _spawn_call_sites() -> "list[_CallSite]":
+    """Every CALL of a ``_SPAWN_SEAMS`` seam in ``src/``, RESOLVED to a definition.
 
     An AST walk, not a regex: the same keyword inside a docstring or a comment is
     prose, and matching it textually has already produced false positives on this
     codebase. ``ast`` sees only real ``Call`` nodes.
+
+    #3561: the walk resolves each call by RECEIVER, not by name. Matching
+    ``spawn_session`` by name alone attributes ``router_loop.py``'s
+    ``self.host.spawn_session(chain_id=…, mode=…, request=…)`` to
+    ``AgentRegistry.spawn_session``, which is a different function taking different
+    arguments — a false site that would then need a false declaration. A receiver
+    the seam's table does not answer is recorded in ``_UNRESOLVED_RECEIVERS`` and
+    fails its own test; the walk never guesses in either direction.
     """
-    src = Path(__file__).resolve().parents[1] / "src"
-    sites: "list[tuple[str, str, int]]" = []
-    for py in sorted(src.rglob("*.py")):
+    _UNRESOLVED_RECEIVERS.clear()
+    by_name: "dict[str, _Seam]" = {s.name: s for s in _SPAWN_SEAMS}
+    sites: "list[_CallSite]" = []
+    for py in sorted(_SRC.rglob("*.py")):
+        rel = str(py.relative_to(_SRC))
         tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
         # Enclosing-function attribution: walk defs, then their nested calls.
         enclosing: "dict[int, str]" = {}
@@ -421,35 +712,142 @@ def _spawn_call_sites() -> "list[tuple[str, str, int]]":
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else (
-                func.id if isinstance(func, ast.Name) else None
-            )
-            if name not in _SPAWN_SEAMS:
+            if isinstance(func, ast.Attribute):
+                name, receiver = func.attr, ast.unparse(func.value)
+            elif isinstance(func, ast.Name):
+                name, receiver = func.id, ""
+            else:
                 continue
+            seam = by_name.get(name)
+            if seam is None:
+                continue
+            if seam.receivers is not None:
+                resolved = seam.receivers.get((rel, receiver))
+                if resolved is None:
+                    _UNRESOLVED_RECEIVERS.add((rel, receiver, name))
+                    continue
+                if not resolved:
+                    continue  # a different function that shares the name
             has_narrowing = any(kw.arg == "narrowing" for kw in node.keywords) or any(
                 kw.arg is None for kw in node.keywords  # **kwargs forwarding
             )
-            sites.append((
-                str(py.relative_to(src)),
-                enclosing.get(id(node), "<module>"),
-                int(has_narrowing),
+            sites.append(_CallSite(
+                module=rel,
+                function=enclosing.get(id(node), "<module>"),
+                seam=seam.name,
+                has_narrowing=has_narrowing,
             ))
     return sites
+
+
+def _definition_sites(name: str) -> "set[str]":
+    """Every module in ``src/`` that defines a function or method called ``name``
+    — the ground truth an unambiguous-name claim is checked against."""
+    found: "set[str]" = set()
+    for py in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+                found.add(str(py.relative_to(_SRC)))
+    return found
 
 
 def test_spawn_seam_call_sites_are_findable() -> None:
     """Tier 2: instrument check — the AST walk finds the seams' known call sites.
 
     A completeness gate that silently found NOTHING would pass for the wrong
-    reason, so the gate's own search is witnessed against three sites it must see:
-    the pipeline driver spawn, the ``session_spawn`` tool's spawn, and (#3553) the
-    agent-step spawn, which reaches the primitive only through the wrapper.
+    reason, so the gate's own search is witnessed against four sites it must see:
+    the pipeline driver spawn, the ``session_spawn`` tool's spawn, (#3553) the
+    agent-step spawn, which reaches the recorded primitive only through the wrapper,
+    and (#3561) ``/session new``, which reaches the SYNC primitive and no wrapper at
+    all. The fourth is the one the pre-#3561 name-matching walk could not see,
+    because ``spawn_session`` was not on the list to match.
     """
     sites = _spawn_call_sites()
-    functions = {(mod, fn) for mod, fn, _ in sites}
+    functions = {s.key for s in sites}
     assert ("reyn/runtime/session_api.py", "_spawn_pipeline_driver_session") in functions
     assert ("reyn/runtime/session_api.py", "run_agent_step") in functions
     assert any(mod == "reyn/runtime/services/router_host_adapter.py" for mod, _ in functions)
+    assert ("reyn/interfaces/slash/session.py", "session_cmd") in functions
+
+
+def test_spawn_seam_resolution_separates_same_named_functions() -> None:
+    """Tier 2: (#3561) the walk resolves ``spawn_session`` by RECEIVER, so it does
+    not conflate three unrelated functions that share the name.
+
+    The known-present positive and the known-present negative are asserted together,
+    because either alone is satisfiable by a broken instrument: a walk that matched
+    nothing would pass a negative-only check, and a walk that matched everything by
+    name would pass a positive-only one.
+
+      positive — ``interfaces/slash/session.py``'s ``reg.spawn_session(...)`` IS
+                 ``AgentRegistry.spawn_session``;
+      negative — ``runtime/router_loop.py``'s ``self.host.spawn_session(...)`` is
+                 ``RouterHostAdapter.spawn_session`` (``chain_id`` / ``mode`` /
+                 ``request``), and the registry's envelope-birth accounting must not
+                 claim it. Its own enclosing function is separately enumerated as a
+                 site of ``spawn_session_recorded``, one hop down.
+    """
+    resolved = {(s.module, s.function, s.seam) for s in _spawn_call_sites()}
+    assert (
+        "reyn/interfaces/slash/session.py", "session_cmd", "spawn_session",
+    ) in resolved
+    assert not any(
+        mod == "reyn/runtime/router_loop.py" and seam == "spawn_session"
+        for mod, _fn, seam in resolved
+    ), (
+        "the walk attributed router_loop.py's host-protocol spawn_session call to "
+        "AgentRegistry.spawn_session — a name match, not a resolution"
+    )
+    # …and the hop down IS counted, so the negative above is a re-attribution, not
+    # a hole.
+    assert (
+        "reyn/runtime/services/router_host_adapter.py", "spawn_session",
+        "spawn_session_recorded",
+    ) in resolved
+
+
+def test_spawn_seam_receivers_are_all_resolvable() -> None:
+    """Tier 2: (#3561) every call of an ambiguous seam name has a receiver the seam's
+    resolution table answers.
+
+    The walk refuses to guess: an unlisted receiver is neither counted (a phantom
+    site with a phantom declaration) nor skipped (a real site the gate stops
+    counting, which is the failure mode #3561 exists to close). It lands here
+    instead, so a new call site through an unfamiliar receiver forces a human to
+    resolve it once and record the answer.
+    """
+    _spawn_call_sites()
+    assert not _UNRESOLVED_RECEIVERS, (
+        "call(s) of a spawn-seam name whose receiver the seam's `receivers` table "
+        f"does not resolve: {sorted(_UNRESOLVED_RECEIVERS)!r}. Resolve each to its "
+        "DEFINITION and add it as True (this seam) or False (a different function "
+        "of the same name)."
+    )
+
+
+def test_unambiguous_seam_names_have_exactly_one_definition() -> None:
+    """Tier 2: (#3561) a seam declared unambiguous (``receivers=None``) really has
+    one definition in ``src/``, and every seam's declared module really defines it.
+
+    Name matching is sound only under that premise, and the premise is exactly the
+    kind of thing that silently stops being true — someone adds a second
+    ``spawn_ephemeral_session`` on another class and the walk starts attributing its
+    calls to this one. Asserting the definition SET (not its size) means the failure
+    names the intruder.
+    """
+    for seam in _SPAWN_SEAMS:
+        defs = _definition_sites(seam.name)
+        assert seam.module in defs, (
+            f"seam {seam.name!r} is declared as defined in {seam.module!r}, but no "
+            f"such definition was found there (found: {sorted(defs)!r})"
+        )
+        if seam.receivers is None:
+            assert defs == {seam.module}, (
+                f"seam {seam.name!r} is declared unambiguous, but {sorted(defs)!r} "
+                "define that name — resolution by name alone now conflates them. "
+                "Give the seam a `receivers` table."
+            )
 
 
 def test_every_spawn_site_passes_narrowing() -> None:
@@ -458,12 +856,12 @@ def test_every_spawn_site_passes_narrowing() -> None:
 
     Counted at the place that should inherit, not at the places that might have
     re-checked — the latter set is unbounded, this one is enumerable. A site that
-    legitimately must not pass ``narrowing=`` registers its reason in
-    ``_NARROWING_EXEMPT_SITES`` instead of being silently absent.
+    does not pass ``narrowing=`` registers its reason in ``_NARROWING_EXEMPT_SITES``
+    instead of being silently absent.
     """
     missing = [
-        (mod, fn) for mod, fn, has in _spawn_call_sites()
-        if not has and (mod, fn) not in _NARROWING_EXEMPT_SITES
+        s.key for s in _spawn_call_sites()
+        if not s.has_narrowing and s.key not in _NARROWING_EXEMPT_SITES
     ]
     assert not missing, (
         "spawn call site(s) do not pass narrowing=, so the spawned session's "
@@ -471,6 +869,35 @@ def test_every_spawn_site_passes_narrowing() -> None:
         f"{missing!r}. Pass narrowing=, or register the site in "
         "_NARROWING_EXEMPT_SITES with the reason it must not."
     )
+
+
+def test_narrowing_exempt_sites_have_no_narrowing_channel() -> None:
+    """Tier 2: (#3561) every exempt site's exemption rests on a fact about the LIVE
+    seam signature, not on prose — the seam it calls really has no ``narrowing``
+    parameter.
+
+    Every entry in ``_NARROWING_EXEMPT_SITES`` today says the same thing: the site
+    calls ``AgentRegistry.spawn_session``, which has no channel to pass a narrowing
+    through. That is recorded as an unmet requirement, and this test is what makes it
+    expire: add the channel and every exemption goes RED, forcing each site to either
+    use it or re-argue. It also fails if an exempt entry is stale (naming a site the
+    walk no longer finds), so the registry cannot accumulate dead permissions.
+    """
+    seam_by_name = {s.name: s for s in _SPAWN_SEAMS}
+    sites = _spawn_call_sites()
+    for key in sorted(_NARROWING_EXEMPT_SITES):
+        seams_here = {s.seam for s in sites if s.key == key and not s.has_narrowing}
+        assert seams_here, (
+            f"_NARROWING_EXEMPT_SITES lists {key!r}, but the walk finds no "
+            "narrowing-less spawn call there — a stale exemption"
+        )
+        for seam_name in sorted(seams_here):
+            params = inspect.signature(seam_by_name[seam_name].func).parameters
+            assert "narrowing" not in params, (
+                f"{key!r} is exempted from passing narrowing=, but the seam it calls "
+                f"({seam_name}) DOES take a narrowing parameter — the exemption's "
+                "stated reason is no longer true. Pass it, or re-argue the exemption."
+            )
 
 
 def test_every_spawn_site_declares_its_parent_layers() -> None:
@@ -483,8 +910,7 @@ def test_every_spawn_site_declares_its_parent_layers() -> None:
     site. ⚠️ Stated, not verified: see ``_SiteDeclaration``.
     """
     undeclared = [
-        (mod, fn) for mod, fn, _ in _spawn_call_sites()
-        if (mod, fn) not in _SITE_PARENT_LAYERS
+        s.key for s in _spawn_call_sites() if s.key not in _SITE_PARENT_LAYERS
     ]
     assert not undeclared, (
         "spawn call site(s) do not declare which layers of the spawner's permission "
@@ -509,8 +935,13 @@ def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
     tests_root = Path(__file__).resolve().parent
     for (mod, fn), decl in sorted(_SITE_PARENT_LAYERS.items()):
         assert decl.parent_layers.strip(), f"{mod}::{fn} declares no parent layers"
-        assert decl.measured_by or decl.unmeasured_reason.strip(), (
-            f"{mod}::{fn} names neither a behavioural test nor a reason it has none"
+        assert (
+            decl.measured_by
+            or decl.measured_via_callers
+            or decl.unmeasured_reason.strip()
+        ), (
+            f"{mod}::{fn} names neither a behavioural test, nor the callers that "
+            "carry the measurement for it, nor a reason it has none"
         )
         for ref in decl.measured_by:
             path_part, _, test_name = ref.partition("::")
@@ -526,3 +957,85 @@ def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
                 "A renamed or deleted measurement must not leave the site silently "
                 "declared-but-unmeasured."
             )
+
+
+def test_forwarder_exemptions_name_their_real_callers() -> None:
+    """Tier 2: (#3561) a forwarder's exemption is a claim about the CALL GRAPH, and
+    the call graph is what checks it.
+
+    ``spawn_ephemeral_session``'s exemption used to read "there is no value of its
+    own to measure; a thin forwarder…" — a judgement, true or false in the reader's
+    head and green either way. In particular it stayed green under the one change
+    that would falsify it: a SECOND caller, deciding a second value nobody measured.
+    The claim is now "these are its callers", and this test compares that list to the
+    callers the AST actually finds, in both directions:
+
+      - a declared caller the walk does not find ⇒ the list is stale;
+      - a found caller the list omits ⇒ a new deciding site slipped in behind the
+        exemption, which is exactly the case the prose could not catch.
+
+    A declared caller must also be an enumerated site itself, so the exemption cannot
+    hand the measurement to somewhere the gate never looks.
+    """
+    sites = _spawn_call_sites()
+    for key, decl in sorted(_SITE_PARENT_LAYERS.items()):
+        if not decl.measured_via_callers:
+            continue
+        seam_name = key[1]  # a forwarder's own def name is the seam its callers call
+        assert seam_name in {s.name for s in _SPAWN_SEAMS}, (
+            f"{key!r} declares measured_via_callers, but {seam_name!r} is not an "
+            "enumerated seam — its callers are not something this walk can find"
+        )
+        actual = {s.key for s in sites if s.seam == seam_name}
+        declared = set(decl.measured_via_callers)
+        assert declared == actual, (
+            f"{key[0]}::{key[1]} claims its measurement is carried by "
+            f"{sorted(declared)!r}, but the call graph says its callers are "
+            f"{sorted(actual)!r}. A forwarder exemption must not outlive the caller "
+            "set that justified it."
+        )
+        for caller in sorted(declared):
+            assert caller in _SITE_PARENT_LAYERS, (
+                f"{key[0]}::{key[1]} defers its measurement to {caller!r}, which is "
+                "not itself a declared site — the deferral would leave the value "
+                "decided outside the gate"
+            )
+
+
+def test_forwarder_deferral_terminates_in_a_real_measurement() -> None:
+    """Tier 2: (#3561) following every ``measured_via_callers`` deferral reaches a
+    site with a non-empty ``measured_by`` — the exemption chain has a bottom.
+
+    Two forwarders now defer to each other's callers
+    (``spawn_session_recorded`` → ``spawn_ephemeral_session`` → ``run_agent_step``),
+    and a deferral graph that closed into a cycle, or that ended on an
+    ``unmeasured_reason``, would let a site be "measured" by nothing at all while
+    every individual link looked accounted for. Walking the closure is what makes
+    "its callers are measured individually" a checkable sentence rather than a
+    plausible one.
+    """
+    for key, decl in sorted(_SITE_PARENT_LAYERS.items()):
+        if not decl.measured_via_callers:
+            continue
+        seen: "set[tuple[str, str]]" = set()
+        frontier = list(decl.measured_via_callers)
+        leaves: "list[tuple[str, str]]" = []
+        while frontier:
+            cur = frontier.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            sub = _SITE_PARENT_LAYERS[cur]
+            if sub.measured_via_callers:
+                frontier.extend(sub.measured_via_callers)
+            else:
+                leaves.append(cur)
+        assert leaves, (
+            f"{key[0]}::{key[1]}'s deferral closes into a cycle and never reaches a "
+            "site that measures anything"
+        )
+        unmeasured = [leaf for leaf in leaves if not _SITE_PARENT_LAYERS[leaf].measured_by]
+        assert not unmeasured, (
+            f"{key[0]}::{key[1]} defers its measurement, transitively, to site(s) "
+            f"that measure nothing: {sorted(unmeasured)!r}"
+        )

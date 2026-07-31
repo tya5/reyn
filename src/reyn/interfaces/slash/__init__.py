@@ -104,7 +104,9 @@ REGISTRY: SlashRegistry = SlashRegistry()
 def suggest_for_unknown(cmd: str, *, names: list[str] | None = None) -> list[str]:
     """Return up to ~3 closest-match suggestions for a typo'd slash command.
 
-    Used by :meth:`Session._dispatch_slash` to build the inline error
+    Used by :meth:`Session._maybe_handle_slash` — the OS's one slash
+    dispatch method (``runtime/session.py``; the ``Session._dispatch_slash``
+    this line used to name has never existed) — to build the inline error
     body when ``/<cmd>`` doesn't resolve. The suggestion list is
     intentionally tight: prefix-matches (= commands whose name starts with
     the typed token) come first, then fuzzy similarity matches

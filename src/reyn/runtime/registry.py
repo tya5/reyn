@@ -2729,6 +2729,37 @@ class AgentRegistry:
         # freshness for the CURRENT conversation is already supplied separately by the
         # live overlay (this session's uncompacted calls layered on each turn). So it is
         # correctly shared across the agent's sessions, not per-conversation state.
+        # #3561: re-resolve + inject the sid-keyed #2103-S1a narrowing, for the same
+        # reason #2126 does it in spawn_session_recorded and at the same point in the
+        # sequence — right after the per-session state dir is finalized, before the
+        # caller starts a run-loop. The factory resolved this session's envelope with
+        # sid=None (no sid exists yet at construction), so the live session's
+        # _contextual_permission — the SINGLE source the RouterLoop's advertisement
+        # filter and its _excluded_result call-time gate both read — ignores this sid's
+        # config.yaml until something re-resolves WITH the sid.
+        #
+        # spawn_session_recorded did that for itself and only for itself, which left
+        # every caller that reaches this primitive DIRECTLY outside the narrowing:
+        # restore_all and _rewake_pipeline_runs re-create a crashed session under its
+        # ORIGINAL sid, whose config.yaml is still on disk, and the re-woken session ran
+        # unnarrowed. Measured, not inferred: against a live positive control (an
+        # un-narrowed session whose write_file DOES land), the re-woken session's denied
+        # write_file landed too — while capability_visibility_state() still showed the
+        # tool denied, because THAT surface re-resolves with the sid on every read and
+        # the enforcement path does not. Two surfaces, one of them decorative; the gap is
+        # invisible from the operator's status bar.
+        # See tests/test_3561_spawn_session_seam_reachability.py.
+        #
+        # Injecting here rather than at each recovery site closes the class at the one
+        # place every path shares: this is where the sid becomes known, so it is where
+        # the sid-keyed layer becomes resolvable. Inert for a sid with no config.yaml
+        # (resolved_profile_for then returns the name-keyed layers the factory already
+        # applied). spawn_session_recorded keeps its own re-inject — it WRITES the config
+        # after this returns, so its value does not exist yet at this point.
+        inject = getattr(session, "apply_per_session_narrowing", None)
+        if callable(inject):
+            contextual, excluded = self.resolved_profile_for(name, sid=new_sid)
+            inject(contextual, excluded)
         # #2285 step2: now that the per-session state dir is finalized (snapshot re-key above),
         # restore any persisted visibility/hook toggles for this (name, sid) — the loaded override
         # composes atop the authoritative envelope, so visible ⊆ authorized survives across restart.
