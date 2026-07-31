@@ -785,8 +785,10 @@ def test_exec_is_the_exec_categorys_only_action() -> None:
     """Tier 2: the ``exec`` category offers exactly the ``exec`` tool.
 
     #3226 Phase 3 renamed the tool sandboxed_exec -> exec; the op kind stays
-    ``sandboxed_exec``, which is why ``contextual_gate`` still bridges those
-    two strings. The actual handler invocation is covered separately.
+    ``sandboxed_exec``, so the two strings differ. (A table that bridged them,
+    ``contextual_gate._OP_KIND_TOOLS``, was deleted caller-less in #3513 — this
+    assertion is about the category table, not that bridge.) The actual handler
+    invocation is covered separately.
     """
     from reyn.tools.universal_dispatch import action_names_for_category
 

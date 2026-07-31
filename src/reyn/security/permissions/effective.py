@@ -353,18 +353,32 @@ class ContextualLayer:
 def tool_contextually_denied(
     contextual: "ContextualPermission | None", effective_name: str
 ) -> bool:
-    """The single contextual TOOL-axis gate check (#1912).
+    """The contextual TOOL-axis gate check (#1912).
 
     True iff a per-session contextual narrowing is present AND denies
-    ``effective_name``. **Every** tool-dispatch path calls this one function —
-    chat ``RouterLoop._excluded_result``, the phase ``RouterLoop`` (same code),
-    and control-IR op dispatch — so contextual enforcement is a single seam,
-    bypass-impossible by construction. ``contextual is None`` → not denied (⊤),
-    so an un-narrowed path is byte-identical to pre-#1827.
+    ``effective_name``. ``contextual is None`` → not denied (⊤), so an
+    un-narrowed path is byte-identical to pre-#1827.
+
+    **Measured callers** (#3513, ``src/`` enumeration): the RouterLoop
+    enforcement gate ``_excluded_result`` (chat and phase are the same code) and
+    its advertisement filter, plus the three exposure/fence schemes
+    (``_category_exposure``, ``_enumerate_exposure``,
+    ``retrieval_content_fence``). Those paths share this one function, so they
+    cannot disagree about what a narrowing means.
+
+    ⚠️ This docstring used to claim that **every** tool-dispatch path calls this
+    function — naming "control-IR op dispatch" as one of them — and concluded
+    contextual enforcement was "bypass-impossible by construction". That leg was
+    ``core/op_runtime/contextual_gate``, whose own two consumers
+    (``control_ir_executor`` / ``preprocessor_executor``) were deleted as whole
+    files in #2434; the orphaned wrapper had no ``src/`` caller and was deleted
+    in #3513. **Whether op dispatch needs contextual narrowing, and whether it is
+    covered some other way, is unmeasured — see #3546.** Do not restore an
+    exhaustiveness claim here without an enumeration that supports it.
 
     Callers pass the **effective resolved name** (``invoke_action`` already
-    unwrapped to ``action_name``; a control-IR op mapped to its tool-name) so the
-    same name vocabulary reaches the deny-set on every path.
+    unwrapped to ``action_name``) so the same name vocabulary reaches the
+    deny-set on every path that calls this.
     """
     if contextual is None:
         return False

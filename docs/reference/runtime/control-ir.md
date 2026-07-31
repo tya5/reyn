@@ -339,7 +339,7 @@ so ordinary memo/replay applies.
 
 Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend`. Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
 
-The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3) — the rename is tool-name-only and does not touch this op schema, its events, or its result shape. The op kind and the tool name therefore differ, which is why `op_runtime.contextual_gate._OP_KIND_TOOLS` still bridges these two strings after #3429 removed the rest of that table.
+The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`). The router/phase tool that reaches this op was renamed `sandboxed_exec` -> **`exec`** (#3226 Phase 3) — the rename is tool-name-only and does not touch this op schema, its events, or its result shape. The op kind and the tool name therefore differ. A table bridging the two strings (`op_runtime.contextual_gate._OP_KIND_TOOLS`) used to exist; #3513 deleted it, because its only consumers — `control_ir_executor` / `preprocessor_executor` — had already been deleted as whole files in #2434, leaving it with no caller in `src/`. Whether op dispatch requires contextual narrowing in its own right is tracked in #3546 and is not settled here.
 
 ```json
 {
@@ -1115,7 +1115,7 @@ The bound is a **latency** invariant, not a **cost** one: it caps how long reyn 
 
 Events: `embed_secret_redacted` (`count`, `model`) when the PRE-embed scan redacts one or more texts. `embed_cancelled` (`model`) when `cancel_event` fires mid-embed — a cancelled outcome, distinct from a provider fault (mirrors `mcp_cancelled` / `sandboxed_exec_cancelled`). `embed_attempts` (`model`, `attempts`, `successful_batches`) on every successful embed (#3047 (c)): `attempts` is how many times reyn's own retry loop reached the provider call (summed across internal batches), `successful_batches` how many returned — so `attempts - successful_batches` is the retry overhead the cost tracker cannot see (it prices only the returned response). Always emitted on success, even with zero retries (`attempts == successful_batches`), so an absent event means "not instrumented", never "zero retries". Provider-supplied `attempts` is `NotRequired` on `EmbedBatchResult` — a loopless provider omits it and the op simply does not emit (no fabricated `attempts=1`); the op reads it defensively. This is reyn's retry-loop altitude, not a raw wire-request count — the two coincide only while #3054's `max_retries=0` holds the SDK-internal retry at 0.
 
-Default-**ALLOW** (compute op — the cost is the embedding API/compute, not a workspace write); individually name-gateable via `contextual_gate` like every other op kind. At Phase 1 this op was additive and did not retire `embed_and_index` (`reyn.api.safe.embed_index`, the CodeAct-only ingestion entry); that clean-break landed in FP-0057 Phase 2b — `embed_and_index` is deleted, and both `index_update` (ingestion) and `semantic_search` (query) now dispatch their embed calls through THIS op (see [`index_update`](#index_update) below).
+Default-**ALLOW** (compute op — the cost is the embedding API/compute, not a workspace write); individually name-gateable, as a registered router-callable tool, by a per-session contextual narrowing at the RouterLoop gate (`effective.tool_contextually_denied`). At Phase 1 this op was additive and did not retire `embed_and_index` (`reyn.api.safe.embed_index`, the CodeAct-only ingestion entry); that clean-break landed in FP-0057 Phase 2b — `embed_and_index` is deleted, and both `index_update` (ingestion) and `semantic_search` (query) now dispatch their embed calls through THIS op (see [`index_update`](#index_update) below).
 
 ## `index_query`
 
@@ -1223,7 +1223,7 @@ Returns: `{"kind": "index_update", "source": str, "added": int, "updated": int, 
 
 Events: `index_update_cost_warning` (`source`, `chunk_count`, `estimated_tokens`, `threshold`) when the to-embed batch exceeds the configured threshold; `index_updated` (`source`, `added`, `updated`, `removed`, `skipped`) on completion.
 
-Default-**ALLOW** (own-write op — writes only to the source's OWN index + manifest, not a destructive cross-cutting op like `index_drop`); individually name-gateable via `contextual_gate`.
+Default-**ALLOW** (own-write op — writes only to the source's OWN index + manifest, not a destructive cross-cutting op like `index_drop`).
 
 ## `compact`
 
