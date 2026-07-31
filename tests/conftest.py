@@ -283,6 +283,70 @@ def _isolate_budget_limit_context():
     from reyn.llm.llm import _llm_call_limit_context_var
     _llm_call_limit_context_var.set(None)
 
+
+@pytest.fixture(autouse=True)
+def _isolate_rich_style_ansi_memo():
+    """Reset rich's process-global rendered-SGR memo after every test (#3572).
+
+    ``Style._make_ansi_codes`` caches a Style's rendered escape in
+    ``self._ansi`` and never keys that cache by ``color_system`` (measured on
+    rich 15.0.0 — a bug in rich, deliberately NOT reported upstream, see
+    ``tests/test_markdown_palette_gate_3469.py``'s ``_memo_cleared_theme`` for
+    the owner decision and the runnable "is it still there?" snippet). Because
+    ``Style.parse`` is ``lru_cache``d and ``rich.default_styles.DEFAULT_STYLES``
+    is a module global, those Style instances are shared by every test in the
+    pytest process: whichever console renders a given style string FIRST bakes
+    its colour system into the shared instance, and every later console —
+    whatever colour system IT asked for — re-emits that escape verbatim.
+
+    What makes this bite in CI and not on a developer's machine is the colour
+    system reyn's own renderers get. ``RichChatRenderer`` / ``InlineChatRenderer``
+    construct ``Console(force_terminal=True, ...)`` with colour detection left to
+    rich, which is correct for production. Under CI's environment (no ``TERM``,
+    no ``COLORTERM``) that detects **standard**, so any of the ~15 test files
+    that drive those renderers memoizes ``_CC_DIM`` (``#6b7280``) as
+    bright-black ``'90'``; a later test that explicitly asks for truecolor then
+    measures ``'\\x1b[90m…'`` and goes red (measured: #3571 / #3575, byte-identical
+    to a local repro with ``TERM``/``COLORTERM`` unset, running
+    ``test_agui_sr5_bit_identical_p4.py`` before
+    ``test_right_gutter_label_visible_3536.py``). It flaps rather than failing
+    every run because ``--dist load`` decides per run which worker gets which
+    pair. Locally, ``TERM=xterm-256color`` detects eight-bit and both sides of
+    the pair agree often enough to hide it.
+
+    Guarding each READER (as #3472 did for the palette gate alone) closes one
+    hole and leaves the class open — the next test that renders ``#6b7280`` on a
+    truecolor console inherits the bug, which is exactly how #3536's gutter test
+    became the second victim. Resetting here instead is leaker-agnostic: every
+    test starts from an unmemoized rich, so no test can observe another's colour
+    system. ``_ansi`` is a rich-private field and there is no public reset
+    (``copy()`` and ``+ Style()`` both preserve or alias it), so the two globals
+    are restored directly — if a rich upgrade renames either, this fixture
+    raises here rather than silently stopping.
+
+    Same shape as ``_isolate_budget_limit_context`` above, for the same reason.
+    """
+    yield
+    from rich.default_styles import DEFAULT_STYLES
+    from rich.style import Style
+
+    # Every ``lru_cache``d member of ``Style`` — enumerated rather than named
+    # (``parse``, ``_add``, ``normalize``, ``clear_meta_and_links``, … on rich
+    # 15.0.0) because ``Style.__add__`` delegates to a CACHED ``_add``, so the
+    # combined style a Console actually renders is itself process-global and
+    # carries its own ``_ansi``. Clearing only ``parse`` measurably leaves the
+    # red in place (verified while landing this: the poisoned instance the
+    # renderer used was the cached ``_add`` result, not the parsed one).
+    cleared = [
+        member for member in (getattr(Style, name, None) for name in dir(Style))
+        if hasattr(member, "cache_clear")
+    ]
+    assert cleared, "rich.style.Style exposes no cached member — reset is now a no-op"
+    for member in cleared:
+        member.cache_clear()
+    for style in DEFAULT_STYLES.values():
+        style._ansi = None
+
 # ── Marker registration ────────────────────────────────────────────────────────
 
 
