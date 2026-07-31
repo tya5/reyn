@@ -306,11 +306,13 @@ class LLMReplay:
         Appends new entries; existing entries are not rewritten.  The
         fixture directory is created automatically.
 
-        #3473: each precondition is asked to :meth:`capture` the live
-        environment here — at the END of recording, when whatever populated
-        it (an MCP probe, a catalog refresh) has had the whole recorded run to
-        do so. The snapshots are written as ``"environment"`` lines and are
-        what a later replay injects.
+        #3473: in RECORD mode each precondition is asked to :meth:`capture` the
+        live environment here — at the END of recording, when whatever
+        populated it (an MCP probe, a catalog refresh) has had the whole
+        recorded run to do so. The snapshots are written as ``"environment"``
+        lines and are what a later replay injects. A replay-mode flush
+        captures nothing: it would append this machine's environment to a
+        committed fixture, which is the opposite of the guarantee.
         """
         captured = [
             {"kind": "environment", "name": precondition.name, "value": snapshot}
@@ -318,7 +320,7 @@ class LLMReplay:
                 (p, p.capture()) for p in self._preconditions
             )
             if snapshot is not None
-        ]
+        ] if self.mode == "record" else []
         if not self._pending and not captured:
             return
         self.fixture_path.parent.mkdir(parents=True, exist_ok=True)
