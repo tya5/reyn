@@ -55,6 +55,14 @@ MEASURED, not inferred: with the fix, turn 2's server→tools projection is
 reyn_vector_store: [upsert, query, list_metadata, delete]}`` against turn 1's
 ``{reyn_markitdown: [convert_to_markdown]}``.
 
+#3556 re-keyed BOTH files the same way, for a smaller reason: it extended the
+``session_spawn`` ``narrowing`` parameter DESCRIPTION (the composition is now stated
+to the model), and a tool's JSON schema is part of the ``tools=`` payload
+``LLMReplay.key`` hashes. Regenerated with the same switch; the authored responses are
+byte-identical, only ``key`` / ``key_components`` moved. Verified re-keyed rather than
+merely re-saved: the NEW fixtures against the OLD description raise ``MissingFixture``
+attributing the drift to ``session_spawn: schema differs``.
+
 Why the fixture responses are AUTHORED, not live-recorded (disclosed, not
 silently passed off as a live LLM transcript -- same disclosure norm as this
 plugin's markitdown-mcp stub substitution below): this sandbox's LLM
