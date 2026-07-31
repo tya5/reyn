@@ -19,19 +19,25 @@ The pins below are the two halves the fix must keep:
     an entry with no recorded imprint is refused rather than served under an
     environment it was never captured against.
 
-The last test is the "deterministic without waiting" pin: #3473 rules out
-sleeps, longer deadlines and retries, so the recorded catalog is injected
-directly and the probe is off the replay path entirely — witnessed with a
-probe that never answers.
+  - A miss attributes itself across all FOUR key components (model /
+    messages / tools / tool_choice), not just the one someone suspected —
+    #3473 had two causal stories falsified, and an instrument scoped to a
+    hypothesis can confirm it but never reject it.
+  - Determinism comes from injection, not from waiting: #3473 rules out
+    sleeps, longer deadlines and retries, so the recorded catalog is written
+    onto the real warm-start path and the probe is off the replay path
+    entirely — witnessed with a probe that never answers.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from reyn.dev.testing.replay import LLMReplay, MissingFixture, PreconditionMismatch
+from reyn.dev.testing.replay_key_diff import fingerprint
 from reyn.dev.testing.replay_preconditions import (
     MCPCatalogPrecondition,
     ReplayRequest,
@@ -140,6 +146,22 @@ def _write_fixture(path: Path, entries: list[dict]) -> None:
     )
 
 
+async def _replay_call(replay: LLMReplay, tools: list[dict]) -> Any:
+    """Drive one completion through the REAL boundary ``LLMReplay`` patches.
+
+    Going through ``litellm.acompletion`` rather than the handler directly is
+    what makes the install/restore lifecycle — including #3473's injection
+    step, which happens in ``install`` — part of what these tests exercise.
+    """
+    import litellm
+
+    replay.install()
+    try:
+        return await litellm.acompletion(model=_MODEL, messages=_MESSAGES, tools=tools)
+    finally:
+        replay.restore()
+
+
 def _recorded_entry(tools: list[dict], *, with_preconditions: bool = True) -> dict:
     """A completion entry as record mode writes it for ``tools``."""
     precondition = MCPCatalogPrecondition()
@@ -183,7 +205,7 @@ async def test_a_different_catalog_fails_naming_the_server_and_its_missing_tools
     replay = LLMReplay(fixture, mode="replay")
 
     with pytest.raises(PreconditionMismatch) as excinfo:
-        await replay._handle(_MODEL, _MESSAGES, tools=_TOOLS_UNANSWERED)
+        await _replay_call(replay, _TOOLS_UNANSWERED)
 
     message = str(excinfo.value)
     assert "mcp_catalog" in message
@@ -208,7 +230,7 @@ async def test_the_matching_catalog_replays(tmp_path: Path) -> None:
     _write_fixture(fixture, [_recorded_entry(_TOOLS_FULL_CATALOG)])
     replay = LLMReplay(fixture, mode="replay")
 
-    response = await replay._handle(_MODEL, _MESSAGES, tools=_TOOLS_FULL_CATALOG)
+    response = await _replay_call(replay, _TOOLS_FULL_CATALOG)
     assert response.choices[0].message.content == "ok"
 
 
@@ -231,14 +253,14 @@ async def test_an_entry_with_no_recorded_imprint_is_refused_under_a_live_environ
     )
     replay = LLMReplay(fixture, mode="replay")
 
-    response = await replay._handle(_MODEL, _MESSAGES, tools=_TOOLS_NO_MCP)
+    response = await _replay_call(replay, _TOOLS_NO_MCP)
     assert response.choices[0].message.content == "ok"
 
     legacy_with_catalog = _recorded_entry(_TOOLS_FULL_CATALOG, with_preconditions=False)
     _write_fixture(fixture, [legacy_with_catalog])
     replay = LLMReplay(fixture, mode="replay")
     with pytest.raises(MissingFixture) as excinfo:
-        await replay._handle(_MODEL, _MESSAGES, tools=_TOOLS_FULL_CATALOG)
+        await _replay_call(replay, _TOOLS_FULL_CATALOG)
     assert "mcp_catalog" in str(excinfo.value)
 
 
@@ -284,10 +306,7 @@ async def test_the_recorded_catalog_is_injected_so_a_probe_that_never_answers_is
         fixture, mode="replay", preconditions=(MCPCatalogPrecondition(state_dir),),
     )
     replay.install()
-    try:
-        pass
-    finally:
-        replay.restore()
+    replay.restore()
 
     class _NeverAnswers(_CountingProbe):
         async def __call__(self, server_name: str) -> list[dict]:
@@ -303,14 +322,73 @@ async def test_the_recorded_catalog_is_injected_so_a_probe_that_never_answers_is
     )
     await adapter.ensure_mcp_tools_cached()
 
-    catalog = {
-        server["name"]: [t["name"] for t in server.get("tools", [])]
-        for server in adapter._get_mcp_servers_for_router()
-    }
-    assert catalog == {"reyn_markitdown": ["convert_to_markdown"]}, (
-        "the injected catalog did not reach the router payload — the adapter "
-        f"fell through to the probe (calls: {probe.calls})"
+    assert adapter.mcp_tools_cache_snapshot == {
+        "reyn_markitdown": [{"name": "convert_to_markdown", "description": "d"}],
+    }, "the injected catalog did not reach the adapter"
+    assert probe.calls == [], (
+        "the probe was still consulted — injection did not take the deadline "
+        "off the replay path, it only made missing it less likely"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_key_miss_names_which_of_the_four_key_components_moved(
+    tmp_path: Path,
+) -> None:
+    """Tier 1: a miss attributes itself across model / messages / tools / tool_choice.
+
+    #3473's second falsified causal story is why this is not scoped to the
+    catalog: an instrument that only lights up the hypothesis under test can
+    confirm it but never reject it. Here the scenario itself differs (a tool
+    the recording never carried), and the report must say which component that
+    was — and say the other three matched, so a reader can rule them out
+    rather than merely not hear about them.
+    """
+    fixture = tmp_path / "f.jsonl"
+    recorded = _recorded_entry(_TOOLS_NO_MCP)
+    recorded["key_components"] = fingerprint(_MODEL, _MESSAGES, _TOOLS_NO_MCP, None)
+    _write_fixture(fixture, [recorded])
+    replay = LLMReplay(fixture, mode="replay")
+
+    other_tools = [
+        {"type": "function", "function": {"name": "read_file", "parameters": {}}},
+    ]
+    with pytest.raises(MissingFixture) as excinfo:
+        await _replay_call(replay, other_tools)
+
+    message = str(excinfo.value)
+    assert "model: MATCHES" in message
+    assert "messages: MATCHES" in message
+    assert "tool_choice: MATCHES" in message
+    assert "tools: DIFFERS" in message
+    assert "list_skills" in message, "the report must name the tool only in the recording"
+    assert "read_file" in message, "the report must name the tool only in this run"
+
+
+@pytest.mark.asyncio
+async def test_a_miss_against_unfingerprinted_entries_says_so_rather_than_all_match(
+    tmp_path: Path,
+) -> None:
+    """Tier 1: "not measured" must not be reported as "no difference".
+
+    Pre-#3473 fixtures carry no fingerprint. A report that silently printed
+    four MATCHES lines against nothing would be the same class of defect the
+    whole instrument exists to end — a confident statement with no observation
+    behind it.
+    """
+    fixture = tmp_path / "f.jsonl"
+    _write_fixture(fixture, [_recorded_entry(_TOOLS_NO_MCP)])
+    replay = LLMReplay(fixture, mode="replay")
+
+    other_tools = [
+        {"type": "function", "function": {"name": "read_file", "parameters": {}}},
+    ]
+    with pytest.raises(MissingFixture) as excinfo:
+        await _replay_call(replay, other_tools)
+
+    message = str(excinfo.value)
+    assert "attribution unavailable" in message
+    assert "MATCHES" not in message
 
 
 def test_capture_reads_back_what_inject_wrote(tmp_path: Path) -> None:
