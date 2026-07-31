@@ -215,8 +215,12 @@ unnecessary re-records.
 
 `LLMReplay` raises `MissingFixture` in replay mode when the call's key matches
 no fixture entry. That is the mechanism that catches accidental prompt drift —
-if someone changes the messages or tool catalog the OS sends, the key changes,
-no fixture matches, and the test fails loudly rather than passing on stale data.
+if someone changes the messages or the SET OF TOOLS the OS sends, the key
+changes, no fixture matches, and the test fails loudly rather than passing on
+stale data. (The MCP tool *catalog* — which servers answered and with what
+tools — is the one part of `tools` that is NOT in the key; a change there
+surfaces as `PreconditionMismatch` instead. See
+[Environment-derived inputs are preconditions, not key components](#environment-derived-inputs-are-preconditions-not-key-components).)
 
 ```python
 from reyn.dev.testing.replay import MissingFixture
@@ -246,8 +250,10 @@ claiming everything matched.
 
 ## Step 4: Update fixtures after intentional input changes
 
-When you intentionally change the messages or tool catalog, the fixture key
+When you intentionally change the messages or the set of tools, the fixture key
 changes and replay mode raises `MissingFixture`. This is expected and correct.
+An intentional change to the MCP catalog instead raises `PreconditionMismatch`;
+re-recording is the same fix, and it also refreshes the captured snapshot.
 
 Re-record by deleting the fixture and running with `REYN_LLM_RECORD=1`:
 
@@ -270,8 +276,8 @@ Commit the new fixture alongside the change. Reviewers can diff the
 > **Warning — `-k` filtered runs exclude replay tests.** If your local test run uses
 > `-k some_keyword` that does not match replay test names, replay tests are silently
 > skipped and the run appears green. This masks broken fixtures until CI runs the
-> full suite. Always run the full replay suite after any change to the tool catalog
-> or LLM-call boundaries.
+> full suite. Always run the full replay suite after any change to the set of
+> tools or the LLM-call boundaries.
 
 ---
 
