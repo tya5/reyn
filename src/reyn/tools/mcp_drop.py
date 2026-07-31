@@ -16,8 +16,8 @@ FP-0034 §D23, this op lives in the universal catalog under
 
 The handler delegates to op_runtime.mcp_drop_server.handle, which:
   1. Resolves scope (= explicit or auto-detect)
-  2. Gates via require_mcp_drop_server (FP-0034 §D23 — distinct from
-     mcp_install permission)
+  2. Gates via require_file_write on the scope's config file (the bool-axis
+     ``require_mcp_drop_server`` was removed by the #571 arc, Phase 5)
   3. Removes the YAML entry
   4. Optionally cleans secrets
   5. Emits mcp_server_removed P6 event
