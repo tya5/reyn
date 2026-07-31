@@ -759,16 +759,14 @@ class _QueueTransport(ClientTransport):
 
 def _rendered_lines(flow: "FlowView[OutboxMessage]") -> "list[str]":
     """Every composed row line (left gutter + body + right gutter) of the
-    FlowView's virtual content, via flowview's own selection extraction."""
-    from textual.geometry import Offset
-    from textual.selection import Selection
+    FlowView, read off ``Widget.render_line`` — Textual's public paint surface.
 
-    height = max(0, flow.virtual_size.height - 1)
-    result = flow.get_selection(
-        Selection(Offset(0, 0), Offset(flow.virtual_size.width, height))
-    )
-    assert result is not None
-    return [ln for ln in result[0].split("\n") if ln.strip()]
+    NOT ``get_selection``: since textual-flowview 0.9.0 a selection is confined
+    to the BODY columns (the gutter is decoration, like a scrollbar, so a yank
+    never carries gutter glyphs), so selection text reports an empty gutter for
+    a perfectly painted one."""
+    lines = [flow.render_line(y).text.rstrip() for y in range(flow.size.height)]
+    return [ln for ln in lines if ln.strip()]
 
 
 @pytest.mark.asyncio

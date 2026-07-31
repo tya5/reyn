@@ -190,7 +190,7 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     # #3476: pinned to the version pyproject's git SHA resolves to — the pin
     # here is what detects a locally-forked/vendored flowview masquerading as
     # the release (a mismatch means the installed copy is not the pinned one).
-    assert textual_flowview.__version__ == "0.8.0"
+    assert textual_flowview.__version__ == "0.9.0"
     # The native animation primitive reyn now drives the blink through: FlowView
     # accepts an ``animation_fps`` and owns its own animation tick.
     import inspect

@@ -198,6 +198,19 @@ def _full_selection(flow: "FlowView[OutboxMessage]") -> Selection:
     return Selection(Offset(0, 0), Offset(flow.virtual_size.width, height))
 
 
+def _painted_lines(flow: "FlowView[OutboxMessage]") -> "list[str]":
+    """Every non-blank PAINTED row of the FlowView, gutters included, read off
+    ``Widget.render_line`` — Textual's public paint surface.
+
+    This is the surface that answers "is the right gutter on screen?".
+    ``get_selection`` deliberately is NOT: from textual-flowview 0.9.0 the
+    selection is confined to the BODY columns (the gutter is decoration, like a
+    scrollbar, so a yank never carries gutter glyphs), so reading a gutter label
+    out of a selection reports an empty gutter for a perfectly painted one."""
+    lines = [flow.render_line(y).text.rstrip() for y in range(flow.size.height)]
+    return [ln for ln in lines if ln.strip()]
+
+
 def _entry_by_kind(app: TextualChatApp, kind: str):
     return [e for e in app.query_one(FlowView).entries if e.item.kind == kind]
 
@@ -407,10 +420,15 @@ async def test_app_stashes_final_elapsed_for_an_orphaned_tool_too() -> None:
 async def test_right_gutter_wired_end_to_end_settled_tool_vs_plain_row() -> None:
     """Tier 2b: through the REAL mounted FlowView (real ``right_decorator`` /
     ``right_gutter_width`` wiring), a SETTLED tool row's composed line ends in
-    the elapsed label and a plain agent row's composed line does not — reads
-    ``FlowView.get_selection`` (flowview's own selection-extraction, which
-    composes left gutter + body + right gutter), asserting on the RENDERED
-    row text rather than the source meta field."""
+    the elapsed label and a plain agent row's composed line does not — read off
+    ``FlowView.render_line`` (Textual's public paint surface, which composes
+    left gutter + body + right gutter), asserting on the RENDERED row text
+    rather than the source meta field.
+
+    Also pins the complement, since the two are easy to confuse: the same label
+    is ABSENT from ``get_selection``. Since textual-flowview 0.9.0 a selection
+    is confined to the body columns, so a yank carries the message text and no
+    gutter glyphs — that is the contract, not a missing gutter."""
     now = [500.0]
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: now[0])
@@ -425,10 +443,7 @@ async def test_right_gutter_wired_end_to_end_settled_tool_vs_plain_row() -> None
         await pilot.pause()
 
         flow = app.query_one(FlowView)
-        result = flow.get_selection(_full_selection(flow))
-        assert result is not None
-        text, _sep = result
-        lines = [ln for ln in text.split("\n") if ln.strip()]
+        lines = _painted_lines(flow)
 
         # The settled tool row's own line carries its captured elapsed label
         # at the RIGHT-hand end (the right gutter) — positive content check.
@@ -442,6 +457,14 @@ async def test_right_gutter_wired_end_to_end_settled_tool_vs_plain_row() -> None
         agent_lines = [ln for ln in lines if "hello there" in ln]
         assert agent_lines, f"no rendered row found for the agent row: {lines!r}"
         assert not any(re.search(r"\d+[smh]$", ln) for ln in agent_lines), agent_lines
+
+        # Complement: a SELECTION over the same rows yields the body text and
+        # no gutter glyph — flowview 0.9.0 confines selection to the body.
+        result = flow.get_selection(_full_selection(flow))
+        assert result is not None
+        selected, _sep = result
+        assert "grep" in selected, selected
+        assert not re.search(r"\d+[smh]\s*$", selected, re.MULTILINE), selected
 
 
 # ── Gate 3: left gutter unchanged (#3273 state contract) ──────────────────────
@@ -636,9 +659,7 @@ async def test_narrow_terminal_keeps_gutters_fixed_and_squashes_the_body() -> No
         # RUNNING tool row's elapsed label is still readable in the composed
         # row text even at this extreme width (flowview's own body-width
         # floor absorbs the squeeze instead of hiding the gutter).
-        result = flow.get_selection(_full_selection(flow))
-        assert result is not None
-        text, _sep = result
-        assert re.search(r"\d+[smh]\s*$", text, re.MULTILINE), (
-            f"elapsed label not found in narrow-terminal render:\n{text!r}"
+        painted = "\n".join(_painted_lines(flow))
+        assert re.search(r"\d+[smh]\s*$", painted, re.MULTILINE), (
+            f"elapsed label not found in narrow-terminal render:\n{painted!r}"
         )
