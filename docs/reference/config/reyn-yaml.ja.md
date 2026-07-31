@@ -923,7 +923,7 @@ skills:
 | フィールド | 型 | デフォルト | 説明 |
 |-----------|-----|----------|------|
 | `path` | string | 必須 | `SKILL.md`、またはそれを含むディレクトリへのパス。 |
-| `description` | string | `""` | モデル向けの `## Skills` メニューに表示される一行サマリー(最初の行のみ、200 文字上限)。 |
+| `description` | string | `""` | モデル向けの `## Skills` メニューに表示される一行サマリー(最初の行のみ、1024 文字上限 — [Agent Skills 仕様](https://agentskills.io/specification)が `description` に定める上限; #3550)。 |
 | `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます。`visibility` より優先します。 |
 | `visibility` | enum | `menu` | どの面が skill を名指すか: `menu`(`## Skills` システムプロンプトメニューに載る)\| `on_demand`(メニューには載らないが `skill_list` ツールが返す — 常駐トークンコストなし)\| `hidden`(どのモデル向け面にも現れない)。 |
 

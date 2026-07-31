@@ -28,7 +28,7 @@ skills:
 | フィールド | 型 | デフォルト | 意味 |
 |-----------|-----|----------|------|
 | `path` | string | 必須 | `SKILL.md`(またはそれを含むディレクトリ)へのパス。project-root 相対または絶対。 |
-| `description` | string | `""` | L1 メニューに表示される一行サマリー。最初の行のみ、200 文字上限で切り詰め。 |
+| `description` | string | `""` | L1 メニューに表示される一行サマリー。最初の行のみ、**1024 文字**上限で切り詰め — [Agent Skills 仕様](https://agentskills.io/specification)が `description` frontmatter フィールドに定める上限そのもので、仕様に適合した description はそのまま残ります(#3550)。上限を超えた場合は収まる最後の語境界で切られ `…` が付きます(`…` は 1024 に含みます)。 |
 | `enabled` | bool | `true` | `false` にするとエントリはレジストリから完全に除外されます(単に非表示ではありません)。`visibility` より優先されます。 |
 | `visibility` | enum | `menu` | skill がどの発見面に載るか: `menu` \| `on_demand` \| `hidden`。下記参照。 |
 
