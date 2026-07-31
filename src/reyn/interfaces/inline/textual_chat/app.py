@@ -591,7 +591,7 @@ class TextualChatApp(App):
     }
     /* #3496 / flowview#5: ``flowview--highlight`` / ``--selected`` are left
        UNDECLARED on purpose — the addressed row is marked in the gutter (see
-       ReynGutter's ``is_marked``), never by restyling the row. flowview 0.6.1
+       ReynRightGutter's ``is_marked``), never by restyling the row. flowview 0.6.1
        honours that: an undeclared component class paints nothing, because the
        row overlay uses the *partial* component style. Under 0.6.0 it did not
        (an undeclared class resolved to a CONCRETE inherited style and was
@@ -602,7 +602,7 @@ class TextualChatApp(App):
        side causes it. */
     /* #3490: NO ``flowview--selected`` / ``--cursor`` component style. Both
        are deliberately left unstyled (flowview's own default) and the
-       addressed row is marked in the GUTTER instead — see ReynGutter's
+       addressed row is marked in the GUTTER instead — see ReynRightGutter's
        ``is_marked``. A component style cannot do this job: flowview applies it
        via ``Strip.apply_style``, i.e. ``style + segment.style``, so it is only
        ever a BASE under each segment's own attributes and a background here
@@ -939,13 +939,7 @@ class TextualChatApp(App):
         self._flow: "FlowView[OutboxMessage]" = FlowView(
             model=self.conversation,
             presenter=self._presenter,
-            decorator=ReynGutter(
-                frame_period=_RUNNING_FRAME_PERIOD,
-                # #3490: the addressed-row rail. Read live off the view each
-                # repaint (not pushed in on every move) so the gutter can never
-                # hold a stale copy of which entry is current.
-                is_marked=self._is_addressed_entry,
-            ),
+            decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
             gutter_width=_GUTTER_WIDTH,
             # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
             # (tool rows) AND the row's turn's real prompt/completion token
@@ -954,7 +948,13 @@ class TextualChatApp(App):
             # additive flowview params; the LEFT gutter/state contract above is
             # untouched.
             right_decorator=ReynRightGutter(
-                clock=self._clock, usage_lookup=self._turn_usage
+                clock=self._clock,
+                usage_lookup=self._turn_usage,
+                # #3490, moved to this side by #3526 (owner directive): the
+                # addressed-row rail. Read live off the view each repaint (not
+                # pushed in on every move) so the gutter can never hold a stale
+                # copy of which entry is current.
+                is_marked=self._is_addressed_entry,
             ),
             right_gutter_width=RIGHT_GUTTER_WIDTH,
             spacing=1,

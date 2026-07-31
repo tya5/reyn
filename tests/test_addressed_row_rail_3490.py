@@ -4,7 +4,8 @@
 ``text-style: reverse`` on flowview's ``--selected``/``--cursor`` component
 classes. That survived flowview's style merge but inverted fg/bg into a
 near-white block over the palette (owner review: it broke the design). The
-mark is now CONTENT — a thin rail in the left gutter's trailing cell — which
+mark is now CONTENT — a thin rail in a gutter (the right one since #3526) —
+which
 is what makes it work uniformly:
 
 flowview applies a component style as ``Segment.apply_style(segments, style)``
