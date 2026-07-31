@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, AsyncIterator
 
 from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
@@ -127,6 +128,26 @@ class InProcessTransport(ClientTransport):
     async def frames(self) -> "AsyncIterator[Frame]":
         while True:
             frame = await self._frames.get()
+            # #3570: an UNCONDITIONAL yield point, once per frame. ``Queue.get()``
+            # returns WITHOUT suspending whenever the queue is non-empty, so the
+            # ``await`` above is not a scheduling point at all in the regime that
+            # matters: a producer that enqueues several frames between two visits
+            # of this task (a provider whose SSE reads carry many deltas — measured
+            # occupancy 5..1000 in #3570) makes the consumer drain to exhaustion
+            # with ZERO returns to the event loop, so nothing else — animations,
+            # input, timers — runs for the whole burst. Whether the loop breathes
+            # must not be a function of queue occupancy (a timing property); this
+            # line makes it a function of the loop's structure.
+            #
+            # ★The suspension is per FRAME, not per batch of frames. ``_frames``
+            # is an UNBOUNDED ``asyncio.Queue``, so any "suspend every N frames"
+            # rule would leave the interval between suspensions proportional to
+            # something the producer chooses; at N=1 the interval is one frame's
+            # processing, which is the smallest a non-preemptible consumer can
+            # offer and needs no time-based escape hatch to bound it. It also
+            # leaves the terminal check below exactly where it was — no batch
+            # can ever straddle ``__end__``.
+            await suspend_between_frames()
             yield frame
             if frame.tag is FrameTag.DISPLAY and frame.message.kind == "__end__":
                 return
