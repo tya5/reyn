@@ -1886,7 +1886,14 @@ class TextualChatApp(App):
         The SAME entry is updated in place (churn-zero, #3299 P2 §4) to a
         ``✓ answered: <label>`` record
         (:meth:`ReynPresenter._present_intervention_pending` reads the
-        ``_answer_label`` meta key). The entry's :class:`EntryState` goes to
+        ``_answer_label`` meta key). #3540: this is the LOCAL-panel half of the
+        settle — the answer's own broadcast comes back as an
+        ``intervention_answer_submitted`` event and stamps the SAME key on the
+        SAME entry (:meth:`_handle_intervention_answer_event`), which is what
+        settles an answer this panel never saw (`/answer`, an A2A peer, AG-UI
+        HITL). Both writes are idempotent in render terms, so the local path
+        keeps its immediate feedback without producing a second entry. The
+        entry's :class:`EntryState` goes to
         ``DEFAULT`` — not ``SUCCESS``/``ERROR`` (an intervention answer is
         neither an outcome to celebrate nor a failure, the #3296
         don't-fabricate-a-classification lesson) and not ``RUNNING`` (would

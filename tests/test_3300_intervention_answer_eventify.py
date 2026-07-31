@@ -21,6 +21,14 @@ SURFACE-SIDE consumers the producer-side tests cannot reach:
    retired outbox broadcast provided must not regress), and must neutralize
    raw ESC/OSC at ITS OWN render boundary (the surface never trusted the
    producer to have already stripped it — #3300's RAW-on-the-wire model).
+   ★ #3540 NARROWED WHAT THESE COVER: the handler now FOLDS an answer into
+   the ``kind="intervention"`` entry its ``intervention_id`` identifies, and
+   appends a row of its own only when no such entry exists. Every TUI test
+   here pushes an answer event into an app that never saw the announce, so
+   they are the FALLBACK leg's witnesses — which is exactly the leg whose
+   ADR-0039 reachability + own-boundary neutralization they were written for.
+   The fold leg (and the live-vs-restore entry-sequence gate) lives in
+   ``tests/test_3540_intervention_answer_fold.py``.
 2. ``ConsoleChatRenderer`` / ``InlineChatRenderer`` (the plain/--cui and
    plain-render-mode-fallback surfaces, ``on_chat_event`` ->
    ``intervention_answer_display_message``) — same neutralize-at-boundary
@@ -118,9 +126,11 @@ def _flow_user_entries(app: TextualChatApp):
 
 @pytest.mark.asyncio
 async def test_intervention_answer_event_appends_flow_entry_directly() -> None:
-    """Tier 2b: an "intervention_answer_submitted" event renders straight to
-    the flow (no sent-queue staging — an intervention answer was never a
-    queued inbox item, unlike "user_submitted").
+    """Tier 2b: an "intervention_answer_submitted" event with NO announced
+    question entry on this surface renders straight to the flow (no
+    sent-queue staging — an intervention answer was never a queued inbox
+    item, unlike "user_submitted"). #3540: this is the fallback leg, the one
+    a client attached after the announce takes.
 
     Strip-falsify: removing the ``elif etype ==
     "intervention_answer_submitted"`` branch in ``_pump_frames`` (or the

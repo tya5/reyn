@@ -397,12 +397,14 @@ class ReynPresenter:
         site — the SAME leaf-neutralization discipline ``_intervention_head``
         already applies to ``prompt``/``detail`` (#2770) — because a matched
         CLOSED-SET choice's label is model-supplied / untrusted the same way
-        the prompt is; a live choice answer arrives here ALREADY neutralized
-        (``InterventionPanel`` neutralizes labels at tab-build time) so this
-        is idempotent for it, but a RESTORED answer arrives RAW (persisted
-        RAW by design — neutralize only at display boundaries, never at
-        write time), making this the ONE real neutralization boundary for the
-        restore path's answer text."""
+        the prompt is; a RESTORED answer arrives RAW (persisted RAW by design
+        — neutralize only at display boundaries, never at write time), and
+        since #3540 a LIVE answer does too (``TextualChatApp.
+        _handle_intervention_answer_event`` folds the event's RAW text onto
+        this same key, so live and restore store the same bytes). This is
+        therefore the ONE real neutralization boundary for an answer label on
+        both paths — the panel's own tab-build neutralization covers the
+        widget, not this row."""
         meta = item.meta or {}
         head = _intervention_head(item)
         head_h = self._measure(head, width)
