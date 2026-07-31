@@ -939,7 +939,20 @@ class TextualChatApp(App):
         self._flow: "FlowView[OutboxMessage]" = FlowView(
             model=self.conversation,
             presenter=self._presenter,
-            decorator=ReynGutter(frame_period=_RUNNING_FRAME_PERIOD),
+            decorator=ReynGutter(
+                frame_period=_RUNNING_FRAME_PERIOD,
+                # The app's own injectable clock, as the right gutter already
+                # takes — production passes ``time.monotonic``, so this is the
+                # same behaviour, and it lets a test drive the blink instead of
+                # sleeping through a real frame period.
+                clock=self._clock,
+                # #3530: blink a reply that is still receiving chunks. Read
+                # live off ``_streaming_replies`` each repaint — the same
+                # record the terminal completion frame pops — so the marker
+                # can never disagree with whether the stream is actually
+                # still open.
+                is_streaming=self._is_streaming_entry,
+            ),
             gutter_width=_GUTTER_WIDTH,
             # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
             # (tool rows) AND the row's turn's real prompt/completion token
@@ -2697,6 +2710,23 @@ class TextualChatApp(App):
         if record is None or record.entry is not entry:
             return None
         return record
+
+    def _is_streaming_entry(self, entry: "Entry[OutboxMessage]") -> bool:
+        """Whether ``entry`` is a reply still receiving chunks — what
+        :class:`ReynGutter` blinks on (#3530).
+
+        ★ This is a READ of authoritative state, not a timing heuristic. A
+        record lives in :attr:`_streaming_replies` from the first delta until
+        the TERMINAL COMPLETION FRAME pops it in :meth:`_ingest_frame`, so
+        "still open" and "finished" are recorded facts. A model that pauses
+        mid-reply therefore keeps blinking, which is the whole point of the
+        owner's request — an "idle for N seconds means done" rule would say the
+        opposite, and would say it most often exactly when the wait is longest.
+
+        Shares :meth:`_streaming_record_for`'s identity check, so a row whose
+        chain_id was reused by a successor entry is not reported as streaming.
+        """
+        return self._streaming_record_for(entry) is not None
 
     def _on_streaming_entry_shown(self, entry: "Entry[OutboxMessage]") -> None:
         """★The replay leg (#3283 ③): a streamed reply's row scrolled back INTO
