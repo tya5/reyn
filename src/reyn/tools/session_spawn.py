@@ -15,6 +15,16 @@ recorded now (on the ``session_spawned`` WAL event).
 ``narrowing`` (optional) is a per-session capability narrowing (restrict-only, the
 #2103 S1a 4th COMBINE layer) — a capability_profile subset the spawner imposes on the
 sub-session; it is workspace-backed (config.yaml) + composed at construction.
+
+Restrict-only is enforced against the SPAWNER, not just asserted (#3556): this argument
+is LLM-authored, so ``RouterHostAdapter.spawn_session`` composes the spawning session's
+own sid-keyed narrowing into it (``compose_narrowing_mappings`` — denies union, allows
+intersect, an absent allow key is ⊤) before the child's ``config.yaml`` is written. Until
+#3556 the argument WAS the whole value, and a narrowed session could hand a sibling a
+wider envelope than its own. Measured by
+``tests/test_3556_session_spawn_narrowing_inheritance.py``; the layers this does NOT
+carry (the #2285 ``/visibility`` toggle, the #1827-S4b ephemeral untrusted-context
+narrowing) are the same ones the sibling spawn sites leave behind.
 """
 from __future__ import annotations
 

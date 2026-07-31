@@ -22,6 +22,7 @@ from reyn.runtime.services.mcp_cache_file import (
     ToolsUnknown,
     answered_only,
 )
+from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 
 logger = logging.getLogger(__name__)
 
@@ -1251,6 +1252,24 @@ class RouterHostAdapter:
                             "BOTH the agent-tree and session-nesting caps)."
                         ),
                     }
+        # #3556: the spawner's OWN sid-keyed #2103-S1a narrowing composes IN. ``narrowing``
+        # arrives here as a ``session_spawn`` tool argument — i.e. whatever THIS session's
+        # LLM asked for — so without this line the spawned sibling is born under the LLM's
+        # requested envelope alone, and a narrowed session widens itself by spawning. The
+        # tool's own parameter description promises the model the opposite ("restrict-only,
+        # cannot widen your envelope", ``tools/descriptions/delegation.py``), which is the
+        # contract this restores rather than a new control. Same composition as #3553 and
+        # for the same reason (``narrowing`` sits where ``capabilities`` sits there: an
+        # argument the spawner imposes on the child): deny keys union, allow keys intersect,
+        # an absent allow key is ⊤. The name-keyed layers (the agent's ``permissions``
+        # declaration, topology ``capability_profile`` bindings, the #2081 ``_delegate``
+        # floor) need nothing passed — the child shares this agent's identity and
+        # ``resolved_profile_for`` re-derives them; the #2285 ``/visibility`` toggle and the
+        # #1827-S4b ephemeral untrusted-context narrowing are NOT carried, identically to
+        # the two sibling sites (#3546 module docstring, layers 3 and 4).
+        narrowing = compose_narrowing_mappings(
+            self._registry.per_session_narrowing(self._agent_name, from_sid), narrowing,
+        )
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
             presentation_consumer=_routing.presentation_consumer,

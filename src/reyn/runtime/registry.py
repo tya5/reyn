@@ -3570,7 +3570,7 @@ class AgentRegistry:
             return None, frozenset()
         return compose_resolved(resolved)
 
-    def per_session_narrowing(self, name: str, sid: str) -> "dict | None":
+    def per_session_narrowing(self, name: str, sid: "str | None" = None) -> "dict | None":
         """#3546: the per-session narrowing MAPPING persisted for ``(name, sid)`` —
         the inverse of what ``spawn_session_recorded`` writes, so a caller that
         spawns a child session under the SAME identity can hand it back as
@@ -3595,9 +3595,17 @@ class AgentRegistry:
         ``_load_per_session_capability_profile``'s fail-open-and-surface handling
         of the SAME file: a parent whose own narrowing was skipped as unreadable
         must not hand a child a narrowing the parent itself is not under.
+
+        ``sid=None`` means the implicit "main" session, the same normalisation
+        ``session_nesting_depth`` applies (#3556: ``RouterHostAdapter.
+        live_session_id`` is ``str | None``, and a main session's narrowing lives at
+        the agent-level state dir — reading None as "nothing to inherit" instead
+        would drop that layer for exactly the spawner that has no spawned sid).
         """
         import yaml
-        path = self._session_state_dir(name, sid) / "config.yaml"
+        path = self._session_state_dir(
+            name, sid if sid is not None else _DEFAULT_SID,
+        ) / "config.yaml"
         if not path.is_file():
             return None
         try:
