@@ -7,18 +7,19 @@ Pinned invariant:
 - Each of the 3 index op handlers checks ``ctx.workspace is None`` BEFORE
   attempting ``ctx.workspace.base_dir`` access.
 - On None, the handler raises ``ValueError`` with an actionable error
-  message that names (a) the op kind, (b) the cause (= router-side path
-  with no workspace), (c) the fix path (= pass an OpContext with
+  message that names (a) the op kind, (b) the cause (= dispatched from a
+  path carrying no workspace), (c) the fix path (= pass an OpContext with
   workspace).
 - The opaque ``AttributeError: 'NoneType' object has no attribute
   'base_dir'`` is no longer surfaced to control_ir_failed events.
 
 Motivation: B48 W2-S7 (= chained_find_then_index) showed 4 consecutive
 ``control_ir_failed`` events with the opaque AttributeError. The
-``ctx.workspace`` was None because the calling tool (e.g. recall)
-propagated a workspace-less ToolContext through. The opaque error
-prevented the LLM and operators from understanding the actual cause.
-This guard makes the failure mode actionable.
+``ctx.workspace`` was None because the caller propagated a workspace-less
+context through (at the time, the agent-facing RAG tools that FP-0066 P1b
+later retired). The opaque error prevented the LLM and operators from
+understanding the actual cause. This guard makes the failure mode
+actionable.
 
 testing.ja.md compliance:
 - No mocks. Real ``handle()`` called against a real OpContext with
@@ -87,7 +88,8 @@ def test_index_query_raises_clear_value_error_when_workspace_none():
     assert "workspace" in msg.lower()
     # actionable hint: should mention OpContext + how to fix
     assert "OpContext" in msg
-    assert "router-side" in msg.lower()
+    # …and name the cause, not just the symptom (the dispatching path had none)
+    assert "dispatched" in msg.lower()
 
 
 def test_index_query_fallback_path_bypasses_workspace_check():

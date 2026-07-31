@@ -2,10 +2,18 @@
 
 Destructive op: drops the SQLite backend + removes the SourceManifest entry.
 
-Permission gate: mirrors require_mcp_install pattern (ADR-0029).
-  - Caller must declare `permissions.index_drop: true`.
-  - Config may hard-allow or hard-deny (permissions.index_drop: allow/deny).
-  - Interactive prompt or REYN_INDEX_DROP_AUTO_APPROVE=1 CI escape hatch.
+Permission gate (#571 permission-collapse arc, Phase 5): the uniform
+file-write axis, NOT a bool axis of its own.
+  - Caller must declare `file.write` over `.reyn/config/index/sources.yaml`
+    (the manifest) and the source's own index dir.
+  - A sandbox `write_paths` cap is threaded in and constrains it; the delete
+    self-gates again at the real write site inside the backend, so a
+    resolver-less caller is gated too (#2856 Part B).
+  - The bool-axis `permissions.index_drop` decl, its ask-prompt, and the
+    `REYN_INDEX_DROP_AUTO_APPROVE=1` escape hatch this docstring used to
+    describe are GONE — `require_index_drop` no longer exists on
+    `PermissionResolver`. Per-source granularity is not preserved (see the
+    inline note on the gate below).
 
 P6 event: emits `index_dropped` after completion (audit trail).
 """
@@ -37,8 +45,8 @@ async def handle(
             "index_drop: op_runtime context has no workspace. Index ops "
             "require a workspace to locate the SQLite backend; pass an "
             "OpContext with a populated `workspace` field. This typically "
-            "indicates the calling tool (e.g. drop_source) was invoked from "
-            "a router-side path without a workspace."
+            "indicates the caller was dispatched from a path that carries "
+            "no workspace."
         )
 
     workspace_root = ctx.workspace.base_dir

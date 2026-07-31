@@ -66,8 +66,8 @@ async def handle(
             "index_query: op_runtime context has no workspace. Index ops "
             "require a workspace to locate the SQLite backend; pass an "
             "OpContext with a populated `workspace` field. This typically "
-            "indicates the calling tool (e.g. semantic_search, drop_source) was "
-            "invoked from a router-side path without a workspace."
+            "indicates the caller (e.g. the semantic_search macro op) was "
+            "dispatched from a path that carries no workspace."
         )
 
     workspace_root = ctx.workspace.base_dir

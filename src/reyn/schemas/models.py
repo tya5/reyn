@@ -721,7 +721,11 @@ class SemanticSearchIROp(BaseModel):
     enumeration anyway).
 
     Handler dispatches sub-ops via the OS dispatch path (= iterate op
-    precedent). LLM-callable via ToolDefinition `semantic_search`.
+    precedent). NOT LLM-callable: there is no `semantic_search`
+    ToolDefinition — the agent-facing layer-1 RAG tool of that name was
+    RETIRED by FP-0066 P1b (#3257) as a pre-audience-split relic. This op
+    is the OS-internal substrate that tool used to ride, reached only
+    through the op_runtime dispatch path.
     """
     kind: Literal["semantic_search"]
     query: str
@@ -734,8 +738,16 @@ class SemanticSearchIROp(BaseModel):
 class IndexDropIROp(BaseModel):
     """Remove an indexed source entirely (ADR-0033 §2.1).
 
-    `permissions.index_drop: ask` default (= ADR-0029 mirror, destructive op
-    consent gate). LLM-callable via ToolDefinition `drop_source`.
+    Permission gate: the caller must hold `file.write` over the source
+    manifest (`.reyn/config/index/sources.yaml`) plus the source's own index
+    dir, and the destructive delete self-gates at the real write site inside
+    the backend. The bool-axis `permissions.index_drop` / `require_index_drop`
+    ask-prompt this docstring used to describe was removed by the #571
+    permission-collapse arc (Phase 5) — see `op_runtime/index_drop.py`.
+
+    NOT LLM-callable: there is no `drop_source` ToolDefinition — the
+    agent-facing layer-1 RAG tool of that name was RETIRED by FP-0066 P1b
+    (#3257). This op is the OS-internal substrate it used to ride.
     """
     kind: Literal["index_drop"]
     source: str
@@ -774,10 +786,18 @@ class IndexUpdateIROp(BaseModel):
     source (an existing source's `embedding_model` field is authoritative
     over a caller-supplied override — a source is one embedding space).
 
-    `permissions.index_drop`-style ask-gate does NOT apply here (index_update
-    is additive/own-write, not destructive) — default-ALLOW, mirroring
-    `embed`/`index_query`.
-    LLM-callable via ToolDefinition `index_update`.
+    Permission gate: additive/own-write (not destructive), so it declares
+    `file.write` over this source's own index + the sources.yaml manifest and
+    nothing more — same shape as `index_query`'s read gate and `index_drop`'s
+    write gate, and constrained by a sandbox `write_paths` cap. There is no
+    ask-prompt on either this op or `index_drop` (the bool-axis
+    `require_index_drop` was removed by the #571 permission-collapse arc,
+    Phase 5), and the default-ALLOW posture no longer comes from a
+    ToolDefinition's `ToolGates` — see the next paragraph.
+
+    NOT LLM-callable: there is no `index_update` ToolDefinition — the
+    agent-facing layer-1 RAG tool of that name was RETIRED by FP-0066 P1b
+    (#3257). This op is the OS-internal substrate it used to ride.
     """
     kind: Literal["index_update"]
     source: str

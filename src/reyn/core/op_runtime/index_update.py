@@ -104,9 +104,11 @@ async def handle(op: IndexUpdateIROp, ctx: OpContext) -> dict:
     # Permission gate — own-write (not destructive), same shape as
     # index_query's read gate / index_drop's write gate: declares
     # file.write authority over this source's own index + the sources.yaml
-    # manifest, so a sandbox write_paths cap constrains it. Default-ALLOW
-    # posture (no ask-gate) comes from the ToolGates on the `index_update`
-    # ToolDefinition, not from this call.
+    # manifest, so a sandbox write_paths cap constrains it. The default-ALLOW
+    # posture (no ask-gate) is the file.write gate's own outcome — it used to
+    # be attributed to the ToolGates on an `index_update` ToolDefinition, but
+    # that tool was retired by FP-0066 P1b (#3257), so this call site plus the
+    # backend's own write-site self-gate are the WHOLE gate now.
     if ctx.permission_resolver is not None:
         # Derive the DB path via the SAME `cache_dir_for_source` helper
         # `SqliteIndexBackend._db_path` uses for the actual write, so the gate
