@@ -58,10 +58,14 @@ out of the DSL's shape rather than needing a runtime policy layered on top:
   the cost-bound approval an agent grants when it launches a pipeline a
   transitive closure over a *known* step graph, not an open-ended one a
   running step could extend.
-- **Capability narrowing is structural, not a runtime check.** An `agent`
-  step's ephemeral session is spawned under the *invoker's own identity* and
-  narrowed restrict-only — a pipeline step can never exceed the capability
-  envelope of the agent that launched it, by construction. For an ad-hoc
+- **Capability narrowing rides the spawn, and a tool step re-checks it.** A
+  pipeline runs in a driver-session spawned under the *invoker's own identity*,
+  which reproduces the identity-keyed parts of the envelope; the invoker's
+  *per-session* narrowing is keyed by session id instead, so it is passed to
+  the spawn explicitly, and a `tool` step's dispatch consults it at run time
+  (that dispatch is the one tool path outside the router loop). An `agent`
+  step's ephemeral session is narrowed restrict-only on top of that — no step
+  can exceed the capability envelope of the agent that launched it. For an ad-hoc
   pipeline an agent generates on the fly (see
   [Invocation](pipeline-registration.md)), a step naming a different agent's
   identity would be a capability escalation, so a static gate rejects that

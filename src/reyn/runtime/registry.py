@@ -3570,6 +3570,51 @@ class AgentRegistry:
             return None, frozenset()
         return compose_resolved(resolved)
 
+    def per_session_narrowing(self, name: str, sid: str) -> "dict | None":
+        """#3546: the per-session narrowing MAPPING persisted for ``(name, sid)`` —
+        the inverse of what ``spawn_session_recorded`` writes, so a caller that
+        spawns a child session under the SAME identity can hand it back as
+        ``narrowing=`` and have the child be born inside the same envelope.
+
+        Returns the ``config.yaml`` body minus the synthetic ``name`` key
+        ``spawn_session_recorded`` stamps on it (``{"name": "_session_<sid>",
+        **narrowing}``), so the round-trip is exact. ``None`` when the session has
+        no narrowing at all — which is also what a caller passes for "nothing to
+        inherit", so the inert case stays byte-identical.
+
+        This is the RAW mapping, deliberately not the resolved
+        ``ContextualPermission``: the value is re-persisted into the child's own
+        ``config.yaml``, and resolution happens on the child's side through the
+        normal ``resolved_profile_for`` path. The other layers of the envelope
+        (topology ``capability_profile`` bindings, the #2081 ``_delegate`` floor)
+        are keyed by the AGENT NAME, not the sid, so a same-identity child
+        re-derives them without anything being passed — this accessor exists for
+        the one layer that is sid-keyed.
+
+        A malformed file yields ``None`` with a warning, matching
+        ``_load_per_session_capability_profile``'s fail-open-and-surface handling
+        of the SAME file: a parent whose own narrowing was skipped as unreadable
+        must not hand a child a narrowing the parent itself is not under.
+        """
+        import yaml
+        path = self._session_state_dir(name, sid) / "config.yaml"
+        if not path.is_file():
+            return None
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+            import sys
+            print(
+                f"warning: skipping malformed per-session config {path} while "
+                f"deriving a child session's inherited narrowing: {e}",
+                file=sys.stderr,
+            )
+            return None
+        if not isinstance(raw, dict):
+            return None
+        narrowing = {k: v for k, v in raw.items() if k != "name"}
+        return narrowing or None
+
     def _load_per_session_capability_profile(
         self, name: str, sid: str
     ) -> "object | None":

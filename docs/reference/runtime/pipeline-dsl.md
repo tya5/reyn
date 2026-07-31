@@ -846,9 +846,14 @@ definition fails clearly and spawns nothing:
    schemas.
 3. Every `tool` step's name resolves to a registered tool or qualified
    action.
-4. *(Structural, not runtime-checked)* the driver-session spawns under the
-   invoker's own identity and narrows restrict-only, so a generated pipeline
-   can never exceed the invoker's own envelope by construction.
+4. *(Partly structural, partly runtime-enforced)* the driver-session spawns
+   under the invoker's own identity — which carries the identity-keyed layers
+   of the envelope (the agent's own `permissions`, its topology
+   `capability_profile` bindings, the `_delegate` floor) — **and** is handed
+   the invoker's per-session narrowing, which is keyed by session id and so
+   does not follow from identity. A `tool` step's dispatch then re-checks that
+   narrowing at run time, because it executes outside the router loop whose
+   gates cover every other tool path.
 5. No `tool` step launches a pipeline or delegates — nesting is `call`-only.
 6. **Inline-only**: an `agent` step's `identity`, if set, must equal the
    invoker's own identity. A registered pipeline is exempt from this check (a

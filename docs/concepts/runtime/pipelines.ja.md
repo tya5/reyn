@@ -25,7 +25,7 @@ Reyn には既に非決定的な execution plane が存在します: エージ�
 制御フローが固定され閉じているため、いくつかの安全性の性質は、上に乗せた実行時ポリシーではなく DSL の形そのものから導かれます:
 
 - **ネストされた起動は不可。** pipeline の `tool` ステップは自分自身で別の pipeline を起動したり別のエージェントに delegate したりできません — ネストは `call` のみです。これにより、エージェントが pipeline を起動する際に許可する cost-bound の承認は、実行中のステップが拡張し得るオープンエンドなものではなく、*既知の*ステップグラフに対する推移閉包のままになります。
-- **capability の narrowing は実行時チェックではなく構造的です。** `agent` ステップの ephemeral session は*起動者自身の identity* の下で spawn され、restrict-only で narrowing されます — pipeline のステップは、構造上、それを起動したエージェントの capability envelope を超えることが決してできません。エージェントがその場で生成する ad-hoc な pipeline については([Invocation](pipeline-registration.md) 参照)、別のエージェントの identity を指定するステップは capability escalation となるため、何かが spawn される前に静的ゲートがそれを拒否します。
+- **capability の narrowing は spawn に載り、`tool` ステップが実行時に再確認します。** pipeline は*起動者自身の identity* の下で spawn された driver-session で走り、identity を鍵とする envelope の各層はそれで再現されます。一方 *per-session* の narrowing は session id を鍵とするため identity からは導けず、spawn に明示的に渡されます。そして `tool` ステップの dispatch がそれを実行時に参照します(この dispatch は router loop の外側にある唯一の tool 経路です)。`agent` ステップの ephemeral session はその上でさらに restrict-only に narrowing されます — どのステップも、それを起動したエージェントの capability envelope を超えることはできません。エージェントがその場で生成する ad-hoc な pipeline については([Invocation](pipeline-registration.md) 参照)、別のエージェントの identity を指定するステップは capability escalation となるため、何かが spawn される前に静的ゲートがそれを拒否します。
 - **fan-out は「省略時に無制限」ではなく、境界を持ちます。** `for_each` の並行分岐は operator が設定した spawn budget で上限が課されます([Pipeline DSL リファレンス § Safety caps](../../reference/runtime/pipeline-dsl.md) 参照)。これは実行中どこで到達しても — トップレベルでも fan-out 経由でも — `agent` ステップごとに課金されます。これらのステップは通常の spawn-lineage の記帳の外側で ephemeral session を spawn するためです。
 
 ## Driver-as-session

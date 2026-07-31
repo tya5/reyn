@@ -41,12 +41,27 @@ all statically decidable over the parsed ``Pipeline`` + its ``SchemaRegistry``:
   3. **tool names resolve** — every ``tool`` step name resolves to a registered
      tool (qualified-action routing, then a bare registry lookup — the SAME
      resolution :func:`_make_tool_dispatch` performs at run time).
-  4. **capability ⊆ invoker** — already STRUCTURAL, no runtime re-check needed:
-     the driver-session is spawned under the INVOKER's own identity
-     (``_spawn_pipeline_driver_session``), and an ``agent`` step narrows
-     RESTRICT-ONLY (``_build_agent_step_narrowing``), so a generated pipeline
-     can never exceed the invoker's envelope by construction. The gate only
-     DOCUMENTS this; check 6 closes the one hole it leaves.
+  4. **capability ⊆ invoker** — partly structural, and the rest is enforced at
+     run time. The driver-session is spawned under the INVOKER's own identity
+     (``_spawn_pipeline_driver_session``), which carries the IDENTITY-keyed
+     layers of the envelope for free: the agent's own ``permissions``
+     declaration, its topology ``capability_profile`` bindings, and the #2081
+     ``_delegate`` floor all resolve from the agent NAME, so a same-identity
+     child re-derives them unchanged. An ``agent`` step additionally narrows
+     RESTRICT-ONLY (``_build_agent_step_narrowing``).
+     ⚠️ This check used to claim the whole envelope followed from identity ("⊆
+     by construction, no runtime re-check needed"). It does not: the #2103-S1a
+     per-session narrowing is keyed by SID, not by identity, so a fresh
+     driver-session resolved it to nothing — and this module's own
+     :func:`_make_tool_dispatch` runs OUTSIDE any ``RouterLoop``, so neither of
+     the RouterLoop TOOL-axis gates was in the path either. Measured on the
+     unfixed code (#3546): a session narrowed with ``tool_deny: [X]`` ran a
+     pipeline whose step invoked ``X`` and ``X``'s real side effect happened.
+     Both halves are now closed — the spawn passes ``narrowing=`` (the seam
+     where the envelope is born) and the tool-step dispatch consults the
+     session's live contextual through the shared
+     ``effective.tool_contextually_denied`` predicate. Check 6 closes the
+     separate identity hole.
   5. **S3 no nested launch** — a ``tool`` step must not itself launch a pipeline
      or delegate (nesting is ``call``-only; enforced structurally at dispatch
      via ``_PIPELINE_STEP_DENY_TOOLS``, validated statically here so a bad
@@ -195,7 +210,9 @@ _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
 })
 
 
-def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
+def _make_tool_dispatch(
+    ctx: ToolContext, *, contextual_permission: "object | None" = None,
+) -> "Callable[[str, dict], Any]":
     """Build the real ``tool_dispatch`` a pipeline ``ToolStep`` invokes through.
 
     ``step.name`` is looked up directly in the unified registry and its handler
@@ -203,6 +220,19 @@ def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
     it — so router_state callbacks (permission resolver, workspace, etc.) reach
     the tool exactly as if the caller had invoked it directly. No stub, no
     op_runtime bridge: this IS the real tool-execution path.
+
+    #3546: ``contextual_permission`` is the running session's live
+    ``ContextualPermission`` (``Session.contextual_permission``), consulted through
+    the SAME shared predicate every other TOOL-axis site uses
+    (``effective.tool_contextually_denied``). This path is the one tool-dispatch
+    seam that does NOT run inside a ``RouterLoop`` — a pipeline driver-session
+    runs ``PipelineExecutorDriver``, so neither the RouterLoop advertisement
+    filter nor its ``_excluded_result`` call-time gate is in the path. Without
+    this the narrowing a driver-session is born with (``session_api.
+    _spawn_pipeline_driver_session``) would be persisted and never read on the
+    surface that actually executes capabilities. ``None`` (the default, and what
+    the ``reyn pipe`` CLI passes — an operator-direct run with no session
+    envelope) leaves the dispatch byte-identical to pre-#3546.
 
     #3429: this used to try ``universal_dispatch.resolve_invoke_action`` first,
     so a step could name a tool by its second, ``<category>__<verb>`` spelling
@@ -228,6 +258,22 @@ def _make_tool_dispatch(ctx: ToolContext) -> "Callable[[str, dict], Any]":
                 "call-only, so the launch-time cost-bound approval stays a "
                 "transitive closure."
             )
+
+        # #3546: the TOOL-axis contextual gate, on the one dispatch seam that runs
+        # outside a RouterLoop. Same predicate + same deny text as every other site.
+        if contextual_permission is not None:
+            from typing import cast
+
+            from reyn.security.permissions.effective import (
+                contextual_deny_message,
+                tool_contextually_denied,
+            )
+
+            _ctx_perm = cast("Any", contextual_permission)
+            if tool_contextually_denied(_ctx_perm, name):
+                raise PipelineExecutionError(
+                    contextual_deny_message("tool", name, _ctx_perm)
+                )
 
         target = registry.lookup(name)
         if target is None:

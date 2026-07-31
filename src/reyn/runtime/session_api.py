@@ -405,8 +405,26 @@ async def _spawn_pipeline_driver_session(
       1. spawn the driver-session under the INVOKER's identity
          (``spawn_session_recorded(mode="persistent")`` — the same recorded seam
          as every other programmatic spawn; persistent because the session must
-         survive a crash to be re-woken). Same identity ⇒ the driver's
-         permission envelope is the invoker's (⊆ by construction).
+         survive a crash to be re-woken), passing the invoker's per-session
+         ``narrowing``.
+         ⚠️ Identity alone does NOT reproduce the invoker's envelope, though
+         this step used to say it did ("⊆ by construction"). Identity carries
+         the NAME-keyed layers — the agent's ``permissions`` declaration, its
+         topology ``capability_profile`` bindings, the #2081 ``_delegate``
+         floor — because ``resolved_profile_for`` re-derives those from the
+         agent name. The #2103-S1a per-session narrowing is keyed by SID: it
+         lives in ``<session-state-dir>/config.yaml``, and a freshly-spawned
+         driver-session has a fresh sid and therefore no such file. So it had
+         to be handed over explicitly, and is (``registry.per_session_narrowing``
+         → ``narrowing=``), which is what the two sibling ``spawn_session_recorded``
+         call sites already did (#3546). Two further layers are deliberately not
+         carried: the #2285 in-memory ``/visibility`` toggle (an operator view
+         override on a live ``Session``, not persisted and not passed at the
+         sibling sites either) and the #1827-S4b ephemeral untrusted-context
+         narrowing (not inheritable state at all — ``Session.
+         _ephemeral_contextual_for_turn`` re-derives it each turn from that
+         session's OWN history plus the ``safety.threat_scan.capability_narrowing``
+         opt-in).
       2. persist the work-order (``invocation.json`` — full serialized pipeline +
          input + reply address + the driver's own (agent, sid) + the WAL seq at
          spawn + (#2572) ``schema_defs``, the launch's ``schema_registry``
@@ -467,8 +485,15 @@ async def _spawn_pipeline_driver_session(
         if attached_parent_session is not None
         else AuditOnlyNoSurface()
     )
+    # #3546: the driver-session is where a NEW permission envelope is born, so the
+    # invoker's sid-keyed narrowing has to be handed to it explicitly — sharing the
+    # invoker's IDENTITY re-derives only the name-keyed layers (see this function's
+    # docstring, step 1). Sibling parity: the two other ``spawn_session_recorded``
+    # call sites (``session_spawn``'s router host, the ``agent`` step) already pass
+    # ``narrowing=``; this was the one that did not.
     sid = await registry.spawn_session_recorded(
         reply_to_agent, mode="persistent",
+        narrowing=registry.per_session_narrowing(reply_to_agent, reply_to_sid),
         presentation_consumer=routing.presentation_consumer,
         intervention_bridge=routing.intervention_bridge,
     )

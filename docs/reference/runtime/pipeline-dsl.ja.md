@@ -534,7 +534,7 @@ pipeline を起動するツールは 4 つあります。いずれも同じ実�
 1. 定義が parse できる。
 2. すべてのステップの `schema:` 参照が、定義自身の schema 内で解決する。
 3. すべての `tool` ステップ名が、登録済みツールまたは qualified action に解決する。
-4. *(構造的、実行時チェックではない)* driver-session は起動者自身の identity の下で spawn され、restrict-only で narrowing されるため、生成された pipeline が起動者自身の envelope を超えることは構造上あり得ない。
+4. *(一部は構造的、一部は実行時強制)* driver-session は起動者自身の identity の下で spawn され、identity を鍵とする層(そのエージェント自身の `permissions`、topology の `capability_profile` バインディング、`_delegate` floor)はそれで再現される。**加えて**、identity からは導けない per-session の narrowing(session id が鍵)が spawn に渡される。`tool` ステップの dispatch は実行時にその narrowing を再確認する — この dispatch は、他のすべての tool 経路を覆う router loop のゲートの外側で実行されるため。
 5. どの `tool` ステップも pipeline を起動したり delegate したりしない — ネストは `call` のみ。
 6. **Inline 専用**: `agent` ステップの `identity` は、設定されている場合、起動者自身の identity と等しくなければならない。登録済み pipeline はこのチェックの対象外(信頼された登録者が意図的に identity を選んだため)。別の identity を指定する inline の、エージェントが生成した pipeline は capability escalation として拒否される。
 
