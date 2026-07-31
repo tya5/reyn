@@ -611,15 +611,27 @@ class LLMReplay:
                 # compare against. An empty imprint is still safe to serve —
                 # scrubbing was a no-op, so this key IS the key it was recorded
                 # under. A non-empty one is not: the response would be replayed
-                # against tooling the recording never saw.
+                # against tooling the recording never saw. Reported as
+                # "not recorded", never as "captured empty" — the two are
+                # different claims and only one of them was observed.
                 if actual == precondition.absent_value():
                     continue
-                expected: Any = precondition.absent_value()
-            else:
-                expected = recorded.get(precondition.name, precondition.absent_value())
-                if actual == expected:
-                    continue
-            preview = self._prompt_preview(messages)
+                raise PreconditionMismatch(
+                    f"Fixture precondition unverifiable: {precondition.name!r} — "
+                    f"this entry predates environment-precondition recording "
+                    f"(#3473) and this run's environment is not empty, so there "
+                    f"is nothing to check it against.\n"
+                    f"Expected (captured): NOT RECORDED\n"
+                    f"Actual   (this run): {actual!r}\n"
+                    f"Model: {model!r}\n"
+                    f"Prompt preview: {self._prompt_preview(messages)!r}\n"
+                    f"Fixture: {self.fixture_path}\n"
+                    f"Serving it would replay a response recorded against "
+                    f"unknown tooling. Re-record with REYN_LLM_RECORD=1."
+                )
+            expected = recorded.get(precondition.name, precondition.absent_value())
+            if actual == expected:
+                continue
             raise PreconditionMismatch(
                 f"Fixture precondition mismatch: {precondition.name!r} — this "
                 f"fixture entry was captured under a different environment.\n"
@@ -627,7 +639,7 @@ class LLMReplay:
                 f"Expected (captured): {expected!r}\n"
                 f"Actual   (this run): {actual!r}\n"
                 f"Model: {model!r}\n"
-                f"Prompt preview: {preview!r}\n"
+                f"Prompt preview: {self._prompt_preview(messages)!r}\n"
                 f"Fixture: {self.fixture_path}\n"
                 f"The conversation matched — only the environment did not, so "
                 f"this is NOT a missing recording. Either restore the recorded "
