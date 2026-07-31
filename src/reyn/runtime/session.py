@@ -3176,7 +3176,9 @@ class Session:
           2. ``RouterHostAdapter.maybe_reload_mcp_tools_cache_from_disk()`` (S1)
              — picks up the on-disk cache file if newer than the in-memory cache.
           3. ``RouterHostAdapter.ensure_mcp_tools_cached()`` (#160 lazy probe)
-             — first-call fallback when neither (1) nor (2) populated the cache.
+             — probes every configured server that (1) and (2) left without a
+             cached ANSWER (#3520; this includes a server whose earlier probe
+             timed out, which is stored nowhere rather than as an empty list).
 
         Use cases (FP-0037 #164):
           - Test scenarios where MCP config changes mid-test.
@@ -7512,7 +7514,9 @@ class Session:
         spawned worker's first inbound message, e.g.) built its `tools=`
         payload against a never-primed cache — no `mcp_tool_name` enum on
         `call_mcp_tool`/`describe_mcp_tool`, silently, for that session's
-        entire life (`ensure_mcp_tools_cached`'s populated-guard is one-shot).
+        entire life (`ensure_mcp_tools_cached`'s populated-guard was one-shot;
+        #3520 made it per-server, so an UNANSWERED probe no longer freezes the
+        enum either — but a chain that never runs still primes nothing).
         Running the chain here instead makes the ordering guarantee structural
         rather than kind-dependent.
         """

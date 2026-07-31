@@ -52,10 +52,16 @@ async def test_probe_server_tools_returns_real_tools(monkeypatch):
     config → ValueError → swallowed → empty list)."""
     monkeypatch.setattr(pool_mod, "MCPClient", _FakeMCPClient)
 
-    name, tools = await _probe_server_tools("mysrv", {"type": "stdio", "command": "x"})
+    name, outcome = await _probe_server_tools("mysrv", {"type": "stdio", "command": "x"})
 
     assert name == "mysrv"
-    assert tools == [{"name": "tool_a"}, {"name": "tool_b"}], "real tools returned + cleaned"
+    assert outcome.kind == "answered", (
+        "a server that replied with real tools ANSWERED, even though the reply "
+        f"also carried an unusable entry; got {outcome!r}"
+    )
+    assert outcome.tools == [{"name": "tool_a"}, {"name": "tool_b"}], (
+        "real tools returned + cleaned"
+    )
     assert _FakeMCPClient.last_config == {"type": "stdio", "command": "x"}, (
         "constructed with the cfg DICT (config-first), not the server name"
     )

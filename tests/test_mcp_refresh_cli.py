@@ -20,7 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.runtime.services.mcp_cache_file import cache_file_path, read_cache
+from reyn.runtime.services.mcp_cache_file import (
+    ToolsAnswered,
+    ToolsUnknown,
+    cache_file_path,
+    read_cache,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,7 +68,7 @@ def _make_fake_probe(tools_by_server: dict[str, list[dict]]):
     """Return an async _probe_server_tools replacement returning fixed tools."""
 
     async def _fake(server_name: str, cfg: dict, *, per_server_timeout: float = 5.0):
-        return server_name, tools_by_server.get(server_name, [])
+        return server_name, ToolsAnswered(tools=tools_by_server.get(server_name, []))
 
     return _fake
 
@@ -112,7 +117,7 @@ def test_refresh_writes_cache_file(tmp_path: Path, monkeypatch) -> None:
     result = read_cache(cache_path)
     assert result is not None
     assert "myserver" in result
-    assert result["myserver"] == fixed_tools
+    assert result["myserver"].tools == fixed_tools
 
 
 # ---------------------------------------------------------------------------
@@ -142,19 +147,28 @@ def test_refresh_handles_empty_server_config(tmp_path: Path, monkeypatch) -> Non
 
 
 # ---------------------------------------------------------------------------
-# 4. Per-server failure → warning printed, empty list written, exit 0
+# 4. Per-server failure → warning printed, server OMITTED from cache, exit 0
 # ---------------------------------------------------------------------------
 
 
-def test_refresh_per_server_failure_warns_writes_empty(
+def test_refresh_per_server_failure_warns_and_omits_from_cache(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    """Tier 2: a server that times out / errors gets empty list in cache;
-    a warning is printed; the command exits without raising."""
+    """Tier 2: a server whose probe does not answer is warned about and left
+    OUT of the cache file; the command exits without raising.
+
+    #3520: this used to assert the opposite ("failed server must be written as
+    empty list, not omitted"). Writing it is what made the CLI a second door to
+    the defect — the file is what every later session warm-starts from, so an
+    empty list persisted here tells every future session the server has no
+    tools and stops them from ever probing it again. Omitted means "not
+    measured", which each session resolves for itself on its next turn.
+    """
     import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     async def _failing_probe(server_name, cfg, *, per_server_timeout=5.0):
-        return server_name, []  # simulates timeout / connection error
+        # simulates timeout / connection error
+        return server_name, ToolsUnknown(reason="timeout")
 
     monkeypatch.setattr(mcp_cmd, "_probe_server_tools", _failing_probe)
 
@@ -182,8 +196,9 @@ def test_refresh_per_server_failure_warns_writes_empty(
     state_dir = project_root / ".reyn" / "state"
     result = read_cache(cache_file_path(state_dir))
     assert result is not None
-    assert result.get("badserver") == [], (
-        "failed server must be written as empty list, not omitted"
+    assert "badserver" not in result, (
+        "a server whose probe did not answer must be OMITTED from the cache "
+        f"file, never written as an empty list; got {result!r}"
     )
 
 
@@ -252,7 +267,7 @@ def test_refresh_uses_configured_mcp_probe_seconds(tmp_path: Path, monkeypatch) 
 
     async def _recording_probe(server_name, cfg, *, per_server_timeout=5.0):
         recorded.append(per_server_timeout)
-        return server_name, []
+        return server_name, ToolsAnswered()
 
     monkeypatch.setattr(mcp_cmd, "_probe_server_tools", _recording_probe)
     monkeypatch.setattr(

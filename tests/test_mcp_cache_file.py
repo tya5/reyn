@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from reyn.runtime.services.mcp_cache_file import (
+    ToolsAnswered,
     cache_file_path,
     file_mtime,
     read_cache,
@@ -27,14 +28,14 @@ from reyn.runtime.services.mcp_cache_file import (
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
-_SAMPLE_SERVERS: dict[str, list[dict]] = {
-    "github": [
+_SAMPLE_SERVERS: dict[str, ToolsAnswered] = {
+    "github": ToolsAnswered(tools=[
         {"name": "get_repo", "description": "Get a repository", "inputSchema": {}},
         {"name": "list_prs", "description": "List pull requests", "inputSchema": {}},
-    ],
-    "filesystem": [
+    ]),
+    "filesystem": ToolsAnswered(tools=[
         {"name": "read_file", "description": "Read a file", "inputSchema": {}},
-    ],
+    ]),
 }
 
 
@@ -64,11 +65,19 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
 
 
 def test_write_cache_creates_version_and_probed_at(tmp_path: Path) -> None:
-    """Tier 2: written file contains version=1 and a probed_at ISO timestamp."""
+    """Tier 2: written file carries a version envelope and a probed_at ISO timestamp.
+
+    #3520: the version is asserted to be >= 2 rather than pinned to a literal.
+    What must hold is that a file written today is NOT readable as a version-1
+    file — version 1's empty entries are irreversibly ambiguous between
+    "answered zero tools" and "probe failed", so a reader must be able to tell
+    the two writers apart. `test_read_version_one_is_declined` is the other
+    half of that contract.
+    """
     path = cache_file_path(tmp_path / "state")
-    write_cache(path, {"s": []})
+    write_cache(path, {"s": ToolsAnswered()})
     raw = json.loads(path.read_text())
-    assert raw["version"] == 1
+    assert raw["version"] >= 2
     assert "probed_at" in raw
     # probed_at must be a non-empty string (ISO timestamp).
     assert isinstance(raw["probed_at"], str) and raw["probed_at"]
@@ -111,13 +120,43 @@ def test_read_corrupt_returns_none_and_logs(tmp_path: Path, caplog) -> None:
 
 
 def test_read_version_mismatch_returns_none(tmp_path: Path) -> None:
-    """Tier 2: read_cache silently returns None when version != 1."""
+    """Tier 2: read_cache silently returns None on an unrecognised version."""
     path = cache_file_path(tmp_path / "state")
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"version": 99, "probed_at": "2026-01-01T00:00:00+00:00", "servers": {}}
     path.write_text(json.dumps(payload), encoding="utf-8")
     result = read_cache(path)
     assert result is None
+
+
+def test_read_version_one_is_declined_because_its_empty_entries_are_ambiguous(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: a version-1 cache file is declined wholesale, not migrated.
+
+    #3520: version 1's writer stored a failed probe as ``[]``, so a version-1
+    ``[]`` could mean either "measured: zero tools" or "never measured". No
+    reader can recover the distinction, and guessing "answered" is exactly the
+    defect that made a timed-out probe permanent. Declining the file costs one
+    re-probe and is the only choice that cannot be wrong. A server carrying a
+    NON-empty entry is declined along with it — the file is one artefact and a
+    partial trust rule would be a second, unstated format.
+    """
+    path = cache_file_path(tmp_path / "state")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    v1_payload = {
+        "version": 1,
+        "probed_at": "2026-01-01T00:00:00+00:00",
+        "servers": {
+            "ambiguous": [],
+            "populated": [{"name": "t1", "description": "d1", "inputSchema": {}}],
+        },
+    }
+    path.write_text(json.dumps(v1_payload), encoding="utf-8")
+    assert read_cache(path) is None, (
+        "a version-1 file must not be read back — its empty entries cannot be "
+        "distinguished from failed probes"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +169,7 @@ def test_write_creates_parent_dir(tmp_path: Path) -> None:
     deep_state = tmp_path / "new_parent" / "nested" / "state"
     path = cache_file_path(deep_state)
     assert not deep_state.exists()
-    write_cache(path, {"s": []})
+    write_cache(path, {"s": ToolsAnswered()})
     assert path.exists(), "write_cache must create missing parent dirs"
 
 

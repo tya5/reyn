@@ -51,7 +51,11 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
+from reyn.runtime.services.mcp_cache_file import (
+    ToolsAnswered,
+    cache_file_path,
+    write_cache,
+)
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
@@ -59,11 +63,16 @@ _SERVER = "reyn_markitdown"
 _TOOLS = [{"name": "convert_to_markdown", "description": "convert a uri to markdown"}]
 
 
+def _answers(by_server: dict[str, list[dict]]) -> dict[str, ToolsAnswered]:
+    """Lift plain tool lists to the ANSWER variant the cache file accepts (#3520)."""
+    return {name: ToolsAnswered(tools=tools) for name, tools in by_server.items()}
+
+
 def _make_session(tmp_path: Path) -> Session:
     """A session with one configured MCP server, warm-startable from disk so
     `ensure_mcp_tools_cached()` never needs a real subprocess probe (mirrors
     `tests/test_session_refresh_mcp_servers.py`'s own technique)."""
-    write_cache(cache_file_path(tmp_path / ".reyn" / "state"), {_SERVER: _TOOLS})
+    write_cache(cache_file_path(tmp_path / ".reyn" / "state"), _answers({_SERVER: _TOOLS}))
     return make_session(
         agent_name="fp3475-agent",
         mcp_servers={_SERVER: {"description": "markitdown"}},

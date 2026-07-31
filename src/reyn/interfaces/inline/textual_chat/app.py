@@ -674,10 +674,30 @@ class TextualChatApp(App):
        no effect (measured). Change it here. */
     MenuBar {
         height: auto;
-        color: $text-muted;
+        /* #3528: ``text-style``, not ``color``. The pair this replaces was
+           ``color: $text-muted`` here and ``color: $text`` on
+           ``:focus-within`` — a brightness step that has been INERT since
+           #3505 adopted ``ansi-dark``, where both variables resolve to the
+           same ``ansi_default`` marker. Measured: moving focus from the
+           composer into the menu changed exactly ONE cell on the whole
+           screen, and it was the composer's own text cursor vanishing — a
+           cue you only notice by its absence. ``dim`` survives that theme
+           (it is an SGR attribute, not a colour) and is the mechanism the
+           tabs' own active/inactive distinction already relies on. */
+        text-style: dim;
         padding: 0 1;
     }
-    MenuBar:focus-within { color: $text; }
+    MenuBar:focus-within { text-style: none; }
+    /* The "you are here" marker. Un-dimming alone is too quiet to answer the
+       owner's report, and it reaches only the ACTIVE tab in practice (the
+       inactive ones are dim already, so the bar as a whole does not visibly
+       lift). ``reverse`` inverts using the TERMINAL's own two colours, so it
+       needs no palette entry and works on a light or dark theme alike — the
+       standard menu-bar idiom, and here it is confined to one short label.
+       #3490 rejected ``reverse`` for the addressed CONVERSATION row, which is
+       not this case: there it inverted a full-width row of prose into a
+       near-white block; a single tab is the size the idiom is built for. */
+    MenuBar:focus-within Tab.-active { text-style: reverse bold; }
     MenuBar Tab { padding: 0 1; }
     /* #3326: tone down. Tab's own DEFAULT_CSS gives ``.-active`` full-brightness
        ``$foreground`` against every other tab's muted 50%-opacity foreground —
