@@ -200,24 +200,15 @@ async def test_embed_pre_embed_redaction_seam_fires_on_a_secret(
 def test_embed_tool_registered_default_allow() -> None:
     """Tier 1: the `embed` ToolDefinition is registered in the default tool
     registry with gates.router=allow (default-ALLOW per
-    the FP-0057 design — a compute op, individually name-gateable via
-    contextual_gate rather than requiring an ask-gate by default)."""
+    the FP-0057 design — a compute op, individually name-gateable by a
+    per-session contextual narrowing at the RouterLoop gate rather than
+    requiring an ask-gate by default)."""
     from reyn.tools import get_default_registry
 
     registry = get_default_registry()
     tool = registry.lookup("embed")
     assert tool is not None
     assert tool.gates.router == "allow"
-
-
-def test_embed_op_kind_has_a_contextual_gate_entry() -> None:
-    """Tier 1: `embed` is registered in the contextual-gate op-kind table (so a
-    per-session capability narrowing can name-gate it individually, even
-    though its default posture is allow) — same shape as index_query/recall."""
-    from reyn.core.op_runtime.contextual_gate import op_kind_tool_names
-
-    names = op_kind_tool_names("embed")
-    assert "embed" in names
 
 
 @pytest.mark.asyncio

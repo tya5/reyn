@@ -2877,8 +2877,11 @@ class RouterLoop:
         source, and S2+ feed a real contextual from topology / delegate / ephemeral
         narrowing."""
         if self._contextual_permission is not None:
-            # #1912: the single shared contextual gate — identical check across
-            # chat RouterLoop + op dispatch (no path bypass).
+            # #1912: the shared contextual gate — the same check the
+            # advertisement filter runs, so what is hidden and what is denied
+            # cannot disagree. (This said "chat RouterLoop + op dispatch" until
+            # #3513; the op-dispatch leg was an orphaned wrapper with no caller
+            # and is gone. Op-dispatch coverage is #3546, unmeasured.)
             from reyn.security.permissions.effective import (
                 contextual_deny_message,
                 tool_contextually_denied,
