@@ -28,6 +28,7 @@ footgun where a client kills the server).
 """
 from __future__ import annotations
 
+import asyncio
 from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
@@ -134,6 +135,14 @@ class AgUiTransport(ClientTransport):
             if line == "":
                 if block:
                     for frame in self._consume_block(block):
+                        # #3570, same property as ``InProcessTransport.frames``:
+                        # one SSE block decodes to MANY frames (a MESSAGES_SNAPSHOT
+                        # reconnect alone carries the whole backlog) and this inner
+                        # loop has no await of its own, while ``aiter_lines`` over a
+                        # buffered read returns without suspending either. Without
+                        # this line whether the loop breathes is a function of how
+                        # much the server packed into one block.
+                        await asyncio.sleep(0)
                         yield frame
                         if (
                             isinstance(frame, DisplayFrame)
@@ -146,6 +155,7 @@ class AgUiTransport(ClientTransport):
         # Flush a trailing block with no terminal blank line.
         if block:
             for frame in self._consume_block(block):
+                await asyncio.sleep(0)  # #3570, same reason as the loop above
                 yield frame
 
     # -- send side ----------------------------------------------------------
