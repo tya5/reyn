@@ -262,11 +262,12 @@ def _make_tool_dispatch(
         # #3546: the TOOL-axis contextual gate, on the one dispatch seam that runs
         # outside a RouterLoop. Same predicate + same deny text as every other site.
         if contextual_permission is not None:
+            from typing import cast
+
             from reyn.security.permissions.effective import (
                 contextual_deny_message,
                 tool_contextually_denied,
             )
-            from typing import cast
 
             _ctx_perm = cast("Any", contextual_permission)
             if tool_contextually_denied(_ctx_perm, name):

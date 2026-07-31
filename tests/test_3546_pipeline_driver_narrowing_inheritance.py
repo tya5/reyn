@@ -242,20 +242,18 @@ async def test_pipeline_driver_session_inherits_invoker_narrowing(
 
     invoker, _sid = await _narrowed_invoker(reg)
     await invoker._reapply_pipelines({})
-    assert _spawned_narrowings(state_log) == [{"tool_deny": [_DENIED_TOOL]}]
+    before = _spawned_narrowings(state_log)
+    assert before == [{"tool_deny": [_DENIED_TOOL]}]
 
     await _handle_run_pipeline(
         {"name": "ns.main", "input": None}, _tool_ctx(invoker, reg, state_log),
     )
 
-    recorded = _spawned_narrowings(state_log)
-    assert len(recorded) >= 2, (
-        "the pipeline launch did not spawn a driver-session through the recorded "
-        f"spawn seam at all (session_spawned narrowings: {recorded!r})"
-    )
-    assert recorded[-1] == {"tool_deny": [_DENIED_TOOL]}, (
-        "the pipeline driver-session was born without the invoker's per-session "
-        f"narrowing (session_spawned narrowings: {recorded!r})"
+    # Every session the launch spawned, and there must be at least the driver.
+    born_by_the_launch = _spawned_narrowings(state_log)[len(before):]
+    assert born_by_the_launch == [{"tool_deny": [_DENIED_TOOL]}], (
+        "the pipeline launch's spawned session(s) were not born with the "
+        f"invoker's per-session narrowing: {born_by_the_launch!r}"
     )
 
 
