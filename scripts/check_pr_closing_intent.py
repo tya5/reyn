@@ -20,7 +20,10 @@ Four checks, all facets of the same invariant:
   2. **false positive** — body declares non-closing intent (``part of #N`` /
      ``toward #N``) but N IS in ``closingIssuesReferences`` → the PR will
      auto-close N on merge despite the author saying it shouldn't. Real
-     example: #3003→#2827.
+     example: #3003→#2827. Subject to the use-vs-mention rule below: a
+     ``part of #N`` occurrence in a body that also declares an unfenced,
+     canonical ``Closes #N`` for the same N is read as a *mention*, not a
+     scope declaration.
   3. **undeclared** — N IS in ``closingIssuesReferences`` but the body
      contains NO declaration at all (neither closing nor non-closing) about
      N → GitHub's parser silently picked up a closing reference from prose
@@ -103,6 +106,133 @@ the author *declaring* intent to close N, and GitHub not honoring it is the
 mismatch worth failing on. The script therefore strips backtick characters
 from the body before matching rather than skipping fenced code spans.
 
+Use vs mention (#3559): the finders above assume every occurrence of a
+declaring phrase is a declaration *about this PR's scope*. For check 2's
+``part of #N`` / ``toward #N`` vocabulary that assumption has a systematic
+counterexample, and it is one the repo's own rules manufacture. CLAUDE.md
+rule 4 requires an author to enumerate every open ``part of #X`` PR before
+writing ``Closes #X``; a Test-plan line recording that they did so
+necessarily *quotes the phrase* — "enumerated part of #3553, none open" —
+inside a body whose operative declaration is ``Closes #3553``. Check 2 read
+the quotation as a declaration and failed the PR (real incident: #3558).
+A PR that follows rule 4 **and records having followed it** went red, while
+not recording it stayed green — a perverse incentive against the very
+discipline the gate enforces.
+
+The criterion is *use vs mention*, not "is it fenced". Backticks are one
+symptom of mention; the same sentence written bare is equally a mention, so
+excluding fenced spans would neither be sufficient here nor safe elsewhere
+(it would blind check 1 — see ``_body_as_author_declared``). What settles it is
+**whether the same body canonically declares ``Closes #N`` for that same
+N**. A PR cannot coherently claim both "this closes #N" and "this is only
+part of #N" about its own scope, so when both appear, one is not a scope
+claim — and the canonical closing declaration is the one the author
+actually made. The ``part of #N`` occurrence is then a mention
+(:func:`find_canonical_closing_declarations`).
+
+Everything rests on how *narrow* "canonically declares" is, and two wider
+rules were written and measured before this one:
+
+  * **Plain co-occurrence over ``_CLOSING_RE``.** Went GREEN on real
+    #3003 — its body declares ``part of #2827`` and, forty lines down,
+    explains that a keyword there "would auto-close #2827 with part 1
+    undone". ``_CLOSING_RE`` matches that ``close`` (it must: GitHub
+    honors it, which is check 1's and check 3's business), so the rule
+    accepted keyword-shaped prose as the author's declaration and
+    silenced check 2 on its own motivating incident.
+  * **"The closing declaration must come FIRST."** Fixed #3003 but went
+    RED when the Test-plan record sits *above* the ``Closes`` line —
+    the verdict flipping on line order alone, with the red case being
+    exactly the plain-prose record this rule exists to permit. That
+    fails the acceptance condition (no marker, no fence, still green),
+    since the only workarounds are reordering or fencing — both rituals.
+
+:data:`_CANONICAL_CLOSING_RE` is therefore restricted to the declaring
+vocabulary this module documents above — ``Closes``/``Fixes``/``Resolves``
+— which is narrower than the keyword set GitHub honors. That is not a
+census of GitHub's parser (the thing check 3 must not do); it is the
+opposite, a deliberately small set of forms an author uses to *declare*.
+``auto-close`` is not one of them, so #3003 stays red without any appeal
+to position, which is what makes the rule order-independent.
+
+Fenced spans are removed first (``_body_as_github_parses``) so a body that
+merely *quotes* `` `Closes #N` `` — a doc PR, or this script's own PR —
+cannot corroborate either; GitHub honors no fenced keyword, so an N in
+``closingIssuesReferences`` alongside only a fenced ``Closes #N`` came from
+a bare prose keyword, i.e. the #3003 shape again. That makes checks 1 and 2
+read the same syntax in deliberately opposite directions, because their
+failure costs are asymmetric: check 1's job is to surface a declaration
+GitHub ignored (so it must be stricter than GitHub), while check 2's job is
+to surface an unintended close (so a quoted keyword must not count as the
+author's intent). ``_body_as_author_declared``'s docstring already established that
+per-check divergence from GitHub's behavior is this gate's design, not a
+deviation from it.
+
+Note what this deliberately does NOT require: no marker, no token, no
+fence. A solution that made the author annotate their Test-plan line would
+only *reduce* the perverse incentive — any extra ritual attached to
+recording the discipline keeps discouraging the record.
+
+**The accepted trade: this rule prefers a false negative to a false
+positive, and that is a decision, not a side effect.** The rule is
+unconditional — given a canonical ``Closes #N``, *every* other
+``part of #N`` in that body becomes a mention, including one the author
+meant as a genuine scope declaration. So a body that declares both forms
+canonically and unfenced for the same N is now SILENT where it used to
+FAIL. That direction was chosen deliberately:
+
+  * The false positive it removes is *systematic and self-reinforcing*.
+    It fires on a body that followed rule 4 and recorded doing so, and the
+    cheapest way for an author to clear it is to delete the record. A gate
+    that trains people out of writing down the discipline it enforces
+    corrupts the evidence it depends on, and it does so on every
+    rule-4-compliant PR, forever.
+  * The false negative it accepts is *self-contradictory input*. "Closes
+    #N" and "only part of #N" cannot both be true of one PR, so the body
+    is already wrong before this gate reads it. The author has stated an
+    intent to close, GitHub agrees, and the resulting close is the one
+    they asked for — there is no surprise closure, which is the harm
+    check 2 exists to prevent. It is also not silent everywhere: a
+    genuinely non-closing PR that carries a stray canonical ``Closes #N``
+    still trips check 4 if that keyword reaches a commit message.
+
+``test_check2_is_silent_when_both_forms_are_canonical`` pins this leg, so
+the behavior is recorded rather than merely reachable. If the trade is ever
+revisited, the honest lever is the ``<!-- closing-check: discussing #N -->``
+marker, which is exempt from this rule precisely because it is unambiguous
+syntax — not a re-narrowing of the ``part of`` reading, which is where the
+perverse incentive lives.
+
+Why check 2 is NOT replaced by performing rule 4's enumeration itself
+(``gh pr list --state all --search "#X in:body"``), which would measure the
+property (#3368: an open part-of PR still existed) rather than the body's
+self-consistency, and would structurally dissolve the perverse incentive.
+Three measured reasons, none of them cost — the query is one search per
+declared closing issue and returns in ~0.75s:
+
+  * **It is not a substitute.** The enumeration answers "do sibling
+    part-of PRs remain open for #X?" (#3368). Check 2 answers "will THIS
+    PR close #N against its own declaration?" (#3003→#2827). Disjoint
+    incidents; dropping check 2 loses the #3003 class outright, and
+    keeping it means the use-vs-mention fix is needed either way.
+  * **It inherits the same use/mention ambiguity, one scope up.** GitHub's
+    search is a text search over PR bodies — the same substrate as the
+    regexes here, not a different kind of measurement. Measured on this
+    repo: ``"part of #3300" in:body`` returns 6 PRs, and PR #3309 is among
+    them because its prose says "#3301 (part of #3300 P1 C)" while its own
+    declaration is "part of #3273. Closes #3287" — a mention, not a
+    declaration. (Unquoted, it is far worse: search drops ``#``, so
+    ``#3300 in:body`` and ``3300 in:body`` return the same 24 PRs,
+    including several that merely contain the digits.) When the false hit
+    is a *sibling*, the failing PR's author has no remedy — they cannot
+    edit another PR's body — which is strictly worse than the incentive
+    being replaced.
+  * **It is not deterministic.** The verdict would depend on repo state at
+    CI time rather than on the PR under test, so the same commit can go
+    green and then red without being touched, and GitHub's search index is
+    eventually consistent on top of that. A required merge gate that
+    re-runs to a different answer teaches authors to re-run until green.
+
 (#3003 is *not* evidence about backticks: its body's backticked
 `` `Closes` `` has no adjacent issue number and could not have closed
 anything. What GitHub actually parsed there is the bare ``close #2827``
@@ -182,32 +312,100 @@ _DISCUSSING_MARKER_RE = re.compile(
 _ISSUE_NUM_RE = re.compile(r"#(\d+)")
 
 
-def _strip_backticks(text: str) -> str:
-    """Remove backtick characters so fenced/defused keywords still match.
+# ---------------------------------------------------------------------------
+# The two readings of a PR body.
+#
+# This module deliberately reads the same body two ways, and the pair below is
+# the ONLY place that difference lives. They are named for the question they
+# answer, not for the string surgery they perform, because the surgeries look
+# alike (both are about backticks) while the meanings are opposite — and a
+# caller that picks the wrong one gets a plausible-looking wrong answer rather
+# than an error. See the module docstring's "Use vs mention" section.
+# ---------------------------------------------------------------------------
 
-    GitHub's parser **does** respect backticks — a body containing
-    `` `Closes #N` `` does NOT auto-close N on merge (verified: #2990 and
-    #3006 both fence their closing keyword and both have an empty
-    ``closingIssuesReferences``; #2620 and #2972 consequently stayed open).
+# Fenced code — a ``` block, then an inline `span`. Used only to build the
+# GitHub-side reading below.
+_FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
 
-    This matcher is deliberately stricter: a fenced ``Closes #N`` is still
-    the author declaring intent to close N, so we must see the declaration
-    that GitHub's parser ignored — that mismatch IS the check-1 defect.
-    Hence: strip the fence characters, don't skip fenced spans.
+
+def _body_as_author_declared(text: str) -> str:
+    """The body as the AUTHOR meant it — fences are defused, not honored.
+
+    Removes backtick characters so a fenced keyword still matches. GitHub's
+    parser **does** respect backticks — a body containing `` `Closes #N` ``
+    does NOT auto-close N on merge (verified: #2990 and #3006 both fence
+    their closing keyword and both have an empty ``closingIssuesReferences``;
+    #2620 and #2972 consequently stayed open).
+
+    This reading is deliberately stricter than GitHub's: a fenced
+    ``Closes #N`` is still the author declaring intent to close N, so we must
+    see the declaration that GitHub's parser ignored — that mismatch IS the
+    check-1 defect. Hence: strip the fence characters, do not skip fenced
+    spans.
     """
     return text.replace("`", "")
 
 
+def _body_as_github_parses(text: str) -> str:
+    """The body as GITHUB reads it — fenced spans are honored and dropped.
+
+    The mirror image of :func:`_body_as_author_declared`: fenced blocks and
+    inline code spans are removed (blocks first, then spans), so a merely
+    quoted keyword contributes nothing. Used where the question is what the
+    author *actually declared to the world* rather than what they typed —
+    check 2's use-vs-mention corroboration.
+    """
+    return _INLINE_CODE_RE.sub(" ", _FENCED_BLOCK_RE.sub(" ", text))
+
+
+# The CANONICAL declaring form only — ``Closes #N`` / ``Fixes #N`` /
+# ``Resolves #N``, which is exactly the closing vocabulary the module
+# docstring documents an author as *declaring* with. Deliberately NARROWER
+# than _CLOSING_RE, which also matches the bare and past-tense shapes GitHub
+# honors (``close``/``closed``/``fix``/``fixed``/...) because check 1 must
+# catch anything GitHub would act on. Check 2 asks a different question — did
+# the author *declare* a close? — and keyword-shaped prose is not a
+# declaration. Real falsifier: #3003's body says a keyword there "would
+# auto-close #2827", which _CLOSING_RE matches and this does not. The
+# ``(?<![\w-])`` guard additionally refuses a hyphen- or word-glued keyword.
+_CANONICAL_CLOSING_RE = re.compile(
+    r"(?<![\w-])(?:closes|fixes|resolves)\s*:?\s*#(\d+)",
+    re.IGNORECASE,
+)
+
+
 def find_closing_declarations(body: str) -> set[int]:
     """Return the set of issue numbers the body declares closing-intent for."""
-    text = _strip_backticks(body)
+    text = _body_as_author_declared(body)
     return {int(m.group(1)) for m in _CLOSING_RE.finditer(text)}
 
 
 def find_nonclosing_declarations(body: str) -> set[int]:
     """Return the set of issue numbers the body declares non-closing-intent for."""
-    text = _strip_backticks(body)
+    text = _body_as_author_declared(body)
     return {int(m.group(1)) for m in _NONCLOSING_RE.finditer(text)}
+
+
+def find_canonical_closing_declarations(body: str) -> set[int]:
+    """Return issue numbers the body declares closing intent for, canonically.
+
+    "Canonically" = an unfenced ``Closes #N`` / ``Fixes #N`` / ``Resolves #N``
+    (:data:`_CANONICAL_CLOSING_RE`), i.e. the author writing the declaring
+    form — not merely prose that collides with a keyword GitHub honors, and
+    not a quoted example. Deliberately reads fences the opposite way to
+    :func:`find_closing_declarations`; see the module docstring's "Use vs
+    mention" section for why the two checks diverge here.
+
+    Check 2 uses this to tell use from mention: when the same body declares
+    ``Closes #N`` canonically, a ``part of #N`` elsewhere in it is not a
+    second, contradictory scope claim — it is a mention. Position-independent
+    on purpose (see the docstring: an ordering rule reddened the very
+    plain-prose record this rule exists to permit).
+    """
+    return {
+        int(m.group(1)) for m in _CANONICAL_CLOSING_RE.finditer(_body_as_github_parses(body))
+    }
 
 
 def find_discussing_declarations(body: str) -> set[int]:
@@ -287,10 +485,38 @@ def check_contradictions(
     # (scope) and a `discussing #N` marker (mention-only). They contradict
     # the parser identically: the author said they are not closing N, and
     # GitHub says it will.
-    for n in sorted((nonclosing_declared | discussing_declared) & closing_refs_set):
+    #
+    # Use vs mention (#3559): "part of #N" is prose, so an occurrence is not
+    # automatically a declaration about THIS PR's scope. When the same body
+    # ALSO declares `Closes #N` canonically, the two cannot both be scope
+    # claims about N, and the canonical declaration is the one the author
+    # made — so the "part of #N" occurrence is a mention. That is the shape
+    # CLAUDE.md rule 4's enumeration record produces (#3558), where without
+    # this the gate penalises recording the discipline it enforces.
+    #
+    # What does the work is the NARROWNESS of the corroborating vocabulary,
+    # not position. Two rules were measured and rejected first:
+    #   * plain co-occurrence over _CLOSING_RE — went GREEN on real #3003,
+    #     whose body says a keyword there "would auto-close #2827". That
+    #     silenced check 2 on its own motivating incident.
+    #   * "the closing declaration must come FIRST" — went RED when the
+    #     Test-plan record was written above the `Closes` line, i.e. on
+    #     exactly the plain-prose record this rule exists to permit, with
+    #     the verdict flipping on line order alone.
+    # _CANONICAL_CLOSING_RE excludes the first (auto-close is not `Closes`)
+    # and needs no ordering, so it excludes the second too. Fences are
+    # removed so a merely quoted `Closes #N` cannot corroborate either.
+    #
+    # The `discussing` marker is NOT subject to this: it is exact syntax an
+    # author types for this single purpose, so it is never a mention, and a
+    # body carrying both `Closes #N` and a `discussing #N` marker is genuine
+    # author confusion worth reporting.
+    nonclosing_operative = nonclosing_declared - find_canonical_closing_declarations(body)
+
+    for n in sorted((nonclosing_operative | discussing_declared) & closing_refs_set):
         form = (
             "a closing-check 'discussing' marker"
-            if n in discussing_declared and n not in nonclosing_declared
+            if n in discussing_declared and n not in nonclosing_operative
             else "part of/toward"
         )
         findings.append(
