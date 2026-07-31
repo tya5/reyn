@@ -323,6 +323,14 @@ N=5 実行 × 20 シナリオ = 100 judge calls/suite run。LLMReplay fixture �
 全 fixture が miss する。**対策**: Fixture 内に `model_class` (= `light`/`standard`/`strong`)
 を別途記録し、`MissingFixture` を `blocked` として報告する設計を Component F に組み込む。
 
+> **2026-07-31 注記（この R4 は 2026-05-17 時点の記述です。上の key 式は現行仕様ではありません）**
+> key はその後 `tools` / `tool_choice` を含むようになり（PR35）、さらに #3473 で
+> **環境由来の値は key から外れ「検査される前提条件」になりました**（MCP catalog が第1例）。
+> 現行の key 仕様は `docs/reference/testing/replay.md` が正典です。
+> このパラグラフは当時のリスク評価の記録として残しています — 仕様として読まないでください。
+> （モジュールパスも当時の `src/reyn/testing/replay.py` から
+> `src/reyn/dev/testing/replay.py` へ移動済みです。）
+
 ---
 
 ## 6. "framework PR" の最小スコープ定義
