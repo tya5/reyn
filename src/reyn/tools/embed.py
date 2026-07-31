@@ -5,7 +5,9 @@ a batch of vectors out. The user composes `embed` -> their own external MCP
 vector-DB's store/retrieve tools via pipeline (reyn never hosts a user RAG
 store, per the FP-0057 design). Default-ALLOW (compute op — cost is the
 embedding API/compute, not a workspace side effect); individually
-name-gateable via `contextual_gate` like every other op kind.
+name-gateable, as a registered router-callable tool, by a per-session
+contextual narrowing at the RouterLoop gate
+(`effective.tool_contextually_denied`).
 
 ADDITIVE at Phase 1: this did NOT retire `embed_and_index` (the CodeAct-only
 ingestion entry) — that clean-break landed in FP-0057 Phase 2b, which

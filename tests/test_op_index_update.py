@@ -95,15 +95,6 @@ def test_index_update_registered_in_op_kind_model_map() -> None:
     assert "index_update" in available_kinds()
 
 
-def test_index_update_op_kind_has_a_contextual_gate_entry() -> None:
-    """Tier 1: `index_update` is registered in the contextual-gate op-kind
-    table (per-session capability narrowing), same shape as embed/index_query."""
-    from reyn.core.op_runtime.contextual_gate import op_kind_tool_names
-
-    names = op_kind_tool_names("index_update")
-    assert "index_update" in names
-
-
 # ---------------------------------------------------------------------------
 # Tier 2: add / update / remove / skip reconciliation
 # ---------------------------------------------------------------------------

@@ -14,8 +14,9 @@ a ``<category>__<verb>`` *qualified* spelling — ``file__read`` for
 for one operation meant every subsystem that keys on a tool name had to decide
 whether to handle both, and the ones that forgot broke silently: a census of
 the 11 name-keyed subsystems found 4 that had grown explicit two-form
-compensation (``capability_profile._expand_tool_forms``,
-``op_runtime.contextual_gate._OP_KIND_TOOLS``, …) and 7 that had not
+compensation (``capability_profile._expand_tool_forms`` among them — another,
+``op_runtime.contextual_gate._OP_KIND_TOOLS``, was itself deleted in #3513 as
+caller-less) and 7 that had not
 (result normalisation, canonicalization declarations, permission-denied hints,
 the advertisement gate, the exclusive-wrapper strip list, the
 ``routing_decided`` audit-event, action-usage tracking). Fixing the 7 would

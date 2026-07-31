@@ -677,8 +677,9 @@ class EmbedIROp(BaseModel):
     provider.
 
     Default-ALLOW (compute op, cost = the embedding API/compute, not a
-    workspace write); individually name-gateable via `contextual_gate`.
-    LLM-callable via ToolDefinition `embed`.
+    workspace write). LLM-callable via ToolDefinition `embed`, and therefore
+    individually name-gateable by a per-session contextual narrowing at the
+    RouterLoop gate (`effective.tool_contextually_denied`).
     """
     kind: Literal["embed"]
     texts: list[str]
@@ -774,8 +775,8 @@ class IndexUpdateIROp(BaseModel):
     over a caller-supplied override — a source is one embedding space).
 
     `permissions.index_drop`-style ask-gate does NOT apply here (index_update
-    is additive/own-write, not destructive) — default-ALLOW, individually
-    name-gateable via `contextual_gate`, mirroring `embed`/`index_query`.
+    is additive/own-write, not destructive) — default-ALLOW, mirroring
+    `embed`/`index_query`.
     LLM-callable via ToolDefinition `index_update`.
     """
     kind: Literal["index_update"]
