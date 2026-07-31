@@ -16,6 +16,12 @@ from typing import Any, Awaitable, Callable
 
 from reyn.config.chat import TimeoutConfig
 from reyn.core.events.events import EventLog
+from reyn.runtime.services.mcp_cache_file import (
+    ProbeOutcome,
+    ToolsAnswered,
+    ToolsUnknown,
+    answered_only,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +499,14 @@ class RouterHostAdapter:
         # Lazy per-session cache for MCP tools — populated by
         # ensure_mcp_tools_cached() on the first user turn; None means
         # "not yet probed". See FP-0037 issue #160.
-        self._mcp_tools_cache: dict[str, list[dict]] | None = None
+        #
+        # #3520: the value type is ``ToolsAnswered``, never a bare list, and a
+        # server whose probe did not answer is ABSENT rather than mapped to an
+        # empty list. Both halves matter: the type keeps "measured zero tools"
+        # apart from "not measured", and absence is what makes the unmeasured
+        # server re-probed on the next turn instead of being frozen as a
+        # capability the model is never told about.
+        self._mcp_tools_cache: dict[str, ToolsAnswered] | None = None
         # FP-0037 S1: mtime of the cache file when we last loaded from it.
         # None = never loaded from disk. Used by maybe_reload_mcp_tools_cache_from_disk
         # to detect when the CLI has written a fresher version.
@@ -1880,8 +1893,10 @@ class RouterHostAdapter:
     def _get_mcp_servers_for_router(self) -> list[dict]:
         """Return [{name, description, tools?}, ...] for configured MCP servers.
 
-        ``tools`` is included when `ensure_mcp_tools_cached()` has populated
-        the per-session tools cache; absent otherwise. Callers downstream
+        ``tools`` is included when `ensure_mcp_tools_cached()` has an ANSWER
+        for that server; absent otherwise (#3520 — a server whose probe did
+        not answer has no cache entry at all, so the `mcp_tool_name` enum
+        simply omits it and the next turn re-probes). Callers downstream
         (= `_enumerate_category("mcp.tool")` in `universal_catalog.py` and
         `router_loop.py`'s `mcp.tool__*` alias builder) iterate `tools`
         defensively so the missing-tools case is graceful.
@@ -1903,43 +1918,55 @@ class RouterHostAdapter:
                 "name": name,
                 "description": cfg.get("description", ""),
             }
-            cached_tools = tools_cache.get(name)
-            if cached_tools is not None:
-                entry["tools"] = cached_tools
+            cached = tools_cache.get(name)
+            if cached is not None:
+                entry["tools"] = cached.tools
             result.append(entry)
         return result
 
     async def ensure_mcp_tools_cached(
         self, *, per_server_timeout: float = _DEFAULT_MCP_PROBE_SECONDS,
     ) -> None:
-        """Probe every configured MCP server's tool list and cache the
-        results for the session lifetime.
+        """Probe each configured MCP server whose tool list is not yet known
+        and cache the ANSWERS for the session lifetime.
 
         Called by `Session._handle_user_message` at the start of each
         user turn. The first call populates the cache (= lazy, post-startup,
-        per FP-0037 issue #160). Subsequent calls are no-ops.
+        per FP-0037 issue #160). Later calls are no-ops **as long as every
+        configured server has an answer**.
+
+        #3520: the guard is per-server, not one-shot, and that is the whole
+        fix. It used to be `if self._mcp_tools_cache is not None: return`,
+        which is correct only if every entry in the cache is a measurement.
+        It was not: a probe that timed out or raised was stored as `[]`, i.e.
+        the *failure to measure* was recorded as the *result* of measuring,
+        and the permanent cache then made that non-answer permanent too — the
+        model was never told about that server's tools again, for the rest of
+        the session and (once the file was written) across restarts. Now an
+        unanswered probe produces `ToolsUnknown`, which `answered_only()`
+        drops, so the server has no entry, so this guard sees it as still
+        needing a probe and re-probes it on the next turn. Permanence is thus
+        a property of ANSWERS only. This is deliberately NOT "re-probe every
+        turn": a server that answered — including one that answered "zero
+        tools" — is probed once and reused exactly as before.
 
         FP-0037 S1: before probing, checks for a pre-written cache file at
         ``<state_dir>/mcp_tools_cache.json``. If present and parseable, the
         in-memory cache is warm-started from disk (= zero probe latency on
-        sessions after the operator ran ``reyn mcp refresh``). On cache-miss
-        (file absent / corrupt) the existing live-probe path runs unchanged,
-        and the result is written back to disk for future warm-starts.
+        sessions after the operator ran ``reyn mcp refresh``). Servers the
+        file does not cover are then live-probed, and the merged answers are
+        written back for future warm-starts.
 
-        Probes run in parallel via `asyncio.gather` with `return_exceptions=True`
-        so a single slow / unreachable server does not block the others.
-        Per-server timeout caps each probe; on timeout or exception the
-        server is cached as an empty list (= still cached, so we don't
-        re-probe a known-broken server every turn). #3475: that degradation
-        used to be silent — a server dropping out under co-located load left
-        no trace anywhere the operator could see. Each such case now emits an
-        `mcp_tool_probe_degraded` audit-event naming the server and the
-        reason (`timeout` / `exception`), so "this server is unreachable" is
-        an observation instead of an inference from a missing tool the model
-        never mentions. `per_server_timeout` (default `TimeoutConfig.
-        mcp_probe_seconds`, #3475) is operator-tunable via `safety.timeout.
-        mcp_probe_seconds` in reyn.yaml — the knob this audit-event tells the
-        operator to reach for.
+        Probes run in parallel via `asyncio.gather` so a single slow /
+        unreachable server does not block the others. Per-server timeout caps
+        each probe. #3475: degradation used to be silent — a server dropping
+        out under co-located load left no trace anywhere the operator could
+        see. Each such case emits an `mcp_tool_probe_degraded` audit-event
+        naming the server and the reason (`timeout` / `exception`), so "this
+        server is unreachable" is an observation instead of an inference from
+        a missing tool the model never mentions. `per_server_timeout` (default
+        `TimeoutConfig.mcp_probe_seconds`, #3475) is operator-tunable via
+        `safety.timeout.mcp_probe_seconds` in reyn.yaml.
 
         The result feeds `_get_mcp_servers_for_router` which is consumed
         by `_enumerate_category("mcp.tool")` (= list_actions visibility)
@@ -1954,23 +1981,25 @@ class RouterHostAdapter:
             write_cache,
         )
 
-        if self._mcp_tools_cache is not None:
-            return
+        cache_path = cache_file_path(self._state_dir)
 
         # FP-0037 S1: warm-start from persistent cache file when available.
-        cache_path = cache_file_path(self._state_dir)
-        disk_cache = read_cache(cache_path)
-        if disk_cache is not None:
-            self._mcp_tools_cache = disk_cache
-            self._mcp_tools_cache_mtime = file_mtime(cache_path)
-            return
+        # Only on the very first call — once the in-memory cache exists, the
+        # disk file is the business of maybe_reload_mcp_tools_cache_from_disk.
+        if self._mcp_tools_cache is None:
+            disk_cache = read_cache(cache_path)
+            if disk_cache is not None:
+                self._mcp_tools_cache = disk_cache
+                self._mcp_tools_cache_mtime = file_mtime(cache_path)
+            else:
+                self._mcp_tools_cache = {}
 
         servers = self._mcp_servers_flat()
-        if not servers:
-            self._mcp_tools_cache = {}
+        unanswered = [name for name in servers if name not in self._mcp_tools_cache]
+        if not unanswered:
             return
 
-        async def _probe_one(server_name: str) -> tuple[str, list[dict]]:
+        async def _probe_one(server_name: str) -> tuple[str, ProbeOutcome]:
             # ``asyncio.timeout()`` (Python 3.11+) instead of
             # ``asyncio.wait_for`` because the latter wraps the awaited
             # coroutine in a new asyncio.Task in some scenarios. When that
@@ -1987,17 +2016,17 @@ class RouterHostAdapter:
                 async with asyncio.timeout(per_server_timeout):
                     tools = await self.mcp_list_tools(server_name)
             except (TimeoutError, asyncio.TimeoutError):
-                # #3475: this server is cached as EMPTY for the rest of the
-                # session (no retry, by design — see the method docstring).
-                # Surface that decision — silence made the earlier #3475
-                # investigation depend on a fixture byte-diff to notice it.
+                # #3475: surface the degradation — silence made the earlier
+                # #3475 investigation depend on a fixture byte-diff to notice
+                # it. #3520: and return UNKNOWN, not `[]` — we did not learn
+                # that this server has no tools, we learned nothing.
                 self._events.emit(
                     "mcp_tool_probe_degraded",
                     server=server_name,
                     reason="timeout",
                     per_server_timeout=per_server_timeout,
                 )
-                return server_name, []
+                return server_name, ToolsUnknown(reason="timeout")
             except Exception as exc:  # noqa: BLE001 — adapter must never raise
                 self._events.emit(
                     "mcp_tool_probe_degraded",
@@ -2006,20 +2035,39 @@ class RouterHostAdapter:
                     per_server_timeout=per_server_timeout,
                     detail=repr(exc),
                 )
-                return server_name, []
-            # _mcp_list_tools may return [{"error": "..."}] on failure;
-            # treat as empty so the cache shape stays uniform.
-            cleaned = [
-                t for t in (tools or [])
-                if isinstance(t, dict) and "error" not in t and t.get("name")
-            ]
-            return server_name, cleaned
+                return server_name, ToolsUnknown(reason="exception", detail=repr(exc))
+            # mcp_list_tools may return [{"error": "..."}] instead of raising.
+            # #3520: an error sentinel and NO usable tool is the same non-answer
+            # as the two except-arms above wearing a different shape — reporting
+            # an error is not reporting an empty catalog — so it maps to UNKNOWN
+            # too. A response that carries real tools alongside a stray error
+            # entry DID measure something, so it stays an answer with the
+            # unusable entries dropped; only a wholly unusable error response is
+            # a non-answer.
+            raw = [t for t in (tools or []) if isinstance(t, dict)]
+            cleaned = [t for t in raw if "error" not in t and t.get("name")]
+            if not cleaned and any("error" in t for t in raw):
+                self._events.emit(
+                    "mcp_tool_probe_degraded",
+                    server=server_name,
+                    reason="exception",
+                    per_server_timeout=per_server_timeout,
+                    detail=repr(raw),
+                )
+                return server_name, ToolsUnknown(reason="exception", detail=repr(raw))
+            return server_name, ToolsAnswered(tools=cleaned)
 
         results = await asyncio.gather(
-            *(_probe_one(name) for name in servers),
+            *(_probe_one(name) for name in unanswered),
             return_exceptions=False,  # _probe_one handles its own errors
         )
-        self._mcp_tools_cache = dict(results)
+        new_answers = answered_only(results)
+        if not new_answers:
+            # Every probe came back unknown: nothing was measured, so there is
+            # nothing to record. Rewriting the file here would only advance its
+            # mtime and make every following turn reload an unchanged cache.
+            return
+        self._mcp_tools_cache = {**self._mcp_tools_cache, **new_answers}
 
         # FP-0037 S1: persist the live-probe result so subsequent sessions
         # and turns can warm-start from disk. Failures are opportunistic
@@ -2044,16 +2092,16 @@ class RouterHostAdapter:
         has no other way to learn the cached tool list may now be stale (it probes
         ONCE per session by design).
 
-        Resets the WHOLE in-memory cache (not just ``server``'s entry), because
-        ``ensure_mcp_tools_cached``'s populated-guard is all-or-nothing (``if
-        self._mcp_tools_cache is not None: return``) — there is no cheaper
-        single-server re-probe path today. The next turn boundary's
-        ``ensure_mcp_tools_cached()`` re-probes every configured server in parallel
-        (cheap; the existing per-server timeout already caps a slow/unreachable one),
-        so a list-changed notification for ONE server causes a full (but bounded)
-        re-probe rather than a targeted one. ``server`` is accepted (not ``*args``)
-        so the call site + a future targeted implementation both have a stable
-        signature; unused beyond that today.
+        Resets the WHOLE in-memory cache (not just ``server``'s entry). #3520 made
+        ``ensure_mcp_tools_cached``'s guard per-server (it re-probes any configured
+        server with no cached answer), so a targeted invalidation is now
+        *expressible* — dropping one key would re-probe exactly that server. It is
+        still not done here: a ``tools/list_changed`` notification says the sending
+        server's catalog moved, and #2597 S2b's contract is the conservative one
+        (full, bounded re-probe). Narrowing it is a behaviour change that belongs
+        to whoever wants it, not a side effect of the #3520 type fix. ``server`` is
+        accepted (not ``*args``) so the call site + a future targeted implementation
+        both have a stable signature; unused beyond that today.
 
         Known interaction (not a regression, flagged for awareness): FP-0037 S1's
         on-disk warm-start cache (``<state_dir>/mcp_tools_cache.json``) is consulted
@@ -2107,13 +2155,20 @@ class RouterHostAdapter:
         """Read-only snapshot of the current in-memory MCP tools cache.
 
         FP-0037 S1: test-supporting public surface (per Tier policy
-        [[feedback_tier_policy_strict_compliance]]). Returns a shallow copy
+        [[feedback_tier_policy_strict_compliance]]). Returns a fresh dict
         so callers cannot mutate adapter internals through the returned dict.
         Returns None when the cache has not yet been populated.
+
+        #3520: this projects the stored ``ToolsAnswered`` back to plain tool
+        lists for readability, and that is safe here precisely because the
+        stored type cannot hold a non-answer: every key present is a server
+        that was measured, so ``[]`` in this snapshot means "measured, zero
+        tools". A server that could not be measured is ABSENT — read a missing
+        key as "unknown", never as "no tools".
         """
         if self._mcp_tools_cache is None:
             return None
-        return dict(self._mcp_tools_cache)
+        return {name: entry.tools for name, entry in self._mcp_tools_cache.items()}
 
     @property
     def yaml_mtimes_snapshot(self) -> dict[Path, float]:
@@ -2219,13 +2274,18 @@ class RouterHostAdapter:
         # --- Re-probe servers in parallel (shared helper from CLI) ---
         from reyn.interfaces.cli.commands.mcp import _probe_server_tools
 
-        async def _probe_all() -> dict[str, list[dict]]:
+        async def _probe_all() -> dict[str, ToolsAnswered]:
             tasks = [
                 _probe_server_tools(name, cfg)
                 for name, cfg in servers_flat.items()
             ]
             results = await asyncio.gather(*tasks, return_exceptions=False)
-            return dict(results)
+            # #3520: a server whose probe did not answer is dropped, not written
+            # as `[]`. It therefore has no entry after the disk-reload swap, and
+            # the same turn's ensure_mcp_tools_cached() picks it up as
+            # unanswered and live-probes it — self-healing instead of a
+            # yaml edit permanently costing a slow server its tools.
+            return answered_only(results)
 
         try:
             probe_results = await _probe_all()

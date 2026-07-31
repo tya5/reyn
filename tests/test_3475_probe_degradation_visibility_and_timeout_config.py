@@ -138,9 +138,10 @@ async def test_session_threads_configured_probe_timeout_into_the_real_probe(tmp_
     short value (0.05s) must reach `ensure_mcp_tools_cached`'s `per_server_timeout` —
     the round-trip is witnessed by a probe that sleeps 0.2s: that sleep exceeds the
     CONFIGURED 0.05s but not the unchanged 5.0s default, so a wired path times out
-    (server cached empty) and a dead path (still passing the 5.0s default) would NOT —
-    the test fails on a wrong RESULT, not merely on an uncalled function, if the wiring
-    from Session._safety.timeout.mcp_probe_seconds regresses."""
+    (server left UNANSWERED — #3520: absent from the cache, not cached empty) and a
+    dead path (still passing the 5.0s default) would instead record the probe's
+    tools — the test fails on a wrong RESULT, not merely on an uncalled function, if
+    the wiring from Session._safety.timeout.mcp_probe_seconds regresses."""
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
@@ -155,11 +156,12 @@ async def test_session_threads_configured_probe_timeout_into_the_real_probe(tmp_
 
         snapshot = session.router_host.mcp_tools_cache_snapshot
         assert snapshot is not None, "priming must have run for the first turn"
-        assert snapshot[server] == [], (
+        assert server not in snapshot, (
             "expected the configured 0.05s per_server_timeout to time out the "
-            "0.2s-sleeping probe; a non-empty result means the 0.05s value never "
-            "reached ensure_mcp_tools_cached and the unwired 5.0s default absorbed "
-            "the sleep instead"
+            "0.2s-sleeping probe, leaving the server unanswered and therefore "
+            f"absent from the cache; got {snapshot!r}. A recorded entry means "
+            "the 0.05s value never reached ensure_mcp_tools_cached and the "
+            "unwired 5.0s default absorbed the sleep instead"
         )
     finally:
         os.chdir(old_cwd)

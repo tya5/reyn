@@ -59,7 +59,11 @@ _EMPTY_MCP_GATEWAY = McpGatewayInputs(
     mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
 )
 
-from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
+from reyn.runtime.services.mcp_cache_file import (
+    ToolsAnswered,
+    cache_file_path,
+    write_cache,
+)
 
 # ---------------------------------------------------------------------------
 # Null callbacks (same shape as in test_mcp_lazy_tools_cache.py)
@@ -191,8 +195,8 @@ async def test_ensure_mcp_tools_cached_warm_starts_from_disk(tmp_path: Path) -> 
     populated from the file."""
     state_dir = tmp_path / "state"
     cache_path = cache_file_path(state_dir)
-    pre_written = {"myserver": [{"name": "disk_tool", "description": "from disk"}]}
-    write_cache(cache_path, pre_written)
+    disk_tools = [{"name": "disk_tool", "description": "from disk"}]
+    write_cache(cache_path, {"myserver": ToolsAnswered(tools=disk_tools)})
 
     probe = _CountingProbe({"myserver": [{"name": "live_tool", "description": "live"}]})
     adapter = _make_adapter(
@@ -245,7 +249,7 @@ async def test_ensure_mcp_tools_cached_writes_to_disk_after_live_probe(
     from reyn.runtime.services.mcp_cache_file import read_cache
     on_disk = read_cache(cache_path)
     assert on_disk is not None
-    assert on_disk.get("srv") == live_tools
+    assert on_disk["srv"].tools == live_tools
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +293,7 @@ async def test_maybe_reload_mcp_tools_cache_from_disk_unchanged_mtime_noops(
     state_dir = tmp_path / "state"
     cache_path = cache_file_path(state_dir)
     initial_tools = {"srv": [{"name": "original", "description": "v1"}]}
-    write_cache(cache_path, initial_tools)
+    write_cache(cache_path, {"srv": ToolsAnswered(tools=initial_tools["srv"])})
 
     probe = _CountingProbe()
     adapter = _make_adapter(
@@ -328,7 +332,7 @@ async def test_maybe_reload_mcp_tools_cache_from_disk_newer_mtime_reloads(
     cache_path = cache_file_path(state_dir)
 
     v1_tools = {"srv": [{"name": "v1_tool", "description": "first version"}]}
-    write_cache(cache_path, v1_tools)
+    write_cache(cache_path, {"srv": ToolsAnswered(tools=v1_tools["srv"])})
 
     probe = _CountingProbe()
     adapter = _make_adapter(
@@ -346,7 +350,7 @@ async def test_maybe_reload_mcp_tools_cache_from_disk_newer_mtime_reloads(
     # Sleep a tiny bit to ensure the mtime advances (filesystem resolution).
     time.sleep(0.02)
     v2_tools = {"srv": [{"name": "v2_tool", "description": "refreshed version"}]}
-    write_cache(cache_path, v2_tools)
+    write_cache(cache_path, {"srv": ToolsAnswered(tools=v2_tools["srv"])})
 
     # Turn-boundary call should detect the newer mtime and reload.
     adapter.maybe_reload_mcp_tools_cache_from_disk()

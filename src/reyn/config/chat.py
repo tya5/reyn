@@ -83,11 +83,15 @@ class TimeoutConfig:
         mcp_probe_seconds:
             #3475: per-server timeout for the MCP tools-list probe
             (`RouterHostAdapter.ensure_mcp_tools_cached` / the CLI's
-            `reyn mcp refresh`). A server slower than this is cached as
-            an EMPTY tool list for the rest of the session (no retry —
-            see `ensure_mcp_tools_cached`'s own docstring) and an
+            `reyn mcp refresh`). A server slower than this is NOT cached
+            at all (#3520: a timed-out probe measured nothing, so there is
+            no answer to cache — it used to be recorded as an empty tool
+            list, which the model then read as "this server has no tools"
+            for the rest of the session and beyond) and an
             `mcp_tool_probe_degraded` audit-event is emitted naming which
-            server and why. THE default (``5.0``) — the two call sites
+            server and why. The server is re-probed on the next turn;
+            raising this value is how you stop paying that cost every turn
+            on a legitimately slow server. THE default (``5.0``) — the two call sites
             derive their own defaults from this field rather than
             repeating the literal, so raising this one number is the only
             operator action needed to widen the budget under co-located

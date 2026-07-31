@@ -74,11 +74,21 @@ async def test_async_with_calls_tool_and_reopens_cleanly(stdio_cfg):
 @pytest.mark.asyncio
 async def test_server_death_is_contained_not_uncontained_crash():
     """Tier 2: fault isolation (owner req) — an MCP server that DIES on startup surfaces a contained
-    error through the real probe (empty tool list), it does NOT crash the caller. (P1 covers the
+    NON-ANSWER through the real probe, it does NOT crash the caller. (P1 covers the
     simple-site error path via ``except Exception``; the per-turn-pool exception boundary for
-    teardown BaseExceptionGroups — the transport-signature faults — is P2.)"""
+    teardown BaseExceptionGroups — the transport-signature faults — is P2.)
+
+    #3520: containment used to mean "empty tool list", which is a claim about the
+    server's catalog that a dead server never made. It now means ``ToolsUnknown``
+    — still contained (no crash), but no longer a fabricated answer that the
+    cache would then make permanent.
+    """
     from reyn.interfaces.cli.commands.mcp import _probe_server_tools
 
     dead_cfg = {"type": "stdio", "command": sys.executable, "args": ["-c", "import sys; sys.exit(1)"]}
-    name, tools = await _probe_server_tools("dead", dead_cfg)
-    assert (name, tools) == ("dead", []), "server death is contained → empty result, not a crash"
+    name, outcome = await _probe_server_tools("dead", dead_cfg)
+    assert name == "dead"
+    assert outcome.kind == "unknown", (
+        "server death is contained → an explicit non-answer, not a crash and "
+        f"not a fabricated empty catalog; got {outcome!r}"
+    )

@@ -29,13 +29,22 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.services.mcp_cache_file import cache_file_path, write_cache
+from reyn.runtime.services.mcp_cache_file import (
+    ToolsAnswered,
+    cache_file_path,
+    write_cache,
+)
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
 # Minimal Session factory
 # ---------------------------------------------------------------------------
+
+
+def _answers(by_server: dict[str, list[dict]]) -> dict[str, ToolsAnswered]:
+    """Lift plain tool lists to the ANSWER variant the cache file accepts (#3520)."""
+    return {name: ToolsAnswered(tools=tools) for name, tools in by_server.items()}
 
 
 def _make_session(
@@ -92,7 +101,7 @@ async def test_refresh_calls_three_phases_in_order(tmp_path: Path) -> None:
     """
     state_dir = _state_dir(tmp_path)
     v1_tools = {"srvA": [{"name": "t1", "description": "d1"}]}
-    write_cache(cache_file_path(state_dir), v1_tools)
+    write_cache(cache_file_path(state_dir), _answers(v1_tools))
 
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -113,7 +122,7 @@ async def test_refresh_calls_three_phases_in_order(tmp_path: Path) -> None:
                 {"name": "t2", "description": "d2"},
             ]
         }
-        write_cache(cache_file_path(state_dir), v2_tools)
+        write_cache(cache_file_path(state_dir), _answers(v2_tools))
 
         # Call 2: yaml-watch noop (no yaml edited); S1 detects newer mtime,
         # swaps to v2; ensure-cached is noop (already cached).
@@ -147,7 +156,7 @@ async def test_refresh_returns_refreshed_true_when_cache_swaps(
     """
     state_dir = _state_dir(tmp_path)
     v1_tools = {"srv": [{"name": "tool_a", "description": "a"}]}
-    write_cache(cache_file_path(state_dir), v1_tools)
+    write_cache(cache_file_path(state_dir), _answers(v1_tools))
 
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -168,7 +177,7 @@ async def test_refresh_returns_refreshed_true_when_cache_swaps(
                 {"name": "tool_b", "description": "b"},
             ]
         }
-        write_cache(cache_file_path(state_dir), v2_tools)
+        write_cache(cache_file_path(state_dir), _answers(v2_tools))
 
         # Second call: S1 disk-reload detects newer mtime → swap to v2.
         result_2 = await session.refresh_mcp_servers()
@@ -200,7 +209,7 @@ async def test_refresh_returns_refreshed_false_when_nothing_changes(
     """
     state_dir = _state_dir(tmp_path)
     tools = {"srv": [{"name": "tool_x", "description": "x"}]}
-    write_cache(cache_file_path(state_dir), tools)
+    write_cache(cache_file_path(state_dir), _answers(tools))
 
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -243,7 +252,7 @@ async def test_refresh_servers_projection_shape(tmp_path: Path) -> None:
             {"name": "b1", "description": "b one"},
         ],
     }
-    write_cache(cache_file_path(state_dir), fixture_cache)
+    write_cache(cache_file_path(state_dir), _answers(fixture_cache))
 
     old_cwd = os.getcwd()
     os.chdir(tmp_path)

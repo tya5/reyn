@@ -26,6 +26,10 @@ reyn mcp clear-secret  <SERVER> [<KEY>]
 
 `reyn mcp refresh` re-probes all configured MCP servers and writes results to the persistent cache file (`.reyn/state/mcp_tools_cache.json`). Active `reyn chat` sessions pick up the new cache on their next turn boundary — **no restart required**.
 
+**Only answers are written.** A server whose probe times out or errors is reported as a warning and **omitted** from the cache file, not written as an empty tool list (#3520). The distinction matters because the file is what later sessions warm-start from: an empty list is indistinguishable from "this server genuinely exposes no tools", so persisting one would tell every future session the server is tool-less and stop them from ever looking again. Omitted instead means each session live-probes that server on its next turn. Re-run `reyn mcp refresh` once the server is healthy to restore the zero-latency warm-start.
+
+**Cache format version 2.** Files written by earlier versions are ignored on read rather than migrated: their empty entries cannot be told apart from failed probes, so the servers they name are simply re-probed once and the file is rewritten as version 2.
+
 ```
 reyn mcp refresh [--project PATH]
 ```
