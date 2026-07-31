@@ -1005,6 +1005,14 @@ it. `FlowView.row_count` / `row_text(y)` / `entry_at_row(y)` are the row-level
 primitives copy mode is built on, available to any consumer that needs to map
 content rows back to entries.
 
+A selection — whether from copy mode's `y` or a mouse drag — covers the **body
+columns only** (flowview 0.9.0): the gutters are decoration, like a scrollbar,
+so a yank carries the message text and never a state glyph, an elapsed label,
+or a token figure. `row_text(y)` is body-only for the same reason. Reading a
+*gutter* off `get_selection` therefore reports an empty gutter for a perfectly
+painted one — the surface that answers "is the gutter on screen?" is
+`render_line(y)`, Textual's own paint surface.
+
 ### `reyn.intervention.<kind>`
 
 An **open namespace** carried differently from the two above: it is the `toolName`
