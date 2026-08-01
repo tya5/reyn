@@ -353,7 +353,7 @@ Multi-turn continuity is preserved: each agent's `Session` keeps its `history.js
 
 | Audit-event | Progress message |
 |-------------|------------------|
-| `turn_started` | `turn: <inbox trigger kind>` — e.g. `turn: user` |
+| `turn_started` | `turn: <inbox trigger kind>` — `turn: external_message` for a `send_to_agent` call (#3595 step 1b: an MCP peer's message is not the operator's typing, so it does not claim the `user` kind) |
 | `llm_called` | `llm: <model>` |
 | `tool_returned` | `tool: <name>` |
 | `tool_failed` | `tool: <name> (failed)` |

@@ -55,11 +55,20 @@ def _make_cron_runner():
         history of prior runs ("what changed since last run"). The run-loop is
         booted WITHOUT a forwarder (``ensure_session_running``) since cron is
         unattended (output handling = S4b-3b notify layer); the envelope is
-        dispatched as ``kind="user"`` so the LLM processes the text as a turn, with
-        ``sender="cron:<name>"`` driving the PR-A attribution state_change.
+        dispatched as ``CRON_INBOX_KIND`` so the LLM processes the text as a turn,
+        with ``sender="cron:<name>"`` driving the PR-A attribution state_change.
+
+        #3595 step 1b: that kind was ``"user"`` until this arc, which meant a job
+        message beginning with ``/`` was executed as an operator slash command in
+        this unattended session instead of being read by the model. Cron is not a
+        human at a client, so it stopped saying it was one.
         """
         from reyn.interfaces.web.deps import _get_registry
-        from reyn.runtime.cron.routing import dispatch_cron_fired, resolve_cron_session
+        from reyn.runtime.cron.routing import (
+            CRON_INBOX_KIND,
+            dispatch_cron_fired,
+            resolve_cron_session,
+        )
         registry = _get_registry()
         try:
             session = resolve_cron_session(registry, to, native_id)
@@ -79,7 +88,7 @@ def _make_cron_runner():
         if notify:
             from reyn.runtime.transport import ExternalRef
             payload["reply_to"] = ExternalRef(transport=notify, destination={})
-        await session._put_inbox("user", payload)
+        await session._put_inbox(CRON_INBOX_KIND, payload)
         return "ok"
 
     async def _failure_notifier(job, reason: str) -> None:

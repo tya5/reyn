@@ -4844,6 +4844,13 @@ class Session:
         ``pipeline_result`` inbox items are internal wake triggers, never
         rendered as a queued user message).
 
+        #3595 step 1b narrowed what reaches this filter rather than changing the
+        filter: text pushed by an external transport (``external_message``) or a
+        cron fire (``cron``) used to claim ``kind="user"`` and therefore appeared
+        here. It no longer does, and that is the same sentence as before — the
+        sent-queue renders what THIS operator submitted from a client, and a
+        Slack peer's message was never that.
+
         Each item: ``{"msg_id": str, "chain_id": str | None, "text": str | None,
         "meta": dict}`` — ``msg_id``/``chain_id`` are the correlation ids a
         client matches against the ``user_submitted`` (enqueue) /
@@ -5447,6 +5454,36 @@ class Session:
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
             )
+        elif kind == "external_message":  # EXTERNAL_MESSAGE_INBOX_KIND (#3595 step 1b)
+            # Text that arrived over an EXTERNAL transport: a chat webhook
+            # (``gateway.api.push_to_agent`` — Slack / LINE / any ``reyn.webhooks``
+            # plugin) or an out-of-process request handler
+            # (``mcp.server.send_to_agent_impl``, reached by the MCP
+            # ``send_to_agent`` tool and the A2A JSON-RPC router). Both used to
+            # arrive as ``kind="user"``, which is the claim
+            # ``_handle_user_message`` acts on by handing a ``/``-prefixed line to
+            # slash dispatch — so a Slack message reading ``/reset`` executed the
+            # command, and anyone able to post to the webhook could run any of the
+            # registered slash commands. Its own kind routes it to the turn body
+            # directly: the short-circuit is not skipped by a flag, it is not on
+            # this path at all (#3595 / owner: "inbox につまれたものはスラッシュ
+            # コマンドとして解釈されない").
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
+        elif kind == "cron":  # CRON_INBOX_KIND value (#3595 step 1b)
+            # A fired message-based cron job's text. Operator-authored (job
+            # config), but authored as the AGENT'S PROMPT and delivered to an
+            # unattended session with no client attached — not a line typed at a
+            # composer, so it does not claim to be one. Same routing as
+            # ``external_message`` above, a separate union member because the two
+            # answer "who wrote this" differently; see
+            # ``runtime.cron.routing.CRON_INBOX_KIND``.
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
         elif kind == "hook":  # HOOK_INBOX_KIND value (#1800 slice 5b)
             # E (wake=true) lifecycle-hook push delivered as a turn trigger:
             # a system-role [hook:name] message + one router turn (self-
@@ -5466,7 +5503,8 @@ class Session:
         — the OS-authoritative provenance classification of this turn, threaded into
         ``OpContext.turn_origin`` at both ctx-build sites. Only an explicit
         ``kind == "user"`` turn grants ``"user_directed"``; EVERY other kind —
-        hook, pipeline_result, ``agent_step`` (#3595), sub-agent
+        hook, pipeline_result, ``agent_step`` (#3595), ``external_message`` /
+        ``cron`` (#3595 step 1b), sub-agent
         ``agent_request``/``agent_response``, or
         any future kind this method does not yet know about — resolves to the
         strictER ``"auto_improvement"``. This is an if/else fail-safe, not a
@@ -5648,6 +5686,14 @@ class Session:
         ``_handle_inbox_text`` directly, so it cannot execute a slash command
         by writing one (owner ruling: "inbox につまれたものはスラッシュコマンド
         として解釈されない。されるんだとするとそれが不具合").
+
+        #3595 step 1b moved the last three text-bearing producers off ``"user"``
+        onto that direct route: a chat webhook and an MCP / A2A peer
+        (``transport.EXTERNAL_MESSAGE_INBOX_KIND``) and a cron fire
+        (``cron.routing.CRON_INBOX_KIND``). Slash is deliberately not exposed to
+        any of them (owner, 2026-08-01: 「現時点では slash に公開不要」) — if it
+        ever is, it goes through a shared CLIENT-side slash layer, never through
+        a transport re-testing ``startswith("/")``.
 
         Sibling entry: ``_handle_pipeline_result`` still calls THIS method, so a
         pipeline's OS-framed result text is still slash-interpreted. Its framing

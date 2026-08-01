@@ -458,7 +458,11 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
         inbox_consumed.append(kind)
         return await original_put_inbox(self, kind, payload)
 
-    async def _fake_handle_user_message(self, text, *, chain_id):
+    # #3595 step 1b: the seam is _handle_inbox_text, the shared turn body every
+    # text-bearing inbox kind reaches (_handle_user_message is the OPERATOR entry
+    # above it and calls straight into this). Patching the body keeps this test on
+    # the code both the old kind="user" route and the new external kind end at.
+    async def _fake_handle_inbox_text(self, text, *, chain_id):
         from reyn.runtime.chat_message import ChatMessage
         self._append_history(ChatMessage(
             role="user", content=text, ts="2026-05-14T00:00:00",
@@ -471,7 +475,7 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
         ))
 
     monkeypatch.setattr(Session, "_put_inbox", _tracking_put_inbox)
-    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_inbox_text", _fake_handle_inbox_text)
 
     result = await send_to_agent_impl(
         registry,
@@ -481,9 +485,12 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
     )
 
     # The inbox was used (= MessageBus path, not inline bypass).
-    assert "user" in inbox_consumed, (
+    from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND
+    assert EXTERNAL_MESSAGE_INBOX_KIND in inbox_consumed, (
         "send_to_agent_impl must use the inbox (MessageBus path); "
-        "direct _handle_user_message bypass detected."
+        "direct turn-body bypass detected. (#3595 step 1b: the kind it puts is "
+        "EXTERNAL_MESSAGE_INBOX_KIND, not 'user' — an MCP / A2A peer is not the "
+        "operator, and 'user' is the kind whose text reaches slash dispatch.)"
     )
     assert result["agent"] == "default"
     assert "bus_reply:test_bus_msg" in result["reply"]

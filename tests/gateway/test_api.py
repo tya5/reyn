@@ -3,7 +3,7 @@
 Pins the stable contract that webhook plugins consume:
 
   push_to_agent(target_agent, text, sender, reply_to=None,
-                kind="user", extra_meta=None, registry=None)
+                extra_meta=None, registry=None)
 
 Internal ``Session._put_inbox`` is deliberately private; the
 helper is the documented path. Tests cover:
@@ -12,8 +12,12 @@ helper is the documented path. Tests cover:
      and pushes the right envelope shape.
   2. Optional ``reply_to`` propagates when set, absent when None.
   3. Optional ``extra_meta`` becomes the envelope's ``meta``.
-  4. Non-default ``kind`` is forwarded to ``_put_inbox`` (= future
-     A2A/MCP unify path).
+  4. The inbox kind is FIXED at ``EXTERNAL_MESSAGE_INBOX_KIND`` and
+     is not caller-selectable (#3595 step 1b — it used to default to
+     ``"user"`` and be overridable, which is what let a webhook
+     message execute an operator slash command; the reachability
+     consequence is measured in
+     ``tests/test_3595_step1b_external_producer_slash_reachability.py``).
   5. Custom ``registry`` override is honored (= tests stub out the
      process singleton).
   6. ``FileNotFoundError`` from registry propagates (= caller
@@ -28,7 +32,7 @@ from __future__ import annotations
 import pytest
 
 from reyn.gateway.api import push_to_agent
-from reyn.runtime.transport import ExternalRef
+from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND, ExternalRef
 
 # ── stub registry / session ───────────────────────────────────────────
 
@@ -75,7 +79,7 @@ class _StubRegistry:
 @pytest.mark.asyncio
 async def test_push_to_agent_minimal_call():
     """Tier 2: a minimal call (= target_agent + text + sender) lands
-    a ``kind="user"`` envelope with no reply_to / meta.
+    an ``EXTERNAL_MESSAGE_INBOX_KIND`` envelope with no reply_to / meta.
     """
     reg = _StubRegistry()
     await push_to_agent(
@@ -85,7 +89,9 @@ async def test_push_to_agent_minimal_call():
         registry=reg,
     )
     sess = await reg.ensure_running("news")
-    assert sess.pushed == [("user", {"text": "hello", "sender": "slack:U1"})]
+    assert sess.pushed == [
+        (EXTERNAL_MESSAGE_INBOX_KIND, {"text": "hello", "sender": "slack:U1"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -104,7 +110,7 @@ async def test_push_to_agent_with_reply_to():
     )
     sess = await reg.ensure_running("news")
     kind, payload = sess.pushed[0]
-    assert kind == "user"
+    assert kind == EXTERNAL_MESSAGE_INBOX_KIND
     assert payload["reply_to"] is ref
 
 
@@ -145,22 +151,32 @@ async def test_push_to_agent_extra_meta_propagates():
 
 
 @pytest.mark.asyncio
-async def test_push_to_agent_kind_override():
-    """Tier 2: non-default ``kind`` is forwarded to ``_put_inbox``.
-    Reserved for future A2A / MCP unification; webhook plugins use
-    the default ``"user"``.
+async def test_push_to_agent_kind_is_not_caller_selectable():
+    """Tier 2: the caller cannot choose the inbox kind (#3595 step 1b).
+
+    This replaces a leg that pinned the opposite — a ``kind=`` kwarg forwarded
+    verbatim to ``_put_inbox``, "reserved for future A2A / MCP unification".
+    The reservation was never taken up (the A2A and MCP paths drive
+    ``mcp.server.send_to_agent_impl``, not this module) and the parameter was
+    the gate: ``"user"`` is the one kind whose text
+    ``Session._handle_user_message`` hands to slash dispatch, so a plugin that
+    passed it made an external chat message able to execute any registered
+    slash command. A discriminator that decides a trust class is not something
+    the classified side may choose.
+
+    Pinned as the TypeError a plugin still passing ``kind=`` now gets — loud at
+    the call site, rather than silently ignored, which would leave the plugin
+    author believing a kind they chose is in effect.
     """
     reg = _StubRegistry()
-    await push_to_agent(
-        target_agent="news",
-        text="please respond",
-        sender="a2a:peer",
-        kind="agent_request",
-        registry=reg,
-    )
-    sess = await reg.ensure_running("news")
-    kind, _ = sess.pushed[0]
-    assert kind == "agent_request"
+    with pytest.raises(TypeError):
+        await push_to_agent(
+            target_agent="news",
+            text="please respond",
+            sender="a2a:peer",
+            kind="agent_request",
+            registry=reg,
+        )
 
 
 @pytest.mark.asyncio
@@ -215,7 +231,7 @@ async def test_push_to_agent_full_envelope_shape():
     )
     sess = await reg.ensure_running("news")
     kind, payload = sess.pushed[0]
-    assert kind == "user"
+    assert kind == EXTERNAL_MESSAGE_INBOX_KIND
     assert payload == {
         "text": "hi",
         "sender": "line:user:U1",
