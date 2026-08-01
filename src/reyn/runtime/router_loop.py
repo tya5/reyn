@@ -642,7 +642,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
         ...
 
-    async def web_fetch(self, *, url: str, max_length: int) -> dict:
+    async def web_fetch(self, *, url: str) -> dict:
         """RouterLoopHost: invoke the OS-native web/fetch op."""
         ...
 

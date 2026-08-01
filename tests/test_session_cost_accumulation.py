@@ -93,7 +93,7 @@ class _FakeHost:
     async def web_search(self, *, query: str, max_results: int) -> dict:
         return {"kind": "web_search", "query": query, "results": []}
 
-    async def web_fetch(self, *, url: str, max_length: int) -> dict:
+    async def web_fetch(self, *, url: str) -> dict:
         return {"kind": "web_fetch", "url": url, "status": "ok", "content": ""}
 
     def memory_path(self, layer: str, slug: str) -> str:

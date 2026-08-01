@@ -71,13 +71,15 @@ def test_mcp_without_structured_has_no_structured_attachment():
     assert not any(a["kind"] == "structured" for a in c["attachments"])
 
 
-def test_web_fetch_content_is_text_truncated_is_signal():
-    """Tier 1: web_fetch → the page ``content`` is ``text``; a ``truncated`` fetch surfaces
-    ``truncated`` + ``next_start`` (the pagination handle) as signal meta; transport is dropped."""
+def test_web_fetch_content_is_text_and_carries_no_truncation_signal():
+    """Tier 1: web_fetch → the page ``content`` is ``text`` and transport is dropped. #3580 ③:
+    the op no longer truncates, so the mapper has no ``truncated``/``next_start`` pair to forward
+    — a result carrying them (a stale producer) must NOT resurrect the removed pagination handle
+    in the LLM-visible meta."""
     c = to_canonical({"kind": "web_fetch", "url": "http://x", "status": "ok", "content": "PAGE",
                       "truncated": True, "next_start": 4096}, source="web_fetch")
     assert c["text"] == "PAGE"
-    assert c["meta"].get("truncated") is True and c["meta"].get("next_start") == 4096
+    assert "truncated" not in c["meta"] and "next_start" not in c["meta"]
     assert "url" not in c["meta"] and "status" not in c["meta"]
 
 

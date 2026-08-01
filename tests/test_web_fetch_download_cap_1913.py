@@ -1,8 +1,10 @@
 """Tier 2: web_fetch download-size cap prevents unbounded-memory DoS (#1913).
 
-`client.get` materialized the ENTIRE response body into memory before
-`max_length` (an extracted-TEXT cap) ever applied — so a hostile URL (or a
-benign one that redirects to a huge payload) could exhaust memory. web_fetch now
+`client.get` materialized the ENTIRE response body into memory before any
+extracted-text cap applied — so a hostile URL (or a benign one that redirects
+to a huge payload) could exhaust memory. (#3580 ③ later removed web_fetch's
+own extracted-text cap entirely, which makes THIS bound the only size gate on
+the fetch itself.) web_fetch now
 streams with a byte ceiling (`web.fetch.max_download_bytes`), rejecting a
 response whose `Content-Length` exceeds the cap (early, before download) or
 whose streamed body runs past it (chunked / no Content-Length).

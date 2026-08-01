@@ -67,9 +67,12 @@ class WebFetchConfig:
             response whose ``Content-Length`` exceeds this — or that streams past
             it without one — is rejected (``status="too_large"``), preventing an
             unbounded-memory DoS from a hostile URL (including a benign URL that
-            redirects to a huge payload). Distinct from ``WebFetchIROp.max_length``
-            (which caps the *extracted text* only AFTER the full body is loaded).
-            Default 10 MiB.
+            redirects to a huge payload). #3580 ③: this is now web_fetch's ONLY
+            size bound — the op's own ``max_length`` extracted-text cap was removed
+            (owner ruling: abolish the bespoke per-tool scheme, add nothing in its
+            place), so how much of the extracted text reaches the model's context
+            is governed by the OS-level tool-result cap (``offload.enabled``,
+            default false = uncapped), not by web_fetch. Default 10 MiB.
         allow_private_ips:
             #1956 SSRF: when ``True``, ``web_fetch`` / ``safe.http`` may reach
             private RFC1918/ULA addresses (enterprise internal-fetch opt-in).

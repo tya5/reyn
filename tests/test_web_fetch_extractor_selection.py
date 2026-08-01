@@ -181,7 +181,7 @@ def test_result_envelope_contains_extractor_field_for_html(
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingHTMLClient)
 
     ctx = _make_ctx()
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
@@ -199,7 +199,7 @@ def test_result_envelope_extractor_none_for_non_html(
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingTextClient)
 
     ctx = _make_ctx()
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"
@@ -219,7 +219,7 @@ def test_result_envelope_uses_stdlib_when_trafilatura_unavailable(
     monkeypatch.setattr(httpx, "AsyncClient", _CapturingHTMLClient)
 
     ctx = _make_ctx()
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     result = asyncio.run(handle_web_fetch(op=op, ctx=ctx))
 
     assert result["status"] == "ok"

@@ -306,8 +306,11 @@ class WebFetchIROp(BaseModel):
     url: str                      # URL to fetch
     prompt: str = ""              # optional hint describing what to extract (informational for LLM)
     timeout: int = 30             # request timeout in seconds
-    max_length: int = 50_000      # cap on returned content length (characters)
-    start_index: int = 0          # byte offset into extracted content for pagination (issue #357)
+    # #3580 ③: web_fetch has NO size cap of its own. The extracted text is returned
+    # whole; the only ceiling on what reaches the model's context is the OS-level
+    # tool-result cap (``offload.enabled``, default false = uncapped). The removed
+    # ``max_length``/``start_index`` pair was a per-tool truncate + "paging" scheme
+    # whose ``start_index`` never reached the tool schema, so the LLM could not page.
 
 
 class WebSearchIROp(BaseModel):

@@ -55,24 +55,18 @@ web_fetch = ToolDescription(
     tool_name="web_fetch",
     surfaced="router (gates.router=allow)",
     purpose=(
-        "Fetch a single URL and return a structured preview + a path_ref to "
-        "the full body, so the LLM can follow up a web_search result without "
-        "inlining the whole page into context."
+        "Fetch a single URL and return its text-extracted body, so the LLM can "
+        "follow up a web_search result by actually reading the page."
     ),
     text=(
-        "Fetch a single URL. Returns a structured preview "
-        "(title, outline, first paragraph, link count for HTML; "
-        "first lines for text) plus a path_ref to the full body "
-        "stored under .reyn/tool-results/. url: absolute http/https URL. "
-        "max_length: cap on extracted body length (default 50000). "
-        "Use after web_search to load a result page; call "
-        "read_file(path) to read the full body."
+        "Fetch a single URL and return its text-extracted body. "
+        "url: absolute http/https URL. "
+        "Use after web_search to load a result page."
     ),
     ja=(
-        "単一の URL を取得する。構造化されたプレビュー（タイトル、アウト"
-        "ライン、冒頭段落、リンク数など）と、本文全体への path_ref を返す。"
-        "web_search の結果ページを読み込む際に使う。本文全体は "
-        "read_file(path) で読む。"
+        "単一の URL を取得し、テキスト抽出した本文を返す。"
+        "url: 絶対 http/https URL。"
+        "web_search の結果ページを読み込む際に使う。"
     ),
 )
 
@@ -302,7 +296,7 @@ ALL: dict[str, ToolDescription] = {
 # ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
 #
 # web_fetch / web_search have no param-level descriptions in their origin
-# schemas (url/max_length/query are bare-typed) — no entries needed here.
+# schemas (url/query are bare-typed) — no entries needed here.
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
     "embed": {

@@ -424,21 +424,18 @@ def mcp_get_prompt_to_canonical(result: dict) -> CanonicalToolResult:
 
 def web_fetch_to_canonical(result: dict) -> CanonicalToolResult:
     """web_fetch result → canonical. The fetched page text (``content``, or the op's own ``preview``
-    when it pre-offloaded to a ``path_ref``) → ``text``. Signal meta: ``truncated`` + ``next_start``
-    (the LLM's pagination handle) when the fetch was cut. Transport (url/status/extractor) is dropped
-    from ``meta`` — but ``content_type`` (the HTTP response's declared MIME type, e.g.
-    ``"text/html"``) is carried on the RENDERER-only ``content_type`` sidecar (#2663), never into
-    ``meta``/the frontmatter, so present's stage-3 default viewer can pick a markdown/code default
-    for the offloaded body without the LLM-visible frontmatter growing a transport field."""
+    when it pre-offloaded to a ``path_ref``) → ``text``. NO signal meta:
+    #3580 ③ removed web_fetch's own truncation, so there is no ``truncated``/``next_start`` pair to
+    forward — the op returns the extracted text whole and the only ceiling is the OS-level
+    tool-result cap. Transport (url/status/extractor) is dropped from ``meta`` — but ``content_type``
+    (the HTTP response's declared MIME type, e.g. ``"text/html"``) is carried on the RENDERER-only
+    ``content_type`` sidecar (#2663), never into ``meta``/the frontmatter, so present's stage-3
+    default viewer can pick a markdown/code default for the offloaded body without the LLM-visible
+    frontmatter growing a transport field."""
     meta: dict[str, Any] = {}
     content = result.get("content")
     text = content if content else str(result.get("preview") or "")
     text = _explicit_empty(text, "(no content)", meta)
-    if result.get("truncated"):
-        meta["truncated"] = True
-        next_start = result.get("next_start")
-        if next_start is not None:
-            meta["next_start"] = next_start
     # Only declare content_type for the RAW fetched body (``extractor: "none"``) — an
     # HTML page run through the trafilatura/stdlib extractor becomes plain readable
     # text, no longer HTML, so echoing the original ``text/html`` header here would be
