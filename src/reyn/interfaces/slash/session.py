@@ -69,9 +69,17 @@ def _inherited_restriction_lines(reg, name: str, sid: str) -> "list[str]":
     if denied:
         shown = ", ".join(denied[:_NAMED_DENIALS])
         more = len(denied) - _NAMED_DENIALS
+        # Says two separate true things rather than one convenient one: the child
+        # inherited this session's narrowing (a fact about what was passed), and its
+        # envelope denies these capabilities (a fact read off the child). It does NOT
+        # claim every denial listed is DUE to the inheritance — ``denied_by_envelope``
+        # also carries the agent's own name-keyed layers, which the child would have had
+        # either way, and attributing those to the operator's narrowing would be a
+        # confident wrong answer to "why is this denied?".
         lines.append(
-            f"  ↳ inherited this session's capability narrowing — {len(denied)} "
-            f"denied in the new session: {shown}" + (f", +{more} more" if more > 0 else "")
+            f"  ↳ inherited this session's capability narrowing; the new session's "
+            f"envelope denies {len(denied)}: {shown}"
+            + (f", +{more} more" if more > 0 else "")
         )
     if not tools_left:
         lines.append(
