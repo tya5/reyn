@@ -482,6 +482,32 @@ call path or a hand-mirrored copy of it — a copy that never diverges from
 the real thing under test is not proof they stayed in sync, only that no one
 has yet made them diverge.
 
+## 16. An equality assertion is blind to both sides being wrong the same way
+
+A PR unifying two code paths ("door A" and "door B" build the same object)
+naturally reaches for an equivalence test: build via both doors, assert the
+results match. That assertion is structurally unable to catch the case where
+BOTH doors are wrong IDENTICALLY. A strip that regressed one door's
+`agent_id` back to `None` left the equality arm GREEN — both doors produced
+`None`, so they still "agreed" — while a separate identity-specific
+assertion (`test_the_agent_identity_reaches_the_registry_dispatch_door`)
+went RED, because it asserted the actual VALUE reaching a consumer, not
+whether the two doors matched each other (#3610).
+
+Two arms are required for this class of unification test, not one: an
+equality arm (do the two paths still produce the same thing, guarded
+against vacuity — a real change must show through the fingerprint) AND at
+least one VALUE arm that asserts a specific field reaches a specific
+consumer with a specific expected value, independent of the other door
+entirely. The equality arm alone cannot distinguish "both doors correct" from
+"both doors wrong in the same way" — a value arm is the only assertion form
+that can.
+
+**Apply**: when testing "these two paths build equivalent output," don't
+stop at the equality assertion. Add at least one assertion that names an
+actual expected value for a load-bearing field, reached through only ONE of
+the paths, independent of whatever the other path currently produces.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
