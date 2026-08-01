@@ -35,7 +35,7 @@ from reyn.core.events.progress_lifecycle import (
     format_progress_message,
 )
 from reyn.runtime.agent_locks import get_agent_lock as _get_agent_lock
-from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND
+from reyn.runtime.turn_origin import TurnOrigin
 
 logger = logging.getLogger(__name__)
 
@@ -187,10 +187,10 @@ async def send_to_agent_impl(
     timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
     intervention_override: "RequestBus | None" = None,
     sid: "str | None" = None,
-    # EXTERNAL_MESSAGE_INBOX_KIND is imported at module level, not with this
-    # module's usual lazy-import idiom, because a default argument is evaluated
-    # at def time. reyn.runtime.transport imports nothing but dataclasses.
-    inbox_kind: str = EXTERNAL_MESSAGE_INBOX_KIND,
+    # TurnOrigin is imported at module level, not with this module's usual
+    # lazy-import idiom, because a default argument is evaluated at def time.
+    # reyn.runtime.turn_origin imports nothing but enum.
+    inbox_kind: TurnOrigin = TurnOrigin.EXTERNAL_MESSAGE,
 ) -> dict:
     """Backing implementation of the ``send_to_agent`` tool.
 
@@ -208,16 +208,20 @@ async def send_to_agent_impl(
     from this task, eliminating the inline ``_handle_user_message`` bypass.
     The inbox is now the single intake channel for every transport surface.
 
-    ``inbox_kind`` (#3595 step 1b) is the union member ``message`` rides onto
-    the inbox, and it exists because THIS function has four producers with two
-    different answers to "who wrote this text":
+    ``inbox_kind`` (#3595 step 1b) is the ``TurnOrigin`` member ``message``
+    rides onto the inbox, and it exists because THIS function has producers with
+    two different answers to "who wrote this text":
 
     - the MCP ``send_to_agent`` tool and the A2A JSON-RPC router — a
       counterparty outside this process, frequently another LLM. They take the
-      default, ``EXTERNAL_MESSAGE_INBOX_KIND``.
-    - ``reyn run-once`` (whole stdin as one message) and the dogfood scenario
-      runner — an operator at a first-party client, and a harness standing in
-      for one. Both pass ``inbox_kind="user"`` explicitly.
+      default, ``TurnOrigin.EXTERNAL_MESSAGE``.
+    - first-party operator surfaces, which pass ``TurnOrigin.CLIENT_INPUT``
+      explicitly. ★ Which callers those are, and why each is entitled to that
+      claim, is NOT counted here: it is enumerated once, in
+      ``tests/test_3595_client_input_provenance_gate.py``'s allowlist, which is
+      a gate rather than prose — this docstring said "Both pass …" while there
+      were three such call sites, because a count in prose is a snapshot of
+      whoever last read the code.
 
     The default is the NON-operator one on purpose: a new caller that says
     nothing gets the kind that cannot execute a slash command, the same

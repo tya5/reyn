@@ -130,7 +130,7 @@ Reyn versions; this API stays stable.
                 extra_meta=None, registry=None)
     Deliver a message to a Reyn agent's inbox. Default for webhook
     gateways. The inbox kind is fixed at
-    ``EXTERNAL_MESSAGE_INBOX_KIND`` and is deliberately NOT a
+    ``TurnOrigin.EXTERNAL_MESSAGE`` and is deliberately NOT a
     parameter — see "Slash commands are not exposed to gateways"
     below.
 
@@ -191,7 +191,7 @@ client — and `Session._handle_user_message` acts on that claim by
 handing a `/`-prefixed line to slash dispatch before any router
 turn. Anyone able to post to a webhook could therefore run any
 registered slash command. Gateway pushes now ride
-`EXTERNAL_MESSAGE_INBOX_KIND`, which `Session._run_turn_body` routes
+`TurnOrigin.EXTERNAL_MESSAGE`, which `Session._run_turn_body` routes
 straight to the shared turn body: the dispatch is not skipped by a
 flag, it is not on the path at all.
 

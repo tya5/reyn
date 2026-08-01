@@ -15,6 +15,7 @@ from reyn.interfaces.cli.env_backend import (
     build_environment_backend,
     register_env_backend_args,
 )
+from reyn.runtime.turn_origin import TurnOrigin
 
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
@@ -56,7 +57,7 @@ async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> 
         # CLI, so it says so. Dropping this makes `echo "/model x" | reyn
         # run-once` stop executing the command, which is an operator-visible
         # behaviour change this arc explicitly must not make.
-        inbox_kind="user",
+        inbox_kind=TurnOrigin.CLIENT_INPUT,
     )
     return result if isinstance(result, dict) else {"reply": result or ""}
 

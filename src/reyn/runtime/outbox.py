@@ -30,6 +30,14 @@ if TYPE_CHECKING:
     from reyn.runtime.transport import TransportRef
 
 # ── the closed kind vocabulary ───────────────────────────────────────────────
+# ★ This is the DISPLAY vocabulary — how to render a frame. It is not the inbox
+# vocabulary, which answers who authored a turn's text and lives in
+# ``runtime.turn_origin.TurnOrigin``. Both are called ``kind``, and until #3595
+# they shared exactly one word, ``"user"`` — the display kind below and the inbox
+# claim that a human typed the line, unrelated to each other and indistinguishable
+# by grep. The inbox member is now spelled ``CLIENT_INPUT``, so the two symbol sets
+# no longer intersect; the value here is unchanged and means what it always did.
+#
 # The settled disposition of every producer kind (P6a): standard 4 / profiled 11
 # / control 2. This module DECLARES the vocabulary independently; the
 # non-circular gate (tests/test_outbox_vocabulary.py +

@@ -39,12 +39,9 @@ from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
 from reyn.hooks.schema_registry import canonical_kind
 from reyn.hooks.shell_runner import run_shell_hook  # runs exec/exec_capture argv (#3226 P4)
+from reyn.runtime.turn_origin import TurnOrigin
 
 _log = logging.getLogger(__name__)
-
-# The inbox kind for an E (wake=true) hook trigger. Routed by the run-loop to
-# ``Session._handle_hook_message`` (system-role ``[hook:name]`` + one turn).
-HOOK_INBOX_KIND = "hook"
 
 # The kind stored on a staged C (wake=false) ride-along entry; the staged-context
 # consumer reads ``payload["name"]`` for the ``[hook:name]`` attribution.
@@ -226,7 +223,7 @@ class HookDispatcher:
         are otherwise identical to ``dispatch()``'s Sync loop.
 
         A ``template_push`` hook's wake=true action lands in the inbox via
-        the SAME ``_push_resolved`` E-path (``HOOK_INBOX_KIND``/kind="hook")
+        the SAME ``_push_resolved`` E-path (``TurnOrigin.HOOK``/kind="hook")
         every other hook-driven wake uses, so a composed->wake turn is
         counted by the Session's existing ``max_hook_driven_turns`` loop-valve
         with zero new bounding logic (architect-ratified §224
@@ -386,12 +383,12 @@ class HookDispatcher:
         if (target and self._cross_session_put is not None
                 and target != self._current_session_id):
             await self._cross_session_put(
-                target, HOOK_INBOX_KIND, {**payload, "wake": resolved.wake}, wake=resolved.wake)
+                target, TurnOrigin.HOOK, {**payload, "wake": resolved.wake}, wake=resolved.wake)
             return
         if resolved.wake:
             # E — a turn trigger (self-continuation): _put_inbox wake=True →
             # _drain_to_wake treats it as the trigger → _handle_hook_message.
-            await self._put_inbox(HOOK_INBOX_KIND, {**payload, "wake": True})
+            await self._put_inbox(TurnOrigin.HOOK, {**payload, "wake": True})
         else:
             # C — a passive ride-along: stage directly into next-turn context (the
             # 4b API), NOT via the inbox (a wake=false-only inbox push never drains
@@ -457,4 +454,4 @@ def _parse_exec_push(stdout: str | None) -> ResolvedPush | None:
     return ResolvedPush(message=message, wake=wake, push_when=push_when, session=session)
 
 
-__all__ = ["HookDispatcher", "HOOK_INBOX_KIND", "HOOK_STAGE_KIND"]
+__all__ = ["HookDispatcher", "HOOK_STAGE_KIND"]

@@ -12,7 +12,7 @@ helper is the documented path. Tests cover:
      and pushes the right envelope shape.
   2. Optional ``reply_to`` propagates when set, absent when None.
   3. Optional ``extra_meta`` becomes the envelope's ``meta``.
-  4. The inbox kind is FIXED at ``EXTERNAL_MESSAGE_INBOX_KIND`` and
+  4. The inbox kind is FIXED at ``TurnOrigin.EXTERNAL_MESSAGE`` and
      is not caller-selectable (#3595 step 1b — it used to default to
      ``"user"`` and be overridable, which is what let a webhook
      message execute an operator slash command; the reachability
@@ -32,7 +32,8 @@ from __future__ import annotations
 import pytest
 
 from reyn.gateway.api import push_to_agent
-from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND, ExternalRef
+from reyn.runtime.transport import ExternalRef
+from reyn.runtime.turn_origin import TurnOrigin
 
 # ── stub registry / session ───────────────────────────────────────────
 
@@ -79,7 +80,7 @@ class _StubRegistry:
 @pytest.mark.asyncio
 async def test_push_to_agent_minimal_call():
     """Tier 2: a minimal call (= target_agent + text + sender) lands
-    an ``EXTERNAL_MESSAGE_INBOX_KIND`` envelope with no reply_to / meta.
+    an ``TurnOrigin.EXTERNAL_MESSAGE`` envelope with no reply_to / meta.
     """
     reg = _StubRegistry()
     await push_to_agent(
@@ -90,7 +91,7 @@ async def test_push_to_agent_minimal_call():
     )
     sess = await reg.ensure_running("news")
     assert sess.pushed == [
-        (EXTERNAL_MESSAGE_INBOX_KIND, {"text": "hello", "sender": "slack:U1"}),
+        (TurnOrigin.EXTERNAL_MESSAGE, {"text": "hello", "sender": "slack:U1"}),
     ]
 
 
@@ -110,7 +111,7 @@ async def test_push_to_agent_with_reply_to():
     )
     sess = await reg.ensure_running("news")
     kind, payload = sess.pushed[0]
-    assert kind == EXTERNAL_MESSAGE_INBOX_KIND
+    assert kind == TurnOrigin.EXTERNAL_MESSAGE
     assert payload["reply_to"] is ref
 
 
@@ -231,7 +232,7 @@ async def test_push_to_agent_full_envelope_shape():
     )
     sess = await reg.ensure_running("news")
     kind, payload = sess.pushed[0]
-    assert kind == EXTERNAL_MESSAGE_INBOX_KIND
+    assert kind == TurnOrigin.EXTERNAL_MESSAGE
     assert payload == {
         "text": "hi",
         "sender": "line:user:U1",

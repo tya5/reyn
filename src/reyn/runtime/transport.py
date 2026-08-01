@@ -97,54 +97,12 @@ class ExternalRef:
 
 
 # ---------------------------------------------------------------------------
-# Inbox kind for text arriving over an external transport
-# ---------------------------------------------------------------------------
-
-#: The inbox kind every message that arrived over an EXTERNAL transport rides
-#: (#3595 step 1b): a chat webhook (``gateway.api.push_to_agent`` — Slack /
-#: LINE / any ``reyn.webhooks`` plugin) and an out-of-process request handler
-#: (``mcp.server.send_to_agent_impl``, reached by the MCP ``send_to_agent``
-#: tool and by the A2A JSON-RPC router).
-#:
-#: A member of the SAME discriminated union ``Session._run_turn_body`` already
-#: dispatches on (``user`` / ``agent_request`` / ``agent_response`` /
-#: ``pipeline_result`` / ``agent_step`` / ``hook``). ``"user"`` means "a human
-#: typed this at a first-party client", and ``Session._handle_user_message``
-#: acts on that claim by handing a ``/``-prefixed line to slash dispatch before
-#: any router turn. None of the producers above is that human, so under the old
-#: ``kind="user"`` a Slack message reading ``/reset`` executed the command; under
-#: this kind the text reaches the turn body directly and no registered slash
-#: command is reachable from it at all.
-#:
-#: **Why ONE kind for two transports.** What the kind has to answer is who
-#: authored the text, for the purpose of deciding whether the OS may act on its
-#: FORM — and a webhook peer and an MCP/A2A peer answer it identically: a
-#: counterparty outside this process, never the operator. Every in-tree consumer
-#: of the kind (turn dispatch, ``_stamp_execution_context``, the hook-driven-turn
-#: valve, ``queued_user_messages``) branches identically on the two. A consumer
-#: that needs the transport ITSELF already has a strictly better source on the
-#: envelope — ``sender`` (``"slack:U456"``) or ``reply_to`` (``McpRef`` /
-#: ``ExternalRef``) — which names the individual peer, not just its transport.
-#: A distinction no consumer branches on, and that a richer field already
-#: carries, is a label rather than a union member.
-#:
-#: Declared HERE rather than at one of the two producers, because neither
-#: produces it alone; this module is already the shared vocabulary both import
-#: for the same class of thing (``ExternalRef`` / ``McpRef``). Contrast
-#: ``hooks.dispatcher.HOOK_INBOX_KIND`` and
-#: ``runtime.session_api.AGENT_STEP_INBOX_KIND``, which each have exactly one
-#: producer and live in it.
-EXTERNAL_MESSAGE_INBOX_KIND = "external_message"
-
-
-# ---------------------------------------------------------------------------
 # Union alias
 # ---------------------------------------------------------------------------
 
 TransportRef = TuiRef | McpRef | A2aRef | AgentRef | SystemRef | ExternalRef
 
 __all__ = [
-    "EXTERNAL_MESSAGE_INBOX_KIND",
     "TransportRef",
     "TuiRef",
     "McpRef",

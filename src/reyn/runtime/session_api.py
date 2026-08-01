@@ -28,7 +28,7 @@ existing primitives — it adds no new session/LLM machinery of its own:
      would make it return early on a pending chain the spawned session is
      still awaiting a reply for.
   2. ``MessageBus.request`` (``runtime/message_bus.py``) — the existing
-     synchronous run+collect: put an ``AGENT_STEP_INBOX_KIND`` message (the
+     synchronous run+collect: put a ``TurnOrigin.AGENT_STEP`` message (the
      prompt is a model's reading material, never an operator's typed line, so
      it does not claim the ``user`` kind that slash dispatch acts on) on the
      spawned session's inbox, pump ``run_one_iteration`` on the caller's own task
@@ -107,27 +107,11 @@ from typing import TYPE_CHECKING, Any
 
 from reyn.runtime.errors import AgentStepError
 from reyn.runtime.transport import SystemRef
+from reyn.runtime.turn_origin import TurnOrigin
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.schema import SchemaRegistry
     from reyn.runtime.registry import AgentRegistry
-
-#: The inbox kind an ``agent`` pipeline step's prompt rides (#3595 step 1).
-#:
-#: A member of the SAME discriminated union ``Session._run_turn_body`` already
-#: dispatches on (``user`` / ``agent_request`` / ``agent_response`` /
-#: ``pipeline_result`` / ``hook``) — this is not a new mechanism, it is the
-#: agent-step path no longer claiming a kind that is not true of it. ``"user"``
-#: means "a human typed this at a client", and ``Session._handle_user_message``
-#: acts on that claim by handing a ``/``-prefixed line to slash dispatch. An
-#: agent step's prompt is a MODEL's text, so under the old ``kind="user"`` every
-#: registered slash command was executable from model output; under its own kind
-#: the prompt reaches the turn body directly and none of them are.
-#:
-#: Declared here, at the producer, the way ``hooks.dispatcher.HOOK_INBOX_KIND``
-#: is; ``session.py``'s dispatch spells the literal with a comment naming this
-#: constant, the same as it does for ``hook``.
-AGENT_STEP_INBOX_KIND = "agent_step"
 
 # Tool names an ``agent`` pipeline step must never reach — a leaf worker (R6
 # session-hierarchy constraint 4: "E_i are spawn-tree LEAVES"). Two distinct
@@ -250,14 +234,14 @@ async def run_agent_step(
     leaf-worker session under ``identity`` (capability-narrowed to
     ``capabilities`` plus a structural delegation deny, see
     ``_build_agent_step_narrowing``), feed it ``prompt`` as a single
-    ``AGENT_STEP_INBOX_KIND`` turn via ``MessageBus.request``, and return its
+    ``TurnOrigin.AGENT_STEP`` turn via ``MessageBus.request``, and return its
     collected reply.
 
     #3595 step 1: that kind used to be ``"user"``, i.e. the prompt claimed a
     human had typed it at a client, which is what made every registered slash
     command executable from a model's output (``Session._handle_user_message``
     hands a ``/``-prefixed line to slash dispatch before any router turn). See
-    ``AGENT_STEP_INBOX_KIND``.
+    ``TurnOrigin.AGENT_STEP``.
 
     With ``schema`` unset, returns the joined ``kind="agent"`` reply text
     verbatim. With ``schema`` set (a name registered in ``schema_registry``):
@@ -400,7 +384,7 @@ async def run_agent_step(
     bus = MessageBus()
     replies = await bus.request(
         session,
-        kind=AGENT_STEP_INBOX_KIND,
+        kind=TurnOrigin.AGENT_STEP,
         payload={"text": prompt, "chain_id": chain_id or uuid.uuid4().hex},
         reply_to=SystemRef(),
         timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
@@ -791,9 +775,15 @@ async def run_pipeline_attached(
         # message to forward (that #2707 interim is removed — present now rides the
         # inherited parent sink, see below). The request is still awaited for pump
         # quiescence; its return value is intentionally unused.
+        # #3595 S2: this pump used to claim ``CLIENT_INPUT``. It was the fifth and
+        # last producer to do so, and the only one the slash defect could never
+        # expose — its text is ``""``, so ``startswith("/")`` was never true — which
+        # is precisely why four censuses walked past it: nothing it did was wrong.
+        # The claim was still false. Nobody authored this message; it exists to hand
+        # the driver-session's executor one iteration, so it says that instead.
         await bus.request(
             session,
-            kind="user",
+            kind=TurnOrigin.PIPELINE_NUDGE,
             payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
             reply_to=SystemRef(),
             timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
