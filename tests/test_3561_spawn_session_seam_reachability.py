@@ -14,26 +14,39 @@ REACHABILITY — can a narrowed subject cause this to run.
 standing assumption was that ``AgentRegistry.spawn_session``'s one non-registry call
 site, the ``/session new`` slash command, is operator-initiated and therefore out of
 scope. The path that had actually been established was only that the OPERATOR input
-face reaches it — never that no other face does.
-``test_model_output_reaches_slash_dispatch_and_spawns_a_session`` is the falsification:
-it drives the real ``run_agent_step`` with a prompt that is a previous agent step's
-MODEL OUTPUT, on a session narrowed to a single capability, and observes a session
-being born. The assumption is false.
+face reaches it — never that no other face does. The original
+``test_model_output_reaches_slash_dispatch_and_spawns_a_session`` was the
+falsification: it drove the real ``run_agent_step`` with a prompt that is a previous
+agent step's MODEL OUTPUT, on a session narrowed to a single capability, and observed
+a session being born. The assumption was false.
 
-Why the reaching turn is not a model turn: ``Session._handle_user_message`` tests
-``text.startswith("/")`` and hands the line to ``_maybe_handle_slash`` BEFORE the
-router turn, so the worker never calls its LLM on that turn at all — which the test
-asserts, because "the scripted LLM was not consulted" is what distinguishes a slash
-short-circuit from a model that happened to decide to spawn. Slash dispatch has
-exactly two production callers (``_handle_user_message`` and
-``maybe_deliver_answer_command``), so the surface reached here is small and
-enumerable; what is NOT bounded is the set of ways text arrives at
-``_handle_user_message``, and the agent-step prompt is one of them.
+★ **#3595 step 1 made it true, and this file's leg is the same measurement inverted.**
+The reason model output reached slash dispatch was a KIND that was not true of it:
+``run_agent_step`` fed its prompt as ``kind="user"``, i.e. as a line a human had typed
+at a client, and ``Session._handle_user_message`` acts on that claim by handing a
+``/``-prefixed line to ``_maybe_handle_slash`` before any router turn. The prompt now
+rides its own union member (``session_api.AGENT_STEP_INBOX_KIND``), which
+``_run_turn_body`` routes straight to the shared turn body — the slash dispatch is not
+skipped by a flag, it is not on that path at all. The leg below asserts the ABSENCE of
+the spawn, and asserts the scripted LLM WAS consulted on the reaching turn: the text
+is now content a model reads, which is the positive half that keeps the absence from
+being explained by "the worker never ran". ★ The original assertion message asked for
+exactly this re-argument if the reachability claim ever became false; the guard is
+kept alive inverted rather than deleted, because what has to stay measured is that no
+non-operator face reaches an OS-executed command — a claim that only an executable
+witness can hold. The paired operator leg
+(``test_an_operator_submitted_slash_command_still_spawns_a_session``) is its control:
+the same command, submitted the way every client submits one, still executes, so
+"nothing spawns any more" cannot pass for the fix.
 
-What this file deliberately does NOT assert: that the session ``/session new`` opens
-is un-narrowed. It is (the invoking session's #2103-S1a layer is not carried, which is
-#3562), but pinning that would make the fix red. The measurement is the reachability,
-which stays true either way.
+Slash dispatch has exactly two production callers (``_handle_user_message`` and
+``maybe_deliver_answer_command``), so the surface is small and enumerable; what is NOT
+bounded is the set of ways text arrives at ``_handle_user_message`` — which is why the
+fix was to bound the KIND that may enter it rather than to enumerate the commands.
+
+What this file deliberately does NOT assert: anything about the narrowing of the
+session ``/session new`` opens (#3562's subject). The measurement is WHO can reach the
+site, which is a separate axis from what the child inherits when they do.
 
 ★ **The second claim is a defect this enumeration found, and the fix that closes it.**
 Crash recovery (``restore_all`` / ``_rewake_pipeline_runs``) re-creates a session
@@ -174,32 +187,36 @@ def _registry(
 
 
 
-# ── the reachability falsification ──────────────────────────────────────────
+# ── the reachability measurement, inverted by #3595 step 1 ──────────────────
 
 
 @pytest.mark.asyncio
-async def test_model_output_reaches_slash_dispatch_and_spawns_a_session(
+async def test_model_output_cannot_reach_slash_dispatch_and_spawns_nothing(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2: MODEL OUTPUT reaches slash dispatch, and through it
-    ``AgentRegistry.spawn_session`` — the measurement that decides
-    ``interfaces/slash/session.py::session_cmd`` is a spawn seam in scope.
+    """Tier 2: MODEL OUTPUT does not reach slash dispatch, so it cannot reach
+    ``AgentRegistry.spawn_session`` through ``interfaces/slash/session.py::session_cmd``.
 
-    Two agent steps, both real ``run_agent_step`` calls on real sessions:
+    The #3561 falsification, run unchanged and asserted the other way round (#3595
+    step 1). Two agent steps, both real ``run_agent_step`` calls on real sessions:
 
-      1. the first returns the model's text — here a slash command;
+      1. the first returns the model's text — here a real, registered slash command;
       2. the production template splice (``executor._interpolate_prompt``, the exact
          function an ``agent`` step's ``prompt`` goes through) puts that text in the
          second step's prompt;
-      3. the second step's worker — narrowed to a single capability, so it is a
-         NARROWED subject — reaches ``/session new`` and a session is born under the
-         attached agent.
+      3. the second step's worker runs that prompt and NO session is born.
 
-    No operator submits anything at any point. ``scripted.calls`` staying at 1 across
-    step 2 is what shows the reaching turn short-circuited at
-    ``_maybe_handle_slash`` instead of running a router turn: without it, a spawn
-    could be explained by the worker's own model deciding to spawn, which is a
-    different (already-gated, #3556) path.
+    The second assertion is what makes the absence readable. ``scripted.calls``
+    reaching 2 means the reaching turn went to the model — the slash-shaped line was
+    delivered as CONTENT for a router turn. Without it, "no session was born" would
+    have a second explanation (the worker never ran at all), which is the shape an
+    absence-only leg cannot tell apart. The two together say: the line arrived, and it
+    arrived as text rather than as a command.
+
+    The invariant is not about ``/session new``. It is that a non-operator inbox kind
+    cannot execute ANY of the registered slash commands, because the kind that carries
+    it never enters the dispatch — ``/session new`` is simply the command whose side
+    effect is observable from outside the session.
     """
     monkeypatch.chdir(tmp_path)
     scripted = _ScriptedReply(_MODEL_OUTPUT)
@@ -215,7 +232,7 @@ async def test_model_output_reaches_slash_dispatch_and_spawns_a_session(
     assert next_prompt == _MODEL_OUTPUT
 
     # An operator is attached, which is the ordinary REPL state — ``/session new``
-    # acts on the ATTACHED agent, so this is whose session count moves.
+    # acts on the ATTACHED agent, so this is whose session count would move.
     reg.get_or_load("operator")
     await reg.attach_session("operator", "main")
     before = set(reg.session_ids("operator"))
@@ -226,16 +243,59 @@ async def test_model_output_reaches_slash_dispatch_and_spawns_a_session(
     )
 
     born = set(reg.session_ids("operator")) - before
-    assert born, (
-        "model output did not reach slash dispatch — no session was born under the "
-        "attached agent. If this is now correct, the reachability claim in "
-        "tests/test_3546_pipeline_driver_narrowing_inheritance.py's declaration for "
-        "interfaces/slash/session.py::session_cmd is stale and must be re-argued."
+    assert not born, (
+        "model output reached slash dispatch and spawned a session under the attached "
+        f"agent ({sorted(born)!r}) — the agent-step prompt is being interpreted as an "
+        "operator command line again, which puts all 25 registered slash commands back "
+        "within reach of model output (#3595 step 1: the prompt must ride "
+        "session_api.AGENT_STEP_INBOX_KIND, never kind='user')"
     )
-    assert scripted.calls == 1, (
-        "the reaching turn consulted the LLM, so the spawn is not evidence of the "
-        "slash short-circuit — _handle_user_message is expected to hand a '/'-prefixed "
-        f"line to _maybe_handle_slash before any router turn (llm calls: {scripted.calls})"
+    assert scripted.calls == 2, (
+        "the reaching turn never consulted the LLM, so the absence above is not "
+        "evidence that the prompt was delivered as content — the worker may not have "
+        f"taken a turn at all (llm calls: {scripted.calls})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_operator_submitted_slash_command_still_spawns_a_session(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: the CONTROL for the leg above — an operator-submitted ``/session new``
+    still executes, so slash dispatch is closed to model output and not to everyone.
+
+    Same registry, same command, same observable (a session born under the attached
+    agent); the only difference is the door the text comes through
+    (``Session.submit_user_text`` — the one public entry every client's composer ends
+    at, CUI and TUI alike). Without this leg, deleting slash dispatch outright would
+    also pass the absence above, and #3595 step 1 explicitly must not change what an
+    operator typing ``/model foo`` gets.
+
+    ``scripted.calls`` staying at 0 is the other half: the operator's line
+    short-circuited at ``_maybe_handle_slash`` before any router turn, which is what
+    distinguishes an executed command from a model that decided to spawn.
+    """
+    monkeypatch.chdir(tmp_path)
+    scripted = _ScriptedReply("nothing to say")
+    reg = _registry(tmp_path, scripted, agents=("operator",))
+
+    operator = reg.get_or_load("operator")
+    await reg.attach_session("operator", "main")
+    before = set(reg.session_ids("operator"))
+
+    await operator.submit_user_text(_MODEL_OUTPUT)
+    await operator.run_one_iteration()
+    await operator.await_quiescent()
+
+    born = set(reg.session_ids("operator")) - before
+    assert born, (
+        "an operator's own '/session new' no longer opens a session — #3595 step 1 "
+        "closed slash dispatch to a kind that is not the operator's, and must leave "
+        "the operator's own path untouched"
+    )
+    assert scripted.calls == 0, (
+        "the operator's slash line reached the model instead of the slash handler, so "
+        f"the spawn above is not evidence the command ran (llm calls: {scripted.calls})"
     )
 
 

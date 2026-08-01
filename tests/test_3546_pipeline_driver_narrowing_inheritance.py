@@ -640,17 +640,31 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             "its invoker is. This is the arc's open gap, filed as #3562; it is declared "
             "HERE rather than left off the list, because a site the gate does not "
             "enumerate is a site the gate does not count. "
-            "#3561 measured that it is REACHABLE FROM MODEL OUTPUT, which is the fact "
-            "that decides it is in scope: an agent step whose prompt is a previous "
+            "#3561 measured that it was REACHABLE FROM MODEL OUTPUT, which is what "
+            "first decided it was in scope: an agent step whose prompt was a previous "
             "agent step's model output, run on a session narrowed to a single "
-            "capability, reaches this site and spawns — no operator in the path, no LLM "
-            "call on the reaching turn (``Session._handle_user_message`` short-circuits "
-            "to ``_maybe_handle_slash`` before the router runs). The measurement below "
-            "asserts the REACHABILITY only, never that the child is un-narrowed, so it "
-            "stays green when #3562 closes the gap."
+            "capability, reached this site and spawned — no operator in the path, no "
+            "LLM call on the reaching turn. ★ #3595 step 1 made that FALSE and the "
+            "measurement below is now its inverse: the agent-step prompt rides its own "
+            "inbox kind (``session_api.AGENT_STEP_INBOX_KIND``) instead of claiming "
+            "``kind='user'``, so it never enters ``Session._handle_user_message``'s "
+            "``startswith('/')`` dispatch and no registered slash command is reachable "
+            "from model output at all. "
+            "★ The site STAYS enumerated, and the reason has changed rather than "
+            "expired: this list counts every place a child envelope is BORN, not every "
+            "place a model can reach — a site whose only caller is an operator is still "
+            "a site whose child inherits nothing. What #3595 retires is the SEVERITY "
+            "argument, not the entry. The narrowing gap itself was settled separately "
+            "by #3562/#3586 on an owner policy decision (a session opened from a "
+            "narrowed one should stay narrowed), which stands on its own and never "
+            "stood on this reachability. "
+            "The measurement below still asserts REACHABILITY only — now its absence, "
+            "paired with an operator control proving the command itself still runs — "
+            "never anything about what the child inherits."
         ),
         measured_by=(
-            f"{_S3561}::test_model_output_reaches_slash_dispatch_and_spawns_a_session",
+            f"{_S3561}::test_model_output_cannot_reach_slash_dispatch_and_spawns_nothing",
+            f"{_S3561}::test_an_operator_submitted_slash_command_still_spawns_a_session",
         ),
     ),
 }

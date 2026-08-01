@@ -5433,6 +5433,20 @@ class Session:
             # launch returned immediately, so this is a fresh turn, routed
             # exactly like a task wake).
             await self._handle_pipeline_result(payload)
+        elif kind == "agent_step":  # AGENT_STEP_INBOX_KIND value (#3595 step 1)
+            # A pipeline ``agent`` step's prompt: text a MODEL will read as this
+            # ephemeral worker's one turn, never an operator's typed line. It used
+            # to arrive as ``kind="user"`` (``session_api.run_agent_step``), which
+            # is what put model-authored text through ``_handle_user_message``'s
+            # ``startswith("/")`` slash dispatch — every registered slash command
+            # executable from model output. Its own kind routes it to the turn
+            # body directly: the short-circuit is not skipped by a flag, it is
+            # not on this path at all (#3595 / owner: "inbox につまれたものは
+            # スラッシュコマンドとして解釈されない").
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
         elif kind == "hook":  # HOOK_INBOX_KIND value (#1800 slice 5b)
             # E (wake=true) lifecycle-hook push delivered as a turn trigger:
             # a system-role [hook:name] message + one router turn (self-
@@ -5452,7 +5466,8 @@ class Session:
         — the OS-authoritative provenance classification of this turn, threaded into
         ``OpContext.turn_origin`` at both ctx-build sites. Only an explicit
         ``kind == "user"`` turn grants ``"user_directed"``; EVERY other kind —
-        hook, pipeline_result, sub-agent ``agent_request``/``agent_response``, or
+        hook, pipeline_result, ``agent_step`` (#3595), sub-agent
+        ``agent_request``/``agent_response``, or
         any future kind this method does not yet know about — resolves to the
         strictER ``"auto_improvement"``. This is an if/else fail-safe, not a
         lookup table: there is no path by which an unmapped kind can silently
@@ -5460,7 +5475,11 @@ class Session:
         autonomous turn bypass the Phase-4 auto-improvement gate). Sub-agent
         turns are deliberately `"auto_improvement"` (lead-adjudicated, Addendum
         B A7): a human directed the PARENT task, not necessarily this install
-        action."""
+        action. #3595 made a pipeline agent step's prompt turn carry its own
+        kind instead of impersonating ``"user"``, so it now lands on that same
+        stricter side — by the rule above, not by a new branch, and matching the
+        sub-agent reasoning verbatim (the human directed the pipeline, not this
+        step's install)."""
         self._current_turn_origin = "user_directed" if kind == "user" else "auto_improvement"
 
     async def _handle_pipeline_result(self, payload: dict) -> None:
@@ -5619,12 +5638,52 @@ class Session:
         # task — see docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
+        """An OPERATOR-authored line: interpret it, then run the turn.
+
+        #3595 step 1 split this in two. Everything above the
+        ``_handle_inbox_text`` call interprets text *as an operator command
+        surface* — the slash dispatch. Everything below it is the turn itself,
+        which every text-bearing inbox kind needs. Only text whose kind claims
+        an operator typed it may enter here; a non-operator producer calls
+        ``_handle_inbox_text`` directly, so it cannot execute a slash command
+        by writing one (owner ruling: "inbox につまれたものはスラッシュコマンド
+        として解釈されない。されるんだとするとそれが不具合").
+
+        Sibling entry: ``_handle_pipeline_result`` still calls THIS method, so a
+        pipeline's OS-framed result text is still slash-interpreted. Its framing
+        (``[pipeline] run …``) means no such text can currently start with
+        ``/``, but that is a property of the formatter, not a gate — recorded as
+        a finding on #3595, deliberately not changed here (it would also change
+        that path's ``:skill`` and pending-intervention-answer behaviour, which
+        is a different rollback shape).
+        """
         # Slash commands (`/list`, `/tasks kill <id>`, `/answer <id> <text>`)
         # take precedence over both the active-intervention router and a
         # fresh router turn.
         if text.startswith("/"):
             if await self._maybe_handle_slash(text):
                 return
+        await self._handle_inbox_text(text, chain_id=chain_id)
+
+    async def _handle_inbox_text(self, text: str, *, chain_id: str) -> None:
+        """Run ONE turn on ``text`` — the shared body under every text-bearing
+        inbox kind, with the SLASH dispatch above it rather than in it
+        (#3595 step 1).
+
+        Extracted from ``_handle_user_message``, which now calls it after that
+        dispatch, unchanged for operators. ``kind="agent_step"`` reaches it
+        directly: an agent step's prompt is model-readable CONTENT, so it gets a
+        turn and never an OS-executed command.
+
+        The split point is the slash block and nothing else, so this body still
+        carries the ``:skill`` invocation and the pending-intervention answer
+        route exactly as the agent-step path met them before — both remain
+        reachable from an agent step's prompt. Neither dispatches a registered
+        command (a `:` invocation composes skill text and falls THROUGH into the
+        turn below; an intervention answer is a typed reply to a question this
+        session itself asked), which is why closing the slash leg alone is the
+        step-1 scope; #3595 records them as findings for the later steps.
+        """
         # #3100: operator-explicit `:skill [:skill2 ...] [trailing]` skill
         # invocation — a namespace separate from `/` (Axis 4: syntactic
         # closed-type distinction, not a runtime precedence lookup). Unlike
@@ -5981,7 +6040,7 @@ class Session:
 
     def _reset_router_turn_counter(self) -> None:
         """Reset the per-turn router invocation counter. Called at the top
-        of each fresh turn (`_handle_user_message`, `_handle_agent_request`).
+        of each fresh turn (`_handle_inbox_text`, `_handle_agent_request`).
         Re-entrant in-chain paths (`_handle_agent_response` continuation,
         `_resolve_pending_chain`) intentionally do NOT reset — their
         invocations count against the same budget."""

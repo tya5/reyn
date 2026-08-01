@@ -117,7 +117,7 @@ def parse_skill_invocation(text: str) -> "ParsedSkillInvocation | None":
     """Parse a leading ``:name [:name2 ...] [trailing text]`` stack.
 
     Returns ``None`` when *text* does not start with a ``:name``-shaped
-    token at all — the caller (``Session._handle_user_message``) then falls
+    token at all — the caller (``Session._handle_inbox_text``) then falls
     through to ordinary message handling untouched, so a message that merely
     starts with a literal colon in prose (rare, but not impossible) is never
     misrouted into an "unknown skill" error. Once at least one valid
