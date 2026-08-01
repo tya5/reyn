@@ -12,7 +12,7 @@ Every new feature is read through **eight engineering lenses** and must stand on
 ### The eight lenses — each line is the pass-line (a gate for new work)
 1. **System Design** — responsibility sits at the right layer (LLM decides / OS executes / feature owns its domain); no new cross-layer coupling.
 2. **Tool Contract** — every side effect rides a typed, validated envelope (Control IR / a typed op), never an untyped string the LLM free-forms.
-3. **Retrieval** — the right context is delivered deterministically at the right time (`semantic_search` + a pluggable `IndexBackend` a safe-mode Python step can call directly), not stuffed unconditionally into the prompt.
+3. **Retrieval** — the right context is delivered deterministically at the right time (`search_actions` over the tool/mcp/pipeline catalog; the FP-0063 user-RAG plugin's bundled ingest/query pipelines for agent-facing document search; the in-core `IndexBackend` substrate is OS-internal, with no agent-callable entry point), not stuffed unconditionally into the prompt.
 4. **Reliability** — it recovers from failure (schema-validate + re-prompt, bounded loops with graceful force-close, timeout + opt-in provider-retry); any derived state survives WAL truncation.
 5. **Security** — it is permission-gated and sandbox-scoped; no capability reaches the world without passing the gatekeeper.
 6. **Evaluation** — its output can be scored against a rubric in-run (an `agent` step + `schema`: the OS constrains generation and validates the parsed result; the threshold comparison is a plain `if`).
@@ -24,7 +24,7 @@ Every new feature is read through **eight engineering lenses** and must stand on
 
 Three lenses name a *discipline* whose *universal mechanism* is a band member: **Security ↔ permission**, **Reliability ↔ crash-recovery (WAL)**, **Observability ↔ audit-events**. The band is where the still-true P5 (workspace) / P6 (events) / P7 (OS-domain-agnostic) survive, demoted from "principles" to the substrate every lens-cell stands on.
 
-*Two honest thin areas (where new work is most valuable): **Retrieval** (`semantic_search` + a RAG framework to build on, not a fixed pipeline) and **Evaluation** (an `agent` step + `schema` is the surviving eval surface — the bespoke `judge_output` scorer op and the eval-export subsystem were both removed; scoring is ordinary agent work riding the OS's typed-schema + cost-tracking substrate, not a special-cased op).*
+*Two honest thin areas (where new work is most valuable): **Retrieval** (the FP-0063 user-RAG plugin's bundled pipelines are the current agent-facing surface — a framework to build on for internal retrieval is `search_actions`/a planned `search_knowledge` verb over the OS-internal substrate, not an agent-callable `semantic_search`) and **Evaluation** (an `agent` step + `schema` is the surviving eval surface — the bespoke `judge_output` scorer op and the eval-export subsystem were both removed; scoring is ordinary agent work riding the OS's typed-schema + cost-tracking substrate, not a special-cased op).*
 
 *"event" is three distinct things — **audit-event** (P6 `.reyn/events`, the audit trail) / **WAL-event** (`.reyn/state/wal.jsonl`, the recovery substrate) / **hook-event** (lifecycle+external reactivity triggers). Never write bare "event".*
 

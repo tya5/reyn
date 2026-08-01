@@ -47,7 +47,7 @@ How the LLM acts on the world: every side effect rides a typed, validated envelo
 
 ### 3. [Retrieval Engineering](retrieval-engineering.md)
 
-Getting the right context into the agent at the right time, deterministically (`semantic_search` + the preprocessor step), not stuffed unconditionally into the prompt. This is one of the constitution's two declared honest thin areas.
+Getting the right context into the agent at the right time, deterministically (`search_actions` over the tool/mcp/pipeline catalog; the FP-0063 user-RAG plugin's bundled pipelines for agent-facing document search — the in-core `IndexBackend` substrate has no agent-callable entry point of its own), not stuffed unconditionally into the prompt. This is one of the constitution's two declared honest thin areas.
 
 ### 4. [Reliability Engineering](reliability-engineering.md)
 
