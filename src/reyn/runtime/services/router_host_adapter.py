@@ -1100,7 +1100,7 @@ class RouterHostAdapter:
         ctx = self.make_router_op_context()
         return await handle_web_search(op, ctx)
 
-    async def web_fetch(self, *, url: str, max_length: int) -> dict:
+    async def web_fetch(self, *, url: str) -> dict:
         """Dispatch the OS-native web/fetch op from the router.
 
         FP-0022: authorization is now enforced at the handler level via
@@ -1112,7 +1112,6 @@ class RouterHostAdapter:
         op = WebFetchIROp(
             kind="web_fetch",
             url=url,
-            max_length=max_length,
             timeout=15.0,
         )
         ctx = self.make_router_op_context()

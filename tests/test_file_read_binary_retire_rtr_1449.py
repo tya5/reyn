@@ -112,11 +112,17 @@ def test_read_tool_result_no_longer_registered():
     assert reg.lookup("read_file") is not None or reg.lookup("read_file") is not None
 
 
-def test_web_fetch_preview_points_to_file_read():
-    """Tier 2: #1449 — web_fetch's preview message tells the model to call
-    read_file(path), not the retired read_tool_result."""
+def test_web_fetch_description_never_names_the_retired_tool():
+    """Tier 2: #1449 — the retired ``read_tool_result`` is not named to the model.
+
+    This used to also assert the description POINTS at ``read_file(path)``: web_fetch
+    returned a preview + a path_ref and had to tell the model where the body was.
+    #3583 removed that offload branch (the body comes back inline) and #3580 ③
+    removed the sentence, so the "where to read the body" half has no mechanism left
+    to guard. The retirement half still does — a description is LLM-visible surface,
+    and naming a tool that no longer exists in the registry is exactly the drift the
+    sibling registry test cannot see.
+    """
     from reyn.tools.web_fetch import WEB_FETCH
 
-    desc = WEB_FETCH.description
-    assert "read_file(path)" in desc
-    assert "read_tool_result" not in desc
+    assert "read_tool_result" not in WEB_FETCH.description

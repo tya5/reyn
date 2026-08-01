@@ -110,16 +110,18 @@ def test_build_offload_body_returns_content_type_but_never_in_frontmatter():
     never reach the LLM's ``role: tool`` YAML frontmatter)."""
     canonical = to_canonical({
         "kind": "web_fetch", "url": "http://x", "status": "ok",
-        "content": "raw body", "content_type": "text/markdown", "extractor": "none",
-        "truncated": True, "next_start": 10,
+        "content": "", "content_type": "text/markdown", "extractor": "none",
     }, source="web_fetch")
     frontmatter, text, _media, content_type = build_offload_body(canonical, save_fn=None)
 
     assert content_type == "text/markdown"
-    assert text == "raw body"
-    # Strip-falsify anchor: meta (truncated/next_start) DOES reach frontmatter (existing
-    # signal channel) while content_type (renderer-only) explicitly does not.
-    assert frontmatter.get("truncated") is True
+    assert text == "(no content)"
+    # Strip-falsify anchor: signal meta DOES reach frontmatter (existing channel) while
+    # content_type (renderer-only) explicitly does not. The anchor used to be web_fetch's
+    # ``truncated``/``next_start`` pair; #3580 ③ removed web_fetch's own truncation, so the
+    # anchor is now ``empty`` (#3010) — a different key on the SAME meta→frontmatter channel,
+    # so the contrast this test exists for is unchanged.
+    assert frontmatter.get("empty") is True
     assert "content_type" not in frontmatter
     assert "content_type" not in str(frontmatter), "content_type must not leak anywhere in the YAML frontmatter dict"
 

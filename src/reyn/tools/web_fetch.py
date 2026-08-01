@@ -15,27 +15,24 @@ from typing import Any, Mapping
 from reyn.tools.descriptions import discovery
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# Description updated by #385 PoC PR-D: when MediaStore is available
-# (= default production path), the tool returns a structured ``preview``
-# block + ``path_ref`` under ``.reyn/tool-results/`` instead of inlining
-# the full extracted body. The ``read_tool_result(path=...)`` tool loads
-# the full body on demand. The wording stays purely descriptive — no
-# behavioural guidance about WHEN to expand (= sandbox_2 cofounder
-# warning (b): keep the LLM's decision driven by the tool schema, not
-# by prompt-engineered instructions).
-#
-# Reviewable in src/reyn/tools/descriptions/discovery.py (Phase 1 of the
-# tool-description package refactor) — this alias keeps the call site
-# unchanged (byte-identical relocation, no LLM-facing text change).
+# The description text lives in src/reyn/tools/descriptions/discovery.py
+# (Phase 1 of the tool-description package refactor); this alias keeps the
+# call site unchanged. The wording stays purely descriptive — no behavioural
+# guidance about WHEN to fetch (= sandbox_2 cofounder warning (b): keep the
+# LLM's decision driven by the tool schema, not by prompt-engineered
+# instructions).
 _WEB_FETCH_DESCRIPTION = discovery.web_fetch.text
 
-# Parameters JSON schema must be byte-identical to the current
-# router_tools.py ToolSpec.parameters for web_fetch.
+# #3580 ③: ``url`` is the ONLY LLM-settable argument. ``max_length`` used to sit
+# here as a per-tool size cap; it is gone with nothing replacing it (owner ruling
+# on #3580: 「わけわからんオレオレ仕様なんて廃止して」 — abolish the bespoke
+# per-tool scheme rather than add a second mechanism). The size ceiling on what
+# reaches the model's context is the OS-level tool-result cap alone
+# (``offload.enabled``, default false), not anything web_fetch owns.
 _WEB_FETCH_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "url": {"type": "string"},
-        "max_length": {"type": "integer"},
     },
     "required": ["url"],
 }
@@ -68,7 +65,6 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     op = WebFetchIROp(
         kind="web_fetch",
         url=args["url"],
-        max_length=int(args.get("max_length", 50_000)),
     )
 
     rs = ctx.router_state

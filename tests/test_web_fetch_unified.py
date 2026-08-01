@@ -44,17 +44,15 @@ def test_web_fetch_router_render_matches_legacy_shape():
     # Name
     assert fn["name"] == "web_fetch"
 
-    # Description: key phrases that identify the post-PR-D web_fetch
-    # contract. The exact wording is pinned in
-    # ``test_web_fetch_router_render_exact_description``; this test
-    # only checks the load-bearing tokens.
+    # Description: key phrases that identify the web_fetch contract. The exact
+    # wording is pinned in ``test_web_fetch_router_render_exact_description``;
+    # this test only checks the load-bearing tokens. #3580 ③: the description no
+    # longer offers ``max_length`` (removed, nothing replaces it) and no longer
+    # claims a structured preview + path_ref (that path went with #3583).
     assert "URL" in fn["description"] or "url" in fn["description"].lower()
-    assert "preview" in fn["description"]
-    assert "path_ref" in fn["description"]
-    assert "max_length" in fn["description"]
-    assert "50000" in fn["description"]
     assert "web_search" in fn["description"]
-    assert "read_file" in fn["description"]  # #1449: read_tool_result retired
+    assert "max_length" not in fn["description"]
+    assert "path_ref" not in fn["description"]
 
     # Parameters schema
     params = fn["parameters"]
@@ -62,24 +60,22 @@ def test_web_fetch_router_render_matches_legacy_shape():
     assert params["required"] == ["url"]
     assert "url" in params["properties"]
     assert params["properties"]["url"] == {"type": "string"}
-    assert "max_length" in params["properties"]
-    assert params["properties"]["max_length"] == {"type": "integer"}
+    # #3580 ③: ``url`` is the ONLY LLM-settable argument.
+    assert list(params["properties"]) == ["url"]
 
 
 def test_web_fetch_router_render_exact_description():
-    """Tier 2: WEB_FETCH description is byte-identical to the post-#385
-    PoC PR-D string. Any whitespace or punctuation diff is a stop signal
-    — LLMReplay fixtures hash this verbatim.
+    """Tier 2: WEB_FETCH description is byte-identical to the shipped string.
+    Any whitespace or punctuation diff is a stop signal — LLMReplay fixtures
+    hash this verbatim. #3580 ③ rewrote it: the ``max_length`` offer is gone
+    (removed argument, no replacement) and so is the structured-preview +
+    path_ref claim, which #3583 had already falsified.
     """
     rendered = WEB_FETCH.render_for_router()
     expected_description = (
-        "Fetch a single URL. Returns a structured preview "
-        "(title, outline, first paragraph, link count for HTML; "
-        "first lines for text) plus a path_ref to the full body "
-        "stored under .reyn/tool-results/. url: absolute http/https URL. "
-        "max_length: cap on extracted body length (default 50000). "
-        "Use after web_search to load a result page; call "
-        "read_file(path) to read the full body."
+        "Fetch a single URL and return its text-extracted body. "
+        "url: absolute http/https URL. "
+        "Use after web_search to load a result page."
     )
     assert rendered["function"]["description"] == expected_description
 
@@ -88,15 +84,14 @@ def test_web_fetch_router_render_exact_parameters():
     """Tier 2: WEB_FETCH parameters schema is byte-identical to the legacy
     ToolSpec parameters dict."""
     rendered = WEB_FETCH.render_for_router()
-    legacy_parameters = {
+    expected_parameters = {
         "type": "object",
         "properties": {
             "url": {"type": "string"},
-            "max_length": {"type": "integer"},
         },
         "required": ["url"],
     }
-    assert rendered["function"]["parameters"] == legacy_parameters
+    assert rendered["function"]["parameters"] == expected_parameters
 
 
 # ── 2. Gate invariants ────────────────────────────────────────────────────────
@@ -163,18 +158,14 @@ def test_build_tools_includes_web_fetch_via_registry():
     assert wf["type"] == "function"
     assert wf["function"]["name"] == "web_fetch"
 
-    # Description byte-identity check (key phrases). Wording updated in
-    # #385 PoC PR-D to surface the preview + path_ref contract.
-    assert "preview" in wf["function"]["description"]
-    assert "path_ref" in wf["function"]["description"]
-    assert "max_length" in wf["function"]["description"]
-    assert "50000" in wf["function"]["description"]
+    # Description key-phrase check. #3580 ③: no ``max_length`` offer.
+    assert "text-extracted" in wf["function"]["description"]
+    assert "max_length" not in wf["function"]["description"]
 
-    # Parameters schema byte-identity check
+    # Parameters schema check — ``url`` is the only LLM-settable argument.
     params = wf["function"]["parameters"]
     assert params["required"] == ["url"]
-    assert "url" in params["properties"]
-    assert "max_length" in params["properties"]
+    assert list(params["properties"]) == ["url"]
 
 
 def test_build_tools_web_fetch_not_duplicated():

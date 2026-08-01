@@ -166,7 +166,7 @@ def test_verify_ssl_ca_bundle_in_config_passes_to_httpx(monkeypatch: pytest.Monk
 
     cfg = WebConfig(fetch=WebFetchConfig(ca_bundle="/etc/ssl/certs/corp-ca.pem"))
     ctx = _make_ctx(web_config=cfg)
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
@@ -193,7 +193,7 @@ def test_verify_ssl_false_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPa
 
     cfg = WebConfig(fetch=WebFetchConfig(verify_ssl=False))
     ctx = _make_ctx(web_config=cfg)
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
@@ -218,7 +218,7 @@ def test_verify_ssl_true_in_config_passes_to_httpx(monkeypatch: pytest.MonkeyPat
 
     cfg = WebConfig(fetch=WebFetchConfig(verify_ssl=True))
     ctx = _make_ctx(web_config=cfg)
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
@@ -247,7 +247,7 @@ def test_ca_bundle_takes_priority_over_verify_ssl(monkeypatch: pytest.MonkeyPatc
         verify_ssl=False,  # must NOT win — ca_bundle takes priority
     ))
     ctx = _make_ctx(web_config=cfg)
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(
@@ -284,7 +284,7 @@ def test_env_var_fallback_when_config_unset(
     monkeypatch.setenv("SSL_VERIFY", "0")
 
     ctx = _make_ctx(web_config=None)  # no config → env-var fallback path
-    op = WebFetchIROp(kind="web_fetch", url="https://example.com", max_length=50_000)
+    op = WebFetchIROp(kind="web_fetch", url="https://example.com")
 
     monkeypatch.setattr(httpx, "AsyncClient", _CaptureAsyncClient)
     monkeypatch.setattr(

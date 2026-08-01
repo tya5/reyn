@@ -75,7 +75,7 @@ async def test_fence_by_source_and_scan_all(monkeypatch):
     loop = RouterLoop(host=host, chain_id="chain-1822-s2", max_iterations=5)
 
     round1 = tool_result([
-        {"name": "web_fetch", "args": {"url": "http://x", "max_length": 1000}, "id": "call_web"},
+        {"name": "web_fetch", "args": {"url": "http://x"}, "id": "call_web"},
         {"name": "read_file", "args": {"path": "a.py"}, "id": "call_src"},
     ])
     scripted = _CapturingLLM([round1, text_result("done")])
