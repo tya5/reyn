@@ -12,8 +12,19 @@ from reyn.interfaces.slash.budget import budget_cmd, cost_cmd
 from reyn.interfaces.slash.reload import reload_cmd
 from reyn.interfaces.slash.session import session_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
 
 # ── shared stub ────────────────────────────────────────────────────────────
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now, so the list the assertions read is the
+    one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -128,7 +139,7 @@ class _FakeReloader:
 async def test_cost_disabled_replies_tracker_note() -> None:
     """Tier 2: /cost with budget tracker disabled (cost_line returns None) → info note."""
     session = _FakeSession(budget=_FakeBudget(cost_line_result=None))
-    await cost_cmd(session, "")  # type: ignore[arg-type]
+    await cost_cmd(_ctx(session), "")  # type: ignore[arg-type]
     assert "disabled" in session.reply_text()
 
 
@@ -136,7 +147,7 @@ async def test_cost_disabled_replies_tracker_note() -> None:
 async def test_cost_enabled_replies_cost_line() -> None:
     """Tier 2: /cost with active tracker replies with the cost line."""
     session = _FakeSession(budget=_FakeBudget(cost_line_result="42 tok / $0.01"))
-    await cost_cmd(session, "")  # type: ignore[arg-type]
+    await cost_cmd(_ctx(session), "")  # type: ignore[arg-type]
     assert "42 tok / $0.01" in session.reply_text()
 
 
@@ -147,7 +158,7 @@ async def test_cost_enabled_replies_cost_line() -> None:
 async def test_budget_full_disabled_replies_tracker_note() -> None:
     """Tier 2: /budget with tracker disabled → info note."""
     session = _FakeSession(budget=_FakeBudget(budget_full_result=None))
-    await budget_cmd(session, "")  # type: ignore[arg-type]
+    await budget_cmd(_ctx(session), "")  # type: ignore[arg-type]
     assert "disabled" in session.reply_text()
 
 
@@ -155,7 +166,7 @@ async def test_budget_full_disabled_replies_tracker_note() -> None:
 async def test_budget_full_replies_full_text() -> None:
     """Tier 2: /budget with active tracker replies with the full breakdown text."""
     session = _FakeSession(budget=_FakeBudget(budget_full_result="Breakdown here"))
-    await budget_cmd(session, "")  # type: ignore[arg-type]
+    await budget_cmd(_ctx(session), "")  # type: ignore[arg-type]
     assert "Breakdown here" in session.reply_text()
 
 
@@ -163,7 +174,7 @@ async def test_budget_full_replies_full_text() -> None:
 async def test_budget_reset_disabled_replies_tracker_note() -> None:
     """Tier 2: /budget reset with tracker disabled → info note."""
     session = _FakeSession(budget=_FakeBudget(reset_all_result=None))
-    await budget_cmd(session, "reset")  # type: ignore[arg-type]
+    await budget_cmd(_ctx(session), "reset")  # type: ignore[arg-type]
     assert "disabled" in session.reply_text()
 
 
@@ -171,7 +182,7 @@ async def test_budget_reset_disabled_replies_tracker_note() -> None:
 async def test_budget_reset_no_agent_tokens_says_reset() -> None:
     """Tier 2: /budget reset with no per-agent data confirms reset without detail lines."""
     session = _FakeSession(budget=_FakeBudget(reset_all_result={}))
-    await budget_cmd(session, "reset")  # type: ignore[arg-type]
+    await budget_cmd(_ctx(session), "reset")  # type: ignore[arg-type]
     text = session.reply_text()
     assert "reset" in text.lower()
     assert "daily" in text.lower()
@@ -182,7 +193,7 @@ async def test_budget_reset_with_agent_tokens_includes_per_agent_lines() -> None
     """Tier 2: /budget reset with per-agent token data includes per-agent detail lines."""
     before = {"agent_tokens": {"alpha": 1000}, "agent_cost_usd": {"alpha": 0.05}}
     session = _FakeSession(budget=_FakeBudget(reset_all_result=before))
-    await budget_cmd(session, "reset")  # type: ignore[arg-type]
+    await budget_cmd(_ctx(session), "reset")  # type: ignore[arg-type]
     text = session.reply_text()
     assert "alpha" in text
     assert "1,000" in text
@@ -195,7 +206,7 @@ async def test_budget_reset_with_agent_tokens_includes_per_agent_lines() -> None
 async def test_session_no_registry_replies_error() -> None:
     """Tier 2: /session without a registry → error."""
     session = _FakeSession(registry=None)
-    await session_cmd(session, "new")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "new")  # type: ignore[arg-type]
     assert session.error_text()
 
 
@@ -204,7 +215,7 @@ async def test_session_no_attached_agent_replies_error() -> None:
     """Tier 2: /session with no agent attached → error."""
     reg = _FakeRegistry(attached_name=None)
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "new")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "new")  # type: ignore[arg-type]
     assert session.error_text()
 
 
@@ -213,7 +224,7 @@ async def test_session_new_replies_new_sid() -> None:
     """Tier 2: /session new with successful spawn → reply includes new session id."""
     reg = _FakeRegistry(spawn_result="s2")
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "new")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "new")  # type: ignore[arg-type]
     assert "s2" in session.reply_text()
 
 
@@ -222,7 +233,7 @@ async def test_session_new_spawn_error_replies_error() -> None:
     """Tier 2: /session new when spawn raises ValueError → error."""
     reg = _FakeRegistry(spawn_raises=ValueError("dup"))
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "new")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "new")  # type: ignore[arg-type]
     assert session.error_text()
 
 
@@ -230,7 +241,7 @@ async def test_session_new_spawn_error_replies_error() -> None:
 async def test_session_switch_no_sid_replies_usage() -> None:
     """Tier 2: /session switch (no sid arg) → usage error."""
     session = _FakeSession(registry=_FakeRegistry())
-    await session_cmd(session, "switch")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "switch")  # type: ignore[arg-type]
     assert session.error_text()
 
 
@@ -239,7 +250,7 @@ async def test_session_switch_unknown_sid_replies_error() -> None:
     """Tier 2: /session switch to unknown sid → error."""
     reg = _FakeRegistry(get_session_result=None)
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "switch missing")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "switch missing")  # type: ignore[arg-type]
     assert session.error_text()
 
 
@@ -248,7 +259,7 @@ async def test_session_switch_known_sid_emits_sentinel() -> None:
     """Tier 2: /session switch to a known sid emits the __session_switch_request__ sentinel."""
     reg = _FakeRegistry(get_session_result=object())
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "switch s2")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "switch s2")  # type: ignore[arg-type]
     assert "__session_switch_request__" in session.outbox_kinds()
     # The sentinel text is the target sid
     sentinel = next(m for m in session._outbox if m.kind == "__session_switch_request__")
@@ -260,7 +271,7 @@ async def test_session_list_no_sessions_replies_note() -> None:
     """Tier 2: /session list with no loaded sessions → informational note."""
     reg = _FakeRegistry(session_ids=[])
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "list")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "list")  # type: ignore[arg-type]
     assert session.reply_text()
     assert not session.error_text()
 
@@ -270,7 +281,7 @@ async def test_session_list_marks_focused_with_star() -> None:
     """Tier 2: /session list marks the currently focused session with '*'."""
     reg = _FakeRegistry(session_ids=["main", "s2"], attached_sid="s2")
     session = _FakeSession(registry=reg)
-    await session_cmd(session, "list")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "list")  # type: ignore[arg-type]
     text = session.reply_text()
     assert "* s2" in text
     assert "main" in text
@@ -280,7 +291,7 @@ async def test_session_list_marks_focused_with_star() -> None:
 async def test_session_unknown_sub_replies_usage_error() -> None:
     """Tier 2: /session with unrecognised sub-command → usage error."""
     session = _FakeSession(registry=_FakeRegistry())
-    await session_cmd(session, "frobnicate")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session), "frobnicate")  # type: ignore[arg-type]
     assert session.error_text()
 
 
@@ -291,7 +302,7 @@ async def test_session_unknown_sub_replies_usage_error() -> None:
 async def test_reload_no_reloader_replies_error() -> None:
     """Tier 2: /reload when session has no hot-reloader → error reply."""
     session = _FakeSession()
-    await reload_cmd(session, "")  # type: ignore[arg-type]
+    await reload_cmd(_ctx(session), "")  # type: ignore[arg-type]
     assert session.error_text()
     assert "not available" in session.error_text()
 
@@ -301,7 +312,7 @@ async def test_reload_calls_request_reload_and_replies() -> None:
     """Tier 2: /reload with reloader wired → calls request_reload(source='operator') + success reply."""
     reloader = _FakeReloader()
     session = _FakeSession(hot_reloader=reloader)
-    await reload_cmd(session, "")  # type: ignore[arg-type]
+    await reload_cmd(_ctx(session), "")  # type: ignore[arg-type]
     assert reloader.calls == [{"source": "operator"}]
     assert session.reply_text()
     assert not session.error_text()

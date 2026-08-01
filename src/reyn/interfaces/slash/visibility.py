@@ -8,12 +8,7 @@ Session-scoped (this session only); live next turn; persists across restart (ste
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, reply_error, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 _KINDS = ("tool", "mcp", "category")
 
@@ -23,7 +18,7 @@ _KINDS = ("tool", "mcp", "category")
     summary="Toggle this session's visibility of a tool / mcp / category",
     usage="/visibility on|off <tool|mcp|category> <name>",
 )
-async def visibility_cmd(session: "Session", args: str) -> None:
+async def visibility_cmd(ctx: "SlashContext", args: str) -> None:
     """``/visibility on|off <kind> <name>`` — hide/show a capability from the LLM for THIS session.
 
     ``off`` hides it next turn; ``on`` restores it (up to the agent envelope — an envelope-denied
@@ -31,18 +26,18 @@ async def visibility_cmd(session: "Session", args: str) -> None:
     parts = args.split()
     if len(parts) != 3 or parts[0] not in ("on", "off") or parts[1] not in _KINDS:
         await reply_error(
-            session, "usage: /visibility on|off <tool|mcp|category> <name>",
+            ctx, "usage: /visibility on|off <tool|mcp|category> <name>",
         )
         return
     on = parts[0] == "on"
     kind, name = parts[1], parts[2]
-    setter = getattr(session, "set_capability_visible", None)
+    setter = getattr(ctx.session, "set_capability_visible", None)
     if setter is None:
-        await reply_error(session, "visibility toggle is not available in this session")
+        await reply_error(ctx, "visibility toggle is not available in this session")
         return
     setter(kind, name, on)
     await reply(
-        session,
+        ctx,
         f"{kind} {name!r} is now {'visible' if on else 'hidden'} for this session "
         f"(applies next turn; session-scoped; persists across restart)",
     )

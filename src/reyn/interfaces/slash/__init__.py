@@ -5,14 +5,19 @@ Add a new command with three lines::
     from reyn.interfaces.slash import slash, reply
 
     @slash("ping", summary="Echo pong")
-    async def ping_cmd(session, args: str) -> None:
-        await reply(session, "pong")
+    async def ping_cmd(ctx, args: str) -> None:
+        await reply(ctx, "pong")
 
 The decorator handles registration. `reply()` / `reply_error()` wrap
 the OutboxMessage construction so handlers stay focused on logic.
 
-For commands that just delegate to a `session._slash_X` method, the
-body is a one-liner — see `chat.py`, `agents.py`, `budget.py`.
+★ A handler is handed a :class:`SlashContext`, NOT a ``Session`` (#3595 S4).
+Slash is a client-side layer — the owner's design is that a client interprets
+``/``-prefixed text and maps it onto published operations, and that ``Session``
+never interprets a string — so the dependency a handler is allowed to take is
+the client seam, :class:`~reyn.interfaces.transport.client_transport.ClientTransport`.
+``reply()`` writes through it. See :class:`SlashContext` for what the
+``session`` field is still doing there and why it is temporary.
 
 The TUI palette and session dispatch read from `REGISTRY` directly,
 so registered commands are immediately available everywhere.
@@ -20,7 +25,10 @@ so registered commands are immediately available everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterable
+
+if TYPE_CHECKING:
+    from reyn.interfaces.transport.client_transport import ClientTransport
 
 HandlerFn = Callable[..., Awaitable[None]]
 # CompleterFn signature: ``(session, arg_partial: str = "") -> list[str]``.
@@ -31,13 +39,42 @@ HandlerFn = Callable[..., Awaitable[None]]
 CompleterFn = Callable[..., list[str]]
 
 
+@dataclass(frozen=True)
+class SlashContext:
+    """What a slash handler is handed (#3595 S4).
+
+    ``transport`` is the dependency the layer is SUPPOSED to have: the client
+    seam every reyn client already writes through. All display output goes here
+    via :func:`reply` / :func:`reply_error`, so no handler holds the session's
+    outbox any more.
+
+    ``session`` is **migration residue, not a design element.** #3595 S4 converts
+    the dependency that all 25 commands shared — the reply path — in one
+    increment; the session-side reads that remain (a registry lookup, the budget
+    gateway, the model override, an intervention-id prefix resolution) each need
+    an operation designed for them, and designing 25 commands' worth of
+    operations inside the increment that moves the seam would make neither
+    reviewable. Every remaining private access through this field is enumerated
+    with its reason in ``tests/test_3595_s4_slash_handler_seam.py``, whose gate
+    is a RATCHET: the declared set may shrink, and a member not in it is RED.
+
+    ★ The success metric of the arc is that ``Session``'s public surface does not
+    GROW while that set shrinks. Publishing ``_x`` as ``x`` to satisfy a handler
+    would ratify the encapsulation break instead of closing it, so the same test
+    file pins the public-member count as a ceiling.
+    """
+
+    transport: "ClientTransport"
+    session: Any = None
+
+
 @dataclass
 class SlashCommand:
     """Descriptor for a single slash command."""
 
     name: str               # command name without leading /  (e.g. "list")
     summary: str            # one-line description shown in /help and palette
-    handler: HandlerFn      # async (session, args: str) -> None
+    handler: HandlerFn      # async (ctx: SlashContext, args: str) -> None
     aliases: tuple[str, ...] = ()
     completer: CompleterFn | None = None  # optional: (session, arg_partial="") -> list[str]
     hidden: bool = False    # if True, omit from /help and the Tab palette
@@ -185,7 +222,7 @@ def slash(
     """Decorator that registers `fn` as a slash command on import.
 
     Arguments mirror :class:`SlashCommand`. The decorated function must be
-    `async def fn(session, args: str) -> None`.
+    `async def fn(ctx: SlashContext, args: str) -> None`.
 
     ``usage`` is the optional structured usage line surfaced by ``/help <cmd>``
     and as the completion popup's argument-stage header row (see
@@ -215,22 +252,34 @@ def slash(
 # ── reply helpers ──────────────────────────────────────────────────────────
 
 
-async def reply(session: "object", text: str, *, kind: str = "system") -> None:
-    """Emit a slash-command reply via the session outbox.
+async def reply(ctx: SlashContext, text: str, *, kind: str = "system") -> None:
+    """Emit a slash-command reply through the client transport.
 
     Default kind is ``system`` (persistent log entry with a neutral
     ``system`` header) so prior command outputs remain visible when the
     user runs multiple commands in succession. Pass ``kind="status"``
     for ephemeral one-line indicators that should overwrite. Use
     ``reply_error`` for errors.
+
+    ★ This one function carried the ``session._put_outbox`` dependency for
+    effectively every registered command (#3595 S4): the five handlers holding
+    it directly, plus all the rest through here. A slash reply is
+    CLIENT-AUTHORED display — ``ClientTransport.put_display``'s own docstring
+    named the ``/copy`` result as one of its payloads before this arc existed —
+    so it belongs on the client seam, and going through it is what lets the
+    dispatch itself move client-side in S5.
+
+    Stays ``async`` although ``put_display`` is not: the callers are ``await``
+    expressions in 25 modules, and a signature flip would be churn in the same
+    commit as the seam change, hiding the seam change inside it.
     """
     from reyn.runtime.outbox import OutboxMessage
-    await session._put_outbox(OutboxMessage(kind=kind, text=text))
+    ctx.transport.put_display(OutboxMessage(kind=kind, text=text))
 
 
-async def reply_error(session: "object", text: str) -> None:
+async def reply_error(ctx: SlashContext, text: str) -> None:
     """Emit an error message (red ✗ in the TUI)."""
-    await reply(session, text, kind="error")
+    await reply(ctx, text, kind="error")
 
 
 # ── trigger registration of built-in commands ─────────────────────────────
@@ -264,6 +313,7 @@ __all__ = [
     "REGISTRY",
     "SlashRegistry",
     "SlashCommand",
+    "SlashContext",
     "slash",
     "reply",
     "reply_error",

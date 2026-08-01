@@ -11,10 +11,10 @@ the palette's ``c.name.startswith(token)`` filter happy for ``/q`` and
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import slash
+from reyn.interfaces.slash import SlashContext, slash
 
 
-async def _quit_handler(session: "object", args: str) -> None:
+async def _quit_handler(ctx: "SlashContext", args: str) -> None:
     """No-op — quit is intercepted at the input level before this fires."""
 
 

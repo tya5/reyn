@@ -11,8 +11,19 @@ import pytest
 
 from reyn.interfaces.slash.reset import reset_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
 
 # ── stubs ──────────────────────────────────────────────────────────────────
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -42,7 +53,7 @@ class _FakeRegistry:
 async def test_reset_no_confirm_sends_warning_not_error() -> None:
     """Tier 2: /reset without 'confirm' sends a warning system reply, not an error."""
     session = _FakeSession()
-    await reset_cmd(session, "")
+    await reset_cmd(_ctx(session), "")
     assert session.system_text(), "expected warning reply"
     assert not session.error_text()
 
@@ -51,7 +62,7 @@ async def test_reset_no_confirm_sends_warning_not_error() -> None:
 async def test_reset_no_confirm_warns_to_type_confirm() -> None:
     """Tier 2: the warning tells the user to type /reset confirm."""
     session = _FakeSession()
-    await reset_cmd(session, "anything_but_confirm")
+    await reset_cmd(_ctx(session), "anything_but_confirm")
     assert "confirm" in session.system_text().lower()
 
 
@@ -59,7 +70,7 @@ async def test_reset_no_confirm_warns_to_type_confirm() -> None:
 async def test_reset_confirm_no_registry_sends_error() -> None:
     """Tier 2: /reset confirm with no registry wired replies an error."""
     session = _FakeSession(registry=None)
-    await reset_cmd(session, "confirm")
+    await reset_cmd(_ctx(session), "confirm")
     assert session.error_text(), "expected error when no registry"
     assert not session.system_text()
 
@@ -69,7 +80,7 @@ async def test_reset_confirm_no_project_root_sends_error() -> None:
     """Tier 2: /reset confirm with registry but no _project_root replies an error."""
     registry = _FakeRegistry(project_root=None)
     session = _FakeSession(registry=registry)
-    await reset_cmd(session, "confirm")
+    await reset_cmd(_ctx(session), "confirm")
     assert session.error_text(), "expected error when no _project_root"
 
 
@@ -78,7 +89,7 @@ async def test_reset_confirm_valid_state_sends_success(tmp_path: Path) -> None:
     """Tier 2: /reset confirm with a valid project root sends a success reply."""
     registry = _FakeRegistry(project_root=tmp_path)
     session = _FakeSession(registry=registry)
-    await reset_cmd(session, "confirm")
+    await reset_cmd(_ctx(session), "confirm")
     text = session.system_text()
     assert text, f"expected success reply; got errors: {session.error_text()!r}"
     assert not session.error_text()

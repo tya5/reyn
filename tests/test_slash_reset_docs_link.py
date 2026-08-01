@@ -8,7 +8,8 @@ Covers the surface added in Wave-12 T2-5b (A#6):
 Policy compliance:
 - No MagicMock / AsyncMock / patch — real instances throughout.
 - Docstring first line declares the Tier.
-- Uses only public surfaces: reset_cmd handler + captured reply text.
+- Uses only public surfaces: reset_cmd handler + the client transport's
+  recorded display (#3595 S4 routes a slash reply through that seam).
 """
 from __future__ import annotations
 
@@ -20,15 +21,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-
-class _FakeSession:
-    """Minimal session double that captures reply text via _put_outbox."""
-
-    def __init__(self) -> None:
-        self.messages: list[str] = []
-
-    async def _put_outbox(self, msg: object) -> None:
-        self.messages.append(getattr(msg, "text", str(msg)))
+from tests._support.slash import slash_ctx  # noqa: E402 — after the sys.path bootstrap
 
 
 def test_reset_confirm_includes_docs_path() -> None:
@@ -36,11 +29,11 @@ def test_reset_confirm_includes_docs_path() -> None:
     from reyn.interfaces.slash import REGISTRY  # noqa: F401 — triggers registration
     from reyn.interfaces.slash.reset import reset_cmd
 
-    session = _FakeSession()
-    asyncio.run(reset_cmd(session, ""))
+    ctx = slash_ctx()
+    asyncio.run(reset_cmd(ctx, ""))
 
-    assert session.messages, "expected at least one reply from /reset"
-    combined = "\n".join(session.messages)
+    assert ctx.transport.displayed, "expected at least one reply from /reset"
+    combined = "\n".join(ctx.transport.texts())
     assert "crash-recovery-and-resume.md" in combined, (
         f"Expected docs link in /reset prompt, got: {combined!r}"
     )

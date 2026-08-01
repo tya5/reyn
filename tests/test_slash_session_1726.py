@@ -16,6 +16,17 @@ import pytest
 from reyn.interfaces.slash import REGISTRY
 from reyn.interfaces.slash.session import session_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_calls)
 
 
 class _StubRegistry:
@@ -91,7 +102,7 @@ async def test_session_new_spawns_and_reports_sid():
     """Tier 2: #1726 — `/session new` calls spawn_session and reports the new sid."""
     reg = _StubRegistry()
     s = _FakeSession(reg)
-    await session_cmd(s, "new")
+    await session_cmd(_ctx(s), "new")
     assert reg.spawned == ["default"], "spawn_session invoked for the attached agent"
     assert "s1" in s.reply_text(), "new sid surfaced to the user"
 
@@ -102,7 +113,7 @@ async def test_session_switch_known_posts_sentinel():
     (the focus flip is driven by the registry forwarder, mirroring /attach)."""
     reg = _StubRegistry(sids=("main", "s1"))
     s = _FakeSession(reg)
-    await session_cmd(s, "switch s1")
+    await session_cmd(_ctx(s), "switch s1")
     switch_sids = [m.text for m in s.outbox_calls if m.kind == "__session_switch_request__"]
     assert switch_sids == ["s1"], "exactly the one switch sentinel, carrying the target sid"
 
@@ -114,7 +125,7 @@ async def test_session_switch_unknown_is_graceful():
     posts NO sentinel (no crash)."""
     reg = _StubRegistry(sids=("main",))
     s = _FakeSession(reg)
-    await session_cmd(s, "switch nope")
+    await session_cmd(_ctx(s), "switch nope")
     assert not [m for m in s.outbox_calls if m.kind == "__session_switch_request__"]
     err = s.reply_text()
     assert "nope" in err, "user-facing error names the bad sid"
@@ -128,7 +139,7 @@ async def test_session_list_marks_focused():
     """Tier 2: #1726 — `/session list` lists the agent's sessions with a focus marker."""
     reg = _StubRegistry(sids=("main", "s1"), focused="s1")
     s = _FakeSession(reg)
-    await session_cmd(s, "list")
+    await session_cmd(_ctx(s), "list")
     body = s.reply_text()
     assert "main" in body and "s1" in body
     assert "* s1" in body, "the focused session is marked"

@@ -20,7 +20,7 @@ replacement.
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
 @slash(
@@ -29,11 +29,11 @@ from reyn.interfaces.slash import reply, reply_error, slash
     usage="/reset confirm",
     see_also=("docs/guide/crash-recovery-and-resume.md",),
 )
-async def reset_cmd(session: "object", args: str) -> None:
+async def reset_cmd(ctx: "SlashContext", args: str) -> None:
     token = args.strip().lower()
     if token != "confirm":
         await reply(
-            session,
+            ctx,
             "⚠ This will delete all in-flight run state "
             "(snapshots + WAL). Audit logs are preserved.\n"
             "Type `/reset confirm` to proceed, or anything else to abort.\n"
@@ -42,17 +42,17 @@ async def reset_cmd(session: "object", args: str) -> None:
         )
         return
 
-    registry = getattr(session, "_registry", None)
+    registry = getattr(ctx.session, "_registry", None)
     if registry is None:
         await reply_error(
-            session,
+            ctx,
             "registry not wired; /reset only works in `reyn chat`",
         )
         return
     project_root = getattr(registry, "_project_root", None)
     if project_root is None:
         await reply_error(
-            session,
+            ctx,
             "registry has no _project_root; /reset cannot locate state directory",
         )
         return
@@ -64,7 +64,7 @@ async def reset_cmd(session: "object", args: str) -> None:
     proceeded = _reset_project_state(project_root, confirm=False)
     if proceeded:
         await reply(
-            session,
+            ctx,
             "✓ State reset complete. Snapshots + WAL removed; audit logs "
             "preserved. Restart `reyn chat` for the changes to fully apply "
             "to the active session.",
@@ -73,4 +73,4 @@ async def reset_cmd(session: "object", args: str) -> None:
         # _reset_project_state only returns False when confirm=True and the
         # interactive prompt is declined — we passed confirm=False, so this
         # branch shouldn't normally hit. Guarded for defence in depth.
-        await reply_error(session, "Reset did not proceed (unexpected).")
+        await reply_error(ctx, "Reset did not proceed (unexpected).")

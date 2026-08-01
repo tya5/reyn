@@ -21,7 +21,7 @@ typical project layout).
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
 def _format_currently_line(session: "object") -> str:
@@ -55,13 +55,13 @@ def _format_currently_line(session: "object") -> str:
     ),
     usage="/clear-history confirm",
 )
-async def clear_history_cmd(session: "object", args: str) -> None:
+async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
     token = args.strip().lower()
     if token != "confirm":
-        currently = _format_currently_line(session)
+        currently = _format_currently_line(ctx.session)
         preamble = f"{currently}\n" if currently else ""
         await reply(
-            session,
+            ctx,
             f"{preamble}"
             "⚠ This will clear the chat history and the action-usage "
             "ranking. Audit logs (.reyn/events/), in-flight run state "
@@ -72,9 +72,9 @@ async def clear_history_cmd(session: "object", args: str) -> None:
         )
         return
 
-    history = getattr(session, "history", None)
-    history_path = getattr(session, "history_path", None)
-    tracker = getattr(session, "_action_usage_tracker", None)
+    history = getattr(ctx.session, "history", None)
+    history_path = getattr(ctx.session, "history_path", None)
+    tracker = getattr(ctx.session, "_action_usage_tracker", None)
 
     cleared_parts: list[str] = []
 
@@ -92,7 +92,7 @@ async def clear_history_cmd(session: "object", args: str) -> None:
             history_path.unlink(missing_ok=True)
         except OSError as exc:
             await reply_error(
-                session,
+                ctx,
                 f"failed to remove history file {history_path}: {exc}",
             )
             return
@@ -111,13 +111,13 @@ async def clear_history_cmd(session: "object", args: str) -> None:
 
     if not cleared_parts:
         await reply(
-            session,
+            ctx,
             "✓ Nothing to clear (= history empty, no action-usage tracker).",
         )
         return
 
     await reply(
-        session,
+        ctx,
         "✓ Cleared: " + ", ".join(cleared_parts) + ". "
         "Audit logs and run state preserved.",
     )

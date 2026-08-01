@@ -9,6 +9,17 @@ import pytest
 
 from reyn.interfaces.slash.compact import compact_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -31,7 +42,7 @@ class _FakeSession:
 async def test_compact_no_engine_sends_error() -> None:
     """Tier 2: /compact with no _compact_now_for_op wired replies an error."""
     session = _FakeSession()  # no compact_now attr
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     assert session.error_text(), "expected error reply when engine absent"
     assert not session.reply_text(), "expected no system reply when engine absent"
 
@@ -43,7 +54,7 @@ async def test_compact_engine_raises_sends_error_with_message() -> None:
         raise RuntimeError("disk full")
 
     session = _FakeSession(compact_now=_raising)
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     err = session.error_text()
     assert err, "expected an error reply"
     assert "disk full" in err
@@ -56,7 +67,7 @@ async def test_compact_nothing_to_compact_no_free_window() -> None:
         return {"summarized_turns": 0}
 
     session = _FakeSession(compact_now=_nothing)
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "nothing" in text.lower() or "already fits" in text.lower()
     assert not session.error_text()
@@ -69,7 +80,7 @@ async def test_compact_nothing_to_compact_with_free_window_includes_token_count(
         return {"summarized_turns": 0, "free_window_after": 45000}
 
     session = _FakeSession(compact_now=_nothing)
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "45000" in text, f"expected free token count in reply; got: {text!r}"
 
@@ -85,7 +96,7 @@ async def test_compact_success_mentions_summarized_turns() -> None:
         }
 
     session = _FakeSession(compact_now=_success)
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "3" in text, "turn count not in reply"
     assert not session.error_text()
@@ -98,7 +109,7 @@ async def test_compact_success_singular_turn_word() -> None:
         return {"summarized_turns": 1, "compressed_tokens": 400, "bridge_tokens": 60}
 
     session = _FakeSession(compact_now=_one)
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "1" in text, f"count not in reply; got: {text!r}"
     assert "turn" in text, f"singular 'turn' not in reply; got: {text!r}"
@@ -112,6 +123,6 @@ async def test_compact_success_plural_turns_word() -> None:
         return {"summarized_turns": 5, "compressed_tokens": 2000, "bridge_tokens": 300}
 
     session = _FakeSession(compact_now=_many)
-    await compact_cmd(session, "")
+    await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "turns" in text, f"plural not used; got: {text!r}"

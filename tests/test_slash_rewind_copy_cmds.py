@@ -12,8 +12,19 @@ import pytest
 from reyn.interfaces.slash.copy import copy_cmd
 from reyn.interfaces.slash.rewind import rewind_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
 
 # ── stubs ──────────────────────────────────────────────────────────────────
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now, so the list the assertions read is the
+    one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -69,7 +80,7 @@ class _FakeRegistry:
 async def test_rewind_bare_no_registry_no_crash() -> None:
     """Tier 2: bare /rewind with no registry attached replies a graceful no-checkpoints message."""
     session = _FakeSession()  # no _registry attr
-    await rewind_cmd(session, "")
+    await rewind_cmd(_ctx(session), "")
     assert session.system_text(), "expected a system reply"
     assert not session.error_text()
 
@@ -79,7 +90,7 @@ async def test_rewind_bare_empty_points_replies_no_checkpoints() -> None:
     """Tier 2: bare /rewind with registry that has no points → 'no earlier checkpoints' reply."""
     registry = _FakeRegistry(points=[])
     session = _FakeSession(registry=registry)
-    await rewind_cmd(session, "")
+    await rewind_cmd(_ctx(session), "")
     assert "no earlier checkpoints" in session.system_text()
 
 
@@ -89,7 +100,7 @@ async def test_rewind_bare_with_points_emits_rewind_list_sentinel() -> None:
     points = [{"seq": 1, "kind": "phase_start"}, {"seq": 2, "kind": "phase_end"}]
     registry = _FakeRegistry(points=points)
     session = _FakeSession(registry=registry)
-    await rewind_cmd(session, "")
+    await rewind_cmd(_ctx(session), "")
     assert "__rewind_list__" in session.outbox_kinds()
 
 
@@ -99,7 +110,7 @@ async def test_rewind_bare_with_points_calls_set_pending_command_ui() -> None:
     points = [{"seq": 5, "kind": "phase_start"}]
     registry = _FakeRegistry(points=points)
     session = _FakeSession(registry=registry)
-    await rewind_cmd(session, "")
+    await rewind_cmd(_ctx(session), "")
     assert session.pending_ui_calls, "set_pending_command_ui was not called"
     assert session.pending_ui_calls[0].get("kind") == "rewind"
 
@@ -111,7 +122,7 @@ async def test_rewind_bare_with_points_calls_set_pending_command_ui() -> None:
 async def test_rewind_non_integer_arg_is_an_error() -> None:
     """Tier 2: /rewind with a non-integer arg replies an error, not a crash."""
     session = _FakeSession()
-    await rewind_cmd(session, "notanumber")
+    await rewind_cmd(_ctx(session), "notanumber")
     assert session.error_text(), "expected error on non-integer arg"
     assert not session.system_text()
 
@@ -120,7 +131,7 @@ async def test_rewind_non_integer_arg_is_an_error() -> None:
 async def test_rewind_direct_no_registry_is_an_error() -> None:
     """Tier 2: /rewind <N> with no registry attached replies an error."""
     session = _FakeSession()  # no _registry
-    await rewind_cmd(session, "3")
+    await rewind_cmd(_ctx(session), "3")
     assert session.error_text(), "expected error when no registry"
 
 
@@ -130,7 +141,7 @@ async def test_rewind_direct_checkout_raises_surfaces_error() -> None:
     exc = RuntimeError("seq 99 not found in WAL")
     registry = _FakeRegistry(checkout_raises=exc)
     session = _FakeSession(registry=registry)
-    await rewind_cmd(session, "99")
+    await rewind_cmd(_ctx(session), "99")
     err = session.error_text()
     assert "seq 99 not found" in err
 
@@ -141,7 +152,7 @@ async def test_rewind_direct_success_mentions_agent_count() -> None:
     result = {"agents": ["a1", "a2", "a3"], "target_n": 7}
     registry = _FakeRegistry(checkout_result=result)
     session = _FakeSession(registry=registry)
-    await rewind_cmd(session, "7")
+    await rewind_cmd(_ctx(session), "7")
     text = session.system_text()
     assert "3" in text, f"agent count not in reply: {text!r}"
     assert not session.error_text()
@@ -153,7 +164,7 @@ async def test_rewind_direct_success_calls_checkout_with_parsed_int() -> None:
     result = {"agents": [], "target_n": 42}
     registry = _FakeRegistry(checkout_result=result)
     session = _FakeSession(registry=registry)
-    await rewind_cmd(session, "42")
+    await rewind_cmd(_ctx(session), "42")
     assert registry.checkout_calls == [42]
 
 
@@ -164,7 +175,7 @@ async def test_rewind_direct_success_calls_checkout_with_parsed_int() -> None:
 async def test_copy_emits_copy_sentinel_kind() -> None:
     """Tier 2: /copy always emits the __copy_last_reply__ sentinel kind."""
     session = _FakeSession()
-    await copy_cmd(session, "")
+    await copy_cmd(_ctx(session), "")
     assert "__copy_last_reply__" in session.outbox_kinds()
 
 
@@ -172,7 +183,7 @@ async def test_copy_emits_copy_sentinel_kind() -> None:
 async def test_copy_passes_args_verbatim_as_text() -> None:
     """Tier 2: /copy <N> puts the raw arg string in the sentinel's text field."""
     session = _FakeSession()
-    await copy_cmd(session, "2")
+    await copy_cmd(_ctx(session), "2")
     msgs = [m for m in session._outbox if m.kind == "__copy_last_reply__"]
     assert msgs and msgs[0].text == "2"
 
@@ -181,6 +192,6 @@ async def test_copy_passes_args_verbatim_as_text() -> None:
 async def test_copy_list_arg_passes_through() -> None:
     """Tier 2: /copy list passes the 'list' token verbatim (the output loop validates)."""
     session = _FakeSession()
-    await copy_cmd(session, "list")
+    await copy_cmd(_ctx(session), "list")
     msgs = [m for m in session._outbox if m.kind == "__copy_last_reply__"]
     assert msgs and msgs[0].text == "list"

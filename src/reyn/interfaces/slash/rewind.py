@@ -14,7 +14,7 @@ Two forms:
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 from reyn.runtime.outbox import OutboxMessage
 
 
@@ -23,7 +23,7 @@ from reyn.runtime.outbox import OutboxMessage
     summary="Time-travel to an earlier checkpoint (no arg = pick from a menu)",
     usage="/rewind [seq]",
 )
-async def rewind_cmd(session: "object", args: str) -> None:
+async def rewind_cmd(ctx: "SlashContext", args: str) -> None:
     arg = (args or "").strip()
 
     # Bare /rewind → open the checkpoint picker. F4: publish a command-UI request
@@ -31,18 +31,18 @@ async def rewind_cmd(session: "object", args: str) -> None:
     # list). Replaces a dead __rewind_menu__ sentinel that no inline handler
     # consumed (a silent no-op before this).
     if not arg:
-        registry = getattr(session, "_registry", None)
+        registry = getattr(ctx.session, "_registry", None)
         points = list(reversed(registry.list_rewind_points())) if registry is not None else []
         if not points:
-            await reply(session, "/rewind: no earlier checkpoints to rewind to")
+            await reply(ctx, "/rewind: no earlier checkpoints to rewind to")
             return
         # Inline CUI: the region polls this and shows a ↑↓ selector.
-        session.set_pending_command_ui({"kind": "rewind", "points": points})
+        ctx.session.set_pending_command_ui({"kind": "rewind", "points": points})
         # --cui fallback: a text list (the output loop renders this only on the
         # plain path; the inline path skips it since the region shows a selector).
         lines = ["rewind to a checkpoint with /rewind <seq>:"]
         lines += [f"  seq {p.get('seq')} · {p.get('kind', '?')}" for p in points]
-        await session._put_outbox(
+        ctx.transport.put_display(
             OutboxMessage(kind="__rewind_list__", text="\n".join(lines))
         )
         return
@@ -51,12 +51,12 @@ async def rewind_cmd(session: "object", args: str) -> None:
     try:
         target = int(arg)
     except ValueError:
-        await reply_error(session, f"/rewind: expected a checkpoint seq (integer), got {arg!r}")
+        await reply_error(ctx, f"/rewind: expected a checkpoint seq (integer), got {arg!r}")
         return
 
-    registry = getattr(session, "_registry", None)
+    registry = getattr(ctx.session, "_registry", None)
     if registry is None:
-        await reply_error(session, "/rewind: no agent registry attached (rewind unavailable)")
+        await reply_error(ctx, "/rewind: no agent registry attached (rewind unavailable)")
         return
 
     try:
@@ -66,7 +66,7 @@ async def rewind_cmd(session: "object", args: str) -> None:
         # (no sibling-gap); checkout subsumes rewind_to for active seqs.
         result = await registry.checkout(target)
     except Exception as exc:  # noqa: BLE001 — surface the reason to the user
-        await reply_error(session, f"/rewind: {exc}")
+        await reply_error(ctx, f"/rewind: {exc}")
         return
 
     agents = result.get("agents", [])
@@ -85,7 +85,7 @@ async def rewind_cmd(session: "object", args: str) -> None:
         bits.append(f"{finished} in-flight finished")
     if bits:
         summary += " · " + ", ".join(bits)
-    await reply(session, summary)
+    await reply(ctx, summary)
 
 
 __all__ = ["rewind_cmd"]

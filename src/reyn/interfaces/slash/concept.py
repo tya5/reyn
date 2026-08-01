@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 
 import reyn
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 # Canonical path relative to the project root.  Resolved at call time so
 # tests can inject a custom path via the ``_glossary_path`` kwarg on the
@@ -156,7 +156,7 @@ _GLOSSARY_PATH_HINT = (
     summary="Look up a TUI/reyn concept in the glossary",
     usage="/concept [<term>]",
 )
-async def concept_cmd(session: object, args: str) -> None:  # noqa: D401
+async def concept_cmd(ctx: "SlashContext", args: str) -> None:  # noqa: D401
     term = (args or "").strip()
 
     if not term:
@@ -165,21 +165,21 @@ async def concept_cmd(session: object, args: str) -> None:  # noqa: D401
             "Try /concept plan.\n"
             f"{_GLOSSARY_PATH_HINT}"
         )
-        await reply(session, msg)
+        await reply(ctx, msg)
         return
 
     gloss_path = _default_glossary_path()
     glossary = _load_glossary(gloss_path)
     if glossary is None:
         await reply_error(
-            session,
+            ctx,
             f"glossary unreadable — expected at {_GLOSSARY_REL}",
         )
         return
 
     definition, suggestions = _lookup(term, glossary)
     if definition is not None:
-        await reply(session, f"{term}: {definition}")
+        await reply(ctx, f"{term}: {definition}")
         return
 
     # Miss — compose "did you mean" line
@@ -188,4 +188,4 @@ async def concept_cmd(session: object, args: str) -> None:  # noqa: D401
         msg = f"no glossary entry for '{term}' — {did_you_mean}"
     else:
         msg = f"no glossary entry for '{term}'"
-    await reply_error(session, msg)
+    await reply_error(ctx, msg)

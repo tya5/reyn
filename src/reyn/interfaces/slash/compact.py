@@ -15,12 +15,7 @@ compact op uses), so the freed-token report is the **same contract** as the op:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, reply_error, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
 @slash(
@@ -29,17 +24,17 @@ if TYPE_CHECKING:
     usage="/compact",
     see_also=("docs/reference/runtime/control-ir.md",),
 )
-async def compact_cmd(session: "Session", args: str) -> None:
+async def compact_cmd(ctx: "SlashContext", args: str) -> None:
     """``/compact`` — fire on-demand history compaction and report what it freed.
 
     Routes through the session's compaction wrapper (force_compact_now); reports
     freed tokens + the free window afterwards in exact tokens (same contract as
     the `compact` op). Fail-loud on error rather than a silent no-op.
     """
-    compact_now = getattr(session, "_compact_now_for_op", None)
+    compact_now = getattr(ctx.session, "_compact_now_for_op", None)
     if compact_now is None:
         await reply_error(
-            session,
+            ctx,
             "compaction is not available in this session "
             "(no compaction engine wired).",
         )
@@ -48,7 +43,7 @@ async def compact_cmd(session: "Session", args: str) -> None:
     try:
         result = await compact_now()
     except Exception as exc:  # noqa: BLE001 — surface to the user, never crash the REPL
-        await reply_error(session, f"compaction failed: {exc}")
+        await reply_error(ctx, f"compaction failed: {exc}")
         return
 
     # #191: front the chat compression metric, not router-view `freed_tokens`
@@ -61,7 +56,7 @@ async def compact_cmd(session: "Session", args: str) -> None:
         free_after = result.get("free_window_after")
         tail = f" Free window: ~{free_after} tokens." if free_after is not None else ""
         await reply(
-            session,
+            ctx,
             "✓ Nothing to compact right now — recent history already fits the "
             "window." + tail,
         )
@@ -71,7 +66,7 @@ async def compact_cmd(session: "Session", args: str) -> None:
     bridge = result.get("bridge_tokens", 0)
     word = "turn" if n == 1 else "turns"
     await reply(
-        session,
+        ctx,
         f"✓ Compacted — summarised {n} older {word} (~{compressed} tokens) into a "
         f"~{bridge}-token summary bridge.",
     )
