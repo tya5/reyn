@@ -319,6 +319,8 @@ Use `pypdf` for form-field operations...
 
 `name` and `description` are frontmatter keys read by the install tools (see below) to prefill a `skills.yaml` entry — the config entry's own `description` is what actually reaches the model, so keep it accurate and short (first line only; longer detail belongs in the body). The Markdown body is free-form: this is model-facing instruction text, not a schema the OS parses.
 
+**`name` spelling.** The [Agent Skills specification](https://agentskills.io/specification) constrains `name` to **lowercase letters, numbers, and hyphens only** (max 64 characters, no leading/trailing hyphen, no consecutive hyphens, and it must match the parent directory name). Every skill reyn itself ships obeys that rule — `reyn-cheat-sheet`, `draft-judge-revise`, `reactive-orchestration-plugins`, and the `rag` plugin's `build-and-query-rag-corpus` (#3567 renamed all four from an earlier underscore spelling; there is no alias for the old spelling, so `:draft-judge-revise` is the only way to invoke it). Note what reyn does **not** do: it does not *enforce* the rule on an operator-registered or third-party skill. The `:name` token grammar and the install-time path-safety check (below) both still accept `_`, because rejecting a non-conformant third-party `SKILL.md` outright would be a separate decision from spelling reyn's own skills to the standard.
+
 ## Three-layer exposure
 
 | Layer | What the model sees | Mechanism |
@@ -350,7 +352,7 @@ alias for `REYN_SKILL_DIR`, `src/reyn/plugins/tokens.py`):
 
 ```markdown
 ---
-name: reyn_cheat_sheet
+name: reyn-cheat-sheet
 description: ...
 ---
 

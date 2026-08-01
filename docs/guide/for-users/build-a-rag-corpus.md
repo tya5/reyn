@@ -38,7 +38,7 @@ mcp_install_local(name="reyn_markitdown", command="uvx", args=["markitdown-mcp"]
 
 `install_plugin` is **register-only**: it copies the plugin's files and registers **both MCP servers, both pipelines, and its RAG skill** together — no `permissions:` block to add, because a configured server is granted when the pipeline runs it. **Refuse and nothing is written.** It does **not** install the plugin's Python dependencies (chonkie/apsw/sqlite-vec/fastmcp) for you — that is a separate, deliberate next step:
 
-> **Create the plugin's own venv INSIDE this project, then point the servers at it** — Reyn's LLM does this in-sandbox, following the `build_and_query_rag_corpus` skill's own body, so you normally don't type these yourself. **The venv must live in the project (e.g. `./.venv-rag`), never under `~/.reyn/...`** — an LLM-driven sandboxed command cannot write outside the project's workspace, so a home-dir venv path fails with "Operation not permitted" and the whole flow silently stalls; a home-dir path is also global across every project on the machine, so two unrelated projects would race the same venv:
+> **Create the plugin's own venv INSIDE this project, then point the servers at it** — Reyn's LLM does this in-sandbox, following the `build-and-query-rag-corpus` skill's own body, so you normally don't type these yourself. **The venv must live in the project (e.g. `./.venv-rag`), never under `~/.reyn/...`** — an LLM-driven sandboxed command cannot write outside the project's workspace, so a home-dir venv path fails with "Operation not permitted" and the whole flow silently stalls; a home-dir path is also global across every project on the machine, so two unrelated projects would race the same venv:
 >
 > ```bash
 > python3 -m venv ./.venv-rag
@@ -71,7 +71,7 @@ Each server is **probed before its registration is committed**: if a command doe
 
 ## Use it
 
-In `reyn chat`, just ask — *"ingest the documents in /abs/path/to/docs into a searchable store, then tell me what they say about X"*. Reyn reads its `build_and_query_rag_corpus` skill (reading a bundled reference as needed) and drives both pipelines.
+In `reyn chat`, just ask — *"ingest the documents in /abs/path/to/docs into a searchable store, then tell me what they say about X"*. Reyn reads its `build-and-query-rag-corpus` skill (reading a bundled reference as needed) and drives both pipelines.
 
 To run them yourself, outside a chat session:
 

@@ -1,6 +1,6 @@
 """Tier 2: OS invariant — proposal 0060 F3b sibling PR: the 2 remaining
 curated-5 builtins (Addendum D9.5 #3/#4) that did not ship with the core
-spine (#2912) — the `draft_judge_revise` workflow SKILL and the
+spine (#2912) — the `draft-judge-revise` workflow SKILL and the
 `status_card` present-view.
 
 Co-vet-style pins:
@@ -12,7 +12,7 @@ Co-vet-style pins:
   2. **The skill's SKILL.md is well-formed** (parseable YAML frontmatter
      with `name`/`description`) and its body is wheel-reachable via the same
      `read_builtin_body_bytes` bypass #2913/#2914 established for
-     `reyn_cheat_sheet` (mirrors `test_2913_builtin_body_wheel_reachable.py`'s
+     `reyn-cheat-sheet` (mirrors `test_2913_builtin_body_wheel_reachable.py`'s
      wheel-layout scenario for this second skill).
   3. **The skill's embedded worked example is D5a-executable**: the fenced
      ```yaml``` self-review pipeline definition parses via the REAL pipeline
@@ -58,7 +58,7 @@ from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.tools.pipeline_verbs import _static_analysis_gate
 
-_SKILL_PATH = Path(BUILTIN_SKILLS["draft_judge_revise"]["path"])
+_SKILL_PATH = Path(BUILTIN_SKILLS["draft-judge-revise"]["path"])
 
 
 def _skill_body() -> str:
@@ -67,7 +67,7 @@ def _skill_body() -> str:
 
 def _extract_fenced_block(text: str, lang: str) -> str:
     match = re.search(rf"```{re.escape(lang)}\n(.*?)```", text, re.DOTALL)
-    assert match is not None, f"no ```{lang} fenced block found in draft_judge_revise skill"
+    assert match is not None, f"no ```{lang} fenced block found in draft-judge-revise skill"
     return match.group(1)
 
 
@@ -77,11 +77,11 @@ def _extract_fenced_block(text: str, lang: str) -> str:
 
 
 def test_draft_judge_revise_skill_ships_builtin_provenance_and_inert() -> None:
-    """Tier 2: the draft_judge_revise skill loads with provenance="builtin",
+    """Tier 2: the draft-judge-revise skill loads with provenance="builtin",
     visibility="on_demand" (#2971: out of the menu, reachable via skill_list),
     enabled=True."""
     cfg = build_builtin_config()
-    entry = cfg["skills"]["entries"]["draft_judge_revise"]
+    entry = cfg["skills"]["entries"]["draft-judge-revise"]
     assert entry["provenance"] == "builtin"
     assert entry["visibility"] == "on_demand"
     assert entry.get("enabled", True) is True
@@ -104,7 +104,7 @@ def test_status_card_discoverable_not_auto_enabled() -> None:
 
 
 # ---------------------------------------------------------------------------
-# draft_judge_revise: well-formed SKILL.md + wheel-reachable body
+# draft-judge-revise: well-formed SKILL.md + wheel-reachable body
 # ---------------------------------------------------------------------------
 
 
@@ -116,14 +116,14 @@ def test_skill_frontmatter_is_well_formed() -> None:
     match = re.match(r"^---\n(.*?)\n---\n", body, re.DOTALL)
     assert match is not None, "SKILL.md must open with a YAML frontmatter block"
     frontmatter = yaml.safe_load(match.group(1))
-    assert frontmatter["name"] == "draft_judge_revise"
+    assert frontmatter["name"] == "draft-judge-revise"
     assert isinstance(frontmatter["description"], str) and frontmatter["description"]
 
 
 def test_skill_body_readable_with_project_root_elsewhere(tmp_path, monkeypatch):
     """Tier 2: simulated wheel layout (mirrors
-    test_2913_builtin_body_wheel_reachable.py for the reyn_cheat_sheet skill)
-    -- the draft_judge_revise body reads successfully through the real
+    test_2913_builtin_body_wheel_reachable.py for the reyn-cheat-sheet skill)
+    -- the draft-judge-revise body reads successfully through the real
     read_file op even when project_root has nothing to do with the package's
     on-disk location."""
     monkeypatch.chdir(tmp_path)
@@ -147,7 +147,7 @@ def test_skill_body_readable_with_project_root_elsewhere(tmp_path, monkeypatch):
     result = asyncio.run(handle(op, ctx))
 
     assert result["status"] == "ok", result
-    assert "draft_judge_revise" in result["content"]
+    assert "draft-judge-revise" in result["content"]
     assert "description:" in result["content"]
 
 
@@ -157,7 +157,7 @@ def test_body_read_dir_bypass_reaches_the_second_skill_too() -> None:
     ANY path under skills/, including this second builtin skill."""
     raw = read_builtin_body_bytes(str(_SKILL_PATH))
     assert raw is not None
-    assert b"draft_judge_revise" in raw
+    assert b"draft-judge-revise" in raw
 
 
 # ---------------------------------------------------------------------------

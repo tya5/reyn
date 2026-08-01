@@ -186,7 +186,7 @@ NO_MATCH_ROW = "no matches"
 #: continuation unmistakably subordinate; the reported symptom was three skill
 #: rows reading as six because the continuations also began at column 0. Two
 #: columns rather than the label's own width: the label width varies per row
-#: (``:reactive_orchestration_plugins`` is 31 columns), so aligning to it would
+#: (``:reactive-orchestration-plugins`` is 31 columns), so aligning to it would
 #: both shift per row and eat the width the wrapped text needs.
 #:
 #: SPACING, never colour. #3536/#3537 removed fixed dark hex constants because

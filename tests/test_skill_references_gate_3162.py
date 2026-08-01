@@ -58,7 +58,7 @@ paths, unioned with every `SKILL.md` found by walking
 
 **Vacuity guards.** The real-tree test asserts it found a non-zero number of
 skills AND (separately) that it found a non-zero number of token-prefixed
-links across those skills -- reyn_cheat_sheet already ships 4 such links
+links across those skills -- reyn-cheat-sheet already ships 4 such links
 (#3162 fix), so an empty match set here would indicate the extraction regex
 itself broke, not that no skill uses the mechanism.
 
@@ -237,7 +237,7 @@ def test_every_skill_reference_link_resolves_has_no_orphans_fits_cap_and_leaf() 
 
     assert total_links >= 1, (
         "vacuity guard: no ${CLAUDE_SKILL_DIR}/${REYN_SKILL_DIR}-prefixed "
-        "link found across any shipped skill -- reyn_cheat_sheet ships 4 "
+        "link found across any shipped skill -- reyn-cheat-sheet ships 4 "
         "such links, so an empty count here means the extraction regex "
         "itself broke, not that the mechanism is unused"
     )

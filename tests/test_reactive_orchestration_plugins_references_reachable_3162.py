@@ -1,5 +1,5 @@
 """Tier 2: OS invariant -- #3162's L2-router-plus-L3-references split for
-`reactive_orchestration_plugins` (2nd consumer, after `reyn_cheat_sheet`
+`reactive-orchestration-plugins` (2nd consumer, after `reyn-cheat-sheet`
 #3171) uses the OFFICIAL Agent Skills convention: a `${CLAUDE_SKILL_DIR}`-
 prefixed relative markdown link in the SKILL.md BODY, not a front-matter
 `references:` declaration (owner ruling, ground-truthed against both
@@ -49,7 +49,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp, LoadSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
-_SKILL_PATH = Path(BUILTIN_SKILLS["reactive_orchestration_plugins"]["path"])
+_SKILL_PATH = Path(BUILTIN_SKILLS["reactive-orchestration-plugins"]["path"])
 _SKILL_DIR = _SKILL_PATH.parent
 _REFERENCES_DIR = _SKILL_DIR / "references"
 

@@ -3,7 +3,7 @@
 Co-vet pins:
 
   1. **Wheel-layout reachability.** A builtin skill's body (``BUILTIN_SKILLS``'s
-     ``reyn_cheat_sheet`` entry, ``reyn.builtin.registry``) is readable through
+     ``reyn-cheat-sheet`` entry, ``reyn.builtin.registry``) is readable through
      the real ``read_file`` op (``reyn.core.op_runtime.file.handle``) even when
      the ``PermissionResolver``'s ``project_root`` is a directory that does
      NOT contain the builtin package (= the fact of a wheel install: the
@@ -51,7 +51,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
-_CHEAT_SHEET_PATH = BUILTIN_SKILLS["reyn_cheat_sheet"]["path"]
+_CHEAT_SHEET_PATH = BUILTIN_SKILLS["reyn-cheat-sheet"]["path"]
 
 
 def _make_ctx(*, permission_resolver: PermissionResolver | None) -> OpContext:
@@ -102,7 +102,7 @@ def test_builtin_skill_body_readable_with_project_root_elsewhere(tmp_path, monke
     assert result["status"] == "ok", result
     # Behavioral assertion (not a golden pin): the REAL SKILL.md content, via a
     # distinctive marker from its own front-matter — not exact length/formatting.
-    assert "reyn_cheat_sheet" in result["content"]
+    assert "reyn-cheat-sheet" in result["content"]
     assert "description:" in result["content"]
 
 

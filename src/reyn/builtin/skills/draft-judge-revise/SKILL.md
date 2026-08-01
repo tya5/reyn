@@ -1,5 +1,5 @@
 ---
-name: draft_judge_revise
+name: draft-judge-revise
 description: Draft an artifact, self-review it against your own checklist via a schema-validated agent step, and revise on failure -- the standard Evaluation-gated workflow for any "produce then check quality" task (a summary, a doc section, an email, a report paragraph). Read this before handing off a self-authored artifact you have not gated.
 ---
 
@@ -35,7 +35,7 @@ judge. Do not oversell it as one.
    a caveat) rather than looping indefinitely -- Reliability lens: bounded
    loops with graceful force-close, never an unbounded retry.
 4. **Hand off.** Once the draft passes (or the revision budget is spent),
-   show it to the operator via `present` (see `reyn_cheat_sheet`) instead of
+   show it to the operator via `present` (see `reyn-cheat-sheet`) instead of
    pasting it into your reply, or continue with whatever workflow requested
    the draft.
 

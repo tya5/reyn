@@ -1,7 +1,7 @@
 # ADR 0064 P5 -- builtin user RAG, now shipped as the `rag` PLUGIN
 # (src/reyn/builtin/plugins/rag/): two MCP servers (chunker/vector-store) +
 # two pipelines (rag_ingest.ingest / rag_query.query) + its RAG skill
-# (build_and_query_rag_corpus, a single skill with bundled references --
+# (build-and-query-rag-corpus, a single skill with bundled references --
 # #3162), installed together in one call.
 # Originally authored under FP-0063 (P2 MCP layer / P3 pipelines / P4 skill).
 #
@@ -23,7 +23,7 @@
 # project's `.reyn/config/{mcp,pipelines,skills}.yaml`, using the plugin's
 # own `.mcp.json` `command` value AS-IS -- it does NOT install the plugin's
 # runtime deps (chonkie/apsw/sqlite-vec/fastmcp) for you. That step is
-# skill-driven: the `build_and_query_rag_corpus` skill's body walks the
+# skill-driven: the `build-and-query-rag-corpus` skill's body walks the
 # operator/LLM through creating a venv + `pip install -r requirements.txt`
 # (never reyn's own environment -- no `pip install "reyn[builtin-rag]"`
 # needed) and then editing the registered entries below to point `command`
@@ -136,7 +136,7 @@
 # set -- it is a hand-edit to the registered entry.
 #
 # The RAG skill (installed alongside the plugin's other capabilities --
-# `build_and_query_rag_corpus`, routing/install in its router SKILL.md, with
+# `build-and-query-rag-corpus`, routing/install in its router SKILL.md, with
 # embedding setup / the ingest-query workflow / corpus internals bundled as
 # `references/` files, #3162) carries the "when/how" these two one-line
 # pipeline descriptions cannot: which of reyn's two RAGs to reach for, the

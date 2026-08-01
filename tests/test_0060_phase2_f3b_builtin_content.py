@@ -69,7 +69,7 @@ from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
 
 _REPO_ROOT = Path(__file__).parent.parent
-_CHEAT_SHEET_PATH = Path(BUILTIN_SKILLS["reyn_cheat_sheet"]["path"])
+_CHEAT_SHEET_PATH = Path(BUILTIN_SKILLS["reyn-cheat-sheet"]["path"])
 _FLAGSHIP_PIPELINE_PATH = Path(BUILTIN_PIPELINES["flagship"]["path"])
 
 
@@ -391,7 +391,7 @@ def test_cheat_sheet_skill_ships_builtin_provenance_and_inert() -> None:
     provenance="builtin", visibility="on_demand" (#2971: out of the menu,
     reachable via skill_list), enabled=True."""
     cfg = build_builtin_config()
-    entry = cfg["skills"]["entries"]["reyn_cheat_sheet"]
+    entry = cfg["skills"]["entries"]["reyn-cheat-sheet"]
     assert entry["provenance"] == "builtin"
     assert entry["visibility"] == "on_demand"
     assert entry.get("enabled", True) is True

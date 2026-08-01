@@ -60,9 +60,9 @@ returned three empty ``entries`` dicts, a no-op merge (byte-identical to
 pre-F3a config resolution): this is what "ships inert" means at the
 mechanism level, zero behavior change until content lands. F3b (proposal §3
 F3, Addendum D9.5's curated-5) populated the maps with the exemplar content
-across two PRs: the core spine (``reyn_cheat_sheet`` skill + the ``flagship``
+across two PRs: the core spine (``reyn-cheat-sheet`` skill + the ``flagship``
 pipeline, #2912) and this sibling PR's remaining two exemplars
-(``draft_judge_revise`` skill + the ``status_card`` presentation). Every
+(``draft-judge-revise`` skill + the ``status_card`` presentation). Every
 entry still carries ``provenance="builtin"`` and ships inert (A3) — the
 mechanism guarantee is unchanged, only the content maps are no longer empty.
 """
@@ -79,7 +79,7 @@ from reyn.data.skills.registry import VISIBILITY_ON_DEMAND
 # sheet" skill is THE flagship builtin — the gap-filler between "reyn has
 # these parts" and "the LLM uses them" — plus the flagship through-chain
 # pipeline it documents). This F3b sibling PR adds the 2 remaining curated-5
-# exemplars (Addendum D9.5 #3/#4): the `draft_judge_revise` workflow skill
+# exemplars (Addendum D9.5 #3/#4): the `draft-judge-revise` workflow skill
 # (Evaluation idiom) and the `status_card` present-view (the status/results
 # card, invoke-by-name, zero-token exemplar). Shape mirrors the operator
 # config entry shape exactly:
@@ -102,21 +102,21 @@ from reyn.data.skills.registry import VISIBILITY_ON_DEMAND
 _BUILTIN_DIR = Path(__file__).parent
 
 BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
-    "reyn_cheat_sheet": {
+    "reyn-cheat-sheet": {
         "description": (
             "Reyn-specific usage cheat sheet -- which mechanism to reach for "
             "(skill/pipeline/mcp/hook/present), composition idioms, op "
             "essentials, and pointers to the full specs. Read this before "
             "authoring a new part or composing several."
         ),
-        "path": str(_BUILTIN_DIR / "skills" / "reyn_cheat_sheet" / "SKILL.md"),
+        "path": str(_BUILTIN_DIR / "skills" / "reyn-cheat-sheet" / "SKILL.md"),
         "enabled": True,
         # visibility is force-stamped "on_demand" for every builtin skill by
         # _stamp_builtin_entry (A3) regardless of what's declared here —
         # kept explicit for readability, not because it changes anything.
         "visibility": VISIBILITY_ON_DEMAND,
     },
-    "draft_judge_revise": {
+    "draft-judge-revise": {
         "description": (
             'Draft an artifact, self-review it against your own checklist '
             "via a schema-validated agent step, and revise on failure -- the "
@@ -125,11 +125,11 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
             "paragraph). Read this before handing off a self-authored "
             "artifact you have not gated."
         ),
-        "path": str(_BUILTIN_DIR / "skills" / "draft_judge_revise" / "SKILL.md"),
+        "path": str(_BUILTIN_DIR / "skills" / "draft-judge-revise" / "SKILL.md"),
         "enabled": True,
         "visibility": VISIBILITY_ON_DEMAND,
     },
-    "reactive_orchestration_plugins": {
+    "reactive-orchestration-plugins": {
         # Kept verbatim-identical to the SKILL.md front-matter description so
         # the two never drift apart (there is no gate comparing them).
         "description": (
@@ -139,16 +139,16 @@ BUILTIN_SKILLS: "dict[str, dict[str, Any]]" = {
             "anti-pattern list of things people re-invent. Read this BEFORE "
             "designing any external-event-driven plugin, server-push "
             "handling, wake/notification behaviour, or browser UI "
-            "integration. Companion to reyn_cheat_sheet (which covers "
+            "integration. Companion to reyn-cheat-sheet (which covers "
             "choosing between skill/pipeline/mcp/hook/present in general)."
         ),
         "path": str(
-            _BUILTIN_DIR / "skills" / "reactive_orchestration_plugins" / "SKILL.md"
+            _BUILTIN_DIR / "skills" / "reactive-orchestration-plugins" / "SKILL.md"
         ),
         "enabled": True,
         "visibility": VISIBILITY_ON_DEMAND,
     },
-    # FP-0063's `build_and_query_rag_corpus` skill (+ the `rag_ingest`/
+    # FP-0063's `build-and-query-rag-corpus` skill (+ the `rag_ingest`/
     # `rag_query` pipelines it documents) moved OUT of this always-on
     # builtin registry under ADR 0064 P5 ("builtin RAG becomes the first
     # plugin") -- they now ship as `src/reyn/builtin/plugins/rag/` and are
