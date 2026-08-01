@@ -217,6 +217,20 @@ seam (`ClientTransport` — `reply()` writes through `put_display`). The
 `tests/test_3595_s4_slash_handler_seam.py`, not a supported dependency for a
 new command.
 
+**Since #3595 S5** the DISPATCH is client-side too:
+`reyn.interfaces.slash.dispatch.maybe_dispatch_slash` is the one place typed
+text becomes a command, called by the CUI (`stream_client.route_input_line`) and the TUI
+(`TextualChatApp._submit`) before either submits a turn. `session.py` holds no
+slash entry point at all — neither the `startswith("/")` short-circuit nor the
+`/answer` pre-queue fast path. Two consequences worth knowing when adding a
+command:
+
+- a command runs IMMEDIATELY, never queued behind an in-flight turn (a client
+  layer has no inbox), so a handler may run concurrently with a live turn;
+- a REMOTE (`--connect`) client holds no `Session`, so a command needing
+  `ctx.session` runs server-side via the AG-UI `slash_command` payload — a
+  command NAME the client already resolved, never a raw line.
+
 The registry is populated by importing each slash module
 (`slash/agents.py`, `slash/cost.py`, …). `session.py` no longer hard-
 codes command parsing; it delegates to the registry.

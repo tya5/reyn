@@ -132,7 +132,7 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
-        await session._handle_user_message("hello", chain_id="chain-001")
+        await session._handle_inbox_text("hello", chain_id="chain-001")
 
     _run(run())
 
@@ -154,7 +154,7 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
-        await session._handle_user_message("hello", chain_id="chain-002")
+        await session._handle_inbox_text("hello", chain_id="chain-002")
 
     _run(run())
 

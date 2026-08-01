@@ -475,10 +475,11 @@ class TextualChatApp(App):
     and unchanged — had no way back: ``Tab``/``Shift+Tab`` only cycle
     Composer↔MenuBar, and the Composer's own ``↓``/``↑`` targeted the menu
     and sent-queue, never the panel. Two fixes close this, both #3327: (1)
-    :meth:`_submit` now tries ``/answer`` through
-    :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.deliver_pending_answer`
-    — a DIRECT, un-queued delivery — before the queued path, so it can
-    always resolve the intervention it targets regardless of turn state; (2)
+    :meth:`_submit` runs ``/answer`` as a COMMAND rather than submitting it as
+    a turn — a DIRECT, un-queued delivery, so it can always resolve the
+    intervention it targets regardless of turn state. #3595 S5 replaced the
+    ``/answer``-only fast path this used to name with the shared client-side
+    slash layer, which runs every command that way; (2)
     the Composer's ``↑`` (first line, per :class:`Composer`'s own
     ``_on_key``) now focuses the pending :class:`InterventionPanel` FIRST,
     ahead of the sent-queue, whenever one is showing — the SAME idiom that
@@ -3244,30 +3245,33 @@ class TextualChatApp(App):
         :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
         (:meth:`on_intervention_panel_choice_selected` /
         :meth:`on_intervention_panel_text_submitted`) — its own, never-queued
-        transport funnel — for anyone who can reach the panel, plus ONE
-        Composer-typed exception: ``/answer`` (#3327). ``/answer`` acts on an
-        EXISTING pending intervention, not a new turn, so it is tried FIRST
-        through :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.deliver_pending_answer`
-        — a direct, un-queued delivery — before falling through to the
-        ordinary new-turn path below. This is load-bearing, not cosmetic:
-        #3327 found that a Composer submit landing while a turn is blocked on
-        an intervention is durably queued (the #3300 sent-queue) but the
-        queue only DRAINS once that SAME turn frees — which requires that
-        SAME intervention to resolve. A queued ``/answer`` therefore chases
-        its own precondition and can never fire; a keyboard-only user who
-        ``Esc``-dismissed the panel (#3299 P1's documented escape hatch, which
-        returns focus WITHOUT answering) had no way back at all before this
-        fix. Every OTHER submission (a fresh turn, or ``/answer`` typed with
-        nothing pending) is UNCHANGED: ``deliver_pending_answer`` returns
-        ``False`` and ``submit_user_text`` durably queues the line on the
-        inbox — visible in the sent-queue region (#3300 P2b, this module) and
-        cancelable there (#3300 Y-client, ``↑`` from the composer to focus
-        it when nothing is pending, ``Enter`` on a highlighted row to
-        cancel) — rather than losing it. Errors are contained and surfaced as
-        an error frame the pump renders — a silent input drop is the worst
-        failure for a chat box."""
+        transport funnel — for anyone who can reach the panel.
+
+        #3595 S5: a ``/``-prefixed line is a COMMAND, and the TUI interprets it
+        itself through the layer both reyn clients share
+        (:func:`~reyn.interfaces.slash.dispatch.maybe_dispatch_slash`) rather
+        than submitting the string for the session to interpret. It is run
+        immediately and never queued, which SUBSUMES #3327's ``/answer`` fast
+        path: that fix existed because a queued ``/answer`` chases its own
+        precondition — the #3300 sent-queue only drains once the blocking turn
+        frees, and that turn frees only when the intervention the ``/answer``
+        targets resolves — so a keyboard-only user who ``Esc``-dismissed the
+        panel (#3299 P1's documented escape hatch, which returns focus WITHOUT
+        answering) had no way back at all. That argument was never specific to
+        ``/answer``, and a client-side layer has no inbox to queue any command
+        on.
+
+        A bare (non-``/``) submission is UNCHANGED: ``submit_user_text``
+        durably queues it on the inbox — visible in the sent-queue region
+        (#3300 P2b, this module) and cancelable there (#3300 Y-client, ``↑``
+        from the composer to focus it when nothing is pending, ``Enter`` on a
+        highlighted row to cancel) — rather than losing it. That is the
+        invariant #3300 protects, and slash leaving the queue does not touch
+        it. Errors are contained and surfaced as an error frame the pump
+        renders — a silent input drop is the worst failure for a chat box."""
         try:
-            if await self._transport.deliver_pending_answer(text):
+            from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
+            if await maybe_dispatch_slash(self._transport, text):
                 return
             await self._transport.submit_user_text(text)
         except Exception as exc:

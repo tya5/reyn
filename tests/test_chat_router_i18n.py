@@ -125,7 +125,7 @@ def test_retry_exhausted_fallback_is_japanese_when_output_language_ja(
     session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"
 
-    _run(session._handle_user_message("こんにちは", chain_id="chain-ja"))
+    _run(session._handle_inbox_text("こんにちは", chain_id="chain-ja"))
 
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
@@ -155,7 +155,7 @@ def test_retry_exhausted_fallback_is_english_when_output_language_en(
     session.router_invocations_this_turn = 3
     session._router_last_reason = "test_reason"
 
-    _run(session._handle_user_message("hello", chain_id="chain-en"))
+    _run(session._handle_inbox_text("hello", chain_id="chain-en"))
 
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
@@ -182,7 +182,7 @@ def test_retry_exhausted_fallback_defaults_to_english_for_unsupported_language(
     session._router_last_reason = ""
 
     # Must not raise.
-    _run(session._handle_user_message("bonjour", chain_id="chain-fr"))
+    _run(session._handle_inbox_text("bonjour", chain_id="chain-fr"))
 
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
@@ -300,7 +300,7 @@ def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypat
         return _text_result("テスト応答")
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm_tools)
-    _run(session._handle_user_message("こんにちは", chain_id="chain-prompt"))
+    _run(session._handle_inbox_text("こんにちは", chain_id="chain-prompt"))
 
     assert captured_prompts, "No system prompt was captured — LLM was never called"
     system_prompt = captured_prompts[0]
@@ -427,7 +427,7 @@ def test_retry_exhausted_wrap_up_success_replaces_canned_fallback(
     session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"
 
-    _run(session._handle_user_message("こんにちは", chain_id="chain-wrapup"))
+    _run(session._handle_inbox_text("こんにちは", chain_id="chain-wrapup"))
 
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]

@@ -1,23 +1,37 @@
-"""Test support for driving a slash handler directly (#3595 S4).
+"""Test support for driving a slash handler, and the client layer above it.
 
 A slash handler is handed a :class:`~reyn.interfaces.slash.SlashContext`, not a
-``Session`` — its display output goes through the client seam
+``Session`` (#3595 S4) — its display output goes through the client seam
 (``ClientTransport.put_display``) and only its not-yet-converted session-side
 reads go through ``ctx.session``. A test that calls a handler directly has to
-build the same shape the production dispatch builds
-(``Session._slash_context``), so this module provides it once.
+build the same shape production builds, so this module provides it once.
+
+#3595 S5 moved the DISPATCH — the step that turns typed text into a command —
+out of ``Session`` and into the shared client layer
+(:func:`reyn.interfaces.slash.dispatch.maybe_dispatch_slash`). A test that used
+to drive ``Session._maybe_handle_slash`` drives that instead, over one of the two
+transports here: :func:`local_transport` for the production-routing claim (a real
+``InProcessTransport``, exactly what a local CUI/TUI attach holds), or
+:class:`RecordingTransport` when the claim is about what was displayed.
 
 :class:`RecordingTransport` is a REAL ``ClientTransport`` subclass, not a stand-in:
 it implements the abstract seam and records what a client would have rendered.
 The send-side methods delegate to whatever session the test supplied, so a test
-that exercises one of them exercises the real call.
+that exercises one of them exercises the real call — including
+``run_slash_command``, which runs the command through the same
+``execute_slash_command`` the production transports use.
 """
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from reyn.interfaces.slash import SlashContext
+from reyn.interfaces.slash.dispatch import execute_slash_command
 from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.in_process import InProcessTransport
+from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
 
 if TYPE_CHECKING:
     from reyn.interfaces.transport.frames import Frame
@@ -97,6 +111,17 @@ class RecordingTransport(ClientTransport):
     async def cancel_inflight(self) -> None:
         await self._session.cancel_inflight()
 
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        # The SAME one line ``InProcessTransport.run_slash_command`` runs — the
+        # handler is handed this transport and the test's session, so a test
+        # driving the client layer exercises the real executor rather than a
+        # re-implementation of it.
+        if self._session is None:
+            return False
+        return await execute_slash_command(
+            SlashContext(transport=self, session=self._session), name, args,
+        )
+
     async def shutdown(self) -> None:
         await self._session.shutdown()
 
@@ -122,4 +147,37 @@ def slash_ctx(
     return SlashContext(transport=transport, session=session)
 
 
-__all__ = ["RecordingTransport", "slash_ctx"]
+def local_transport(session: Any) -> "tuple[InProcessTransport, asyncio.Queue]":
+    """The real local ``ClientTransport`` over a single-session registry, plus
+    the display queue it writes to.
+
+    The SAME class a local ``reyn chat`` attach holds, so a test driving
+    ``maybe_dispatch_slash`` through it takes the production path end to end:
+    client interpretation → ``run_slash_command`` → the handler. Display lands on
+    the registry's ``repl_outbox``, which is where a local client's own display
+    (user echo, ``/copy`` result) has always landed and where the transport's
+    frame pump reads it from. The queue is returned rather than dug out of the
+    transport so a test never reaches into it.
+    """
+    repl_outbox: asyncio.Queue = asyncio.Queue()
+    transport = InProcessTransport(
+        SimpleNamespace(
+            attached_session=lambda: session,
+            repl_outbox=repl_outbox,
+        ),
+        intervention_channel=DEFAULT_CHAT_CHANNEL_ID,
+    )
+    return transport, repl_outbox
+
+
+def drain_display(queue: "asyncio.Queue") -> "list[OutboxMessage]":
+    """Everything the client display received, in order."""
+    out: "list[OutboxMessage]" = []
+    while not queue.empty():
+        out.append(queue.get_nowait())
+    return out
+
+
+__all__ = [
+    "RecordingTransport", "slash_ctx", "local_transport", "drain_display",
+]

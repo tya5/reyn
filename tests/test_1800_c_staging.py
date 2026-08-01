@@ -12,9 +12,12 @@ Four test groups:
    arrives — so a crash during the blocking wait does not lose them.
    restore_state recovers them in ``_next_turn_context``.
 
-3. **Tier 1 (contract) — slash/intervention short-circuit safety**: a slash
-   command short-circuit in ``_handle_user_message`` does NOT consume the staged
-   C messages; they wait for the real turn.
+3. **Tier 1 (contract) — slash/intervention short-circuit safety**: running a
+   slash command does NOT consume the staged C messages; they wait for the real
+   turn. Before #3595 S5 the command ran as a short-circuit inside
+   ``_handle_user_message``, ahead of the injection point; it now runs in the
+   client layer and never enters the turn machinery at all — a stronger form of
+   the same contract, driven through the client dispatch here.
 
 4. **Tier 2 (OS invariant — B=persist crash-window)**: falsifiable proof that
    the B=persist gap is closed — C is durable DURING the drain-wait, not only
@@ -35,10 +38,12 @@ import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.slash import local_transport
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -460,12 +465,12 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
 async def test_c_staging_slash_command_does_not_consume_staged(
     tmp_path, monkeypatch,
 ) -> None:
-    """Tier 1: slash command short-circuit does NOT consume staged C messages.
+    """Tier 1: running a slash command does NOT consume staged C messages.
 
-    Contract (flow-trace §3 risk note): a slash command in
-    ``_handle_user_message`` short-circuits before the injection point.
-    The staged C messages must still be in ``_next_turn_context`` after
-    the slash command returns (they wait for a real turn).
+    Contract (flow-trace §3 risk note): a slash command must not be able to
+    swallow context staged for the next real turn. #3595 S5 moved the dispatch
+    into the client layer, so the command no longer passes through the turn body
+    at all — driven here the way a client drives it.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -476,9 +481,12 @@ async def test_c_staging_slash_command_does_not_consume_staged(
         {"kind": "hook", "payload": {"name": "pending_hook", "text": "pending-context"}}
     )
 
-    # Call _handle_user_message with a slash command (e.g. /help, /list).
-    # We don't need LLM stubs since slash commands short-circuit before the LLM.
-    await session._handle_user_message("/help", chain_id="test-chain")
+    # Run the command the way a client runs it: the shared client-side layer
+    # over the real local transport. No LLM stub is needed — a command never
+    # reaches the router at all.
+    transport, _display = local_transport(session)
+    consumed = await maybe_dispatch_slash(transport, "/help")
+    assert consumed is True, "/help must be claimed by the client slash layer"
 
     # The staged entries must still be in _next_turn_context.
     n_ntc = len(session._next_turn_context)

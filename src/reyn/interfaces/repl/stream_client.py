@@ -27,6 +27,7 @@ from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import FrameTag
 from reyn.runtime.outbox import OutboxMessage
@@ -142,6 +143,11 @@ async def route_input_line(
 ) -> None:
     """Route one non-quit client line to the session via the transport.
 
+    #3595 S5: a ``/``-prefixed line is a COMMAND, and this client interprets it
+    itself — through the shared client-side layer both reyn clients call, never
+    by handing the string to the session. It is consumed here and never reaches
+    ``submit_user_text``, so the branches below see turn text only.
+
     A pending intervention (permission prompt, ask_user, safety-limit) suspends
     the router turn on the intervention's future — and that turn is the SOLE
     consumer of the session inbox, so an answer routed the ordinary way
@@ -155,10 +161,9 @@ async def route_input_line(
     blocked turn resumes.
 
     Ordinary turns (no pending intervention) still flow through
-    ``submit_user_text``; a ``/``-prefixed line is never an intervention answer,
-    so it is left on the normal slash/inbox path. The direct-delivery result is
-    checked so a race where the intervention resolves between the head-check and
-    the deliver falls back to a normal turn instead of being dropped.
+    ``submit_user_text``. The direct-delivery result is checked so a race where
+    the intervention resolves between the head-check and the deliver falls back
+    to a normal turn instead of being dropped.
 
     ``own_submissions`` (#3287) is populated ONLY on the branch that actually
     calls ``submit_user_text`` — that is the ONLY branch that produces a
@@ -172,16 +177,20 @@ async def route_input_line(
     so it can never accidentally match an event whose own ``msg_id`` also
     reads empty/missing.
     """
-    if not text.startswith("/") and transport.pending_intervention_head() is not None:
+    if await maybe_dispatch_slash(transport, text):
+        return
+    # Everything below is TURN text: a command returned above, so the two
+    # ``not text.startswith("/")`` guards this function used to carry are gone
+    # rather than left as conditions that can no longer be false (#3595 S5).
+    if transport.pending_intervention_head() is not None:
         if await transport.answer_intervention_text(text):
             return
     # Mark a reply as in flight before submit so the pacing gate on the next
-    # iteration blocks until the output loop signals it. `/`-prefixed slash
-    # commands (`/list`, `/attach`, `/answer`, ...) bypass the router and emit
-    # only `status` (no router reply), so clearing the gate for them would
-    # deadlock the next pipe iteration. `/quit` and `/exit` are handled by the
-    # caller and never reach here.
-    if reply_seen is not None and not text.startswith("/"):
+    # iteration blocks until the output loop signals it. A command would
+    # deadlock the next pipe iteration here — it emits only `status`, never a
+    # router reply — which is why it must have been consumed above; `/quit` and
+    # `/exit` are handled by the caller and never reach here at all.
+    if reply_seen is not None:
         reply_seen.clear()
     msg_id = await transport.submit_user_text(text)
     if own_submissions is not None and msg_id:

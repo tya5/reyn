@@ -170,13 +170,21 @@ class InProcessTransport(ClientTransport):
             return ""
         return await s.submit_user_text(text)
 
-    async def deliver_pending_answer(self, text: str) -> bool:
-        # #3327: real override — see ``Session.maybe_deliver_answer_command``
-        # for the deadlock this un-queued delivery closes.
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        # #3595 S5: the local execution side of the shared client-side slash
+        # layer. The handler is handed THIS transport — the client's own seam,
+        # the one its display already arrives on — plus the attached session for
+        # the reads S4 enumerated as residue. Un-queued by construction: the
+        # command never touches the inbox, so it can act on a session whose turn
+        # is blocked (#3327's deadlock, generalized past ``/answer``).
+        from reyn.interfaces.slash import SlashContext
+        from reyn.interfaces.slash.dispatch import execute_slash_command
         s = self._attached()
         if s is None:
             return False
-        return await s.maybe_deliver_answer_command(text)
+        return await execute_slash_command(
+            SlashContext(transport=self, session=s), name, args,
+        )
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
