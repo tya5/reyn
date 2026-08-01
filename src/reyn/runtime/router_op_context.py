@@ -1,28 +1,31 @@
-"""#1412: single-source the chat-router OpContext construction.
+"""The chat-router OpContext: one supplier, one construction.
 
-Two hosts built the ``actor="chat_router"`` OpContext with ~95% identical
-code: ``Session._make_router_op_context`` (session.py) and
-``RouterHostAdapter.make_router_op_context`` (services/router_host_adapter.py).
-They drifted — #1410/#1411 threaded ``base_dir`` to one and lagged the other
-(the #187 wrong-FS class). This factory is the single source for the common
-construction (PermissionDecl with the #571 axes, the canonical ``.reyn/`` write
-paths + session-approval, the Workspace FS root, the OpContext).
+``build_router_op_context`` assembles the ``actor="chat_router"`` OpContext
+(PermissionDecl with the #571 axes, the canonical ``.reyn/`` write paths +
+session-approval, the Workspace FS root, the OpContext itself) and
+:class:`RouterOpContextSource` is its **only** caller: one object per Session
+owns the materials and answers "give me an op-context" for every chat-router
+surface.
 
-**Behavior-preserving** (#1412 lead decision): the fields that legitimately
-differ per host — ``agent_id`` / ``intervention_bus`` / ``multimodal_config`` /
-``media_store`` / ``compact_now`` / ``run_id`` — are caller-supplied params, so
-each host passes its CURRENT values (incl. ``None`` where it doesn't wire one).
-The divergence the single-sourcing makes explicit (e.g. RouterHostAdapter never
-wires ``agent_id``) is surfaced for a follow-up classification, NOT folded here
-(same "root-fix surfaces a latent gap" pattern as #1402 -> #1431).
+Why a supplier rather than a set of materials each host carries: the two
+surfaces that need this OpContext — ``Session`` (its own ``_file_op`` / MCP
+callbacks) and ``RouterHostAdapter`` (``op_context_factory``, the registry
+dispatch path) — used to *each* call the factory, one from its own attributes
+and one from a 16-field bundle of copies of those same attributes. Two call
+sites assembling the same object is a drift surface, and it had already
+drifted on twelve fields: ``agent_id``, ``presentation_renderer``,
+``intervention_bus``, ``presentation_registry``, ``multimodal_config``,
+``compact_now``, ``cancel_event``, ``threat_scan`` and ``session_id`` reached
+one path and not the other, and ``allowed_mcp`` / ``contextual_permission`` /
+``sandbox_policy`` were read LIVE on one path and frozen at construction on the
+other. So which capabilities an op got depended on which door it came through,
+and for three of them, on how long the session had been running.
 
-Which-ops trace (#1412): Session's impl serves file ops (``_file_op``) +
-MCP ops (which wire ``intervention_bus`` POST-HOC on the returned ctx), so its
-``intervention_bus=None`` at construction is a wiring-style difference, not a
-missing capability; media/multimodal/compact ops go via the registry /
-RouterHostAdapter path. The lone capability-gap candidate is RouterHostAdapter's
-unset ``agent_id`` (registry-dispatched memory ops lose agent-scope) — a
-follow-up to classify drift-vs-intentional.
+Per-turn values are held as zero-arg **suppliers**, not snapshots: a value
+captured when the Session is constructed (``turn_origin``,
+``contextual_permission``, the live session id, the sandbox policy, the
+hot-reloaded presentation registry / skill set) is right on the first turn and
+wrong on every turn after it.
 """
 from __future__ import annotations
 
@@ -51,10 +54,10 @@ def build_router_op_context(
     environment_backend: Any,  # FS seam backend instance (#1200 PR-F1)
     sandbox_backend: Any,  # exec seam backend instance (#1200 PR-F2)
     sandbox_policy: Any,  # raw policy → resolve_sandbox_policy here (#1339)
-    # ── per-host fields (caller-supplied; behavior-preserving) ─────────────
-    agent_id: str | None,  # FP-0016 memory scope (RouterHostAdapter: None — gap candidate)
-    intervention_bus: Any = None,  # Session wires post-hoc; RouterHostAdapter inline
-    presentation_renderer: Any,  # #2708 P1: REQUIRED (no default) — every OpContext builder must EXPLICITLY decide the present sink (a PresentationRenderer or None for the file/MCP-op path that no present op reaches). Silent-omission drift removed. RouterHostAdapter wires the surface consumer's sink (factory); Session._make_router_op_context passes None.
+    # ── fields the single supplier resolves per call ───────────────────────
+    agent_id: str | None,  # FP-0016 identity → the MCP client's X-Reyn-Agent-Id header
+    intervention_bus: Any = None,  # the surface that answers a router op's intervention
+    presentation_renderer: Any,  # #2708 P1: REQUIRED (no default) — the present sink must be an EXPLICIT decision (a PresentationRenderer or None), never a silent omission.
     presentation_registry: Any = None,  # FP-0054 PR-C: operator named-template registry (hot-reloadable)
     multimodal_config: Any = None,  # #364
     media_store: Any = None,  # #383
@@ -69,14 +72,14 @@ def build_router_op_context(
     turn_origin: str | None = None,  # proposal 0060 Phase 1 (A7): OS-derived turn provenance → install-op stamping (A9)
     hot_reloader: Any = None,  # #2761 PR-2: this session's HotReloader → immediate mid-turn install apply
     render_template_bounds: Any = None,  # #2679: operator RenderTemplateBounds → the render_template op cap. None → the op's in-handler defaults.
-    budget_gateway: Any = None,  # FP-0063 PC: the calling Session's per-session BudgetGateway → the `embed` op's single embedding-cost recording entry point (fans out to session scope + agent/project scope via the tracker it holds, keyed by agent NAME). Wired by BOTH router op-ctx builders; RouterHostAdapter's is the load-bearing one (the `embed` TOOL resolves that factory).
-    available_skills: Any = None,  # #3196: the host's registered SkillEntry list (Session/RouterHostAdapter's `_available_skills`) → the `file` op's skill-load provenance gate (the config-registered-entry class, alongside builtin/plugin). None → that provenance class is simply unavailable (fails closed, not open).
+    budget_gateway: Any = None,  # FP-0063 PC: the calling Session's per-session BudgetGateway → the `embed` op's single embedding-cost recording entry point (fans out to session scope + agent/project scope via the tracker it holds, keyed by agent NAME).
+    available_skills: Any = None,  # #3196: the host's registered SkillEntry list → the `file` op's skill-load provenance gate (the config-registered-entry class, alongside builtin/plugin). None → that provenance class is simply unavailable (fails closed, not open).
 ) -> Any:
-    """Build the chat-router OpContext (the single source for both hosts).
+    """Build the chat-router OpContext.
 
-    The PermissionDecl + canonical-path approval + Workspace + OpContext are
-    identical across hosts; per-host fields are passed explicitly. See module
-    docstring for the drift-class + behavior-preserving rationale."""
+    Assembly only: every value arrives resolved. The one caller is
+    :meth:`RouterOpContextSource.build`, which owns the materials and decides
+    when each is read — see the module docstring."""
     from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
     from reyn.security.permissions.permissions import PermissionDecl
@@ -98,10 +101,10 @@ def build_router_op_context(
     # has NO such runtime prompt — the allowlist IS the whole gate, so it must
     # read the OPERATOR'S actual reyn.yaml declaration, never a wildcard
     # default. Read straight off `permission_resolver._config` (the raw
-    # `config.permissions` dict), the SAME idiom both hosts already use for
-    # `file.read`/`file.write` (`_get_file_permissions_for_router`) — centralized
-    # here instead of duplicated in Session AND RouterHostAdapter since this is
-    # the one place both already funnel through.
+    # `config.permissions` dict), the SAME idiom the supplier already uses for
+    # `file.read`/`file.write` (`_get_file_permissions_for_router`) — read here,
+    # in the one place every chat-router OpContext funnels through, rather than
+    # at each surface that asks for one.
     _raw_perm_config = getattr(permission_resolver, "_config", None) or {}
     env_expand = (
         PermissionDecl._parse_secret_key_list(_raw_perm_config.get("env.expand"))
@@ -174,3 +177,162 @@ def build_router_op_context(
         budget_gateway=budget_gateway,  # FP-0063 PC: the embed op's embedding-cost recording entry point
         available_skills=available_skills,  # #3196: config-registered-entry provenance class for the file op's skill-load gate
     )
+
+
+class RouterOpContextSource:
+    """The one supplier of chat-router OpContexts for a Session.
+
+    Owns every material :func:`build_router_op_context` needs and is that
+    function's ONLY caller, so "which capabilities does a chat-router op get"
+    has one answer instead of one per surface. ``Session`` keeps a single
+    instance and hands the SAME object to ``RouterHostAdapter``; both
+    ``Session._make_router_op_context`` and
+    ``RouterHostAdapter.make_router_op_context`` are one-line delegations to
+    :meth:`build`, which is what makes the two entry points equivalent by
+    construction rather than by review.
+
+    **Suppliers, not snapshots.** Fields named ``*_fn`` are read at
+    :meth:`build` time. Each of them is a value that changes AFTER this object
+    is constructed — the per-turn provenance (``turn_origin``), a spawned
+    session's real id, the operator's capability narrowing (built after the
+    router waist, so it does not even exist yet at construction), the resolved
+    sandbox policy, and the two hot-reloadable registries. A plain value in any
+    of those slots is correct on the first turn and silently stale on every
+    turn after it. A ``None`` supplier means "this Session wires no such
+    value" and yields ``None`` (``mcp_servers_flat`` yields ``{}`` — its
+    consumer indexes it).
+
+    No parameter has a default: a caller that silently omits one would absorb a
+    wiring change unnoticed, which is the failure mode #3482's default-free
+    bundles were introduced to prevent.
+
+    ``cancel_event`` is the one slot filled after construction — ``RouterLoop``
+    creates the per-turn ``asyncio.Event`` and registers it via
+    :meth:`set_cancel_event` (through ``RouterHostAdapter._set_cancel_event``),
+    so it lives here rather than being copied into every holder that needs it.
+    """
+
+    def __init__(
+        self,
+        *,
+        events: Any,
+        permission_resolver: Any,
+        file_permissions_fn: Any,
+        mcp_servers_fn: Any,
+        mcp_servers_flat_fn: Any,
+        allowed_mcp_fn: Any,
+        workspace_base_dir: Any,
+        workspace_state_dir: Any,
+        environment_backend: Any,
+        sandbox_backend: Any,
+        sandbox_policy_fn: Any,
+        agent_id: Any,
+        intervention_bus_factory: Any,
+        presentation_renderer_factory: Any,
+        presentation_registry_fn: Any,
+        multimodal_config: Any,
+        media_store_fn: Any,
+        compact_now: Any,
+        threat_scan: Any,
+        contextual_permission_fn: Any,
+        session_id_fn: Any,
+        hook_dispatcher: Any,
+        hook_bus: Any,
+        turn_origin_fn: Any,
+        hot_reloader: Any,
+        render_template_bounds: Any,
+        budget_gateway: Any,
+        available_skills_fn: Any,
+    ) -> None:
+        self._events = events
+        self._permission_resolver = permission_resolver
+        self._file_permissions_fn = file_permissions_fn
+        self._mcp_servers_fn = mcp_servers_fn
+        self._mcp_servers_flat_fn = mcp_servers_flat_fn
+        self._allowed_mcp_fn = allowed_mcp_fn
+        self._workspace_base_dir = workspace_base_dir
+        self._workspace_state_dir = workspace_state_dir
+        self._environment_backend = environment_backend
+        self._sandbox_backend = sandbox_backend
+        self._sandbox_policy_fn = sandbox_policy_fn
+        self._agent_id = agent_id
+        self._intervention_bus_factory = intervention_bus_factory
+        self._presentation_renderer_factory = presentation_renderer_factory
+        self._presentation_registry_fn = presentation_registry_fn
+        self._multimodal_config = multimodal_config
+        self._media_store_fn = media_store_fn
+        self._compact_now = compact_now
+        self._threat_scan = threat_scan
+        self._contextual_permission_fn = contextual_permission_fn
+        self._session_id_fn = session_id_fn
+        self._hook_dispatcher = hook_dispatcher
+        self._hook_bus = hook_bus
+        self._turn_origin_fn = turn_origin_fn
+        self._hot_reloader = hot_reloader
+        self._render_template_bounds = render_template_bounds
+        self._budget_gateway = budget_gateway
+        self._available_skills_fn = available_skills_fn
+        self._cancel_event: Any = None
+
+    @property
+    def hot_reloader(self) -> Any:
+        """#2073 S3 / #2761 PR-2: this session's HotReloader.
+
+        Public because it has a SECOND consumer besides the OpContext —
+        ``RouterLoop`` threads it onto the tool ctx so a self-reload tool
+        reloads THIS session rather than a process global. Read from here so
+        the two consumers share one holder."""
+        return self._hot_reloader
+
+    @property
+    def cancel_event(self) -> Any:
+        """The per-turn cancel event, or None outside a turn.
+
+        Public because the MCP-listing seam needs the same event the OpContext
+        carries; a second copy on the adapter is exactly the duplication this
+        class exists to remove."""
+        return self._cancel_event
+
+    def set_cancel_event(self, event: Any) -> None:
+        """#1470: register the turn's cancel event so a sandboxed op can
+        observe cancellation mid-subprocess."""
+        self._cancel_event = event
+
+    @staticmethod
+    def _resolve(supplier: Any, absent: Any = None) -> Any:
+        """Call *supplier*, or yield *absent* when this Session wires none."""
+        return supplier() if supplier is not None else absent
+
+    def build(self) -> Any:
+        """Build a chat-router OpContext with this Session's CURRENT state."""
+        return build_router_op_context(
+            events=self._events,
+            permission_resolver=self._permission_resolver,
+            file_permissions=self._resolve(self._file_permissions_fn),
+            mcp_servers=self._resolve(self._mcp_servers_fn),
+            mcp_servers_flat=self._resolve(self._mcp_servers_flat_fn, {}),
+            allowed_mcp=self._resolve(self._allowed_mcp_fn),
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
+            environment_backend=self._environment_backend,
+            sandbox_backend=self._sandbox_backend,
+            sandbox_policy=self._resolve(self._sandbox_policy_fn),
+            agent_id=self._agent_id,
+            intervention_bus=self._resolve(self._intervention_bus_factory),
+            presentation_renderer=self._resolve(self._presentation_renderer_factory),
+            presentation_registry=self._resolve(self._presentation_registry_fn),
+            multimodal_config=self._multimodal_config,
+            media_store=self._resolve(self._media_store_fn),
+            compact_now=self._compact_now,
+            cancel_event=self._cancel_event,
+            threat_scan=self._threat_scan,
+            contextual_permission=self._resolve(self._contextual_permission_fn),
+            session_id=self._resolve(self._session_id_fn),
+            hook_dispatcher=self._hook_dispatcher,
+            hook_bus=self._hook_bus,
+            turn_origin=self._resolve(self._turn_origin_fn),
+            hot_reloader=self._hot_reloader,
+            render_template_bounds=self._render_template_bounds,
+            budget_gateway=self._budget_gateway,
+            available_skills=self._resolve(self._available_skills_fn),
+        )

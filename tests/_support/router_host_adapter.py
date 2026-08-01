@@ -10,15 +10,61 @@ from pathlib import Path
 
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.router_op_context import RouterOpContextSource
 from reyn.runtime.services import (
     LiveSessionIdInputs,
     McpGatewayInputs,
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
 )
+
+# Every RouterOpContextSource field, all inert. Deliberately spelled out
+# rather than defaulted on the class: the class stays default-free (a silent
+# omission there would absorb a wiring change unnoticed), so adding a field to
+# it makes make_op_context_source raise TypeError here — one loud edit instead
+# of a quiet None in every test.
+_INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
+    "events": None,
+    "permission_resolver": None,
+    "file_permissions_fn": None,
+    "mcp_servers_fn": None,
+    "mcp_servers_flat_fn": None,
+    "allowed_mcp_fn": None,
+    "workspace_base_dir": None,
+    "workspace_state_dir": None,
+    "environment_backend": None,
+    "sandbox_backend": None,
+    "sandbox_policy_fn": None,
+    "agent_id": None,
+    "intervention_bus_factory": None,
+    "presentation_renderer_factory": None,
+    "presentation_registry_fn": None,
+    "multimodal_config": None,
+    "media_store_fn": None,
+    "compact_now": None,
+    "threat_scan": None,
+    "contextual_permission_fn": None,
+    "session_id_fn": None,
+    "hook_dispatcher": None,
+    "hook_bus": None,
+    "turn_origin_fn": None,
+    "hot_reloader": None,
+    "render_template_bounds": None,
+    "budget_gateway": None,
+    "available_skills_fn": None,
+}
+
+
+def make_op_context_source(**overrides: object) -> RouterOpContextSource:
+    """A REAL RouterOpContextSource with everything inert but *overrides*.
+
+    The real class, not a stand-in: it is a plain object with no I/O, so a test
+    that needs one builds one."""
+    unknown = set(overrides) - set(_INERT_OP_CONTEXT_SOURCE_FIELDS)
+    assert not unknown, f"not RouterOpContextSource fields: {sorted(unknown)}"
+    return RouterOpContextSource(**{**_INERT_OP_CONTEXT_SOURCE_FIELDS, **overrides})
 
 
 async def null_file_read(path: str) -> dict:
@@ -117,23 +163,12 @@ def make_adapter(
     _delegations = delegation_list
     _replies = agent_replies_list
 
-    op_context_inputs = RouterOpContextInputs(
-        allowed_mcp=None,
-        base_available_skills_fn=None,
-        budget_gateway=None,
-        compact_now=None,
-        contextual_permission=None,
-        hook_bus=None,
-        hook_dispatcher=None,
-        hot_reloader=None,
-        multimodal_config=None,
-        presentation_renderer_factory=None,
-        render_template_bounds=None,
-        sandbox_backend_instance=None,
-        sandbox_policy=None,
+    op_context_source = make_op_context_source(
+        events=events,
+        environment_backend=environment_backend,
         turn_origin_fn=turn_origin_fn,
         workspace_base_dir=workspace_base_dir,
-        workspace_state_dir=None,
+        session_id_fn=(lambda: session_id) if session_id is not None else None,
     )
     mcp_gateway_inputs = McpGatewayInputs(
         mcp_connection_service=None,
@@ -157,7 +192,7 @@ def make_adapter(
         agent_name=agent_name,
         agent_role="test role",
         output_language="en",
-        op_context_inputs=op_context_inputs,
+        op_context_source=op_context_source,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
