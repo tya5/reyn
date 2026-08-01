@@ -109,7 +109,7 @@ async def test_external_tool_result_meta_carries_taint_marker(tmp_path, monkeypa
             _text_result("ok"),
         ]),
     )
-    await session._handle_user_message("look things up", chain_id="c1")
+    await session._handle_inbox_text("look things up", chain_id="c1")
 
     tool_msgs = {m.tool_call_id: m for m in session.history if m.role == "tool"}
     assert tool_msgs["tc_ext"].meta.get("external_source") is True
@@ -132,7 +132,7 @@ async def test_baseline_without_taint_remember_shared_succeeds(tmp_path, monkeyp
             _text_result("done"),
         ]),
     )
-    await session._handle_user_message("remember this", chain_id="c1")
+    await session._handle_inbox_text("remember this", chain_id="c1")
 
     (tool_msg,) = [m for m in session.history if m.role == "tool"]
     assert "tool_excluded" not in str(tool_msg.content)
@@ -170,8 +170,8 @@ async def test_next_turn_dispatch_denied_negative_witness(tmp_path, monkeypatch)
             _text_result("done"),
         ]),
     )
-    await session._handle_user_message("look something up", chain_id="c1")
-    await session._handle_user_message("now remember it", chain_id="c2")
+    await session._handle_inbox_text("look something up", chain_id="c1")
+    await session._handle_inbox_text("now remember it", chain_id="c2")
 
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)
@@ -205,8 +205,8 @@ async def test_self_clears_after_tainted_entry_compacted_out(tmp_path, monkeypat
             _text_result("done again"),
         ]),
     )
-    await session._handle_user_message("look something up", chain_id="c1")
-    await session._handle_user_message("now remember it", chain_id="c2")
+    await session._handle_inbox_text("look something up", chain_id="c1")
+    await session._handle_inbox_text("now remember it", chain_id="c2")
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)
 
@@ -215,6 +215,6 @@ async def test_self_clears_after_tainted_entry_compacted_out(tmp_path, monkeypat
         m for m in session.history if not (m.meta or {}).get("external_source")
     ]
 
-    await session._handle_user_message("try again", chain_id="c3")
+    await session._handle_inbox_text("try again", chain_id="c3")
     (allowed_msg,) = [m for m in session.history if m.tool_call_id == "tc_allowed"]
     assert "tool_excluded" not in str(allowed_msg.content)

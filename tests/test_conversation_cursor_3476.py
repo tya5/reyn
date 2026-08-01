@@ -13,8 +13,9 @@ a real ``pbcopy`` stand-in, the transport's own submitted-text log):
   (``highlight_last`` is flowview's own mount-time default once ``highlight=True``);
 - Enter/Space copies the CURSOR entry's own text — any kind, not just an
   agent reply, and NOT through the ``/copy`` ring;
-- ``r`` submits bare ``/rewind`` through the app's normal submit seam (the
-  SAME path an ordinary composer-typed ``/rewind`` would take) — never a
+- ``r`` runs bare ``/rewind`` through the app's normal submit seam (the
+  SAME path an ordinary composer-typed ``/rewind`` would take — since #3595 S5
+  that path interprets the line client-side and runs it) — never a
   per-entry targeted jump (there is no chat-seq/WAL-seq correlation to make
   one; #3476 issue comment).
 """
@@ -38,6 +39,8 @@ from reyn.runtime.outbox import OutboxMessage
 class _Transport(ClientTransport):
     def __init__(self) -> None:
         self.submitted: list[str] = []
+        # #3595 S5: a slash the app dispatches is RUN as a command here.
+        self.commands: list[str] = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -51,6 +54,10 @@ class _Transport(ClientTransport):
 
     async def submit_user_text(self, text: str) -> None:
         self.submitted.append(text)
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        self.commands.append(f"/{name} {args}".rstrip())
+        return True
 
     async def answer_intervention_text(self, text: str) -> bool:
         return False
@@ -184,9 +191,9 @@ async def test_r_opens_rewind_through_the_ordinary_submit_seam() -> None:
 
         await pilot.press("r")
         await pilot.pause()
-        assert transport.submitted == ["/rewind"], (
-            f"'r' did not submit bare /rewind through the normal seam: "
-            f"{transport.submitted!r}"
+        assert transport.commands == ["/rewind"], (
+            f"'r' did not run bare /rewind through the normal seam: "
+            f"{transport.commands!r}"
         )
 
 

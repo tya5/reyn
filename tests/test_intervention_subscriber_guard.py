@@ -326,7 +326,7 @@ def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
     async def _drive() -> None:
         # Must complete promptly — pre-Phase 1 this awaited forever.
         await asyncio.wait_for(
-            session._handle_user_message("こんにちは", chain_id="chain-no-listener"),
+            session._handle_inbox_text("こんにちは", chain_id="chain-no-listener"),
             timeout=5.0,
         )
 

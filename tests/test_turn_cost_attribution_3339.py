@@ -278,7 +278,7 @@ def test_session_turn_attributes_its_llm_calls_to_its_chain_id(tmp_path, monkeyp
     tracker = BudgetTracker(CostConfig())
     session = make_session(agent_name="test_agent", budget_tracker=tracker)
 
-    asyncio.run(session._handle_user_message("hello", chain_id="turn-live-1"))
+    asyncio.run(session._handle_inbox_text("hello", chain_id="turn-live-1"))
 
     latest = tracker.latest_turn_usage()
     assert latest is not None and latest["chain_id"] == "turn-live-1", (
@@ -321,7 +321,7 @@ def test_no_turn_figure_is_published_as_unknown_never_zero(tmp_path, monkeypatch
     assert session.last_turn_usage == unknown, "no turn run yet ⇒ no figure"
 
     # This session runs a real turn, so it DOES have a figure...
-    asyncio.run(session._handle_user_message("hello", chain_id="turn-mine"))
+    asyncio.run(session._handle_inbox_text("hello", chain_id="turn-mine"))
     assert session.last_turn_usage["tokens"] == 1750
 
     # ...and it KEEPS it when some other session's turn becomes the tracker's

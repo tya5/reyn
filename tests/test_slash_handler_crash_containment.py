@@ -2,9 +2,14 @@
 
 session.run()'s `while await run_one_iteration(): pass` has no `except`, so an
 uncaught error from a slash handler propagates out and ends the session run loop —
-the front-end keeps accepting input but never replies again. Slash dispatch now
+the front-end keeps accepting input but never replies again. Slash dispatch
 wraps the handler call: it surfaces a clean error and treats the command as
 consumed so the loop continues.
+
+#3595 S5 moved that dispatch to the shared client-side layer. The containment
+claim moved with it and is driven here through a real ``InProcessTransport`` —
+the same seam a local attach uses — because a handler running un-queued
+alongside a live turn is exactly the regime the containment protects.
 """
 from __future__ import annotations
 
@@ -13,8 +18,10 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.slash import drain_display, local_transport
 
 
 def _make_session(tmp_path: Path) -> Session:
@@ -23,13 +30,6 @@ def _make_session(tmp_path: Path) -> Session:
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "alpha_snapshot.json",
     )
-
-
-def _drain_outbox(session: Session) -> list:
-    out = []
-    while not session.outbox.empty():
-        out.append(session.outbox.get_nowait())
-    return out
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_raising_slash_handler_is_contained_not_fatal(
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    async def _boom(sess: Session, args: str) -> None:
+    async def _boom(ctx, args: str) -> None:
         raise RuntimeError("handler exploded")
 
     from reyn.interfaces.slash import REGISTRY, SlashCommand
@@ -55,9 +55,10 @@ async def test_raising_slash_handler_is_contained_not_fatal(
     )
 
     # Before the fix this raised RuntimeError out of dispatch (→ killed run()).
-    consumed = await session._maybe_handle_slash("/__f3boom__")
+    transport, display = local_transport(session)
+    consumed = await maybe_dispatch_slash(transport, "/__f3boom__")
     assert consumed is True  # handled → the run loop continues
-    msgs = _drain_outbox(session)
+    msgs = drain_display(display)
     err = next(m for m in msgs if m.kind == "error")
     # Exception type + message must appear in the error text so the user sees
     # what went wrong without needing developer log access.

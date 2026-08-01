@@ -153,7 +153,7 @@ def test_handle_user_message_reaches_the_degrade_warning(
     session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"
 
-    asyncio.run(session._handle_user_message("hello", chain_id="chain-wired"))
+    asyncio.run(session._handle_inbox_text("hello", chain_id="chain-wired"))
 
     (warning,) = _warnings(caplog)
     assert "wrap_up_failed" in warning, warning

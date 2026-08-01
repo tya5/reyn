@@ -187,17 +187,18 @@ This is a **decision, not an omission** (#3595 step 1b, owner ruling
 2026-08-01: 「現時点では slash に公開不要」 — "no need to expose slash
 at present"). Until this arc, a gateway push claimed the `"user"`
 inbox kind — the claim that a human typed the line at a first-party
-client — and `Session._handle_user_message` acts on that claim by
+client — and `Session._handle_user_message` acted on that claim by
 handing a `/`-prefixed line to slash dispatch before any router
 turn. Anyone able to post to a webhook could therefore run any
 registered slash command. Gateway pushes now ride
-`TurnOrigin.EXTERNAL_MESSAGE`, which `Session._run_turn_body` routes
-straight to the shared turn body: the dispatch is not skipped by a
-flag, it is not on the path at all.
+`TurnOrigin.EXTERNAL_MESSAGE`, and #3595 S5 has since deleted the
+dispatch itself: `Session` interprets no string, so the hole is
+closed twice over — once by the kind, once by construction.
 
 If Reyn ever does expose slash to a gateway, the route is the
-ratified one — a **shared client-side slash layer** the gateway
-drives — not `startswith("/")` re-introduced at a transport, and not
+ratified one — the **shared client-side slash layer**
+(`reyn.interfaces.slash.dispatch`, which every reyn client already
+drives) — not `startswith("/")` re-introduced at a transport, and not
 an allow-list of "safe" commands.
 
 Reyn's session dispatch automatically:

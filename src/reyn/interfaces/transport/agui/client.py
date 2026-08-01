@@ -184,6 +184,19 @@ class AgUiTransport(ClientTransport):
         msg_id = (result or {}).get("msg_id")
         return msg_id if isinstance(msg_id, str) else ""
 
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        # #3595 S5: the remote execution side of the shared client-side slash
+        # layer. The CLIENT already interpreted the line — what goes on the wire
+        # is a typed payload naming a registered command, never the raw text, so
+        # no transport re-tests ``startswith("/")`` and the server executes a
+        # named operation rather than sniffing a string. The server re-resolves
+        # the name against its OWN registry (a client and a server can be
+        # running different builds) and answers whether it ran.
+        result = await self._send(
+            {"type": "slash_command", "name": name, "args": args}
+        )
+        return bool((result or {}).get("ran"))
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:
