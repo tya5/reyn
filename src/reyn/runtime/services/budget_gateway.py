@@ -215,7 +215,7 @@ class BudgetGateway:
     def reset_router_turn_counter(self) -> None:
         """Reset the per-turn router invocation counter and last reason.
 
-        Called at the top of each fresh turn (``_handle_user_message``,
+        Called at the top of each fresh turn (``_handle_inbox_text``,
         ``_handle_agent_request``). Re-entrant in-chain paths intentionally
         do NOT reset — their invocations count against the same budget.
         """

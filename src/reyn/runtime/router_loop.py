@@ -1690,7 +1690,7 @@ class RouterLoop:
                 )(),
                 non_interactive=self._non_interactive,
             )
-        # Session._handle_user_message appends the user turn to history
+        # Session._handle_inbox_text appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
         # caller's `history` argument already ends with this turn's user
         # message. Appending it again as a trailing user message creates a

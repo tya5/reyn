@@ -28,8 +28,10 @@ existing primitives — it adds no new session/LLM machinery of its own:
      would make it return early on a pending chain the spawned session is
      still awaiting a reply for.
   2. ``MessageBus.request`` (``runtime/message_bus.py``) — the existing
-     synchronous run+collect: put a ``user`` message on the spawned
-     session's inbox, pump ``run_one_iteration`` on the caller's own task
+     synchronous run+collect: put an ``AGENT_STEP_INBOX_KIND`` message (the
+     prompt is a model's reading material, never an operator's typed line, so
+     it does not claim the ``user`` kind that slash dispatch acts on) on the
+     spawned session's inbox, pump ``run_one_iteration`` on the caller's own task
      until quiescent, and return every ``OutboxMessage`` emitted during the
      turn. The ephemeral session self-vanishes via
      ``_maybe_schedule_ephemeral_vanish`` once the turn leaves it quiescent
@@ -109,6 +111,23 @@ from reyn.runtime.transport import SystemRef
 if TYPE_CHECKING:
     from reyn.core.pipeline.schema import SchemaRegistry
     from reyn.runtime.registry import AgentRegistry
+
+#: The inbox kind an ``agent`` pipeline step's prompt rides (#3595 step 1).
+#:
+#: A member of the SAME discriminated union ``Session._run_turn_body`` already
+#: dispatches on (``user`` / ``agent_request`` / ``agent_response`` /
+#: ``pipeline_result`` / ``hook``) — this is not a new mechanism, it is the
+#: agent-step path no longer claiming a kind that is not true of it. ``"user"``
+#: means "a human typed this at a client", and ``Session._handle_user_message``
+#: acts on that claim by handing a ``/``-prefixed line to slash dispatch. An
+#: agent step's prompt is a MODEL's text, so under the old ``kind="user"`` every
+#: registered slash command was executable from model output; under its own kind
+#: the prompt reaches the turn body directly and none of them are.
+#:
+#: Declared here, at the producer, the way ``hooks.dispatcher.HOOK_INBOX_KIND``
+#: is; ``session.py``'s dispatch spells the literal with a comment naming this
+#: constant, the same as it does for ``hook``.
+AGENT_STEP_INBOX_KIND = "agent_step"
 
 # Tool names an ``agent`` pipeline step must never reach — a leaf worker (R6
 # session-hierarchy constraint 4: "E_i are spawn-tree LEAVES"). Two distinct
@@ -230,8 +249,15 @@ async def run_agent_step(
     The future Pipeline executor's ``agent`` step primitive (R5): spawn a
     leaf-worker session under ``identity`` (capability-narrowed to
     ``capabilities`` plus a structural delegation deny, see
-    ``_build_agent_step_narrowing``), feed it ``prompt`` as a single ``user``
-    turn via ``MessageBus.request``, and return its collected reply.
+    ``_build_agent_step_narrowing``), feed it ``prompt`` as a single
+    ``AGENT_STEP_INBOX_KIND`` turn via ``MessageBus.request``, and return its
+    collected reply.
+
+    #3595 step 1: that kind used to be ``"user"``, i.e. the prompt claimed a
+    human had typed it at a client, which is what made every registered slash
+    command executable from a model's output (``Session._handle_user_message``
+    hands a ``/``-prefixed line to slash dispatch before any router turn). See
+    ``AGENT_STEP_INBOX_KIND``.
 
     With ``schema`` unset, returns the joined ``kind="agent"`` reply text
     verbatim. With ``schema`` set (a name registered in ``schema_registry``):
@@ -374,7 +400,7 @@ async def run_agent_step(
     bus = MessageBus()
     replies = await bus.request(
         session,
-        kind="user",
+        kind=AGENT_STEP_INBOX_KIND,
         payload={"text": prompt, "chain_id": chain_id or uuid.uuid4().hex},
         reply_to=SystemRef(),
         timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
