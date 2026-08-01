@@ -404,6 +404,31 @@ And before a gate is allowed to pin a literal collection's exact contents,
 confirm that pinning it won't fight the next correct change to that
 collection.
 
+## 14. A declaration of completion is not a witness of completion
+
+A lead reported an arc's items "①②④⑤ complete" after merging a PR. Item ①
+explicitly included a rewrite of the LLM-facing tool-description prose for a
+retired mechanism. A later PR's author, editing a nearby paragraph, checked
+`gh pr view <N> --json files` for the merged PR before citing it as
+precedent — and that file was not in its file set. The retired mechanism's
+sales pitch (`"returns a structured preview... and a path_ref to the full
+body saved under .reyn/tool-results/"`) had shipped to the model, unchanged,
+for the entire duration between the two PRs: "①complete" was true only for
+the item's *code* half, not its doc half, and the declaration didn't
+distinguish the two.
+
+This is the completion-declaration form of the same root as §1's "Observed-
+target identity unverified" — not "which object did I measure," but "which
+object did the PERSON REPORTING COMPLETION measure before declaring it."
+Reporting "arc done" is itself a claim, and the claim's own referent (the
+actual file set of the PR being cited) was never checked before it propagated
+into a second person's mental model of what was already fixed.
+
+**Apply**: before citing a prior PR as having landed item X, run
+`gh pr view <N> --json files` and confirm X's own named file is actually in
+that set — a declaration of completion is not a witness of completion, and
+checking costs one command.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
