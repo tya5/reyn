@@ -187,6 +187,171 @@ def test_find_nonclosing_declarations_matches_toward():
 
 
 # ---------------------------------------------------------------------------
+# Use vs mention (#3559): a body that records CLAUDE.md rule 4's enumeration
+# necessarily quotes "part of #X" inside a body whose operative declaration
+# is `Closes #X`. Check 2 read the quotation as a scope declaration and
+# failed PR #3558 — penalising the record of following the rule the gate
+# enforces. Bodies below are the real #3558 shape (its `Closes #3553` plus
+# the Test-plan line that tripped the gate), and its plain-prose form.
+# ---------------------------------------------------------------------------
+
+
+def test_check2_treats_part_of_as_mention_when_the_record_follows_closes():
+    """Tier 1: the #3559 acceptance condition — rule 4's enumeration recorded
+
+    in PLAIN PROSE, with no fences and no `closing-check` marker, is clean.
+    The body declares `Closes #3553` canonically and GitHub's parser resolved
+    3553, so the "part of #3553" in the Test-plan line is a mention of the
+    search that was run, not a claim about this PR's scope.
+    """
+    body = (
+        "**[per-PR-coder]** — worker inherits the invoker's narrowing.\n\n"
+        "Closes #3553\n\n"
+        "## Test plan\n"
+        "- [x] Enumerated 3553 in:body before writing the closing keyword — "
+        "the only hit is #3554 (MERGED); no open part of #3553 PR remains."
+    )
+    findings = m.check_contradictions(body, closing_refs=[3553])
+    assert findings == []
+
+
+def test_check2_treats_part_of_as_mention_when_the_record_precedes_closes():
+    """Tier 1: the same body with the record ABOVE the closing keyword.
+
+    The mention-first leg. An earlier attempt at this rule resolved use vs
+    mention by which declaration came first, which made the verdict flip on
+    line order alone and reddened exactly this arrangement — a plain-prose
+    record of rule 4 whose only workaround would be reordering or fencing,
+    i.e. the ritual the acceptance condition forbids. Same meaning, same
+    verdict: green.
+    """
+    body = (
+        "**[per-PR-coder]** — worker inherits the invoker's narrowing.\n\n"
+        "Enumerated 3553 in:body before writing the closing keyword — the "
+        "only hit is #3554 (MERGED); no open part of #3553 PR remains.\n\n"
+        "Closes #3553"
+    )
+    findings = m.check_contradictions(body, closing_refs=[3553])
+    assert findings == []
+
+
+def test_check2_treats_fenced_part_of_as_mention_when_body_also_closes():
+    """Tier 1: the same record written with backticks (#3558's literal line)
+
+    is clean too. Fencing is a *symptom* of mention, never the criterion —
+    both spellings must pass, so neither can be the thing being tested.
+    """
+    body = (
+        "**[per-PR-coder]** — worker inherits the invoker's narrowing.\n\n"
+        "Closes #3553\n\n"
+        "- [x] `Closes` の前に `3553 in:body` を全列挙 — 該当は #3554"
+        "（MERGED）のみ、open な `part of #3553` は無し"
+    )
+    findings = m.check_contradictions(body, closing_refs=[3553])
+    assert findings == []
+
+
+def test_check2_is_silent_when_both_forms_are_canonical():
+    """Tier 1: the accepted trade — a false negative is preferred here.
+
+    The mention rule is unconditional: given a canonical `Closes #N`, every
+    other "part of #N" in that body reads as a mention, INCLUDING one the
+    author meant as a real scope declaration. So a body declaring both forms
+    canonically and unfenced for the same N is silent where it once failed.
+
+    Pinned deliberately, not discovered: the removed false positive is
+    systematic (it fires on every rule-4-compliant PR that records the
+    enumeration, and the cheapest fix is deleting the record), while the
+    accepted false negative is self-contradictory input whose close is the
+    one the author asked for — no surprise closure, which is the harm check 2
+    guards. Rationale in full in the module docstring.
+    """
+    body = "Closes #400\n\nAlso part of #400, which cannot both be true."
+    findings = m.check_contradictions(body, closing_refs=[400])
+    assert findings == []
+
+
+def test_check2_still_fires_on_the_real_3003_body_shape_with_its_prose_keyword():
+    """Tier 1: the mention rule must not silence its own motivating incident.
+
+    Real PR #3003 declares "part of #2827" and elsewhere explains that a
+    closing keyword "would auto-close #2827 with part 1 undone" — keyword-
+    shaped prose (both excerpts are real substrings of that body). `_CLOSING_RE`
+    matches that `close`, as it must, so a co-occurrence rule over the wide
+    vocabulary went green here. Corroboration is restricted to the canonical
+    declaring forms, and "auto-close" is not one, so this stays red — with no
+    appeal to where in the body either phrase sits.
+    """
+    body = (
+        "**[per-PR-coder]** — part of #2827 (part 2 only; part 1 = asdf/mise "
+        "resolution is NOT in this PR, so no closing keyword).\n\n"
+        "Per CLAUDE.md rule 4, a sub-PR must not carry a closing keyword: "
+        "`Closes` here would auto-close #2827 with part 1 undone."
+    )
+    findings = m.check_contradictions(body, closing_refs=[2827])
+    assert _checks(findings) == [(2, 2827)]
+
+
+def test_check2_still_fires_when_the_body_only_quotes_the_closing_keyword():
+    """Tier 1: a merely QUOTED closing keyword cannot corroborate.
+
+    Fenced spans are removed before looking for the canonical declaration,
+    so a doc-style body that quotes `Closes #N` while genuinely declaring
+    "part of #N" still reports the contradiction. GitHub honors no fenced
+    keyword, so an N in closingIssuesReferences there came from a bare prose
+    keyword — the #3003 class again.
+    """
+    body = (
+        "Rule 4 says to write `Closes #2827` only in the final PR of an arc.\n\n"
+        "This PR is part of #2827 (part 2 only)."
+    )
+    findings = m.check_contradictions(body, closing_refs=[2827])
+    assert _checks(findings) == [(2, 2827)]
+
+
+def test_discussing_marker_is_not_downgraded_to_a_mention_by_a_closing_keyword():
+    """Tier 1: the mention rule covers the prose vocabulary only.
+
+    `<!-- closing-check: discussing #N -->` is exact syntax an author types
+    for one purpose, so it is never an incidental quotation. A body that
+    both closes #N and declares it merely discussed is author confusion, and
+    check 2 must still report it.
+    """
+    body = "Closes #77\n\n<!-- closing-check: discussing #77 -->"
+    findings = m.check_contradictions(body, closing_refs=[77])
+    assert _checks(findings) == [(2, 77)]
+
+
+def test_canonical_closing_finder_is_the_mirror_of_the_check1_finder():
+    """Tier 1: the corroboration finder reads fences opposite to check 1's.
+
+    `find_closing_declarations` reads the body as the AUTHOR declared it
+    (fences defused) so check 1 still sees the declaration GitHub ignored;
+    the corroboration finder reads it as GITHUB parses it (fences honored)
+    so a quoted keyword cannot pass as the author's own scope declaration.
+    Same input, deliberately opposite answers — the per-check asymmetry the
+    module docstring justifies.
+    """
+    body = "Docs quote `Closes #10`, but this PR is only part of #10."
+    assert m.find_canonical_closing_declarations(body) == set()
+    assert m.find_closing_declarations(body) == {10}
+
+
+def test_canonical_closing_finder_rejects_keyword_shaped_prose():
+    """Tier 1: corroboration needs a declaring FORM, not any keyword GitHub honors.
+
+    `_CLOSING_RE` must match "auto-close #N" and "will close #N" — GitHub
+    acts on both, which is checks 1 and 3's business. Check 2 asks whether
+    the author *declared* a close, and neither is a declaration; widening
+    corroboration to them is what silenced check 2 on real #3003.
+    """
+    prose = "a keyword would auto-close #2827, and merging will close #2827"
+    assert m.find_canonical_closing_declarations(prose) == set()
+    assert m.find_closing_declarations(prose) == {2827}
+    assert m.find_canonical_closing_declarations("Closes #2827") == {2827}
+
+
+# ---------------------------------------------------------------------------
 # Check 4: commit-message closing declarations (real PR #3187 / #1909 shape).
 #
 # Real data, verbatim from `gh pr view 3187 --json body,commits,
