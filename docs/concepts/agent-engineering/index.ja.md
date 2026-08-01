@@ -47,7 +47,7 @@ LLM がどのように世界に作用するか: すべての副作用は typed �
 
 ### 3. [Retrieval Engineering](retrieval-engineering.md)
 
-適切なコンテキストを適切なタイミングで、決定論的に(`semantic_search` + preprocessor ステップ)agent に渡すこと — プロンプトに無条件に詰め込むのではありません。これは憲章が明示する 2 つの honest thin area の 1 つです。
+適切なコンテキストを適切なタイミングで、決定論的に(tool/mcp/pipeline カタログに対する`search_actions`、agent向けドキュメント検索のための FP-0063 user-RAG plugin のバンドル済みパイプライン — in-core `IndexBackend` substrate 自体には agent-callable な入口はありません)agent に渡すこと — プロンプトに無条件に詰め込むのではありません。これは憲章が明示する 2 つの honest thin area の 1 つです。
 
 ### 4. [Reliability Engineering](reliability-engineering.md)
 
