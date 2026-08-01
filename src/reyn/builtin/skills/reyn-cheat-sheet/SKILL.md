@@ -1,5 +1,5 @@
 ---
-name: reyn_cheat_sheet
+name: reyn-cheat-sheet
 description: Reyn-specific usage cheat sheet -- which mechanism to reach for (skill/pipeline/mcp/hook/present), composition idioms, op essentials, and pointers to the full specs. Read this before authoring a new part or composing several.
 ---
 
@@ -19,7 +19,7 @@ need it.
 ## Decision tree (which mechanism)
 
 - Need **input** (new data, or a reactive trigger) -> `hook` | `mcp` |
-  the builtin `build_and_query_rag_corpus` skill (document search over the
+  the builtin `build-and-query-rag-corpus` skill (document search over the
   operator's own files). Deeper detail (hook action schemes, a
   CI-verified worked hook example, MCP tool discovery):
   [input-hooks-and-mcp.md](${CLAUDE_SKILL_DIR}/references/input-hooks-and-mcp.md)

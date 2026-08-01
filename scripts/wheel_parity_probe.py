@@ -48,7 +48,7 @@ _CHECK_NAMES = [
     "reyn_repo read: docs/index.md byte-identical to dev checkout",
     "reyn_repo read: src/reyn/runtime/reyn_repo.py byte-identical to dev checkout",
     "reyn_repo read: non-declared path (pyproject.toml) refused",
-    "read_builtin_body_bytes: reyn_cheat_sheet SKILL.md reachable",
+    "read_builtin_body_bytes: reyn-cheat-sheet SKILL.md reachable",
     "read_builtin_body_bytes: flagship pipeline yaml reachable",
     "read_builtin_body_bytes: non-body .py path returns None (least-privilege)",
 ]
@@ -143,11 +143,11 @@ from reyn.builtin.registry import BUILTIN_PIPELINES, BUILTIN_SKILLS  # noqa: E40
 
 
 def _check_cheat_sheet() -> None:
-    path = BUILTIN_SKILLS["reyn_cheat_sheet"]["path"]
+    path = BUILTIN_SKILLS["reyn-cheat-sheet"]["path"]
     body = read_builtin_body_bytes(path)
     assert body is not None, f"read_builtin_body_bytes({path!r}) returned None"
-    assert len(body) > 0, "reyn_cheat_sheet SKILL.md body is empty"
-    assert b"reyn_cheat_sheet" in body, "reyn_cheat_sheet SKILL.md missing its own name marker"
+    assert len(body) > 0, "reyn-cheat-sheet SKILL.md body is empty"
+    assert b"reyn-cheat-sheet" in body, "reyn-cheat-sheet SKILL.md missing its own name marker"
 
 
 check(_CHECK_NAMES[6], _check_cheat_sheet)

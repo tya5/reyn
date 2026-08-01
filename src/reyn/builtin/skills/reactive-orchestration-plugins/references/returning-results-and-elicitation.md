@@ -5,7 +5,7 @@ You do **not** need a callback convention. `pipeline_launch` renders
 carried in the URI reaches the pipeline -- runs async, and the result comes
 back on this session's own inbox. A `shell` step is the write-back leg to the
 external system. A worked `pipeline_launch` example lives in the Hooks
-section of the `reyn_cheat_sheet` skill.
+section of the `reyn-cheat-sheet` skill.
 
 ## Asking the human
 

@@ -16,7 +16,7 @@ therefore silently truncated -- and WHICH skills truncate depends on which
 model is resolved at read time, the worst kind of failure (the same
 content behaves differently depending on an orthogonal runtime variable).
 
-Before #3162, ``build_and_query_rag_corpus/SKILL.md`` shipped at 21_837
+Before #3162, ``build-and-query-rag-corpus/SKILL.md`` shipped at 21_837
 bytes -- 266% of the 8_192-char default floor, already truncated in
 practice for any caller without a large-window model resolved. #3162 part 1
 split it into three skills that each fit; THIS gate is what keeps any
