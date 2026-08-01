@@ -424,10 +424,28 @@ Reporting "arc done" is itself a claim, and the claim's own referent (the
 actual file set of the PR being cited) was never checked before it propagated
 into a second person's mental model of what was already fixed.
 
+A sibling instance, same day: an owner asked why four constructor params
+weren't grouped together. A lead re-derived the grouping criterion from the
+code, doubted it under owner questioning, and re-measured to back up the
+doubt — a full four-step chain, all of it already sitting in PR #3515,
+merged two days earlier, including the exact rejected alternative and the
+measured reason it was rejected (a looser criterion looked cleaner but
+silently mis-grouped an unrelated param). The habit of grepping for an existing
+mechanism before writing a new one had been applied to CODE but not to the
+DECISION RECORD — the PR body, issue comments, and design firms that already
+settled the question. `gh pr view <N> --json body` would have closed it in
+one command.
+
 **Apply**: before citing a prior PR as having landed item X, run
 `gh pr view <N> --json files` and confirm X's own named file is actually in
 that set — a declaration of completion is not a witness of completion, and
-checking costs one command.
+checking costs one command. Before re-deriving *why* a design is the way it
+is — especially when a criterion starts to look wrong under questioning —
+search the decision record (`gh pr list --search "#<issue> in:body"`,
+`gh pr view <N> --json body`, `gh issue view <N> --comments`) for the PR or
+issue that already settled it, including any rejected alternative and the
+reason it was rejected; re-deriving from code alone re-litigates a decision
+someone already made and recorded.
 
 ## See also
 
