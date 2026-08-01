@@ -527,6 +527,9 @@ class _EventOnlyTransport(ClientTransport):
     def __init__(self) -> None:
         self._queue: "asyncio.Queue[object]" = asyncio.Queue()
         self.submitted: list[str] = []
+        # #3595 S5: a menu row that dispatches a slash now RUNS it as a command
+        # through this seam instead of submitting the line as a turn.
+        self.commands: list[str] = []
 
     async def push_event(self, event: Event) -> None:
         await self._queue.put(EventFrame(event))
@@ -543,6 +546,10 @@ class _EventOnlyTransport(ClientTransport):
 
     async def submit_user_text(self, text: str) -> None:
         self.submitted.append(text)
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        self.commands.append(f"/{name} {args}".rstrip())
+        return True
 
     async def answer_intervention_text(self, text: str) -> bool:
         return False
@@ -1061,7 +1068,7 @@ async def test_selecting_a_visibility_row_dispatches_the_slash(tmp_path) -> None
         )
         await pilot.pause()
         want = "off" if target["on"] else "on"
-        assert f"/visibility {want} tool {target['name']}" in transport.submitted, (
-            f"the Tool row dispatched nothing: {transport.submitted}"
+        assert f"/visibility {want} tool {target['name']}" in transport.commands, (
+            f"the Tool row dispatched nothing: {transport.commands}"
         )
         assert app.query_one("#drawer", ContentSwitcher).display is False

@@ -29,9 +29,10 @@ Graded invariants:
    them rather than leaking a bare sentinel into the conversation.
 
 **No real state is ever rewound here.** The app's rewind action ends at the
-``ClientTransport.submit_user_text`` seam, and the transport under test is a real
-but scripted ``ClientTransport`` that records the line instead of running a
-router turn — the destructive ``AgentRegistry.checkout`` leg is pinned by its own
+``ClientTransport.run_slash_command`` seam (#3595 S5 — a slash the app routes is
+run as a command, not submitted as a turn), and the transport under test is a
+real but scripted ``ClientTransport`` that records the command instead of
+running it — the destructive ``AgentRegistry.checkout`` leg is pinned by its own
 existing tests (``test_slash_rewind_1f.py``), not re-driven here.
 
 All app-level tests use real instances (a concrete ``ClientTransport`` + a
@@ -120,6 +121,9 @@ class ScriptedTransport(ClientTransport):
     def __init__(self, messages: "list[OutboxMessage] | None" = None) -> None:
         self._messages = list(messages or [])
         self.submitted: "list[str]" = []
+        # #3595 S5: a slash line the app routes is RUN as a command through this
+        # seam; ``submitted`` keeps its meaning of "went out as a turn".
+        self.commands: "list[str]" = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -134,6 +138,10 @@ class ScriptedTransport(ClientTransport):
 
     async def submit_user_text(self, text: str) -> None:
         self.submitted.append(text)
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        self.commands.append(f"/{name} {args}".rstrip())
+        return True
 
     async def answer_intervention_text(self, text: str) -> bool:
         return False
@@ -403,7 +411,9 @@ async def test_picking_a_checkpoint_rewinds_through_the_real_slash_seam() -> Non
     one. Fixing the list while the action stayed a no-op is the failure this
     gate exists for.
 
-    No real state is rewound: the action ends at ``submit_user_text`` here."""
+    No real state is rewound: the action ends at the transport's
+    ``run_slash_command`` here (#3595 S5 — a slash the app routes is run as a
+    command, not submitted as a turn)."""
     read_model = _PickerReadModel({"kind": "rewind", "points": _POINTS})
     transport = ScriptedTransport([
         OutboxMessage(kind="__rewind_list__", text="…"),
@@ -416,8 +426,8 @@ async def test_picking_a_checkpoint_rewinds_through_the_real_slash_seam() -> Non
         await pilot.press("down")
         await pilot.press("enter")
         await _settle(pilot)
-        assert transport.submitted == ["/rewind 9"], (
-            f"picking a checkpoint did not rewind: {transport.submitted}"
+        assert transport.commands == ["/rewind 9"], (
+            f"picking a checkpoint did not rewind: {transport.commands}"
         )
         # (b) the SAME line a typed submission produces.
         typed = ScriptedTransport()
@@ -426,7 +436,7 @@ async def test_picking_a_checkpoint_rewinds_through_the_real_slash_seam() -> Non
             await typed_pilot.pause()
             await typed_app._submit("/rewind 9")
             await typed_pilot.pause()
-        assert transport.submitted == typed.submitted, (
+        assert transport.commands == typed.commands, (
             "the picker's rewind is not the typed /rewind path"
         )
         assert not app.query_one(RewindPicker).display, (
@@ -449,8 +459,8 @@ async def test_escape_dismisses_the_picker_without_rewinding() -> None:
         await pilot.press("escape")
         await _settle(pilot)
         assert not app.query_one(RewindPicker).display
-        assert transport.submitted == [], (
-            f"Esc rewound something: {transport.submitted}"
+        assert transport.commands == [] and transport.submitted == [], (
+            f"Esc rewound something: {transport.commands or transport.submitted}"
         )
 
 

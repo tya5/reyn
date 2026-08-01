@@ -110,7 +110,7 @@ async def test_turn_rung_not_narrowed_mid_turn_same_turn(tmp_path, monkeypatch):
             _text_result("done"),
         ]),
     )
-    await session._handle_user_message("look something up then remember it", chain_id="c1")
+    await session._handle_inbox_text("look something up then remember it", chain_id="c1")
 
     (msg,) = [m for m in session.history if m.tool_call_id == "tc_r"]
     assert "tool_excluded" not in str(msg.content)
@@ -140,7 +140,7 @@ async def test_on_engages_mid_turn_and_emits_audit_event(tmp_path, monkeypatch):
             _text_result("done"),
         ]),
     )
-    await session._handle_user_message("look something up then remember it", chain_id="c1")
+    await session._handle_inbox_text("look something up then remember it", chain_id="c1")
 
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)
@@ -207,7 +207,7 @@ async def test_on_latch_survives_mid_turn_compaction(tmp_path, monkeypatch):
             on_round={1: _simulate_mid_turn_compaction},
         ),
     )
-    await session._handle_user_message("look something up then remember it", chain_id="c1")
+    await session._handle_inbox_text("look something up then remember it", chain_id="c1")
 
     assert not any((m.meta or {}).get("external_source") for m in session.history), (
         "the compaction simulation must have actually evicted the tainted entry"
@@ -244,12 +244,12 @@ async def test_off_rung_never_narrows_across_a_turn_boundary(tmp_path, monkeypat
             _text_result("done"),
         ]),
     )
-    await session._handle_user_message("look something up", chain_id="c1")
+    await session._handle_inbox_text("look something up", chain_id="c1")
     assert any((m.meta or {}).get("external_source") for m in session.history), (
         "the external tool-result must actually have tainted history — otherwise "
         "this test would pass even with the narrowing fully wired"
     )
-    await session._handle_user_message("now remember it", chain_id="c2")
+    await session._handle_inbox_text("now remember it", chain_id="c2")
 
     (msg,) = [m for m in session.history if m.tool_call_id == "tc_r2"]
     assert "tool_excluded" not in str(msg.content)

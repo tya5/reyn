@@ -157,7 +157,7 @@ so `:skill` does not add a `require_file_read` gate around the read.
 Implementation: `reyn.interfaces.skill_invoke` (the parser / substitution /
 collision-lookup helpers, pure functions) and
 `Session._maybe_handle_skill_invoke` (the dispatch point in
-`_handle_inbox_text`, mirroring `_maybe_handle_slash`'s shape).
+`_handle_inbox_text`).
 
 **Audit trail.** The `:` invoke path emits its own `skill_invoke_body_loaded`
 audit-event for each loaded skill body (name, path), scoped separately from
@@ -169,9 +169,12 @@ explicitly invoked it via `:name`".
 ### Call-site mechanics (`_handle_inbox_text`)
 
 `Session._maybe_handle_skill_invoke` returns a `(consumed, text)` tri-state read at
-the top of `_handle_inbox_text` — the turn body `_handle_user_message` enters right
-after the `/`-slash short-circuit (#3595 step 1 split the two apart, so `/` is now
-an OPERATOR-entry-only step while `:` stays on the shared body):
+the top of `_handle_inbox_text`, the turn body every text-bearing inbox kind
+reaches. `:` and `/` are separate namespaces with separate homes: `:` is a
+SESSION-side step (it composes text a model then reads, so it belongs to the
+turn), while `/` is a COMMAND the client interprets and never reaches the session
+as text at all (#3595 — step 1 split them apart, S5 moved the `/` half out of
+`Session` entirely into `reyn.interfaces.slash.dispatch`):
 
 - `consumed is True` — the invocation was fully handled here (e.g. `:list`, an
   unknown-name error, a `skill_invoke_collision` warning); `_handle_inbox_text`

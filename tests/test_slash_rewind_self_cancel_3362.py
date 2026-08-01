@@ -19,6 +19,20 @@ suspension (the reset-record's durability await). The observable damage:
 this call shape; ``cancel_inflight`` did not. These tests drive the real slash
 seam through a real ``Session`` run loop on a real ``StateLog``.
 
+★ **#3595 S5 changed the caller shape, and this file records it rather than
+quietly following it.** A slash command no longer runs inside the issuing
+session's turn task: the dispatch is client-side
+(``reyn.interfaces.slash.dispatch``) and the handler runs on the CLIENT's task,
+so ``checkout``'s all-cancel can no longer reach its own caller through this
+route. The self-cancel REPRO is therefore gone from the slash path — the guard
+stays (``await_quiescent`` carried the same one for an independent call shape,
+and nothing here argues for removing a guard because one of its callers moved).
+These tests now drive ``/rewind`` the way an operator reaches it — the shared
+client layer over a real ``InProcessTransport`` on this same real registry —
+which is why the divergence gate below, explicitly kept "for the failure class
+rather than for this instance", is the one that carries forward unchanged in
+meaning.
+
 ``test_a_persisted_rewind_record_implies_the_reset_was_materialised`` is the
 **divergence-falsify** gate — the permanent one, kept for the failure class
 rather than for this instance. It compares the WAL's claim against what the
@@ -46,12 +60,14 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
+from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
-from reyn.runtime.session import Session
+from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from tests._support.agent_session import make_session
 
 _WAIT_S = 20.0
@@ -146,6 +162,20 @@ async def _run_turns(registry: AgentRegistry, session, count: int) -> None:
             raise AssertionError(f"turn {i} never reached a WAL generation boundary")
 
 
+async def _run_rewind(registry: AgentRegistry, target: int) -> bool:
+    """Issue ``/rewind <target>`` the way an operator does after #3595 S5.
+
+    The REAL client transport over this REAL registry, through the shared
+    client-side layer — the production path, not a handler called directly.
+    Replies land on ``registry.repl_outbox``, which ``_await_reply`` drains, so
+    the observation point is unchanged.
+    """
+    transport = InProcessTransport(
+        registry, intervention_channel=DEFAULT_CHAT_CHANNEL_ID,
+    )
+    return await maybe_dispatch_slash(transport, f"/rewind {target}")
+
+
 def _snapshot_applied_seq(snapshot_path: Path) -> "int | None":
     """The runtime substrate's own cut — the half a WAL read cannot see."""
     if not snapshot_path.exists():
@@ -163,12 +193,15 @@ def _wal_seqs(tmp_path: Path) -> "list[tuple[int, str]]":
 
 
 @pytest.mark.asyncio
-async def test_rewind_from_a_turn_confirms_to_the_operator(tmp_path, monkeypatch):
-    """Tier 2: ``/rewind <seq>`` issued from a live turn returns its confirmation.
+async def test_rewind_confirms_to_the_operator(tmp_path, monkeypatch):
+    """Tier 2: ``/rewind <seq>`` returns its confirmation to the operator.
 
-    RED without the ``cancel_inflight`` self-cancel guard: the turn cancels
-    itself inside ``checkout``, so NOTHING reaches the client — not the
-    ``⏪ checked out`` reply and not an error frame.
+    Originally RED without the ``cancel_inflight`` self-cancel guard: the turn
+    that issued the command cancelled itself inside ``checkout``, so NOTHING
+    reached the client — not the ``⏪ checked out`` reply and not an error
+    frame. #3595 S5 moved the caller off the turn task (see the module
+    docstring), so this now holds the plainer contract the symptom named: a
+    rewind an operator asks for is either confirmed or reported, never silent.
     """
     monkeypatch.chdir(tmp_path)
     _install_provider(monkeypatch)
@@ -181,7 +214,7 @@ async def test_rewind_from_a_turn_confirms_to_the_operator(tmp_path, monkeypatch
     assert points, "the completed turns must have produced rewind points"
     target = points[0]["seq"]
 
-    await session.submit_user_text(f"/rewind {target}")
+    assert await _run_rewind(registry, target), "/rewind was not run as a command"
     reply = await _await_reply(registry, contains="⏪")
 
     assert reply is not None, (
@@ -231,7 +264,7 @@ async def test_a_persisted_rewind_record_implies_the_reset_was_materialised(
     applied_before = _snapshot_applied_seq(snapshot_path)
 
     target = registry.list_rewind_points()[0]["seq"]
-    await session.submit_user_text(f"/rewind {target}")
+    assert await _run_rewind(registry, target), "/rewind was not run as a command"
     await _await_reply(registry, contains="⏪")
 
     reset_seq, reset_kind = _wal_seqs(tmp_path)[-1]
@@ -276,7 +309,7 @@ async def test_the_session_keeps_serving_turns_after_a_rewind(tmp_path, monkeypa
     await _run_turns(registry, session, 3)
 
     target = registry.list_rewind_points()[0]["seq"]
-    await session.submit_user_text(f"/rewind {target}")
+    assert await _run_rewind(registry, target), "/rewind was not run as a command"
     await _await_reply(registry, contains="⏪")
 
     before = len([1 for _, kind in _wal_seqs(tmp_path) if kind == "inbox_consume"])

@@ -10,12 +10,21 @@ precondition and can never fire (chicken-and-egg). Combined with #3299 P1's
 keyboard-only Textual-chat user who dismissed the panel had no way back at
 all — the deadlock issue #3327 reports.
 
-The fix: ``Session.maybe_deliver_answer_command`` (called from
-``InProcessTransport.deliver_pending_answer``, called from
-``TextualChatApp._submit`` BEFORE ``submit_user_text``) delivers an
-``/answer`` command through the SAME un-queued, direct funnel
-(``_maybe_handle_slash`` → ``_deliver_answer_to``) the
-``InterventionPanel``'s own (never-queued) answer delivery already uses.
+The fix: ``TextualChatApp._submit`` runs an ``/answer`` line as a COMMAND
+rather than submitting it as a turn, through the same un-queued funnel
+(``_deliver_answer_to``) the ``InterventionPanel``'s own (never-queued) answer
+delivery already uses.
+
+★ #3595 S5 GENERALIZED that fix and this file follows it. The narrow
+``/answer``-only fast path (``Session.maybe_deliver_answer_command`` →
+``InProcessTransport.deliver_pending_answer``) is gone; the shared client-side
+slash layer (``reyn.interfaces.slash.dispatch.maybe_dispatch_slash``, called
+from ``_submit`` and from the CUI's ``route_input_line`` BEFORE
+``submit_user_text``) runs EVERY command that way, because a client-side layer
+has no inbox to queue one on. The deadlock argument was never specific to
+``/answer``: any command meant to act on a busy session chases the same
+precondition. What is deliberately NOT widened, and is still witnessed below, is
+the sent-queue contract for ORDINARY turns — bare text still queues.
 
 Policy (docs/deep-dives/contributing/testing.md): real instances only — a
 real ``Session`` + real ``PermissionResolver`` + the real intervention
@@ -33,23 +42,23 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.security.permissions.permissions import PermissionResolver
 from tests._support.agent_session import make_session
+from tests._support.slash import drain_display, local_transport
 
 _USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
 
-def _transport_for(session) -> InProcessTransport:
+def _transport_for(session) -> "tuple[InProcessTransport, asyncio.Queue]":
     """The local ``ClientTransport`` over a single-session registry — the SAME
-    seam ``TextualChatApp._submit`` sends every Composer submission through."""
-    return InProcessTransport(
-        SimpleNamespace(attached_session=lambda: session),
-        intervention_channel=DEFAULT_CHAT_CHANNEL_ID,
-    )
+    seam ``TextualChatApp._submit`` sends every Composer submission through —
+    paired with the client display queue its replies land on."""
+    return local_transport(session)
 
 
 def _tool_call_result(name: str, args_json: str) -> LLMToolCallResult:
@@ -135,12 +144,12 @@ async def test_answer_command_dispatches_immediately_while_turn_blocked(
 ):
     """Tier 2: GATE 1 + GATE 2 — an ``/answer <id-prefix> y`` submitted through
     the SAME seam ``TextualChatApp._submit`` uses
-    (``transport.deliver_pending_answer`` tried FIRST, THEN
+    (``maybe_dispatch_slash`` tried FIRST, THEN
     ``submit_user_text``) resolves the blocked turn's intervention promptly —
     it is not stuck behind the #3300 sent-queue, which could never drain it
     (the turn only frees once this SAME intervention resolves).
 
-    RED before the fix: ``deliver_pending_answer`` did not exist (or
+    RED before the fix: no command path existed at this seam (or
     ``_submit`` never called it) — every ``/answer`` line at this seam went
     straight to ``submit_user_text`` and sat in the inbox until the poll
     budget exhausted, since the turn stayed blocked forever. Verified by the
@@ -161,12 +170,12 @@ async def test_answer_command_dispatches_immediately_while_turn_blocked(
         assert head.kind == "permission.file.write"
         prefix = head.id[:8]
 
-        transport = _transport_for(session)
-        # THE PRODUCTION CALLSITE under test: TextualChatApp._submit tries
-        # deliver_pending_answer() BEFORE submit_user_text().
-        delivered = await transport.deliver_pending_answer(f"/answer {prefix} y")
+        transport, display = _transport_for(session)
+        # THE PRODUCTION CALLSITE under test: TextualChatApp._submit runs
+        # maybe_dispatch_slash() BEFORE submit_user_text().
+        delivered = await maybe_dispatch_slash(transport, f"/answer {prefix} y")
         assert delivered is True, (
-            "deliver_pending_answer did not report the /answer as handled"
+            "the client slash layer did not claim the /answer line"
         )
 
         assert await _poll(lambda: out.exists()), (
@@ -189,14 +198,14 @@ async def test_strip_falsify_queued_answer_path_deadlocks(tmp_path, monkeypatch)
     """Tier 2: ★non-vacuity / strip-falsify for gate 1+2 — proves the deadlock
     this PR fixes is REAL: with ``/answer`` submitted the OLD way (straight
     to ``submit_user_text``, the sent-queue's normal path, never through
-    ``deliver_pending_answer``), the intervention NEVER resolves within a
+    the command path), the intervention NEVER resolves within a
     generous poll budget, because the turn that would dequeue it is the SAME
     turn blocked awaiting it.
 
     This demonstrates the OLD seam (``submit_user_text`` alone) still
     deadlocks on the current tree exactly as before #3327 — the fix only
     changed WHICH seam ``TextualChatApp._submit`` calls FIRST
-    (``deliver_pending_answer``, proven above), it did not change
+    (the client-side command path, proven above), it did not change
     ``submit_user_text``'s own queueing mechanics. This is the RED the
     companion positive test above is GREEN against."""
     proj = tmp_path / "proj"
@@ -239,9 +248,11 @@ async def test_strip_falsify_queued_answer_path_deadlocks(tmp_path, monkeypatch)
 async def test_ordinary_submission_still_queues_during_busy_turn(tmp_path, monkeypatch):
     """Tier 2: GATE 3 — the bypass is narrow. An ORDINARY (non-``/answer``)
     Composer submission made while a turn is blocked on a pending
-    intervention must still go through ``deliver_pending_answer`` → False →
+    intervention must still go through ``maybe_dispatch_slash`` → False →
     ``submit_user_text`` → the inbox queue, exactly per #3300 — never
-    resolve the intervention, never dispatch early."""
+    resolve the intervention, never dispatch early. ★ This is the invariant
+    #3595 S5 must not touch, and the one that says what "narrow" means once
+    slash itself has left the queue: TURNS queue, commands do not."""
     proj = tmp_path / "proj"
     proj.mkdir()
     out = proj / "out.txt"
@@ -252,12 +263,12 @@ async def test_ordinary_submission_still_queues_during_busy_turn(tmp_path, monke
     run_task = asyncio.create_task(session.run())
     try:
         await _start_blocked_write_turn(session, monkeypatch, out=out)
-        transport = _transport_for(session)
+        transport, display = _transport_for(session)
 
-        delivered = await transport.deliver_pending_answer("just a normal message")
+        delivered = await maybe_dispatch_slash(transport, "just a normal message")
         assert delivered is False, (
-            "an ordinary (non-/answer) submission must NOT be claimed by "
-            "deliver_pending_answer — the bypass must stay narrow to /answer"
+            "an ordinary (non-slash) submission must NOT be claimed by the "
+            "client slash layer — a turn is not a command"
         )
 
         msg_id = await transport.submit_user_text("just a normal message")
@@ -286,25 +297,28 @@ async def test_ordinary_submission_still_queues_during_busy_turn(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_unrelated_slash_command_during_pending_intervention_is_not_claimed(
+async def test_unrelated_slash_command_during_pending_intervention_never_answers_it(
     tmp_path, monkeypatch,
 ):
-    """Tier 2: ★co-vet finding (#3330 review) — GATE 3's narrowness has TWO
-    independent conditions (``cmd == "answer"`` AND something pending), and
-    the FIRST test above only witnessed the second (plain, non-slash text).
-    This is the missing witness for the ``cmd == "answer"`` check itself: an
-    UNRELATED slash command (``/model …``) typed while a turn is blocked on
-    a pending intervention must ALSO fall through to the ordinary queued
-    path — ``deliver_pending_answer`` must not widen to "any slash command
-    is un-queued while something is pending", which would silently erode
-    #3300's "every Composer submission rides the queue" invariant for
-    every OTHER slash command, not just ``/answer``.
+    """Tier 2: an UNRELATED command (``/model …``) run while a turn is blocked on
+    a pending intervention runs, and does NOT resolve that intervention.
 
-    NON-VACUITY (strip-falsify, verified locally): commenting out the
-    ``if cmd != "answer": return False`` guard in
-    ``Session.maybe_deliver_answer_command`` flips this assertion to
-    ``True`` — RED — confirming this test actually exercises that specific
-    line (not just the already-witnessed ``list_active()`` guard)."""
+    ★ This test's claim CHANGED with #3595 S5, deliberately, and the change is
+    the reason it is stated here rather than quietly deleted. Before S5 the
+    ``/answer`` bypass was narrow by an explicit ``cmd == "answer"`` guard, and
+    this test witnessed that guard: an unrelated command fell through to
+    ``submit_user_text`` and QUEUED. S5 removed the guard by removing the thing
+    it guarded — the session-side dispatch — so no command queues, because the
+    client layer that runs them has no inbox.
+
+    What must survive is the property the guard was protecting, and it is not
+    "slash queues": it is that a command must never be mistaken for an answer to
+    a pending question. That is asserted directly below (the intervention is
+    still pending afterwards) instead of indirectly through the queue, plus the
+    #3300 invariant that actually remains — a command is not a submission, so it
+    never appears in the sent queue at all. ``test_ordinary_submission_still_
+    queues_during_busy_turn`` above holds the queueing half for TURNS, which is
+    what #3300 is about."""
     proj = tmp_path / "proj"
     proj.mkdir()
     out = proj / "out.txt"
@@ -315,29 +329,23 @@ async def test_unrelated_slash_command_during_pending_intervention_is_not_claime
     run_task = asyncio.create_task(session.run())
     try:
         await _start_blocked_write_turn(session, monkeypatch, out=out)
-        transport = _transport_for(session)
+        transport, display = _transport_for(session)
 
-        delivered = await transport.deliver_pending_answer("/model gpt-fake")
-        assert delivered is False, (
-            "an UNRELATED slash command (/model) must NOT be claimed by "
-            "deliver_pending_answer while an intervention is pending — the "
-            "bypass must stay narrow to /answer specifically, not widen to "
-            "'any slash command bypasses the queue while something is "
-            "pending'"
+        consumed = await maybe_dispatch_slash(transport, "/model gpt-fake")
+        assert consumed is True, (
+            "the client slash layer did not claim /model — a registered command "
+            "must be run as a command, not submitted as a turn"
         )
-
-        msg_id = await transport.submit_user_text("/model gpt-fake")
-        assert msg_id, "submit_user_text did not accept the slash command"
+        assert session.interventions.head() is not None, (
+            "an unrelated slash command RESOLVED the pending intervention — the "
+            "property the old cmd == 'answer' guard existed to protect"
+        )
         queued_texts = [
             item.get("text") for item in session.queued_user_messages()
         ]
-        assert "/model gpt-fake" in queued_texts, (
-            "the unrelated slash command was not queued — an unintended "
-            "widening of the bypass would let it dispatch early instead"
-        )
-        assert session.interventions.head() is not None, (
-            "an unrelated slash command must never resolve the pending "
-            "intervention"
+        assert "/model gpt-fake" not in queued_texts, (
+            "a command reached the sent queue, which renders what this operator "
+            "SUBMITTED as a turn — after #3595 S5 a command is never a submission"
         )
     finally:
         await session.shutdown()
@@ -350,9 +358,12 @@ async def test_unrelated_slash_command_during_pending_intervention_is_not_claime
 
 @pytest.mark.asyncio
 async def test_answer_command_with_nothing_pending_is_not_claimed(tmp_path):
-    """Tier 2: GATE 3 (mirror) — ``/answer`` typed with NOTHING pending must
-    also fall through to the ordinary queued path (``deliver_pending_answer``
-    returns False) rather than being silently swallowed."""
+    """Tier 2: GATE 3 (mirror) — ``/answer`` typed with NOTHING pending runs and
+    reports its own failure, rather than being silently swallowed.
+
+    Pre-S5 this fell through to the queued path and the handler reported
+    'nothing pending' once dispatched; the visible outcome is the same message,
+    reached without the queue."""
     proj = tmp_path / "proj"
     proj.mkdir()
     session = _make_session(
@@ -360,13 +371,15 @@ async def test_answer_command_with_nothing_pending_is_not_claimed(tmp_path):
     )
     run_task = asyncio.create_task(session.run())
     try:
-        transport = _transport_for(session)
-        delivered = await transport.deliver_pending_answer("/answer abc123 y")
-        assert delivered is False, (
-            "an /answer with nothing pending must not be claimed by the "
-            "bypass — it should fall through to the ordinary queued path "
-            "(where the slash handler reports its own 'nothing pending' "
-            "error once dispatched)"
+        transport, display = _transport_for(session)
+        consumed = await maybe_dispatch_slash(transport, "/answer abc123 y")
+        assert consumed is True, (
+            "/answer with nothing pending must still be claimed as a command"
+        )
+        shown = " ".join(m.text for m in drain_display(display) if m.kind == "error")
+        assert shown, (
+            "/answer with nothing pending produced no error line — it was "
+            "silently swallowed, the failure this mirror test exists to catch"
         )
     finally:
         await session.shutdown()

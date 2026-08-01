@@ -14,11 +14,13 @@ should not have been:
     what THIS operator submitted from a client. A pump with no author and no text
     was appearing in it, exactly as a Slack peer's message and a cron fire did
     before #3595 step 1b removed them for the same reason;
-  * slash dispatch. Empty text cannot reach a command, so this leg measures the
-    MECHANISM rather than a closed hole: text of this kind routes to the shared
-    turn body and never past ``_handle_user_message``'s ``startswith("/")``. If a
-    later change ever gives the nudge a non-empty payload, the leg is already
-    holding the line that change would otherwise quietly cross.
+  * slash dispatch. Empty text cannot reach a command, so this leg measured the
+    MECHANISM rather than a closed hole: text of this kind routed to the shared
+    turn body and never past ``_handle_user_message``'s ``startswith("/")``.
+    #3595 S5 has since deleted that entry outright — no inbox member reaches a
+    command any more — so this leg is now a standing check that the nudge runs a
+    turn and nothing else, with the client-side dispatch as its positive
+    control.
 
 ★ What must NOT change is that the nudge still runs a turn — that is the whole
 job of the message, and it is how an attached pipeline run starts at all. One
@@ -39,10 +41,12 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
+from tests._support.slash import local_transport
 
 AGENT = "s2-nudge-agent"
 
@@ -124,11 +128,17 @@ async def test_a_pipeline_nudge_turn_cannot_execute_a_slash_command(
     )
     assert not set(reg.session_ids("operator")) - before, (
         "a slash line delivered under the pipeline-nudge kind EXECUTED — the nudge "
-        "is reaching Session._handle_user_message, which hands a '/'-prefixed line "
-        "to slash dispatch on the claim that a human typed it"
+        "is reaching a slash dispatch on the claim that a human typed it — "
+        "which since #3595 S5 would mean Session grew one back"
     )
 
-    handled = await session._maybe_handle_slash("/session new")
+    # POSITIVE CONTROL. #3595 S5 deleted Session._maybe_handle_slash, so the
+    # operator's own '/session new' is driven where it now runs: the shared
+    # client-side layer, over the real transport a local attach holds. The
+    # control's job is unchanged — prove the command CAN spawn, so the absence
+    # above is about the nudge and not about slash being dead.
+    transport, _display = local_transport(session)
+    handled = await maybe_dispatch_slash(transport, "/session new")
     assert handled is True and set(reg.session_ids("operator")) - before, (
         "the operator's own '/session new' did not execute either, so the absence "
         "above says nothing about the nudge — slash dispatch may simply be dead"

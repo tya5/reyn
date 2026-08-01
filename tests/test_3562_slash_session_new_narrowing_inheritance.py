@@ -61,6 +61,7 @@ from typing import Any
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
@@ -71,8 +72,10 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 from reyn.runtime.transport import SystemRef
+from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
 from tests._support.permissions import make_resolver
+from tests._support.slash import RecordingTransport
 
 #: The capability the invoking session is narrowed away from. A production,
 #: catalog-listed tool whose execution leaves an observable trace on disk.
@@ -186,21 +189,38 @@ def _registry(tmp_path: Path, scripted: "_WritesOnceLLM") -> AgentRegistry:
 
 async def _drive(session: Session, text: str) -> "list[OutboxMessage]":
     """Run ONE real turn on ``session`` through the production run+collect primitive
-    (``MessageBus.request``). Returns the turn's outbox messages, which is where a slash
-    reply lands.
+    (``MessageBus.request``) and return its outbox messages.
 
-    ★ ``kind="user"`` is a deliberate claim, not a convenience. Since #3595 step 1 that
-    kind means specifically "an operator typed this at a client", and it is the only one
-    whose text ``Session._handle_user_message`` interprets as a command surface before
-    handing it to the shared turn body (``_handle_inbox_text``). Simulating an operator
-    keystroke is exactly what these legs need — the ONLY face that reaches ``/session
-    new`` today — so this is the right side of that split. A producer that is not an
-    operator would have to call the lower half directly and could not run the command at
-    all, which is ``tests/test_3561_spawn_session_seam_reachability.py``'s subject."""
+    ``TurnOrigin.CLIENT_INPUT`` is the deliberate claim: these legs simulate an
+    operator's keystroke. Since #3595 S5 the claim buys no command privilege — no
+    inbox member does — so a ``/``-line put through here would be read as content,
+    not executed; :func:`_drive_command` is the operator's command door.
+    """
     return await MessageBus().request(
-        session, kind="user", payload={"text": text, "chain_id": "c3562t"},
+        session, kind=TurnOrigin.CLIENT_INPUT,
+        payload={"text": text, "chain_id": "c3562t"},
         reply_to=SystemRef(), timeout=30,
     )
+
+
+async def _drive_command(session: Session, text: str) -> "list[OutboxMessage]":
+    """Run ``text`` as an OPERATOR's command line and return what was displayed.
+
+    ★ #3595 S5 moved the operator's door. Until then an operator keystroke rode the
+    inbox as ``kind="user"``, and that kind was the only one whose text
+    ``Session._handle_user_message`` interpreted as a command surface — so these legs
+    drove ``MessageBus.request`` with it. ``Session`` interprets no string now: the
+    CLIENT does (``reyn.interfaces.slash.dispatch``), over the transport seam every
+    reyn client writes through, and that is what is driven here. A producer that is not
+    an operator has no way to reach the command at all, which is
+    ``tests/test_3561_spawn_session_seam_reachability.py``'s subject.
+
+    Returns the messages a client would have rendered, which is where a slash reply
+    lands — the same observable the outbox collection gave before."""
+    transport = RecordingTransport(session)
+    consumed = await maybe_dispatch_slash(transport, text)
+    assert consumed, f"the client slash layer did not claim {text!r}"
+    return transport.displayed
 
 
 async def _invoker(
@@ -230,7 +250,7 @@ async def _open_child(reg: AgentRegistry, invoker: Session) -> "tuple[str, list[
     reg.get_or_load(_ATTACHED_AGENT)  # attach_session focuses, it never builds
     await reg.attach_session(_ATTACHED_AGENT, "main")
     before = set(reg.session_ids(_ATTACHED_AGENT))
-    replies = await _drive(invoker, "/session new")
+    replies = await _drive_command(invoker, "/session new")
     born = set(reg.session_ids(_ATTACHED_AGENT)) - before
     assert len(born) == 1, (
         f"/session new did not open exactly one session under {_ATTACHED_AGENT!r} "

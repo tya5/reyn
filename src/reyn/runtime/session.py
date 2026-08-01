@@ -3070,51 +3070,6 @@ class Session:
         # id, not text (avoids same-text collision). See agui-transport.md.
         return msg_id
 
-    async def maybe_deliver_answer_command(self, text: str) -> bool:
-        """#3327: run an ``/answer`` command IMMEDIATELY, bypassing the inbox,
-        when there is a pending intervention to answer.
-
-        ``/answer`` is not a new turn — it acts on EXISTING pending state — so
-        it must not ride the same inbox queue a fresh turn does. When a turn is
-        blocked awaiting an intervention (the router's ``ask_user``/permission
-        await), that turn is the SOLE consumer of the inbox
-        (:meth:`run_one_iteration` does not call :meth:`_drain_to_wake` again
-        until the current turn settles), so a queued ``/answer`` can only be
-        dequeued once that SAME intervention resolves — a chicken-and-egg
-        deadlock a keyboard-only Textual-chat user could not escape (#3327:
-        ``Esc`` dismisses the intervention panel without answering, per #3299
-        P1's documented escape hatch, and the ``/answer`` fallback then hung
-        forever behind its own precondition).
-
-        This reuses the SAME unqueued, direct-delivery funnel
-        (:meth:`_maybe_handle_slash` → :meth:`_deliver_answer_to` /
-        :meth:`answer_intervention_by_id`) the
-        :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
-        already uses for its own (never-queued) answer delivery — concurrency
-        with an in-flight turn task is therefore already proven safe, not new.
-
-        Returns ``False`` — do nothing — unless ``text`` names the ``answer``
-        slash command AND at least one intervention is currently pending;
-        the caller then falls through to the ordinary ``submit_user_text``
-        queued path, UNCHANGED. This keeps the bypass narrow (#3300's
-        sent-queue keeps gating every OTHER Composer submission, including an
-        ``/answer`` typed while nothing is pending, or an unrelated slash
-        command / new turn typed during a busy turn — the regression risk of
-        widening this bypass beyond ``/answer`` specifically)."""
-        first_line = text.partition("\n")[0]
-        if not first_line.startswith("/"):
-            return False
-        body = first_line[1:].lstrip()
-        if not body:
-            return False
-        cmd = body.split(maxsplit=1)[0]
-        if cmd != "answer":
-            return False
-        if not self._interventions.list_active():
-            return False
-        await self._maybe_handle_slash(text)
-        return True
-
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
         from_sid: "str | None" = None,
@@ -5452,7 +5407,13 @@ class Session:
         each iteration boundary (too coarse to interrupt a mid-flight LLM
         call — see ``cancel_inflight``'s docstring)."""
         if kind == TurnOrigin.CLIENT_INPUT:
-            await self._handle_user_message(
+            # #3595 S5: the same arm every other text-bearing member takes.
+            # ``_handle_user_message`` used to sit here and short-circuit a
+            # ``/``-prefixed line into slash dispatch before the turn; with the
+            # interpretation moved client-side there is nothing left for a
+            # CLIENT_INPUT-specific entry to do, so it is gone rather than kept
+            # as a forwarder.
+            await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
             )
@@ -5472,10 +5433,13 @@ class Session:
             # to arrive as ``kind="user"`` (``session_api.run_agent_step``), which
             # is what put model-authored text through ``_handle_user_message``'s
             # ``startswith("/")`` slash dispatch — every registered slash command
-            # executable from model output. Its own kind routes it to the turn
-            # body directly: the short-circuit is not skipped by a flag, it is
-            # not on this path at all (#3595 / owner: "inbox につまれたものは
-            # スラッシュコマンドとして解釈されない").
+            # executable from model output. Its own kind took it off that entry
+            # in step 1; S5 then deleted the entry itself, so the separation no
+            # longer carries the protection — no inbox member reaches a slash
+            # dispatch, because ``Session`` has none (#3595 / owner: "inbox に
+            # つまれたものはスラッシュコマンドとして解釈されない"). The member
+            # stays because "who wrote this" is still a real distinction the
+            # turn-origin stamp below reads.
             await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -5487,13 +5451,17 @@ class Session:
             # (``mcp.server.send_to_agent_impl``, reached by the MCP
             # ``send_to_agent`` tool and the A2A JSON-RPC router). Both used to
             # arrive as ``kind="user"``, which is the claim
-            # ``_handle_user_message`` acts on by handing a ``/``-prefixed line to
-            # slash dispatch — so a Slack message reading ``/reset`` executed the
-            # command, and anyone able to post to the webhook could run any of the
-            # registered slash commands. Its own kind routes it to the turn body
-            # directly: the short-circuit is not skipped by a flag, it is not on
-            # this path at all (#3595 / owner: "inbox につまれたものはスラッシュ
-            # コマンドとして解釈されない").
+            # ``_handle_user_message`` acted on by handing a ``/``-prefixed line
+            # to slash dispatch — so a Slack message reading ``/reset`` executed
+            # the command, and anyone able to post to the webhook could run any
+            # of the registered slash commands. Step 1b took these producers off
+            # that entry; S5 deleted the entry itself, so the hole is closed
+            # twice over and by construction (#3595 / owner: "inbox につまれた
+            # ものはスラッシュコマンドとして解釈されない"). Slash stays
+            # unexposed to these producers by product decision, not by omission
+            # (owner, 2026-08-01: 「現時点では slash に公開不要」) — exposing it
+            # later means routing them through the shared CLIENT-side slash
+            # layer, never re-testing ``startswith("/")`` at a transport.
             await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -5522,13 +5490,14 @@ class Session:
             # (``session_api.run_pipeline_attached``). It claimed CLIENT_INPUT
             # until #3595 S2 — a statement about which member the table above
             # runs a turn for, not about who wrote the message; nobody did.
-            # Routing it here rather than through ``_handle_user_message`` is
-            # what the rename BUYS, and it is behaviour-neutral for this
-            # producer specifically: the only step in between is
+            # Routing it here rather than through ``_handle_user_message`` was
+            # what the rename BOUGHT, and it was behaviour-neutral for this
+            # producer specifically: the only step in between was
             # ``text.startswith("/")``, and this producer's text is always
             # ``""``. That is why the slash defect could never surface here,
-            # and why the fix is not "close a hole" but "stop the one honest
-            # member from having two meanings".
+            # and why the fix was not "close a hole" but "stop the one honest
+            # member from having two meanings". S5 has since deleted that step
+            # entirely, so every text-bearing member now takes this same call.
             await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -5567,8 +5536,15 @@ class Session:
     async def _handle_pipeline_result(self, payload: dict) -> None:
         """IS-2: surface an async pipeline's terminal result (``pipeline_result``)
         to the LLM as one router turn — the driver already formatted the
-        OS-framed ``text``."""
-        await self._handle_user_message(
+        OS-framed ``text``.
+
+        #3595 S5 closed a finding recorded here: this path used to go through
+        ``_handle_user_message``, so a pipeline's result text was slash
+        -interpreted. Nothing protected it but the formatter's ``[pipeline] run
+        …`` framing never starting with ``/`` — a property of the formatter, not
+        a gate. With no interpretation left in ``Session`` the property is no
+        longer load-bearing."""
+        await self._handle_inbox_text(
             payload.get("text", ""),
             chain_id=payload.get("chain_id") or _new_chain_id(),
         )
@@ -5719,60 +5695,32 @@ class Session:
         # #1128 PR-a: compaction runs synchronously now, not as a background
         # task — see docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
-    async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
-        """An OPERATOR-authored line: interpret it, then run the turn.
-
-        #3595 step 1 split this in two. Everything above the
-        ``_handle_inbox_text`` call interprets text *as an operator command
-        surface* — the slash dispatch. Everything below it is the turn itself,
-        which every text-bearing inbox kind needs. Only text whose kind claims
-        an operator typed it may enter here; a non-operator producer calls
-        ``_handle_inbox_text`` directly, so it cannot execute a slash command
-        by writing one (owner ruling: "inbox につまれたものはスラッシュコマンド
-        として解釈されない。されるんだとするとそれが不具合").
-
-        #3595 step 1b moved the last three text-bearing producers off ``"user"``
-        onto that direct route: a chat webhook and an MCP / A2A peer
-        (``TurnOrigin.EXTERNAL_MESSAGE``) and a cron fire
-        (``TurnOrigin.CRON``). Slash is deliberately not exposed to
-        any of them (owner, 2026-08-01: 「現時点では slash に公開不要」) — if it
-        ever is, it goes through a shared CLIENT-side slash layer, never through
-        a transport re-testing ``startswith("/")``.
-
-        Sibling entry: ``_handle_pipeline_result`` still calls THIS method, so a
-        pipeline's OS-framed result text is still slash-interpreted. Its framing
-        (``[pipeline] run …``) means no such text can currently start with
-        ``/``, but that is a property of the formatter, not a gate — recorded as
-        a finding on #3595, deliberately not changed here (it would also change
-        that path's ``:skill`` and pending-intervention-answer behaviour, which
-        is a different rollback shape).
-        """
-        # Slash commands (`/list`, `/tasks kill <id>`, `/answer <id> <text>`)
-        # take precedence over both the active-intervention router and a
-        # fresh router turn.
-        if text.startswith("/"):
-            if await self._maybe_handle_slash(text):
-                return
-        await self._handle_inbox_text(text, chain_id=chain_id)
-
     async def _handle_inbox_text(self, text: str, *, chain_id: str) -> None:
         """Run ONE turn on ``text`` — the shared body under every text-bearing
-        inbox kind, with the SLASH dispatch above it rather than in it
-        (#3595 step 1).
+        inbox kind, and the ONLY thing ``Session`` does with inbox text (#3595).
 
-        Extracted from ``_handle_user_message``, which now calls it after that
-        dispatch, unchanged for operators. ``kind="agent_step"`` reaches it
-        directly: an agent step's prompt is model-readable CONTENT, so it gets a
-        turn and never an OS-executed command.
+        ★ There is no operator-command surface above this method any more. S5
+        deleted ``_handle_user_message``, whose entire remaining content was a
+        ``text.startswith("/")`` short-circuit into slash dispatch, and with it
+        the ``/answer`` pre-queue fast path that was the second entry to the same
+        dispatch. Interpreting a string as a command is CLIENT work
+        (:mod:`reyn.interfaces.slash.dispatch`), so ``TurnOrigin.CLIENT_INPUT``
+        now arrives here exactly like every other text-bearing member — the
+        owner's ruling, in its final form: "inbox につまれたものはスラッシュ
+        コマンドとして解釈されない。されるんだとするとそれが不具合".
 
-        The split point is the slash block and nothing else, so this body still
-        carries the ``:skill`` invocation and the pending-intervention answer
-        route exactly as the agent-step path met them before — both remain
-        reachable from an agent step's prompt. Neither dispatches a registered
-        command (a `:` invocation composes skill text and falls THROUGH into the
-        turn below; an intervention answer is a typed reply to a question this
-        session itself asked), which is why closing the slash leg alone is the
-        step-1 scope; #3595 records them as findings for the later steps.
+        S1–S3 made a producer unable to CLAIM ``CLIENT_INPUT`` without being a
+        declared client-input seam; S5 makes the claim carry no command
+        privilege at all, so the two gates are independent rather than stacked:
+        even a producer that legitimately claims ``CLIENT_INPUT`` (a webhook
+        never can, but ``run-once``'s stdin does) cannot execute a command by
+        writing one.
+
+        This body carries the ``:skill`` invocation and the pending-intervention
+        answer route. Neither is a registered command (a ``:`` invocation
+        composes skill text and falls THROUGH into the turn below; an
+        intervention answer is a typed reply to a question this session itself
+        asked), which is why they stay here while slash left.
         """
         # #3100: operator-explicit `:skill [:skill2 ...] [trailing]` skill
         # invocation — a namespace separate from `/` (Axis 4: syntactic
@@ -6853,28 +6801,34 @@ class Session:
                 meta={"chain_id": chain_id},
             ))
 
-    # ── slash command dispatch ──────────────────────────────────────────────────
+    # ── slash command support (no dispatch: that is client-side, #3595 S5) ──────
 
     def _resolve_intervention_id(self, prefix: str) -> tuple[str | None, list[str]]:
         """Resolve a unique intervention id by prefix in the intervention registry."""
         return self._interventions.resolve_id_prefix(prefix)
 
     def _slash_context(self) -> "SlashContext":
-        """Build what a slash handler is handed (#3595 S4).
+        """Build what a slash handler is handed when it runs SERVER-side (#3595).
 
         A slash handler is CLIENT-layer code — the owner's design is that a
         client interprets ``/``-prefixed text and maps it onto published
         operations, and that ``Session`` never interprets a string — so what it
         depends on is ``ClientTransport``, the seam every reyn client already
-        writes through. This method exists because the dispatch has not moved
-        yet (#3595 S5 deletes it, together with the ``/answer`` fast path above,
-        so ``/answer`` is never left with two entry points): until then the
-        session builds the client's seam over ITSELF and hands it over, so
-        handler code is already written against the contract it will keep.
+        writes through. After S5 the interpretation is entirely the client's
+        (:mod:`reyn.interfaces.slash.dispatch`), and a LOCAL client passes its
+        own transport, never this.
+
+        ★ This survives S5 for the REMOTE case only, and the reason is a
+        property of the residue rather than of the dispatch: a ``--connect``
+        client holds no ``Session``, so the eleven commands that still read
+        session state cannot run on its side of the wire at all. The AG-UI
+        endpoint's ``slash_command`` arm — which receives a command NAME the
+        client already resolved, never a string to sniff — runs them here and
+        builds their context with this method. It goes away when
+        ``SlashContext.session`` does.
 
         ``session=self`` is the declared residue, not a design element — see
-        :class:`~reyn.interfaces.slash.SlashContext`. When S5 lands, the client
-        passes its own transport and this method goes with the dispatch.
+        :class:`~reyn.interfaces.slash.SlashContext`.
         """
         from reyn.interfaces.slash import SlashContext
         from reyn.interfaces.transport.session_bound import SessionBoundTransport
@@ -6886,105 +6840,12 @@ class Session:
             session=self,
         )
 
-    async def _maybe_handle_slash(self, text: str) -> bool:
-        """Dispatch `/command args...` lines. Returns True when consumed.
-
-        Delegates to the SlashRegistry in `reyn.interfaces.slash` so new commands
-        can be added without touching this method.
-
-        Unknown slash commands also return True (with a hint on outbox) to
-        keep the router from running on user typos like "/halp".
-
-        Multi-line slash input: slash commands today are line-oriented and
-        do not accept multi-line args. When the user submits `/cmd …\nmore`,
-        the trailing content was previously bundled into `args` and then
-        silently dropped by handlers that ignore their args (e.g. `/cost`,
-        `/help`, `/list`). We now warn before dispatching and feed the
-        handler only the first line, so the user sees that the extra lines
-        were not part of the command.
-        """
-        from reyn.interfaces.slash import REGISTRY
-
-        first_line, sep, rest = text.partition("\n")
-        if sep and rest.strip():
-            await self._put_outbox(OutboxMessage(
-                kind="system",
-                text=(
-                    f"note: {first_line.split(maxsplit=1)[0]} ignored extra "
-                    "lines; only the first line is treated as the command."
-                ),
-            ))
-        text = first_line
-
-        body = text[1:].lstrip()
-        if not body:
-            known = ", ".join(f"/{n}" for n in REGISTRY.names())
-            await self._put_outbox(OutboxMessage(
-                kind="system",
-                text=f"known commands: {known}",
-            ))
-            return True
-        parts = body.split(maxsplit=1)
-        cmd = parts[0]
-        args = parts[1] if len(parts) > 1 else ""
-        slash_cmd = REGISTRY.get(cmd)
-        if slash_cmd is None:
-            # Suggest the 3 closest matches rather than dumping the full 20+ command catalog
-            # into the error line — the full list previously truncated mid-name, hiding the
-            # actionable suggestions. ``suggest_for_unknown`` is a pure helper in
-            # ``reyn.interfaces.slash`` so the suggestion contract is testable standalone.
-            from reyn.interfaces.slash import suggest_for_unknown
-            suggestions = suggest_for_unknown(cmd)
-            known = ", ".join(f"/{n}" for n in suggestions)
-            # ``kind="error"`` so the TUI renders an inline error (✗ glyph,
-            # severity colour, scroll-away). The previous ``kind="system"``
-            # rendered as a dim grey line indistinguishable from a successful
-            # slash-command reply — a typo'd command silently looked OK.
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"unknown command /{cmd}; try: {known}",
-            ))
-            return True
-        # Wave-13 T2-3: recall hint. Reads `outbox._queue` (asyncio.Queue's PRIVATE
-        # deque) read-only, best-effort — keep the surrounding try/except, or a
-        # CPython internals change breaks slash dispatch, not just the hint.
-        pre_size = self.outbox.qsize()
-        try:
-            await slash_cmd.handler(self._slash_context(), args)
-        except Exception as e:
-            # A slash handler raising must not kill the session run loop: run()'s
-            # `while await run_one_iteration()` has no `except`, so an uncaught
-            # error here ends session.run() and silently drops every later inbox
-            # message (the front-end keeps accepting input but never replies).
-            # Surface a clean error and treat the command as consumed so the loop
-            # continues. (CancelledError is BaseException → shutdown still cancels.)
-            logger.exception("slash handler /%s failed", cmd)
-            detail = f"{type(e).__name__}: {e}"
-            if len(detail) > 72:
-                detail = detail[:69] + "…"
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"/{cmd} failed: {detail}",
-            ))
-            return True
-        try:
-            new_items = list(self.outbox._queue)[pre_size:]  # type: ignore[attr-defined]
-            had_error = any(
-                getattr(item, "kind", None) == "error" for item in new_items
-            )
-        except Exception:
-            had_error = False
-        if had_error:
-            await self._put_outbox(OutboxMessage(
-                kind="status",
-                text=f"↑ to recall `/{cmd}`",
-                meta={"source": "slash_recall_hint"},
-            ))
-        return True
-
-    # NOTE: the slash handlers (list / answer / agents / attach / cost / budget)
-    # live in ``src/reyn/runtime/slash/`` per the cli-redesign plan.
-    # ``_resolve_intervention_id`` / ``_deliver_answer_to`` stay here as
-    # session-state helpers the slash modules call back into.
+    # NOTE: the slash handlers live in ``src/reyn/interfaces/slash/`` and the
+    # dispatch that reaches them is CLIENT-side (#3595 S5,
+    # ``interfaces/slash/dispatch.py``). ``_resolve_intervention_id`` /
+    # ``_deliver_answer_to`` stay here as session-state helpers the slash
+    # modules call back into through ``SlashContext.session`` — the declared,
+    # shrinking residue enumerated in ``tests/test_3595_s4_slash_handler_seam.py``.
 
     async def _maybe_handle_skill_invoke(
         self, text: str,
@@ -7742,7 +7603,8 @@ class Session:
         #3475: this is ALSO where the FP-0037 MCP-tools-cache priming chain
         (yaml refresh / disk reload / lazy probe) runs, for the same reason —
         it is the one place every turn kind funnels through BEFORE the first
-        LLM call of the turn. Previously only ``_handle_user_message`` ran this
+        LLM call of the turn. Previously only the CLIENT_INPUT entry
+        (``_handle_user_message``, deleted by #3595 S5) ran this
         chain, so a turn arriving as ``hook`` or ``agent_request`` (a freshly
         spawned worker's first inbound message, e.g.) built its `tools=`
         payload against a never-primed cache — no `mcp_tool_name` enum on

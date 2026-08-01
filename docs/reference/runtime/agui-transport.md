@@ -38,6 +38,19 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
     already dispatched → a no-op (never escalated to `cancel_inflight`);
     idempotent (a second cancel of the same id is a no-op, safe for an
     at-most-once retry).
+  - `{"type": "slash_command", "name": "model", "args": "strong"}` — run a
+    registered slash command (#3595 S5). The response body is
+    `{"status": "ok", "ran": true|false}`; `ran: false` means this server's
+    registry has no such command (a client on a different build), never a
+    crash. ★ The client has ALREADY interpreted the operator's `/…` line and
+    resolved the NAME against its own registry — nothing on the wire or on the
+    server tests a leading `/`, which is the whole point of #3595: `Session`
+    interprets no string, and a client maps typed text onto published
+    operations. A remote client sends this rather than running the command
+    itself because it holds no `Session`, and the commands that still read
+    session state can only run where that session is. Permission-gated by the
+    same `authorize_write` check `user_message` passes, and the command's reply
+    rides the ordinary display stream.
   - `{"type": "heartbeat"}` — a liveness keepalive.
 
   An input type the server does not model is a **graceful no-op** (a `200` ack),

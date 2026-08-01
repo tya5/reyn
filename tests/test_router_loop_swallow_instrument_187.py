@@ -42,7 +42,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
     s._run_router_loop = _raise_mid_work  # inject the failure at the loop seam
 
     # Must not propagate — the handler swallows-but-surfaces.
-    await s._handle_user_message("hello", chain_id="c-test")
+    await s._handle_inbox_text("hello", chain_id="c-test")
 
     terminated = [
         e for e in s._chat_events.all()
