@@ -307,6 +307,11 @@ class _StreamingReply:
     visible: bool = True
     handle: "VisibilityHandle | None" = None
     last_repaint: float = 0.0
+    #: Set when the TURN ended, whatever ended it. The record STAYS in the map
+    #: — a terminal completion frame that arrives after the turn-end event still
+    #: has to find it to write the authoritative full text. This flag says only
+    #: "no further chunks are coming", which is what the #3530 marker reads.
+    settled: bool = False
 
     @property
     def pending(self) -> bool:
@@ -2264,6 +2269,39 @@ class TextualChatApp(App):
                 )
         self._running_tools.clear()
 
+    def _sweep_orphaned_streaming_replies(self) -> None:
+        """Release any streamed reply still marked in-flight at a TURN BOUNDARY.
+
+        The sibling of :meth:`_sweep_orphaned_running_tools`, and the same
+        argument applies: a record in :attr:`_streaming_replies` means "more
+        chunks are coming", and #3530 blinks the row's marker on exactly that.
+        The terminal completion frame normally clears it — but that is only ONE
+        of the ways a stream ends. ``Ctrl+C`` cancels the turn through the
+        transport without any terminal frame, so the record survived and the
+        marker blinked forever (owner report, 2026-08-02).
+
+        Fixing the cancel path alone would have left the next one. Both maps are
+        therefore released at the SAME boundary the tool sweep already uses:
+        once the turn is settled/completed/cancelled there can be no further
+        chunks for that turn's reply, whatever ended it — a terminal frame, a
+        cancel, an error, or a dropped connection all land on one of those three
+        events. That is a property of the turn, not a list of causes to keep
+        extending.
+
+        ★ The record is MARKED, never removed. Clearing the map was the first
+        attempt and it lost text: the terminal completion frame writes the
+        authoritative full body inside ``if streaming is not None``, so a
+        turn-end event arriving first would delete the record and skip that
+        write entirely (caught by #3570's repaint test, which freezes the clock
+        so the final text can only land through that frame). Only the "still
+        streaming" claim is withdrawn — which is what the marker reads — and the
+        record stays for whatever still needs to find it.
+        """
+        if not self._streaming_replies:
+            return
+        for record in self._streaming_replies.values():
+            record.settled = True
+
     def _begin_running_indicator(self, entry: "Entry[OutboxMessage]") -> None:
         """Start the live spinner + elapsed body for a RUNNING tool entry (②).
 
@@ -2842,7 +2880,8 @@ class TextualChatApp(App):
         Shares :meth:`_streaming_record_for`'s identity check, so a row whose
         chain_id was reused by a successor entry is not reported as streaming.
         """
-        return self._streaming_record_for(entry) is not None
+        record = self._streaming_record_for(entry)
+        return record is not None and not record.settled
 
     def _on_streaming_entry_shown(self, entry: "Entry[OutboxMessage]") -> None:
         """★The replay leg (#3283 ③): a streamed reply's row scrolled back INTO
@@ -3137,6 +3176,12 @@ class TextualChatApp(App):
                         except Exception:
                             logger.exception(
                                 "textual chat: orphaned-tool sweep failed"
+                            )
+                        try:
+                            self._sweep_orphaned_streaming_replies()
+                        except Exception:
+                            logger.exception(
+                                "textual chat: orphaned-stream sweep failed"
                             )
                 else:
                     msg = frame.message
