@@ -394,7 +394,7 @@ async def test_run_pipeline_via_invoke_action_full_live_loop(
     ])
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
 
-    await session._handle_user_message(
+    await session._handle_inbox_text(
         "please run the greet pipeline", chain_id="chain-is5-001",
     )
 

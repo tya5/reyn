@@ -8,7 +8,7 @@ from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.intervention_coordinator import InterventionCoordinator
 from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.runtime.services.intervention_registry import InterventionRegistry
-from reyn.runtime.services.memory_service import MemoryService
+from reyn.runtime.services.memory_service import MemoryKnowledgeSync, MemoryService
 from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.services.router_host_adapter import (
@@ -16,7 +16,6 @@ from reyn.runtime.services.router_host_adapter import (
     McpGatewayInputs,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
 )
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
@@ -40,10 +39,10 @@ __all__ = [
     "InterventionHandler",
     "InterventionRegistry",
     "McpGatewayInputs",
+    "MemoryKnowledgeSync",
     "MemoryService",
     "RouterHistoryBuffer",
     "RouterHostAdapter",
-    "RouterOpContextInputs",
     "RouterLoopDriver",
     "ChainTimeoutGlue",
     "SnapshotJournal",

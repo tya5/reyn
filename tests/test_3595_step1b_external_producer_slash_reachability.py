@@ -53,6 +53,7 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.gateway.api import push_to_agent
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
@@ -62,6 +63,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
 from tests._support.permissions import make_resolver
+from tests._support.slash import RecordingTransport
 
 #: A real, registered slash command whose handler calls
 #: ``AgentRegistry.spawn_session`` (``interfaces/slash/session.py::session_cmd``) —
@@ -285,14 +287,16 @@ async def test_an_operator_submitted_slash_command_still_spawns_a_session(
     non-operator producers and not to everyone.
 
     Same harness, same command, same observable; the only difference is the door the
-    text comes through — ``Session.submit_user_text``, the one public entry every
-    client's composer ends at, CUI and TUI alike. Without this leg, a harness that
-    ran no turns, or a change that deleted slash dispatch outright, would pass all
-    three absences.
+    text comes through. ★ #3595 S5 moved that door: an operator's ``/``-line is
+    interpreted by the CLIENT (``reyn.interfaces.slash.dispatch``) and never
+    submitted as a turn, so this leg drives the shared client layer over a real
+    ``ClientTransport``. Its JOB is unchanged and is why it exists: without it, a
+    harness that ran no turns — or a change that deleted the command surface
+    outright — would pass all three absences.
 
-    ``scripted.calls`` staying at 0 is the other half: the operator's line
-    short-circuited at ``_maybe_handle_slash`` before any router turn, which is what
-    tells an executed command apart from a model that decided to spawn.
+    ``scripted.calls`` staying at 0 is the other half: the operator's line was
+    executed as a command with no router turn at all, which is what tells an
+    executed command apart from a model that decided to spawn.
     """
     monkeypatch.chdir(tmp_path)
     scripted = _ScriptedReply("nothing to say")
@@ -300,15 +304,15 @@ async def test_an_operator_submitted_slash_command_still_spawns_a_session(
     before = await _attach_operator(reg)
 
     operator = reg.get_or_load("operator")
-    await operator.submit_user_text(_SLASH_LINE)
-    await operator.run_one_iteration()
+    consumed = await maybe_dispatch_slash(RecordingTransport(operator), _SLASH_LINE)
+    assert consumed, "the client layer did not claim the operator's slash line"
     await operator.await_quiescent()
 
     born = set(reg.session_ids("operator")) - before
     assert born, (
-        "an operator's own '/session new' no longer opens a session — #3595 step 1b "
-        "closed slash dispatch to kinds that are not the operator's, and must leave "
-        "the operator's own path untouched"
+        "an operator's own '/session new' no longer opens a session — the arc closed "
+        "the command surface to producers that are not the operator, and must leave "
+        "the operator's own path working"
     )
     assert scripted.calls == 0, (
         "the operator's slash line reached the model instead of the slash handler, so "

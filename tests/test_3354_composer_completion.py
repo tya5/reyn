@@ -82,6 +82,9 @@ class RecordingTransport(ClientTransport):
     def __init__(self) -> None:
         self._queue: "asyncio.Queue[object]" = asyncio.Queue()
         self.submitted: "list[str]" = []
+        # #3595 S5: the client interprets a ``/`` line itself, so what it shows
+        # is the observable for a command that did or did not resolve.
+        self.displayed: "list" = []
 
     async def push_event(self, event: Event) -> None:
         await self._queue.put(EventFrame(event))
@@ -117,7 +120,7 @@ class RecordingTransport(ClientTransport):
         return None
 
     def put_display(self, msg) -> None:
-        pass
+        self.displayed.append(msg)
 
     async def cancel_inflight(self) -> None:
         pass
@@ -658,9 +661,18 @@ async def test_tab_accepts_and_enter_still_submits(tmp_path) -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert transport.submitted == ["/he"], (
-            "Enter with the menu open must submit the TYPED text, not accept "
-            f"the highlighted candidate; got {transport.submitted}"
+        # #3595 S5: a ``/`` line is INTERPRETED by the client rather than
+        # submitted as a turn, so what the typed text reached is the command
+        # layer. ``/he`` resolves to nothing, and the error names what the user
+        # actually typed — which is the discriminator this test is about: had
+        # Enter accepted the highlighted row, ``/help`` would have RUN.
+        shown = " ".join(m.text for m in transport.displayed)
+        assert "unknown command /he;" in shown, (
+            "Enter with the menu open must act on the TYPED text, not accept "
+            f"the highlighted candidate; the client showed {shown!r}"
+        )
+        assert transport.submitted == [], (
+            f"a command line was also submitted as a turn: {transport.submitted}"
         )
 
 

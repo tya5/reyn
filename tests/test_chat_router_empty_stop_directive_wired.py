@@ -102,7 +102,7 @@ async def test_chat_session_passes_shared_resume_directive_always_on(monkeypatch
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    await session._handle_user_message("hello", chain_id="chain-test-b44")
+    await session._handle_inbox_text("hello", chain_id="chain-test-b44")
 
     captured = _CapturingRouterLoop.last_kwargs
     assert captured.get("empty_stop_retry_directive") == EMPTY_STOP_RETRY_DIRECTIVE, (

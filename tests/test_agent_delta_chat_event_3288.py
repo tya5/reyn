@@ -108,7 +108,7 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
-    _run(session._handle_user_message("hi", chain_id="chain-delta-1"))
+    _run(session._handle_inbox_text("hi", chain_id="chain-delta-1"))
 
     # (1) one "agent_delta" chat-event per piece, in order, carrying the raw
     # per-chunk text — the non-vacuity witness that streaming actually ran
@@ -154,7 +154,7 @@ def test_non_streaming_turn_emits_no_agent_delta_events(tmp_path, monkeypatch) -
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
-    _run(session._handle_user_message("hi", chain_id="chain-nodelta"))
+    _run(session._handle_inbox_text("hi", chain_id="chain-nodelta"))
 
     assert not [e for e in sink.events if e.type == "agent_delta"]
     agent_msgs = [m for m in _drain_outbox(session) if m.kind == "agent"]

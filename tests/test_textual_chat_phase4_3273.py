@@ -224,6 +224,8 @@ class ScriptedTransport(ClientTransport):
     def __init__(self, messages: "list[OutboxMessage] | None" = None) -> None:
         self._messages = list(messages or [])
         self.submitted: list[str] = []
+        # #3595 S5: a menu row dispatches its slash as a COMMAND, not a turn.
+        self.commands: list[str] = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -238,6 +240,10 @@ class ScriptedTransport(ClientTransport):
 
     async def submit_user_text(self, text: str) -> None:
         self.submitted.append(text)
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        self.commands.append(f"/{name} {args}".rstrip())
+        return True
 
     async def answer_intervention_text(self, text: str) -> bool:
         return False
@@ -357,7 +363,7 @@ async def test_selecting_model_row_routes_model_slash() -> None:
         idx = _SNAP["model_classes"].index("strong")
         option_list.post_message(OptionList.OptionSelected(option_list, option_list.get_option_at_index(idx), idx))
         await pilot.pause()
-        assert "/model strong" in transport.submitted, f"picker did not route /model: {transport.submitted}"
+        assert "/model strong" in transport.commands, f"picker did not route /model: {transport.commands}"
         assert app.query_one("#drawer", ContentSwitcher).display is False, "drawer did not collapse"
 
 
