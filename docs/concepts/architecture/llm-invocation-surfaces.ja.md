@@ -97,7 +97,8 @@ ADR-0026 は、1 つの `ToolDefinition` に 2 つの render メソッド(うち
 
 1. **`op_context_factory: Callable | None`** — RouterLoop が `host.make_router_op_context` を bind し、 file / mcp / web handlers が operator-declared PermissionDecl + Workspace を受信。 legacy router branch と同等。
 2. **`host: Any`** — MCP handlers が session-level MCPClient cache を保持するための duck-typed RouterHostAdapter 参照。
-3. **Per-tool callable bridges** (`run_skill_fn` / `list_memory_fn` / `read_memory_body_fn` / `remember_fn` / `forget_fn`) — RouterLoop の private helper に bind されており、 chain_id propagation (`invoke_skill`) と agent-aware memory paths (memory cluster) を保持。
+3. **Per-tool callable bridges** (`run_skill_fn` / `list_memory_fn`) — RouterLoop の private helper に bind されており、 chain_id propagation (`invoke_skill`) と agent-aware な memory listing (`list_memory`) を保持。
+4. **`memory_service`** (#3607) — session の `MemoryService` をそのまま渡す。`read_memory_body` / `remember_*` / `forget_memory` はそのメソッドに委譲する。以前は RouterLoop の private helper への callable bridge 3 本で、その helper が host の file プリミティブから操作を組み立てていた。操作とそれが持つドメイン規則 (memory write の threat scan、frontmatter、index 再生成、knowledge ingest) は memory 層のもの。
 
 `RouterLoop._invoke_router_tool` は registry dispatch top-branch + 将来 cluster 用の placeholder コメントだけの薄い実装に。 `_normalise_router_tool_result` が handler 戻り値 shape (= op_runtime synthesis 由来の dict envelope) を legacy router branch が emit していた bare-string / bare-list shape に正規化し、 LLMReplay byte-identity を 5 cluster migration を通じて end-to-end で保持。
 

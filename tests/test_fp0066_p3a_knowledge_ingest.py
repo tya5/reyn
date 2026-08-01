@@ -11,7 +11,7 @@ Covers (per the architect's P3 firm §7 tracked items + P3a scope):
      this PR).
   2. **real-producer dirty→heal recovery e2e**: a real ``remember`` (via
      ``reyn.tools.memory._handle_remember``, the fallback/non-router path
-     — the SAME handler ``RouterLoop._remember`` wires to production) with
+     — the same operation ``MemoryService.remember`` performs in production) with
      the embedding provider failing → the op still SUCCEEDS (§G2
      best-effort) + the "knowledge_memory" source is left ``dirty`` → a
      subsequent ``search_await`` with a WORKING provider HEALS it (re-
@@ -129,7 +129,7 @@ def test_remember_survives_provider_failure_and_heals_on_next_search_await(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 3a: a real `remember` (reyn.tools.memory._handle_remember, the
-    same handler RouterLoop._remember production-wires to) with the
+    same operation MemoryService.remember performs in production) with the
     embedding provider FAILING still succeeds (§G2 best-effort) and leaves
     "knowledge_memory" dirty; a later search_await with a WORKING provider
     heals it (re-ingests, state -> clean) — the IndexCoordinator's (#3259
@@ -170,7 +170,7 @@ def test_forget_memory_sync_deindexes_the_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 3a: forget_memory (reyn.tools.memory._handle_forget_memory, the
-    fallback path RouterLoop._forget production-wires to as well) removes
+    fallback twin of MemoryService.forget's production path) removes
     the entry's embedded row SYNCHRONOUSLY — a direct backend query after
     forget confirms the content_hash is gone (§G3, not best-effort)."""
     ctx = _make_ctx(tmp_path)

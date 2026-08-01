@@ -113,8 +113,13 @@ class RouterCallerState:
     # sets e.g. ``{"reyn_repo"}``; the general/interactive agent leaves it empty.
     excluded_categories: frozenset[str] = frozenset()
 
-    # Memory access (= for memory tools when invoked router-side;
-    # the router uses MemoryService directly)
+    # The memory-store capability (``MemoryService``) the memory-cluster
+    # handlers delegate to when invoked router-side. #3607: this field already
+    # existed and was wired by nobody — the router instead bound three
+    # ``*_fn`` callables to RouterLoop privates that re-implemented
+    # remember / forget / read_body over file primitives. The privates are
+    # gone; this field is now the live one. When None (= non-router callers,
+    # test sites) the handlers take their workspace-level fallback path.
     memory_service: Any = None
 
     # Catalog access callbacks (= for catalog stub handlers
@@ -139,22 +144,15 @@ class RouterCallerState:
     # directly.  Test sites leave it None.
     host: Any = None
 
-    # Memory tool callbacks (= for memory cluster handlers; Phase 3.5-B-heavy).
-    # Bound by RouterLoop to its private ``_list_memory`` /
-    # ``_read_memory_body`` / ``_remember`` / ``_forget`` helpers so
-    # registry handlers consume the SAME parsed-index path the legacy
-    # router branches used (= host.get_memory_index() routed through
-    # the agent-aware session layer).  Without this, registry handlers
-    # would read MEMORY.md from a path not aware of per-agent dirs.
+    # Memory LISTING callback (= for the list_memory handler). Bound by
+    # RouterLoop to its private ``_list_memory`` helper so registry handlers
+    # consume the SAME parsed-index path the legacy router branches used (=
+    # host.get_memory_index() routed through the agent-aware session layer).
+    # Without this, registry handlers would read MEMORY.md from a path not
+    # aware of per-agent dirs. The three sibling ``*_fn`` fields that used to
+    # sit here (read_memory_body_fn / remember_fn / forget_fn) are gone —
+    # those are memory-store operations and ride ``memory_service`` (#3607).
     list_memory_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
-    # ``Callable[..., Awaitable[Any]]`` to allow optional ``offset`` /
-    # ``limit`` kwargs (= line-slice symmetry with ``read_file`` /
-    # ``reyn_repo_read``). Concrete signature is
-    # ``(layer: str, slug: str, *, offset: int | None = None,
-    # limit: int | None = None) -> Awaitable[dict]``.
-    read_memory_body_fn: Callable[..., Awaitable[Any]] | None = None
-    remember_fn: Callable[..., Awaitable[Any]] | None = None
-    forget_fn: Callable[[str, str], Awaitable[Any]] | None = None
 
     # FP-0032: MCP server list for enum injection into call_mcp_tool /
     # describe_mcp_tool. Shape: [{name, description, tools?: [{name, ...}]}, ...]

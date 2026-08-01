@@ -171,10 +171,6 @@ def _make_adapter(
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -605,10 +601,6 @@ async def test_session_handle_user_message_calls_yaml_watch_before_reload(
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(

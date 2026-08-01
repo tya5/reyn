@@ -163,11 +163,17 @@ patterns on `RouterCallerState`:
    legacy router branch.
 2. **`host: Any`** — duck-typed RouterHostAdapter reference for MCP
    handlers that preserve the session-level MCPClient cache.
-3. **Per-tool callable bridges** (`run_skill_fn`, `list_memory_fn`,
-   `read_memory_body_fn`, `remember_fn`, `forget_fn`) — bound to
-   RouterLoop's private helpers so chain_id propagation
-   (`invoke_skill`) and agent-aware memory paths (memory cluster) are
-   preserved.
+3. **Per-tool callable bridges** (`run_skill_fn`, `list_memory_fn`) —
+   bound to RouterLoop's private helpers so chain_id propagation
+   (`invoke_skill`) and the agent-aware combined memory listing
+   (`list_memory`) are preserved.
+4. **`memory_service`** (#3607) — the session's `MemoryService`, passed
+   whole. `read_memory_body` / `remember_*` / `forget_memory` delegate to
+   its methods. They used to be three more callable bridges onto
+   RouterLoop privates that assembled the operations out of the host's
+   file primitives; the operations, and the domain rules they carry
+   (memory-write threat scan, frontmatter, index regeneration, knowledge
+   ingest), belong to the memory layer.
 
 `RouterLoop._invoke_router_tool` is now a thin top-branch (registry
 dispatch) plus a comment placeholder for future clusters.

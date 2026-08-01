@@ -172,7 +172,15 @@ class RouterHostAdapter:
     resolver:
         ModelResolver instance for ``resolve_model``.
     memory:
-        MemoryService instance for ``memory_path`` / ``memory_dir``.
+        The session's :class:`MemoryService` — the memory-store capability
+        (``remember`` / ``forget`` / ``read_body``), exposed whole as
+        ``host.memory``. #3607: the adapter used to receive four file
+        primitives (``file_read`` / ``file_write`` / ``file_delete`` /
+        ``file_regenerate_index``) instead, whose ONLY consumers were three
+        RouterLoop privates that re-implemented the memory operations —
+        domain rules (threat scan, frontmatter, index regen, knowledge
+        ingest) included — on top of them. The rules moved to MemoryService
+        and the primitives left the adapter with them.
     journal:
         SnapshotJournal instance for plan-lifecycle persistence.
     agent_registry:
@@ -182,14 +190,6 @@ class RouterHostAdapter:
         lookup source, exposed via ``get_pipeline_registry()``.
     agent_workspace_dir:
         Path to ``.reyn/agents/<agent_name>`` — used for ``get_memory_index``.
-    file_read:
-        Async callback ``(path: str) -> dict``.
-    file_write:
-        Async callback ``(path: str, content: str) -> dict``.
-    file_delete:
-        Async callback ``(path: str) -> dict``.
-    file_regenerate_index:
-        Async callback ``(*, path, output_path, entry_template, header) -> dict``.
     mcp_call_tool:
         Async callback ``(server: str, tool: str, args: dict) -> dict``.
     mcp_read_resource:
@@ -285,11 +285,6 @@ class RouterHostAdapter:
         presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         agent_workspace_dir: Path,
-        # File op callbacks
-        file_read: Callable[..., Awaitable[dict]],
-        file_write: Callable[..., Awaitable[dict]],
-        file_delete: Callable[..., Awaitable[dict]],
-        file_regenerate_index: Callable[..., Awaitable[dict]],
         # MCP op callbacks
         mcp_call_tool: Callable[..., Awaitable[dict]],
         # #2597 slice ②a: resources consumption (read/templates) — defaults to
@@ -541,11 +536,6 @@ class RouterHostAdapter:
         self._presentation_registry = presentation_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._workspace_dir = Path(agent_workspace_dir)
-        # File callbacks
-        self._file_read_cb = file_read
-        self._file_write_cb = file_write
-        self._file_delete_cb = file_delete
-        self._file_regenerate_index_cb = file_regenerate_index
         # MCP callbacks
         self._mcp_call_tool_cb = mcp_call_tool
         self._mcp_read_resource_cb = mcp_read_resource
@@ -667,28 +657,10 @@ class RouterHostAdapter:
         from reyn.security.content_guard import fence_if_enabled
         return fence_if_enabled(content, self._threat_scan)
 
-    def scan_for_block(self, content: str, *, scope: str = "strict"):
-        """FP-0050/#1822 S4a (Class B): return the first block-severity threat
-        match in ``content`` at ``scope``, or None. Used at agent-write seams
-        (memory write) to REJECT a poisoned write before it persists. Emits a
-        ``threat_block`` event on a hit. No-op (None) when disabled; fail-open.
-        """
-        cfg = self._threat_scan
-        if cfg is None or not getattr(cfg, "enabled", False):
-            return None
-        from reyn.security.content_guard import first_blocking_match, scan_for_threats
-        try:
-            matches = scan_for_threats(content, cfg, scope=scope)
-        except Exception:  # noqa: BLE001 — fail-open
-            if getattr(cfg, "fail_open", True):
-                return None
-            raise
-        hit = first_blocking_match(matches, getattr(cfg, "block_severity", "block"))
-        if hit is not None:
-            self._events.emit(
-                "threat_block", pattern_id=hit.pattern_id, severity=hit.severity, scope=hit.scope,
-            )
-        return hit
+    # #3607: ``scan_for_block`` — the agent-write (memory) leg of the same
+    # FP-0050 guard — moved to ``MemoryService.scan_for_block``. It had exactly
+    # one caller, ``RouterLoop._remember``, and it is a rule ABOUT a memory
+    # write, not about a tool result: it belongs with the operation it rejects.
 
     def _is_turn_cancel_requested(self) -> bool:
         """#1468: True when the session has requested a cooperative turn cancel.
@@ -1157,15 +1129,18 @@ class RouterHostAdapter:
             return {"error": str(exc)}
         return read_text(target, path)
 
-    # --- Memory file paths ---
+    # --- Memory capability ---
 
-    def memory_path(self, layer: str, slug: str) -> str:
-        """Resolve layer + slug to file path via MemoryService."""
-        return self._memory.memory_path(layer, slug)
+    @property
+    def memory(self) -> Any:
+        """The session's :class:`MemoryService` — handed to the router whole.
 
-    def memory_dir(self, layer: str) -> str:
-        """Directory for the layer's memory files via MemoryService."""
-        return self._memory.memory_dir(layer)
+        #3607: the two path delegates that used to live here
+        (``memory_path`` / ``memory_dir``) existed so RouterLoop could
+        assemble memory file paths itself. It no longer assembles anything:
+        it calls ``host.memory.remember`` / ``.forget`` / ``.read_body``.
+        """
+        return self._memory
 
     # --- Action callbacks ---
 
@@ -1644,59 +1619,16 @@ class RouterHostAdapter:
             return ""
         return self._reasoning_continuity_section_fn() or ""
 
-    # --- File ops ---
-
-    async def file_read(self, path: str) -> str:
-        """Returns content string (with a trailing note appended when the
-        underlying read was truncated or carried an unrecognized op status)
-        or a JSON error.
-
-        #3193 co-vet finding: this method flattens the ``_file_read_cb``
-        dict to a bare string — the same choke point ``read_file``'s
-        registry-dispatch sibling had to fix for the identical reason
-        (#3191/#3192; #3429 then deleted that sibling outright, routing the
-        chat path through ``file_to_canonical`` instead — this adapter method
-        is NOT on that path, see the consumer list below):
-        flattening to a string BEFORE the caller sees the dict
-        silently drops any sibling key (``truncated``/``note``/
-        ``_unknown_op_status``) unless this method explicitly re-attaches it.
-        The #3193 classifier fix made ``_file_read_cb`` start forwarding
-        those keys — this adapter was the one place still discarding them on
-        the way to the LLM (verified: two of ``_file_read``'s live
-        consumers, ``MemoryService.read_body`` and this method — the router
-        chat path predating the #2782/#3082 registry-dispatch migration —
-        forward the dict onward; only this one collapsed it to a bare
-        string without re-attaching the signal).
-        """
-        import json
-        res = await self._file_read_cb(path)
-        if "content" in res:
-            content = res["content"]
-            if res.get("truncated") and res.get("note"):
-                content = f"{content}\n\n... {res['note']}"
-            elif "_unknown_op_status" in res:
-                content = (
-                    f"{content}\n\n... note: this read returned an unrecognized "
-                    f"op status ({res['_unknown_op_status']!r}) — content may be "
-                    f"incomplete; re-read to confirm if in doubt."
-                )
-            return content
-        return json.dumps(res)
-
-    async def file_write(self, path: str, content: str) -> dict:
-        return await self._file_write_cb(path, content)
-
-    async def file_delete(self, path: str) -> dict:
-        return await self._file_delete_cb(path)
-
-    async def file_regenerate_index(self, path: str, output_path: str,
-                                     entry_template: str, header: str) -> dict:
-        return await self._file_regenerate_index_cb(
-            path=path,
-            output_path=output_path,
-            entry_template=entry_template,
-            header=header,
-        )
+    # #3607: the four file-op delegates (``file_read`` / ``file_write`` /
+    # ``file_delete`` / ``file_regenerate_index``) lived here only so
+    # RouterLoop could re-implement `remember`/`forget`/`read_memory_body`
+    # on top of them. The memory operations are now MemoryService's, and
+    # they call the SAME session callbacks directly (Session wires them
+    # into MemoryService, as it always did) — one hop fewer, and the router
+    # host no longer offers the LLM's loop a general file primitive it had
+    # no business holding. ``file_read``'s #3193 dict→string flattening
+    # went with it: MemoryService.read_body returns a dict, so the
+    # truncation signal rides as sibling keys instead of appended prose.
 
     # --- MCP ops ---
 

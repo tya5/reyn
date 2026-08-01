@@ -121,14 +121,20 @@ def test_adapter_protocol_conformance(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 2: memory_path / memory_dir delegation
+# Test 2: the memory capability is handed over whole
 # ---------------------------------------------------------------------------
 
-def test_memory_path_delegation_matches_service(tmp_path):
-    """Tier 2: adapter.memory_path returns the same value as MemoryService.memory_path.
+def test_adapter_exposes_the_memory_capability_itself(tmp_path):
+    """Tier 2: adapter.memory IS the injected MemoryService, and the adapter
+    exposes no file primitive in its place.
 
-    Asserts no double-mapping or path transformation between the adapter
-    delegation surface and the service's own method.
+    #3607: the adapter used to expose ``memory_path`` / ``memory_dir`` plus
+    four file-op methods, out of which the router loop assembled the memory
+    operations. What the router needs is the operations — so the capability
+    is handed over whole, and the primitives it was assembled from are not
+    on the host surface at all. The second assertion is the load-bearing
+    one: re-adding a ``file_write`` delegate here re-opens the layering hole
+    even if ``memory`` is also present.
     """
     events = EventLog(subscribers=[])
     workspace = tmp_path / "agents" / "test-agent"
@@ -146,8 +152,16 @@ def test_memory_path_delegation_matches_service(tmp_path):
         memory=memory,
     )
 
-    assert adapter.memory_path("shared", "test_slug") == memory.memory_path("shared", "test_slug")
-    assert adapter.memory_dir("agent") == memory.memory_dir("agent")
+    assert adapter.memory is memory
+    assert adapter.memory.memory_path("shared", "s") == memory.memory_path("shared", "s")
+    for primitive in (
+        "file_read", "file_write", "file_delete", "file_regenerate_index",
+        "memory_path", "memory_dir", "scan_for_block",
+    ):
+        assert not hasattr(adapter, primitive), (
+            f"the router host must not expose {primitive!r}: memory operations "
+            f"belong to the memory capability, not to the router's host surface"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -207,10 +221,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=tmp_path / "agents" / "alpha",
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -283,10 +293,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -346,10 +352,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -408,10 +410,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(

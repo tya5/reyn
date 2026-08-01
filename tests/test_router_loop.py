@@ -124,19 +124,20 @@ async def test_remember_shared_writes_file_and_regenerates_index(monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("remember: I'm a developer", [])
 
-    # file_write should have been called with the right path
+    # the write landed at the layer's own resolved path
+    expected_path = host.memory.memory_path("shared", "user_role")
     written_paths = [path for path, _ in host.file_writes]
-    assert "/memory/shared/user_role.md" in written_paths
+    assert expected_path in written_paths
 
     # Check frontmatter in written content
-    written_content = dict(host.file_writes)["/memory/shared/user_role.md"]
+    written_content = dict(host.file_writes)[expected_path]
     assert "name: User Role" in written_content
     assert "type: user" in written_content
     assert "The user is a senior developer." in written_content
 
-    # file_regenerate_index should have been called
+    # the listing index was regenerated for that same layer
     (regen,) = host.index_regenerations
-    assert regen["output_path"] == "/memory/shared/MEMORY.md"
+    assert regen["output_path"] == host.memory.memory_path("shared", "MEMORY")
 
     assert host.outbox[0]["text"] == "Saved."
 
@@ -349,7 +350,8 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls(monkeypatch):
 async def test_forget_memory_deletes_file_and_regenerates_index(monkeypatch):
     """Tier 1: forget_memory tool deletes the memory file and triggers index regeneration."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
-    host._files["/memory/shared/user_role.md"] = "# old memory"
+    existing_path = host.memory.memory_path("shared", "user_role")
+    host._files[existing_path] = "# old memory"
     loop = make_loop(host)
 
     rounds = [
@@ -364,7 +366,7 @@ async def test_forget_memory_deletes_file_and_regenerates_index(monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("forget my role", [])
 
-    assert "/memory/shared/user_role.md" in host.file_deletes
+    assert existing_path in host.file_deletes
     (only_regen,) = host.index_regenerations
     assert host.outbox[0]["text"] == "Forgotten."
 

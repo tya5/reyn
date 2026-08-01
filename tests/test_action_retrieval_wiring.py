@@ -97,10 +97,6 @@ def _make_adapter(
         journal=_noop_callable,
         agent_registry=None,
         agent_workspace_dir=Path("/tmp"),
-        file_read=_noop_callable,
-        file_write=_noop_callable,
-        file_delete=_noop_callable,
-        file_regenerate_index=_noop_callable,
         mcp_call_tool=_noop_callable,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(

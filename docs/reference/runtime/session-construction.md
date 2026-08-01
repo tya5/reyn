@@ -383,6 +383,19 @@ Session still builds each field with the exact same expression as before
 `ephemeral_fn` / `live_session_id_fn` and the two tracker lambdas are still
 live per-turn callables, not eager-ized); only the wire shape changed.
 
+**#3607 — ask the layering question BEFORE the bundling one.** Four params
+(`file_read` / `file_write` / `file_delete` / `file_regenerate_index`) left the
+constructor entirely rather than becoming a sixth bundle. They shared a consumer
+set, so the measurement above would happily have bundled them — and the result
+would have been primitives neatly grouped, with the 57 lines of memory domain
+rule still sitting in `RouterLoop` on top of them. The prior question is "is this
+a capability, or a primitive the capability is assembled from?": the adapter now
+receives `memory` (the `MemoryService`) and the router calls its operations. Note
+what the bundling criterion cannot see — a Parameter Object moves parameters to a
+common root; only a Facade Service hides the aggregate BEHAVIOUR. The five
+bundles below are the former by design (their own docstrings say "no construction
+logic"); they are not evil, they are insufficient for a layering defect.
+
 The remaining bare params are bare because **no other param travels to the
 same set of destinations** — and that is not recorded anywhere as prose. It is
 COMPUTED, by `scripts/measure_router_host_adapter_consumers.py` (exact
@@ -484,12 +497,18 @@ kept verbatim.
 
 ## Family 8b — Memory
 
-`_build_memory` constructs the memory persistence adapter (PR-refactor-session-1
-wave 3 PR2 — absorbs memory path resolution + remember/forget/read_body; PR3
-`RouterHostAdapter` holds a direct reference, session delegates via the adapter's
-`memory_path`/`memory_dir`). Byte-identical, same args as the inline construction it
-replaced, unmoved — this position is PRE-WAIST, before Family 6a's `_build_router_waist`
-reads `self._memory` eagerly.
+`_build_memory` constructs the memory-store capability — `MemoryService`, which owns
+memory path resolution plus `remember` / `forget` / `read_body` and the domain rules
+they carry (the FP-0050 memory-write threat scan, YAML frontmatter, listing-index
+regeneration, knowledge-index ingest/de-index via the injected `MemoryKnowledgeSync`).
+`RouterHostAdapter` receives it whole and exposes it as `host.memory`; #3607 removed the
+adapter's `memory_path` / `memory_dir` delegates and its four `file_*` callbacks, which
+existed only so `RouterLoop` could assemble those operations itself.
+
+Position unmoved and PRE-WAIST, before Family 6a's `_build_router_waist` reads
+`self._memory` eagerly. Args are eager `self._X` reads except `knowledge_sync`'s
+`op_context_fn`, a lambda resolving `self._router_host` at call time (the waist does not
+exist yet here, and an OpContext is per-turn state that must not be snapshotted).
 
 ## Family 8c — MCP connection service
 

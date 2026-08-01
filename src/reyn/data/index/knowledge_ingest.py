@@ -5,8 +5,10 @@
 **Why this module exists (avoid dispersion, per the Coordinator's own
 boundary principle)**: memory (``remember``/``forget_memory``) has TWO
 call paths that both need the same sync-in-op ingest/de-index behavior —
-the production ``RouterLoop._remember``/``_forget`` path
-(``src/reyn/runtime/router_loop.py``) and the non-router fallback path in
+the production ``MemoryService.remember``/``forget`` path
+(``src/reyn/runtime/services/memory_service.py``, reached through the
+``MemoryKnowledgeSync`` collaborator that binds these functions to a live
+coordinator + OpContext) and the non-router fallback path in
 ``src/reyn/tools/memory.py`` (used by phase/test callers without a live
 router). Skill install/uninstall similarly has one production entry point
 each (``skill_install`` op / ``plugin_uninstall`` op). Putting the

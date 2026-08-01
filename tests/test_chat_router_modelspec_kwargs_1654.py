@@ -79,8 +79,6 @@ def _mk_host_with_kwargs():
             file_write=_noop, file_read=_noop, file_delete=_noop, file_regenerate_index=_noop),
         journal=None, agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_noop, file_write=_noop, file_delete=_noop,
-        file_regenerate_index=_noop,
         mcp_call_tool=_noop, mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
             send_to_agent=_noop, delegation_tracker=lambda: [],
