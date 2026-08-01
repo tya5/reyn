@@ -52,6 +52,7 @@ from reyn.interfaces.transport.agui.surface import (
     monotonic,
     surface_registry,
 )
+from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
@@ -365,6 +366,14 @@ class _SessionFrameSource:
     async def frames(self):
         while True:
             frame = await self._q.get()
+            # #3570, the server-side instance of the same shape as
+            # ``InProcessTransport.frames``: ``_q`` is fed by SYNCHRONOUS
+            # ``put_nowait`` callers (the chat-event subscriber, the forwarder),
+            # so a burst leaves it non-empty and ``get()`` stops suspending —
+            # the emitter would then encode + serialize the whole burst without
+            # the server's event loop running anything else (other connections'
+            # writes, the fail-close driver's timers).
+            await suspend_between_frames()
             yield frame
             if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
                 return

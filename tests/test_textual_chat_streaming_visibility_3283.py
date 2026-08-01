@@ -52,6 +52,7 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat.app import _STREAM_REPAINT_MIN_INTERVAL
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -61,6 +62,24 @@ from reyn.schemas.models import Event
 #: more than a short test viewport holds, so the reply is genuinely off-screen
 #: (asserted via the public ``visible_range()`` in every gate that needs it).
 _FILLER_ROWS = 40
+
+
+class _DrivenClock:
+    """The app's own ``clock`` injection point, driven instead of slept through
+    (the idiom ``tests/test_stream_spinner_3530.py`` uses for the blink).
+
+    Needed here since #3570: the repaint budget reads this clock, so a test that
+    wants "one delta, one update" has to say when a delta is due rather than
+    race a real 33 ms window."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class QueueTransport(ClientTransport):
@@ -205,29 +224,44 @@ async def test_offscreen_deltas_do_not_re_render_the_row() -> None:
     ``Entry.set_item``; counting it counts the real update feed rather than
     inferring the deferral from the final content (which cannot tell "deferred"
     from "updated every time"). Both legs are asserted in the SAME test so the
-    negative is not vacuous: the same code path DOES feed the row while visible."""
+    negative is not vacuous: the same code path DOES feed the row while visible.
+
+    #3570 added a SECOND gate in front of the same ``set_item``: a repaint
+    budget, so an on-screen row is fed at most once per
+    ``_STREAM_REPAINT_MIN_INTERVAL`` however fast deltas arrive. The visible leg
+    therefore drives the app's own injected clock past that window between
+    deltas — which keeps this test measuring the ③ VISIBILITY gate (its subject)
+    at full strength rather than accidentally measuring #3570's budget. The
+    budget's own gates live in ``tests/test_stream_repaint_coalesce_3570.py``.
+    """
     transport = QueueTransport()
-    app = TextualChatApp(transport=transport)
+    clock = _DrivenClock()
+    app = TextualChatApp(transport=transport, clock=clock)
     async with app.run_test(size=(80, 10)) as pilot:
         await pilot.pause()
-        # Leg 1 — VISIBLE: the feed is live, every delta bumps the revision.
+        # Leg 1 — VISIBLE: the feed is live, every (budget-clear) delta bumps
+        # the revision.
         await transport.push_event(_delta(chain_id="chain-v", text="a"))
         await pilot.pause()
         visible_entry = _reply_entry(app, "chain-v")
         assert not _is_offscreen(app, visible_entry)
         before_visible = visible_entry.revision
         for _ in range(6):
+            clock.advance(_STREAM_REPAINT_MIN_INTERVAL * 2)
             await transport.push_event(_delta(chain_id="chain-v", text="a"))
-        await pilot.pause()
+            await pilot.pause()
         live_bumps = visible_entry.revision - before_visible
         assert live_bumps == 6, (
             f"a VISIBLE streamed reply must be fed every delta, got {live_bumps} of 6"
         )
 
-        # Leg 2 — OFF SCREEN: the feed is deferred, no update is issued at all.
+        # Leg 2 — OFF SCREEN: the feed is deferred, no update is issued at all —
+        # and the clock keeps advancing past the budget, so what is measured is
+        # the visibility gate alone, not a repaint that was merely not due yet.
         entry = await _push_reply_above_the_fold(transport, pilot, app, "chain-o", "a")
         before = entry.revision
         for _ in range(6):
+            clock.advance(_STREAM_REPAINT_MIN_INTERVAL * 2)
             await transport.push_event(_delta(chain_id="chain-o", text="a"))
         await pilot.pause()
         await pilot.pause()

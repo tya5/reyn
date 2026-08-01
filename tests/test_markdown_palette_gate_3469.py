@@ -94,13 +94,21 @@ def _memo_cleared_theme() -> "object":
     rich (measured on 15.0.0, ``style.py`` ``_make_ansi_codes``) memoizes a
     Style's rendered escape on FIRST render without keying it by the
     console's ``color_system`` — and ``Style.parse`` is ``lru_cache``d
-    process-wide, so the instances in this theme are shared with every other
-    test in the same pytest process. Any earlier test that rendered the same
-    style string on a lower-colour console bakes the DOWNGRADED escape into
-    the shared instance (``#6b7280`` → bright_black ``'90'``), and this
-    gate's truecolor console then re-emits it — a false leak that flaps with
-    xdist test ordering (the #3472 CI-only red; reproduced deterministically
-    in ``test_gate_measures_the_theme_not_another_consoles_downgrade_memo``).
+    process-wide, so the instances in this theme are shared with everything
+    else rendered in the same pytest process. Whatever renders a style string
+    on a lower-colour console FIRST bakes the DOWNGRADED escape into the shared
+    instance (``#6b7280`` → bright_black ``'90'``), and this gate's truecolor
+    console then re-emits it — a false leak (the #3472 CI-only red; reproduced
+    deterministically in
+    ``test_gate_measures_the_theme_not_another_consoles_downgrade_memo``).
+
+    ACROSS tests that leak is closed centrally as of #3572: the autouse
+    ``_isolate_rich_style_ansi_memo`` fixture in ``tests/conftest.py`` resets
+    rich's memo after every test, so no test can inherit another's colour
+    system (which is what made #3536's gutter test red on CI). This helper is
+    still load-bearing for the poisoning that happens WITHIN a single test —
+    which is exactly what the sibling test below performs deliberately.
+
     Clearing the memo (a rich-private field, acknowledged — no public reset
     exists: ``copy()`` and ``+ Style()`` both preserve or alias it) makes the
     gate measure what a real single-colour-system terminal process sees. A

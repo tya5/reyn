@@ -100,6 +100,7 @@ from .search_bar import SearchBar
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
     from textual_flowview import VisibilityHandle
 
     from reyn.interfaces.repl.read_model import ChatReadModel
@@ -246,6 +247,22 @@ def _apply_restored_state(msg: "OutboxMessage", entry: "Entry[OutboxMessage]") -
 #: snapshot (pre-session), which must NOT trigger a second read.
 _UNSET: object = object()
 
+#: #3570 — the minimum wall-clock gap between two repaints of the SAME streamed
+#: reply. Deltas arrive at the provider's rate (measured: up to ~1000/s through a
+#: proxy that packs many SSE events into one read); repainting at that rate spends
+#: the loop re-presenting and re-rendering an O(body) markdown body far more often
+#: than a terminal can show. 1/30 s is the knee of the measured curve on the real
+#: TUI path (2000 deltas / 60 KB reply, textual-flowview v0.9.0): ``set_item``
+#: 1979 → 75 and ``present`` 1908 → 72 with wall-clock 16.1 s → 3.3 s, while going
+#: on to 1/20 s bought a further ~5% for 50% more latency. (Those present/wall
+#: figures are against the drain's unconditional suspension point already being
+#: in place — see ``transport/drain.py``: with it and without this budget, every
+#: delta buys its own present, which is what the 1908 is.) It is a REPAINT budget
+#: only — the accumulated text is
+#: never gated by it (see :class:`_StreamingReply`), and no deferral outlives it
+#: (:meth:`TextualChatApp._schedule_streaming_catchup`).
+_STREAM_REPAINT_MIN_INTERVAL = 1 / 30
+
 
 @dataclass(slots=True)
 class _StreamingReply:
@@ -261,12 +278,22 @@ class _StreamingReply:
       optimisation, never a data path.
     - :attr:`rendered` — how much of :attr:`text` the flow entry has actually
       been handed (via ``Entry.set_item``). Equal to :attr:`text` while the row
-      is on screen; LAGS it while the row is scrolled out of view.
+      is on screen AND the repaint budget below allowed the last delta through;
+      LAGS it while the row is scrolled out of view, or within the budget window.
 
     ``rendered != text`` is therefore exactly "this row owes the viewport a
     repaint", and :meth:`TextualChatApp._flush_streaming_reply` is the only
-    thing that closes the gap — driven either by the next delta (while visible)
-    or by ``on_show`` when the row scrolls back (while it was not).
+    thing that closes the gap — driven by the next delta whose arrival is at
+    least :data:`_STREAM_REPAINT_MIN_INTERVAL` after :attr:`last_repaint`, by
+    the catch-up timer that bounds that deferral
+    (:meth:`TextualChatApp._schedule_streaming_catchup`), or by ``on_show`` when
+    the row scrolls back (while it was not visible).
+
+    :attr:`last_repaint` is the app-clock reading of the last such flush — the
+    #3570 repaint budget's whole state. It is a RENDER throttle: deltas arriving
+    inside the window still land on :attr:`text` in full, they just do not each
+    buy their own ``set_item`` (and, through the revision bump, their own
+    present + strip render of the whole accumulated body).
 
     :attr:`handle` is the ``FlowView.track_visibility`` registration whose
     ``on_show``/``on_hide`` maintain :attr:`visible`; :meth:`release` stops it
@@ -279,6 +306,7 @@ class _StreamingReply:
     rendered: str
     visible: bool = True
     handle: "VisibilityHandle | None" = None
+    last_repaint: float = 0.0
 
     @property
     def pending(self) -> bool:
@@ -881,6 +909,12 @@ class TextualChatApp(App):
         # session switch, so a chain_id can never leak past its turn's
         # completion.
         self._streaming_replies: "dict[str, _StreamingReply]" = {}
+        # #3570: the one-shot timer that BOUNDS a repaint deferral, or ``None``
+        # when nothing is deferred. Not per-session state (it holds no session
+        # identity and its callback iterates whatever is in-flight at the time),
+        # so it is deliberately NOT in :attr:`_PER_SESSION_DICT_STATE` — a switch
+        # clears the records and the timer then finds nothing to flush.
+        self._streaming_catchup: "Timer | None" = None
         # #3283 ④: the status snapshot's keyed per-turn token/cost lookup
         # (``turn_usage_fn`` = ``Session.turn_usage``), cached off the snapshot
         # :meth:`_refresh_live_chrome` already reads once per arriving frame.
@@ -2662,7 +2696,22 @@ class TextualChatApp(App):
         SAME ``chain_id`` accumulates onto the tracked text and updates
         that SAME entry in place (``Entry.set_item`` — bumps the revision,
         re-presents on the next viewport paint), never appending a second
-        row. This entry is finalized (and popped from
+        row.
+
+        **#3570 — the in-place update is also REPAINT-BUDGETED.** Deltas
+        arrive at the provider's rate, not the terminal's; each ``set_item``
+        costs a present + a strip render of the WHOLE accumulated body, so at
+        a proxy's rate the loop spends itself redrawing frames no eye ever
+        separates. A delta arriving within
+        :data:`_STREAM_REPAINT_MIN_INTERVAL` of this reply's last repaint
+        therefore accumulates WITHOUT a ``set_item``; the next delta past the
+        window repaints everything collected since, and a catch-up timer
+        (:meth:`_schedule_streaming_catchup`) bounds the wait when no such
+        delta follows. Measured on the real TUI path (2000 deltas, 60 KB
+        reply, textual-flowview v0.9.0): ``set_item`` 1979 → 75, ``present``
+        1908 → 72, wall-clock 16.1 s → 3.3 s, with the full text unchanged.
+
+        This entry is finalized (and popped from
         :attr:`_streaming_replies`) by the terminal completion frame in
         :meth:`_ingest_frame`, never here — so a chain_id's tracked partial
         never contests with the authoritative completed text (L9
@@ -2713,8 +2762,13 @@ class TextualChatApp(App):
             entry = self.conversation.append(
                 OutboxMessage(kind="agent", text=text, meta={"chain_id": chain_id})
             )
-            # The append already carries this first chunk, so rendered == text.
-            record = _StreamingReply(entry=entry, text=text, rendered=text)
+            # The append already carries this first chunk, so rendered == text —
+            # and it IS this reply's first repaint, so it opens the #3570 budget
+            # window rather than leaving it at 0.0 (which would let the very next
+            # delta repaint immediately, however close behind it arrived).
+            record = _StreamingReply(
+                entry=entry, text=text, rendered=text, last_repaint=self._clock()
+            )
             self._streaming_replies[chain_id] = record
             self._track_streaming_visibility(record)
             return
@@ -2723,7 +2777,7 @@ class TextualChatApp(App):
         # re-shown before its completion still had every byte collected here.
         existing.text += text
         if existing.visible:
-            self._flush_streaming_reply(existing)
+            self._repaint_streaming_reply_within_budget(existing)
 
     def _track_streaming_visibility(self, record: "_StreamingReply") -> None:
         """Bind a streamed reply's live-update feed to its row's viewport state
@@ -2817,16 +2871,79 @@ class TextualChatApp(App):
         if record is not None:
             record.visible = False
 
+    def _repaint_streaming_reply_within_budget(
+        self, record: "_StreamingReply"
+    ) -> None:
+        """#3570 — the live leg's repaint decision: flush now, or accumulate and
+        let the bound catch up.
+
+        The budget is per reply and measured on the app's own (injectable) clock:
+        a delta arriving at least :data:`_STREAM_REPAINT_MIN_INTERVAL` after this
+        reply's last repaint flushes everything collected since, in ONE
+        ``set_item``. One arriving sooner does not — its text is already on
+        :attr:`_StreamingReply.text` (the caller appended it unconditionally,
+        which is the data path this method must never touch), so the only thing
+        deferred is the redraw.
+
+        ★ The deferral is BOUNDED and the bound does not depend on the producer:
+        every skipped repaint arms :meth:`_schedule_streaming_catchup`, so
+        accumulated text reaches the screen within one interval even if deltas
+        keep arriving forever (the queue never emptying must never mean the
+        viewer sees nothing until completion) or stop arriving entirely (a model
+        that pauses mid-reply must not leave its last chunk unpainted until the
+        completion frame)."""
+        if self._clock() - record.last_repaint >= _STREAM_REPAINT_MIN_INTERVAL:
+            self._flush_streaming_reply(record)
+            return
+        self._schedule_streaming_catchup()
+
+    def _schedule_streaming_catchup(self) -> None:
+        """Arm the one-shot timer that bounds a #3570 repaint deferral.
+
+        ONE timer for the app, not one per reply: the callback flushes every
+        pending in-flight reply, so a second skipped repaint (of this reply or
+        another) while one is already armed needs no second timer. The handle is
+        cleared by the callback, so the next skipped repaint arms a fresh one —
+        the deferral window can therefore never exceed one interval, however long
+        the stream runs.
+
+        Guarded: the budget is an OPTIMISATION, so failing to arm the timer must
+        degrade to "repaint on the next due delta", never break the pump."""
+        if self._streaming_catchup is not None:
+            return
+        try:
+            self._streaming_catchup = self.set_timer(
+                _STREAM_REPAINT_MIN_INTERVAL, self._flush_pending_streaming_replies
+            )
+        except Exception:
+            logger.exception("textual chat: could not arm the streamed-reply catch-up")
+
+    def _flush_pending_streaming_replies(self) -> None:
+        """The #3570 catch-up timer's callback: repaint every visible in-flight
+        reply that owes the viewport text.
+
+        Flushes UNCONDITIONALLY rather than re-consulting the budget — the timer
+        was armed by a skipped repaint and fires a full interval later, and a
+        budget re-check here could push the same text past yet another window
+        (with an injected/frozen test clock, forever). This is the leg that makes
+        the deferral bounded, so it must not be able to defer again."""
+        self._streaming_catchup = None
+        for record in list(self._streaming_replies.values()):
+            if record.visible and record.pending:
+                self._flush_streaming_reply(record)
+
     def _flush_streaming_reply(self, record: "_StreamingReply") -> None:
         """Hand the entry the FULL accumulated text and mark it rendered — the
-        single place a streamed partial reaches the flow, from either the
-        live leg (a delta while visible) or the replay leg (``on_show``).
+        single place a streamed partial reaches the flow, from the live leg (a
+        delta past the #3570 repaint budget), the catch-up timer that bounds that
+        budget, or the replay leg (``on_show``).
 
         ``rendered`` is advanced BEFORE the ``set_item`` on purpose:
         ``set_item`` re-enters flowview (reflow → ``_sync_visibility``), which can
         call straight back into :meth:`_on_streaming_entry_shown`, and a record
         that still looked ``pending`` there would flush a second time."""
         record.rendered = record.text
+        record.last_repaint = self._clock()
         record.entry.set_item(replace(record.entry.item, text=record.text))
 
     def _restore_cancelled_text(self, text: str) -> None:

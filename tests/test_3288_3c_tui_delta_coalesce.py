@@ -47,10 +47,39 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat.app import _STREAM_REPAINT_MIN_INTERVAL
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
+
+
+class _DrivenClock:
+    """The app's own ``clock`` injection point, driven instead of slept through
+    (the idiom ``tests/test_stream_spinner_3530.py`` uses for the blink).
+
+    ★Load-bearing since #3570: a streamed reply's entry is repainted at most
+    once per ``_STREAM_REPAINT_MIN_INTERVAL`` on THIS clock, so "push two deltas
+    and read the row" is only a statement about the render if the test says when
+    the budget window has passed. Left on the real clock, the assertion below
+    passes or fails according to how long ``pilot.pause()`` happens to take on
+    the machine — measured 9/20 failures at ~25 ms per pause and 0/20 at ~35 ms,
+    which is a coin-flip CI gate, not a gate (the #3473 flake class). The
+    accumulated TEXT is never affected either way: it is appended
+    unconditionally, and only the ``set_item`` is budgeted."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+    def past_the_repaint_budget(self) -> None:
+        """Move beyond the #3570 repaint window, so the NEXT delta repaints."""
+        self.advance(_STREAM_REPAINT_MIN_INTERVAL * 2)
 
 
 class QueueTransport(ClientTransport):
@@ -206,12 +235,17 @@ async def test_stream_on_off_render_equivalence() -> None:
     # Streaming ON: the SAME reply, chunked into deltas, then the SAME
     # completion text.
     on_transport = QueueTransport()
-    on_app = TextualChatApp(transport=on_transport)
+    on_clock = _DrivenClock()
+    on_app = TextualChatApp(transport=on_transport, clock=on_clock)
     async with on_app.run_test(size=(100, 30)) as on_pilot:
         await on_pilot.pause()
         before = len(on_app.query_one(FlowView).entries)
         chunks = ["The answer is 42, ", "computed across ", "three steps."]
         for chunk in chunks[:-1]:
+            # #3570: each chunk must be past the repaint budget for the
+            # mid-stream cross-section below to be a statement about the RENDER
+            # (the accumulated text is unconditional either way).
+            on_clock.past_the_repaint_budget()
             await on_transport.push_event(_agent_delta(chain_id="on-chain", text=chunk))
             await on_pilot.pause()
 
@@ -230,6 +264,7 @@ async def test_stream_on_off_render_equivalence() -> None:
             "equals the full text — the chunking must be non-trivial"
         )
 
+        on_clock.past_the_repaint_budget()
         await on_transport.push_event(_agent_delta(chain_id="on-chain", text=chunks[-1]))
         await on_pilot.pause()
         await on_transport.push_display(

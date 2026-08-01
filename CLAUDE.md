@@ -160,6 +160,13 @@ Three rules then keep multi-session work coherent:
    remaining work rather than merely failing to finish it (#3368: a `Closes`
    fired 40 minutes before the arc's actual last PR merged, because the
    enumeration step was skipped).
+   **Record the enumeration in your Test plan, in plain prose** — quoting
+   `part of #X` there is safe, anywhere in the body. When the body also
+   declares `Closes #X` unfenced, `scripts/check_pr_closing_intent.py` reads
+   any other `part of #X` in it as a mention rather than a scope declaration,
+   so the record needs no marker, no fence, and no particular ordering
+   (#3559 — before that fix, recording it is what turned a rule-4-compliant
+   PR red, penalising the discipline the gate enforces).
    **Reviewer recovery angle:** an unexpected issue auto-close triggered by a
    sub-PR merge is almost always a closing-keyword false positive. Reopen the
    issue and verify the arc is not half-done before assuming completion.
