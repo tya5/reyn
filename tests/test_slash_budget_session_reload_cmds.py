@@ -17,6 +17,12 @@ from reyn.runtime.outbox import OutboxMessage
 
 
 class _FakeSession:
+    #: (#3562) ``/session new`` looks the INVOKING session's own (agent, sid) up to find
+    #: the per-session narrowing the child inherits, so the stand-in carries the two
+    #: identity fields the real ``Session`` exposes.
+    agent_name = "alpha"
+    session_id = "main"
+
     def __init__(
         self,
         *,
@@ -83,8 +89,18 @@ class _FakeRegistry:
         self._spawn_raises = spawn_raises
         self._get_session_result = get_session_result
 
+    def per_session_narrowing(self, name: str, sid: "str | None" = None) -> "dict | None":
+        """#3562: no per-session capability layer on this stand-in's sessions, so the
+        handler's inheritance branch is inert and these tests keep measuring the
+        dispatch paths they were written for. ★ The inheritance is measured against real
+        instances — by a denied tool's real side effect — in
+        ``tests/test_3562_slash_session_new_narrowing_inheritance.py``, never here: a
+        stand-in that answers None can only exercise the empty case."""
+        return None
+
     def spawn_session(
         self, name: str, *, presentation_consumer=None, intervention_bridge=None,
+        narrowing: "dict | None" = None,
     ) -> str:
         if self._spawn_raises is not None:
             raise self._spawn_raises

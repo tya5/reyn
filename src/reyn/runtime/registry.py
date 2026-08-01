@@ -2639,13 +2639,61 @@ class AgentRegistry:
             attach_anchor(anchors)
         return session
 
+    def _persist_session_narrowing(self, name: str, sid: str, narrowing: dict) -> None:
+        """Write ``narrowing`` to ``(name, sid)``'s own ``config.yaml`` — the #2103-S1a
+        per-session capability layer, workspace-backed (P5).
+
+        The single WRITER of that file, so the two spawn entry points cannot drift from
+        each other or from its reader (``_load_per_session_capability_profile`` /
+        ``per_session_narrowing``, both keyed through ``_session_state_dir``). The
+        synthetic ``name`` key is what ``per_session_narrowing`` strips back off, so the
+        parent→child round-trip is exact.
+
+        Writing the file is not by itself enforcement: the live session's
+        ``_contextual_permission`` was resolved by the factory with ``sid=None`` and has
+        never seen this file. Each of the two callers re-resolves WITH the sid and
+        injects — ``spawn_session`` immediately after calling this, and
+        ``spawn_session_recorded`` after its own ``refresh_config_projections()`` (the
+        ordering there is measured, not stylistic; see the note at its ``spawn_session``
+        call). A caller that writes without injecting has persisted a narrowing nothing
+        enforces, which is the #2126 failure mode."""
+        import yaml
+        cfg_path = self._session_state_dir(name, sid) / "config.yaml"
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(
+            yaml.safe_dump({"name": f"_session_{sid}", **narrowing}),
+            encoding="utf-8",
+        )
+
     def spawn_session(
         self, name: str, sid: "str | None" = None,
         *, presentation_consumer: "object | None",
         intervention_bridge: "object | None",
+        narrowing: "dict | None" = None,
     ) -> str:
         """FP-0043 Stage 3: open a NEW conversation Session under an existing
         Agent, SHARING the agent's identity object. Returns the new session-id.
+
+        #3562: ``narrowing`` is the #2103-S1a per-session capability mapping the child
+        is BORN under — persisted to its own ``config.yaml`` and injected into the live
+        session before this returns, so the first turn already gates against it.
+        ``None`` (every recovery caller, and any caller with nothing to impose) is
+        byte-identical to the pre-#3562 behaviour: no file is written and the sid's own
+        persisted layer, if it has one, is what the injection below applies.
+
+        ★ Why the channel is HERE and not "route the remaining caller through
+        ``spawn_session_recorded``" — a decision, not an omission. ``/session new``
+        (``interfaces/slash/session.py``) was the one reachable caller with something to
+        inherit and no way to pass it (#3561 recorded that as an UNMET REQUIREMENT
+        rather than an exemption). Sending it through the recorded seam instead would
+        have carried three unrelated changes with it: a ``session_spawned`` WAL record
+        making an operator-opened session rewind-tracked and re-materialisable (which
+        operator-created sessions are not today, so a rewind past the command would
+        start DROPPING the operator's session), a spawn-time
+        ``refresh_config_projections()``, and async-ness. #3562 changes exactly one
+        observable thing — the child's envelope — so the channel belongs on the
+        primitive every direct caller already shares. It is also where #3561 put the
+        injection, for the same reason: this is where the sid becomes known.
 
         #2708 P3-item3: ``presentation_consumer`` + ``intervention_bridge`` are REQUIRED,
         no-default kwargs (the spawn-axis completeness gate) — every caller must declare an
@@ -2754,8 +2802,22 @@ class AgentRegistry:
         # place every path shares: this is where the sid becomes known, so it is where
         # the sid-keyed layer becomes resolvable. Inert for a sid with no config.yaml
         # (resolved_profile_for then returns the name-keyed layers the factory already
-        # applied). spawn_session_recorded keeps its own re-inject — it WRITES the config
-        # after this returns, so its value does not exist yet at this point.
+        # applied).
+        #
+        # #3562: a caller-supplied ``narrowing`` is persisted FIRST, so the single
+        # re-resolve below covers both the sid's already-persisted layer (recovery) and
+        # the value this spawn imposes (inheritance) — one write, one injection, no
+        # second seam where the two could disagree.
+        #
+        # ⚠️ The injection is only durable for a caller that does not then run
+        # ``refresh_config_projections()``: that refresh's
+        # ``reapply_visibility_override`` re-resolves from base and SETs, and on a
+        # session with no registry back-reference there is no base to re-resolve, so it
+        # sets ALLOW-ALL and discards this. That is why ``spawn_session_recorded``
+        # deliberately does NOT pass ``narrowing`` here and re-injects after its own
+        # refresh instead — measured, see the note at its ``spawn_session`` call.
+        if narrowing:
+            self._persist_session_narrowing(name, new_sid, narrowing)
         inject = getattr(session, "apply_per_session_narrowing", None)
         if callable(inject):
             contextual, excluded = self.resolved_profile_for(name, sid=new_sid)
@@ -2778,7 +2840,10 @@ class AgentRegistry:
         """#2103 S1bc: the action-layer SESSION-SPAWN seam — spawn a fresh-context
         session under ``name`` (sync ``spawn_session``) + persist the spawner's
         per-session capability narrowing (workspace-backed P5 config.yaml, the #2103
-        S1a layer) + emit ``session_spawned`` so rewind tracks/drops/re-materialises
+        S1a layer — written through the primitive's ``_persist_session_narrowing``, the
+        single writer, but from HERE and not through the primitive's ``narrowing``
+        channel: see the note at the ``spawn_session`` call for the measurement that
+        pins the ordering) + emit ``session_spawned`` so rewind tracks/drops/re-materialises
         it. Mirrors ``create_agent`` (the agent CREATE seam): the mechanism stays sync;
         the event marks the LLM action. ``session_spawned`` is config-complete
         (mode + narrowing) for symmetric re-materialise. Returns the new sid.
@@ -2793,6 +2858,19 @@ class AgentRegistry:
         parent surface, ask_user reaches the parent's live operator), ``AuditOnlyNoSurface``
         (detached/headless — present audit-only, ask_user a typed refusal), or ``ReviewedNA``
         (``None``/``None`` self-bound, reviewed sites only). No silent default (#2708 P3-item3)."""
+        # #3562: this seam does NOT hand ``narrowing`` down the primitive's new channel,
+        # and the reason is measured rather than stylistic. Its own write + re-inject
+        # (below) must stay AFTER ``refresh_config_projections()``: that refresh fires
+        # ``reapply_visibility_override``, which re-resolves the envelope from base and
+        # SETs it — and when the session has no registry back-reference there IS no base
+        # to re-resolve, so it sets an ALLOW-ALL envelope and silently discards anything
+        # injected before it. Passing the narrowing down was tried and falsified by
+        # tests/test_2103_s1bc_session_spawn_tool.py::
+        # test_spawn_session_recorded_enforces_narrowing_on_live_session and
+        # tests/test_pipeline_a2_spawn_ephemeral_session.py::
+        # test_spawn_ephemeral_session_narrowing_applied — both went RED with an empty
+        # ``tool_deny`` on the live session. The primitive's channel is for callers that
+        # do not run that refresh (``/session new``, #3562).
         sid = self.spawn_session(
             name,
             presentation_consumer=presentation_consumer,
@@ -2852,13 +2930,11 @@ class AgentRegistry:
                 # its one turn asking a question no one can answer.
                 spawned_session._non_interactive = True
         if narrowing:
-            import yaml
-            cfg_path = self._session_state_dir(name, sid) / "config.yaml"
-            cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            cfg_path.write_text(
-                yaml.safe_dump({"name": f"_session_{sid}", **narrowing}),
-                encoding="utf-8",
-            )
+            # #3562: the file write itself is the primitive's ``_persist_session_narrowing``
+            # — one writer for both spawn entry points, so the two cannot drift from each
+            # other or from the reader. Only the CALL SITE stays here; see the note above
+            # this method's ``spawn_session`` call for the measurement that keeps it here.
+            self._persist_session_narrowing(name, sid, narrowing)
             # #2126: ENFORCE the narrowing just written. The per-session capability
             # layer (#1827 / #2103-S1a) only resolves WITH a sid, and every
             # construction-time factory caller resolves sid=None — so the live spawned
