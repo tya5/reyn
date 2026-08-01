@@ -10,11 +10,11 @@ Feeding the right context into the agent at the right time — memory of past in
 
 ## How reyn handles it
 
-### `semantic_search` — vector search over any indexed corpus
+### `semantic_search` — OS-internal only, not something the LLM calls
 
-`semantic_search` (FP-0057 Phase 2a; renamed from `recall` — clean-break, fixes the observed recall/search_actions/memory naming collision) is a typed Control IR op the LLM calls directly: per-source-model embed the query, run `index_query` per configured source, merge the top-K results (never comparing scores across different embedding spaces). It runs over a pluggable `IndexBackend` (SQLite is the default, ≤100K chunks, sub-second query) — not a keyword/flat-index match.
+`semantic_search` (FP-0057 Phase 2a; renamed from `recall`) is a Control-IR op over a pluggable `IndexBackend` (SQLite is the default, ≤100K chunks, sub-second query) — per-source-model embed the query, run `index_query` per configured source, merge the top-K results (never comparing scores across different embedding spaces). **As of FP-0066 P1b/P1c, this is OS-internal substrate, not an agent- or user-facing surface**: there is no LLM tool, no safe-mode Python entry point, and no CLI command left that can create or query a source in this store — see [Concepts: RAG](../data-retrieval/rag.md) for the full retirement history and what still builds on the substrate internally (`search_actions` today; a planned `search_knowledge` verb).
 
-Indexing a corpus is deliberately not a bundled one-command skill: a short safe-mode Python step reads your files, chunks them, and calls `index_update()` once. **The differentiation from LangChain/LlamaIndex is where the retrieval call lives** — those give you a library you call from your own driver code; reyn's `semantic_search` is a built-in tool the LLM itself calls during an ordinary `reyn chat` session, with no orchestration code required on the search side. There is no separate `recall_docs` mechanism — project documentation is retrieved the same way any other corpus is: index it once via `index_update()`, then `semantic_search` reaches it like any other source.
+**If you want an agent to search your own documents**, use the builtin user RAG (proposal 0063) instead — two bundled pipelines that ingest a folder of documents into an external vector store you name and query it, agent-callable end-to-end, no Python step to write. See [Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md). That is a different store with a different setup from the in-core index this section describes; the two share only the `embed` primitive.
 
 ### Memory — a separate mechanism from RAG retrieval
 
@@ -28,14 +28,14 @@ Project- and agent-scoped memory (user preferences, project decisions, agent-spe
 
 Being honest about scope rather than dressing it up:
 
-- **Phase 1 only.** The framework foundation, the SQLite default backend, and the LiteLLM embedding passthrough are what currently ships. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), and RAG eval frameworks are explicitly post-1.0 territory — not a secret gap, a stated boundary. If you need that ecosystem today, LangChain / LlamaIndex are the better fit for it.
-- **A framework, not a pipeline.** `semantic_search` + a pluggable `IndexBackend` a safe-mode Python step calls directly is a foundation to build retrieval on, not a deterministic, fully-managed RAG pipeline. You own the chunking logic.
-- **No bundled corpus-indexing skill.** Every corpus (docs included) needs its own short indexing script before `semantic_search` can reach it — there is no `reyn index this repo` one-liner.
+- **Documents only, via the user RAG plugin.** The agent-callable, agent-facing retrieval story is the FP-0063 plugin's bundled ingest/query pipelines — a folder of documents in, an external vector store you name, queryable end-to-end. Advanced retrieval (rerank / HyDE / contextual retrieval) and a built-in RAG-eval framework are not shipped; the pipeline's own YAML is the intended extension point (copy it, swap the chunker/vector-store server), not a separate plugin API.
+- **No general-purpose "index anything and have the LLM search it" surface.** The OS-internal store (`semantic_search`/`index_update`) that used to serve this role is retired as an agent/user-facing mechanism (FP-0066 P1b/P1c) — see the section above. Non-document corpora (execution traces, custom logs) have no supported indexing path today.
+- **No bundled corpus-indexing skill for the user-RAG plugin either.** Feeding it a folder of documents is what's bundled; adapting an arbitrary source into that shape is on you.
 
 ## See also
 
 - `CLAUDE.md` (§ Constitution) — the Retrieval lens's pass-line and its explicit thin-area declaration
 - [`docs/concepts/architecture/charter.md`](../architecture/charter.md) — the Retrieval row, grounded across all 7 feature families
-- [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) — the full RAG framework, quick start, and Phase 1/2 scope boundary
+- [`docs/concepts/data-retrieval/rag.md`](../data-retrieval/rag.md) — the full retirement history of the in-core index and the user-RAG plugin's scope
+- [`docs/guide/for-users/build-a-rag-corpus.md`](../../guide/for-users/build-a-rag-corpus.md) — setting up the user-RAG plugin
 - [`docs/concepts/data-retrieval/memory.md`](../data-retrieval/memory.md) — the separate memory mechanism
-- [tool-contract-design.md](tool-contract-design.md) — how `semantic_search` slots into the typed op contract
