@@ -6,90 +6,14 @@ audience: [human, agent]
 
 # Operational Intelligence
 
-Reyn's P6 audit log records every state change — phase transitions, tool calls, LLM invocations, errors — as an append-only JSONL stream. Combine that with the RAG infrastructure from ADR-0033 and the result is **operational intelligence**: Reyn agents can recall their own execution history semantically rather than via linear event log scan. The same `semantic_search` op (FP-0057 Phase 2a; renamed from `recall`) used for document retrieval works on execution traces once the event log has been indexed into a source — using the same [`index_update()`](rag.md) primitive (FP-0057 Phase 2b; the safe-mode entry point, replacing the retired `embed_and_index()`) as any other corpus, there is no dedicated events-indexing skill. **This is a DIY pattern, not a bundled turnkey events indexer** — you write the python step that reads `.reyn/events/*.jsonl` and calls `index_update`; see [§Scheduling](#scheduling) for keeping it current on a cadence.
+**This capability does not exist today.** The workflow this page used to describe — indexing Reyn's own P6 audit-event log (`.reyn/events/*.jsonl`) into the in-core RAG store via a safe-mode `index_update()` step, then querying execution history semantically via `semantic_search` — has no surviving entry point. FP-0066 P1b retired the four agent-facing layer-1 RAG tools (`semantic_search`, `index_update`, `drop_source`, `list_rag_sources`); FP-0066 P1c then retired the remaining safe-mode `index_update()` Python entry point and the `reyn source` CLI command group. There is no operator- or agent-facing way to add to, remove from, or search the in-core store any more — see [Concepts: RAG](rag.md) for the full retirement history.
 
-## Architecture
+This is a deliberate removal, not an oversight — recorded here so a future reader can tell "forgotten" from "decided" rather than inferring either from the absence.
 
-```
-P6 events ──┐
-            ├─► your indexing step ──► index_update(source="events") ──► .reyn/cache/index/events/ (sqlite)
-            │                                                                        │
-            │                                                                        ▼
-            │                                                          semantic_search(sources=["events"])
-            │                                                                        │
-            │                                       ┌────────────────────────────────┼─────────────────┐
-            │                                       ▼                                ▼                 ▼
-            │                            your own analysis phase      FP-0006 collect_traces      debugging
-            │                            (no bundled "weekly summary") "find failure patterns"     via /chat
-            └─► raw file read fallback (`.reyn/events/*.jsonl`) when no index exists
-```
-
-Indexing the event log is not a bundled skill — write a `python` step that reads `.reyn/events/*.jsonl`, groups events into per-run chunks, and calls `index_update(chunks, source="events", ...)` the same way you would for any other corpus (see [Concepts: RAG — Quick start](rag.md#quick-start)). Once indexed, any phase can query the execution history with `semantic_search(sources=["events"], query="...", top_k=N)`.
-
-## Run-chunk format
-
-Events are stored one-per-line in JSONL, but the meaningful unit for operational intelligence is **one run** (from `turn_started` to `turn_settled`). Group each run into a single structured chunk before calling `index_update`:
-
-```
-[run chunk]
-agent: my_agent
-timestamp: 2026-05-10T09:15:00
-status: success | failed | aborted
-tool_calls: grep(×3), read_file(×5), edit_file(×2), shell(×1)
-cost_usd: 0.18   ← aggregated from llm_response_received.cost_usd across the run
-```
-
-The exact fields available depend on which P6 event types you fold into a chunk — see [Concepts: Events](../runtime/events.md) for the current event taxonomy (`session_started`/`session_completed`, `turn_started`/`turn_completed`, `llm_response_received`, tool-call events). There is no single ready-made "one event per run" summary event; building a run-chunk means aggregating the session/turn boundary events yourself in your indexing step.
-
-Failed runs should retain error details as additional chunk metadata so queries like "failure patterns in my_agent" retrieve the right chunks.
-
-## Incremental indexing
-
-`index_update` is reconcile-only by construction (see [Concepts: RAG — Limitations](rag.md#limitations)) — a re-run naturally skips run-chunks whose `content_hash` is already indexed, no explicit append/replace mode to choose. Still track your own last-processed timestamp (e.g. a cursor file under `.reyn/cache/`) so repeated indexing runs don't re-read + re-hash the entire `.reyn/events/*.jsonl` history on every pass — the dedup happens at `content_hash` comparison time, but reading + re-chunking the full log every run is wasted I/O the cursor avoids.
-
-## Querying execution history
-
-Once a source has been indexed, `semantic_search` can query it from any phase:
-
-```yaml
-- type: run_op
-  op:
-    kind: semantic_search
-    query: "failure patterns in my_agent"
-    sources: ["events"]
-    top_k: 10
-  output_name: trace_summary
-```
-
-From `/chat`:
-
-```
-> What went wrong last week?
-> Find all runs where the agent failed during file edits
-```
-
-## Relationship to RAG Phase 1
-
-Indexing the event log uses the exact same `index_update()` entry point as indexing documents (see [Concepts: RAG](rag.md)) — the only difference is what you chunk (one chunk per run, instead of per passage) and how you track incremental progress (a timestamp cursor to skip already-processed events, on top of `index_update`'s own `content_hash` dedup).
-
-## Scheduling
-
-Recurring indexing (and any reporting built on top of it) is not a bundled feature — `reyn.yaml`'s `cron:` jobs dispatch a message to a named **agent** (`to`/`message`, not a skill invocation), so keeping the events index current on a schedule means having an agent whose task includes running your indexing step:
-
-```yaml
-cron:
-  jobs:
-    - name: reindex_events_hourly
-      to: ops_agent
-      message: "reindex the events source, then summarize failures since last run"
-      schedule: "0 */6 * * *"   # every 6 hours
-      enabled: true
-```
-
-See [Reference: `reyn cron`](../../reference/cli/cron.md) and [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) for the current job schema, running modes, and inspection commands.
+**Current entry points**, for context: `search_actions` (tool/mcp/pipeline catalog search) is live today; a `search_knowledge` verb (skill/memory/repo retrieval) is planned. Neither is a general-purpose "index an arbitrary corpus" surface. For agent-facing document retrieval, the current path is the FP-0063 user-RAG plugin (an external vector store, documents only) — see [Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md). No workflow for indexing something like an event log through that plugin has been built or exercised; if one becomes worth doing, it belongs in its own design/issue rather than a claim on this page.
 
 ## See also
 
-- [FP-0009: Operational Intelligence](../../deep-dives/proposals/0009-operational-intelligence.md) — original design rationale (predates the skill-word removal; primitives described here are current, skill-based examples are not)
-- [Concepts: RAG](rag.md) — underlying index/semantic-search primitives
+- [Concepts: RAG](rag.md) — the full retirement history and what remains
 - [Concepts: Events](../runtime/events.md) — P6 event log structure and current event taxonomy
+- [FP-0009: Operational Intelligence](../../deep-dives/proposals/0009-operational-intelligence.md) — original design rationale (historical; the mechanism it proposed has since been retired)
