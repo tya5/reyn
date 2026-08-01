@@ -1446,14 +1446,30 @@ Opt-in switch for **all three** tool-result size gates (tool-result-schema-redes
 
 Set `enabled: true` to opt in when you want the cost reduction of capping/offloading large tool results. When a single tool result is very large, opting in also keeps it from producing an oversized turn.
 
+The size bounds are tunable too, so "cap, but less aggressively" is expressible — previously the only lever was the boolean and every bound was a fixed constant. Each field below defaults to that former constant, so an existing `enabled: true` config is unchanged, and each falls back independently (setting one does not reset the rest).
+
 ```yaml
 offload:
-  enabled: true   # opt in: truncate + offload oversized tool results (default: false)
+  enabled: true              # opt in: cap + offload oversized tool results (default: false)
+  max_inline_bytes: 16384    # ceiling on what a capped text result leaves inline
+  preview_head_chars: 6000   # how much of the head that inline keeps
+  preview_tail_chars: 2000   # …and the tail
+  cap_ceil_tokens: 4096      # upper clamp on the per-turn token cap
+  cap_alpha: 0.5             # budget-relative term of that cap
+  structured_inline_max_chars: 2000  # size at which a dict/list gets its own ref
+  structured_preview_chars: 600      # how much of it stays inline beside the ref
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Master switch. `true` opts in to the text token cap, the structured inline cap, and the media follow-up budget bound. |
+| `enabled` | bool | `false` | Master switch. `true` opts in to the text token cap, the structured inline cap, and the media follow-up budget bound. The size fields below apply only while it is `true`. |
+| `max_inline_bytes` | int | `16384` | Absolute ceiling on the inline preview a capped text result leaves behind. **Also feeds the turn budget's force-close reserve** — it is what the OS reserves for "one more increment", so lowering it lets a turn run longer before force-close fires. |
+| `preview_head_chars` | int | `6000` | How much of the body's head that inline preview keeps. The body itself is stored and referenced, never lost. |
+| `preview_tail_chars` | int | `2000` | The same for the tail. |
+| `cap_ceil_tokens` | int | `4096` | Upper clamp on the per-turn token cap, so a large-context model still gets a lean inline. |
+| `cap_alpha` | float | `0.5` | Budget-relative term: the cap is `min(cap_ceil_tokens, cap_alpha × effective_trigger)`, which keeps a capped turn compactable on a small-context model too. |
+| `structured_inline_max_chars` | int | `2000` | Serialized size at which a structured (dict/list) result is stored under its own ref instead of staying inline. |
+| `structured_preview_chars` | int | `600` | How much of that serialization stays inline beside the ref. |
 
 ## `render_template` block
 

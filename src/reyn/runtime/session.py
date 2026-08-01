@@ -1737,6 +1737,8 @@ class Session:
         engine = try_build_default_turn_budget_engine(
             self._resolver.resolve(self.model).model,
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+            # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
+            max_inline_bytes=self._offload_config.max_inline_bytes,
         )
         self._router_host.set_turn_budget_engine(engine)
 
@@ -3793,6 +3795,8 @@ class Session:
         _chat_turn_budget_engine = try_build_default_turn_budget_engine(
             self._resolver.resolve(self.model).model,
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+            # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
+            max_inline_bytes=self._offload_config.max_inline_bytes,
         )
 
         # #3482: the 16-param op-context cluster (measured: sole reader is
@@ -3958,6 +3962,10 @@ class Session:
             # inline-size gate (STRUCTURED_INLINE_MAX_CHARS). Static per-session config,
             # not a callable (unlike the two budgets above, which read live engine state).
             offload_enabled=self._offload_config.enabled,
+            # #3580: the structured gate's two sizes are operator-tunable too;
+            # threaded beside the flag through the same static-config seam.
+            offload_structured_inline_max_chars=self._offload_config.structured_inline_max_chars,
+            offload_structured_preview_chars=self._offload_config.structured_preview_chars,
             # (``compact_now`` now lives in op_context_inputs, #3482.)
             # #272/#1128 context-size signal: live exact-token budget so the
             # router SP can show the LLM the free window (header).

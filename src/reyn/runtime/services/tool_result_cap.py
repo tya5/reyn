@@ -51,7 +51,12 @@ ALPHA: float = 0.5
 FIXED_CEIL_TOKENS: int = 4096
 
 
-def compute_cap_tokens(effective_trigger: int) -> int:
+def compute_cap_tokens(
+    effective_trigger: int,
+    *,
+    ceil_tokens: int = FIXED_CEIL_TOKENS,
+    alpha: float = ALPHA,
+) -> int:
     """B_M-relative per-turn cap: ``min(FIXED_CEIL_TOKENS, floor(ALPHA·effective_trigger))``.
 
     By construction ``< effective_trigger ≤ B_M``, so a capped tool-result turn
@@ -60,7 +65,7 @@ def compute_cap_tokens(effective_trigger: int) -> int:
     """
     if effective_trigger <= 0:
         return 0
-    return min(FIXED_CEIL_TOKENS, int(ALPHA * effective_trigger))
+    return min(ceil_tokens, int(alpha * effective_trigger))
 
 
 def cap_tool_result_content(
@@ -72,6 +77,9 @@ def cap_tool_result_content(
     use_chars4: bool = False,
     events: Any = None,
     content_type: "str | None" = None,
+    max_inline_bytes: int = MAX_TOOL_RESULT_INLINE_BYTES,
+    preview_head_chars: int = _PREVIEW_HEAD_CHARS,
+    preview_tail_chars: int = _PREVIEW_TAIL_CHARS,
 ) -> str:
     """Return *content_str* unchanged if within the cap, else its offloaded plain-text preview.
 
@@ -126,10 +134,10 @@ def cap_tool_result_content(
         # additional absolute char ceiling (latency / pathological guard).
         return (
             estimate_tokens(p, model, use_chars4=use_chars4) <= cap_tokens
-            and len(p) <= MAX_TOOL_RESULT_INLINE_BYTES
+            and len(p) <= max_inline_bytes
         )
 
-    head_chars, tail_chars = _PREVIEW_HEAD_CHARS, _PREVIEW_TAIL_CHARS
+    head_chars, tail_chars = preview_head_chars, preview_tail_chars
     preview = _build_preview(
         preview_source, ref=ref,
         head_chars=head_chars, tail_chars=tail_chars,

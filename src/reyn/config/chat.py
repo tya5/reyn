@@ -274,16 +274,77 @@ class OffloadConfig:
     (``STRUCTURED_INLINE_MAX_CHARS`` in ``build_offload_body``), and the media
     follow-up budget bound (``media_followup_budget`` — included so enabling
     the flag isn't confounded by media starvation from an un-gated budget).
+
+    **The size bounds are operator-tunable (#3580).** They used to be module
+    constants, so an operator who opted in got one fixed shape of capping and
+    no way to say "cap, but not that aggressively" — the only lever was the
+    boolean. Each field below keeps its previous constant as the default, so
+    an existing ``enabled: true`` config behaves exactly as before.
+
+    Fields (all apply only while ``enabled: true``):
+
+    ``max_inline_bytes``
+        Absolute ceiling on the inline preview left in the conversation after a
+        text result is offloaded. Also the value the turn-budget's
+        ``offload_cap`` reserve is derived from.
+    ``preview_head_chars`` / ``preview_tail_chars``
+        How much of the head and tail of the body that preview keeps. The body
+        itself is never lost — it is stored and referenced.
+    ``cap_ceil_tokens`` / ``cap_alpha``
+        The per-turn token cap is ``min(cap_ceil_tokens, cap_alpha × effective_trigger)``.
+        ``cap_alpha`` is the budget-relative term (so a small-context model still
+        gets a compactable turn); ``cap_ceil_tokens`` clamps it so a large-context
+        model does not get a huge inline.
+    ``structured_inline_max_chars`` / ``structured_preview_chars``
+        The same two questions for a STRUCTURED (dict/list) result: the size at
+        which it goes to its own ref, and how much of it stays inline.
     """
     enabled: bool = False
+    max_inline_bytes: int = 16_384
+    preview_head_chars: int = 6_000
+    preview_tail_chars: int = 2_000
+    cap_ceil_tokens: int = 4_096
+    cap_alpha: float = 0.5
+    structured_inline_max_chars: int = 2_000
+    structured_preview_chars: int = 600
 
 
 def _build_offload_config(raw: object) -> "OffloadConfig":
-    """Parse the ``offload:`` section. Missing/malformed -> defaults (enabled=False, opt-in)."""
+    """Parse the ``offload:`` section. Missing/malformed -> defaults (enabled=False, opt-in).
+
+    Each size field falls back to its own default independently, so a config
+    that sets only one of them keeps the shipped value for the rest.
+    """
     if not isinstance(raw, dict):
         return OffloadConfig()
-    defaults = OffloadConfig()
-    return OffloadConfig(enabled=bool(raw.get("enabled", defaults.enabled)))
+    d = OffloadConfig()
+
+    def _int(key: str, fallback: int) -> int:
+        try:
+            return int(raw.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+
+    def _float(key: str, fallback: float) -> float:
+        try:
+            return float(raw.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+
+    return OffloadConfig(
+        enabled=bool(raw.get("enabled", d.enabled)),
+        max_inline_bytes=_int("max_inline_bytes", d.max_inline_bytes),
+        preview_head_chars=_int("preview_head_chars", d.preview_head_chars),
+        preview_tail_chars=_int("preview_tail_chars", d.preview_tail_chars),
+        cap_ceil_tokens=_int("cap_ceil_tokens", d.cap_ceil_tokens),
+        cap_alpha=_float("cap_alpha", d.cap_alpha),
+        structured_inline_max_chars=_int(
+            "structured_inline_max_chars", d.structured_inline_max_chars
+        ),
+        structured_preview_chars=_int(
+            "structured_preview_chars", d.structured_preview_chars
+        ),
+    )
 
 
 @dataclass

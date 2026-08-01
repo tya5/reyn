@@ -468,8 +468,25 @@
 # inline cap, and the media follow-up budget bound); when a single tool result
 # is very large, opting in also prevents an oversized turn.
 # -----------------------------------------------------------------------------
+# The size bounds are tunable too (#3580) — previously the only lever was the
+# boolean and every bound was a fixed constant, so "cap, but less aggressively"
+# was unexpressible. Each defaults to its former constant and falls back
+# independently, so setting one does not reset the rest. All apply only while
+# enabled: true.
+#
+# NOTE max_inline_bytes also feeds the turn budget's force-close reserve (what
+# the OS holds back for "one more increment"), so lowering it lets a turn run
+# longer before force-close fires — it is not only a preview bound.
+# -----------------------------------------------------------------------------
 # offload:
-#   enabled: true  # opt in to the size gates (default: false)
+#   enabled: true                     # opt in to the size gates (default: false)
+#   max_inline_bytes: 16384           # ceiling on what a capped text result leaves inline
+#   preview_head_chars: 6000          # how much of the head that inline keeps
+#   preview_tail_chars: 2000          # …and the tail
+#   cap_ceil_tokens: 4096             # upper clamp on the per-turn token cap
+#   cap_alpha: 0.5                    # budget-relative term of that cap
+#   structured_inline_max_chars: 2000 # size at which a dict/list gets its own ref
+#   structured_preview_chars: 600     # how much of it stays inline beside the ref
 
 
 # -----------------------------------------------------------------------------

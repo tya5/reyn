@@ -234,6 +234,7 @@ def build_default_turn_budget_engine(
     *,
     resolver: "ModelResolver | None" = None,
     use_chars4: bool = False,
+    max_inline_bytes: "int | None" = None,
 ) -> TurnBudgetEngine:
     """Construct a TurnBudgetEngine with the shared cross-axis default reserves.
 
@@ -257,9 +258,11 @@ def build_default_turn_budget_engine(
 
     # The offload ceiling is a BYTE bound; convert to the model's tokens so it is
     # comparable with the (token-denominated) threshold. Measured once at build.
-    offload_cap = estimate_tokens(
-        "x" * MAX_TOOL_RESULT_INLINE_BYTES, model, use_chars4=use_chars4
-    )
+    # #3580: the ceiling is operator-tunable (``offload.max_inline_bytes``); the
+    # shipped constant is the fallback so a caller that does not pass one is
+    # unchanged.
+    _ceil = MAX_TOOL_RESULT_INLINE_BYTES if max_inline_bytes is None else max_inline_bytes
+    offload_cap = estimate_tokens("x" * _ceil, model, use_chars4=use_chars4)
     return TurnBudgetEngine(
         model,
         output_reserve=DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,
@@ -274,6 +277,7 @@ def try_build_default_turn_budget_engine(
     *,
     resolver: "ModelResolver | None" = None,
     use_chars4: bool = False,
+    max_inline_bytes: "int | None" = None,
 ) -> "TurnBudgetEngine | None":
     """:func:`build_default_turn_budget_engine`, but returns ``None`` instead of
     raising when the model's context is too small to satisfy the by-construction
@@ -294,7 +298,8 @@ def try_build_default_turn_budget_engine(
     no bounds logic is duplicated (which would drift from the engine's measure)."""
     try:
         return build_default_turn_budget_engine(
-            model, resolver=resolver, use_chars4=use_chars4
+            model, resolver=resolver, use_chars4=use_chars4,
+            max_inline_bytes=max_inline_bytes
         )
     except AssertionError:
         return None

@@ -3348,11 +3348,23 @@ class RouterLoop:
                     content_str = f"Error: {text}"
                     _tool_error_message = text_full
                 else:
+                    # #3580: the two structured sizes are operator-tunable. A host
+                    # without them (legacy/test double) yields ``None``, and the
+                    # callee keeps its shipped default — same fall-closed idiom as
+                    # the flag below.
+                    _si = getattr(host, "offload_structured_inline_max_chars", None)
+                    _sp = getattr(host, "offload_structured_preview_chars", None)
+                    _structured_kw = {}
+                    if _si is not None:
+                        _structured_kw["structured_inline_max_chars"] = _si
+                    if _sp is not None:
+                        _structured_kw["structured_preview_chars"] = _sp
                     frontmatter, text, built_media, content_type = build_offload_body(
                         canonical, save_fn=_save_fn,
                         # opt-in flip: a host with no ``offload_enabled`` attribute
                         # (legacy/test double) falls closed — offload stays off.
                         enabled=getattr(host, "offload_enabled", False),
+                        **_structured_kw,
                     )
                     # FP-0056 PR-F2: a VISIBLE fallback (a #2681 CANONICAL_TODO producer, a
                     # genuinely-unregistered source, or a STRUCTURED_PASSTHROUGH whose whole-dict

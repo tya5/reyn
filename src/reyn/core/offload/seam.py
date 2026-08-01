@@ -127,6 +127,8 @@ def build_offload_body(
     *,
     save_fn: "Callable[..., dict] | None" = None,
     enabled: bool = True,
+    structured_inline_max_chars: int = STRUCTURED_INLINE_MAX_CHARS,
+    structured_preview_chars: int = _STRUCTURED_PREVIEW_CHARS,
 ) -> tuple[dict, str, list[dict], "str | None"]:
     """Return ``(frontmatter, text, media_blocks, content_type)`` for a canonical tool result.
 
@@ -170,7 +172,7 @@ def build_offload_body(
     if structured_items:
         combined: Any = structured_items[0] if len(structured_items) == 1 else structured_items
         serialized = json.dumps(combined, ensure_ascii=False, default=str)
-        if enabled and len(serialized) > STRUCTURED_INLINE_MAX_CHARS and save_fn is not None:
+        if enabled and len(serialized) > structured_inline_max_chars and save_fn is not None:
             # ``tool="structured"`` distinguishes the structured stream's filename from the text
             # stream's (the caller's text cap also stores through ``save_fn`` with the default tool
             # token) — otherwise both would collide on the same-second filename and one would clobber
@@ -178,7 +180,7 @@ def build_offload_body(
             stored = save_fn(serialized, tool="structured")
             frontmatter["structured"] = "offloaded"
             frontmatter["structured_ref"] = stored.get("path", "")
-            frontmatter["structured_preview"] = serialized[:_STRUCTURED_PREVIEW_CHARS]
+            frontmatter["structured_preview"] = serialized[:structured_preview_chars]
             frontmatter["structured_shape"] = summarize_structured_shape(combined)
         else:
             frontmatter["structured"] = combined
