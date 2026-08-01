@@ -16,7 +16,6 @@ from reyn.runtime.services.router_host_adapter import (
     McpGatewayInputs,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
 )
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
@@ -44,7 +43,6 @@ __all__ = [
     "MemoryService",
     "RouterHistoryBuffer",
     "RouterHostAdapter",
-    "RouterOpContextInputs",
     "RouterLoopDriver",
     "ChainTimeoutGlue",
     "SnapshotJournal",

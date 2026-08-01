@@ -359,29 +359,38 @@ so it is called out here for future edits of that closure.
 `_build_router_waist` aggregates ~40 already-constructed Session sub-components (Families
 1-5's outputs + params/early attrs set earlier in `__init__`) into `RouterHostAdapter`, the
 single object most later families read through — a byte-identical extraction (same object,
-same construction order, same values, including 2 DEFERRED per-turn lambdas —
-`live_session_id_inputs.live_session_id_fn`/`op_context_inputs.turn_origin_fn` — kept
-verbatim, still closing over `self` and resolved at call time, not eager-ized). It stays
-UNMOVED, invoked at its original position — every dependency is already set on `self` by
-this point.
+same construction order, same values, including the DEFERRED per-turn callables —
+`live_session_id_inputs.live_session_id_fn` and every `*_fn` field of the op-context
+supplier — kept verbatim, still closing over `self` and resolved at call time, not
+eager-ized). It stays UNMOVED, invoked at its original position — every dependency is
+already set on `self` by this point.
+
+**#3607 op-context supplier**: `_build_router_waist` also builds
+`self._router_op_context_source` (a `RouterOpContextSource`, see
+`runtime/router_op_context.py`) and hands the SAME object to the adapter as
+`op_context_source`. It is the only caller of `build_router_op_context`, so
+`Session._make_router_op_context` and `RouterHostAdapter.make_router_op_context`
+are both one-line delegations to `.build()` and cannot hand out different
+capabilities. It replaced a 16-field `RouterOpContextInputs` bundle that was a
+COPY of the Session attributes the Session's own builder read directly — two
+argument lists for one object, which had diverged on twelve fields.
 
 **#3482 param bundling**: `RouterHostAdapter.__init__` groups every real
 consumer-set cluster (measured by AST, not by name prefix) into frozen,
-default-free dataclasses built just before the constructor call — five of
+default-free dataclasses built just before the constructor call — four of
 them, each named after the sole consumer the measurement found:
 
 | bundle | fields | sole consumer |
 | --- | --- | --- |
-| `RouterOpContextInputs` | 16: `allowed_mcp`/`base_available_skills_fn`/`budget_gateway`/`compact_now`/`contextual_permission`/`hook_bus`/`hook_dispatcher`/`hot_reloader`/`multimodal_config`/`presentation_renderer_factory`/`render_template_bounds`/`sandbox_backend_instance`/`sandbox_policy`/`turn_origin_fn`/`workspace_base_dir`/`workspace_state_dir` | `make_router_op_context` |
 | `McpGatewayInputs` | `mcp_connection_service`/`mcp_agent_id`/`ephemeral_fn` (#3447's Path A fold) | `_mcp_list_via_gateway` |
 | `SendToAgentInputs` | `send_to_agent`/`delegation_tracker` | the `send_to_agent` method |
 | `PutOutboxInputs` | `put_outbox`/`agent_replies_tracker` | the `put_outbox` method |
 | `LiveSessionIdInputs` | `session_id`/`live_session_id_fn` | the `live_session_id` property |
 
 Session still builds each field with the exact same expression as before
-(same object, same order, same call-time semantics — `turn_origin_fn` /
-`ephemeral_fn` / `live_session_id_fn` and the two tracker lambdas are still
-live per-turn callables, not eager-ized); only the wire shape changed.
+(same object, same order, same call-time semantics — `ephemeral_fn` /
+`live_session_id_fn` and the two tracker lambdas are still live per-turn
+callables, not eager-ized); only the wire shape changed.
 
 **#3607 — ask the layering question BEFORE the bundling one.** Four params
 (`file_read` / `file_write` / `file_delete` / `file_regenerate_index`) left the
@@ -637,23 +646,23 @@ from the catalog the LLM sees, indistinguishable from an operator who
 deliberately disabled exec. No injected instance → falls back to the config
 string (auto / host-default behaviour unchanged).
 
-### base_available_skills_fn reads the BASE set, not the UX-filtered copy (#3196)
+### available_skills_fn reads the BASE set, not the UX-filtered copy (#3196)
 
 `RouterHostAdapter` receives two related-but-distinct skill sets:
 
 - `available_skills=self._available_skills` — the base registered-skill set
   (#2548 PR-A).
-- `base_available_skills_fn=lambda: self._available_skills` — a LIVE read of
-  that SAME `Session._available_skills` field, threaded in separately.
+- `available_skills_fn=lambda: self._available_skills` on the op-context
+  supplier — a LIVE read of that SAME `Session._available_skills` field.
 
-The reason for the second, seemingly-redundant parameter: `RouterHostAdapter`
+The reason for the second, seemingly-redundant source: `RouterHostAdapter`
 holds its OWN `_available_skills` attribute, which `reapply_skill_visibility`
 mutates into a UX-filtered COPY (skills the user toggled off via the status
-bar disappear from it, `#2285`). `make_router_op_context` uses
-`base_available_skills_fn` for the `file` op's skill-load provenance gate — a
+bar disappear from it, `#2285`). The router OpContext uses
+`available_skills_fn` for the `file` op's skill-load provenance gate — a
 TRUST decision, not a UI-visibility decision.
 
-If a future edit swaps `base_available_skills_fn` to close over
+If a future edit swaps `available_skills_fn` to close over
 `RouterHostAdapter`'s own (filtered) `_available_skills` instead of
 `Session._available_skills`, the provenance gate would start following the
 UX visibility toggle: a skill a user merely HID from their own view (but is
@@ -711,14 +720,14 @@ trust decision on a specific skill, discovered later if at all.
   R-D12 follow-up.
 - `_current_task_id` (#1953 §16, recursive-request) — the `task_id` this session is
   currently EXECUTING as a task-as-request, set per-turn from an execute-wake's meta
-  (`run_one_iteration`). Read by the router op-ctx builders so `task.create` derives
+  (`run_one_iteration`). Read by the router op-context supplier so `task.create` derives
   ownership (`requester=<this task>`). `None` = not executing an assigned task (a user /
   hook / recovery turn). Slice B extends the lifetime to a persistent assignment spanning
   continuation + recovery turns.
 - `_current_turn_origin` (proposal 0060 Phase 1 Layer A, A7) — the OS-authoritative
   provenance classification of the turn currently being processed, mirroring
   `_current_task_id` exactly (same seam, same threading). Set per-turn in
-  `_stamp_execution_context`; read by the router op-ctx builders so install-op handlers
+  `_stamp_execution_context`; read per build by the router op-context supplier so install-op handlers
   (skill/pipeline/present, A9) stamp `entry["provenance"]` from a single OS-set source the
   LLM cannot spoof. Initialized to the STRICTER value (fail-safe: never default to
   `"user_directed"` before the first turn is classified).

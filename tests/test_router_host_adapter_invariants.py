@@ -20,37 +20,19 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
 )
 
 # ---------------------------------------------------------------------------
 # Minimal stubs and helpers
 # ---------------------------------------------------------------------------
+# #3607/#3482: the adapter takes the session's op-context SUPPLIER plus the
+# mcp-gateway bundle. These module-level constants are the inert instances the
+# tests below reuse — the real classes, kept default-free, with the defaulting
+# in caller code (see McpGatewayInputs / RouterOpContextSource docstrings).
+from tests._support.router_host_adapter import make_op_context_source  # noqa: E402
 
-# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
-# bundled into two frozen, default-free dataclasses. These module-level
-# constants are the "all fields unset" instances the tests below reuse —
-# the bundle classes themselves stay default-free (see RouterOpContextInputs
-# / McpGatewayInputs docstrings), the defaulting lives here in caller code.
-_EMPTY_OP_CTX = RouterOpContextInputs(
-    allowed_mcp=None,
-    base_available_skills_fn=None,
-    budget_gateway=None,
-    compact_now=None,
-    contextual_permission=None,
-    hook_bus=None,
-    hook_dispatcher=None,
-    hot_reloader=None,
-    multimodal_config=None,
-    presentation_renderer_factory=None,
-    render_template_bounds=None,
-    sandbox_backend_instance=None,
-    sandbox_policy=None,
-    turn_origin_fn=None,
-    workspace_base_dir=None,
-    workspace_state_dir=None,
-)
+_EMPTY_OP_CTX = make_op_context_source()
 _EMPTY_MCP_GATEWAY = McpGatewayInputs(
     mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
 )
@@ -204,7 +186,7 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         agent_name="alpha",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -283,7 +265,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         agent_name="alpha2",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=sentinel,
         mcp_servers=None,
         project_context="",
@@ -342,7 +324,9 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         agent_name="bus-test",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=make_op_context_source(
+            intervention_bus_factory=lambda: sentinel_bus,
+        ),
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -400,7 +384,7 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         agent_name="nobus-test",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",

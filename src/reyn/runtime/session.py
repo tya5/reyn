@@ -69,6 +69,7 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.outbox_hub import OutboxHub
 from reyn.runtime.pending_op_view import PendingOpView
 from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
+from reyn.runtime.router_op_context import RouterOpContextSource
 from reyn.runtime.services import (
     BudgetGateway,
     ChainManager,
@@ -82,7 +83,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
     SnapshotJournal,
 )
@@ -3757,34 +3757,34 @@ class Session:
         reads every OTHER dependency as ``self._X`` / ``self.X`` directly,
         exactly as the inline construction did. ``contextual_permission`` is
         the one EXPLICIT param (#3121 step3 Extract Class): it is the RAW
-        constructor-supplied initial value (RouterHostAdapter freezes its own
-        copy at construction, same as the pre-extraction code — later toggles
-        via ``CapabilityVisibility`` do not retroactively update it, matching
-        byte-identical pre-#3121 behavior), threaded explicitly because
+        constructor-supplied initial value, threaded explicitly because
         ``CapabilityVisibility`` (which owns the LIVE composed value everywhere
         else) needs ``router_host`` — THIS call's output — so it cannot exist
-        yet when this builder runs. Defaults to ``None`` (= no narrowing) so a
+        yet when this builder runs. It is the FALLBACK the op-context
+        supplier's ``contextual_permission_fn`` uses until
+        ``CapabilityVisibility`` exists, after which the supplier reads the
+        live composed value (#3607 — the adapter used to freeze this raw value
+        for the whole session, so an operator's later narrowing never reached a
+        registry-dispatched op). Defaults to ``None`` (= no narrowing) so a
         bare ``_build_router_waist()`` (e.g. a builder-contract test) stays
         constructible; the sole production caller, ``__init__``, always passes
         the real constructor value.
 
-        ★ Two of the values threaded in are DEFERRED lambdas, NOT eager values
-        — ``live_session_id_inputs.live_session_id_fn`` /
-        ``op_context_inputs.turn_origin_fn`` (both #3482 bundle fields; being
-        inside a frozen dataclass changes nothing about when they resolve)
-        keep resolving ``self._session_id`` / ``self._current_turn_origin``
-        at CALL time, not here: ``_current_turn_origin`` already carries a
-        pre-turn DEFAULT at construction (``"auto_improvement"``, set at
-        :1083 — BEFORE this builder runs), but it is then REASSIGNED per turn
-        inside ``run_one_iteration`` (far after ``__init__`` returns) — an
-        eager-captured value here would freeze the pre-turn default forever,
-        never seeing a real turn's origin; ``live_session_id_fn``
-        is deferred because a spawned session's live session id can change
-        AFTER this constructor runs (the cached ``self._session_id`` read
-        here is stale for that case — see the inline comment above
-        ``record_spawned_task`` below). Eager-izing either would freeze a
-        per-turn value at construction time — the Family 3/5 deferred/eager
-        pitfall repeated here for a third and heavier family.
+        ★ Several of the values threaded in are DEFERRED, NOT eager — the
+        ``*_fn`` fields of ``RouterOpContextSource`` (#3607) and
+        ``live_session_id_inputs.live_session_id_fn`` (#3482) keep resolving
+        ``self._<attr>`` at CALL time, not here. ``_current_turn_origin``
+        already carries a pre-turn DEFAULT at construction
+        (``"auto_improvement"``, set at :1083 — BEFORE this builder runs), but
+        it is then REASSIGNED per turn inside ``run_one_iteration`` (far after
+        ``__init__`` returns) — an eager-captured value here would freeze the
+        pre-turn default forever, never seeing a real turn's origin;
+        ``live_session_id_fn`` is deferred because a spawned session's live
+        session id can change AFTER this constructor runs (the cached
+        ``self._session_id`` read here is stale for that case — see the inline
+        comment above ``record_spawned_task`` below). Eager-izing any of them
+        would freeze a per-turn value at construction time — the Family 3/5
+        deferred/eager pitfall repeated here for a third and heavier family.
         ``record_spawned_task`` (a bound method) and the two tracker lambdas
         (``send_to_agent_inputs.delegation_tracker`` /
         ``put_outbox_inputs.agent_replies_tracker``) are likewise kept
@@ -3805,36 +3805,82 @@ class Session:
             max_inline_bytes=self._offload_config.max_inline_bytes,
         )
 
-        # #3482: the 16-param op-context cluster (measured: sole reader is
-        # RouterHostAdapter.make_router_op_context) bundled into one frozen,
-        # default-free dataclass — pure output→input value object, same
-        # values/order as the flat kwargs this replaces (byte-identical).
-        _op_context_inputs = RouterOpContextInputs(
-            allowed_mcp=self._allowed_mcp,
-            base_available_skills_fn=lambda: self._available_skills,
-            budget_gateway=self._budget,
-            compact_now=self._compact_now_for_op,
-            contextual_permission=contextual_permission,  # #1827 S3 → control-IR OpContext (raw initial value, see docstring)
-            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c (router path)
-            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
-            multimodal_config=self._multimodal_config,
-            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
-            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
-            # Built per make_router_op_context() call. The sink is obtained from the
-            # surface's declared PresentationConsumer (orphan-impossible:
-            # OutboxPresentationRenderer is constructible ONLY inside
-            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
-            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
-            render_template_bounds=self._render_template_bounds,
-            sandbox_backend_instance=self._sandbox_backend,
-            sandbox_policy=(
+        # #3607: the ONE chat-router op-context supplier for this Session.
+        # Both entry points that hand an OpContext to a chat-router op —
+        # ``Session._make_router_op_context`` (the _file_op / MCP callbacks)
+        # and ``RouterHostAdapter.make_router_op_context`` (the registry
+        # dispatch's ``op_context_factory``) — are one-line delegations to
+        # ``.build()`` on THIS object, so they cannot hand out different
+        # capabilities. Before, each assembled its own, and twelve fields had
+        # already diverged. Every ``*_fn`` here is read at build time: see the
+        # class docstring for why a snapshot of any of them is right on turn 1
+        # and wrong afterwards.
+        self._router_op_context_source = RouterOpContextSource(
+            events=self._chat_events,
+            permission_resolver=self._perm,
+            file_permissions_fn=self._get_file_permissions_for_router,
+            mcp_servers_fn=self._get_mcp_servers_for_router,
+            mcp_servers_flat_fn=self._mcp_servers_flat,
+            # #1827: live — ``_reapply_per_agent_capability`` REPLACES the
+            # allowlist mid-session, and a narrowing that only reached one of
+            # the two op-context doors is not a narrowing.
+            allowed_mcp_fn=lambda: self._allowed_mcp,
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
+            environment_backend=self._environment_backend,
+            sandbox_backend=self._sandbox_backend,
+            # #1339: live — ``_sandbox_config`` is the resolved operator policy
+            # and a reload can replace it.
+            sandbox_policy_fn=lambda: (
                 self._sandbox_config.policy if self._sandbox_config is not None
                 else None
             ),
+            # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
+            agent_id=self._agent.agent_id,
+            # FP-0022 fix (#53) / #3049: bridge-aware — resolved per call so an
+            # attached pipeline driver's op reaches the ORIGINATOR's operator.
+            intervention_bus_factory=self._make_router_intervention_bus,
+            # FP-0054 PR-B / #2708 P1: a real PresentationRenderer so a `present`
+            # op reaches the surface's sink instead of PR-A's null surface. The
+            # sink comes from the surface's declared PresentationConsumer
+            # (orphan-impossible: OutboxPresentationRenderer is constructible
+            # ONLY inside OutboxPresentationConsumer.sink) — bound to THIS
+            # Session via sink(self).
+            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
+            # FP-0054 PR-C: live — ``_reapply_presentations`` swaps the registry
+            # so a newly-registered template is visible on the next op.
+            presentation_registry_fn=lambda: self._presentation_registry,
+            multimodal_config=self._multimodal_config,
+            media_store_fn=lambda: self._media_store,  # #383/#2409
+            compact_now=self._compact_now_for_op,  # #272/#1128
+            threat_scan=self._safety.threat_scan,  # FP-0050/#1822
+            # #1827 S3: live — ``CapabilityVisibility`` owns the composed value
+            # but needs ``router_host``, i.e. THIS builder's output, so it does
+            # not exist yet. Until it does, the constructor's raw value is the
+            # narrowing in force (byte-identical to the pre-#3607 adapter,
+            # which froze that value forever).
+            contextual_permission_fn=lambda: (
+                self._capability_visibility.contextual_permission
+                if getattr(self, "_capability_visibility", None) is not None
+                else contextual_permission
+            ),
+            # #1953: live — a spawned session's real id is assigned after this
+            # constructor runs, and ops must namespace under the real one.
+            session_id_fn=lambda: self._session_id,
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2
+            # proposal 0060 Phase 1 (A7): live — ``_current_turn_origin`` carries
+            # a pre-turn default here and is REASSIGNED per turn in
+            # ``run_one_iteration``; an eager read would freeze the default.
             turn_origin_fn=lambda: self._current_turn_origin,
-            workspace_base_dir=self._workspace_base_dir,
-            workspace_state_dir=self._workspace_state_dir,
+            hot_reloader=self._hot_reloader,  # #2073 S3 / #2761 PR-2
+            render_template_bounds=self._render_template_bounds,  # #2679
+            budget_gateway=self._budget,  # FP-0063 PC
+            # #3196 co-vet round 2: the BASE registered set, deliberately NOT the
+            # visibility-filtered view — the `file` op's skill-load provenance
+            # gate is a TRUST decision and must not depend on whether the
+            # operator hid the skill from the menu.
+            available_skills_fn=lambda: self._available_skills,
         )
         # #3482/#3447: the 3-param mcp-gateway cluster (sole reader:
         # RouterHostAdapter._mcp_list_via_gateway) — a real consumer-set
@@ -3873,7 +3919,7 @@ class Session:
             turn_budget_engine=_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
-            op_context_inputs=_op_context_inputs,  # #3482
+            op_context_source=self._router_op_context_source,  # #3607
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
             live_session_id_inputs=_live_session_id_inputs,  # #3482
             agent_name=self.agent_name,
@@ -3940,9 +3986,9 @@ class Session:
             ),
             # #187: the FS env-backend instance for the LIVE router OpContext
             # Workspace (the registry file-dispatch factory). Same source as
-            # the chat OpContext (#1410). (workspace_base_dir/workspace_state_dir/
-            # sandbox_backend_instance/sandbox_policy/multimodal_config/
-            # render_template_bounds now live in op_context_inputs, #3482.)
+            # the chat OpContext (#1410) — which now reads it off the shared
+            # op-context supplier; the adapter keeps its own reference because
+            # its container-repo helpers read it directly.
             environment_backend=self._environment_backend,
             # #1652: reasoning config (display/continuity/recent_turns gates) +
             # the bounded prior-reasoning section renderer (reads this session's
@@ -3968,7 +4014,6 @@ class Session:
             # threaded beside the flag through the same static-config seam.
             offload_structured_inline_max_chars=self._offload_config.structured_inline_max_chars,
             offload_structured_preview_chars=self._offload_config.structured_preview_chars,
-            # (``compact_now`` now lives in op_context_inputs, #3482.)
             # #272/#1128 context-size signal: live exact-token budget so the
             # router SP can show the LLM the free window (header).
             context_window_status=self.context_window_status,
@@ -3979,7 +4024,6 @@ class Session:
             # parent's operator; root/detached -> self-bound), single-sourced via
             # _make_router_intervention_bus. docs/concepts/runtime/intervention-delivery.md#the-single-construction-seam
             intervention_bus_factory=self._make_router_intervention_bus,
-            # (``presentation_renderer_factory`` now lives in op_context_inputs, #3482.)
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),
@@ -4751,8 +4795,13 @@ class Session:
             return False  # single-agent / no profile → nothing per-agent to reapply
         if prof.allowed_mcp == self._allowed_mcp:
             return False
+        # #3607: ONE holder. The router OpContext's ``allowed_mcp`` is read off
+        # this attribute at build time, so assigning it IS reapplying the gate.
+        # There used to be a second assignment here, onto the adapter — dead
+        # since #3482 moved the adapter's ``allowed_mcp`` into a FROZEN bundle:
+        # it created an attribute nothing read, so the narrowing reached the
+        # Session door and silently not the registry-dispatch one.
         self._allowed_mcp = prof.allowed_mcp
-        self._router_host._allowed_mcp = prof.allowed_mcp          # MCP gate (decl source)
         return True
 
     async def _reapply_new_agent(self, in_set: dict) -> bool:
@@ -7102,9 +7151,11 @@ class Session:
         return False, composed
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
-    # _make_router_op_context + 3 helpers remain on Session because the
-    # session's internal MCP/file callbacks (_mcp_list_tools, _mcp_call_tool,
-    # _file_op) use them. The adapter has its own private copies.
+    # These 3 resolvers remain on Session because the session's internal
+    # MCP/file callbacks (_mcp_list_tools, _mcp_call_tool, _file_op) use them,
+    # and because the op-context supplier reads them as bound methods (so the
+    # roster it advertises follows a mid-session mcp_install). The adapter has
+    # its own copies for the surfaces it serves directly.
 
     def _get_file_permissions_for_router(self) -> dict | None:
         """Return file permissions in the form {read: [paths], write: [paths]}
@@ -7154,65 +7205,16 @@ class Session:
         return result
 
     def _make_router_op_context(self) -> "OpContext":
-        """Build a minimal OpContext for router-initiated file/MCP ops.
+        """Ask this session's op-context supplier for a chat-router OpContext.
 
-        Uses the session's events log and permission resolver. The actor
-        "chat_router" is used for permission key lookups — it matches what the
-        PermissionResolver uses to gate paths. All .reyn/ paths are in the
-        default write zone so memory ops pass without additional approval.
-
-        PermissionDecl is populated from the agent's effective permissions
-        (file_read / file_write from config, mcp from configured servers) so
-        that op_runtime layer permission checks actually gate access rather than
-        silently allowing everything through an empty decl.
+        The internal MCP / file callbacks below (``_file_op``,
+        ``_mcp_call_tool`` and siblings) reach op_runtime through here. #3607:
+        this used to assemble its own OpContext — the same object
+        ``RouterHostAdapter.make_router_op_context`` assembled separately, and
+        the two had diverged on twelve fields, so an op's capabilities depended
+        on which door it came through. Both are now one call on one supplier.
         """
-        from reyn.runtime.router_op_context import build_router_op_context
-
-        # #1412: single-sourced via build_router_op_context (shared with
-        # RouterHostAdapter). Session wires intervention_bus POST-HOC on the
-        # returned ctx (the MCP-op caller), so it is None at construction here;
-        # media/multimodal/compact ops go via the registry / RouterHostAdapter
-        # path (None here) — behavior-preserving.
-        return build_router_op_context(
-            events=self._chat_events,
-            permission_resolver=self._perm,
-            file_permissions=self._get_file_permissions_for_router(),
-            mcp_servers=self._get_mcp_servers_for_router(),
-            mcp_servers_flat=self._mcp_servers_flat(),
-            allowed_mcp=self._allowed_mcp,
-            workspace_base_dir=self._workspace_base_dir,
-            workspace_state_dir=self._workspace_state_dir,
-            environment_backend=self._environment_backend,
-            sandbox_backend=self._sandbox_backend,
-            sandbox_policy=(
-                self._sandbox_config.policy
-                if getattr(self, "_sandbox_config", None) is not None
-                else None
-            ),
-            agent_id=self._agent.agent_id,
-            # #2708 P1: this builder serves file/MCP ops (_file_op / MCP), which no
-            # `present` op reaches — so the present sink is EXPLICITLY None (the required
-            # kwarg forces the decision, no silent omission). The visible present path is
-            # RouterHostAdapter.make_router_op_context, which wires the surface consumer's sink.
-            presentation_renderer=None,
-            # #2409: forward the media store (the public twin RouterHostAdapter.make_router_op_context
-            # already does — session.py:1826). Without it the chat-router MCP path got media_store=None
-            # → MCP ImageContent couldn't be saved as a path-ref → a large image was inlined as
-            # base64 to the LLM instead of a small path-ref (the clean-payload/offload gate needs the
-            # image out of the inline body).
-            media_store=self._media_store,
-            contextual_permission=self._capability_visibility.contextual_permission,  # #1827 S3 → control-IR OpContext
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
-            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target (both router op-ctx builders complete-by-construction)
-            turn_origin=self._current_turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (enumerate ALL op-ctx builders)
-            hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
-            render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
-            budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
-            # #3196 co-vet round 2: pass the BASE registered set — deliberately NOT run through
-            # the visibility filter (that's RouterHostAdapter's own copy, a UX/menu concern).
-            # Filtering here would conflate a trust/provenance decision with a display decision.
-            available_skills=self._available_skills,
-        )
+        return self._router_op_context_source.build()
 
     def _make_router_intervention_bus(self):
         """The chat-router intervention bus for a router-initiated op, resolved
