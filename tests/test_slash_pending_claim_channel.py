@@ -20,6 +20,17 @@ import pytest
 from reyn.interfaces.slash.pending import _claim
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_messages)
 
 
 class _ClaimStubSession:
@@ -52,7 +63,7 @@ async def test_claim_passes_default_chat_channel_id() -> None:
     InterventionCoordinator.dispatch immediately re-parks the iv stalled.
     """
     sess = _ClaimStubSession(agent_name="default")
-    await _claim(sess, "iv-abc12345")
+    await _claim(_ctx(sess), "iv-abc12345")
 
     assert sess.recorded_channel_id == DEFAULT_CHAT_CHANNEL_ID, (
         f"_claim must pass DEFAULT_CHAT_CHANNEL_ID={DEFAULT_CHAT_CHANNEL_ID!r} "
@@ -69,7 +80,7 @@ async def test_claim_channel_is_not_agent_namespaced() -> None:
     (listener = "tui"), causing the iv to be re-parked stalled on re-dispatch.
     """
     sess = _ClaimStubSession(agent_name="myagent")
-    await _claim(sess, "iv-abc12345")
+    await _claim(_ctx(sess), "iv-abc12345")
 
     # Must not be the old Textual-TUI agent-namespaced form.
     assert sess.recorded_channel_id != f"tui:{sess.agent_name}", (

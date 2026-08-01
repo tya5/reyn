@@ -19,6 +19,17 @@ if str(_SRC) not in sys.path:
 
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now, so the list the assertions read is the
+    one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_calls)
 
 
 class _FakeSession:
@@ -88,7 +99,7 @@ async def test_agent_new_creates_and_emits_attach_request(tmp_path):
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry)
 
-    await _create_agent(session, "beta")
+    await _create_agent(_ctx(session), "beta")
 
     # Profile file landed on disk via the real registry.
     assert registry.exists("beta"), "agent profile must persist on disk"
@@ -112,7 +123,7 @@ async def test_agent_new_rejects_duplicate(tmp_path):
     registry.create("dup")
 
     session = _FakeSession(registry)
-    await _create_agent(session, "dup")
+    await _create_agent(_ctx(session), "dup")
 
     # No attach should have been emitted on the failure path.
     assert all(
@@ -132,7 +143,7 @@ async def test_agent_new_rejects_invalid_name(tmp_path):
     session = _FakeSession(registry)
 
     # Uppercase / starts-with-hyphen / too-long all fail the regex.
-    await _create_agent(session, "BAD-Name-Mixed-Case")
+    await _create_agent(_ctx(session), "BAD-Name-Mixed-Case")
 
     assert all(
         m.kind != "__attach_request__" for m in session.outbox_calls
@@ -155,7 +166,7 @@ async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
     registry.create("gamma", role="old role")
     session = _FakeSession(registry, agent_name="gamma", agent_role="old role")
 
-    await _edit_role(session, "  new persona text  ")
+    await _edit_role(_ctx(session), "  new persona text  ")
 
     # Disk side: profile.yaml carries the new role (stripped).
     reloaded = AgentProfile.load(tmp_path / ".reyn" / "agents" / "gamma")
@@ -188,7 +199,7 @@ async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
     original_created_at = enriched.created_at
 
     session = _FakeSession(registry, agent_name="delta", agent_role="initial")
-    await _edit_role(session, "edited persona")
+    await _edit_role(_ctx(session), "edited persona")
 
     reloaded = AgentProfile.load(agent_dir)
     assert reloaded.role == "edited persona"
@@ -207,7 +218,7 @@ async def test_agent_edit_role_empty_value_errors(tmp_path):
     registry.create("eps", role="keep me")
     session = _FakeSession(registry, agent_name="eps", agent_role="keep me")
 
-    await _edit_role(session, "   ")
+    await _edit_role(_ctx(session), "   ")
 
     errors = [m for m in session.outbox_calls if m.kind == "error"]
     assert errors
@@ -228,7 +239,7 @@ async def test_agent_edit_unknown_field_errors(tmp_path):
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry, agent_name="default", agent_role="r")
 
-    await _edit_agent(session, "name newname")
+    await _edit_agent(_ctx(session), "name newname")
 
     errors = [m for m in session.outbox_calls if m.kind == "error"]
     assert errors
@@ -243,7 +254,7 @@ async def test_agent_edit_no_args_errors(tmp_path):
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry, agent_name="default", agent_role="r")
 
-    await _edit_agent(session, "")
+    await _edit_agent(_ctx(session), "")
 
     errors = [m for m in session.outbox_calls if m.kind == "error"]
     assert errors
@@ -260,7 +271,7 @@ async def test_agent_dispatcher_routes_edit_to_handler(tmp_path):
     registry.create("zeta", role="before")
     session = _FakeSession(registry, agent_name="zeta", agent_role="before")
 
-    await agent_cmd(session, "edit role after")
+    await agent_cmd(_ctx(session), "edit role after")
 
     assert (
         AgentProfile.load(tmp_path / ".reyn" / "agents" / "zeta").role

@@ -22,6 +22,15 @@ client codepath.
 This is an abstract base (not a bare Protocol) so a partial implementation
 fails at construction rather than silently at first use — the #1402
 completeness-by-construction discipline the ``PresentationConsumer`` seam uses.
+
+⚠️ That guarantee covers the abstract METHOD SET, not each method's semantics,
+and there is now one implementation that satisfies it without being a client:
+:class:`~reyn.interfaces.transport.session_bound.SessionBoundTransport` (#3595
+S4) is the SEND side only — a session builds it over itself so slash handlers,
+which are client-layer code, can already depend on this seam while the dispatch
+still lives in ``Session``. Its :meth:`frames` raises rather than returning an
+empty stream, which is the loudest failure available to a method whose contract
+is "produce frames"; it goes away with the dispatch in #3595 S5.
 """
 from __future__ import annotations
 

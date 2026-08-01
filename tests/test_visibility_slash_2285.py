@@ -18,6 +18,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
 from tests._support.agent_session import make_session
+from tests._support.slash import slash_ctx
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -61,10 +62,10 @@ async def test_slash_off_then_on_toggles_capability(tmp_path, monkeypatch):
     session = await _session(tmp_path)
     assert _allows(session, "delete_file") is True  # envelope allows
 
-    await visibility_cmd(session, "off tool delete_file")
+    await visibility_cmd(slash_ctx(session), "off tool delete_file")
     assert _allows(session, "delete_file") is False, "/visibility off hides it"
 
-    await visibility_cmd(session, "on tool delete_file")
+    await visibility_cmd(slash_ctx(session), "on tool delete_file")
     assert _allows(session, "delete_file") is True, "/visibility on restores it"
 
 
@@ -73,7 +74,7 @@ async def test_slash_bad_args_no_crash_no_state_change(tmp_path, monkeypatch):
     """Tier 2: malformed args → reply_error, no exception, no visibility change."""
     monkeypatch.chdir(tmp_path)
     session = await _session(tmp_path)
-    await visibility_cmd(session, "garbage")            # wrong arity
-    await visibility_cmd(session, "maybe tool x")       # bad on/off
-    await visibility_cmd(session, "off widget x")       # bad kind
+    await visibility_cmd(slash_ctx(session), "garbage")            # wrong arity
+    await visibility_cmd(slash_ctx(session), "maybe tool x")       # bad on/off
+    await visibility_cmd(slash_ctx(session), "off widget x")       # bad kind
     assert session.capability_visibility_state()["hidden_by_session"] == [], "no toggle on malformed args"

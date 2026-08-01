@@ -19,6 +19,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.slash import slash_ctx
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -129,11 +130,11 @@ async def test_hook_slash_disables_via_public_state(tmp_path, monkeypatch):
     s = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
     s.is_attached = True
 
-    await hook_cmd(s, "off myhook")
+    await hook_cmd(slash_ctx(s), "off myhook")
     assert {h["name"]: h["enabled"] for h in s.hook_state()}.get("myhook") is False
 
-    await hook_cmd(s, "on myhook")
+    await hook_cmd(slash_ctx(s), "on myhook")
     assert {h["name"]: h["enabled"] for h in s.hook_state()}.get("myhook") is True
 
-    await hook_cmd(s, "garbage")  # malformed → no crash, no change
+    await hook_cmd(slash_ctx(s), "garbage")  # malformed → no crash, no change
     assert {h["name"]: h["enabled"] for h in s.hook_state()}.get("myhook") is True

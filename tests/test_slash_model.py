@@ -26,11 +26,13 @@ import pytest
 
 from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash import SlashContext
 from reyn.interfaces.slash.model import model_cmd
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.slash import slash_ctx
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,15 +60,14 @@ def _make_resolver(extra: dict | None = None) -> ModelResolver:
     return ModelResolver(mapping, builtin={})
 
 
-def _capture_outbox(session: Session) -> list[OutboxMessage]:
-    """Replace session._put_outbox with a simple collector; return the list."""
-    captured: list[OutboxMessage] = []
+def _ctx(session) -> "SlashContext":
+    """The context the production dispatch hands a slash handler.
 
-    async def _collect(msg: OutboxMessage) -> None:
-        captured.append(msg)
-
-    session._put_outbox = _collect  # type: ignore[method-assign]
-    return captured
+    #3595 S4 moved the reply path onto the client transport, so the recording
+    transport — not the session outbox — is where a reply lands. Read it back
+    through ``ctx.transport``.
+    """
+    return slash_ctx(session)
 
 
 def _reply_text(msgs: list[OutboxMessage]) -> str:
@@ -90,18 +91,12 @@ class _FakeSession:
         self._agent = _Agent(agent_name="test", model=agent_model)
         self._resolver = resolver
         self._model_override: str | None = None
-        self.outbox: list[OutboxMessage] = []
-
-    async def _put_outbox(self, msg: OutboxMessage) -> None:
-        self.outbox.append(msg)
 
     def _rebuild_turn_budget_engine_for_model(self) -> None:
         # #1752: no-op on the stub — it has no turn_budget engine / router host.
         # The real rebuild is exercised in Group D against a real Session.
         pass
 
-    def error_text(self) -> str:
-        return "\n".join(m.text for m in self.outbox if m.kind == "error" and m.text)
 
 
 # ===========================================================================
@@ -201,12 +196,12 @@ async def test_model_cmd_no_arg_display_with_active_override(tmp_path):
     """
     session = _make_session(tmp_path, model="standard")
     session._resolver = _make_resolver()
-    msgs = _capture_outbox(session)
     session._model_override = "light"
 
-    await model_cmd(session, "")
+    ctx = _ctx(session)
+    await model_cmd(ctx, "")
 
-    text = _reply_text(msgs)
+    text = _reply_text(ctx.transport.displayed)
     assert "light" in text
     assert "this session" in text  # transient-override UX note
     assert "available:" in text
@@ -220,11 +215,11 @@ async def test_model_cmd_no_arg_display_no_override(tmp_path):
     """
     session = _make_session(tmp_path, model="standard")
     session._resolver = _make_resolver()
-    msgs = _capture_outbox(session)
+    
+    ctx = _ctx(session)
+    await model_cmd(ctx, "")
 
-    await model_cmd(session, "")
-
-    text = _reply_text(msgs)
+    text = _reply_text(ctx.transport.displayed)
     assert "standard" in text
     assert "no override" in text
     assert "available:" in text
@@ -247,9 +242,10 @@ async def test_model_cmd_valid_class_replies_confirmation():
     resolver = _make_resolver()
     session = _FakeSession(resolver, agent_model="standard")
 
-    await model_cmd(session, "light")
+    ctx = _ctx(session)
+    await model_cmd(ctx, "light")
 
-    texts = [m.text for m in session.outbox if m.text]
+    texts = [m.text for m in ctx.transport.displayed if m.text]
     assert texts, "expected a confirmation reply"
     combined = "\n".join(texts)
     assert "light" in combined
@@ -266,16 +262,17 @@ async def test_model_cmd_invalid_class_posts_error_with_class_list():
     resolver = _make_resolver()
     session = _FakeSession(resolver)
 
-    await model_cmd(session, "does_not_exist")
+    ctx = _ctx(session)
+    await model_cmd(ctx, "does_not_exist")
 
-    error = session.error_text()
+    error = ctx.transport.error_text()
     assert error, "expected an error message"
     assert "does_not_exist" in error
     assert "light" in error
     assert "standard" in error
     assert "strong" in error
     # no success (non-error) messages
-    success = [m for m in session.outbox if m.kind != "error"]
+    success = [m for m in ctx.transport.displayed if m.kind != "error"]
     assert not success, f"expected no success reply, got {success}"
 
 
@@ -317,7 +314,8 @@ async def test_turn_budget_engine_rebuilt_on_model_switch(tmp_path):
     before = session._router_host._turn_budget_engine
     assert before is not None  # baseline engine built (gpt-4o has a usable window)
 
-    await model_cmd(session, "strong")
+    ctx = _ctx(session)
+    await model_cmd(ctx, "strong")
 
     after = session._router_host._turn_budget_engine
     assert after is not before  # engine rebuilt for the new model

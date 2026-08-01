@@ -11,7 +11,10 @@ import logging
 import re
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+
+if TYPE_CHECKING:
+    from reyn.interfaces.slash import SlashContext
 
 logger = logging.getLogger(__name__)
 from dataclasses import asdict, dataclass, field
@@ -5959,9 +5962,44 @@ class Session:
                     handled = False
                 if handled:
                     return
+        self._put_outbox_nowait(msg)
+
+    def _put_outbox_nowait(self, msg: OutboxMessage) -> None:
+        """The synchronous tail of :meth:`_put_outbox` — everything except the
+        external-transport interceptor, which is the method's only await.
+
+        Exists because ``ClientTransport.put_display`` is synchronous by
+        contract (``InProcessTransport`` implements it with a bare
+        ``put_nowait``), and #3595 S4 routes slash-command replies through that
+        seam. ``SessionBoundTransport`` is handed this method as its display
+        sink, so a slash reply keeps landing on ``self.outbox`` with the same
+        reply-to defaulting and the same detached-drop rule it had when the
+        handler called ``_put_outbox`` directly — the S4 seam change moves who
+        the handler depends on, not where its output goes.
+
+        ``put_nowait`` rather than ``await put()`` is not a behaviour change:
+        ``self.outbox`` is an UNBOUNDED ``asyncio.Queue``, whose ``put()``
+        never suspends and delegates straight to ``put_nowait``. Bounding the
+        outbox later would break that equivalence — it would make this path
+        drop-or-raise where the async one blocks — so a maxsize on
+        ``self.outbox`` has to reckon with this method.
+
+        ⚠️ The interceptor leg is deliberately NOT reachable from the client
+        seam. It dispatches a message to an external transport (Slack / LINE
+        via the web layer) INSTEAD of queueing it for display, keyed on a
+        ``reply_to`` inherited from whatever last arrived on the inbox. A slash
+        reply is client-authored output for the operator who typed the command,
+        and #3595 step 1b already ruled that slash is not exposed to those
+        transports at all; letting a sticky external ``reply_to`` divert a
+        ``/cost`` line typed in the TUI away from the TUI would contradict that
+        ruling rather than preserve behaviour.
+        """
+        if msg.reply_to is None and self._last_reply_to is not None:
+            from dataclasses import replace
+            msg = replace(msg, reply_to=self._last_reply_to)
         if not self.is_attached and msg.kind in {"status", "trace"}:
             return
-        await self.outbox.put(msg)
+        self.outbox.put_nowait(msg)
 
     # ── compaction helpers (FP-0019 Wave 1) ────────────────────────────────────
     # Business logic lives in CompactionController.  Session keeps only the
@@ -6810,6 +6848,33 @@ class Session:
         """Resolve a unique intervention id by prefix in the intervention registry."""
         return self._interventions.resolve_id_prefix(prefix)
 
+    def _slash_context(self) -> "SlashContext":
+        """Build what a slash handler is handed (#3595 S4).
+
+        A slash handler is CLIENT-layer code — the owner's design is that a
+        client interprets ``/``-prefixed text and maps it onto published
+        operations, and that ``Session`` never interprets a string — so what it
+        depends on is ``ClientTransport``, the seam every reyn client already
+        writes through. This method exists because the dispatch has not moved
+        yet (#3595 S5 deletes it, together with the ``/answer`` fast path above,
+        so ``/answer`` is never left with two entry points): until then the
+        session builds the client's seam over ITSELF and hands it over, so
+        handler code is already written against the contract it will keep.
+
+        ``session=self`` is the declared residue, not a design element — see
+        :class:`~reyn.interfaces.slash.SlashContext`. When S5 lands, the client
+        passes its own transport and this method goes with the dispatch.
+        """
+        from reyn.interfaces.slash import SlashContext
+        from reyn.interfaces.transport.session_bound import SessionBoundTransport
+
+        return SlashContext(
+            transport=SessionBoundTransport(
+                self, display_sink=self._put_outbox_nowait,
+            ),
+            session=self,
+        )
+
     async def _maybe_handle_slash(self, text: str) -> bool:
         """Dispatch `/command args...` lines. Returns True when consumed.
 
@@ -6874,7 +6939,7 @@ class Session:
         # CPython internals change breaks slash dispatch, not just the hint.
         pre_size = self.outbox.qsize()
         try:
-            await slash_cmd.handler(self, args)
+            await slash_cmd.handler(self._slash_context(), args)
         except Exception as e:
             # A slash handler raising must not kill the session run loop: run()'s
             # `while await run_one_iteration()` has no `except`, so an uncaught

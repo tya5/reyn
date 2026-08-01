@@ -27,6 +27,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.slash import slash_ctx
 
 # Compaction summary the engine's litellm call returns; new_turn_seqs lists the
 # candidate turn seqs (head=2/tail=2 over 8 turns → candidates 3..6).
@@ -75,15 +76,10 @@ def _make_session(tmp_path) -> Session:
     return session
 
 
-def _drain(session) -> list:
-    out = []
-    while not session.outbox.empty():
-        out.append(session.outbox.get_nowait())
-    return out
-
-
-def _reply_text(session) -> str:
-    return " ".join(getattr(m, "text", "") for m in _drain(session))
+def _reply_text(ctx) -> str:
+    """What /compact displayed — #3595 S4 routes a slash reply through the
+    client transport, so the recording transport is where it lands."""
+    return " ".join(ctx.transport.texts())
 
 
 def test_compact_slash_registered() -> None:
@@ -140,9 +136,10 @@ def test_compact_slash_reports_compression(tmp_path, monkeypatch) -> None:
     _populate(session)
     _script_compaction_llm(monkeypatch)
 
-    asyncio.run(REGISTRY.get("compact").handler(session, ""))
+    ctx = slash_ctx(session)
+    asyncio.run(REGISTRY.get("compact").handler(ctx, ""))
 
-    text = _reply_text(session).lower()
+    text = _reply_text(ctx).lower()
     assert "summaris" in text and "bridge" in text, (
         f"expected a summarised-turns + bridge compression report; got: {text!r}"
     )
@@ -164,7 +161,8 @@ def test_compact_slash_nothing_to_compact(tmp_path, monkeypatch) -> None:
         raise AssertionError("no LLM call expected when there is nothing to compact")
     monkeypatch.setattr(litellm, "acompletion", _fail_acompletion)
 
-    asyncio.run(REGISTRY.get("compact").handler(session, ""))
+    ctx = slash_ctx(session)
+    asyncio.run(REGISTRY.get("compact").handler(ctx, ""))
 
-    text = _reply_text(session).lower()
+    text = _reply_text(ctx).lower()
     assert "nothing to compact" in text, f"expected the no-op report; got: {text!r}"

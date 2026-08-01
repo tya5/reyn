@@ -28,6 +28,7 @@ from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.chat_message import ChatMessage
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.slash import slash_ctx
 
 
 class _FakeBus:
@@ -39,37 +40,30 @@ class _FakeBus:
 
 
 @dataclass
-class _OutboxRecord:
-    kind: str
-    text: str
-
-
-@dataclass
 class _FakeSession:
     """Minimal Session-shaped stand-in for /image testing.
 
     Holds only the attributes ``image_cmd`` touches: the pending-images
-    queue, the multimodal config, the permission resolver, the
-    intervention bus, and a captured outbox.
+    queue, the multimodal config, the permission resolver and the
+    intervention bus. Replies go through the client transport (#3595 S4),
+    not through this object — ``_ctx`` below is where they land.
     """
     _multimodal_config: MultimodalConfig | None = None
     _perm: PermissionResolver | None = None
     _intervention_bus: _FakeBus | None = None
     _pending_user_images: list[dict] = field(default_factory=list)
-    captured_outbox: list[_OutboxRecord] = field(default_factory=list)
+    captured_outbox: list = field(default_factory=list)
 
     @property
     def pending_user_images(self) -> list[dict]:
         """Mirror of Session.pending_user_images for the fake stub."""
         return self._pending_user_images
 
-    async def _put_outbox(self, msg: object) -> None:
-        self.captured_outbox.append(
-            _OutboxRecord(
-                kind=getattr(msg, "kind", "system"),
-                text=getattr(msg, "text", ""),
-            )
-        )
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler; the
+    transport records into this fake's own reply list."""
+    return slash_ctx(session, recorder=session.captured_outbox)
 
 
 def _resolver(tmp_path: Path) -> PermissionResolver:
@@ -109,7 +103,7 @@ def test_image_cmd_queues_png(tmp_path, monkeypatch):
     )
 
     handler = _get_image_handler()
-    _run(handler(session, "shot.png"))
+    _run(handler(_ctx(session), "shot.png"))
 
     assert session.pending_user_images, "expected image queued"
     block = session.pending_user_images[0]
@@ -131,7 +125,7 @@ def test_image_cmd_supports_jpeg_and_alias(tmp_path, monkeypatch):
     cmd = REGISTRY.get("img")  # alias
     assert cmd is not None
     session = _FakeSession()
-    _run(cmd.handler(session, "pic.jpg"))
+    _run(cmd.handler(_ctx(session), "pic.jpg"))
 
     assert session.pending_user_images, "expected image queued"
     block = session.pending_user_images[0]
@@ -149,8 +143,8 @@ def test_multiple_image_calls_stack(tmp_path, monkeypatch):
 
     session = _FakeSession()
     handler = _get_image_handler()
-    _run(handler(session, "a.png"))
-    _run(handler(session, "b.png"))
+    _run(handler(_ctx(session), "a.png"))
+    _run(handler(_ctx(session), "b.png"))
 
     paths = [b["path"] for b in session.pending_user_images]
     assert any("a.png" in p for p in paths)
@@ -164,7 +158,7 @@ def test_image_cmd_empty_path_errors(tmp_path):
     """Tier 2: /image with empty path → queue stays empty; outbox shows usage error."""
     session = _FakeSession()
     handler = _get_image_handler()
-    _run(handler(session, ""))
+    _run(handler(_ctx(session), ""))
 
     assert session.pending_user_images == []
     assert any(m.kind == "error" and "usage" in m.text for m in session.captured_outbox)
@@ -175,7 +169,7 @@ def test_image_cmd_missing_file_errors(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _FakeSession()
     handler = _get_image_handler()
-    _run(handler(session, "no-such.png"))
+    _run(handler(_ctx(session), "no-such.png"))
 
     assert session.pending_user_images == []
     assert any(m.kind == "error" and "not found" in m.text for m in session.captured_outbox)
@@ -187,7 +181,7 @@ def test_image_cmd_unsupported_extension_errors(tmp_path, monkeypatch):
     (tmp_path / "notes.txt").write_bytes(b"text")
     session = _FakeSession()
     handler = _get_image_handler()
-    _run(handler(session, "notes.txt"))
+    _run(handler(_ctx(session), "notes.txt"))
 
     assert session.pending_user_images == []
     assert any(m.kind == "error" and "unsupported" in m.text for m in session.captured_outbox)
@@ -209,7 +203,7 @@ def test_image_cmd_oversize_with_deny_keeps_queue_empty(tmp_path, monkeypatch):
     )
 
     handler = _get_image_handler()
-    _run(handler(session, "huge.png"))
+    _run(handler(_ctx(session), "huge.png"))
 
     assert session.pending_user_images == []
     assert any(m.kind == "error" for m in session.captured_outbox)
@@ -226,7 +220,7 @@ def test_image_cmd_oversize_with_ask_no_keeps_queue_empty(tmp_path, monkeypatch)
     )
 
     handler = _get_image_handler()
-    _run(handler(session, "huge.png"))
+    _run(handler(_ctx(session), "huge.png"))
 
     assert session.pending_user_images == []
 
@@ -240,7 +234,7 @@ def test_image_cmd_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
     session = _FakeSession()  # no multimodal_config, no perm
 
     handler = _get_image_handler()
-    _run(handler(session, "any.png"))
+    _run(handler(_ctx(session), "any.png"))
 
     assert session.pending_user_images, "expected image queued (gate skipped)"
 

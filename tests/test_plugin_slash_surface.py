@@ -39,26 +39,27 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.security.permissions.permissions import PermissionResolver
 from tests._support.agent_session import make_session
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler; the
+    transport records into this wrapper's own reply list."""
+    return slash_ctx(session, recorder=session.outbox_calls)
+
 
 # ── shared fixtures ─────────────────────────────────────────────────────────
 
 
 class _ReplyCapturingSession:
-    """A real Session, wrapped so tests can read replies via the public
-    ``_put_outbox`` surface (mirrors the ``_FakeSession`` pattern already
-    used across the slash test suite — e.g. test_slash_reload_cmd.py — for
-    the reply-capture concern only; the Session itself underneath is real,
-    not faked)."""
+    """A real Session, wrapped so tests can read the replies the handler
+    displayed. #3595 S4 routes a slash reply through ``ClientTransport``, so
+    the capture is the transport's recorder (``_ctx`` below hands it this
+    list); the Session underneath is real, not faked."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
         self.outbox_calls: list[OutboxMessage] = []
-        self._orig_put_outbox = session._put_outbox
-
-        async def _capturing_put_outbox(msg: OutboxMessage) -> None:
-            self.outbox_calls.append(msg)
-
-        session._put_outbox = _capturing_put_outbox  # type: ignore[method-assign]
 
     def __getattr__(self, item):
         return getattr(self._session, item)
@@ -126,7 +127,7 @@ def _write_local_plugin(base: Path, name: str = "myplugin") -> Path:
 async def test_no_args_is_usage_error(tmp_path) -> None:
     """Tier 2: `/plugin` with no arguments replies a usage error, not a crash."""
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "")
+    await plugin_slash.plugin_cmd(_ctx(session), "")
     assert "usage" in session.error_text().lower()
 
 
@@ -135,7 +136,7 @@ async def test_unknown_subcommand_is_usage_error(tmp_path) -> None:
     """Tier 2: an unrecognized subcommand (not install/uninstall) replies a
     usage error, not a crash."""
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "frobnicate x")
+    await plugin_slash.plugin_cmd(_ctx(session), "frobnicate x")
     assert "unknown subcommand" in session.error_text().lower()
 
 
@@ -144,7 +145,7 @@ async def test_unknown_kind_is_usage_error(tmp_path) -> None:
     """Tier 2: an unrecognized source kind (not builtin/local/git) replies a
     usage error — the typed discriminator rejects untyped/unknown values."""
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "install registry rag")
+    await plugin_slash.plugin_cmd(_ctx(session), "install registry rag")
     assert "unknown source kind" in session.error_text().lower()
 
 
@@ -153,7 +154,7 @@ async def test_malformed_quoting_is_usage_error(tmp_path) -> None:
     """Tier 2: malformed shell-style quoting in the args string replies an
     error (ValueError from shlex.split caught), not a crash."""
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, 'install local "unterminated')
+    await plugin_slash.plugin_cmd(_ctx(session), 'install local "unterminated')
     assert session.error_text(), "expected an error reply for malformed quoting"
 
 
@@ -184,7 +185,7 @@ async def test_install_kind_threads_to_typed_source_shape(
     monkeypatch.setattr(plugin_slash, "_invoke_plugin_tool", _fake_invoke)
 
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, cmd_args)
+    await plugin_slash.plugin_cmd(_ctx(session), cmd_args)
 
     assert captured["name"] == "install_plugin"
     assert captured["args"]["source"] == expected_source
@@ -204,7 +205,7 @@ async def test_install_as_name_overrides_thread_through(tmp_path, monkeypatch) -
     monkeypatch.setattr(plugin_slash, "_invoke_plugin_tool", _fake_invoke)
 
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "install builtin rag as custom")
+    await plugin_slash.plugin_cmd(_ctx(session), "install builtin rag as custom")
 
     assert captured["args"]["source"] == {"kind": "builtin", "name": "rag"}
     assert captured["args"]["name"] == "custom"
@@ -224,7 +225,7 @@ async def test_uninstall_threads_name(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(plugin_slash, "_invoke_plugin_tool", _fake_invoke)
 
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "uninstall myplugin")
+    await plugin_slash.plugin_cmd(_ctx(session), "uninstall myplugin")
 
     assert captured["name"] == "uninstall_plugin"
     assert captured["args"] == {"name": "myplugin"}
@@ -264,7 +265,7 @@ async def test_slash_local_install_real_stack(tmp_path, monkeypatch) -> None:
         project, permission_resolver=perm_resolver, sandbox_config=sandbox_config,
     )
 
-    await plugin_slash.plugin_cmd(session, f"install local {src}")
+    await plugin_slash.plugin_cmd(_ctx(session), f"install local {src}")
 
     assert not session.error_text(), f"unexpected error: {session.error_text()}"
     plugin_copy = home / ".reyn" / "plugins" / "myplugin"
@@ -274,7 +275,7 @@ async def test_slash_local_install_real_stack(tmp_path, monkeypatch) -> None:
     registered = yaml.safe_load(skills_yaml.read_text(encoding="utf-8"))
     assert "hello" in (registered.get("skills") or {}).get("entries", {})
 
-    await plugin_slash.plugin_cmd(session, "uninstall myplugin")
+    await plugin_slash.plugin_cmd(_ctx(session), "uninstall myplugin")
     assert not session.error_text(), f"unexpected error on uninstall: {session.error_text()}"
     assert not plugin_copy.exists(), "plugin copy not removed on uninstall"
 
@@ -292,7 +293,7 @@ async def test_op_error_status_surfaces_as_reply_error(tmp_path, monkeypatch) ->
     monkeypatch.setattr(plugin_slash, "_invoke_plugin_tool", _fake_invoke)
 
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "install builtin rag")
+    await plugin_slash.plugin_cmd(_ctx(session), "install builtin rag")
     assert "boom" in session.error_text()
 
 
@@ -306,5 +307,5 @@ async def test_permission_error_surfaces_as_reply_error(tmp_path, monkeypatch) -
     monkeypatch.setattr(plugin_slash, "_invoke_plugin_tool", _fake_invoke)
 
     session = _make_session(tmp_path)
-    await plugin_slash.plugin_cmd(session, "install git https://example.com/x.git")
+    await plugin_slash.plugin_cmd(_ctx(session), "install git https://example.com/x.git")
     assert "denied for testing" in session.error_text()

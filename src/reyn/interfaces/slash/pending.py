@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
@@ -120,36 +120,36 @@ def _resolve_iv_id(
     ),
     usage="/pending [list|discard <id>|claim <id>]",
 )
-async def pending_cmd(session: "Session", args: str) -> None:
+async def pending_cmd(ctx: "SlashContext", args: str) -> None:
     """Dispatch ``/pending [list|discard|claim]`` subcommands."""
     parts = args.strip().split(maxsplit=1)
     if not parts or parts[0] == "list":
-        await _list(session)
+        await _list(ctx)
         return
     sub = parts[0]
     sub_args = parts[1] if len(parts) > 1 else ""
     if sub == "discard":
-        await _discard(session, sub_args)
+        await _discard(ctx, sub_args)
     elif sub == "claim":
-        await _claim(session, sub_args)
+        await _claim(ctx, sub_args)
     else:
-        await reply_error(session, _USAGE)
+        await reply_error(ctx, _USAGE)
 
 
 
-async def _list(session: "Session") -> None:
-    if not hasattr(session, "list_stalled_interventions"):
-        await reply_error(session, _NO_SESSION)
+async def _list(ctx: "SlashContext") -> None:
+    if not hasattr(ctx.session, "list_stalled_interventions"):
+        await reply_error(ctx, _NO_SESSION)
         return
     try:
-        ops = session.list_stalled_interventions()
+        ops = ctx.session.list_stalled_interventions()
     except Exception as exc:
-        await reply_error(session, f"/pending list failed: {exc}")
+        await reply_error(ctx, f"/pending list failed: {exc}")
         return
-    await reply(session, _render_list(ops))
+    await reply(ctx, _render_list(ops))
 
 
-async def _discard(session: "Session", supplied_id: str) -> None:
+async def _discard(ctx: "SlashContext", supplied_id: str) -> None:
     """Two-step confirm: first invocation shows a warning; second executes.
 
     Mirrors ``/reset``'s pattern (Wave-13 B#2).  The user must re-type
@@ -157,8 +157,8 @@ async def _discard(session: "Session", supplied_id: str) -> None:
     is stripped before resolving the intervention id so the existing
     prefix-resolution logic is unchanged.
     """
-    if not hasattr(session, "discard_pending_intervention"):
-        await reply_error(session, _NO_SESSION)
+    if not hasattr(ctx.session, "discard_pending_intervention"):
+        await reply_error(ctx, _NO_SESSION)
         return
 
     # Detect "confirm" suffix (case-insensitive, space-separated).
@@ -170,9 +170,9 @@ async def _discard(session: "Session", supplied_id: str) -> None:
         id_part = stripped
         _do_confirm = False
 
-    iv_id, err = _resolve_iv_id(session, id_part)
+    iv_id, err = _resolve_iv_id(ctx.session, id_part)
     if err is not None:
-        await reply_error(session, err)
+        await reply_error(ctx, err)
         return
     assert iv_id is not None  # mypy guard
 
@@ -182,7 +182,7 @@ async def _discard(session: "Session", supplied_id: str) -> None:
         kind_hint = ""
         summary_hint = ""
         try:
-            ops = session.list_stalled_interventions()
+            ops = ctx.session.list_stalled_interventions()
             match = next(
                 (v for v in ops if str(getattr(v, "id", "")).startswith(id_part)),
                 None,
@@ -199,7 +199,7 @@ async def _discard(session: "Session", supplied_id: str) -> None:
                 context += f": {_safe(summary_hint)[:40]}"
             context += ")"
         await reply(
-            session,
+            ctx,
             f"⚠ About to discard pending intervention: {iv_id[:8]}{context}\n"
             f"Type `/pending discard {id_part} confirm` to proceed, "
             "or anything else to leave it queued.",
@@ -207,23 +207,23 @@ async def _discard(session: "Session", supplied_id: str) -> None:
         return
 
     try:
-        ok = await session.discard_pending_intervention(iv_id)
+        ok = await ctx.session.discard_pending_intervention(iv_id)
     except Exception as exc:
-        await reply_error(session, f"discard failed: {exc}")
+        await reply_error(ctx, f"discard failed: {exc}")
         return
     if ok:
-        await reply(session, f"discarded {iv_id[:8]}")
+        await reply(ctx, f"discarded {iv_id[:8]}")
     else:
-        await reply_error(session, f"discard {iv_id[:8]}: not in stalled queue")
+        await reply_error(ctx, f"discard {iv_id[:8]}: not in stalled queue")
 
 
-async def _claim(session: "Session", supplied_id: str) -> None:
-    if not hasattr(session, "claim_pending_intervention"):
-        await reply_error(session, _NO_SESSION)
+async def _claim(ctx: "SlashContext", supplied_id: str) -> None:
+    if not hasattr(ctx.session, "claim_pending_intervention"):
+        await reply_error(ctx, _NO_SESSION)
         return
-    iv_id, err = _resolve_iv_id(session, supplied_id)
+    iv_id, err = _resolve_iv_id(ctx.session, supplied_id)
     if err is not None:
-        await reply_error(session, err)
+        await reply_error(ctx, err)
         return
     assert iv_id is not None
     # Use the canonical REPL listener channel so the re-dispatched iv is NOT
@@ -235,18 +235,18 @@ async def _claim(session: "Session", supplied_id: str) -> None:
     from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
     channel_id = DEFAULT_CHAT_CHANNEL_ID
     try:
-        view = await session.claim_pending_intervention(iv_id, channel_id)
+        view = await ctx.session.claim_pending_intervention(iv_id, channel_id)
     except Exception as exc:
-        await reply_error(session, f"claim failed: {exc}")
+        await reply_error(ctx, f"claim failed: {exc}")
         return
     if view is None:
         await reply_error(
-            session, f"claim {iv_id[:8]}: not in stalled queue",
+            ctx, f"claim {iv_id[:8]}: not in stalled queue",
         )
         return
     summary = getattr(view, "summary", "") or ""
     await reply(
-        session,
+        ctx,
         f"claimed {iv_id[:8]} to {channel_id}"
         + (f": {_safe(summary)[:60]}" if summary else ""),
     )

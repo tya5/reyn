@@ -24,6 +24,17 @@ from reyn.core.events.state_log import StateLog
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_msgs)
 
 
 class _CapturingSession:
@@ -86,7 +97,7 @@ async def test_bare_rewind_opens_picker_via_command_ui_and_text_fallback() -> No
     checkpoints first (seq 42 before seq 38 when 42 is the latest WAL seq).
     """
     session = _CapturingSession(registry=_StubRewindRegistry())
-    await _handler().handler(session, "")
+    await _handler().handler(_ctx(session), "")
     assert session.pending_command_ui == {
         "kind": "rewind",
         "points": [{"seq": 42, "kind": "turn"}, {"seq": 38, "kind": "turn"}],
@@ -102,7 +113,7 @@ async def test_bare_rewind_with_no_checkpoints_replies() -> None:
         def list_rewind_points(self, **_kw):
             return []
     session = _CapturingSession(registry=_Empty())
-    await _handler().handler(session, "")
+    await _handler().handler(_ctx(session), "")
     assert session.pending_command_ui is None
     assert any("no earlier checkpoints" in m.text for m in session.outbox_msgs)
 
@@ -122,7 +133,7 @@ async def test_rewind_with_seq_invokes_checkout(tmp_path) -> None:
     head_before = log.current_seq
 
     session = _CapturingSession(registry=reg)
-    await _handler().handler(session, "1")
+    await _handler().handler(_ctx(session), "1")
 
     # A reset-record was appended (checkout ran).
     assert log.current_seq > head_before
@@ -135,7 +146,7 @@ async def test_rewind_with_seq_invokes_checkout(tmp_path) -> None:
 async def test_rewind_non_integer_arg_errors() -> None:
     """Tier 2: /rewind <non-int> surfaces a decision-enabling error, no crash."""
     session = _CapturingSession()
-    await _handler().handler(session, "abc")
+    await _handler().handler(_ctx(session), "abc")
     assert [m.kind for m in session.outbox_msgs] == ["error"]
     assert "abc" in session.outbox_msgs[0].text
 
@@ -144,7 +155,7 @@ async def test_rewind_non_integer_arg_errors() -> None:
 async def test_rewind_seq_without_registry_errors() -> None:
     """Tier 2: /rewind <N> with no registry attached → error (not a crash)."""
     session = _CapturingSession(registry=None)
-    await _handler().handler(session, "5")
+    await _handler().handler(_ctx(session), "5")
     assert [m.kind for m in session.outbox_msgs] == ["error"]
 
 
@@ -166,7 +177,7 @@ async def test_rewind_abandoned_target_checks_out_fork_switch(tmp_path) -> None:
     head_before = log.current_seq
 
     session = _CapturingSession(registry=reg)
-    await _handler().handler(session, "2")  # checkout the dead-branch seq
+    await _handler().handler(_ctx(session), "2")  # checkout the dead-branch seq
 
     # No error — the dead-branch checkout succeeded (fork-switch).
     assert "error" not in [m.kind for m in session.outbox_msgs]

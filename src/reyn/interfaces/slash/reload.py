@@ -11,12 +11,7 @@ is the structural write-gate boundary.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, reply_error, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
 @slash(
@@ -25,16 +20,16 @@ if TYPE_CHECKING:
     usage="/reload",
     see_also=("docs/concepts/runtime/permission-model.md",),
 )
-async def reload_cmd(session: "Session", args: str) -> None:
+async def reload_cmd(ctx: "SlashContext", args: str) -> None:
     """``/reload`` — schedule a runtime config hot-reload.
 
     The IN-set (``.reyn/*.yaml``) is re-read + reapplied at the next turn boundary;
     the startup ``reyn.yaml`` is restart-only. Fail-loud if the reloader is absent.
     """
-    reloader = getattr(session, "_hot_reloader", None)
+    reloader = getattr(ctx.session, "_hot_reloader", None)
     if reloader is None:
         await reply_error(
-            session,
+            ctx,
             "config hot-reload is not available in this session "
             "(no hot-reloader wired).",
         )
@@ -42,7 +37,7 @@ async def reload_cmd(session: "Session", args: str) -> None:
 
     reloader.request_reload(source="operator")
     await reply(
-        session,
+        ctx,
         "✓ Config reload scheduled — the runtime IN-set (.reyn/*.yaml) is re-read "
         "and reapplied at the next turn boundary. (Startup config in reyn.yaml is "
         "restart-only.)",

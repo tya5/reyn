@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import textwrap
 
-from reyn.interfaces.slash import REGISTRY, reply, reply_error, slash, suggest_for_unknown
+from reyn.interfaces.slash import (
+    REGISTRY,
+    SlashContext,
+    reply,
+    reply_error,
+    slash,
+    suggest_for_unknown,
+)
 
 # Built-ins handled outside the registry. ``/quit`` + ``/exit`` were
 # previously here but moved into ``reyn.interfaces.slash.quit`` (= wave-2 P3)
@@ -68,7 +75,7 @@ def _render_command_focus(name: str) -> str:
     summary="Slash command help — list all, or focus on one",
     usage="/help [<cmd>]",
 )
-async def help_cmd(session: "object", args: str) -> None:
+async def help_cmd(ctx: "SlashContext", args: str) -> None:
     arg = (args or "").strip()
     if arg:
         # Per-command focus mode. Strip a leading "/" if the user
@@ -76,15 +83,15 @@ async def help_cmd(session: "object", args: str) -> None:
         # registry only stores names without one.
         target = arg.lstrip("/")
         if not target:
-            await reply_error(session, "usage: /help [<cmd>]")
+            await reply_error(ctx, "usage: /help [<cmd>]")
             return
         panel = _render_command_focus(target)
         # Unknown-command branch deserves the error styling — same
         # signalling as a dispatched-but-unknown command.
         if panel.startswith("unknown"):
-            await reply_error(session, panel)
+            await reply_error(ctx, panel)
         else:
-            await reply(session, panel)
+            await reply(ctx, panel)
         return
 
     rows: list[tuple[str, str, tuple[str, ...]]] = [
@@ -129,4 +136,4 @@ async def help_cmd(session: "object", args: str) -> None:
     )
     lines.append(textwrap.fill(footer, width=_TARGET_WIDTH))
 
-    await reply(session, "\n".join(lines))
+    await reply(ctx, "\n".join(lines))

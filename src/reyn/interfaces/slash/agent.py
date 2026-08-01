@@ -14,15 +14,10 @@ surfaced.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
-
 
 _USAGE = (
     "Usage:\n"
@@ -44,23 +39,23 @@ _NO_REGISTRY = (
     ),
     usage="/agent new <name> | /agent edit role <text>",
 )
-async def agent_cmd(session: "Session", args: str) -> None:
+async def agent_cmd(ctx: "SlashContext", args: str) -> None:
     """Dispatch ``/agent <sub>`` subcommands."""
     parts = args.strip().split(maxsplit=1)
     if not parts:
-        await reply(session, _USAGE)
+        await reply(ctx, _USAGE)
         return
     sub = parts[0]
     sub_args = parts[1] if len(parts) > 1 else ""
     if sub == "new":
-        await _create_agent(session, sub_args)
+        await _create_agent(ctx, sub_args)
     elif sub == "edit":
-        await _edit_agent(session, sub_args)
+        await _edit_agent(ctx, sub_args)
     else:
-        await reply_error(session, _USAGE)
+        await reply_error(ctx, _USAGE)
 
 
-async def _create_agent(session: "Session", name: str) -> None:
+async def _create_agent(ctx: "SlashContext", name: str) -> None:
     """Create a new agent profile and attach to it.
 
     Uses the same ``__attach_request__`` sentinel as ``/attach`` so the
@@ -69,31 +64,31 @@ async def _create_agent(session: "Session", name: str) -> None:
     """
     name = name.strip()
     if not name:
-        await reply_error(session, "Usage: /agent new <name>")
+        await reply_error(ctx, "Usage: /agent new <name>")
         return
-    if session._registry is None:
-        await reply_error(session, _NO_REGISTRY)
+    if ctx.session._registry is None:
+        await reply_error(ctx, _NO_REGISTRY)
         return
     try:
-        await session._registry.create_agent(name)  # #2103 S2b: emit agent_created
+        await ctx.session._registry.create_agent(name)  # #2103 S2b: emit agent_created
     except FileExistsError:
         await reply_error(
-            session,
+            ctx,
             f"agent {name!r} already exists; use /attach {name} instead",
         )
         return
     except ValueError as exc:
         # _validate_agent_name raises with the rule embedded — surface
         # verbatim so the user sees exactly what's wrong with the name.
-        await reply_error(session, str(exc))
+        await reply_error(ctx, str(exc))
         return
-    await reply(session, f"created agent {name!r}; attaching…")
-    await session._put_outbox(OutboxMessage(
+    await reply(ctx, f"created agent {name!r}; attaching…")
+    ctx.transport.put_display(OutboxMessage(
         kind="__attach_request__", text=name,
     ))
 
 
-async def _edit_agent(session: "Session", args: str) -> None:
+async def _edit_agent(ctx: "SlashContext", args: str) -> None:
     """Dispatch ``/agent edit <field> <value>`` — currently ``role`` only.
 
     Edits operate on the **attached agent** (= ``session.agent_name``).
@@ -102,20 +97,20 @@ async def _edit_agent(session: "Session", args: str) -> None:
     """
     parts = args.strip().split(maxsplit=1)
     if not parts:
-        await reply_error(session, "Usage: /agent edit role <text>")
+        await reply_error(ctx, "Usage: /agent edit role <text>")
         return
     field = parts[0]
     rest = parts[1] if len(parts) > 1 else ""
     if field == "role":
-        await _edit_role(session, rest)
+        await _edit_role(ctx, rest)
     else:
         await reply_error(
-            session,
+            ctx,
             f"unknown edit field {field!r}; only `role` is supported.",
         )
 
 
-async def _edit_role(session: "Session", new_role: str) -> None:
+async def _edit_role(ctx: "SlashContext", new_role: str) -> None:
     """Replace the attached agent's role text on disk + in-memory.
 
     Two-side update:
@@ -128,24 +123,24 @@ async def _edit_role(session: "Session", new_role: str) -> None:
     new_role = new_role.strip()
     if not new_role:
         await reply_error(
-            session,
+            ctx,
             "Usage: /agent edit role <text>  (text must be non-empty; "
             "clearing the role intentionally is not yet supported)",
         )
         return
 
-    registry = session._registry
+    registry = ctx.session._registry
     if registry is None:
-        await reply_error(session, _NO_REGISTRY)
+        await reply_error(ctx, _NO_REGISTRY)
         return
 
-    name = session.agent_name
+    name = ctx.session.agent_name
     agent_dir = registry._dir / name
     try:
         profile = AgentProfile.load(agent_dir)
     except FileNotFoundError:
         await reply_error(
-            session,
+            ctx,
             f"profile for agent {name!r} not found at {agent_dir}/profile.yaml",
         )
         return
@@ -154,16 +149,16 @@ async def _edit_role(session: "Session", new_role: str) -> None:
     try:
         updated.save(agent_dir)
     except OSError as exc:
-        await reply_error(session, f"failed to save profile: {exc}")
+        await reply_error(ctx, f"failed to save profile: {exc}")
         return
 
     # Mutate in-memory so the next turn's Agent construction picks up
     # the new role (= session._agent_role is read at
     # ``_construct_agent`` time, not cached on a prompt object).
-    session._agent_role = new_role
+    ctx.session._agent_role = new_role
 
     await reply(
-        session,
+        ctx,
         f"✓ Updated agent {name!r} role.\n  new role: {new_role}\n"
         "Next user turn will use the new role.",
     )

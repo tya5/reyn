@@ -26,6 +26,17 @@ if str(_SRC) not in sys.path:
 
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_messages)
 
 
 def _get_cmd(name: str):
@@ -86,7 +97,7 @@ async def test_pending_discard_no_confirm_shows_warning_not_discarded() -> None:
         ),
     ])
     cmd = _get_cmd("pending")
-    await cmd.handler(sess, "discard iv-abcd1234")
+    await cmd.handler(_ctx(sess), "discard iv-abcd1234")
 
     # API must NOT be called.
     assert sess.discard_calls == []
@@ -110,7 +121,7 @@ async def test_pending_discard_with_confirm_calls_api() -> None:
         ),
     ])
     cmd = _get_cmd("pending")
-    await cmd.handler(sess, "discard iv-abcd1234 confirm")
+    await cmd.handler(_ctx(sess), "discard iv-abcd1234 confirm")
 
     assert sess.discard_calls == ["iv-abcd1234"]
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]

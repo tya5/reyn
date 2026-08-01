@@ -10,6 +10,17 @@ import pytest
 
 from reyn.interfaces.slash.memory import memory_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -30,7 +41,7 @@ class _FakeSession:
 async def test_memory_no_args_shows_usage() -> None:
     """Tier 2: /memory with no args → usage hint (not an error)."""
     session = _FakeSession()
-    await memory_cmd(session, "")  # type: ignore[arg-type]
+    await memory_cmd(_ctx(session), "")  # type: ignore[arg-type]
     text = session.reply_text()
     assert "list" in text.lower()
     assert "view" in text.lower()
@@ -41,6 +52,6 @@ async def test_memory_no_args_shows_usage() -> None:
 async def test_memory_unknown_sub_replies_error() -> None:
     """Tier 2: /memory with an unrecognised sub-command → usage error."""
     session = _FakeSession()
-    await memory_cmd(session, "delete foo")  # type: ignore[arg-type]
+    await memory_cmd(_ctx(session), "delete foo")  # type: ignore[arg-type]
     assert session.error_text()
     assert not session.reply_text()

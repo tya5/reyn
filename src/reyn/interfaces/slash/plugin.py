@@ -27,12 +27,9 @@ from __future__ import annotations
 
 import json
 import shlex
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from reyn.interfaces.slash import reply, reply_error, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 #: The bare syntax line — what ``SlashCommand.usage`` takes. Both of its
 #: renderers (``/help <cmd>``'s ``usage:`` column and the completion popup's
@@ -46,10 +43,10 @@ _SYNTAX = (
 _USAGE = f"usage: {_SYNTAX}"
 
 
-async def _build_plugin_tool_context(session: "Session") -> Any:
+async def _build_plugin_tool_context(ctx: "SlashContext") -> Any:
     from reyn.tools.types import ToolContext, build_resource_caller_state
 
-    host = session.router_host
+    host = ctx.session.router_host
     router_state = await build_resource_caller_state(host)
     return ToolContext(
         events=host.events,
@@ -86,22 +83,22 @@ def _extract_error(result: dict) -> "str | None":
     usage=_SYNTAX,
     see_also=("docs/deep-dives/proposals/0064-plugin-model.md",),
 )
-async def plugin_cmd(session: "Session", args: str) -> None:
+async def plugin_cmd(ctx: "SlashContext", args: str) -> None:
     try:
         parts = shlex.split(args)
     except ValueError as exc:
-        await reply_error(session, f"could not parse arguments: {exc}. {_USAGE}")
+        await reply_error(ctx, f"could not parse arguments: {exc}. {_USAGE}")
         return
 
     if len(parts) < 2:
-        await reply_error(session, _USAGE)
+        await reply_error(ctx, _USAGE)
         return
 
     subcmd = parts[0]
 
     if subcmd == "install":
         if len(parts) < 3:
-            await reply_error(session, _USAGE)
+            await reply_error(ctx, _USAGE)
             return
         kind = parts[1]
         source_value = parts[2]
@@ -115,7 +112,7 @@ async def plugin_cmd(session: "Session", args: str) -> None:
             source = {"kind": "git", "url": source_value}
         else:
             await reply_error(
-                session,
+                ctx,
                 f"unknown source kind {kind!r} — expected builtin/local/git. {_USAGE}",
             )
             return
@@ -125,30 +122,30 @@ async def plugin_cmd(session: "Session", args: str) -> None:
             if len(rest) == 2 and rest[0] == "as":
                 install_name = rest[1]
             else:
-                await reply_error(session, f"unexpected trailing arguments: {rest!r}. {_USAGE}")
+                await reply_error(ctx, f"unexpected trailing arguments: {rest!r}. {_USAGE}")
                 return
 
         tool_args: dict = {"source": source}
         if install_name:
             tool_args["name"] = install_name
 
-        ctx = await _build_plugin_tool_context(session)
+        tool_ctx = await _build_plugin_tool_context(ctx)
         try:
-            result = await _invoke_plugin_tool("install_plugin", tool_args, ctx)
+            result = await _invoke_plugin_tool("install_plugin", tool_args, tool_ctx)
         except PermissionError as exc:
-            await reply_error(session, f"permission denied: {exc}")
+            await reply_error(ctx, f"permission denied: {exc}")
             return
         except Exception as exc:
-            await reply_error(session, f"plugin install failed: {exc}")
+            await reply_error(ctx, f"plugin install failed: {exc}")
             return
 
         err = _extract_error(result)
         if err is not None:
-            await reply_error(session, f"plugin install failed: {err}")
+            await reply_error(ctx, f"plugin install failed: {err}")
             return
 
         await reply(
-            session,
+            ctx,
             f"✓ plugin installed (kind={kind}, source={source_value}).\n"
             f"{json.dumps(result.get('data', result), indent=2, ensure_ascii=False)}",
         )
@@ -156,26 +153,26 @@ async def plugin_cmd(session: "Session", args: str) -> None:
 
     if subcmd == "uninstall":
         name = parts[1]
-        ctx = await _build_plugin_tool_context(session)
+        tool_ctx = await _build_plugin_tool_context(ctx)
         try:
-            result = await _invoke_plugin_tool("uninstall_plugin", {"name": name}, ctx)
+            result = await _invoke_plugin_tool("uninstall_plugin", {"name": name}, tool_ctx)
         except PermissionError as exc:
-            await reply_error(session, f"permission denied: {exc}")
+            await reply_error(ctx, f"permission denied: {exc}")
             return
         except Exception as exc:
-            await reply_error(session, f"plugin uninstall failed: {exc}")
+            await reply_error(ctx, f"plugin uninstall failed: {exc}")
             return
 
         err = _extract_error(result)
         if err is not None:
-            await reply_error(session, f"plugin uninstall failed: {err}")
+            await reply_error(ctx, f"plugin uninstall failed: {err}")
             return
 
         await reply(
-            session,
+            ctx,
             f"✓ plugin {name!r} uninstalled.\n"
             f"{json.dumps(result.get('data', result), indent=2, ensure_ascii=False)}",
         )
         return
 
-    await reply_error(session, f"unknown subcommand {subcmd!r}. {_USAGE}")
+    await reply_error(ctx, f"unknown subcommand {subcmd!r}. {_USAGE}")
