@@ -47,12 +47,22 @@ class MessageBus:
         ref = McpRef(request_id=_new_request_id())
         replies = await bus.request(
             session,
-            kind="user",
+            kind=EXTERNAL_MESSAGE_INBOX_KIND,
             payload={"text": message, "chain_id": chain_id},
             reply_to=ref,
             timeout=60.0,
         )
         reply_text = "\\n\\n".join(r.text for r in replies)
+
+    The example pairs ``McpRef`` with ``EXTERNAL_MESSAGE_INBOX_KIND`` because
+    that is what an MCP request IS — it showed ``kind="user"`` until #3595 step
+    1b, which is the pairing that arc removed (``"user"`` claims a human typed
+    the line at a first-party client, and ``Session._handle_user_message`` acts
+    on that claim by handing a ``/``-prefixed line to slash dispatch). ★ A
+    usage example is a template: the next author of an injection path copies
+    it, so an example that names a kind untruthfully reproduces the defect
+    rather than merely describing it. Pick the kind that is true of YOUR
+    producer — see ``kind`` below.
 
     The bus puts the message on ``session.inbox`` tagged with ``reply_to``,
     then pumps ``run_one_iteration()`` until the session is quiescent *for
@@ -87,7 +97,21 @@ class MessageBus:
         agent:
             The Session to drive.
         kind:
-            Inbox message kind (e.g. ``"user"``).
+            Inbox message kind — the member of the union
+            ``Session._run_turn_body`` dispatches on, naming WHO authored
+            ``payload["text"]``. It is a claim about origin, not a routing
+            hint: ``"user"`` means a human typed this at a first-party client,
+            and is the ONLY kind whose text Reyn interprets as an operator
+            command line. Every other producer says what it is —
+            ``transport.EXTERNAL_MESSAGE_INBOX_KIND`` (a webhook / MCP / A2A
+            peer), ``session_api.AGENT_STEP_INBOX_KIND`` (a pipeline agent
+            step's prompt), ``cron.routing.CRON_INBOX_KIND``,
+            ``hooks.dispatcher.HOOK_INBOX_KIND``, ``"agent_request"`` /
+            ``"agent_response"`` / ``"pipeline_result"``. ★ Naming ``"user"``
+            when a human did not type it is what made every registered slash
+            command executable from model output and from a Slack message
+            (#3595); this parameter is a free-form ``str`` today, so nothing
+            but the caller's honesty enforces it.
         payload:
             Inbox message payload dict.  The bus stamps ``reply_to`` into a
             ``_bus_reply_to`` key so handlers can propagate it to outbox

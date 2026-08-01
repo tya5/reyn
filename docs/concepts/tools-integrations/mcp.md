@@ -343,9 +343,19 @@ Two tools are registered:
 | Tool | Signature | What it does |
 |------|-----------|--------------|
 | `list_agents` | `()` | Returns a JSON array of `{name, role}` objects — one entry per agent declared in `reyn.yaml`. |
-| `send_to_agent` | `(agent_name, message)` | Submits one user-style message to the named agent and blocks (up to `--timeout` seconds) for the final reply text. Returns `{reply, partial, agent}`. If `partial=true`, the agent is still working; call again to receive more. |
+| `send_to_agent` | `(agent_name, message)` | Submits one message to the named agent as a conversational turn and blocks (up to `--timeout` seconds) for the final reply text. Returns `{reply, partial, agent}`. If `partial=true`, the agent is still working; call again to receive more. |
 
 Multi-turn continuity is preserved: each agent's `Session` keeps its `history.jsonl` between calls, so a conversation that starts in Claude Code can be resumed from `reyn chat` — or vice versa.
+
+#### `message` is content the model reads, never an operator command
+
+A `send_to_agent` message rides the `external_message` inbox kind: the OS's record that a counterparty outside this process wrote it, which is what it is. It is **not** the `user` kind, which means "a human typed this at a first-party client" and is the only kind Reyn interprets as an operator command line.
+
+The visible consequence: **Reyn's slash commands are not available over MCP.** A message reading `/reset`, `/model`, `/visibility` or any other registered command is read by the LLM as text; nothing is executed.
+
+This is a **decision, not an omission** (#3595 step 1b, owner ruling 2026-08-01: 「現時点では slash に公開不要」 — "no need to expose slash at present"). Until that arc, `send_to_agent` claimed the `user` kind, so any MCP client could run any registered slash command — including `reset`, `rewind` and `plugin` — by sending one as its message. If Reyn ever does expose slash to a peer, the route is a shared client-side slash layer, not a transport re-inspecting the message for a leading `/`.
+
+The same holds for the A2A router, which shares this implementation, and for chat-gateway plugins — see [the gateway authoring guide](../../gateway/authoring-guide.md#slash-commands-are-not-exposed-to-gateways).
 
 ### Progress notifications
 
