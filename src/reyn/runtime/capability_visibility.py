@@ -293,6 +293,28 @@ class CapabilityVisibility:
         — toggle-ON discards from the override so the capability is restored *up to the envelope*,
         never re-granted beyond it (an envelope-denied capability stays denied). The per-turn
         RouterLoop reads these fields at construction, so the change is live next turn.
+
+        #3593 ① — NO BASE ⇒ NO WRITE. The SET above is correct only when a base was actually
+        OBTAINED. Without an envelope source there is nothing to re-resolve, and composing the
+        override against a default ``ContextualPermission()`` (which allows everything) and SETting
+        THAT paints over live fields that were correct until that moment — the topology
+        ``capability_profile`` bindings, the #2081 ``_delegate`` floor and the #2103-S1a
+        per-session narrowing all replaced by "allow-all minus whatever the operator toggled".
+        A missing INPUT was triggering a WRITE, and the write went outward.
+
+        The live fields already hold the correct values (resolved at construction from a real
+        base), so the existing state is the authority and any state derived from a base that
+        could not be read is fabricated. This method therefore has no standing to overwrite it
+        and returns without writing — that is a judgement about authority, not the "it is safe,
+        so do nothing" a *no-op* would name. It is not fail-closed either: fail-closed would be
+        another write, of a value nobody resolved.
+
+        Cost of preserving, stated rather than buried: on such a session an override change made
+        since the last successful resolve does not reach the live gate (it is still recorded in
+        ``visibility_override`` / persisted / rendered in ``hidden_by_session``). Applying it
+        anyway would require an envelope to compose against, and inventing one is the defect.
+        The condition is surfaced (WARNING) rather than passed over in silence — see
+        ``_surface_unreadable_envelope_source``.
         """
         from typing import cast
 
@@ -310,13 +332,15 @@ class CapabilityVisibility:
         # resolved_profile_for is documented to return (ContextualPermission | None, ...);
         # its declared type is the wider `object | None`, so cast to the concrete type the
         # downstream compose_resolved requires (registry.py:3509 guarantees it).
-        base_ctx: "ContextualPermission | None" = None
-        base_excl: "frozenset[str]" = frozenset()
-        if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
-            raw_ctx, base_excl = self._registry.resolved_profile_for(
-                self._agent_name, sid=self._session_id_provider(),
-            )
-            base_ctx = cast("ContextualPermission | None", raw_ctx)
+        if self._registry is None or not hasattr(self._registry, "resolved_profile_for"):
+            # #3593 ①: preserve — see the docstring. No base was obtained, so nothing below
+            # may run: everything below composes a NEW envelope and SETs it over the live one.
+            self._surface_unreadable_envelope_source()
+            return
+        raw_ctx, base_excl = self._registry.resolved_profile_for(
+            self._agent_name, sid=self._session_id_provider(),
+        )
+        base_ctx: "ContextualPermission | None" = cast("ContextualPermission | None", raw_ctx)
 
         ov = self._visibility_override
         keep_categories: "tuple[str, ...] | None" = None
@@ -343,6 +367,48 @@ class CapabilityVisibility:
         self._contextual_permission = final_ctx
         self._excluded_categories = final_excl
 
+    def _surface_unreadable_envelope_source(self) -> None:
+        """#3593 ①: say out loud that the envelope base could not be read.
+
+        Preserving is the safe direction, which is exactly why it must not be silent: the
+        session keeps whatever gate it already had, so nothing downstream misbehaves, and the
+        wiring defect that produced a security-core object with no envelope source leaves no
+        other trace. A widening bug announces nothing on its own (#3593's framing); a
+        *silently* preserved one announces nothing either.
+
+        WARNING log, not a P6 audit-event kind, and the reason is not convenience:
+
+        - ``.reyn/events`` is the replayable record of what happened to the WORKSPACE, and its
+          ``type`` namespace is a closed vocabulary with consumers outside reyn (see
+          ``AUDIT_EVENT_KINDS``). "A collaborator this object needed was absent" is a fact
+          about how reyn was WIRED at construction, not an action taken on the workspace, and
+          it reconstructs nothing on replay.
+        - This class holds four deps by design (envelope source, router host, two live
+          getters) and no event sink. Injecting one — through ``Session`` and every
+          construction site — to carry a single wiring diagnostic is a larger coupling change
+          than the defect being fixed, and would have to be threaded through the very
+          bootstrap window (the one measured no-back-reference caller) where it is least
+          likely to be available.
+        - Sibling precedent in this same class: ``persist_visibility_override`` reports its
+          best-effort failure the same way.
+
+        Stage ② (#3593) is meant to make this branch unreachable by construction — fix the
+        one bootstrap-ordering caller, then require the envelope source non-optionally. Until
+        then this warning is what would tell an operator the window widened.
+        """
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "#3593: capability envelope NOT re-resolved for agent %r (sid %r) — no envelope "
+            "source to read the base from. The live envelope is PRESERVED, not widened; any "
+            "visibility-override change since the last successful resolve is recorded and "
+            "persisted but is NOT reflected in the live gate. A session on the security-core "
+            "path is expected to carry the registry back-reference: reaching this means a "
+            "construction site built one without it.",
+            self._agent_name,
+            self._session_id_provider(),
+        )
+
     def reapply_skill_visibility(self) -> None:
         """#2548 PR-B: recompute the live skill list from the base registered set minus the session override.
 
@@ -365,6 +431,11 @@ class CapabilityVisibility:
         for visibility: ``reapply_visibility_override`` re-resolves from base, which still denies
         it). Session-scoped (this sid only); live next turn; persists across restart (step2,
         ``toggle_store_dir`` is the caller's per-session state dir).
+
+        "Live next turn" holds for a session that HAS an envelope source. On one that does not,
+        ``reapply_visibility_override`` preserves the live envelope rather than recomposing it
+        (#3593 ①, see its docstring) — the toggle is still recorded, persisted and reported in
+        ``hidden_by_session``, but it does not reach the live gate, and the attempt is logged.
 
         For ``kind="skill"``: restrict-only within the registered set — disabling a skill name not
         in the registered set is silently ignored (no error; the override is a no-op). Enabling a
