@@ -15,7 +15,7 @@ This is the ratified "``#5 structural-non-reentry`` -> ``§224
 valve-metered-allow``" transition (proposal §9 item 3 / §8.4 item 3): a
 wake=true push a consumer hook makes here traverses ``HookDispatcher``'s
 existing E-path (``_push_resolved`` -> the injected ``put_inbox`` callable ->
-the Session's ``HOOK_INBOX_KIND``/``kind="hook"`` inbox message) — the SAME
+the Session's ``TurnOrigin.HOOK``/``kind="hook"`` inbox message) — the SAME
 path every other hook-driven wake takes, so the Session's existing
 ``max_hook_driven_turns`` loop-valve counts a composed->wake turn with ZERO
 new bounding logic. A self-stimulating composed->wake->(builtin

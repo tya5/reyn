@@ -485,11 +485,11 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
     )
 
     # The inbox was used (= MessageBus path, not inline bypass).
-    from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND
-    assert EXTERNAL_MESSAGE_INBOX_KIND in inbox_consumed, (
+    from reyn.runtime.turn_origin import TurnOrigin
+    assert TurnOrigin.EXTERNAL_MESSAGE in inbox_consumed, (
         "send_to_agent_impl must use the inbox (MessageBus path); "
         "direct turn-body bypass detected. (#3595 step 1b: the kind it puts is "
-        "EXTERNAL_MESSAGE_INBOX_KIND, not 'user' — an MCP / A2A peer is not the "
+        "TurnOrigin.EXTERNAL_MESSAGE, not 'user' — an MCP / A2A peer is not the "
         "operator, and 'user' is the kind whose text reaches slash dispatch.)"
     )
     assert result["agent"] == "default"

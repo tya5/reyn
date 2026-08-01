@@ -26,29 +26,6 @@ from reyn.hooks.ingress import CronIngressAdapter
 
 CRON_TRANSPORT = "cron"
 
-#: The inbox kind a fired message-based cron job's text rides (#3595 step 1b).
-#:
-#: Declared here (the cron subsystem's runtime module, imported by the web
-#: server's thin ``_inbox_pusher`` glue) the way
-#: ``hooks.dispatcher.HOOK_INBOX_KIND`` is declared in the hook dispatcher.
-#:
-#: It used to be ``"user"``, the claim ``Session._handle_user_message`` acts on
-#: by handing a ``/``-prefixed line to slash dispatch — so a job whose message
-#: began with ``/`` executed an operator command in an UNATTENDED session with
-#: no client to show the result to.
-#:
-#: **Why cron does not share** ``EXTERNAL_MESSAGE_INBOX_KIND`` **with the
-#: webhook / MCP producers.** The kind's job is to say who authored the text for
-#: the purpose of deciding whether the OS may act on its form, and cron answers
-#: differently from those two: a cron message is OPERATOR-authored, in
-#: ``.reyn/`` job config, under the same file-permission trust as the rest of
-#: the workspace — not a counterparty's chat line. That is a distinction a trust
-#: decision (e.g. #3501's untrusted-content narrowing) would branch on, and no
-#: envelope field can carry it: ``sender`` (``"cron:<job>"`` vs ``"slack:U456"``)
-#: is a free-form attribution string the pushing plugin supplies, and a
-#: discriminator a trust decision reads must not come from the side being
-#: classified.
-CRON_INBOX_KIND = "cron"
 
 # Hook-Event Redesign Phase 2 (proposal 0059 §6.4): the Cron Adapter is
 # stateless (no bound queue/session — it resolves its target Session fresh

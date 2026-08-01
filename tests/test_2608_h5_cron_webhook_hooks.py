@@ -29,7 +29,6 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.cron import CronJob
 from reyn.runtime.cron.routing import (
-    CRON_INBOX_KIND,
     dispatch_cron_fired,
     resolve_cron_session,
 )
@@ -38,6 +37,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
 
 
@@ -141,7 +141,7 @@ async def test_real_cron_fire_dispatches_cron_fired_hook_into_session_inbox(tmp_
         # keeping the old one stops standing in for the producer.
         session = resolve_cron_session(reg, to, native_id)
         dispatch_cron_fired(session, native_id, to)
-        await session._put_inbox(CRON_INBOX_KIND, envelope)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
         return "ok"
 
     runner = build_default_runner(inbox_pusher=_inbox_pusher)
@@ -180,7 +180,7 @@ async def test_cron_matcher_filters_by_job_name_exact(tmp_path):
         # keeping the old one stops standing in for the producer.
         session = resolve_cron_session(reg, to, native_id)
         dispatch_cron_fired(session, native_id, to)
-        await session._put_inbox(CRON_INBOX_KIND, envelope)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
         return "ok"
 
     runner = build_default_runner(inbox_pusher=_inbox_pusher)
@@ -211,7 +211,7 @@ async def test_cron_empty_registry_leaves_ingress_delivery_unaffected(tmp_path):
         # keeping the old one stops standing in for the producer.
         session = resolve_cron_session(reg, to, native_id)
         dispatch_cron_fired(session, native_id, to)
-        await session._put_inbox(CRON_INBOX_KIND, envelope)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
         return "ok"
 
     runner = build_default_runner(inbox_pusher=_inbox_pusher)
@@ -224,8 +224,8 @@ async def test_cron_empty_registry_leaves_ingress_delivery_unaffected(tmp_path):
     items = _drain(session)
     (only_item,) = items  # exactly one item — unpack asserts the count
     kind, payload = only_item
-    # #3595 step 1b: a cron fire rides CRON_INBOX_KIND, never "user".
-    assert kind == CRON_INBOX_KIND
+    # #3595 step 1b: a cron fire rides TurnOrigin.CRON, never "user".
+    assert kind == TurnOrigin.CRON
     assert payload["text"] == "hi"  # no hook message — pure no-op
 
 
@@ -314,8 +314,8 @@ async def test_webhook_empty_registry_leaves_ingress_delivery_unaffected(tmp_pat
     (only_item,) = items  # exactly one item — unpack asserts the count
     kind, payload = only_item
     # #3595 step 1b: a webhook push rides the EXTERNAL kind, never "user".
-    from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND
-    assert kind == EXTERNAL_MESSAGE_INBOX_KIND
+    from reyn.runtime.turn_origin import TurnOrigin
+    assert kind == TurnOrigin.EXTERNAL_MESSAGE
     assert payload["text"] == "hi"  # no hook message — pure no-op
 
 

@@ -19,9 +19,8 @@ versions; internal session APIs may change without notice.
 - The signature is **kwarg-only** so future additions don't shift
   positional arguments.
 - The inbox kind is **not a parameter** (#3595 step 1b). Every push
-  through this module rides
-  ``runtime.transport.EXTERNAL_MESSAGE_INBOX_KIND``. Until #3595 step
-  1b it defaulted to ``"user"`` and was caller-overridable "so the
+  through this module rides ``TurnOrigin.EXTERNAL_MESSAGE``. Until
+  #3595 step 1b it defaulted to ``"user"`` and was caller-overridable "so the
   contract can extend without API break" — but ``"user"`` is the ONE
   kind ``Session._handle_user_message`` acts on by handing a
   ``/``-prefixed line to slash dispatch, so that parameter was the
@@ -41,7 +40,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.runtime.transport import EXTERNAL_MESSAGE_INBOX_KIND, TransportRef
+from reyn.runtime.transport import TransportRef
+from reyn.runtime.turn_origin import TurnOrigin
 
 
 async def push_to_agent(
@@ -60,7 +60,7 @@ async def push_to_agent(
     directly. Internal session APIs may change between Reyn versions;
     this function won't.
 
-    The message rides ``EXTERNAL_MESSAGE_INBOX_KIND`` — the truthful
+    The message rides ``TurnOrigin.EXTERNAL_MESSAGE`` — the truthful
     claim for text this module carries: a counterparty outside this
     process wrote it, never the operator at a first-party client. That
     is what keeps a Slack/LINE message reading ``/reset`` from
@@ -126,7 +126,7 @@ async def push_to_agent(
         envelope["reply_to"] = reply_to
     if extra_meta:
         envelope["meta"] = dict(extra_meta)
-    await session._put_inbox(EXTERNAL_MESSAGE_INBOX_KIND, envelope)
+    await session._put_inbox(TurnOrigin.EXTERNAL_MESSAGE, envelope)
 
 
 # ── agent discovery ────────────────────────────────────────────────────

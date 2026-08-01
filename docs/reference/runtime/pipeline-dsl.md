@@ -433,7 +433,7 @@ Every `agent` step, wherever it is reached (top-level or fanned out inside a
 
 An `agent` step's leaf session (`spawn_ephemeral_session`, always
 `mode="ephemeral"`) drives its router loop inside `Session._handle_inbox_text`.
-(#3595 step 1: the prompt rides the inbox as `AGENT_STEP_INBOX_KIND`
+(#3595 step 1: the prompt rides the inbox as `TurnOrigin.AGENT_STEP`
 (`"agent_step"`), not `"user"`, and `_run_turn_body` routes that kind straight to
 this shared turn body — so a prompt that happens to start with `/` is content the
 model reads, never a slash command the OS executes. `_handle_user_message` is now

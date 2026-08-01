@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.transport import TransportRef
+from reyn.runtime.turn_origin import TurnOrigin
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
@@ -47,14 +48,14 @@ class MessageBus:
         ref = McpRef(request_id=_new_request_id())
         replies = await bus.request(
             session,
-            kind=EXTERNAL_MESSAGE_INBOX_KIND,
+            kind=TurnOrigin.EXTERNAL_MESSAGE,
             payload={"text": message, "chain_id": chain_id},
             reply_to=ref,
             timeout=60.0,
         )
         reply_text = "\\n\\n".join(r.text for r in replies)
 
-    The example pairs ``McpRef`` with ``EXTERNAL_MESSAGE_INBOX_KIND`` because
+    The example pairs ``McpRef`` with ``TurnOrigin.EXTERNAL_MESSAGE`` because
     that is what an MCP request IS — it showed ``kind="user"`` until #3595 step
     1b, which is the pairing that arc removed (``"user"`` claims a human typed
     the line at a first-party client, and ``Session._handle_user_message`` acts
@@ -82,7 +83,7 @@ class MessageBus:
     async def request(
         self,
         agent: "Session",
-        kind: str,
+        kind: TurnOrigin,
         payload: dict,
         reply_to: TransportRef,
         *,
@@ -97,21 +98,17 @@ class MessageBus:
         agent:
             The Session to drive.
         kind:
-            Inbox message kind — the member of the union
-            ``Session._run_turn_body`` dispatches on, naming WHO authored
-            ``payload["text"]``. It is a claim about origin, not a routing
-            hint: ``"user"`` means a human typed this at a first-party client,
-            and is the ONLY kind whose text Reyn interprets as an operator
-            command line. Every other producer says what it is —
-            ``transport.EXTERNAL_MESSAGE_INBOX_KIND`` (a webhook / MCP / A2A
-            peer), ``session_api.AGENT_STEP_INBOX_KIND`` (a pipeline agent
-            step's prompt), ``cron.routing.CRON_INBOX_KIND``,
-            ``hooks.dispatcher.HOOK_INBOX_KIND``, ``"agent_request"`` /
-            ``"agent_response"`` / ``"pipeline_result"``. ★ Naming ``"user"``
+            The ``TurnOrigin`` member ``Session._run_turn_body`` dispatches on,
+            naming WHO authored ``payload["text"]``. It is a claim about origin,
+            not a routing hint: ``CLIENT_INPUT`` means a human typed this at a
+            first-party client, and is the ONLY member whose text Reyn
+            interprets as an operator command line. Every other producer says
+            what it is — see ``reyn.runtime.turn_origin`` for the full closed
+            vocabulary and each member's reason. ★ Claiming ``CLIENT_INPUT``
             when a human did not type it is what made every registered slash
             command executable from model output and from a Slack message
-            (#3595); this parameter is a free-form ``str`` today, so nothing
-            but the caller's honesty enforces it.
+            (#3595). The parameter used to be a free-form ``str``, so nothing
+            but the caller's honesty enforced it; the type is now what does.
         payload:
             Inbox message payload dict.  The bus stamps ``reply_to`` into a
             ``_bus_reply_to`` key so handlers can propagate it to outbox

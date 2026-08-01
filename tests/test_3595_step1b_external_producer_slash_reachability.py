@@ -1,6 +1,6 @@
 """Tier 2: no non-operator inbox producer can execute a registered slash command.
 
-#3595 step 1 closed the pipeline ``agent`` step's prompt (``AGENT_STEP_INBOX_KIND``);
+#3595 step 1 closed the pipeline ``agent`` step's prompt (``TurnOrigin.AGENT_STEP``);
 ``tests/test_3561_spawn_session_seam_reachability.py`` holds that leg. Step 1b closes
 the three producers that were left claiming ``kind="user"`` with NON-EMPTY text:
 
@@ -17,8 +17,8 @@ the three producers that were left claiming ``kind="user"`` with NON-EMPTY text:
 ``/``-prefixed line to ``_maybe_handle_slash`` BEFORE any router turn, so under that
 kind a Slack message reading ``/reset`` executed the command. Each producer now
 rides its own member of the union ``_run_turn_body`` already dispatches on
-(``runtime.transport.EXTERNAL_MESSAGE_INBOX_KIND`` for the first two,
-``runtime.cron.routing.CRON_INBOX_KIND`` for the third), which routes straight to
+(``TurnOrigin.EXTERNAL_MESSAGE`` for the first two,
+``TurnOrigin.CRON`` for the third), which routes straight to
 the shared turn body: the dispatch is not skipped by a flag, it is not on those
 paths at all.
 

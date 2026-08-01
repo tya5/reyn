@@ -25,8 +25,8 @@ The reason model output reached slash dispatch was a KIND that was not true of i
 ``run_agent_step`` fed its prompt as ``kind="user"``, i.e. as a line a human had typed
 at a client, and ``Session._handle_user_message`` acts on that claim by handing a
 ``/``-prefixed line to ``_maybe_handle_slash`` before any router turn. The prompt now
-rides its own union member (``session_api.AGENT_STEP_INBOX_KIND``), which
-``_run_turn_body`` routes straight to the shared turn body — the slash dispatch is not
+rides its own union member (``TurnOrigin.AGENT_STEP``), which ``_run_turn_body``
+routes straight to the shared turn body — the slash dispatch is not
 skipped by a flag, it is not on that path at all. The leg below asserts the ABSENCE of
 the spawn, and asserts the scripted LLM WAS consulted on the reaching turn: the text
 is now content a model reads, which is the positive half that keeps the absence from
@@ -248,7 +248,7 @@ async def test_model_output_cannot_reach_slash_dispatch_and_spawns_nothing(
         f"agent ({sorted(born)!r}) — the agent-step prompt is being interpreted as an "
         "operator command line again, which puts all 25 registered slash commands back "
         "within reach of model output (#3595 step 1: the prompt must ride "
-        "session_api.AGENT_STEP_INBOX_KIND, never kind='user')"
+        "TurnOrigin.AGENT_STEP, never kind='user')"
     )
     assert scripted.calls == 2, (
         "the reaching turn never consulted the LLM, so the absence above is not "
