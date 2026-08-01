@@ -34,6 +34,8 @@ import time
 
 import pytest
 
+from reyn.runtime.turn_origin import TurnOrigin
+
 # Skip the SDK-dependent tests when slack-bolt isn't installed (= when
 # reyn is installed without the ``sample_slack`` extra).
 slack_bolt = pytest.importorskip("slack_bolt")
@@ -185,7 +187,9 @@ def test_app_mention_dispatches_to_agent_inbox(_slack_client):
     pushed = _slack_client.pushed
     assert pushed, "expected at least one push call to the agent"
     kind, payload = pushed[0]
-    assert kind == "user"
+    # #3595 step 1b: a gateway push rides the EXTERNAL kind, never "user" —
+    # the kind whose text Session._handle_user_message hands to slash dispatch.
+    assert kind == TurnOrigin.EXTERNAL_MESSAGE
     assert payload["text"] == "<@U_BOT> hello"
     assert payload["sender"] == "slack:U456"
 

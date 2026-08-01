@@ -205,5 +205,5 @@ reyn dogfood run dogfood/scenarios/chat_router_smoke.yaml --replay dogfood/fixtu
   4 バンド結果スケール・Brier スコアリング・9 原則フレームワーク
 
 - [Concepts: Events](../runtime/events.ja.md) — `must_emit` アサーションで使用する P6 イベントタイプ
-- [Concepts: Operational Intelligence](../data-retrieval/operational-intelligence.ja.md) — 同 P6 イベントログのインデックス・クエリ
+- [Concepts: Operational Intelligence](../data-retrieval/operational-intelligence.ja.md) — retire 済みの P6 イベントログ index ワークフローと現在の検索入口
 - [Feature Map](../../feature-map.md) — カバレッジタグの正典

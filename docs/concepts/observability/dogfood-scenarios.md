@@ -220,6 +220,6 @@ fixture recording mechanics.
 
 - [Concepts: Events](../runtime/events.md) — P6 event types used in `must_emit`
   assertions
-- [Concepts: Operational Intelligence](../data-retrieval/operational-intelligence.md) — indexing
-  and querying the same P6 event log
+- [Concepts: Operational Intelligence](../data-retrieval/operational-intelligence.md) — the retired
+  P6-event-log-indexing workflow and the current retrieval entry points
 - [Feature Map](../../feature-map.md) — coverage tag source-of-truth

@@ -97,6 +97,7 @@ from reyn.runtime.session_params import (
     ReactivityConfig,
 )
 from reyn.runtime.spawn_tracker import SpawnTracker
+from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.user_intervention import (
@@ -3046,7 +3047,8 @@ class Session:
         # STATE_SNAPSHOT/queued_user_messages() needs it too. See agui-transport.md.
         meta = _user_frame_meta(attribution)
         msg_id = await self._put_inbox(
-            "user", {"text": text, "chain_id": chain_id, "meta": meta},
+            TurnOrigin.CLIENT_INPUT,
+            {"text": text, "chain_id": chain_id, "meta": meta},
         )
         # #3300 P1(C)/P2a(E): user_submitted is the single source of truth for the
         # echo (no parallel outbox write); msg_id is a PUBLIC wire key (unlike the
@@ -3113,7 +3115,7 @@ class Session:
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
         from_sid: "str | None" = None,
     ) -> None:
-        await self._put_inbox("agent_request", {
+        await self._put_inbox(TurnOrigin.AGENT_REQUEST, {
             "from_agent": from_agent, "request": request, "depth": depth,
             "chain_id": chain_id,
             # #2130: the REQUESTER's session id — so this request's response routes back to
@@ -3126,7 +3128,7 @@ class Session:
         self, *, from_agent: str, response: str, depth: int, chain_id: str,
         responder_sid: "str | None" = None,
     ) -> None:
-        await self._put_inbox("agent_response", {
+        await self._put_inbox(TurnOrigin.AGENT_RESPONSE, {
             "from_agent": from_agent, "response": response, "depth": depth,
             "chain_id": chain_id,
             # #2103 S1bc-exec: responder_sid correlates to the spawner's _spawned_tasks
@@ -3149,7 +3151,7 @@ class Session:
         at-least-once (the driver's terminal marker is written only after this
         lands — see ``reyn.core.pipeline.work_order``), so a consumer that
         must dedup can key on ``run_id``."""
-        await self._put_inbox("pipeline_result", {
+        await self._put_inbox(TurnOrigin.PIPELINE_RESULT, {
             "run_id": run_id, "pipeline_name": pipeline_name, "status": status,
             "text": text, "chain_id": chain_id or _new_chain_id(),
             "sender": "pipeline:os",
@@ -4754,7 +4756,7 @@ class Session:
     # call sites (inbox enqueue + dequeue, restoration orchestration).
 
     async def _cross_session_hook_put(
-        self, target_session_id: str, kind: str, payload: dict, *, wake: bool
+        self, target_session_id: str, kind: "TurnOrigin", payload: dict, *, wake: bool
     ) -> None:
         """#2072: deliver a hook push to ANOTHER session of this agent (cross-session push).
 
@@ -4810,7 +4812,7 @@ class Session:
                 "not race ahead of a dead disk)"
             )
 
-    async def _put_inbox(self, kind: str, payload: dict) -> str:
+    async def _put_inbox(self, kind: "TurnOrigin", payload: dict) -> str:
         """Append `inbox_put` to WAL via journal, then queue on the async
         inbox. Returns the assigned message id (also stamped into payload
         as `_msg_id` so the consumer can look it up).
@@ -4844,6 +4846,13 @@ class Session:
         ``pipeline_result`` inbox items are internal wake triggers, never
         rendered as a queued user message).
 
+        #3595 step 1b narrowed what reaches this filter rather than changing the
+        filter: text pushed by an external transport (``external_message``) or a
+        cron fire (``cron``) used to claim ``kind="user"`` and therefore appeared
+        here. It no longer does, and that is the same sentence as before — the
+        sent-queue renders what THIS operator submitted from a client, and a
+        Slack peer's message was never that.
+
         Each item: ``{"msg_id": str, "chain_id": str | None, "text": str | None,
         "meta": dict}`` — ``msg_id``/``chain_id`` are the correlation ids a
         client matches against the ``user_submitted`` (enqueue) /
@@ -4864,7 +4873,7 @@ class Session:
                 "meta": item.get("payload", {}).get("meta") or {},
             }
             for item in self.journal.snapshot.inbox
-            if item.get("kind") == "user"
+            if item.get("kind") == TurnOrigin.CLIENT_INPUT
         ]
 
     async def cancel_queued(self, msg_id: str) -> bool:
@@ -5037,8 +5046,8 @@ class Session:
         """Drain the inbox up to and including the first ``wake=true`` message.
 
         Each inbox payload carries an optional ``wake`` bool (default ``True``
-        when absent).  Existing producers (user / task_ready
-        / etc.) never set ``wake``; the absent-means-True default makes them
+        when absent).  Every producer but the hook dispatcher (``TurnOrigin``'s
+        other members) never sets ``wake``; the absent-means-True default makes them
         all behaviorally identical to wake=true, so the common/back-compat
         path returns immediately after the first blocking get with no
         ride-alongs.
@@ -5265,12 +5274,12 @@ class Session:
         # proposal 0060 Phase 1 (A7): stamp per-turn provenance — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_current_turn_origin`).
         self._stamp_execution_context(kind, payload)
         # #1800 slice 7: the loop valve (bound hook self-continuation) — see docs/concepts/runtime/hooks.md#loop-valve.
-        if kind == "user":
+        if kind == TurnOrigin.CLIENT_INPUT:
             self._hook_driven_turns = 0
             # #2884: snapshot-back the counter so a crash+restart does not hand a
             # near-cap self-wake loop a free fresh budget window (see restore_state).
             await self._journal.record_hook_driven_turns(count=0)
-        elif kind == "hook":
+        elif kind == TurnOrigin.HOOK:
             self._hook_driven_turns += 1
             await self._journal.record_hook_driven_turns(count=self._hook_driven_turns)
             _base_cap = self._safety.loop.max_hook_driven_turns
@@ -5411,6 +5420,16 @@ class Session:
         """#2242: the per-kind turn dispatch, run as ``run_one_iteration``'s
         per-turn cancellable sub-task (``self._turn_owner_task``).
 
+        ``kind`` is annotated ``str``, not ``TurnOrigin``, and that asymmetry with
+        the PRODUCER side (``_put_inbox``) is deliberate. What arrives here came
+        off ``self.inbox``, and ``restore_state`` repopulates that queue from the
+        snapshot's JSON — plain strings, including one a build older than a member
+        wrote. Annotating a ``TurnOrigin`` would be a claim this method cannot
+        keep. The comparisons still read as members because ``TurnOrigin`` is a
+        ``StrEnum``: a restored ``"user"`` and ``TurnOrigin.CLIENT_INPUT`` are the
+        same value, so recovery needs no conversion step and an unknown kind falls
+        through to no branch exactly as before.
+
         Byte-identical dispatch to the pre-#2242 inline body (extracted, not
         rewritten) — a NORMAL (non-cancelled) turn behaves exactly as before;
         the only change is WHICH task executes it, so ``cancel_inflight()`` can
@@ -5418,28 +5437,88 @@ class Session:
         relying solely on the cooperative flag ``RouterLoopDriver`` polls at
         each iteration boundary (too coarse to interrupt a mid-flight LLM
         call — see ``cancel_inflight``'s docstring)."""
-        if kind == "user":
+        if kind == TurnOrigin.CLIENT_INPUT:
             await self._handle_user_message(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
             )
-        elif kind == "agent_request":
+        elif kind == TurnOrigin.AGENT_REQUEST:
             await self._handle_agent_request(payload)
-        elif kind == "agent_response":
+        elif kind == TurnOrigin.AGENT_RESPONSE:
             await self._handle_agent_response(payload)
-        elif kind == "pipeline_result":
+        elif kind == TurnOrigin.PIPELINE_RESULT:
             # IS-2: an async pipeline driver-session posted its terminal
             # result here (the agent_response mirror — but chainless: the
             # launch returned immediately, so this is a fresh turn, routed
             # exactly like a task wake).
             await self._handle_pipeline_result(payload)
-        elif kind == "hook":  # HOOK_INBOX_KIND value (#1800 slice 5b)
+        elif kind == TurnOrigin.AGENT_STEP:
+            # A pipeline ``agent`` step's prompt: text a MODEL will read as this
+            # ephemeral worker's one turn, never an operator's typed line. It used
+            # to arrive as ``kind="user"`` (``session_api.run_agent_step``), which
+            # is what put model-authored text through ``_handle_user_message``'s
+            # ``startswith("/")`` slash dispatch — every registered slash command
+            # executable from model output. Its own kind routes it to the turn
+            # body directly: the short-circuit is not skipped by a flag, it is
+            # not on this path at all (#3595 / owner: "inbox につまれたものは
+            # スラッシュコマンドとして解釈されない").
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
+        elif kind == TurnOrigin.EXTERNAL_MESSAGE:
+            # Text that arrived over an EXTERNAL transport: a chat webhook
+            # (``gateway.api.push_to_agent`` — Slack / LINE / any ``reyn.webhooks``
+            # plugin) or an out-of-process request handler
+            # (``mcp.server.send_to_agent_impl``, reached by the MCP
+            # ``send_to_agent`` tool and the A2A JSON-RPC router). Both used to
+            # arrive as ``kind="user"``, which is the claim
+            # ``_handle_user_message`` acts on by handing a ``/``-prefixed line to
+            # slash dispatch — so a Slack message reading ``/reset`` executed the
+            # command, and anyone able to post to the webhook could run any of the
+            # registered slash commands. Its own kind routes it to the turn body
+            # directly: the short-circuit is not skipped by a flag, it is not on
+            # this path at all (#3595 / owner: "inbox につまれたものはスラッシュ
+            # コマンドとして解釈されない").
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
+        elif kind == TurnOrigin.CRON:
+            # A fired message-based cron job's text. Operator-authored (job
+            # config), but authored as the AGENT'S PROMPT and delivered to an
+            # unattended session with no client attached — not a line typed at a
+            # composer, so it does not claim to be one. Same routing as
+            # ``external_message`` above, a separate union member because the two
+            # answer "who wrote this" differently; see
+            # ``TurnOrigin.CRON``.
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
+        elif kind == TurnOrigin.HOOK:
             # E (wake=true) lifecycle-hook push delivered as a turn trigger:
             # a system-role [hook:name] message + one router turn (self-
             # continuation). The attribution + wake binding ride in the
             # payload (race-free; the slice-7 valve can count hook-driven
             # turns, and the audit trail attributes the turn to the hook).
             await self._handle_hook_message(payload)
+        elif kind == TurnOrigin.PIPELINE_NUDGE:
+            # The empty-text pump that starts an ATTACHED pipeline run
+            # (``session_api.run_pipeline_attached``). It claimed CLIENT_INPUT
+            # until #3595 S2 — a statement about which member the table above
+            # runs a turn for, not about who wrote the message; nobody did.
+            # Routing it here rather than through ``_handle_user_message`` is
+            # what the rename BUYS, and it is behaviour-neutral for this
+            # producer specifically: the only step in between is
+            # ``text.startswith("/")``, and this producer's text is always
+            # ``""``. That is why the slash defect could never surface here,
+            # and why the fix is not "close a hole" but "stop the one honest
+            # member from having two meanings".
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
 
     def _maybe_schedule_ephemeral_vanish(self) -> None:
         """#2103: schedule the ephemeral auto-vanish teardown once this session's turn
@@ -5452,7 +5531,9 @@ class Session:
         — the OS-authoritative provenance classification of this turn, threaded into
         ``OpContext.turn_origin`` at both ctx-build sites. Only an explicit
         ``kind == "user"`` turn grants ``"user_directed"``; EVERY other kind —
-        hook, pipeline_result, sub-agent ``agent_request``/``agent_response``, or
+        hook, pipeline_result, ``agent_step`` (#3595), ``external_message`` /
+        ``cron`` (#3595 step 1b), sub-agent
+        ``agent_request``/``agent_response``, or
         any future kind this method does not yet know about — resolves to the
         strictER ``"auto_improvement"``. This is an if/else fail-safe, not a
         lookup table: there is no path by which an unmapped kind can silently
@@ -5460,8 +5541,14 @@ class Session:
         autonomous turn bypass the Phase-4 auto-improvement gate). Sub-agent
         turns are deliberately `"auto_improvement"` (lead-adjudicated, Addendum
         B A7): a human directed the PARENT task, not necessarily this install
-        action."""
-        self._current_turn_origin = "user_directed" if kind == "user" else "auto_improvement"
+        action. #3595 made a pipeline agent step's prompt turn carry its own
+        kind instead of impersonating ``"user"``, so it now lands on that same
+        stricter side — by the rule above, not by a new branch, and matching the
+        sub-agent reasoning verbatim (the human directed the pipeline, not this
+        step's install)."""
+        self._current_turn_origin = (
+            "user_directed" if kind == TurnOrigin.CLIENT_INPUT else "auto_improvement"
+        )
 
     async def _handle_pipeline_result(self, payload: dict) -> None:
         """IS-2: surface an async pipeline's terminal result (``pipeline_result``)
@@ -5619,12 +5706,60 @@ class Session:
         # task — see docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
+        """An OPERATOR-authored line: interpret it, then run the turn.
+
+        #3595 step 1 split this in two. Everything above the
+        ``_handle_inbox_text`` call interprets text *as an operator command
+        surface* — the slash dispatch. Everything below it is the turn itself,
+        which every text-bearing inbox kind needs. Only text whose kind claims
+        an operator typed it may enter here; a non-operator producer calls
+        ``_handle_inbox_text`` directly, so it cannot execute a slash command
+        by writing one (owner ruling: "inbox につまれたものはスラッシュコマンド
+        として解釈されない。されるんだとするとそれが不具合").
+
+        #3595 step 1b moved the last three text-bearing producers off ``"user"``
+        onto that direct route: a chat webhook and an MCP / A2A peer
+        (``TurnOrigin.EXTERNAL_MESSAGE``) and a cron fire
+        (``TurnOrigin.CRON``). Slash is deliberately not exposed to
+        any of them (owner, 2026-08-01: 「現時点では slash に公開不要」) — if it
+        ever is, it goes through a shared CLIENT-side slash layer, never through
+        a transport re-testing ``startswith("/")``.
+
+        Sibling entry: ``_handle_pipeline_result`` still calls THIS method, so a
+        pipeline's OS-framed result text is still slash-interpreted. Its framing
+        (``[pipeline] run …``) means no such text can currently start with
+        ``/``, but that is a property of the formatter, not a gate — recorded as
+        a finding on #3595, deliberately not changed here (it would also change
+        that path's ``:skill`` and pending-intervention-answer behaviour, which
+        is a different rollback shape).
+        """
         # Slash commands (`/list`, `/tasks kill <id>`, `/answer <id> <text>`)
         # take precedence over both the active-intervention router and a
         # fresh router turn.
         if text.startswith("/"):
             if await self._maybe_handle_slash(text):
                 return
+        await self._handle_inbox_text(text, chain_id=chain_id)
+
+    async def _handle_inbox_text(self, text: str, *, chain_id: str) -> None:
+        """Run ONE turn on ``text`` — the shared body under every text-bearing
+        inbox kind, with the SLASH dispatch above it rather than in it
+        (#3595 step 1).
+
+        Extracted from ``_handle_user_message``, which now calls it after that
+        dispatch, unchanged for operators. ``kind="agent_step"`` reaches it
+        directly: an agent step's prompt is model-readable CONTENT, so it gets a
+        turn and never an OS-executed command.
+
+        The split point is the slash block and nothing else, so this body still
+        carries the ``:skill`` invocation and the pending-intervention answer
+        route exactly as the agent-step path met them before — both remain
+        reachable from an agent step's prompt. Neither dispatches a registered
+        command (a `:` invocation composes skill text and falls THROUGH into the
+        turn below; an intervention answer is a typed reply to a question this
+        session itself asked), which is why closing the slash leg alone is the
+        step-1 scope; #3595 records them as findings for the later steps.
+        """
         # #3100: operator-explicit `:skill [:skill2 ...] [trailing]` skill
         # invocation — a namespace separate from `/` (Axis 4: syntactic
         # closed-type distinction, not a runtime precedence lookup). Unlike
@@ -5981,7 +6116,7 @@ class Session:
 
     def _reset_router_turn_counter(self) -> None:
         """Reset the per-turn router invocation counter. Called at the top
-        of each fresh turn (`_handle_user_message`, `_handle_agent_request`).
+        of each fresh turn (`_handle_inbox_text`, `_handle_agent_request`).
         Re-entrant in-chain paths (`_handle_agent_response` continuation,
         `_resolve_pending_chain`) intentionally do NOT reset — their
         invocations count against the same budget."""

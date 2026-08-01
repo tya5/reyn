@@ -4,7 +4,7 @@ Plugins (= webhook handlers under ``reyn.gateway.*`` or external pip
 packages registered via the ``reyn.webhooks`` entry-point group)
 SHOULD use the helpers in this module to interact with Reyn agents,
 NOT call internal ``Session`` methods (= ``_put_inbox``,
-``_handle_user_message``) directly.
+``_handle_inbox_text``) directly.
 
 The contract here is intended to stay stable across Reyn minor
 versions; internal session APIs may change without notice.
@@ -18,11 +18,18 @@ versions; internal session APIs may change without notice.
 
 - The signature is **kwarg-only** so future additions don't shift
   positional arguments.
-- ``kind`` defaults to ``"user"`` (= the typical webhook plugin case
-  where an external message becomes a user-shaped turn). Future
-  unification with A2A / MCP message paths may use other kind
-  values; the parameter is exposed today so the contract can extend
-  without API break.
+- The inbox kind is **not a parameter** (#3595 step 1b). Every push
+  through this module rides ``TurnOrigin.EXTERNAL_MESSAGE``. Until
+  #3595 step 1b it defaulted to ``"user"`` and was caller-overridable "so the
+  contract can extend without API break" — but ``"user"`` is the ONE
+  kind ``Session._handle_user_message`` acts on by handing a
+  ``/``-prefixed line to slash dispatch, so that parameter was the
+  gate: a plugin could claim to be the operator and thereby make an
+  external chat message execute any registered slash command. A
+  discriminator that decides a trust class is not something its own
+  subject may choose. Nothing in-tree ever passed it; the A2A /  MCP
+  paths it was reserved for do not go through this module at all
+  (they drive ``mcp.server.send_to_agent_impl``).
 - ``extra_meta`` is a passthrough hook for future per-path metadata
   (= e.g. A2A's ``chain_id``, MCP's ``request_id``). Webhook plugins
   typically omit it; A2A/MCP convergence work is tracked separately.
@@ -34,6 +41,7 @@ from __future__ import annotations
 from typing import Any
 
 from reyn.runtime.transport import TransportRef
+from reyn.runtime.turn_origin import TurnOrigin
 
 
 async def push_to_agent(
@@ -42,7 +50,6 @@ async def push_to_agent(
     text: str,
     sender: str,
     reply_to: TransportRef | None = None,
-    kind: str = "user",
     extra_meta: dict | None = None,
     registry: Any | None = None,
 ) -> None:
@@ -52,6 +59,14 @@ async def push_to_agent(
     plugins. Use it instead of touching ``Session._put_inbox``
     directly. Internal session APIs may change between Reyn versions;
     this function won't.
+
+    The message rides ``TurnOrigin.EXTERNAL_MESSAGE`` — the truthful
+    claim for text this module carries: a counterparty outside this
+    process wrote it, never the operator at a first-party client. That
+    is what keeps a Slack/LINE message reading ``/reset`` from
+    executing the command (#3595 step 1b; the kind is fixed here and
+    not a parameter — see this module's docstring for why it stopped
+    being one).
 
     Parameters
     ----------
@@ -73,12 +88,6 @@ async def push_to_agent(
         via MCP). When set, Reyn's outbox interceptor (= PR-D2)
         forwards replies through ``route_to_mcp``. When ``None``,
         replies follow the default surface (= TUI / detached).
-    kind:
-        Inbox dispatch kind. ``"user"`` for normal external user
-        messages (= webhook plugin default). Other values are
-        Reyn-internal (= ``"agent_request"`` / ``"agent_response"``
-        for A2A; reserved for future unification work). Plugin
-        authors should not need to override this in current Reyn.
     extra_meta:
         Per-path metadata for future unification (= A2A chain_id,
         MCP request_id, etc.). Webhook plugins typically omit it;
@@ -117,7 +126,7 @@ async def push_to_agent(
         envelope["reply_to"] = reply_to
     if extra_meta:
         envelope["meta"] = dict(extra_meta)
-    await session._put_inbox(kind, envelope)
+    await session._put_inbox(TurnOrigin.EXTERNAL_MESSAGE, envelope)
 
 
 # ── agent discovery ────────────────────────────────────────────────────

@@ -131,7 +131,7 @@ def test_operation_category_describe_returns_target_parameters():
     ctx = _make_ctx()
     out = _describe("web_fetch", ctx)
     schema = out["input_schema"]
-    # web_fetch ToolDefinition declares url + max_length.
+    # web_fetch ToolDefinition declares url only (#3580 ③ removed max_length).
     assert "url" in schema["properties"]
     assert schema["required"] == ["url"]
 

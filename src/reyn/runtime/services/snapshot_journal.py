@@ -13,6 +13,7 @@ from pathlib import Path
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.turn_origin import TurnOrigin
 
 
 class SnapshotJournal:
@@ -174,7 +175,7 @@ class SnapshotJournal:
 
     # ── WAL-recorded mutations ────────────────────────────────────────────
 
-    async def append_inbox(self, *, kind: str, payload: dict) -> str:
+    async def append_inbox(self, *, kind: "TurnOrigin", payload: dict) -> str:
         """Append ``inbox_put`` to WAL, update snapshot, return assigned msg_id.
 
         Mirrors ``Session._put_inbox``.  Note: this method does NOT

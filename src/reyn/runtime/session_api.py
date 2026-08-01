@@ -28,8 +28,10 @@ existing primitives — it adds no new session/LLM machinery of its own:
      would make it return early on a pending chain the spawned session is
      still awaiting a reply for.
   2. ``MessageBus.request`` (``runtime/message_bus.py``) — the existing
-     synchronous run+collect: put a ``user`` message on the spawned
-     session's inbox, pump ``run_one_iteration`` on the caller's own task
+     synchronous run+collect: put a ``TurnOrigin.AGENT_STEP`` message (the
+     prompt is a model's reading material, never an operator's typed line, so
+     it does not claim the ``user`` kind that slash dispatch acts on) on the
+     spawned session's inbox, pump ``run_one_iteration`` on the caller's own task
      until quiescent, and return every ``OutboxMessage`` emitted during the
      turn. The ephemeral session self-vanishes via
      ``_maybe_schedule_ephemeral_vanish`` once the turn leaves it quiescent
@@ -105,6 +107,7 @@ from typing import TYPE_CHECKING, Any
 
 from reyn.runtime.errors import AgentStepError
 from reyn.runtime.transport import SystemRef
+from reyn.runtime.turn_origin import TurnOrigin
 
 if TYPE_CHECKING:
     from reyn.core.pipeline.schema import SchemaRegistry
@@ -230,8 +233,15 @@ async def run_agent_step(
     The future Pipeline executor's ``agent`` step primitive (R5): spawn a
     leaf-worker session under ``identity`` (capability-narrowed to
     ``capabilities`` plus a structural delegation deny, see
-    ``_build_agent_step_narrowing``), feed it ``prompt`` as a single ``user``
-    turn via ``MessageBus.request``, and return its collected reply.
+    ``_build_agent_step_narrowing``), feed it ``prompt`` as a single
+    ``TurnOrigin.AGENT_STEP`` turn via ``MessageBus.request``, and return its
+    collected reply.
+
+    #3595 step 1: that kind used to be ``"user"``, i.e. the prompt claimed a
+    human had typed it at a client, which is what made every registered slash
+    command executable from a model's output (``Session._handle_user_message``
+    hands a ``/``-prefixed line to slash dispatch before any router turn). See
+    ``TurnOrigin.AGENT_STEP``.
 
     With ``schema`` unset, returns the joined ``kind="agent"`` reply text
     verbatim. With ``schema`` set (a name registered in ``schema_registry``):
@@ -374,7 +384,7 @@ async def run_agent_step(
     bus = MessageBus()
     replies = await bus.request(
         session,
-        kind="user",
+        kind=TurnOrigin.AGENT_STEP,
         payload={"text": prompt, "chain_id": chain_id or uuid.uuid4().hex},
         reply_to=SystemRef(),
         timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
@@ -765,9 +775,15 @@ async def run_pipeline_attached(
         # message to forward (that #2707 interim is removed — present now rides the
         # inherited parent sink, see below). The request is still awaited for pump
         # quiescence; its return value is intentionally unused.
+        # #3595 S2: this pump used to claim ``CLIENT_INPUT``. It was the fifth and
+        # last producer to do so, and the only one the slash defect could never
+        # expose — its text is ``""``, so ``startswith("/")`` was never true — which
+        # is precisely why four censuses walked past it: nothing it did was wrong.
+        # The claim was still false. Nobody authored this message; it exists to hand
+        # the driver-session's executor one iteration, so it says that instead.
         await bus.request(
             session,
-            kind="user",
+            kind=TurnOrigin.PIPELINE_NUDGE,
             payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
             reply_to=SystemRef(),
             timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,

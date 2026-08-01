@@ -28,12 +28,16 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.cron import CronJob
-from reyn.runtime.cron.routing import dispatch_cron_fired, resolve_cron_session
+from reyn.runtime.cron.routing import (
+    dispatch_cron_fired,
+    resolve_cron_session,
+)
 from reyn.runtime.cron.runners import build_default_runner
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
+from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
 
 
@@ -132,9 +136,12 @@ async def test_real_cron_fire_dispatches_cron_fired_hook_into_session_inbox(tmp_
     _seed(tmp_path, "news_agent")
 
     async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
+        # Mirrors the production pusher in reyn.interfaces.web.server, kind
+        # included: #3595 step 1b moved cron off "user", and a local stand-in
+        # keeping the old one stops standing in for the producer.
         session = resolve_cron_session(reg, to, native_id)
         dispatch_cron_fired(session, native_id, to)
-        await session._put_inbox("user", envelope)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
         return "ok"
 
     runner = build_default_runner(inbox_pusher=_inbox_pusher)
@@ -168,9 +175,12 @@ async def test_cron_matcher_filters_by_job_name_exact(tmp_path):
     _seed(tmp_path, "news_agent")
 
     async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
+        # Mirrors the production pusher in reyn.interfaces.web.server, kind
+        # included: #3595 step 1b moved cron off "user", and a local stand-in
+        # keeping the old one stops standing in for the producer.
         session = resolve_cron_session(reg, to, native_id)
         dispatch_cron_fired(session, native_id, to)
-        await session._put_inbox("user", envelope)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
         return "ok"
 
     runner = build_default_runner(inbox_pusher=_inbox_pusher)
@@ -196,9 +206,12 @@ async def test_cron_empty_registry_leaves_ingress_delivery_unaffected(tmp_path):
     _seed(tmp_path, "news_agent")
 
     async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
+        # Mirrors the production pusher in reyn.interfaces.web.server, kind
+        # included: #3595 step 1b moved cron off "user", and a local stand-in
+        # keeping the old one stops standing in for the producer.
         session = resolve_cron_session(reg, to, native_id)
         dispatch_cron_fired(session, native_id, to)
-        await session._put_inbox("user", envelope)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
         return "ok"
 
     runner = build_default_runner(inbox_pusher=_inbox_pusher)
@@ -211,7 +224,8 @@ async def test_cron_empty_registry_leaves_ingress_delivery_unaffected(tmp_path):
     items = _drain(session)
     (only_item,) = items  # exactly one item — unpack asserts the count
     kind, payload = only_item
-    assert kind == "user"
+    # #3595 step 1b: a cron fire rides TurnOrigin.CRON, never "user".
+    assert kind == TurnOrigin.CRON
     assert payload["text"] == "hi"  # no hook message — pure no-op
 
 
@@ -299,7 +313,9 @@ async def test_webhook_empty_registry_leaves_ingress_delivery_unaffected(tmp_pat
     items = _drain(session)
     (only_item,) = items  # exactly one item — unpack asserts the count
     kind, payload = only_item
-    assert kind == "user"
+    # #3595 step 1b: a webhook push rides the EXTERNAL kind, never "user".
+    from reyn.runtime.turn_origin import TurnOrigin
+    assert kind == TurnOrigin.EXTERNAL_MESSAGE
     assert payload["text"] == "hi"  # no hook message — pure no-op
 
 

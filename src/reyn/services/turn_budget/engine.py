@@ -246,8 +246,18 @@ def build_default_turn_budget_engine(
       the ContextFrame-driven phase path, was removed by earlier convergence
       steps, so this now sources the ceiling from the ONE surviving offload
       path's own constant instead — same value, same purpose) converted to
-      tokens: the largest a single tool_result can re-add as the "one more
-      turn" increment once offload has capped it.
+      tokens: the size a single tool_result is ASSUMED to re-add as the "one
+      more turn" increment.
+      ★ This reserve is an assumption, not a guarantee, and the number below is
+      computed unconditionally. It holds only when the offload cap actually runs:
+      ``ContextBudgetAdvisor.cap_tool_result`` returns the content UNCHANGED when
+      ``offload.enabled`` is false (the shipped default) or when no media store is
+      wired, so on a default install a single tool_result can re-add more than
+      this. Layer 2 (the provider-side overflow + shrink/retry path) is what
+      catches that case; the cost of the reserve being optimistic is a failed
+      call plus a shrink-and-retry, not an unrecoverable turn. Do not read the
+      number as a bound on tool_result size — it bounds only how much headroom
+      layer 1 keeps before it force-closes.
     - ``output_reserve`` — :data:`DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS`.
 
     Building every axis through THIS helper keeps the threshold shape identical

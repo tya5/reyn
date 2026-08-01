@@ -38,20 +38,29 @@ earlier gates decided membership by SHAPE — #3554's by whether a site spelled
 parent), and the enumeration itself by whether a callee's NAME was on a list. Neither
 question is the one that matters. ``AgentRegistry.spawn_session`` — the sync primitive
 that ``spawn_session_recorded`` itself calls, and that four other sites call directly —
-was outside the gate because it takes no ``narrowing`` argument at all, i.e. it failed
-the shape check in the opposite direction. "It cannot inherit" is not "it need not
+was outside the gate because it took no ``narrowing`` argument at all (it does since
+#3562), i.e. it failed the shape check in the opposite direction. "It cannot inherit"
+is not "it need not
 inherit": an API with no inheritance channel is an unmet requirement. The criterion is
 REACHABILITY — can a narrowed subject cause this to run — and it is now listed, with the
 walk resolving calls by RECEIVER so ``spawn_session`` the registry primitive is not
 conflated with the two other functions of that name (see ``_Seam``).
 
 Reachability is measured, not assumed:
-``tests/test_3561_spawn_session_seam_reachability.py`` drives an agent step whose prompt
-is a previous agent step's MODEL OUTPUT, on a session narrowed to one capability, and
-observes it reach ``/session new`` — ``Session._handle_user_message`` short-circuits to
-``_maybe_handle_slash`` before the router turn, so the reaching turn makes no LLM call at
-all — and spawn. The pre-measurement guess ("slash is operator-initiated, so it is out of
-scope") is false.
+``tests/test_3561_spawn_session_seam_reachability.py`` drove an agent step whose prompt
+was a previous agent step's MODEL OUTPUT, on a session narrowed to one capability, and
+observed it reach ``/session new`` and spawn — ``Session._handle_user_message``
+short-circuited to ``_maybe_handle_slash`` before the router turn, so the reaching turn
+made no LLM call at all. The pre-measurement guess ("slash is operator-initiated, so it
+is out of scope") was false.
+
+★ #3595 step 1 then made it TRUE, by ruling that path a defect: the agent-step prompt
+rides its own inbox kind instead of claiming ``kind="user"``, so it never enters the
+``startswith('/')`` dispatch, and that file's leg is the same measurement INVERTED (the
+absence of the spawn, plus an operator control proving the command still runs). The
+enumeration criterion is unchanged and so is this site's membership — this list counts
+every place a child envelope is BORN, not every place a model can reach. What #3595
+retires is the severity argument, not the entry (#3596 / #3562-#3586).
 
 ★ Enumerating the primitive immediately paid for itself: measuring the CRASH-RECOVERY
 sites (``restore_all`` / ``_rewake_pipeline_runs``), which reach ``spawn_session``
@@ -63,9 +72,26 @@ shape check would never have asked.
 
 Every enumerated site is accounted for today — a state this file records but does not
 enforce, since a NEW site may register an ``unmeasured_reason`` and stay green here.
-``/session new``'s missing inheritance is a real, declared gap (#3562), not a
-measurement gap: its declaration says so, and its measurement asserts the reachability
-only, so closing #3562 does not turn it red.
+
+★ #3562 closed the one declared GAP and, in doing so, expired the exemption every
+``spawn_session`` site rested on. ``/session new`` composes its invoker's #2103-S1a
+layer in (uniformly — see its declaration for why there is no cross-identity branch),
+which required the primitive to grow the ``narrowing`` channel #3561 had recorded as an
+UNMET REQUIREMENT. ``test_no_exemption_claims_a_channel_that_exists`` is what made that
+expiry mechanical rather than remembered: the four sites that still pass nothing are
+re-argued on the merits — no spawner to inherit from (``resolve_session``); a value
+would OVERWRITE the recovering session's own durable layer, since the primitive
+persists what it is given (the recovery pair); and, for ``spawn_session_recorded``, the
+injection has to happen at a LATER point than the primitive offers. ★ That last one is
+measured, not judged: routing its ``narrowing`` through the new channel REDs two
+existing behavioural tests, because ``refresh_config_projections()`` runs in between and
+its ``reapply_visibility_override`` re-resolves-from-base-and-SETs — with no registry
+back-reference there is no base, so it lands on ALLOW-ALL and discards the injection.
+"The channel exists, therefore use it" would have been a shape argument in the third
+direction. The ``_S3561`` legs assert reachability only, never anything about what the
+child inherits, so they are orthogonal to #3562's and stay green through it — verified
+by running them (both the pre-#3595 leg and, after the rebase, its #3596 inverse plus
+the operator control), not assumed.
 
 Scope of what this fix carries (the layers a session's live capability envelope
 is composed from — enumerated, not assumed):
@@ -328,28 +354,67 @@ async def test_pipeline_driver_session_inherits_invoker_narrowing(
 #: passes ``narrowing=`` or is registered here with a reason a reviewer can weigh
 #: — the #3484 ``*_UNMEASURED`` idiom.
 #:
-#: #3561 filled it, for one reason only: every entry calls
-#: ``AgentRegistry.spawn_session``, whose signature HAS no ``narrowing`` parameter.
-#: That is deliberately recorded as an unmet requirement, not as a merit-based
+#: #3561 filled it, for one reason only: every entry called
+#: ``AgentRegistry.spawn_session``, whose signature had no ``narrowing`` parameter.
+#: That was deliberately recorded as an unmet requirement, not as a merit-based
 #: exemption — "the API cannot take one" would be a shape argument, and this arc has
-#: been slipped past on the shape axis twice already. What each site's child envelope
-#: is actually decided by is stated in ``_SITE_PARENT_LAYERS``, individually.
-#: ``test_narrowing_exempt_sites_have_no_narrowing_channel`` reads the LIVE signature,
-#: so the day a ``narrowing`` channel is added to the primitive, every entry here goes
-#: RED and has to be revisited rather than quietly outliving its reason.
+#: been slipped past on the shape axis twice already.
+#:
+#: ★ #3562 MET that requirement: the primitive now takes ``narrowing``, and the
+#: exemption that rested on its absence expired exactly as
+#: ``test_narrowing_exempt_sites_have_no_narrowing_channel`` was built to make it. One
+#: entry left the table by USING the channel (``/session new`` composes its invoker's
+#: layer in). The four that remain are re-argued ON THE MERITS below, individually —
+#: two shapes: there is no SPAWNER whose narrowing could be inherited (and passing one
+#: would not be a no-op but an overwrite of the child's own durable layer), or — for
+#: the recorded seam — the enforcement must happen at a LATER point than the primitive
+#: offers, which was measured, not assumed.
+_EXEMPT_NO_SPAWNER_SESSION = (
+    "no spawner SESSION exists at this seam (#3562): it is the inbound-transport "
+    "get-or-spawn for a `<transport>:<native_id>` conversation key, entered from a "
+    "transport frame, so there is no per-session layer to carry across. The child "
+    "re-derives the agent's NAME-keyed layers itself. See this site's "
+    "_SITE_PARENT_LAYERS entry."
+)
+_EXEMPT_RECOVERY_REENTRY = (
+    "crash recovery RE-ENTERS an existing sid rather than spawning a child (#3562): "
+    "that session's own #2103-S1a config.yaml is already on disk and is resolved + "
+    "injected by the primitive itself (#3561). There is no spawner here, and passing a "
+    "narrowing would not be a no-op — the primitive PERSISTS what it is given, so any "
+    "value would overwrite the recovering session's own durable layer. See this site's "
+    "_SITE_PARENT_LAYERS entry."
+)
+_EXEMPT_RECORDED_SEAM_INJECTS_LATER = (
+    "the recorded seam writes + injects its OWN ``narrowing`` a few statements after "
+    "the spawn, and that ordering is MEASURED (#3562): it must happen AFTER its "
+    "``refresh_config_projections()``, whose ``reapply_visibility_override`` "
+    "re-resolves the envelope from base and SETs it — on a session with no registry "
+    "back-reference there is no base, so it sets ALLOW-ALL and discards anything "
+    "injected earlier. Handing the value down the primitive's channel was tried and "
+    "REDded tests/test_2103_s1bc_session_spawn_tool.py::"
+    "test_spawn_session_recorded_enforces_narrowing_on_live_session and "
+    "tests/test_pipeline_a2_spawn_ephemeral_session.py::"
+    "test_spawn_ephemeral_session_narrowing_applied, both with an empty live tool_deny."
+)
+_NARROWING_EXEMPT_SITES: "dict[tuple[str, str], str]" = {
+    ("reyn/runtime/registry.py", "spawn_session_recorded"): (
+        _EXEMPT_RECORDED_SEAM_INJECTS_LATER
+    ),
+    ("reyn/runtime/registry.py", "resolve_session"): _EXEMPT_NO_SPAWNER_SESSION,
+    ("reyn/runtime/registry.py", "restore_all"): _EXEMPT_RECOVERY_REENTRY,
+    ("reyn/runtime/registry.py", "_rewake_pipeline_runs"): _EXEMPT_RECOVERY_REENTRY,
+}
+
+#: The exemption text #3561 used while the primitive had no ``narrowing`` parameter.
+#: Kept as a named constant with no users so
+#: ``test_no_exemption_claims_a_channel_that_exists`` can check that nothing re-adopts
+#: it — the claim it makes is now false, and a false reason is worse than none.
 _UNMET_NO_NARROWING_CHANNEL = (
     "calls AgentRegistry.spawn_session, which has no narrowing parameter (#3561): an "
     "UNMET REQUIREMENT recorded so the gate counts the site, not an exemption on the "
     "merits. See this site's _SITE_PARENT_LAYERS entry for what decides its child's "
     "envelope instead."
 )
-_NARROWING_EXEMPT_SITES: "dict[tuple[str, str], str]" = {
-    ("reyn/runtime/registry.py", "spawn_session_recorded"): _UNMET_NO_NARROWING_CHANNEL,
-    ("reyn/runtime/registry.py", "resolve_session"): _UNMET_NO_NARROWING_CHANNEL,
-    ("reyn/runtime/registry.py", "restore_all"): _UNMET_NO_NARROWING_CHANNEL,
-    ("reyn/runtime/registry.py", "_rewake_pipeline_runs"): _UNMET_NO_NARROWING_CHANNEL,
-    ("reyn/interfaces/slash/session.py", "session_cmd"): _UNMET_NO_NARROWING_CHANNEL,
-}
 
 @dataclass(frozen=True)
 class _Seam:
@@ -381,7 +446,7 @@ class _Seam:
     name: str
     #: The real function object — imported, not named by string, so a rename
     #: raises at collection time and ``inspect.signature`` reads the live
-    #: parameter list (``test_narrowing_exempt_sites_have_no_narrowing_channel``).
+    #: parameter list (``test_no_exemption_claims_a_channel_that_exists``).
     func: object
     #: Module (relative to ``src/``) the seam is defined in.
     module: str
@@ -399,12 +464,13 @@ class _Seam:
 #: long as it did.
 #:
 #: ``AgentRegistry.spawn_session`` joined the list in #3561 on a REACHABILITY
-#: criterion, not a shape one. It takes no ``narrowing`` argument, and "it cannot
+#: criterion, not a shape one. It took no ``narrowing`` argument then, and "it cannot
 #: take one, so it is out of scope" is the same shape argument that let #3556
 #: through this gate inverted: #3556 passed BECAUSE it spelled ``narrowing=``,
 #: while passing a value that was not a function of its parent. A seam with no
-#: inheritance channel is an UNMET REQUIREMENT, not an exemption — so it is listed,
-#: and each of its sites states what actually decides its child's envelope.
+#: inheritance channel is an UNMET REQUIREMENT, not an exemption — so it was listed,
+#: each of its sites stating what actually decides its child's envelope, and #3562
+#: then MET the requirement by adding the channel to the primitive.
 _SPAWN_SEAMS: "tuple[_Seam, ...]" = (
     _Seam(
         name="spawn_session_recorded",
@@ -485,6 +551,7 @@ _S3546 = "tests/test_3546_pipeline_driver_narrowing_inheritance.py"
 _S3553 = "tests/test_3553_agent_step_worker_narrowing_inheritance.py"
 _S3556 = "tests/test_3556_session_spawn_narrowing_inheritance.py"
 _S3561 = "tests/test_3561_spawn_session_seam_reachability.py"
+_S3562 = "tests/test_3562_slash_session_new_narrowing_inheritance.py"
 
 #: Every spawn site in ``src/``, with the parent layers its ``narrowing=`` value
 #: composes and the behavioural test that measures that claim. A site missing from
@@ -548,16 +615,21 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
         ),
     ),
     # ── #3561: the sites of the SYNC primitive ``AgentRegistry.spawn_session`` ──
-    # None of these can pass ``narrowing=`` — the primitive has no such parameter.
-    # That is recorded in ``_NARROWING_EXEMPT_SITES`` as an unmet requirement rather
-    # than an exemption on the merits, and each entry below says what DOES decide the
-    # child's envelope, because "it cannot inherit" is not the same claim as "it has
-    # nothing to inherit".
+    # #3561 listed these while the primitive had no ``narrowing`` parameter at all,
+    # recording that in ``_NARROWING_EXEMPT_SITES`` as an unmet requirement rather than
+    # an exemption on the merits — because "it cannot inherit" is not the same claim as
+    # "it has nothing to inherit". #3562 met the requirement: the primitive takes the
+    # argument, this seam and ``/session new`` pass one, and the three that still do not
+    # are exempt on the second claim, stated per site below.
     ("reyn/runtime/registry.py", "spawn_session_recorded"): _SiteDeclaration(
         parent_layers=(
             "NONE of its own — this is the recorded seam itself, calling the sync "
             "primitive and then writing its OWN ``narrowing`` argument to the child's "
-            "sid-keyed ``config.yaml`` (the #2103-S1a layer) a few statements later. "
+            "sid-keyed ``config.yaml`` (the #2103-S1a layer) a few statements later, "
+            "through the primitive's ``_persist_session_narrowing`` (#3562 made that "
+            "the single writer) and re-injecting it into the live session. It does NOT "
+            "hand the value down the primitive's own ``narrowing`` channel, and that is "
+            "measured rather than stylistic — see its _NARROWING_EXEMPT_SITES reason. "
             "The value is therefore decided by whoever calls IT, which is why all "
             "three of those callers are enumerated sites in their own right."
         ),
@@ -580,7 +652,9 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             "so a SESSION can be upstream of it after all — but the session it reaches "
             "through is one of its OWN agent's, whose name-keyed envelope it already "
             "shares, so there is no per-session layer to carry across. A cross-AGENT "
-            "variant would change that answer; there is none today."
+            "variant would change that answer; there is none today. #3562: the "
+            "primitive now HAS a ``narrowing`` channel, and this site still passes "
+            "nothing — not for want of a channel but for want of a spawner."
         ),
         unmeasured_reason=(
             "the claim is about the ABSENCE of a per-session layer to inherit, and the "
@@ -608,7 +682,11 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
             "``#2126`` re-resolve-and-inject into ``spawn_session`` itself, where the "
             "sid becomes known, closing it for every direct caller of the primitive at "
             "once. What the site inherits is now a property of the primitive, which is "
-            "the reason the primitive belongs on this list at all."
+            "the reason the primitive belongs on this list at all. "
+            "#3562: the primitive now also has a ``narrowing`` channel, and this site "
+            "deliberately passes nothing through it — the primitive PERSISTS what it is "
+            "given, so a value here would overwrite the recovering session's own "
+            "durable layer with a spawner's, and there is no spawner in a re-wake."
         ),
         measured_by=(
             f"{_S3561}::test_recovery_recreated_session_is_still_inside_its_persisted_narrowing",
@@ -633,24 +711,60 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
     ),
     ("reyn/interfaces/slash/session.py", "session_cmd"): _SiteDeclaration(
         parent_layers=(
-            "NONE — and unlike the two recovery sites, this one has something it could "
-            "inherit and does not. ``/session new`` opens a session under the ATTACHED "
-            "agent with no ``config.yaml`` of its own and nothing carried from the "
-            "invoking session, so the child's #2103-S1a layer is empty however narrow "
-            "its invoker is. This is the arc's open gap, filed as #3562; it is declared "
-            "HERE rather than left off the list, because a site the gate does not "
+            "the INVOKING session's #2103-S1a sid-keyed narrowing "
+            "(``registry.per_session_narrowing`` for the caller's own (agent, sid)), "
+            "composed through ``capability_profile.compose_narrowing_mappings`` with a "
+            "``None`` child term — this site imposes nothing of its own, so deny ∪ / "
+            "allow ∩ / absent-allow-⊤ leaves the invoker's mapping standing (#3562). "
+            "Same name-keyed / not-carried layers as the three sites above. Until #3562 "
+            "this site carried NOTHING: the child's #2103-S1a layer was empty however "
+            "narrow its invoker was, which is why it was declared here as the arc's "
+            "open gap rather than left off the list — a site the gate does not "
             "enumerate is a site the gate does not count. "
-            "#3561 measured that it is REACHABLE FROM MODEL OUTPUT, which is the fact "
-            "that decides it is in scope: an agent step whose prompt is a previous "
+            "★ The composition is applied UNIFORMLY, with no branch for the case where "
+            "the invoking session's agent differs from the ATTACHED agent the child is "
+            "born under. ``name`` is ``reg.attached_name``, so on the operator path — "
+            "the only face that reaches this site, see below — the caller IS the attach "
+            "target and the identities coincide, so there is no live cross-identity "
+            "case to branch on; a branch would be a lenient special case for exactly "
+            "the caller a uniform restrict-only rule exists to bound. (The original "
+            "#3562 argument for uniformity was sharper — the identities differed ONLY "
+            "on the model-output path, making 'the identity differs' the same event as "
+            "'the escape is happening'. #3595 step 1 retired that argument by closing "
+            "the path; it did not change the decision, and #3562/#3586 stands on an "
+            "owner policy decision instead: a session opened from a narrowed one should "
+            "stay narrowed.) "
+            "#3561 measured that this site was REACHABLE FROM MODEL OUTPUT, which is what "
+            "first decided it was in scope: an agent step whose prompt was a previous "
             "agent step's model output, run on a session narrowed to a single "
-            "capability, reaches this site and spawns — no operator in the path, no LLM "
-            "call on the reaching turn (``Session._handle_user_message`` short-circuits "
-            "to ``_maybe_handle_slash`` before the router runs). The measurement below "
-            "asserts the REACHABILITY only, never that the child is un-narrowed, so it "
-            "stays green when #3562 closes the gap."
+            "capability, reached this site and spawned — no operator in the path, no "
+            "LLM call on the reaching turn. ★ #3595 step 1 made that FALSE and the "
+            "measurement below is now its inverse: the agent-step prompt rides its own "
+            "inbox kind (``TurnOrigin.AGENT_STEP``) instead of claiming ``kind='user'``, "
+            "so it never enters ``Session._handle_user_message``'s "
+            "``startswith('/')`` dispatch and no registered slash command is reachable "
+            "from model output at all. "
+            "★ The site STAYS enumerated, and the reason has changed rather than "
+            "expired: this list counts every place a child envelope is BORN, not every "
+            "place a model can reach — a site whose only caller is an operator is still "
+            "a site whose child inherits nothing. What #3595 retires is the SEVERITY "
+            "argument, not the entry. The narrowing gap itself was settled separately "
+            "by #3562/#3586 on an owner policy decision (a session opened from a "
+            "narrowed one should stay narrowed), which stands on its own and never "
+            "stood on this reachability. "
+            "★ Two different claims are measured below, and they are not "
+            "interchangeable. The ``_S3561`` pair is about WHO can reach the site — now "
+            "the ABSENCE of the model-output path, paired with an operator control "
+            "proving the command itself still runs — and asserts nothing about what the "
+            "child inherits. The ``_S3562`` pair is about what the child inherits when "
+            "an operator does reach it, witnessed on the side-effect side (a denied "
+            "tool's file does not appear) next to its own un-narrowed control."
         ),
         measured_by=(
-            f"{_S3561}::test_model_output_reaches_slash_dispatch_and_spawns_a_session",
+            f"{_S3561}::test_model_output_cannot_reach_slash_dispatch_and_spawns_nothing",
+            f"{_S3561}::test_an_operator_submitted_slash_command_still_spawns_a_session",
+            f"{_S3562}::test_a_session_opened_by_slash_session_new_cannot_run_a_tool_its_invoker_is_denied",
+            f"{_S3562}::test_the_witness_tool_runs_when_the_invoker_is_not_narrowed",
         ),
     ),
 }
@@ -871,32 +985,43 @@ def test_every_spawn_site_passes_narrowing() -> None:
     )
 
 
-def test_narrowing_exempt_sites_have_no_narrowing_channel() -> None:
-    """Tier 2: (#3561) every exempt site's exemption rests on a fact about the LIVE
-    seam signature, not on prose — the seam it calls really has no ``narrowing``
-    parameter.
+def test_no_exemption_claims_a_channel_that_exists() -> None:
+    """Tier 2: (#3561, expired and re-grounded by #3562) no exemption rests on the
+    claim that the seam it calls cannot take a ``narrowing`` — checked against the LIVE
+    signature, so the claim cannot outlive the fact.
 
-    Every entry in ``_NARROWING_EXEMPT_SITES`` today says the same thing: the site
-    calls ``AgentRegistry.spawn_session``, which has no channel to pass a narrowing
-    through. That is recorded as an unmet requirement, and this test is what makes it
-    expire: add the channel and every exemption goes RED, forcing each site to either
-    use it or re-argue. It also fails if an exempt entry is stale (naming a site the
-    walk no longer finds), so the registry cannot accumulate dead permissions.
+    #3561 exempted five sites on exactly that claim, correctly at the time: the sync
+    primitive had no such parameter. #3562 added it, which is what this test was built
+    to force — two of the five now USE the channel and the other three are re-argued on
+    their own merits. What survives here is the mechanical half of that: if a seam takes
+    ``narrowing`` and a site is nonetheless exempt, the exemption must not be justified
+    by the seam's shape. It also fails on a stale entry (naming a site the walk no
+    longer finds), so the registry cannot accumulate dead permissions.
+
+    ⚠️ This test cannot check that a merit-based reason is TRUE — no test can read
+    prose. What makes a remaining exemption weigh-able is its ``_SITE_PARENT_LAYERS``
+    entry (required by ``test_every_spawn_site_declares_its_parent_layers``) plus the
+    behavioural measurement that entry names.
     """
     seam_by_name = {s.name: s for s in _SPAWN_SEAMS}
     sites = _spawn_call_sites()
     for key in sorted(_NARROWING_EXEMPT_SITES):
+        reason = _NARROWING_EXEMPT_SITES[key]
         seams_here = {s.seam for s in sites if s.key == key and not s.has_narrowing}
         assert seams_here, (
             f"_NARROWING_EXEMPT_SITES lists {key!r}, but the walk finds no "
             "narrowing-less spawn call there — a stale exemption"
         )
+        assert reason.strip(), f"{key!r} is exempt with no stated reason"
         for seam_name in sorted(seams_here):
             params = inspect.signature(seam_by_name[seam_name].func).parameters
-            assert "narrowing" not in params, (
-                f"{key!r} is exempted from passing narrowing=, but the seam it calls "
-                f"({seam_name}) DOES take a narrowing parameter — the exemption's "
-                "stated reason is no longer true. Pass it, or re-argue the exemption."
+            if "narrowing" not in params:
+                continue
+            assert reason != _UNMET_NO_NARROWING_CHANNEL, (
+                f"{key!r} is exempted from passing narrowing= on the grounds that "
+                f"{seam_name} has no such parameter, but it DOES — the exemption's "
+                "stated reason is false. Pass it, or re-argue the exemption on its "
+                "merits."
             )
 
 

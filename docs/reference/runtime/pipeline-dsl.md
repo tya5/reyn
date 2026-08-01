@@ -432,7 +432,12 @@ Every `agent` step, wherever it is reached (top-level or fanned out inside a
 #### Agent-step exception surfacing (#187 / #2732)
 
 An `agent` step's leaf session (`spawn_ephemeral_session`, always
-`mode="ephemeral"`) drives its router loop inside `Session._handle_user_message`.
+`mode="ephemeral"`) drives its router loop inside `Session._handle_inbox_text`.
+(#3595 step 1: the prompt rides the inbox as `TurnOrigin.AGENT_STEP`
+(`"agent_step"`), not `"user"`, and `_run_turn_body` routes that kind straight to
+this shared turn body — so a prompt that happens to start with `/` is content the
+model reads, never a slash command the OS executes. `_handle_user_message` is now
+the OPERATOR entry alone: slash dispatch, then this same body.)
 Two hardening passes changed how a mid-work failure there reaches the pipeline
 executor:
 
@@ -449,7 +454,8 @@ AND emits a `router_loop_terminated_by_exception` audit event (`chain_id`,
 
 **#2732 — the classified-summary path silently produced a successful-looking
 empty answer for agent steps.** The catch-all `except Exception` in
-`_handle_user_message` is intentionally broad (any LLM-call or router-loop
+`_handle_inbox_text` (in `_handle_user_message` until #3595 split the body out)
+is intentionally broad (any LLM-call or router-loop
 exception, not only credential errors) — that breadth predates #2732. What
 #2732 fixed is what happens *after* classification for an ephemeral session:
 `spawn_ephemeral_session` hardcodes `mode="ephemeral"`, and `run_agent_step`'s

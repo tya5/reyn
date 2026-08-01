@@ -25,6 +25,8 @@ import json
 
 import pytest
 
+from reyn.runtime.turn_origin import TurnOrigin
+
 linebot = pytest.importorskip("linebot.v3")
 
 
@@ -174,7 +176,9 @@ def test_user_text_message_dispatches_to_agent(_line_client):
     pushed = _line_client.pushed
     assert pushed, "expected at least one push call to the agent"
     kind, payload = pushed[0]
-    assert kind == "user"
+    # #3595 step 1b: a gateway push rides the EXTERNAL kind, never "user" —
+    # the kind whose text Session._handle_user_message hands to slash dispatch.
+    assert kind == TurnOrigin.EXTERNAL_MESSAGE
     assert payload["text"] == "hello LINE bot"
     assert payload["sender"] == "line:user:U456"
 

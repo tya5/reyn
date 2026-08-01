@@ -26,6 +26,7 @@ from reyn.hooks.ingress import CronIngressAdapter
 
 CRON_TRANSPORT = "cron"
 
+
 # Hook-Event Redesign Phase 2 (proposal 0059 §6.4): the Cron Adapter is
 # stateless (no bound queue/session — it resolves its target Session fresh
 # at fire time), so one module-level instance is shared by every call.

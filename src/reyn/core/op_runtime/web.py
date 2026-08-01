@@ -408,9 +408,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         return {
             "kind": "web_fetch", "url": op.url, "status": "ok",
             "status_code": response.status_code, "content_type": content_type,
-            "content": "", "truncated": False,
-            "extractor": "binary",
-            "start_index": 0, "next_start": None,
+            "content": "", "extractor": "binary",
             "total_length": len(image_bytes),
             "media_blocks": [media_block],
         }
@@ -427,28 +425,22 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         content = raw
         extractor_name = "none"
 
-    # Pagination (issue #357): slice extracted content by start_index, then
-    # cap at max_length. next_start tells the LLM where to resume on the
-    # follow-up call. start_index past end-of-content yields empty content
-    # with truncated=False.
+    # #3580 ③: no size cap here. The extracted text is returned WHOLE — the only
+    # ceiling on what reaches the model is the OS-level tool-result cap
+    # (``offload.enabled``, default false = uncapped), not a per-tool one. The
+    # removed ``max_length``/``start_index`` slice reported ``truncated`` +
+    # ``next_start`` in this result, i.e. it told the model "there is more, resume
+    # at N" while ``start_index`` was absent from the tool schema (measured: never
+    # present, `git log -S` on this file is empty) — the model could not act on it.
+    # Download volume is still bounded, by ``web.fetch.max_download_bytes``, above.
     total_length = len(content)
-    sliced = content[op.start_index:]
-    truncated = len(sliced) > op.max_length
-    if truncated:
-        content = sliced[: op.max_length]
-        next_start: int | None = op.start_index + op.max_length
-    else:
-        content = sliced
-        next_start = None
 
     ctx.events.emit(
         "web_fetch_completed",
         url=op.url,
         status_code=response.status_code,
         content_length=len(content),
-        truncated=truncated,
         extractor=extractor_name,
-        start_index=op.start_index,
         total_length=total_length,
     )
     return {
@@ -458,11 +450,8 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         "status_code": response.status_code,
         "content_type": content_type,
         "content": content,
-        "truncated": truncated,
         "extractor": extractor_name,
         "media_blocks": [],
-        "start_index": op.start_index,
-        "next_start": next_start,
         "total_length": total_length,
     }
 

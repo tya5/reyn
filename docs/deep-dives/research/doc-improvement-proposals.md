@@ -66,8 +66,7 @@ Use `prompt` to hint what to extract (informational only).
 {
   "kind": "web_fetch",
   "url": "https://example.com/docs",
-  "prompt": "extract the API reference section",
-  "max_length": 50000
+  "prompt": "extract the API reference section"
 }
 ​```
 ```

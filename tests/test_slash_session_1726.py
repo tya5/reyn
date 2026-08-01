@@ -19,7 +19,16 @@ from reyn.runtime.outbox import OutboxMessage
 
 
 class _StubRegistry:
-    """Stub of the registry surface the /session handler reads/calls."""
+    """Stub of the registry surface the /session handler reads/calls.
+
+    #3562: ``per_session_narrowing`` answers None (this stub's sessions carry no
+    per-session capability layer), so the handler's inheritance branch is inert here and
+    these tests keep measuring what they were written for — the command flow and its
+    replies. ★ The inheritance itself is NOT measured against this stub and must not be:
+    a stand-in that answers None can only ever exercise the empty case. It is measured
+    against real instances, by a denied tool's real side effect, in
+    ``tests/test_3562_slash_session_new_narrowing_inheritance.py``.
+    """
 
     def __init__(self, *, attached_name="default", sids=("main",), focused="main"):
         self._attached_name = attached_name
@@ -31,7 +40,13 @@ class _StubRegistry:
     def attached_name(self):
         return self._attached_name
 
-    def spawn_session(self, name, *, presentation_consumer=None, intervention_bridge=None):
+    def per_session_narrowing(self, name, sid=None):
+        return None
+
+    def spawn_session(
+        self, name, *, presentation_consumer=None, intervention_bridge=None,
+        narrowing=None,
+    ):
         sid = f"s{len(self._sids)}"
         self._sids.append(sid)
         self.spawned.append(name)
@@ -45,6 +60,11 @@ class _StubRegistry:
 
 
 class _FakeSession:
+    #: (#3562) The handler looks its OWN (agent, sid) up to find what to inherit, so the
+    #: stand-in carries the two identity fields the real ``Session`` exposes.
+    agent_name = "default"
+    session_id = "main"
+
     def __init__(self, registry):
         self._registry = registry
         # reply()/reply_error() and the switch sentinel all route through

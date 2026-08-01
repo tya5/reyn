@@ -35,6 +35,7 @@ from reyn.core.events.progress_lifecycle import (
     format_progress_message,
 )
 from reyn.runtime.agent_locks import get_agent_lock as _get_agent_lock
+from reyn.runtime.turn_origin import TurnOrigin
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,10 @@ async def send_to_agent_impl(
     timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
     intervention_override: "RequestBus | None" = None,
     sid: "str | None" = None,
+    # TurnOrigin is imported at module level, not with this module's usual
+    # lazy-import idiom, because a default argument is evaluated at def time.
+    # reyn.runtime.turn_origin imports nothing but enum.
+    inbox_kind: TurnOrigin = TurnOrigin.EXTERNAL_MESSAGE,
 ) -> dict:
     """Backing implementation of the ``send_to_agent`` tool.
 
@@ -202,6 +207,27 @@ async def send_to_agent_impl(
     FP-0013: uses ``MessageBus.request`` to pump ``session.run_one_iteration``
     from this task, eliminating the inline ``_handle_user_message`` bypass.
     The inbox is now the single intake channel for every transport surface.
+
+    ``inbox_kind`` (#3595 step 1b) is the ``TurnOrigin`` member ``message``
+    rides onto the inbox, and it exists because THIS function has producers with
+    two different answers to "who wrote this text":
+
+    - the MCP ``send_to_agent`` tool and the A2A JSON-RPC router — a
+      counterparty outside this process, frequently another LLM. They take the
+      default, ``TurnOrigin.EXTERNAL_MESSAGE``.
+    - first-party operator surfaces, which pass ``TurnOrigin.CLIENT_INPUT``
+      explicitly. ★ Which callers those are, and why each is entitled to that
+      claim, is NOT counted here: it is enumerated once, in
+      ``tests/test_3595_client_input_provenance_gate.py``'s allowlist, which is
+      a gate rather than prose — this docstring said "Both pass …" while there
+      were three such call sites, because a count in prose is a snapshot of
+      whoever last read the code.
+
+    The default is the NON-operator one on purpose: a new caller that says
+    nothing gets the kind that cannot execute a slash command, the same
+    fail-safe direction ``Session._stamp_execution_context`` uses for turn
+    origin. Under the old unconditional ``kind="user"`` an MCP client could run
+    any registered slash command by sending ``/reset`` as its message.
     """
     if not registry.exists(agent_name):
         raise ValueError(
@@ -240,7 +266,7 @@ async def send_to_agent_impl(
         try:
             replies = await bus.request(
                 session,
-                kind="user",
+                kind=inbox_kind,
                 payload={"text": message, "chain_id": chain_id},
                 reply_to=McpRef(request_id=req_id),
                 timeout=timeout,

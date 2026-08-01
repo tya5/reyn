@@ -210,7 +210,7 @@ async def image_cmd(session: object, args: str) -> None:
         "mime_type": mime,
         "content_hash": content_hash,
     }
-    # Queue is drained by Session._handle_user_message on the next
+    # Queue is drained by Session._handle_inbox_text on the next
     # user turn (= attached to that ChatMessage.media).
     queue: list[dict] = getattr(session, "_pending_user_images", None)
     if queue is None:

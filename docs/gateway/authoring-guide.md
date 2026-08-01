@@ -127,9 +127,12 @@ Reyn versions; this API stays stable.
 ### Helpers
 
   push_to_agent(*, target_agent, text, sender, reply_to=None,
-                kind="user", extra_meta=None, registry=None)
+                extra_meta=None, registry=None)
     Deliver a message to a Reyn agent's inbox. Default for webhook
-    gateways.
+    gateways. The inbox kind is fixed at
+    ``TurnOrigin.EXTERNAL_MESSAGE`` and is deliberately NOT a
+    parameter — see "Slash commands are not exposed to gateways"
+    below.
 
   list_agents(*, registry=None) -> list[str]
     All agent names known to the project (= sorted disk view).
@@ -172,6 +175,30 @@ await push_to_agent(
 **Do NOT call internal session methods directly.** ``Session.
 _put_inbox`` etc. are private API and may change between Reyn
 versions; ``reyn.gateway.api`` is the contract that stays stable.
+
+### Slash commands are not exposed to gateways
+
+A message pushed through `push_to_agent` is **content the model
+reads**, never a Reyn operator command. A gateway user sending
+`/reset`, `/visibility`, `/plugin` or any other registered slash
+command gets it read by the LLM as text; nothing is executed.
+
+This is a **decision, not an omission** (#3595 step 1b, owner ruling
+2026-08-01: 「現時点では slash に公開不要」 — "no need to expose slash
+at present"). Until this arc, a gateway push claimed the `"user"`
+inbox kind — the claim that a human typed the line at a first-party
+client — and `Session._handle_user_message` acts on that claim by
+handing a `/`-prefixed line to slash dispatch before any router
+turn. Anyone able to post to a webhook could therefore run any
+registered slash command. Gateway pushes now ride
+`TurnOrigin.EXTERNAL_MESSAGE`, which `Session._run_turn_body` routes
+straight to the shared turn body: the dispatch is not skipped by a
+flag, it is not on the path at all.
+
+If Reyn ever does expose slash to a gateway, the route is the
+ratified one — a **shared client-side slash layer** the gateway
+drives — not `startswith("/")` re-introduced at a transport, and not
+an allow-list of "safe" commands.
 
 Reyn's session dispatch automatically:
 - Surfaces ``sender`` as a state_change history entry (= PR-A
