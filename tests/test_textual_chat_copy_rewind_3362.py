@@ -7,11 +7,12 @@ sentinels out of the conversation pane and nothing else consumed them, so
 Graded invariants:
 
 1. **``/copy`` changes the clipboard** — witnessed by EFFECT, not by the status
-   line: the real ``copy_to_clipboard`` discovers a clipboard binary through
-   ``shutil.which`` and pipes the text to it, so these tests put a REAL
+   line: the real ``copy_to_clipboard`` (a thin pyperclip wrapper, #3616 ①) on
+   this macOS test host resolves to pyperclip's ``pbcopy`` backend, which shells
+   out to a bare ``pbcopy`` argv0 resolved via PATH, so these tests put a REAL
    executable named ``pbcopy`` on ``PATH`` that records its stdin to a file. The
    assertion is on that file's bytes — a status line saying "copied" while the
-   subprocess never ran would FAIL here. (Nothing is mocked: the production
+   subprocess never ran would FAIL here. (Nothing is mocked: pyperclip's own
    discovery, argv and pipe all run; only which binary is found is arranged.)
 2. **Every reply the pane shows is copyable** — including a STREAMED reply (which
    settles through an early return in ``_ingest_frame``) and a reply restored
@@ -173,12 +174,14 @@ def clipboard(tmp_path, monkeypatch):
     """Put a REAL ``pbcopy`` executable on ``PATH`` that records its stdin.
 
     Returns a zero-arg callable giving the recorded text, or ``None`` when the
-    binary was never invoked. This is an environment arrangement, not a mock: the
-    production ``copy_to_clipboard`` really calls ``shutil.which``, really spawns
-    the process and really pipes to its stdin, so "the clipboard changed" is
-    witnessed by a side effect outside the process under test. A hermetic stand-in
-    for the system clipboard is required because a CI host has none — the
-    real-``pbpaste`` witness is a manual Test-plan item.
+    binary was never invoked. This is an environment arrangement, not a mock:
+    the production ``copy_to_clipboard`` (a thin pyperclip wrapper, #3616 ①)
+    on this macOS test host really resolves pyperclip's ``pbcopy`` backend
+    (no pyobjc installed), really spawns the process via a bare ``pbcopy``
+    argv0, and really pipes to its stdin, so "the clipboard changed" is
+    witnessed by a side effect outside the process under test. A hermetic
+    stand-in for the system clipboard is required because a CI host has none
+    — the real-``pbpaste`` witness is a manual Test-plan item.
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -195,9 +198,11 @@ def clipboard(tmp_path, monkeypatch):
         "/bin/mv " + str(sink) + ".part " + str(sink) + "\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
-    # PREPENDED, not replaced: ``shutil.which`` takes the first match, so this
-    # one shadows any real ``pbcopy`` (the host's actual clipboard is never
-    # touched by these tests) while the rest of PATH stays usable.
+    # PREPENDED, not replaced: pyperclip's macOS backend spawns bare argv0
+    # ``pbcopy``, resolved by the OS via PATH at exec time, taking the first
+    # match — so this one shadows any real ``pbcopy`` (the host's actual
+    # clipboard is never touched by these tests) while the rest of PATH stays
+    # usable.
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
 
     def read():
@@ -517,7 +522,7 @@ def test_clipboard_witness_actually_witnesses(clipboard) -> None:
     from reyn.interfaces.repl._clipboard import copy_to_clipboard
 
     assert clipboard() is None
-    ok, tool = copy_to_clipboard("witness marker")
-    assert ok and tool == "pbcopy", f"clipboard witness not wired: {ok!r} {tool!r}"
+    ok = copy_to_clipboard("witness marker")
+    assert ok is True, f"clipboard witness not wired: {ok!r}"
     assert clipboard() == "witness marker"
     assert os.environ["PATH"].split(os.pathsep)[0].endswith("bin")
