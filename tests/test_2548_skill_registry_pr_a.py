@@ -203,7 +203,7 @@ def test_a_real_builtin_description_reaches_the_registry_intact() -> None:
     from reyn.builtin.registry import BUILTIN_SKILLS
     from reyn.data.skills.registry import _DESC_ELLIPSIS
 
-    name = "reactive_orchestration_plugins"
+    name = "reactive-orchestration-plugins"
     source = BUILTIN_SKILLS[name]["description"]
 
     entries = build_skill_registry(

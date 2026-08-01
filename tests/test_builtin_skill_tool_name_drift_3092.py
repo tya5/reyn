@@ -2,10 +2,10 @@
 (#3092).
 
 The #3090 gate (``tests/test_fp0063_p4_builtin_rag_skill.py``) checked ONE
-skill — the RAG plugin's ``build_and_query_rag_corpus`` — against the real
+skill — the RAG plugin's ``build-and-query-rag-corpus`` — against the real
 enumerate-all catalog. Every OTHER builtin SKILL.md was unprotected, and
 #3092 found exactly the drift that gap predicts: the standing builtins
-``draft_judge_revise/SKILL.md`` and ``reyn_cheat_sheet/SKILL.md`` told the
+``draft-judge-revise/SKILL.md`` and ``reyn-cheat-sheet/SKILL.md`` told the
 model to call ``run_pipeline_inline(...)`` / ``run_pipeline(name=...)`` —
 host FUNCTION names, not the qualified catalog names
 (``run_pipeline_inline`` / ``run_pipeline``) an enumerate-all ``tools=``
@@ -30,7 +30,7 @@ This file generalizes the check ALONG TWO AXES:
      telling the model to call something it will never be offered.
 
 **#3429 collapsed #3092's own drift class.** #3092 found
-``draft_judge_revise`` / ``reyn_cheat_sheet`` telling the model to call
+``draft-judge-revise`` / ``reyn-cheat-sheet`` telling the model to call
 ``run_pipeline_inline(...)`` — the host FUNCTION name, when the catalog
 advertised only ``pipeline__run_inline``. That gap existed because a tool had
 two names and the skill author picked the wrong one. There is one name now,
@@ -71,11 +71,11 @@ def test_discovery_finds_every_builtin_skill_not_just_the_rag_plugin() -> None:
     names = {p.parent.name for p in found}
 
     # the #3090 gate's only skill — still covered, now via the general path
-    assert "build_and_query_rag_corpus" in names
+    assert "build-and-query-rag-corpus" in names
     # the two standing builtins #3092 found drifted — the RAG-only gate
     # never looked at either of these
-    assert "draft_judge_revise" in names
-    assert "reyn_cheat_sheet" in names
+    assert "draft-judge-revise" in names
+    assert "reyn-cheat-sheet" in names
     # the standing builtins live under a DIFFERENT dir than the plugin skill
     # (`skills/` vs `plugins/rag/skills/`) — discovery must span both, not
     # just widen the single-dir glob the old gate hardcoded.

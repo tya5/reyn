@@ -39,4 +39,4 @@ against your own threshold with a plain `transform` step. This is
 **self-review, not objectivity**: you write the draft, you write the
 checklist, and the same model family scores it -- useful, not independent.
 Mandatory gate for auto-improvement promotion (0060 J-D). Full spec:
-`docs/reference/runtime/pipeline-dsl.md`; worked loop: `draft_judge_revise`.
+`docs/reference/runtime/pipeline-dsl.md`; worked loop: `draft-judge-revise`.

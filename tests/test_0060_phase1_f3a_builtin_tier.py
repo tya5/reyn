@@ -99,7 +99,7 @@ def _make_ctx(tmp_path: Path, *, turn_origin: "str | None") -> OpContext:
 # ---------------------------------------------------------------------------
 # F3a's own mechanism-only invariant, updated for F3b (proposal 0060 Phase 2,
 # two PRs: #2912 = core spine skill+pipeline; this sibling PR = the remaining
-# curated-5 exemplars, draft_judge_revise skill + status_card presentation):
+# curated-5 exemplars, draft-judge-revise skill + status_card presentation):
 # F3a shipped all three maps EMPTY (mechanism only); F3b populates all three
 # — this file no longer asserts any of the three maps stay empty, since that
 # was F3a's phase-scoped state, not a permanent one. See

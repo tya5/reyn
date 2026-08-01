@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant — the consolidated `build_and_query_rag_corpus` skill's
+"""Tier 2: OS invariant — the consolidated `build-and-query-rag-corpus` skill's
 bundled reference files are actually reachable through a REGISTERED plugin
 install, not merely present on disk (part of #3162: the five-skill split was
 folded back into the standard one-skill + bundled-`references/` shape).
@@ -45,7 +45,7 @@ from reyn.security.permissions.permissions import PermissionDecl, PermissionReso
 _REPO_ROOT = Path(__file__).parent.parent
 _REAL_SKILL_DIR = (
     _REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag" / "skills"
-    / "build_and_query_rag_corpus"
+    / "build-and-query-rag-corpus"
 )
 
 
@@ -58,7 +58,7 @@ def _read_op(path: str) -> FileIROp:
 
 
 def _copy_real_skill_as_plugin_source(base: Path) -> Path:
-    """A minimal local plugin dir whose `skills/build_and_query_rag_corpus/`
+    """A minimal local plugin dir whose `skills/build-and-query-rag-corpus/`
     is a byte-for-byte copy of the real shipped skill directory (`SKILL.md` +
     `references/*.md`) — only the manifest is synthetic, and it declares
     ONLY the `skills` capability so install never shells out to `uv` or
@@ -74,7 +74,7 @@ def _copy_real_skill_as_plugin_source(base: Path) -> Path:
         }),
         encoding="utf-8",
     )
-    dest = plugin_dir / "skills" / "build_and_query_rag_corpus"
+    dest = plugin_dir / "skills" / "build-and-query-rag-corpus"
     shutil.copytree(_REAL_SKILL_DIR, dest)
     return plugin_dir
 
@@ -111,7 +111,7 @@ def _read_ctx(unrelated_project_root: Path) -> OpContext:
 def test_real_rag_skill_router_and_every_bundled_reference_reachable_without_approval(
     tmp_path, monkeypatch,
 ):
-    """Tier 2: (positive witness) once the real `build_and_query_rag_corpus`
+    """Tier 2: (positive witness) once the real `build-and-query-rag-corpus`
     skill directory is installed as a REGISTERED plugin, `SKILL.md` AND every
     one of its four bundled `references/*.md` files read successfully with NO
     approval prompt, even with `project_root` unrelated — the real content,
@@ -139,7 +139,7 @@ def test_real_rag_skill_router_and_every_bundled_reference_reachable_without_app
     assert result["status"] == "installed", result
 
     plugin_root = plugins_root() / "rag_skill_only"
-    skill_dir = plugin_root / "skills" / "build_and_query_rag_corpus"
+    skill_dir = plugin_root / "skills" / "build-and-query-rag-corpus"
 
     unrelated_root = tmp_path / "unrelated"
     unrelated_root.mkdir()
