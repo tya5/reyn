@@ -12,12 +12,12 @@ per client.
 
 Two halves, on opposite sides of the transport:
 
-- :func:`maybe_dispatch_slash` is the CLIENT half. It parses one submitted line,
-  resolves it against the process-local ``REGISTRY`` (which every client has —
-  it is imported code, not session state), and asks the transport to run the
-  resolved command by NAME. Everything it displays on its own — the extra-lines
-  note, the bare-``/`` catalog, the unknown-command suggestion — is
-  client-authored display, so it goes through ``put_display``.
+- :func:`maybe_dispatch_slash` is the CLIENT half. It echoes the typed line,
+  parses it, resolves it against the process-local ``REGISTRY`` (which every
+  client has — it is imported code, not session state), and asks the transport
+  to run the resolved command by NAME. Everything it displays on its own — the
+  echo, the extra-lines note, the bare-``/`` catalog, the unknown-command
+  suggestion — is client-authored display, so it goes through ``put_display``.
 - :func:`execute_slash_command` is the EXECUTOR half, called wherever the
   session actually is: in-process for a local attach (``InProcessTransport``),
   server-side for a remote one (the AG-UI endpoint's ``slash_command`` arm). It
@@ -63,7 +63,9 @@ def _display(transport: "ClientTransport", kind: str, text: str, **meta) -> None
     transport.put_display(OutboxMessage(kind=kind, text=text, meta=dict(meta)))
 
 
-async def maybe_dispatch_slash(transport: "ClientTransport", text: str) -> bool:
+async def maybe_dispatch_slash(
+    transport: "ClientTransport", text: str, *, echo: bool = True,
+) -> bool:
     """Interpret ``text`` as a slash command; ``True`` iff it was consumed.
 
     The one place a reyn client turns typed text into a command. A caller
@@ -74,12 +76,35 @@ async def maybe_dispatch_slash(transport: "ClientTransport", text: str) -> bool:
     what keeps the ordinary-turn path, and the #3300 sent-queue behind it,
     exactly as it was.
 
+    ★ **The typed line is echoed first.** A command's OUTPUT is client-authored
+    display and rides ``put_display``; so is its INPUT, and
+    ``ClientTransport.put_display``'s own docstring names "user echo" as its
+    first payload. Showing one without the other is worse than showing neither:
+    two runs of the same command produce two identical result blocks with
+    nothing to attribute them to, and once a command can also run while a turn
+    is in flight, a result cannot even be told from turn output. An ordinary
+    turn's echo comes from the ``user_submitted`` chat-event (#3300 P1 C), which
+    a command never emits — so this is the only surface that can produce it.
+
+    ``echo=False`` is for a client whose own input surface ALREADY put the line
+    on screen: the plain ``--cui`` driver on an interactive TTY, where
+    ``prompt_session.prompt_async`` leaves the typed line in the terminal the
+    instant Enter is pressed. Echoing there would re-print it — the #3287
+    double-render, through a new door. Which side a client is on is a fact only
+    that client knows; HOW to echo lives here, so there is still one
+    implementation.
+
     Multi-line input: slash commands are line-oriented and take no multi-line
     args, so trailing lines are reported and dropped rather than silently
     bundled into ``args`` and ignored by whichever handler does not read them.
+    The echo carries the WHOLE typed text, which is what makes the note about
+    ignored lines legible.
     """
     if not text.startswith("/"):
         return False
+
+    if echo:
+        _display(transport, "user", text)
 
     first_line, sep, rest = text.partition("\n")
     if sep and rest.strip():

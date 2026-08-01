@@ -131,7 +131,11 @@ async def run_input_loop(
         if not transport.has_session():
             renderer.message(_simple_status("no agent attached; try :agents"))
             continue
-        await route_input_line(transport, text, reply_seen, own_submissions=own_submissions)
+        await route_input_line(
+            transport, text, reply_seen,
+            own_submissions=own_submissions,
+            terminal_echoed=is_tty,
+        )
 
 
 async def route_input_line(
@@ -140,6 +144,7 @@ async def route_input_line(
     reply_seen: "asyncio.Event | None",
     *,
     own_submissions: "set[str] | None" = None,
+    terminal_echoed: bool = False,
 ) -> None:
     """Route one non-quit client line to the session via the transport.
 
@@ -147,6 +152,15 @@ async def route_input_line(
     itself — through the shared client-side layer both reyn clients call, never
     by handing the string to the session. It is consumed here and never reaches
     ``submit_user_text``, so the branches below see turn text only.
+
+    ``terminal_echoed`` answers the one question about a command line that only
+    this client can: whether its own input surface already put the line on
+    screen. On an interactive TTY ``prompt_session.prompt_async`` did (the same
+    fact ``own_submissions`` exists for, #3287), so the shared layer must not
+    echo it again; on a piped run nothing did, and the echo is the only record
+    of what was asked for. A command emits no ``user_submitted`` chat-event, so
+    the suppression ``own_submissions`` performs for a TURN has no equivalent
+    here — the decision has to be made before the display is written, not after.
 
     A pending intervention (permission prompt, ask_user, safety-limit) suspends
     the router turn on the intervention's future — and that turn is the SOLE
@@ -177,7 +191,7 @@ async def route_input_line(
     so it can never accidentally match an event whose own ``msg_id`` also
     reads empty/missing.
     """
-    if await maybe_dispatch_slash(transport, text):
+    if await maybe_dispatch_slash(transport, text, echo=not terminal_echoed):
         return
     # Everything below is TURN text: a command returned above, so the two
     # ``not text.startswith("/")`` guards this function used to carry are gone

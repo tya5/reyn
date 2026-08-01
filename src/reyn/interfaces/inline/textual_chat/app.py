@@ -328,10 +328,14 @@ class TextualChatApp(App):
 
     The app drains ``transport.frames()`` in a worker, appending each display
     frame to the retained model (event frames are consumed but not yet drawn);
-    a Composer submit routes back through the transport. The user's own line is
-    NOT echoed locally — it returns as a ``kind="user"`` frame on the same
-    stream, so the model is fed entirely from frames and stays equivalent to the
-    plain renderer's turn sequence.
+    a Composer submit routes back through the transport. The user's own TURN
+    line is NOT echoed locally — it returns as a ``kind="user"`` frame on the
+    same stream, so the model is fed entirely from frames and stays equivalent
+    to the plain renderer's turn sequence. A COMMAND line is the exception and
+    has to be: it emits no ``user_submitted`` chat-event, so nothing would ever
+    send that frame back. The shared client-side slash layer writes the echo
+    through ``put_display`` (#3595 S5) — still a frame on the same stream, so
+    the model is still fed entirely from frames.
 
     Phase 2 adds state-coloured gutters: a tool-call row transitions RUNNING →
     SUCCESS/ERROR (amber → green/coral) as its correlated frames arrive, a

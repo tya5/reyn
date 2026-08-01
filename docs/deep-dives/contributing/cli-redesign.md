@@ -231,6 +231,18 @@ command:
   `ctx.session` runs server-side via the AG-UI `slash_command` payload — a
   command NAME the client already resolved, never a raw line.
 
+★ **The shared layer echoes the typed line through `put_display` before it
+dispatches.** A command's output is client-authored display; so is its input,
+and `ClientTransport.put_display`'s docstring names "user echo" as its first
+payload. A turn gets its echo from the `user_submitted` chat-event (#3300 P1 C)
+and a command emits none, so nothing else can produce it — and result-without-
+input is worse than either extreme: two runs of the same command render two
+identical blocks with nothing to attribute them to. The one exception is a
+client whose own input surface already showed the line (the plain `--cui`
+driver on an interactive TTY, where `prompt_session.prompt_async` leaves it in
+the terminal); it passes `echo=False`, which is why *whether* to echo is the
+client's call while *how* stays in one place.
+
 The registry is populated by importing each slash module
 (`slash/agents.py`, `slash/cost.py`, …). `session.py` no longer hard-
 codes command parsing; it delegates to the registry.

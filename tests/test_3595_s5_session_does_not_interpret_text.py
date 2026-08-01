@@ -369,6 +369,97 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
     )
 
 
+@pytest.mark.asyncio
+async def test_two_runs_of_one_command_are_distinguishable_on_screen(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: running the same command twice produces a display an operator can
+    tell apart — each result carries the line that asked for it.
+
+    ★ The claim is about the SCREEN, not about a call. Asserting "the echo
+    helper was invoked" would pass while the output was still unreadable; what
+    has to hold is that two runs of ``/cost`` are separable, which is exactly
+    what a bare pair of identical result blocks is not. Driven with the operator
+    sequence that exposed it (``/cost`` → ``/budget`` → ``/cost``): with no echo,
+    the first and third results are byte-identical and nothing on screen says
+    which invocation each belongs to.
+
+    A command emits no ``user_submitted`` chat-event (#3300 P1 C is the turn
+    path), so this echo is the only surface that can produce the line.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = make_session(
+        agent_name="echo-s5",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snap.json",
+    )
+    session.is_attached = True
+    transport, display = local_transport(session)
+
+    for line in ("/cost", "/budget", "/cost"):
+        assert await maybe_dispatch_slash(transport, line), f"{line} was not run"
+
+    shown = drain_display(display)
+    asked = [m.text for m in shown if m.kind == "user"]
+    assert asked == ["/cost", "/budget", "/cost"], (
+        "the operator's own command lines are not on the display, so two runs of "
+        f"the same command cannot be told apart. what was shown: "
+        f"{[(m.kind, m.text[:40]) for m in shown]!r}"
+    )
+
+    # Each asked-for line must be FOLLOWED by its own result before the next
+    # one — an echo block with the results elsewhere would satisfy the list
+    # above while still being unattributable.
+    kinds = [m.kind for m in shown]
+    for i, kind in enumerate(kinds):
+        if kind != "user":
+            continue
+        rest = kinds[i + 1:]
+        assert rest and rest[0] != "user", (
+            "a command line is immediately followed by another command line, so "
+            f"its result is not attributable to it: {kinds!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_client_whose_terminal_already_echoed_does_not_echo_twice(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: the plain CUI on an interactive TTY does NOT re-print the line.
+
+    The pair of the test above, and the reason the echo is a client decision
+    rather than an unconditional write: ``prompt_session.prompt_async`` leaves
+    the typed line on the terminal the instant Enter is pressed, so echoing
+    again is the #3287 double-render arriving through a new door. Both legs run
+    here because either one alone is satisfiable by a broken implementation —
+    always echoing, or never echoing.
+    """
+    from reyn.interfaces.repl.stream_client import route_input_line
+
+    monkeypatch.chdir(tmp_path)
+    session = make_session(
+        agent_name="cui-echo-s5",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snap.json",
+    )
+    session.is_attached = True
+
+    transport, display = local_transport(session)
+    await route_input_line(transport, "/cost", None, terminal_echoed=True)
+    echoed = [m.text for m in drain_display(display) if m.kind == "user"]
+    assert echoed == [], (
+        "the line was printed a second time under the terminal that already "
+        f"showed it (#3287's double render): {echoed!r}"
+    )
+
+    await route_input_line(transport, "/cost", None, terminal_echoed=False)
+    piped = [m.text for m in drain_display(display) if m.kind == "user"]
+    assert piped == ["/cost"], (
+        "a client whose surface shows nothing (piped stdin) got no echo either, "
+        f"so the command left no record of what was asked: {piped!r}"
+    )
+
+
 def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) -> None:
     """Tier 2: the AG-UI ``slash_command`` arm runs a NAME, and refuses an
     unknown one.
