@@ -1687,9 +1687,15 @@ class TextualChatApp(App):
         ordinal to resolve and no reason to go through the ring."""
         from reyn.runtime.outbox import OutboxMessage
 
-        ok, status = await copy_to_clipboard_async(event.entry.item.text)
+        # #3616 ①: pyperclip's plain bool return carries no tool label, so the
+        # failure branch gets a real message instead of the empty string the
+        # old (ok, tool_label) contract left behind when no tool was found.
+        ok = await copy_to_clipboard_async(event.entry.item.text)
         self._ingest_frame(
-            OutboxMessage(kind="status", text=status if not ok else "copied to clipboard")
+            OutboxMessage(
+                kind="status",
+                text="copied to clipboard" if ok else "clipboard copy failed",
+            )
         )
 
     async def on_key(self, event) -> None:
@@ -1819,7 +1825,7 @@ class TextualChatApp(App):
         silently look like it worked (OSC 52, the default, cannot be
         acknowledged at all)."""
         try:
-            ok, _tool = copy_to_clipboard(text)
+            ok = copy_to_clipboard(text)
         except Exception:
             logger.exception("textual chat: copy-mode clipboard write failed")
             return False
