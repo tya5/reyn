@@ -137,45 +137,6 @@ _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
 # unchanged.
 
 
-def _strip_frontmatter(content: str) -> str:
-    """Remove a leading YAML frontmatter block (``---\\n...\\n---\\n``) from
-    a memory file's text and return the body alone.
-
-    Used by :meth:`RouterLoop._read_memory_body` to give the LLM the
-    actual remembered text instead of metadata fields it doesn't need
-    (= ``name`` / ``description`` / ``type``). When the input doesn't
-    start with a frontmatter delimiter the original text is returned
-    unchanged — handles legacy memory files written before the frontmatter
-    convention existed.
-    """
-    text = content or ""
-    if not text.lstrip().startswith("---"):
-        return text
-    # Find first non-blank line; require it to be exactly "---".
-    lines = text.split("\n")
-    # Skip leading blanks.
-    i = 0
-    while i < len(lines) and not lines[i].strip():
-        i += 1
-    if i >= len(lines) or lines[i].strip() != "---":
-        return text
-    # Find the closing "---" after the opening one.
-    close = -1
-    for j in range(i + 1, len(lines)):
-        if lines[j].strip() == "---":
-            close = j
-            break
-    if close == -1:
-        # No closing delimiter — leave content alone rather than truncating.
-        return text
-    body_lines = lines[close + 1:]
-    # Trim a single leading blank line that conventionally follows the
-    # closing delimiter; keep subsequent whitespace as authored.
-    if body_lines and body_lines[0].strip() == "":
-        body_lines = body_lines[1:]
-    return "\n".join(body_lines).rstrip("\n") + ("\n" if body_lines else "")
-
-
 # #272 media axis: per-image token estimate. Single-sourced from the compaction
 # engine's ``_IMAGE_FIXED_TOKEN_COST`` (services/compaction/engine.py) so the
 # per-turn media bound is unit-consistent with how a turn's image cost is
@@ -659,15 +620,6 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """RouterLoopHost: read the file at ``<reyn_root>/path`` as text."""
         ...
 
-    # Memory file paths (for list_memory / read_memory_body)
-    def memory_path(self, layer: str, slug: str) -> str:
-        """Resolve layer ('shared'|'agent') + slug to file path"""
-        ...
-
-    def memory_dir(self, layer: str) -> str:
-        """Directory for the layer's memory files"""
-        ...
-
     # Action callbacks (async)
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None: ...
@@ -702,15 +654,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         name: "str | None" = None,
     ) -> None: ...
 
-    # File ops (via op_runtime/file under permission scope)
-    async def file_read(self, path: str) -> str: ...
-
-    async def file_write(self, path: str, content: str) -> dict: ...
-
-    async def file_delete(self, path: str) -> dict: ...
-
-    async def file_regenerate_index(self, path: str, output_path: str,
-                                     entry_template: str, header: str) -> dict: ...
+    # The memory-store capability (``remember`` / ``forget`` / ``read_body``).
+    # #3607: the host used to expose four file primitives + two memory-path
+    # helpers instead, and this loop assembled the memory operations out of
+    # them. It exposes the operations themselves now; the file callbacks
+    # underneath belong to the memory layer, not to the router's host surface.
+    @property
+    def memory(self) -> Any: ...
 
     # MCP ops
     async def mcp_list_servers(self) -> list[dict]: ...
@@ -4003,15 +3953,14 @@ class RouterLoop:
             spawn_agent_fn=_spawn_agent_bound,
             # #2103 C1: topology-create dispatch (None for non-multi-agent hosts).
             topology_create_fn=_topology_create_bound,
-            # Memory tool bridges (= for memory cluster handlers;
-            # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers
-            # so registry handlers consume the same agent-aware
-            # ``host.get_memory_index()`` / ``host.memory_path`` /
-            # ``host.file_*`` paths the legacy router branches used.
+            # Memory tool bridges (= for memory cluster handlers).
+            # ``list_memory`` still parses the host's rendered
+            # ``get_memory_index()`` listing, so it stays a loop helper;
+            # remember / forget / read_body are memory-STORE operations and
+            # ride the capability itself (#3607) — the loop no longer holds
+            # a re-implementation of them over file primitives.
             list_memory_fn=self._list_memory,
-            read_memory_body_fn=self._read_memory_body,
-            remember_fn=self._remember,
-            forget_fn=self._forget,
+            memory_service=getattr(self.host, "memory", None),
             # Identity + cost + model context (forward-looking; consumed by
             # schema_enricher hooks and future activated handlers)
             chain_id=self.chain_id,
@@ -4264,156 +4213,3 @@ class RouterLoop:
                     items.append({"slug": slug, "name": name, "description": desc})
         return items
 
-    async def _read_memory_body(
-        self,
-        layer: str,
-        slug: str,
-        *,
-        offset: int | None = None,
-        limit: int | None = None,
-    ) -> dict:
-        """Read the full body of a memory entry.
-
-        Memory files are stored as Markdown with a YAML frontmatter (= the
-        ``name`` / ``description`` / ``type`` metadata fields written by
-        ``_remember``). Returning the full file content with the frontmatter
-        intact triggered a G12 empty-stop attractor: when the LLM asked
-        ``read_memory_body`` and got back e.g.::
-
-            ---
-            name: User Name
-            description: User Name
-            type: user
-            ---
-
-            Yasuda
-
-        it sometimes parsed the frontmatter as the content and exited with
-        ``finish=stop`` / ``content=""`` instead of narrating "Yasuda".
-        Confirmed via dogfood trace on Q10 ``who am I?`` — the recall
-        returned the body with frontmatter and produced an empty reply.
-
-        Stripping the frontmatter before returning gives the LLM clean
-        text to narrate. The metadata fields are not LLM-actionable here
-        (they were emitted at write time and are surfaced separately via
-        ``list_memory``), so dropping them costs nothing.
-        """
-        path = self.host.memory_path(layer, slug)
-        try:
-            content = await self.host.file_read(path)
-            body = _strip_frontmatter(content)
-            if offset is not None or limit is not None:
-                lines = body.splitlines(keepends=True)
-                start = max(0, offset or 0)
-                sliced = (
-                    lines[start:start + limit] if limit is not None
-                    else lines[start:]
-                )
-                body = "".join(sliced)
-            return {
-                "content": body,
-                "layer": layer,
-                "slug": slug,
-            }
-        except Exception as exc:
-            return {"error": str(exc), "layer": layer, "slug": slug}
-
-    async def _remember(
-        self,
-        *,
-        layer: str,
-        slug: str,
-        name: str,
-        description: str,
-        type: str,
-        body: str,
-    ) -> dict:
-        """Write a memory entry and regenerate the index."""
-        # FP-0050/#1822 S4a (BP1, Class B): scan the LLM-written memory content
-        # (strict scope) BEFORE persisting. A poisoned entry (prompt injection /
-        # exfil / agent-config-mod) would re-enter the SP every session, so we
-        # REJECT the write rather than fence it. Reuses the deny channel: a
-        # decision-enabling error result (what matched + how to fix), no write.
-        _blocker = getattr(self.host, "scan_for_block", None)
-        if _blocker is not None:
-            _hit = _blocker(f"{name}\n{description}\n{body}", scope="strict")
-            if _hit is not None:
-                return {
-                    "status": "error",
-                    "error": {
-                        "kind": "threat_blocked",
-                        "message": (
-                            f"memory write blocked: content matched threat pattern "
-                            f"'{_hit.pattern_id}' ({_hit.scope}/{_hit.severity}). Remove the "
-                            f"flagged content (injection / exfiltration / config-mod phrasing) "
-                            f"from the entry and retry."
-                        ),
-                        "pattern_id": _hit.pattern_id,
-                    },
-                }
-        # Defensive: strip trailing .md if LLM emitted it in slug despite
-        # the tool description saying "Filename stem".
-        if slug.endswith(".md"):
-            slug = slug[:-3]
-        frontmatter = (
-            f"---\nname: {name}\ndescription: {description}\ntype: {type}\n---\n\n{body}\n"
-        )
-        # memory_path appends .md itself — pass bare slug.
-        file_path = self.host.memory_path(layer, slug)
-        await self.host.file_write(file_path, frontmatter)
-
-        mem_dir = self.host.memory_dir(layer)
-        index_path = mem_dir + "/MEMORY.md"
-        await self.host.file_regenerate_index(
-            mem_dir,
-            index_path,
-            "- [{name}]({slug}.md) — {description}",
-            "# Memory Index\n\n",
-        )
-        # FP-0066 P3a (#3247 firm §3/§7): dynamic sync-in-op knowledge
-        # ingest — after the write + listing-index regen both succeed,
-        # (re)embed the memory corpus into the "knowledge_memory" source.
-        # Best-effort (§G2): a provider/embedding failure must not fail
-        # this `remember` op — see ``sync_memory_ingest``'s own docstring.
-        from pathlib import Path as _Path
-
-        from reyn.data.index.knowledge_ingest import sync_memory_ingest
-
-        workspace_root = getattr(self.host, "workspace_root", None) or _Path.cwd()
-        await sync_memory_ingest(
-            self._get_index_coordinator(),
-            workspace_root,
-            self.host.make_router_op_context(),
-            events=self.host.events,
-        )
-        return {"saved": slug, "layer": layer}
-
-    async def _forget(self, layer: str, slug: str) -> dict:
-        """Delete a memory entry and regenerate the index."""
-        # Defensive: strip trailing .md if LLM emitted it.
-        if slug.endswith(".md"):
-            slug = slug[:-3]
-        # memory_path appends .md itself.
-        file_path = self.host.memory_path(layer, slug)
-        await self.host.file_delete(file_path)
-
-        mem_dir = self.host.memory_dir(layer)
-        index_path = mem_dir + "/MEMORY.md"
-        await self.host.file_regenerate_index(
-            mem_dir,
-            index_path,
-            "- [{name}]({slug}.md) — {description}",
-            "# Memory Index\n\n",
-        )
-        # FP-0066 P3a (#3247 firm §4 G3): sync de-index — NOT best-effort.
-        # A stale embedded row for a just-forgotten entry would be
-        # discoverable by a future search over content that no longer
-        # exists; a failure here is surfaced to the caller as an error
-        # rather than silently swallowed (unlike the ingest side).
-        from reyn.data.index.knowledge_ingest import sync_memory_deindex
-
-        try:
-            await sync_memory_deindex(self._get_index_coordinator(), layer, slug)
-        except Exception as exc:
-            return {"error": f"knowledge de-index failed: {exc}", "layer": layer, "slug": slug}
-        return {"deleted": slug, "layer": layer}

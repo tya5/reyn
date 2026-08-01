@@ -25,18 +25,18 @@ later migrated to accept fine-grained ``op.kind`` values (= a separate
 future FP).  Until then these registrations function as documentation +
 defensive guards, not as live phase-dispatch paths.
 
-MemoryService access path — design-revisit finding:
-  ToolContext.workspace is a reyn.data.workspace.Workspace instance which
-  does NOT carry a MemoryService attribute. MemoryService lives on the
-  Session / RouterHostAdapter layer (constructed per-session with
-  injected file-op callbacks). The handlers below duplicate the
-  router_loop.py logic directly against workspace file primitives —
-  they use ctx.workspace.read_file / write_file / delete_file — rather
-  than routing through MemoryService. If fine-grained phase dispatch
-  ever lands, follow-up work should either:
-    (a) surface MemoryService (or equivalent callbacks) on ToolContext, or
-    (b) inline workspace-level file ops as the canonical implementation
-        and remove the MemoryService indirection.
+MemoryService access path:
+  Router-side, the handlers below delegate whole to
+  ``ctx.router_state.memory_service`` — the session's MemoryService, which
+  owns the memory operations and their domain rules (threat scan, YAML
+  frontmatter, listing-index regen, knowledge ingest/de-index).
+  Non-router callers (phase dispatch, tests) have no RouterCallerState, so
+  each handler keeps a fallback that reimplements the same sequence against
+  ``ctx.workspace.read_file`` / ``write_file`` / ``delete_file``:
+  ToolContext.workspace is a reyn.data.workspace.Workspace, which carries no
+  MemoryService. Closing that duplication means surfacing the capability on
+  ToolContext itself — the fallback is not a second design, it is the same
+  design missing a delivery route.
 """
 from __future__ import annotations
 
@@ -367,9 +367,8 @@ async def _handle_read_memory_body(
 ) -> ToolResult:
     """Adapter for read_memory_body.
 
-    Router path: delegate to ``ctx.router_state.read_memory_body_fn``
-    (= RouterLoop._read_memory_body) which uses ``host.memory_path`` +
-    ``host.file_read`` for agent-aware file resolution.
+    Router path: delegate to ``ctx.router_state.memory_service.read_body``
+    (= the session's MemoryService) for agent-aware file resolution.
 
     Fallback: read the body file via ``ctx.workspace.read_file`` and
     strip the YAML frontmatter (= same G12 attractor fix logic as the
@@ -385,9 +384,9 @@ async def _handle_read_memory_body(
     limit = int(limit_raw) if limit_raw is not None else None
 
     rs = ctx.router_state
-    if rs is not None and rs.read_memory_body_fn is not None:
-        return await rs.read_memory_body_fn(
-            args.get("layer", ""), args.get("slug", ""),
+    if rs is not None and rs.memory_service is not None:
+        return await rs.memory_service.read_body(
+            layer=args.get("layer", ""), slug=args.get("slug", ""),
             offset=offset, limit=limit,
         )
 
@@ -420,18 +419,16 @@ async def _handle_remember(
 ) -> ToolResult:
     """Shared adapter body for remember_shared / remember_agent.
 
-    Router path: delegate to ``ctx.router_state.remember_fn``
-    (= RouterLoop._remember) which uses ``host.memory_path`` +
-    ``host.file_write`` + ``host.file_regenerate_index`` for atomic
-    write + index regen (= the same multi-step sequence the legacy
-    router branch performed).
+    Router path: delegate to ``ctx.router_state.memory_service.remember``
+    (= the session's MemoryService), which owns the whole sequence: threat
+    scan → write → listing-index regen → knowledge ingest.
 
     Fallback: write frontmatter + body via ctx.workspace, then
     regenerate MEMORY.md by scanning the layer dir.
     """
     rs = ctx.router_state
-    if rs is not None and rs.remember_fn is not None:
-        return await rs.remember_fn(
+    if rs is not None and rs.memory_service is not None:
+        return await rs.memory_service.remember(
             layer=layer,
             slug=args.get("slug", ""),
             name=args.get("name", ""),
@@ -473,7 +470,7 @@ async def _handle_remember(
     ctx.events.emit("memory_saved", layer=layer, slug=slug, path=str(body_path))
 
     # FP-0066 P3a (#3247 firm §3/§7): dynamic sync-in-op knowledge ingest —
-    # same hook as RouterLoop._remember's production path (see
+    # same hook as MemoryService.remember's production path (see
     # sync_memory_ingest's docstring for the §G2 best-effort contract).
     # This fallback path is exercised by non-router (phase/test) callers.
     from reyn.data.index.coordinator import get_index_coordinator
@@ -509,17 +506,18 @@ async def _handle_forget_memory(
 ) -> ToolResult:
     """Adapter for forget_memory.
 
-    Router path: delegate to ``ctx.router_state.forget_fn``
-    (= RouterLoop._forget) which uses ``host.memory_path`` +
-    ``host.file_delete`` + ``host.file_regenerate_index`` matching the
-    legacy router branch.
+    Router path: delegate to ``ctx.router_state.memory_service.forget``
+    (= the session's MemoryService), which owns the whole sequence: delete →
+    listing-index regen → knowledge de-index.
 
     Fallback: delete the body file via ctx.workspace and regenerate the
     layer's MEMORY.md.
     """
     rs = ctx.router_state
-    if rs is not None and rs.forget_fn is not None:
-        return await rs.forget_fn(args.get("layer", ""), args.get("slug", ""))
+    if rs is not None and rs.memory_service is not None:
+        return await rs.memory_service.forget(
+            layer=args.get("layer", ""), slug=args.get("slug", ""),
+        )
 
     layer = args.get("layer", "")
     slug = args.get("slug", "")
@@ -548,7 +546,7 @@ async def _handle_forget_memory(
     ctx.events.emit("memory_deleted", layer=layer, slug=slug, path=str(body_path))
 
     # FP-0066 P3a (#3247 firm §4 G3): sync de-index — NOT best-effort (see
-    # sync_memory_deindex's docstring). Mirrors RouterLoop._forget's
+    # sync_memory_deindex's docstring). Mirrors MemoryService.forget's
     # production hook for this non-router fallback path.
     from reyn.data.index.coordinator import get_index_coordinator
     from reyn.data.index.knowledge_ingest import sync_memory_deindex

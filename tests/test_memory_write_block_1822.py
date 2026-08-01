@@ -49,25 +49,7 @@ def test_legit_content_no_blocking_match():
     assert first_blocking_match(matches, cfg.block_severity) is None
 
 
-# ── _remember block integration (drive through the loop) ────────────────────
-
-class _BlockHost(FakeRouterHost):
-    def __init__(self, **kw: Any) -> None:
-        super().__init__(**kw)
-        self._threat_scan = ThreatScanConfig()
-
-    def scan_for_block(self, content: str, *, scope: str = "strict"):
-        # Mirrors RouterHostAdapter.scan_for_block (scan + block-select + emit).
-        cfg = self._threat_scan
-        hit = first_blocking_match(
-            scan_for_threats(content, cfg, scope=scope), cfg.block_severity,
-        )
-        if hit is not None:
-            self._events.emit(
-                "threat_block", pattern_id=hit.pattern_id, severity=hit.severity, scope=hit.scope,
-            )
-        return hit
-
+# ── remember block integration (drive through the loop) ─────────────────────
 
 class _CapturingLLM:
     def __init__(self, script: list[LLMToolCallResult]) -> None:
@@ -83,7 +65,10 @@ class _CapturingLLM:
 
 
 async def _run_remember(monkeypatch, description: str):
-    host = _BlockHost()
+    # #3607: the scan is MemoryService's rule now, so the host is the ordinary
+    # fake carrying a REAL ThreatScanConfig into a REAL MemoryService — the
+    # test no longer hand-mirrors the scan+emit sequence it is verifying.
+    host = FakeRouterHost(threat_scan=ThreatScanConfig())
     loop = RouterLoop(host=host, chain_id="chain-bp1", max_iterations=5)
     round1 = tool_result([{
         "name": "remember_shared",

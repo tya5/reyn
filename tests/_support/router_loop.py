@@ -9,11 +9,13 @@ used. patch() is only called with real callables (policy: Mock vs Fake).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
+from reyn.runtime.services import MemoryService
 
 # ---------------------------------------------------------------------------
 # Minimal EventLog stub for tests
@@ -48,6 +50,7 @@ class FakeRouterHost:
         memory_index: dict | None = None,
         file_permissions: dict | None = None,
         mcp_servers: list[dict] | None = None,
+        threat_scan: Any = None,
     ):
         self._skills = skills or []
         self._agents = agents or []
@@ -71,9 +74,29 @@ class FakeRouterHost:
         # Events (required by RouterLoopHost protocol for dispatch_tool)
         self._events = FakeEventLog()
 
+        # The memory-store capability (#3607). A REAL MemoryService — the
+        # class production wires — over this host's in-memory file callbacks,
+        # so a memory test exercises the real domain rules (threat scan,
+        # frontmatter, listing-index regen) instead of a hand-mirrored copy.
+        # ``knowledge_sync`` is left None: the embedding index is a different
+        # subsystem with its own tests.
+        self._memory = MemoryService(
+            agent_workspace_dir=Path(".reyn") / "agents" / self.agent_name,
+            events=self._events,
+            file_write=self._file_write,
+            file_read=self._file_read,
+            file_delete=self._file_delete,
+            file_regenerate_index=self._file_regenerate_index,
+            threat_scan=threat_scan,
+        )
+
     @property
     def events(self) -> FakeEventLog:
         return self._events
+
+    @property
+    def memory(self) -> MemoryService:
+        return self._memory
 
     # --- Catalogue ---
 
@@ -110,15 +133,6 @@ class FakeRouterHost:
     async def web_fetch(self, *, url: str) -> dict:
         return {"kind": "web_fetch", "url": url, "status": "ok", "content": ""}
 
-    # --- Memory paths ---
-
-    def memory_path(self, layer: str, slug: str) -> str:
-        # Match production Session._memory_path contract: appends .md.
-        return f"/memory/{layer}/{slug}.md"
-
-    def memory_dir(self, layer: str) -> str:
-        return f"/memory/{layer}"
-
     # --- Action callbacks ---
 
     async def run_skill_awaitable(self, *, skill: str, input: dict,
@@ -143,28 +157,37 @@ class FakeRouterHost:
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
 
-    # --- File ops ---
+    # --- File callbacks (the memory capability's, not the host's) ---
+    #
+    # #3607: these are no longer RouterLoopHost methods — the router host does
+    # not expose file primitives. They are the callbacks this host hands to
+    # its MemoryService, and their return shapes mirror Session._file_* (the
+    # production wiring): always a dict, never a raise, with the
+    # ``written`` / ``deleted`` / ``error`` keys the real wrappers return. A
+    # shape that did not mirror them would let a memory test pass against a
+    # contract production does not honour.
 
-    async def file_read(self, path: str) -> str:
+    async def _file_read(self, path: str) -> dict:
         self.file_reads.append(path)
         if path not in self._files:
-            raise FileNotFoundError(f"not found: {path}")
-        return self._files[path]
+            return {"error": f"file not found: {path}"}
+        return {"path": path, "content": self._files[path]}
 
-    async def file_write(self, path: str, content: str) -> dict:
+    async def _file_write(self, path: str, content: str) -> dict:
         self.file_writes.append((path, content))
         self._files[path] = content
-        return {"status": "ok", "path": path}
+        return {"path": path, "written": True}
 
-    async def file_delete(self, path: str) -> dict:
+    async def _file_delete(self, path: str) -> dict:
         self.file_deletes.append(path)
+        existed = path in self._files
         self._files.pop(path, None)
-        return {"status": "ok", "path": path}
+        return {"path": path, "deleted": existed}
 
     async def file_list_directory(self, path: str) -> list[dict]:
         return [{"name": "file.txt", "type": "file"}]
 
-    async def file_regenerate_index(self, path: str, output_path: str,
+    async def _file_regenerate_index(self, *, path: str, output_path: str,
                                      entry_template: str, header: str) -> dict:
         self.index_regenerations.append({
             "path": path,
@@ -172,7 +195,7 @@ class FakeRouterHost:
             "entry_template": entry_template,
             "header": header,
         })
-        return {"status": "ok"}
+        return {"path": path, "output_path": output_path, "entries": 0}
 
     # --- MCP ops ---
 

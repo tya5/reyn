@@ -239,10 +239,12 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
         "chat_id", "agent_name", "agent_role",
         "list_available_agents",
         "get_memory_index", "get_file_permissions", "get_mcp_servers",
-        "memory_path", "memory_dir",
+        # #3607: the memory-store capability, in place of the two path helpers
+        # (memory_path / memory_dir) + four file primitives (file_read /
+        # file_write / file_delete / file_regenerate_index) the router used to
+        # assemble the memory operations out of.
+        "memory",
         "send_to_agent", "put_outbox",
-        "file_read", "file_write", "file_delete",
-        "file_regenerate_index",
         "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
         "resolve_model",
     ]

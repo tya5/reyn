@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from reyn.tools.memory import _handle_read_memory_body
+from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
 
 _LINE = "x" * 40 + "\n"
@@ -88,48 +90,78 @@ async def test_file_read_not_found_still_reports_error(
 
 
 @pytest.mark.asyncio
-async def test_router_host_adapter_file_read_string_carries_truncation_note(
+async def test_read_memory_body_handler_surfaces_truncation_signal_to_the_llm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: co-vet finding — `RouterHostAdapter.file_read` (the legacy
-    router-chat path predating the #2782/#3082 registry-dispatch migration)
-    is the SECOND `Session._file_read` consumer, and it flattens the dict to
-    a bare string for the LLM. Asserting only on the wrapper's own dict (as
-    the first round of #3193 tests did) cannot catch this: the dict was
-    correct, but the adapter discarded `note`/`truncated` on the way to a
-    plain string, so the LLM never saw the signal at all — "loaded onto the
-    dict but nobody reads it downstream" (co-vet: the same failure mode
-    #2998/#3190/#3192 already found for list_directory/read_file's
-    registry-dispatch sibling). This test asserts on the actual string the
-    LLM receives, mirroring the #3192 witness shape."""
+    """Tier 2: co-vet finding — asserting only on the wrapper's own dict
+    cannot catch a consumer that discards the signal on the way to the LLM
+    ("loaded onto the dict but nobody reads it downstream" — the same failure
+    mode #2998/#3190/#3192 found for list_directory/read_file). This asserts
+    on the result the `read_memory_body` TOOL returns, i.e. the surface the
+    LLM actually receives, reached through the real handler + a real
+    RouterCallerState carrying the session's real MemoryService.
+
+    #3607 note: this replaces a pair of tests that drove
+    `RouterHostAdapter.file_read` — the adapter method that used to flatten
+    this dict to a bare string with the note appended. That method existed
+    only to let the router loop assemble `read_memory_body` out of file
+    primitives; the operation belongs to MemoryService now, the flattening
+    step is gone, and the signal rides as sibling keys the whole way.
+    """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "big.txt").write_text(_LINE * _LINE_COUNT, encoding="utf-8")
+    session = make_session(agent_name="test-agent-3193-handler-read")
 
-    session = make_session(agent_name="test-agent-3193-adapter-read")
-    llm_visible = await session.router_host.file_read("big.txt")
+    body_path = Path(session._memory.memory_path("agent", "big-note"))
+    body_path.parent.mkdir(parents=True, exist_ok=True)
+    body_path.write_text(_LINE * _LINE_COUNT, encoding="utf-8")
 
-    assert isinstance(llm_visible, str)
-    assert _LINE.strip() in llm_visible, "content must still reach the LLM"
-    assert "truncated" in llm_visible, (
-        "the truncation note must reach the LLM-visible string, not just "
-        "the wrapper's internal dict"
+    ctx = ToolContext(
+        events=session._chat_events,
+        permission_resolver=session._perm,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(memory_service=session._memory),
     )
-    assert "on disk at" in llm_visible  # part of the op_runtime `note` text
+    result = await _handle_read_memory_body(
+        {"layer": "agent", "slug": "big-note"}, ctx,
+    )
+
+    assert "error" not in result, f"unexpected error: {result.get('error')}"
+    assert result["content"], "content must still reach the LLM"
+    assert len(result["content"]) < len(_LINE) * _LINE_COUNT
+    assert result.get("truncated") is True, (
+        "the truncation signal must reach the tool result the LLM reads, "
+        "not just the wrapper's internal dict"
+    )
+    assert "on disk at" in result["note"]  # part of the op_runtime `note` text
 
 
 @pytest.mark.asyncio
-async def test_router_host_adapter_file_read_string_no_spurious_note_on_success(
+async def test_read_memory_body_handler_has_no_spurious_truncation_signal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: regression guard — a plain successful read's LLM-visible
-    string is exactly the file content, no note appended."""
+    """Tier 2: regression guard — a small entry's tool result carries the
+    body and no truncation signal (the two states stay distinguishable)."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "small.txt").write_text("hello world\n", encoding="utf-8")
+    session = make_session(agent_name="test-agent-3193-handler-read-small")
 
-    session = make_session(agent_name="test-agent-3193-adapter-read-small")
-    llm_visible = await session.router_host.file_read("small.txt")
+    body_path = Path(session._memory.memory_path("agent", "small-note"))
+    body_path.parent.mkdir(parents=True, exist_ok=True)
+    body_path.write_text("hello world\n", encoding="utf-8")
 
-    assert llm_visible == "hello world\n"
+    ctx = ToolContext(
+        events=session._chat_events,
+        permission_resolver=session._perm,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(memory_service=session._memory),
+    )
+    result = await _handle_read_memory_body(
+        {"layer": "agent", "slug": "small-note"}, ctx,
+    )
+
+    assert result["content"] == "hello world\n"
+    assert "truncated" not in result and "note" not in result
 
 
 @pytest.mark.asyncio
