@@ -117,7 +117,6 @@ def make_adapter(
     on_limit: object = None,  # #2175: OnLimitConfig for the spawn-limit checkpoint (None → no checkpoint = unattended reject)
     safety_extensions: "dict | None" = None,  # #2175: shared per-run extension dict
     intervention_answer: "str | None" = None,  # #2175: interactive-mode bus answer (choice_id, e.g. "yes")
-    intervention_bus_factory: "object | None" = None,  # FP-0022 (#53): op-ctx intervention bus
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
@@ -170,7 +169,6 @@ def make_adapter(
         turn_origin_fn=turn_origin_fn,
         workspace_base_dir=workspace_base_dir,
         session_id_fn=(lambda: session_id) if session_id is not None else None,
-        intervention_bus_factory=intervention_bus_factory,
     )
     mcp_gateway_inputs = McpGatewayInputs(
         mcp_connection_service=None,
