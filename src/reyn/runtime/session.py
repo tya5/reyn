@@ -78,6 +78,7 @@ from reyn.runtime.services import (
     InterventionRegistry,
     LiveSessionIdInputs,
     McpGatewayInputs,
+    MemoryKnowledgeSync,
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
@@ -3857,10 +3858,6 @@ class Session:
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
             agent_workspace_dir=self.workspace_dir,
-            file_read=self._file_read,
-            file_write=self._file_write,
-            file_delete=self._file_delete,
-            file_regenerate_index=self._file_regenerate_index,
             mcp_call_tool=self._mcp_call_tool,
             # #2597 slice ②a: resources consumption (read/templates).
             mcp_read_resource=self._mcp_read_resource,
@@ -4228,14 +4225,20 @@ class Session:
         construction that used to run inline in ``__init__`` — same object,
         same keyword args, same (unmoved) position.
 
-        This is a single independent leaf component (like Family 8a's
-        ``inter_agent_messaging``) — every arg is an eager ``self._X``
-        (Family 1's ``self._chat_events``, already set on ``self`` by this
-        point) or a bound method / property already available at
-        construction time (``self._file_write`` / ``self._file_read`` /
-        ``self._file_delete`` / ``self._file_regenerate_index`` /
-        ``self.workspace_dir``). No deferred lambda, no intra-family
-        local-vs-self split.
+        Most args are an eager ``self._X`` (Family 1's ``self._chat_events``,
+        already set on ``self`` by this point) or a bound method / property
+        already available at construction time (``self._file_write`` /
+        ``self._file_read`` / ``self._file_delete`` /
+        ``self._file_regenerate_index`` / ``self.workspace_dir``).
+
+        ★ ONE deferred lambda, and it is required: ``knowledge_sync``'s
+        ``op_context_fn`` resolves ``self._router_host`` at CALL time. The
+        waist (Family 6a) has not run yet at this builder's call site — see
+        the PRE-WAIST note below — so an eager read would raise
+        ``AttributeError`` here; and even after the waist exists, an OpContext
+        is per-turn state that must not be snapshotted (#3607: this is the
+        SAME context factory ``RouterLoop._remember`` used to reach through
+        ``self.host.make_router_op_context()``, unchanged).
 
         ★ PRE-WAIST placement: this builder's call site (in ``__init__``)
         MUST stay before ``_build_router_waist`` runs (Family 6a), which
@@ -4252,6 +4255,14 @@ class Session:
             file_read=self._file_read,
             file_delete=self._file_delete,
             file_regenerate_index=self._file_regenerate_index,
+            # FP-0050 / #1822 S4a: the memory-write threat scan config — the
+            # same ``self._safety.threat_scan`` the adapter gets for the
+            # tool-result legs of the same guard.
+            threat_scan=self._safety.threat_scan,
+            knowledge_sync=MemoryKnowledgeSync(
+                op_context_fn=lambda: self._router_host.make_router_op_context(),
+                events=self._chat_events,
+            ),
         )
         return memory
 

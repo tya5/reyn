@@ -1,6 +1,7 @@
-"""Tier 2: pure helpers in runtime/router_loop.py.
+"""Tier 2: pure helpers in runtime/router_loop.py, plus the memory-layer
+``strip_frontmatter`` this module has always covered (it moved to
+runtime/services/memory_service.py with the read_body operation that calls it).
 
-``_strip_frontmatter(content)``       — strip ---fm--- block from memory file text
 ``_overflow_ref_text(ref)``           — format image-overflow reference message
 ``_is_context_overflow_error(exc)``   — keyword-match context length errors
 ``_is_unsupported_param_error(exc)``  — class-name/keyword unsupported param errors
@@ -18,8 +19,12 @@ from reyn.runtime.router_loop import (
     _is_context_overflow_error,
     _is_unsupported_param_error,
     _overflow_ref_text,
-    _strip_frontmatter,
 )
+
+# #3607: strip_frontmatter is a memory-layer rule and moved to MemoryService's
+# module with the operations that use it; it is public there (read_body is its
+# only caller and lives beside it).
+from reyn.runtime.services.memory_service import strip_frontmatter as _strip_frontmatter
 
 # ---------------------------------------------------------------------------
 # _strip_frontmatter

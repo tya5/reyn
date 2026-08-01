@@ -170,10 +170,6 @@ def make_adapter(
         handle_chat_limit_checkpoint=_checkpoint,  # #2175
         safety_extensions=_ext,  # #2175
         agent_workspace_dir=workspace,
-        file_read=null_file_read,
-        file_write=null_file_write,
-        file_delete=null_file_delete,
-        file_regenerate_index=null_file_regen,
         mcp_call_tool=null_mcp_call_tool,
         mcp_gateway_inputs=mcp_gateway_inputs,
         send_to_agent_inputs=send_to_agent_inputs,
