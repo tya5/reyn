@@ -139,8 +139,16 @@ def test_reyn_run_once_cli_reaches_registry_shutdown(tmp_path, monkeypatch):
     run_once.register(sub)
     args = top.parse_args(["run-once"])
 
+    # Signature mirrors send_to_agent_impl, ``inbox_kind`` included (#3595 step
+    # 1b): `reyn run-once` passes it explicitly, and a double that swallows the
+    # kwarg would stop witnessing that the operator path still claims "user".
     async def _fake_send(registry, *, agent_name, message, timeout=0,
-                          intervention_override=None, sid=None) -> dict:
+                          intervention_override=None, sid=None,
+                          inbox_kind="user") -> dict:
+        assert inbox_kind == "user", (
+            "`reyn run-once` is the operator's own line at a first-party CLI; it "
+            f"must not ride a non-operator inbox kind (got {inbox_kind!r})"
+        )
         return {"reply": "ok", "limit_stopped": False}
 
     monkeypatch.setattr("reyn.mcp.server.send_to_agent_impl", _fake_send)

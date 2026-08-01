@@ -50,6 +50,13 @@ async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> 
     result = await send(
         agent_registry, agent_name=agent_name, message=message,
         timeout=_ONCE_SEND_TIMEOUT,
+        # #3595 step 1b: send_to_agent_impl defaults to the EXTERNAL kind (its
+        # MCP / A2A producers are outside-the-process peers). `reyn run-once` is
+        # NOT that — it is the operator, piping their own line at a first-party
+        # CLI, so it says so. Dropping this makes `echo "/model x" | reyn
+        # run-once` stop executing the command, which is an operator-visible
+        # behaviour change this arc explicitly must not make.
+        inbox_kind="user",
     )
     return result if isinstance(result, dict) else {"reply": result or ""}
 

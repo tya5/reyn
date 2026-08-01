@@ -636,12 +636,19 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         reply_parts: list[str] = []
 
         try:
+            # #3595 step 1b: send_to_agent_impl defaults to the EXTERNAL kind
+            # (its MCP / A2A producers are peers outside this process). A
+            # dogfood scenario is the opposite: a human-authored line replayed
+            # AS the operator's own typing, and the whole point of the
+            # instrument is to exercise the path an operator's line takes. Any
+            # other kind would measure a path no operator uses.
             if scenario.is_multi_turn:
                 for prompt in scenario.prompts:
                     result = await send_to_agent_impl(
                         registry,
                         agent_name=agent_name,
                         message=prompt,
+                        inbox_kind="user",
                     )
                     if result.get("reply"):
                         reply_parts.append(result["reply"])
@@ -651,6 +658,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                     registry,
                     agent_name=agent_name,
                     message=message,
+                    inbox_kind="user",
                 )
                 if result.get("reply"):
                     reply_parts.append(result["reply"])

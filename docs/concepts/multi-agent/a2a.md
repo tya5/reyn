@@ -166,7 +166,7 @@ While the task runs, both the SSE stream and the webhook (below) carry an
 
 | Audit-event | `message` |
 |-------------|-----------|
-| `turn_started` | `turn: <inbox trigger kind>` — e.g. `turn: user` |
+| `turn_started` | `turn: <inbox trigger kind>` — `turn: external_message` for an A2A delegation (#3595 step 1b: a peer's message is not the operator's typing, so it does not claim the `user` kind) |
 | `llm_called` | `llm: <model>` |
 | `tool_returned` | `tool: <name>` |
 | `tool_failed` | `tool: <name> (failed)` |
