@@ -36,7 +36,7 @@ one broke (strip-falsify verified per-property, see PR body):**
    this PR the registry carried only a COMMENT claiming the two are kept in
    sync ("kept explicit for readability, not because it changes anything")
    with no gate enforcing it -- and in fact they had already drifted (the
-   ``draft_judge_revise`` front-matter said '..., a report paragraph). Read
+   ``draft-judge-revise`` front-matter said '..., a report paragraph). Read
    this...' with a nested double-quote; the registry copy was missing that
    clause and used a single-quote instead). This PR fixes that drift
    (front-matter is the authored source; the registry copy is now
@@ -163,7 +163,7 @@ def test_builtin_skill_descriptions_match_front_matter_verbatim() -> None:
     `description` must equal BUILTIN_SKILLS[name]["description"]
     character-for-character. Before this PR only a comment in registry.py
     claimed this; no gate enforced it, and the two had already drifted for
-    `draft_judge_revise` (fixed in this same PR)."""
+    `draft-judge-revise` (fixed in this same PR)."""
     assert len(BUILTIN_SKILLS) >= 1, (
         "vacuity guard: BUILTIN_SKILLS is empty -- this gate would pass "
         "trivially with nothing to check"

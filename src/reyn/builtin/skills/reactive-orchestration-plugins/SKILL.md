@@ -1,6 +1,6 @@
 ---
-name: reactive_orchestration_plugins
-description: How to build something that REACTS to an external system (an orchestrator, a watcher, a UI, any MCP server that pushes) -- which reyn mechanism already answers each requirement, and the anti-pattern list of things people re-invent. Read this BEFORE designing any external-event-driven plugin, server-push handling, wake/notification behaviour, or browser UI integration. Companion to reyn_cheat_sheet (which covers choosing between skill/pipeline/mcp/hook/present in general).
+name: reactive-orchestration-plugins
+description: How to build something that REACTS to an external system (an orchestrator, a watcher, a UI, any MCP server that pushes) -- which reyn mechanism already answers each requirement, and the anti-pattern list of things people re-invent. Read this BEFORE designing any external-event-driven plugin, server-push handling, wake/notification behaviour, or browser UI integration. Companion to reyn-cheat-sheet (which covers choosing between skill/pipeline/mcp/hook/present in general).
 ---
 
 # Reactive / orchestration plugins

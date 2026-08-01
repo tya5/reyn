@@ -110,7 +110,7 @@ def test_gate_actually_scans_a_non_empty_corpus_against_real_registries() -> Non
     assert ("permissions_enforcement.yaml", "file_write_outside_cwd_denied") in scanned
 
     # BUILTIN_SKILLS is the code-shipped tier; these two are what registry.py declares.
-    assert known_skills() >= {"reyn_cheat_sheet", "draft_judge_revise"}
+    assert known_skills() >= {"reyn-cheat-sheet", "draft-judge-revise"}
     # A handful of event kinds that demonstrably have live emit call sites.
     assert known_event_types() >= {"routing_decided", "tool_executed", "permission_denied"}
 
@@ -174,7 +174,7 @@ def test_find_violations_accepts_a_live_reference(tmp_path) -> None:
         "scenarios:\n"
         "  - id: ok\n"
         "    input: hi\n"
-        "    expected_skill: reyn_cheat_sheet\n"
+        "    expected_skill: reyn-cheat-sheet\n"
         "    expected:\n"
         "      events:\n"
         "        must_emit:\n"

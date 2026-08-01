@@ -1,5 +1,5 @@
 ---
-name: build_and_query_rag_corpus
+name: build-and-query-rag-corpus
 description: Make a folder of the operator's own documents (txt/md/pdf/xlsx/pptx/docx) searchable by meaning via a user-named sqlite vector store. Covers installing the `rag` plugin, embedding-provider setup, the exact `rag_ingest`/`rag_query` pipeline calls, and corpus internals -- via bundled references. Read this before running the builtin `rag_ingest` / `rag_query` pipelines, or when the operator asks you to search a folder/file of their own documents.
 ---
 

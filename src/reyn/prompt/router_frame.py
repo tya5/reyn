@@ -310,7 +310,7 @@ PRESENT_AFFORDANCE_ESSENTIAL = (
 # 日本語訳: SP本体は最小限のブートストラップに留め、詳細な使い方はチートシート
 # skillへの名指しポインタに委譲する。この名前は D5e ゲートで存在を保証される
 # load-bearing な契約。
-REYN_CHEAT_SHEET_SKILL_NAME = "reyn_cheat_sheet"
+REYN_CHEAT_SHEET_SKILL_NAME = "reyn-cheat-sheet"
 
 CHEAT_SHEET_POINTER = (
     f"For reyn-specific usage details (composition idioms, op essentials, "
