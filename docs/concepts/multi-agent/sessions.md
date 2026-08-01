@@ -53,6 +53,16 @@ outbox, the current task, and transient run state. Identity-scoped things — me
 permissions, workspace scope, peer addressing — live on the Agent and are shared by
 all of that Agent's Sessions; conversation-scoped things stay isolated per Session.
 
+One capability layer is nonetheless *session*-scoped: a session can be **narrowed**
+below its agent's envelope (restrict-only — a narrowing can never grant what the
+identity does not already have). That layer is inherited on spawn: a session opened
+from a narrowed session — by `/session new`, by a pipeline, by an agent step, or by
+the `session_spawn` tool — is born inside the opener's narrowing, composed
+most-restrictive-wins (denials union, allow-lists intersect). So an operator whose own
+session is narrowed gets a narrowed new session, and `/session new` names what it
+inherited in its reply. The alternative — a fresh session silently starting wide — is
+the one an operator cannot notice.
+
 Persistence and recovery key on the **Session**:
 
 - **Per-session persistence** — each Session's state is snapshotted independently,
