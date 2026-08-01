@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
@@ -55,23 +55,23 @@ def _memory_completer(
     completer=_memory_completer,
     see_also=("docs/concepts/data-retrieval/memory.md",),
 )
-async def memory_cmd(session: "Session", args: str) -> None:
+async def memory_cmd(ctx: "SlashContext", args: str) -> None:
     """Dispatch ``list`` / ``view <name>`` subcommands."""
     parts = args.strip().split(maxsplit=1)
     if not parts:
-        await reply(session, _USAGE)
+        await reply(ctx, _USAGE)
         return
     sub = parts[0]
     sub_args = parts[1] if len(parts) > 1 else ""
     if sub == "list":
-        await _list_memory(session)
+        await _list_memory(ctx)
     elif sub == "view":
-        await _view_memory(session, sub_args)
+        await _view_memory(ctx, sub_args)
     else:
-        await reply_error(session, _USAGE)
+        await reply_error(ctx, _USAGE)
 
 
-async def _list_memory(session: "Session") -> None:
+async def _list_memory(ctx: "SlashContext") -> None:
     """Render every memory entry as one line per row.
 
     Sorted by name (the same order ``list_entries`` returns). Type +
@@ -83,7 +83,7 @@ async def _list_memory(session: "Session") -> None:
     entries = list_entries()
     if not entries:
         await reply(
-            session,
+            ctx,
             'no memory entries yet — try: "remember <fact>"',
         )
         return
@@ -100,14 +100,14 @@ async def _list_memory(session: "Session") -> None:
         lines.append(
             f"  {e.name:<{name_w}}  {e.type:<{type_w}}  {desc}"
         )
-    await reply(session, "\n".join(lines))
+    await reply(ctx, "\n".join(lines))
 
 
-async def _view_memory(session: "Session", name: str) -> None:
+async def _view_memory(ctx: "SlashContext", name: str) -> None:
     """Print the full body of the named entry."""
     name = name.strip()
     if not name:
-        await reply_error(session, "Usage: /memory view <name>")
+        await reply_error(ctx, "Usage: /memory view <name>")
         return
     from reyn.data.memory import find_one, list_entries
 
@@ -120,10 +120,10 @@ async def _view_memory(session: "Session", name: str) -> None:
         all_entries = list_entries()
         entry = next((e for e in all_entries if e.name == name), None)
     if entry is None:
-        await reply_error(session, f"memory entry not found: {name!r}")
+        await reply_error(ctx, f"memory entry not found: {name!r}")
         return
     header = f"{entry.name}  [{entry.type}]"
     if entry.description:
         header += f"  — {entry.description}"
     body = entry.body or "(empty body)"
-    await reply(session, f"{header}\n\n{body}")
+    await reply(ctx, f"{header}\n\n{body}")

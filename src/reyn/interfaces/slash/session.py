@@ -23,15 +23,10 @@ routing for non-REPL transports (web / A2A) is Stage 4b.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.spawn_routing import ReviewedNA
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
 
 _USAGE = "usage: /session new | /session switch <sid> | /session list"
 
@@ -95,15 +90,15 @@ def _inherited_restriction_lines(reg, name: str, sid: str) -> "list[str]":
     usage="/session new | /session switch <sid> | /session list",
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
-async def session_cmd(session: "Session", args: str) -> None:
+async def session_cmd(ctx: "SlashContext", args: str) -> None:
     """``/session <new|switch <sid>|list>`` — per-agent multi-session control."""
-    reg = session._registry
+    reg = ctx.session._registry
     if reg is None:
-        await reply_error(session, "/session needs a multi-agent registry session")
+        await reply_error(ctx, "/session needs a multi-agent registry session")
         return
     name = reg.attached_name
     if name is None:
-        await reply_error(session, "no agent attached")
+        await reply_error(ctx, "no agent attached")
         return
 
     parts = args.strip().split(maxsplit=1)
@@ -137,7 +132,7 @@ async def session_cmd(session: "Session", args: str) -> None:
         # attach target and the identities coincide. A branch would be a lenient special
         # case for exactly the caller a uniform restrict-only rule exists to bound.
         parent_narrowing = reg.per_session_narrowing(
-            session.agent_name, session.session_id,
+            ctx.session.agent_name, ctx.session.session_id,
         )
         inherited = compose_narrowing_mappings(parent_narrowing, None)
         try:
@@ -151,21 +146,21 @@ async def session_cmd(session: "Session", args: str) -> None:
                 narrowing=inherited,
             )
         except ValueError as exc:  # dup id (spawn_session guards)
-            await reply_error(session, str(exc))
+            await reply_error(ctx, str(exc))
             return
         lines = [f"opened session {sid!r} — /session switch {sid} to focus it"]
         if inherited:
             lines.extend(_inherited_restriction_lines(reg, name, sid))
-        await reply(session, "\n".join(lines))
+        await reply(ctx, "\n".join(lines))
         return
 
     if sub == "switch":
         if not rest:
-            await reply_error(session, _USAGE)
+            await reply_error(ctx, _USAGE)
             return
         if reg.get_session(name, rest) is None:
             await reply_error(
-                session,
+                ctx,
                 f"no session {rest!r} for {name!r}"
                 " — use the session name (e.g. 'main') or full session ID;"
                 " partial prefixes are not supported. Try /session list.",
@@ -174,8 +169,8 @@ async def session_cmd(session: "Session", args: str) -> None:
         # Visible breadcrumb; the actual focus flip is driven by the sentinel
         # below (the registry forwarder consumes it → attach_session), mirroring
         # /attach so display re-wiring is sequenced on the registry side.
-        await reply(session, f"switching to session {rest!r}")
-        await session._put_outbox(OutboxMessage(
+        await reply(ctx, f"switching to session {rest!r}")
+        ctx.transport.put_display(OutboxMessage(
             kind="__session_switch_request__", text=rest,
         ))
         return
@@ -183,11 +178,11 @@ async def session_cmd(session: "Session", args: str) -> None:
     if sub == "list":
         sids = reg.session_ids(name)
         if not sids:
-            await reply(session, f"no sessions loaded for {name!r}")
+            await reply(ctx, f"no sessions loaded for {name!r}")
             return
         focused = reg.attached_sid
         lines = [f"  {'*' if s == focused else ' '} {s}" for s in sids]
-        await reply(session, f"sessions for {name!r}:\n" + "\n".join(lines))
+        await reply(ctx, f"sessions for {name!r}:\n" + "\n".join(lines))
         return
 
-    await reply_error(session, _USAGE)
+    await reply_error(ctx, _USAGE)

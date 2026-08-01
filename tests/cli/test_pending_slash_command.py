@@ -22,6 +22,17 @@ if str(_SRC) not in sys.path:
 
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_messages)
 
 
 @dataclass
@@ -101,7 +112,7 @@ async def test_pending_list_renders_stalled_ops() -> None:
         ),
     ])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "")
+    await cmd.handler(_ctx(sess), "")
     # At least one outbox reply produced (kind=system) containing the iv info.
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
     assert reply_msgs, "expected at least one system reply"
@@ -117,7 +128,7 @@ async def test_pending_list_empty_returns_friendly_text() -> None:
     """Tier 2b: empty stalled list → "no pending operations" reply."""
     sess = _StubSession(pending_ops=[])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "list")
+    await cmd.handler(_ctx(sess), "list")
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
     assert reply_msgs, "expected at least one system reply"
     assert "no pending" in reply_msgs[0].text.lower()
@@ -134,7 +145,7 @@ async def test_pending_discard_first_invocation_shows_warning() -> None:
         ),
     ])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "discard iv-abcd1234")
+    await cmd.handler(_ctx(sess), "discard iv-abcd1234")
     # Must NOT have called the API.
     assert sess.discard_calls == []
     # Must emit a warning with "confirm" hint.
@@ -154,7 +165,7 @@ async def test_pending_discard_invokes_session_api_with_confirm() -> None:
         ),
     ])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "discard iv-abcd1234 confirm")
+    await cmd.handler(_ctx(sess), "discard iv-abcd1234 confirm")
     assert sess.discard_calls == ["iv-abcd1234"]
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
     assert any("discarded" in m.text for m in reply_msgs)
@@ -176,7 +187,7 @@ async def test_pending_discard_resolves_short_prefix_id() -> None:
         ),
     ])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "discard iv-abcd1 confirm")
+    await cmd.handler(_ctx(sess), "discard iv-abcd1 confirm")
     assert sess.discard_calls == ["iv-abcd1234"]
 
 
@@ -205,7 +216,7 @@ async def test_pending_claim_invokes_session_api_with_tui_channel() -> None:
         ),
     )
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "claim iv-abcd1234")
+    await cmd.handler(_ctx(sess), "claim iv-abcd1234")
     assert sess.claim_calls == [("iv-abcd1234", DEFAULT_CHAT_CHANNEL_ID)]
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
     assert any("claimed" in m.text for m in reply_msgs)
@@ -221,7 +232,7 @@ async def test_pending_discard_unknown_id_emits_error() -> None:
         ),
     ])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "discard iv-nonexistent")
+    await cmd.handler(_ctx(sess), "discard iv-nonexistent")
     assert sess.discard_calls == []
     error_msgs = [m for m in sess.outbox_messages if m.kind == "error"]
     assert error_msgs
@@ -232,7 +243,7 @@ async def test_pending_unknown_subcommand_emits_usage_error() -> None:
     """Tier 2b: ``/pending bogus`` → usage error reply."""
     sess = _StubSession(pending_ops=[])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "bogus")
+    await cmd.handler(_ctx(sess), "bogus")
     error_msgs = [m for m in sess.outbox_messages if m.kind == "error"]
     assert error_msgs
     assert "Usage" in error_msgs[0].text or "usage" in error_msgs[0].text

@@ -23,7 +23,7 @@ import base64
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
@@ -134,11 +134,11 @@ def _image_path_completer(
     aliases=("img",),
     completer=_image_path_completer,
 )
-async def image_cmd(session: object, args: str) -> None:
+async def image_cmd(ctx: "SlashContext", args: str) -> None:
     path_str = args.strip()
     if not path_str:
         await reply_error(
-            session,
+            ctx,
             "usage: /image <path>  (e.g. `/image ./shot.png`). "
             "Supported extensions: .png / .jpg / .jpeg / .gif / .webp / .svg.",
         )
@@ -152,16 +152,16 @@ async def image_cmd(session: object, args: str) -> None:
     path = path.resolve()
 
     if not path.exists():
-        await reply_error(session, f"image not found: {path_str}")
+        await reply_error(ctx, f"image not found: {path_str}")
         return
     if not path.is_file():
-        await reply_error(session, f"not a file: {path_str}")
+        await reply_error(ctx, f"not a file: {path_str}")
         return
 
     mime = _mime_for_path(path)
     if mime is None:
         await reply_error(
-            session,
+            ctx,
             f"unsupported image extension {path.suffix!r}. "
             f"Supported: {', '.join(sorted(_IMAGE_EXTENSIONS))}",
         )
@@ -170,15 +170,15 @@ async def image_cmd(session: object, args: str) -> None:
     try:
         image_bytes = path.read_bytes()
     except OSError as exc:
-        await reply_error(session, f"failed to read {path_str}: {exc}")
+        await reply_error(ctx, f"failed to read {path_str}: {exc}")
         return
 
     # Apply the shared media-size gate (= #364 infrastructure). When the
     # session was built without a ReynConfig (= direct construction in
     # tests), `_multimodal_config` is None — skip the gate gracefully.
-    mm_cfg = getattr(session, "_multimodal_config", None)
-    perm = getattr(session, "_perm", None)
-    bus = getattr(session, "_intervention_bus", None)
+    mm_cfg = getattr(ctx.session, "_multimodal_config", None)
+    perm = getattr(ctx.session, "_perm", None)
+    bus = getattr(ctx.session, "_intervention_bus", None)
     if mm_cfg is not None and perm is not None and bus is not None:
         try:
             await perm.require_media_load(
@@ -191,7 +191,7 @@ async def image_cmd(session: object, args: str) -> None:
             )
         except PermissionError as exc:
             await reply_error(
-                session,
+                ctx,
                 f"image not attached: {exc}",
             )
             return
@@ -212,18 +212,18 @@ async def image_cmd(session: object, args: str) -> None:
     }
     # Queue is drained by Session._handle_inbox_text on the next
     # user turn (= attached to that ChatMessage.media).
-    queue: list[dict] = getattr(session, "_pending_user_images", None)
+    queue: list[dict] = getattr(ctx.session, "_pending_user_images", None)
     if queue is None:
         # Session variants without #366 wiring shouldn't accept the
         # command — surface a clear error rather than silently no-op.
         await reply_error(
-            session,
+            ctx,
             "image queue is unavailable on this session (=#366 wiring missing).",
         )
         return
     queue.append(block)
     await reply(
-        session,
+        ctx,
         f"image attached: {path.name} ({_file_size_human(len(image_bytes))}, {mime}). "
         f"queued count: {len(queue)}. Send your next message to include it.",
     )

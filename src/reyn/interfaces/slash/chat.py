@@ -1,19 +1,14 @@
 """/list, /answer slash commands."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, reply_error, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
 @slash("list", summary="List pending interventions")
-async def list_cmd(session: "Session", args: str) -> None:
+async def list_cmd(ctx: "SlashContext", args: str) -> None:
     """``/list`` — show pending interventions."""
     lines: list[str] = ["running tasks: (none)"]
-    active_ivs = session._interventions.list_active()
+    active_ivs = ctx.session._interventions.list_active()
     if active_ivs:
         lines.append("pending interventions:")
         for iv in active_ivs:
@@ -22,7 +17,7 @@ async def list_cmd(session: "Session", args: str) -> None:
                 f"  {iv.id[:8]}  {iv.kind:<20}  "
                 f"{iv.actor or '?'}#{short}"
             )
-    await reply(session, "\n".join(lines))
+    await reply(ctx, "\n".join(lines))
 
 
 def _intervention_id_completer(
@@ -63,7 +58,7 @@ def _intervention_id_completer(
     usage="/answer <id-prefix> <text>",
     completer=_intervention_id_completer,
 )
-async def answer_cmd(session: "Session", args: str) -> None:
+async def answer_cmd(ctx: "SlashContext", args: str) -> None:
     """``/answer <id-prefix> <text>`` — deliver answer to a non-head
     intervention.
 
@@ -73,29 +68,29 @@ async def answer_cmd(session: "Session", args: str) -> None:
     """
     parts = args.split(maxsplit=1)
     if not parts:
-        await reply_error(session, "usage: /answer <id-prefix> <text>")
+        await reply_error(ctx, "usage: /answer <id-prefix> <text>")
         return
     prefix = parts[0]
     text = parts[1] if len(parts) > 1 else ""
-    iid, candidates = session._resolve_intervention_id(prefix)
+    iid, candidates = ctx.session._resolve_intervention_id(prefix)
     if iid is None:
         if not candidates:
             await reply_error(
-                session,
+                ctx,
                 f"no pending intervention matches {prefix!r}",
             )
         else:
             matches = ", ".join(c[:8] for c in candidates)
             await reply_error(
-                session,
+                ctx,
                 f"ambiguous prefix {prefix!r}; matches: {matches}",
             )
         return
-    iv = session._interventions.get(iid)
+    iv = ctx.session._interventions.get(iid)
     if iv is None:
         await reply_error(
-            session,
+            ctx,
             f"intervention {prefix!r} disappeared mid-resolution",
         )
         return
-    await session._deliver_answer_to(iv, text)
+    await ctx.session._deliver_answer_to(iv, text)

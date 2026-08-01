@@ -28,31 +28,21 @@ import pytest
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.outbox import OutboxMessage
 from reyn.tools.action_usage_tracker import ActionUsageTracker
+from tests._support.slash import slash_ctx
 
 
 class _StubSession:
     """Minimal session-shaped object the slash handler reads from.
 
-    The handler uses ``history``, ``history_path``, ``_action_usage_tracker``,
-    and the same ``_put_outbox`` channel ``reply()`` / ``reply_error()``
-    use. Everything else can be absent.
+    The handler uses ``history``, ``history_path`` and
+    ``_action_usage_tracker``; its replies go through the client transport
+    (#3595 S4), not through this object. Everything else can be absent.
     """
 
     def __init__(self, *, history: list, history_path: Path, tracker):
         self.history = history
         self.history_path = history_path
         self._action_usage_tracker = tracker
-        self.outbox: asyncio.Queue = asyncio.Queue()
-
-    async def _put_outbox(self, msg: OutboxMessage) -> None:
-        await self.outbox.put(msg)
-
-
-def _drain_outbox(session: _StubSession) -> list[OutboxMessage]:
-    msgs: list[OutboxMessage] = []
-    while not session.outbox.empty():
-        msgs.append(session.outbox.get_nowait())
-    return msgs
 
 
 # ── ActionUsageTracker.reset() ────────────────────────────────────────────
@@ -142,11 +132,12 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
         history_path=history_path,
         tracker=tracker,
     )
+    ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     assert cmd is not None
-    await cmd.handler(session, "")
+    await cmd.handler(ctx, "")
 
-    msgs = _drain_outbox(session)
+    msgs = ctx.transport.displayed
     assert len(msgs) >= 1
     body = msgs[-1].text
     assert "confirm" in body.lower()
@@ -172,14 +163,15 @@ async def test_confirm_clears_history_and_tracker(tmp_path: Path):
         history_path=history_path,
         tracker=tracker,
     )
+    ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
-    await cmd.handler(session, "confirm")
+    await cmd.handler(ctx, "confirm")
 
     assert session.history == []
     assert not history_path.exists()
     tracker_size = len(tracker)
     assert tracker_size == 0
-    msgs = _drain_outbox(session)
+    msgs = ctx.transport.displayed
     success_lines = [m.text for m in msgs if "Cleared" in m.text]
     assert success_lines, f"expected a confirmation; got {[m.text for m in msgs]}"
 
@@ -206,8 +198,9 @@ async def test_confirm_preserves_unrelated_files(tmp_path: Path):
     session = _StubSession(
         history=["x"], history_path=history_path, tracker=tracker,
     )
+    ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
-    await cmd.handler(session, "confirm")
+    await cmd.handler(ctx, "confirm")
 
     assert events_sentinel.read_text() == "audit-log-entry\n"
     assert wal_sentinel.read_text() == "wal-entry\n"
@@ -223,8 +216,9 @@ async def test_confirm_when_tracker_missing(tmp_path: Path):
     session = _StubSession(
         history=["x"], history_path=history_path, tracker=None,
     )
+    ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
-    await cmd.handler(session, "confirm")
+    await cmd.handler(ctx, "confirm")
     assert session.history == []
     assert not history_path.exists()
 
@@ -238,7 +232,8 @@ async def test_confirm_when_history_already_empty(tmp_path: Path):
         history_path=tmp_path / "nonexistent.jsonl",
         tracker=None,
     )
+    ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
-    await cmd.handler(session, "confirm")
-    msgs = _drain_outbox(session)
+    await cmd.handler(ctx, "confirm")
+    msgs = ctx.transport.displayed
     assert msgs  # something was said

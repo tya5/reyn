@@ -24,6 +24,7 @@ if str(_SRC) not in sys.path:
 # Import the module so the @slash decorator fires and registers the command.
 import reyn.interfaces.slash.concept  # noqa: F401  (side-effect: registers /concept)
 from reyn.interfaces.slash.concept import _lookup, _parse_glossary
+from tests._support.slash import slash_ctx
 
 # ── fixture ────────────────────────────────────────────────────────────────
 
@@ -112,16 +113,6 @@ def test_lookup_no_match_no_suggestions() -> None:
 # ── /concept command — smoke tests via the live REGISTRY ──────────────────
 
 
-class _FakeSession:
-    """Minimal session stand-in: collects outbox messages without networking."""
-
-    def __init__(self) -> None:
-        self.messages: list[dict] = []
-
-    async def _put_outbox(self, msg: object) -> None:
-        self.messages.append({"kind": msg.kind, "text": msg.text})
-
-
 async def _run_concept(args: str, *, glossary_path: Path | None = None) -> list[dict]:
     """Invoke the registered /concept handler; returns collected messages.
 
@@ -132,7 +123,7 @@ async def _run_concept(args: str, *, glossary_path: Path | None = None) -> list[
     import reyn.interfaces.slash.concept as _mod
     from reyn.interfaces.slash import REGISTRY
 
-    session = _FakeSession()
+    ctx = slash_ctx()
     cmd = REGISTRY.get("concept")
     assert cmd is not None, "/concept must be registered"
 
@@ -140,13 +131,13 @@ async def _run_concept(args: str, *, glossary_path: Path | None = None) -> list[
         original = _mod._default_glossary_path
         _mod._default_glossary_path = lambda: glossary_path
         try:
-            await cmd.handler(session, args)
+            await cmd.handler(ctx, args)
         finally:
             _mod._default_glossary_path = original
     else:
-        await cmd.handler(session, args)
+        await cmd.handler(ctx, args)
 
-    return session.messages
+    return [{"kind": m.kind, "text": m.text} for m in ctx.transport.displayed]
 
 
 # ── helpers to make async tests runnable ──────────────────────────────────

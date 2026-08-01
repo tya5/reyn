@@ -19,7 +19,7 @@ Usage::
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import slash
+from reyn.interfaces.slash import SlashContext, slash
 from reyn.runtime.outbox import OutboxMessage
 
 
@@ -28,9 +28,9 @@ from reyn.runtime.outbox import OutboxMessage
     summary="Copy an agent reply to the clipboard",
     usage="/copy [N|list]",
 )
-async def copy_cmd(session: "object", args: str) -> None:
+async def copy_cmd(ctx: "SlashContext", args: str) -> None:
     # Forward the raw arg; the TUI handler validates and surfaces errors so
     # we don't duplicate the parsing logic across the slash + outbox layers.
-    await session._put_outbox(OutboxMessage(
+    ctx.transport.put_display(OutboxMessage(
         kind="__copy_last_reply__", text=(args or "").strip(),
     ))

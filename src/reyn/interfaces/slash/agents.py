@@ -8,14 +8,8 @@ right outbox shape.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 from reyn.runtime.outbox import OutboxMessage
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
-
 
 _NO_REGISTRY_AGENTS = (
     "agent registry not wired; /agents only works in `reyn chat`"
@@ -38,22 +32,22 @@ def _attach_completer(session: "object", arg_partial: str = "") -> list[str]:
 
 
 @slash("agents", summary="List all agents (* = attached, · = loaded)")
-async def agents_cmd(session: "Session", args: str) -> None:
+async def agents_cmd(ctx: "SlashContext", args: str) -> None:
     """``/agents`` — list known agents with attach / loaded markers."""
-    if session._registry is None:
-        await reply_error(session, _NO_REGISTRY_AGENTS)
+    if ctx.session._registry is None:
+        await reply_error(ctx, _NO_REGISTRY_AGENTS)
         return
-    names = session._registry.list_active_names()  # #1954: hide archived agents
+    names = ctx.session._registry.list_active_names()  # #1954: hide archived agents
     if not names:
         # Default agent auto-creates on first chat start, so an empty list
         # is unexpected — surface as system note rather than swallowing.
         await reply(
-            session,
+            ctx,
             "no agents (this should not happen — default auto-creates)",
         )
         return
-    attached = session._registry.attached_name
-    loaded = set(session._registry.loaded_names())
+    attached = ctx.session._registry.attached_name
+    loaded = set(ctx.session._registry.loaded_names())
     # Header with column labels + legend. Compact ``HH:MM`` for today's
     # activity (vs full ``YYYY-MM-DDTHH:MM`` for older entries) keeps the
     # column readable when most agents were active in the current session.
@@ -66,12 +60,12 @@ async def agents_cmd(session: "Session", args: str) -> None:
     ]
     for n in names:
         try:
-            profile = session._registry.load_profile(n)
+            profile = ctx.session._registry.load_profile(n)
             role_excerpt = (profile.role or "").strip().splitlines()
             role = role_excerpt[0] if role_excerpt else ""
         except Exception:
             role = "(profile load failed)"
-        last = session._registry.last_activity_at(n)
+        last = ctx.session._registry.last_activity_at(n)
         if last is None:
             last_str = "—"
         elif last.date() == today:
@@ -80,7 +74,7 @@ async def agents_cmd(session: "Session", args: str) -> None:
             last_str = last.strftime("%Y-%m-%d %H:%M")
         mark = "*" if n == attached else (" " if n not in loaded else "·")
         lines.append(f"  {mark} {n:<24} {last_str:<17} {role[:60]}")
-    await reply(session, "\n".join(lines))
+    await reply(ctx, "\n".join(lines))
 
 
 @slash(
@@ -90,7 +84,7 @@ async def agents_cmd(session: "Session", args: str) -> None:
     completer=_attach_completer,
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
-async def attach_cmd(session: "Session", args: str) -> None:
+async def attach_cmd(ctx: "SlashContext", args: str) -> None:
     """``/attach <name>`` — request the REPL switch to a different agent.
 
     The actual switch happens in ``repl._input_loop`` (which owns the
@@ -100,22 +94,22 @@ async def attach_cmd(session: "Session", args: str) -> None:
     """
     name = args.strip()
     if not name:
-        await reply_error(session, "usage: /attach <name>")
+        await reply_error(ctx, "usage: /attach <name>")
         return
-    if session._registry is None:
-        await reply_error(session, _NO_REGISTRY_ATTACH)
+    if ctx.session._registry is None:
+        await reply_error(ctx, _NO_REGISTRY_ATTACH)
         return
-    if not session._registry.exists(name):
+    if not ctx.session._registry.exists(name):
         # The user is already in the TUI — direct them at the slash form,
         # not the CLI shell command, so they don't have to drop out of
         # chat to create the agent.
         await reply_error(
-            session,
+            ctx,
             f"agent {name!r} not found; use /agent new {name} to create it",
         )
         return
-    if name == session._registry.attached_name:
-        await reply(session, f"already attached to {name!r}")
+    if name == ctx.session._registry.attached_name:
+        await reply(ctx, f"already attached to {name!r}")
         return
     # Surface the switch in the conv pane. Without this, ``/attach``
     # produced no in-pane feedback — the user had to run ``/agents``
@@ -123,8 +117,8 @@ async def attach_cmd(session: "Session", args: str) -> None:
     # driven by the ``__attach_request__`` sentinel below; this is a
     # separate, visible breadcrumb. (The header label refresh is
     # blocked by a separate registry-forwarder bug — see #191.)
-    await reply(session, f"attached to {name!r}")
+    await reply(ctx, f"attached to {name!r}")
     # Sentinel kind — see repl._input_loop for the receiver.
-    await session._put_outbox(OutboxMessage(
+    ctx.transport.put_display(OutboxMessage(
         kind="__attach_request__", text=name,
     ))

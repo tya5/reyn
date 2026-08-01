@@ -19,8 +19,19 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.runtime.outbox import OutboxMessage  # noqa: E402
+from tests._support.slash import slash_ctx
 
 # ── Shared stubs ──────────────────────────────────────────────────────────
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session.outbox_messages)
 
 
 class _StubSession:
@@ -54,7 +65,7 @@ def test_pending_list_no_attention_when_clean() -> None:
     from reyn.interfaces.slash.pending import pending_cmd
 
     session = _StubSession()
-    asyncio.run(pending_cmd(session, "list"))
+    asyncio.run(pending_cmd(_ctx(session), "list"))
 
     text = session.captured_text()
     assert "needs attention" not in text, (

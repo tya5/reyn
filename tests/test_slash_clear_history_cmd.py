@@ -13,8 +13,19 @@ from reyn.interfaces.slash.clear_history import (
     clear_history_cmd,
 )
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
 
 # ── stubs ──────────────────────────────────────────────────────────────────
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now (#3595 S4), so the list these assertions
+    read is the one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -100,7 +111,7 @@ def test_format_currently_both_attrs() -> None:
 async def test_clear_history_no_confirm_sends_warning_not_error() -> None:
     """Tier 2: /clear-history without 'confirm' sends a warning, not an error."""
     session = _FakeSession()
-    await clear_history_cmd(session, "")
+    await clear_history_cmd(_ctx(session), "")
     assert not session.error_text(), "expected no error for missing confirm"
     # Must include some reply (the "type /clear-history confirm" warning)
     assert session.reply_text(), "expected at least one system reply"
@@ -110,7 +121,7 @@ async def test_clear_history_no_confirm_sends_warning_not_error() -> None:
 async def test_clear_history_no_confirm_warns_about_confirm_token() -> None:
     """Tier 2: the warning tells the user to type /clear-history confirm."""
     session = _FakeSession()
-    await clear_history_cmd(session, "not_confirm")
+    await clear_history_cmd(_ctx(session), "not_confirm")
     text = session.reply_text()
     assert "confirm" in text.lower()
 
@@ -120,7 +131,7 @@ async def test_clear_history_confirm_clears_history_list() -> None:
     """Tier 2: /clear-history confirm mutates the in-memory history list to empty."""
     history: list = ["turn1", "turn2"]
     session = _FakeSession(history=history)
-    await clear_history_cmd(session, "confirm")
+    await clear_history_cmd(_ctx(session), "confirm")
     assert history == []
 
 
@@ -129,7 +140,7 @@ async def test_clear_history_confirm_calls_tracker_reset() -> None:
     """Tier 2: /clear-history confirm calls tracker.reset()."""
     tracker = _FakeTracker(4)
     session = _FakeSession(tracker=tracker)
-    await clear_history_cmd(session, "confirm")
+    await clear_history_cmd(_ctx(session), "confirm")
     assert tracker.reset_called
 
 
@@ -137,7 +148,7 @@ async def test_clear_history_confirm_calls_tracker_reset() -> None:
 async def test_clear_history_confirm_sends_success_reply() -> None:
     """Tier 2: /clear-history confirm sends a system (success) reply, not an error."""
     session = _FakeSession(history=["x"], tracker=_FakeTracker(2))
-    await clear_history_cmd(session, "confirm")
+    await clear_history_cmd(_ctx(session), "confirm")
     kinds = [m.kind for m in session._outbox]
     assert "error" not in kinds
     assert "system" in kinds
@@ -147,7 +158,7 @@ async def test_clear_history_confirm_sends_success_reply() -> None:
 async def test_clear_history_confirm_nothing_to_clear() -> None:
     """Tier 2: /clear-history confirm with empty history + no tracker → nothing-to-clear reply."""
     session = _FakeSession()  # no history, no tracker
-    await clear_history_cmd(session, "confirm")
+    await clear_history_cmd(_ctx(session), "confirm")
     text = session.reply_text()
     assert "nothing" in text.lower() or "empty" in text.lower()
 
@@ -179,7 +190,7 @@ async def test_clear_history_disk_fail_leaves_memory_intact() -> None:
     """
     history: list = ["turn1", "turn2"]
     session = _FakeSession(history=history, history_path=_FailingPath())
-    await clear_history_cmd(session, "confirm")
+    await clear_history_cmd(_ctx(session), "confirm")
 
     # Memory must be unchanged — disk failed so nothing was committed.
     assert history == ["turn1", "turn2"], (

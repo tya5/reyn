@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from reyn.interfaces.slash import reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
@@ -55,15 +55,15 @@ def _model_class_completer(session: "Session", arg_partial: str = "") -> list[st
     usage="/model [<class>]",
     completer=_model_class_completer,
 )
-async def model_cmd(session: "Session", args: str) -> None:
+async def model_cmd(ctx: "SlashContext", args: str) -> None:
     """/model [<class>] — show current model or set a per-session override."""
-    resolver = session._resolver
+    resolver = ctx.session._resolver
     requested = args.strip()
 
     if not requested:
-        agent_default = session._agent.model
-        current = session.model
-        override = session._model_override
+        agent_default = ctx.session._agent.model
+        current = ctx.session.model
+        override = ctx.session._model_override
         lines = [f"model: {current}"]
         if override is not None:
             lines.append(f"  override: {override} (this session — clears on restart)")
@@ -71,12 +71,12 @@ async def model_cmd(session: "Session", args: str) -> None:
         else:
             lines.append("  (agent default, no override set)")
         lines.append(f"available: {', '.join(resolver.known_classes())}")
-        await reply(session, "\n".join(lines))
+        await reply(ctx, "\n".join(lines))
         return
 
     if not resolver.is_known_class(requested):
         await reply_error(
-            session,
+            ctx,
             f"unknown model class {requested!r}; "
             f"available: {', '.join(resolver.known_classes())}",
         )
@@ -91,23 +91,23 @@ async def model_cmd(session: "Session", args: str) -> None:
         maybe_block_high_cost_model,
         maybe_emit_model_cost_warn,
     )
-    if not await maybe_block_high_cost_model(session, requested, action="model_override"):
+    if not await maybe_block_high_cost_model(ctx.session, requested, action="model_override"):
         await reply(
-            session,
+            ctx,
             f"model switch to {requested} cancelled (high-cost model not confirmed).",
         )
         return
 
-    session._model_override = requested
+    ctx.session._model_override = requested
     # #1752: the per-turn budget consumers (history buffer / context budget
     # advisor) read the live resolved model via their model_fn, but the
     # turn_budget engine bakes derived headroom at construction, so rebuild it
     # for the new model's context window.
-    session._rebuild_turn_budget_engine_for_model()
+    ctx.session._rebuild_turn_budget_engine_for_model()
 
     # #1830 / FP-0052: emit model_cost_warn event if the chosen model exceeds
     # the configured cost threshold (pre-selection awareness). De-duped per
     # session: same model warned at most once.
-    maybe_emit_model_cost_warn(session, requested, action="model_override")
+    maybe_emit_model_cost_warn(ctx.session, requested, action="model_override")
 
-    await reply(session, f"model → {requested} (this session — clears on restart)")
+    await reply(ctx, f"model → {requested} (this session — clears on restart)")

@@ -6,13 +6,7 @@ slash command logic — it just holds the BudgetGateway the handlers read.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from reyn.interfaces.slash import reply, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
-
+from reyn.interfaces.slash import SlashContext, reply, slash
 
 _TRACKER_DISABLED = (
     "budget tracker is disabled (no `cost:` config or non-chat mode)"
@@ -20,13 +14,13 @@ _TRACKER_DISABLED = (
 
 
 @slash("cost", summary="Quick token + USD cost summary for this agent")
-async def cost_cmd(session: "Session", args: str) -> None:
+async def cost_cmd(ctx: "SlashContext", args: str) -> None:
     """``/cost`` — one-line token + USD spend for the attached agent."""
-    line = session._budget.cost_line()
+    line = ctx.session._budget.cost_line()
     if line is None:
-        await reply(session, _TRACKER_DISABLED)
+        await reply(ctx, _TRACKER_DISABLED)
         return
-    await reply(session, line)
+    await reply(ctx, line)
 
 
 @slash(
@@ -35,7 +29,7 @@ async def cost_cmd(session: "Session", args: str) -> None:
     usage="/budget [reset]",
     see_also=("docs/reference/config/budget.md",),
 )
-async def budget_cmd(session: "Session", args: str) -> None:
+async def budget_cmd(ctx: "SlashContext", args: str) -> None:
     """``/budget`` (full breakdown) or ``/budget reset`` (clear counters).
 
     ``reset`` clears per-process counters (agent tokens / cost, sub-agent
@@ -45,9 +39,9 @@ async def budget_cmd(session: "Session", args: str) -> None:
     """
     sub = args.strip()
     if sub == "reset":
-        before = session._budget.reset_all()
+        before = ctx.session._budget.reset_all()
         if before is None:
-            await reply(session, _TRACKER_DISABLED)
+            await reply(ctx, _TRACKER_DISABLED)
             return
         lines = ["Budget counters reset."]
         if before.get("agent_tokens"):
@@ -62,11 +56,11 @@ async def budget_cmd(session: "Session", args: str) -> None:
             "they auto-reset at period boundary."
         )
         lines.append("Use `/budget` to verify.")
-        await reply(session, "\n".join(lines))
+        await reply(ctx, "\n".join(lines))
         return
 
-    text = session._budget.budget_full()
+    text = ctx.session._budget.budget_full()
     if text is None:
-        await reply(session, _TRACKER_DISABLED)
+        await reply(ctx, _TRACKER_DISABLED)
         return
-    await reply(session, text)
+    await reply(ctx, text)

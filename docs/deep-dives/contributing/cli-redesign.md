@@ -206,9 +206,16 @@ descriptor:
 class SlashCommand:
     name: str           # "agents" (without /)
     summary: str        # "List or switch agents"
-    handler: Callable   # async (session, args) -> outbox messages
+    handler: Callable   # async (ctx: SlashContext, args) -> displayed messages
     completer: Callable | None = None  # optional dynamic completion (e.g., agent names for /attach)
 ```
+
+**Since #3595 S4** the handler's first argument is a `SlashContext`, not a
+`Session`: slash is client-side, so what a handler depends on is the client
+seam (`ClientTransport` — `reply()` writes through `put_display`). The
+`session` field on the context is declared migration residue, enumerated in
+`tests/test_3595_s4_slash_handler_seam.py`, not a supported dependency for a
+new command.
 
 The registry is populated by importing each slash module
 (`slash/agents.py`, `slash/cost.py`, …). `session.py` no longer hard-
@@ -321,8 +328,10 @@ The TUI app does not modify `ChatSession`. It interacts via:
 **TUI → Engine** (input):
 - User text → `session.submit_user_text(text)` (or, in multi-agent,
   `registry.attached_session.submit_user_text(text)`).
-- Slash command → dispatch via `slash.registry[name].handler(session, args)`.
-  The handler uses existing internal APIs.
+- Slash command → dispatch via `slash.registry[name].handler(ctx, args)`,
+  where `ctx` is a `SlashContext` (#3595 S4). The handler displays through
+  `ctx.transport` (`ClientTransport.put_display`); its remaining session-side
+  reads ride `ctx.session` until each is designed into a published operation.
 - Intervention answer → `session.submit_intervention_response(...)` (the
   existing `ChatSession` API; verify exact method during impl).
 

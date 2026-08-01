@@ -13,8 +13,19 @@ import pytest
 
 from reyn.interfaces.slash.agents import agents_cmd, attach_cmd
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.slash import slash_ctx
 
 # ── stubs ──────────────────────────────────────────────────────────────────
+
+
+def _ctx(session):
+    """The context the production dispatch hands a slash handler.
+
+    The transport IS this test's display recorder — ``reply()`` writes
+    through the client seam now, so the list the assertions read is the
+    one the transport fills.
+    """
+    return slash_ctx(session, recorder=session._outbox)
 
 
 class _FakeSession:
@@ -80,7 +91,7 @@ class _FakeRegistry:
 async def test_agents_no_registry_sends_error() -> None:
     """Tier 2: /agents with no registry wired replies an error."""
     session = _FakeSession(registry=None)
-    await agents_cmd(session, "")
+    await agents_cmd(_ctx(session), "")
     assert session.error_text(), "expected error reply when registry absent"
     assert not session.system_text()
 
@@ -89,7 +100,7 @@ async def test_agents_no_registry_sends_error() -> None:
 async def test_agents_empty_name_list_sends_system_note() -> None:
     """Tier 2: /agents with an empty name list sends a system note (unexpected state)."""
     session = _FakeSession(registry=_FakeRegistry(names=[]))
-    await agents_cmd(session, "")
+    await agents_cmd(_ctx(session), "")
     assert session.system_text(), "expected system note for empty agents"
     assert not session.error_text()
 
@@ -100,7 +111,7 @@ async def test_agents_listing_includes_agent_names() -> None:
     session = _FakeSession(
         registry=_FakeRegistry(names=["alpha", "beta"], attached="alpha")
     )
-    await agents_cmd(session, "")
+    await agents_cmd(_ctx(session), "")
     text = session.system_text()
     assert "alpha" in text
     assert "beta" in text
@@ -112,7 +123,7 @@ async def test_agents_listing_marks_attached_agent() -> None:
     session = _FakeSession(
         registry=_FakeRegistry(names=["alpha", "beta"], attached="alpha")
     )
-    await agents_cmd(session, "")
+    await agents_cmd(_ctx(session), "")
     text = session.system_text()
     # The attached marker (* = attached) appears in the legend and next to the agent
     assert "*" in text
@@ -125,7 +136,7 @@ async def test_agents_listing_marks_attached_agent() -> None:
 async def test_attach_no_name_sends_error() -> None:
     """Tier 2: /attach with no name replies a usage error."""
     session = _FakeSession(registry=_FakeRegistry(names=["alpha"]))
-    await attach_cmd(session, "")
+    await attach_cmd(_ctx(session), "")
     assert session.error_text()
     assert not session.system_text()
 
@@ -134,7 +145,7 @@ async def test_attach_no_name_sends_error() -> None:
 async def test_attach_no_registry_sends_error() -> None:
     """Tier 2: /attach with no registry wired replies an error."""
     session = _FakeSession(registry=None)
-    await attach_cmd(session, "alpha")
+    await attach_cmd(_ctx(session), "alpha")
     assert session.error_text()
 
 
@@ -142,7 +153,7 @@ async def test_attach_no_registry_sends_error() -> None:
 async def test_attach_nonexistent_name_sends_error() -> None:
     """Tier 2: /attach <name> for a name that doesn't exist replies an error."""
     session = _FakeSession(registry=_FakeRegistry(names=["alpha"], attached="alpha"))
-    await attach_cmd(session, "ghost")
+    await attach_cmd(_ctx(session), "ghost")
     assert session.error_text()
     assert "ghost" in session.error_text()
 
@@ -153,7 +164,7 @@ async def test_attach_already_attached_sends_system_note() -> None:
     session = _FakeSession(
         registry=_FakeRegistry(names=["alpha"], attached="alpha")
     )
-    await attach_cmd(session, "alpha")
+    await attach_cmd(_ctx(session), "alpha")
     assert "already" in session.system_text()
     assert not session.error_text()
 
@@ -164,7 +175,7 @@ async def test_attach_valid_name_sends_success_reply() -> None:
     session = _FakeSession(
         registry=_FakeRegistry(names=["alpha", "beta"], attached="alpha")
     )
-    await attach_cmd(session, "beta")
+    await attach_cmd(_ctx(session), "beta")
     assert session.system_text(), "expected success reply"
     assert not session.error_text()
 
@@ -175,6 +186,6 @@ async def test_attach_valid_name_emits_attach_request_sentinel() -> None:
     session = _FakeSession(
         registry=_FakeRegistry(names=["alpha", "beta"], attached="alpha")
     )
-    await attach_cmd(session, "beta")
+    await attach_cmd(_ctx(session), "beta")
     assert "__attach_request__" in session.outbox_kinds()
     assert session.sentinel_text("__attach_request__") == "beta"
