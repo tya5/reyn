@@ -508,6 +508,53 @@ stop at the equality assertion. Add at least one assertion that names an
 actual expected value for a load-bearing field, reached through only ONE of
 the paths, independent of whatever the other path currently produces.
 
+## 17. Scope, not just pattern — a grep's directory/file-set decides the census as much as its regex does
+
+Distinguish this from §3/§4 (a pattern too narrow in TOKEN SPELLING — a CSS
+`#hex` shape missing a Python `_CC_DIM = "#6b7280"` constant, or POSIX ERE not
+understanding `\s`): here the regex can be exactly right and the census still
+undercounts, because the search never looked in the file, or the package,
+the defect actually lives in. The searcher reports what matched honestly;
+the files never searched produce no signal at all, so a partial SCOPE reads
+exactly like a total one — to the searcher and to the reader, alike.
+
+Two same-day instances (2026-08-02):
+
+- A filed defect asserted "no processing restores the cursor position after
+  paint (grep 0 hits)." The restore call existed the whole time, in
+  `app.py`: `Control.move_to(*cursor_position)` at the end of every frame.
+  The fix PR's own retrospective names the actual miss: "`_compositor.py`
+  だけを見たための誤りで、復帰は `app.py` 側にありました" ("the mistake was
+  from looking at only `_compositor.py`; the restore lives on the `app.py`
+  side"). The filed issue's root cause ("doesn't restore") was wrong; the
+  real defect was "restores to a STALE value" — a different fix entirely
+  (#3621 → #3622).
+- A `$text-muted` census ran a grep scoped to reyn's own chat interface
+  directory, found 6 sites, and reported that as the affected set. The
+  coder's own correction: "私は `grep '\$text-muted'
+  src/reyn/interfaces/inline/textual_chat/*.py` で列挙しました。∴ 答えられ
+  るのは『reyn が `\$text-muted` と書いた場所』だけです" — the grep's scope
+  was reyn's own source tree, and the same collapsed-to-`$text`-value defect
+  class also lives in Textual's own `DEFAULT_CSS` (`_text_area.py`,
+  `_input.py`, `_option_list.py`) — a directory the census never entered
+  because it isn't reyn's code, and one of those sites was already the
+  confirmed cause of a distinct, previously-fixed bug in the same class
+  (#3523).
+
+### The detection technique
+
+Neither closure came from a better regex. Instance 1 was caught by
+searching OUTSIDE the file set the original diagnosis had named. Instance 2
+was caught by asking "does this defect class exist somewhere I didn't
+look, for a reason unrelated to how it's spelled" — the dependency's own
+source tree, not `reyn`'s — rather than widening the pattern.
+
+**Apply**: state scope alongside the count — "N, over `<files/dirs
+searched>`" — an unscoped N reads as total. Before trusting a 0 or a small
+N, name every location the defect COULD live (adjacent files in the same
+subsystem, a dependency's own source, a sibling directory) and confirm each
+was actually searched, not just the one that felt likely.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
