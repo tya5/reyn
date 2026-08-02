@@ -60,6 +60,13 @@ class FakeRouterHost:
 
         # Track calls
         self.outbox: list[dict] = []
+        # #3633: mirrors RouterHostAdapter's kind=="agent" → history-append
+        # side effect (gated by ``persist``, default True) so a router_loop
+        # test can assert on the actual persisted-history population, not
+        # just the outbox. ``append_history_entry`` mirrors the OTHER
+        # persist path (``RouterLoop.feedback()`` → ``append_history_entry``)
+        # so both producers of a #3633-shaped duplicate are exercised.
+        self.history: list[dict] = []
         self.skill_calls: list[dict] = []
         self.agent_sends: list[dict] = []
         self.spawn_calls: list[dict] = []
@@ -154,8 +161,34 @@ class FakeRouterHost:
                                   "narrowing": narrowing, "chain_id": chain_id})
         return {"status": "ok", "kind": "session_spawned", "mode": mode}
 
-    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+    async def put_outbox(
+        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+    ) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
+        # #3633: mirror RouterHostAdapter.put_outbox's persist side effect.
+        if kind == "agent" and text and persist:
+            self.history.append({
+                "role": "assistant", "content": text, "meta": meta,
+                "tool_calls": None,
+            })
+
+    def append_history_entry(
+        self,
+        *,
+        role: str,
+        content: Any,
+        meta: dict | None = None,
+        tool_calls: "list[dict] | None" = None,
+        tool_call_id: "str | None" = None,
+        name: "str | None" = None,
+    ) -> None:
+        """#3633: mirrors RouterHostAdapter.append_history_entry (issue #383)
+        — the no-outbox-side-effect persist path ``RouterLoop.feedback()``
+        uses for the canonical tool-call turn record."""
+        self.history.append({
+            "role": role, "content": content, "meta": meta or {},
+            "tool_calls": tool_calls,
+        })
 
     # --- File callbacks (the memory capability's, not the host's) ---
     #

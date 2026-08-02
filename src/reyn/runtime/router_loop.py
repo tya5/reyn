@@ -490,7 +490,15 @@ class RouterLoopCore(Protocol):
 
     def resolve_model(self, name: str) -> str: ...
     def make_router_op_context(self) -> Any: ...
-    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None: ...
+    # #3633: ``persist`` makes the kind=="agent" → history-append coupling an
+    # EXPLICIT per-call-site choice instead of an implicit blanket rule the
+    # host applies unconditionally. Defaults True (= the pre-#3633 behavior,
+    # unchanged for every existing caller); a call site whose text is already
+    # persisted by another path (e.g. router_loop's tool-turn display bubble,
+    # duplicated by ``feedback()``'s ``append_history_entry``) passes False.
+    async def put_outbox(
+        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -630,8 +638,11 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str) -> dict: ...
 
-    async def put_outbox(self, *, kind: str, text: str,
-                         meta: dict) -> None: ...
+    # #3633: see RouterLoopCore.put_outbox above — ``persist`` is the same
+    # explicit per-call-site opt-out, inherited here (Protocol overlap).
+    async def put_outbox(
+        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+    ) -> None: ...
 
     # E-full PR-E (issue #383): persist a single ChatMessage entry
     # without routing through the outbox (= no TUI display side-effect).
@@ -2106,16 +2117,30 @@ class RouterLoop:
                 # #1642: surface the assistant's TEXT content that accompanies tool_calls.
                 # The terminal text-reply path (below, ~line 2638) only fires for a
                 # no-tool_calls turn, so on a tool-turn the explanatory text was dropped
-                # from the conversation (it is still persisted to history). Emit it as an
-                # ``agent`` bubble BEFORE _run_execute_round so the text renders ahead of
-                # the tool rows (lifecycle_forwarder queues tool_call_started during the
-                # round). Skip empty (no empty bubble); no double-emit — the terminal path
-                # is no-tool_calls-only, and history persistence is unchanged.
+                # from the conversation. Emit it as an ``agent`` bubble BEFORE
+                # _run_execute_round so the text renders ahead of the tool rows
+                # (lifecycle_forwarder queues tool_call_started during the round). Skip
+                # empty (no empty bubble).
+                #
+                # #3633: this call is DISPLAY-ONLY — ``persist=False``. The prior
+                # comment here ("no double-emit ... history persistence is unchanged")
+                # was wrong: it only ruled out collision with the *different*
+                # no-tool_calls terminal path further down this file and missed that
+                # ``self._scheme.feedback()`` (called a few lines below, via
+                # ``format_feedback`` → ``append_history_entry``) independently
+                # persists this SAME text moments later as the canonical
+                # ``source="router_tool_turn"`` record — the one that also carries
+                # ``tool_calls``, so it is the complete turn. Without ``persist=False``
+                # RouterHostAdapter's unconditional ``kind=="agent"`` → append-to-
+                # history side effect wrote the identical string to history.jsonl
+                # twice (measured: 24/283 adjacent-duplicate assistant records in a
+                # real session, #3633).
                 _tool_turn_text = result.content or ""
                 if _tool_turn_text.strip():
                     await self.host.put_outbox(
                         kind="agent",
                         text=_tool_turn_text,
+                        persist=False,
                         # #1652: supply this turn's reasoning (host gates display/
                         # continuity + emits the discrete kind="reasoning" signal).
                         meta={

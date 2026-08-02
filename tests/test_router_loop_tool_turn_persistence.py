@@ -135,11 +135,16 @@ def test_router_loop_call_site_uses_getattr_guard_for_legacy_hosts(monkeypatch):
     test fakes pre-dating PR-E), the router_loop call site silently
     no-ops instead of crashing — keeps the protocol additive.
     """
-    # The defensive-guard pattern itself is unit-tested by the
-    # broader test_router_loop_*.py suite which uses FakeRouterHost
-    # lacking the new method. Here we pin the contract textually:
-    # the router_loop source uses ``getattr(host, "append_history_entry", None)``
-    # so any host without the method is silently bypassed.
+    # #3633: FakeRouterHost now implements ``append_history_entry`` (it
+    # mirrors RouterHostAdapter's persist side effects so a router_loop test
+    # can assert on the persisted-history population — see
+    # tests/_support/router_loop.py), so the runtime guard is no longer
+    # exercised by "a host lacking the method" in this suite. It still
+    # matters for any narrower RouterLoopCore-only host (see the Protocol
+    # split docstring in router_loop.py), so we keep pinning the contract
+    # textually here: the router_loop source uses
+    # ``getattr(host, "append_history_entry", None)`` so any host without
+    # the method is silently bypassed.
     import inspect
 
     from reyn.runtime import router_loop

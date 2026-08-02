@@ -112,7 +112,7 @@ class _FakeHost:
     async def send_to_agent(self, *, to, request, depth, chain_id) -> None:
         pass
 
-    async def put_outbox(self, *, kind, text, meta) -> None:
+    async def put_outbox(self, *, kind, text, meta, persist: bool = True) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
 
     async def file_read(self, path: str) -> str:
