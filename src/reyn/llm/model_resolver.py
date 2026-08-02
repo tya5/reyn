@@ -76,6 +76,39 @@ class ModelSpec:
         # Placed here (not in from_config) so BOTH the plain-dict path and the
         # extends-merge path (which build ModelSpec directly) are covered
         # by-construction — single validation site, no parallel drift.
+        # #3627: reject an operator-declared ``stream`` (or ``stream_options``)
+        # at config-load. Reyn — not the operator — decides whether a call
+        # streams: `llm.py`'s single completion funnel makes that call
+        # per-request via a litellm capability query
+        # (`_streaming_capable`, inside `recorded_acompletion`) and
+        # deliberately sets no `stream` key of its own at the call site the
+        # operator's kwargs ride into. A `stream: true` here does NOT turn
+        # streaming on (the gate still decides that) — it rides
+        # `spec.kwargs` straight through to `litellm.acompletion` on
+        # whichever branch the gate picks. On the collect-whole branch
+        # (gate says no) that returns a `CustomStreamWrapper` instead of a
+        # completed response, which the branch then reads as one, surfacing
+        # as `EmptyLLMResponseError: LLM returned a 200 response with empty
+        # choices ...; provider response: <CustomStreamWrapper object ...>`
+        # — an error that names neither `stream` nor the config. Reject at
+        # load, before that shape can ever form.
+        if "stream" in self.kwargs or "stream_options" in self.kwargs:
+            _bad = [k for k in ("stream", "stream_options") if k in self.kwargs]
+            raise ValueError(
+                f"models {'/'.join(_bad)} must not be set (model={self.model!r}); "
+                "reyn decides whether a call streams for itself (a per-call "
+                "litellm capability query inside recorded_acompletion) — an "
+                "operator-set 'stream' does not turn streaming on, it only "
+                "rides through to litellm.acompletion on whichever branch "
+                "the gate picks. On the non-streaming branch this makes "
+                "litellm return a stream object that reyn then reads as a "
+                "finished reply, surfacing as "
+                "'EmptyLLMResponseError ... provider response: "
+                "<CustomStreamWrapper ...>'. Remove it from this model's "
+                "config; reyn will stream when it decides the model/call "
+                "shape supports it."
+            )
+
         effort = self.kwargs.get("reasoning_effort")
         if effort is None:
             return
