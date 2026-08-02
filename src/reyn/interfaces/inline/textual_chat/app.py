@@ -966,6 +966,49 @@ class TextualChatApp(App):
         # #3507: mirrors flowview's copy-mode state off ``CopyModeChanged``.
         self._copy_mode = False
 
+    @property
+    def cursor_position(self) -> "Offset":
+        """Where the terminal pen is left at the end of every frame (#3621).
+
+        Textual returns the pen here after each render, so this is also the point
+        an IME anchors its candidate window to. Upstream keeps it as a STORED
+        value that only ``TextArea`` refreshes — on focus, and on cursor moves.
+        The value it stores is ``cursor_screen_offset``, which is derived from
+        the widget's ``content_region``, so it goes stale as soon as the composer
+        is laid out somewhere else while the cursor itself sits still. The
+        conversation growing does exactly that, and it happens on repaints rather
+        than on keystrokes.
+
+        A stale offset does not merely lag — it names whatever now occupies those
+        rows. Measured on a 30-row terminal: the stored value stayed two rows
+        below the real cursor, i.e. ON THE MENU BAR, and the IME window followed
+        it there. Frames after a keystroke were right; frames after a repaint
+        were wrong. That is precisely the owner's report of a candidate window
+        jumping without any typing.
+
+        Deriving it on READ removes the staleness rather than chasing it: there
+        is no layout event to subscribe to that covers being MOVED (``Resize``
+        fires on size, not position), so any push-based refresh would have to
+        find every mover. The composer knows where its own cursor is, so this
+        asks it at the moment the answer is used.
+
+        The stored value still backs every other case — no focus, or a focused
+        widget that is not the composer — so nothing that relied on it changes.
+        """
+        composer = self.screen.focused if self.is_attached else None
+        if isinstance(composer, Composer):
+            try:
+                return composer.cursor_screen_offset
+            except Exception:  # pragma: no cover - geometry not ready yet
+                pass
+        return self._cursor_position
+
+    @cursor_position.setter
+    def cursor_position(self, value: "Offset") -> None:
+        # Upstream writes here from TextArea's own events. Kept as the fallback
+        # for every widget that is not the composer.
+        self._cursor_position = value
+
     def compose(self) -> ComposeResult:
         # Held so the frame pump can start/stop the per-entry BODY animation
         # (``animate_entry``/``stop_entry_animation``) that drives a RUNNING tool
