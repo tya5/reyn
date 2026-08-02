@@ -113,16 +113,18 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "blueprint": ParamDescription(
             text=(
                 "Optional (advanced): an inline declarative component tree with JSON-Pointer "
-                "bindings for full control over the layout. Prefer the simple default (omit both "
-                "view and blueprint) unless you specifically need a custom layout. At most one of "
-                "view / blueprint."
+                "bindings for full control over the layout. A LIST of component nodes, rendered "
+                "top to bottom; use a one-element list for a single component. Prefer the simple "
+                "default (omit both view and blueprint) unless you specifically need a custom "
+                "layout. At most one of view / blueprint."
             ),
             ja=(
                 "任意（上級者向け）: レイアウトを完全制御するインラインの"
                 "宣言的コンポーネントツリー（JSON-Pointer バインディング付き）。"
-                "カスタムレイアウトが特に必要でない限り、view/blueprint 両方"
-                "省略のシンプルなデフォルトを推奨。view / blueprint はどちらか"
-                "一方のみ。"
+                "コンポーネントノードの LIST で、上から順に描画される。単一"
+                "コンポーネントは要素1つの list にする。カスタムレイアウトが"
+                "特に必要でない限り、view/blueprint 両方省略のシンプルな"
+                "デフォルトを推奨。view / blueprint はどちらか一方のみ。"
             ),
         ),
     },

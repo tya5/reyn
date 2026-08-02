@@ -63,6 +63,26 @@ byte-identical, only ``key`` / ``key_components`` moved. Verified re-keyed rathe
 merely re-saved: the NEW fixtures against the OLD description raise ``MissingFixture``
 attributing the drift to ``session_spawn: schema differs``.
 
+#3630 re-keyed BOTH files again, for the same reason at a different tool: the
+``present`` schema changed (``blueprint`` object -> array, plus its parameter
+description). Same switch, same verification — the NEW fixtures against the OLD
+schema raise ``MissingFixture`` attributing the drift to ``present: schema
+differs (08b2323ddf3a -> 4ab741e16061)``.
+
+**Delete the fixture files before regenerating.** ``REYN_FP0063_ARC_WITNESS_GENERATE=1``
+records into whatever is already there, so regenerating in place APPENDS: the
+old keys survive alongside the new ones and the fixture then matches BOTH the
+old and the new schema — green either way, witnessing neither. Measured here:
+regenerating in place took ``turn1`` from 6 keys to 8 with all 6 old ones intact,
+and the result passed against the pre-change ``present`` schema. Deleting first
+produced 2 keys, and that fixture fails against the old schema as it should.
+
+The same measurement says the committed fixture had been accumulating: ``turn1``
+carried the SAME two logical calls three times over with six DISTINCT keys, i.e.
+three schema generations layered by the earlier in-place regenerations, any of
+which would have satisfied a run. The counts this re-key leaves (``turn1`` 2
+keys, ``turn2`` 3) are the arc's actual call count, not a reduction in coverage.
+
 Why the fixture responses are AUTHORED, not live-recorded (disclosed, not
 silently passed off as a live LLM transcript -- same disclosure norm as this
 plugin's markitdown-mcp stub substitution below): this sandbox's LLM
