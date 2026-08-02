@@ -12,8 +12,13 @@ Usage in tests::
 Environment variables
 ---------------------
 ``REYN_LLM_RECORD=1``
-    Force record mode — call the real LLM and overwrite / extend the fixture.
+    Force record mode — call the real LLM and re-record the fixture.
     Requires a live LLM backend (see ``project_local_env.md`` in memory).
+    #3634: this REPLACES each re-recorded call's stale entry rather than
+    appending a duplicate alongside it (``LLMReplay.flush``'s own docstring
+    has the mechanism) — a fixture shared by several tests keeps every
+    OTHER test's entries untouched, so re-running one test under
+    ``REYN_LLM_RECORD=1`` does not erase its siblings' recordings.
 
 Record mode is also activated automatically when a fixture file is missing
 (first-run bootstrap).

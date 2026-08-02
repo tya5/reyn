@@ -255,14 +255,24 @@ changes and replay mode raises `MissingFixture`. This is expected and correct.
 An intentional change to the MCP catalog instead raises `PreconditionMismatch`;
 re-recording is the same fix, and it also refreshes the captured snapshot.
 
-Re-record by deleting the fixture and running with `REYN_LLM_RECORD=1`:
+Re-record with `REYN_LLM_RECORD=1` — **no manual delete required (#3634)**:
 
 ```bash
-rm tests/fixtures/llm/my_area/text_only.jsonl
 REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
 ```
 
-Or delete and let conftest auto-detect the missing file:
+`LLMReplay.flush()` replaces, not appends: an entry this run re-recorded
+(same call, unchanged) or superseded (same call, changed tool schema) is
+dropped from the on-disk copy before the fresh one is written, and any OTHER
+entry — e.g. one recorded by a sibling test that shares this same fixture
+file — is left untouched. Before #3634, `flush()` only ever appended, so
+regenerating in place after a schema change (even a `description`-only edit)
+left the OLD entry on disk alongside the new one: the fixture then matched
+BOTH the old and the new schema and stayed green regardless of which one the
+code implements — worse than a stale fixture, which at least goes RED. Delete
+the fixture first if you prefer an explicit "starting from nothing" (conftest
+auto-detects the missing file and switches to record mode), but it is no
+longer required for correctness:
 
 ```bash
 rm tests/fixtures/llm/my_area/text_only.jsonl
@@ -272,6 +282,8 @@ python -m pytest tests/test_replay_my_area.py -v
 
 Commit the new fixture alongside the change. Reviewers can diff the
 `prompt_preview` field in the JSONL to see what changed.
+`tests/test_replay_fixture_no_stacking_3634.py` is a CI gate that fails if any
+committed fixture ever holds the same logical call under more than one key.
 
 > **Warning — `-k` filtered runs exclude replay tests.** If your local test run uses
 > `-k some_keyword` that does not match replay test names, replay tests are silently
