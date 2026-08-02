@@ -57,7 +57,7 @@ async def test_stream_is_capability_gated_not_forced_false(monkeypatch):
     """Tier 1: framework contract (#3288 ③a) — ``call_llm_tools`` no longer
     forces ``stream=False`` unconditionally (the pre-③a Gemini #21041
     workaround). The decision is now made INSIDE ``recorded_acompletion`` via
-    a litellm capability query (``_streaming_capable``): a genuinely
+    a capability-informed policy (``_streaming_enabled``): a genuinely
     streaming+function-calling-capable model (real litellm capability data,
     not a reyn hardcode) is called with ``stream=True``.
 

@@ -65,6 +65,13 @@ class ModelSpec:
     # for a direct provider). Both default None → inherit the global api_base.
     api_base: str | None = None
     provider: str | None = None  # litellm custom_llm_provider
+    # Whether calls for this class stream. A REYN field consumed by
+    # ``_streaming_enabled`` — never forwarded to litellm, which is the whole
+    # point: passed through as an ordinary kwarg it reaches the collect-whole
+    # branch and makes litellm return a stream object that reyn then reads as a
+    # finished reply (#3627). ``None`` = no operator opinion, decide from the
+    # catalog.
+    stream: bool | None = None
 
     def __post_init__(self) -> None:
         # #1650: validate the operator-declared ``reasoning_effort`` at
@@ -76,11 +83,17 @@ class ModelSpec:
         # Placed here (not in from_config) so BOTH the plain-dict path and the
         # extends-merge path (which build ModelSpec directly) are covered
         # by-construction — single validation site, no parallel drift.
-        # #3627: reject an operator-declared ``stream`` (or ``stream_options``)
-        # at config-load. Reyn — not the operator — decides whether a call
-        # streams: `llm.py`'s single completion funnel makes that call
+        # #3627, revised by #3639: ``stream`` on a model class is now a REYN
+        # field (see ``ModelSpec.stream``), consumed by ``_streaming_enabled``
+        # as the operator's answer — an operator who configured the endpoint
+        # can know what litellm's pinned snapshot does not. It never reaches
+        # ``kwargs``, so the passthrough this guard was written for has no path
+        # left; the guard stays as a construction-time backstop for anything
+        # that puts one there directly, and for ``stream_options``, which has
+        # no reyn meaning and breaks the same way. The original reasoning,
+        # still accurate for a kwargs-borne key: `llm.py`'s single completion funnel makes that call
         # per-request via a litellm capability query
-        # (`_streaming_capable`, inside `recorded_acompletion`) and
+        # (`_streaming_enabled`, inside `recorded_acompletion`) and
         # deliberately sets no `stream` key of its own at the call site the
         # operator's kwargs ride into. A `stream: true` here does NOT turn
         # streaming on (the gate still decides that) — it rides
@@ -187,11 +200,19 @@ class ModelSpec:
                 raise ValueError(
                     f"ModelSpec 'provider' must be a string, got {type(provider).__name__}"
                 )
+            stream = value.get("stream")
+            if stream is not None and not isinstance(stream, bool):
+                raise ValueError(
+                    f"ModelSpec 'stream' must be a boolean, got {type(stream).__name__}"
+                )
             kwargs = {
                 k: v for k, v in value.items()
-                if k not in ("model", "extends", "api_base", "provider")
+                if k not in ("model", "extends", "api_base", "provider", "stream")
             }
-            return cls(model=model, kwargs=kwargs, api_base=api_base, provider=provider)
+            return cls(
+                model=model, kwargs=kwargs, api_base=api_base,
+                provider=provider, stream=stream,
+            )
         raise ValueError(
             f"ModelSpec.from_config expects str or dict, got {type(value).__name__}"
         )
