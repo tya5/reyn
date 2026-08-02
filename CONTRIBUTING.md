@@ -88,7 +88,7 @@ There is no `black` dependency — `ruff format` covers formatting.
 
 Reyn's OS is governed by eight invariants. Violations break the runtime and
 will not be merged. The full rationale is in
-[`docs/concepts/principles.md`](docs/concepts/principles.md). The
+[`docs/concepts/architecture/charter.md`](docs/concepts/architecture/charter.md). The
 hard rules:
 
 - **P1** Phase declares only `input_schema` and instructions. It must not

@@ -39,7 +39,7 @@ Most agent frameworks optimize for reach. Reyn optimizes for the **integrity of 
 
 The trade-off is explicit: **predictability and auditability over maximum autonomy.** If you want the densest integration ecosystem and maximum LLM latitude, a connectivity-first agent or a workflow framework will feel less restrictive.
 
-> These guarantees are formalized as the OS's eight design principles — see [principles](docs/concepts/architecture/principles.md).
+> These guarantees are formalized as the OS's eight engineering lenses — see [charter](docs/concepts/architecture/charter.md).
 
 ---
 
@@ -156,7 +156,7 @@ flowchart LR
 - **Reached two ways** — *humans drive a session directly* (TUI / browser Web UI → `submit_user_text`), while *systems and schedules inject into an agent's inbox*: external connection (MCP server · A2A server · gateway webhooks like Slack / LINE) and internal trigger (`cron`). An *in-turn hook* layer can intercept a running turn (proposed). The HTTP surfaces — A2A, MCP-over-SSE, gateway webhooks, and the browser Web UI — are all served by the one `reyn web` (FastAPI) gateway. See [interaction layers](docs/concepts/architecture/interaction-layers.md).
 - **Related** — an `AgentRegistry` holds many *Agents* (each an identity), each with many parallel *Sessions*; agents delegate to peers under a *topology* (network / team / pipeline), hop-capped and `chain_id`-traced. See [multi-agent](docs/concepts/multi-agent/multi-agent.md) · [sessions](docs/concepts/multi-agent/sessions.md).
 
-Details: [architecture](docs/concepts/architecture/architecture.md) · [principles](docs/concepts/architecture/principles.md).
+Details: [architecture](docs/concepts/architecture/) · [charter](docs/concepts/architecture/charter.md).
 
 ---
 
@@ -197,10 +197,10 @@ Reyn connects too (MCP + A2A) and runs open-ended tasks, but optimizes for **int
 | Section | What's covered |
 |---|---|
 | [Getting started](docs/guide/getting-started/) | Install, chat mode, evals |
-| [For users](docs/guide/for-users/) | Day-to-day usage: permissions, sandbox, cost caps, scheduling, memory |
-| [For automation authors](docs/guide/for-skill-authors/) | Phases, composition, MCP, validation, operations |
+| [For users](docs/guide/for-users/) | Day-to-day usage: permissions, sandbox, cost caps, memory, MCP servers, writing a pipeline |
+| [For Reyn developers](docs/guide/for-reyn-developers/) | Adding an op kind, replay tests, principles in the code |
 | [Reference](docs/reference/) | CLI, config (`reyn.yaml`), Control IR, events |
-| [Concepts](docs/concepts/) | Architecture, principles, the act-sense-react loop |
+| [Concepts](docs/concepts/) | Architecture, the charter, the act-sense-react loop |
 | [Feature inventory](docs/feature-map.md) | Every implemented feature, grouped by subsystem |
 
 ```bash
