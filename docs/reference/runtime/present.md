@@ -20,16 +20,24 @@ problem, the LLM-sees-shape/user-sees-content asymmetry, the guard/renderer spli
 {
   "kind": "present",
   "data_ref": ".reyn/cache/tool-results/2026-.../structured.json",
-  "blueprint": {
-    "component": "table",
-    "rows": {"$bind": "/results"},
-    "columns": [
-      {"header": "Title",  "path": "/title"},
-      {"header": "Author", "path": "/author"}
-    ]
-  }
+  "blueprint": [
+    {
+      "component": "table",
+      "rows": {"$bind": "/results"},
+      "columns": [
+        {"header": "Title",  "path": "/title"},
+        {"header": "Author", "path": "/author"}
+      ]
+    }
+  ]
 }
 ```
+
+`blueprint` is a **list** of component nodes, rendered top to bottom; a single
+component is a one-element list. The op still accepts a bare component object,
+but the tool schema offered to the model declares an array — the list form is
+the only way to express a sequence, and the Gemini-safe rules forbid declaring
+both (see `runtime/router_tools`).
 
 Exactly one **data source**; **at most one** of `view` / `blueprint` (both omitted is
 valid — see [Optional view/blueprint](#optional-viewblueprint-default-rendering) below):

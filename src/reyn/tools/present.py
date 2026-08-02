@@ -56,8 +56,17 @@ _PRESENT_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": _presentation_descriptions.PARAMS["present"]["view"].text,
         },
+        # ``array``, not ``object``. A blueprint is "a single component node OR a
+        # list of nodes" (``validate_blueprint``), and the object-only declaration
+        # made the list form — the only way to express a SEQUENCE of components —
+        # unrepresentable for the model, which is constrained by this schema and
+        # not by the op's own type. ``array`` loses nothing: a single node is a
+        # one-element list, while no multi-node sequence can be written as an
+        # object. Gemini-safe rules (``runtime/router_tools`` module docstring)
+        # forbid ``anyOf``, so declaring both is not an option — and would not be
+        # worth it if it were.
         "blueprint": {
-            "type": "object",
+            "type": "array",
             "description": _presentation_descriptions.PARAMS["present"]["blueprint"].text,
         },
     },
