@@ -113,7 +113,8 @@ through four stages, the last of which **always renders**:
 2. **Inline blueprint** — an LLM-authored component tree, structurally gated at op
    validation.
 3. **Default viewer** — a blueprint synthesized from the data's *shape* (`list[dict]` →
-   `table`, `dict` → `keyvalue`, scalar → `text`, a diff-sniff → `diff`), run through the
+   `table`, `dict` → `keyvalue` for its scalar keys plus a node per nested value,
+   scalar → `text`, a diff-sniff → `diff`), run through the
    same bind → guard → render path.
 4. **Generic** — the final catch: structured data dumped as YAML into a `text` component,
    plain text shown as-is.

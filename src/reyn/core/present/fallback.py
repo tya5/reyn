@@ -128,6 +128,84 @@ def _escape_token(key: str) -> str:
     return key.replace("~", "~0").replace("/", "~1")
 
 
+#: How far the default viewer descends into an object before it stops naming
+#: structure and lets a text slot render what is left as JSON. Deep enough for
+#: the wrapper layers a tool result normally carries (``{status, data: {items:
+#: [...]}}`` is already three), shallow enough that the synthesized view's size
+#: stays a property of the data's SHAPE rather than of its depth.
+_MAX_DEFAULT_DEPTH = 4
+
+
+def _list_node(value: list, pointer: str) -> dict:
+    """A list bound at *pointer* → a ``table`` over its rows' union of keys, or
+    a plain ``list``. The top-level list branch's rule, applied at any depth."""
+    if any(isinstance(row, dict) for row in value):
+        columns = _column_keys(value)
+        if columns:
+            return {
+                "component": "table",
+                "rows": {"$bind": pointer},
+                "columns": [
+                    {"header": k, "path": f"/{_escape_token(k)}"} for k in columns
+                ],
+            }
+    return {"component": "list", "items": {"$bind": pointer}}
+
+
+def _dict_nodes(data: dict, keys: "list[str]", pointer: str = "", depth: int = 0) -> "list[dict]":
+    """The default view for an object: its scalars as one card, then each
+    container-valued key rendered by its own shape.
+
+    A single ``keyvalue`` over every top-level key was the whole dict branch,
+    and it made a nested value unreadable: a ``keyvalue`` row's ``value`` is a
+    text slot, so a dict or list bound into one renders as its JSON form. Any
+    object carrying a nested value — the shape a tool result normally has —
+    therefore came out as a JSON dump, while the SAME data with the list at the
+    top level rendered as a table, because the list branch descended and this
+    one did not (#3630).
+
+    Each container key is preceded by a ``text`` node carrying the key as a
+    literal. That label is the same string the ``keyvalue`` row already used
+    for it — the key name, taken from the data — so naming it here introduces
+    no text the previous view did not also show.
+
+    At :data:`_MAX_DEFAULT_DEPTH` the descent stops and the remaining value goes
+    into a ``keyvalue`` row, i.e. back to the JSON form. That is the honest
+    floor rather than a hidden one: a table's cells have always bottomed out the
+    same way, and the alternative — descending as far as the data happens to go
+    — makes a deeply nested value emit an unbounded number of nodes.
+    """
+    scalars = [k for k in keys if not isinstance(data[k], (dict, list))]
+    containers = [k for k in keys if isinstance(data[k], (dict, list))]
+    if depth >= _MAX_DEFAULT_DEPTH:
+        scalars, containers = keys, []
+
+    nodes: "list[dict]" = []
+    if scalars:
+        nodes.append({
+            "component": "keyvalue",
+            "rows": [
+                {"label": k, "value": {"$bind": f"{pointer}/{_escape_token(k)}"}}
+                for k in scalars
+            ],
+        })
+    for key in containers:
+        child = f"{pointer}/{_escape_token(key)}"
+        nodes.append({"component": "text", "text": key})
+        value = data[key]
+        if isinstance(value, list):
+            nodes.append(_list_node(value, child))
+            continue
+        sub_keys = [k for k in value if isinstance(k, str)]
+        if sub_keys:
+            nodes.extend(_dict_nodes(value, sub_keys, child, depth + 1))
+        else:
+            # Empty or non-string-keyed: no rows to name, so bind it whole
+            # rather than emitting a card with nothing in it.
+            nodes.append({"component": "text", "text": {"$bind": child}})
+    return nodes
+
+
 def default_viewer_blueprint(data: Any, *, content_type: "str | None" = None) -> "list[dict]":
     """Stage 3 — synthesize a content-type/shape default blueprint for ``data``.
 
@@ -188,13 +266,7 @@ def default_viewer_blueprint(data: Any, *, content_type: "str | None" = None) ->
             }]
         keys = [k for k in data if isinstance(k, str)]
         if keys:
-            return [{
-                "component": "keyvalue",
-                "rows": [
-                    {"label": k, "value": {"$bind": f"/{_escape_token(k)}"}}
-                    for k in keys
-                ],
-            }]
+            return _dict_nodes(data, keys)
         # An empty / non-string-keyed object → fall through to the whole-doc view.
 
     # Any other scalar (number / bool / null) → a text of the whole value.
