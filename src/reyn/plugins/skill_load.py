@@ -108,7 +108,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from reyn.plugins.manifest import manifest_path_for
-from reyn.plugins.tokens import PluginTokenContext, expand_reyn_tokens
+from reyn.plugins.tokens import (
+    LOCATION_TOKEN_NAMES,
+    PluginTokenContext,
+    expand_with_map,
+    resolve_token_map,
+)
 
 if TYPE_CHECKING:
     from reyn.security.permissions.permissions import PermissionDecl
@@ -219,7 +224,7 @@ def load_skill_body(
     project_dir: Path,
     alias_claude: bool = False,
     permission_decl: "PermissionDecl | None" = None,
-) -> "tuple[str, list[str], list[str]]":
+) -> "tuple[str, str, dict[str, str], list[str], list[str]]":
     """Expand invocation-time ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}``
     tokens in a decoded SKILL.md body (§3.5's "skill-load verb").
 
@@ -227,11 +232,36 @@ def load_skill_body(
     caller — ``file.handle`` — has already run the decode ladder; this
     function does no I/O of its own and never re-reads the file).
 
-    Returns ``(expanded_body, env_names_expanded, env_names_denied)`` — the
-    caller returns *expanded_body* verbatim as the read op's `content`;
-    the two name lists (#3198, superseding #3196's bare int count) are for
-    the caller's audit-event ONLY (names + counts via ``len()``, NEVER the
-    values) — never for display to the model.
+    Returns ``(expanded_body, persisted_body, location_token_map,
+    env_names_expanded, env_names_denied)``:
+
+    - *expanded_body* — EVERY recognised token substituted (unchanged shape
+      from before #3629). The caller returns this verbatim as the read op's
+      current-turn `content` — what the model reads THIS turn is exactly as
+      correct as it always was; nothing about immediate usability changes.
+    - *persisted_body* — ``REYN_PROJECT_DIR``/``CLAUDE_PROJECT_DIR``
+      substituted (measured safe: never baked into a durable copy, #3629
+      architect ruling), but ``REYN_SKILL_DIR``/``REYN_PLUGIN_ROOT`` (+
+      their ``CLAUDE_*`` aliases, :data:`~reyn.plugins.tokens.
+      LOCATION_TOKEN_NAMES`) left LITERAL. This is what the caller
+      persists to ``history.jsonl`` instead of *expanded_body* — a rename
+      or move after this turn can never freeze a now-dead absolute path
+      into the durable record, because the record never held one.
+    - *location_token_map* — the SAME token → value mapping that would have
+      baked the location tokens into *expanded_body*, for the caller to
+      stash on the persisted entry's ``meta`` (audit-completeness: since
+      LLM-payload trace dumping is opt-in (``REYN_LLM_TRACE_DUMP``), history
+      is the only ALWAYS-ON record of what a given turn actually resolved
+      to). This map is NOT a re-expansion source on replay —
+      :func:`refresh_location_tokens` re-derives fresh values from the
+      CURRENT filesystem every time, never from this frozen snapshot; see
+      that function's docstring.
+    - *env_names_expanded* / *env_names_denied* — as before (#3198,
+      superseding #3196's bare int count): names + counts via ``len()``
+      ONLY, for the caller's audit-event, never the values, never for
+      display to the model. Reported against *expanded_body* — the
+      current-turn text actually shown to the model — since that is the
+      one substitution round whose count matters for the audit event.
 
     ``alias_claude`` should be ``True`` only when *skill_path* is known to be
     a Claude-authored SKILL.md (ADR §3.6's ingestion-boundary rule, mirroring
@@ -242,9 +272,8 @@ def load_skill_body(
     ``None`` (the default) is treated as an EMPTY ``PermissionDecl``, i.e.
     NOTHING is allowlisted, so a caller that forgets to thread a real decl
     fails CLOSED (no env expansion at all), never open. Location tokens
-    (``${REYN_*}``/``${CLAUDE_*}``, via ``expand_reyn_tokens`` above) are
-    UNAFFECTED by this gate — they carry no credential, only positional
-    metadata (ADR §3.4).
+    (``${REYN_*}``/``${CLAUDE_*}``) are UNAFFECTED by this gate — they carry
+    no credential, only positional metadata (ADR §3.4).
     """
     skill_dir = Path(skill_path).resolve().parent
     token_ctx = PluginTokenContext(
@@ -252,8 +281,89 @@ def load_skill_body(
         project_dir=project_dir,
         skill_dir=skill_dir,
     )
-    expanded = expand_reyn_tokens(content, token_ctx, alias_claude=alias_claude)
-    return _expand_env_tokens(expanded, permission_decl)
+    full_map = resolve_token_map(token_ctx, alias_claude=alias_claude)
+    location_map = {k: v for k, v in full_map.items() if k in LOCATION_TOKEN_NAMES}
+    non_location_map = {k: v for k, v in full_map.items() if k not in LOCATION_TOKEN_NAMES}
+
+    persisted = expand_with_map(content, non_location_map)
+    expanded = expand_with_map(persisted, location_map)
+
+    expanded, env_expanded, env_denied = _expand_env_tokens(expanded, permission_decl)
+    # Same substitution, applied to the persist-safe variant too — ``${env:...}``
+    # expansion is orthogonal to the location-token split (a different regex,
+    # #3198's own security gate, no interaction either way) and must not
+    # differ between what the model reads this turn and what gets persisted.
+    persisted, _persisted_env_expanded, _persisted_env_denied = _expand_env_tokens(
+        persisted, permission_decl,
+    )
+    return expanded, persisted, location_map, env_expanded, env_denied
+
+
+def refresh_location_tokens(
+    content: str, *, skill_source_path: str, project_dir: Path, alias_claude: bool = False,
+) -> str:
+    """Re-expand ``${REYN_SKILL_DIR}``/``${REYN_PLUGIN_ROOT}`` (+ ``CLAUDE_*``
+    aliases) in a PERSISTED skill-body history entry, against the CURRENT
+    filesystem, at wire-serialise time (#3629).
+
+    This is the "dynamic param" half of the location-token fix — the
+    ``REYN_PROJECT_DIR`` discipline (ADR §3.4: "only has a value at
+    invocation... expanded fresh each call, never baked into a durable
+    copy") extended to the two tokens ``load_skill_body`` now leaves literal
+    in what it persists. *skill_source_path* is the IDENTITY the original
+    ``load_skill`` call resolved against (``op.path`` — typically
+    project-relative, exactly as the model gave it), never the frozen
+    absolute VALUE from that turn's ``location_token_map`` — an identity can
+    be re-resolved fresh; a frozen value can only be repeated.
+
+    Fresh resolution runs the EXACT SAME two calls the original load did
+    (:func:`resolve_plugin_root` off ``Path(skill_source_path).parent``) —
+    no separate mechanism, no drift risk between write-time and replay-time
+    resolution.
+
+    Three outcomes, by design, no other:
+
+    - *skill_source_path* still resolves to a real file (nothing moved, OR
+      the same relative structure exists in THIS run's checkout even
+      though a PRIOR run's checkout was different — the "two working
+      copies" / "different machine" case #3629 names explicitly) →
+      substituted with the CURRENT value. Self-heals completely.
+    - *skill_source_path* no longer resolves to anything (the file itself
+      was renamed/deleted — #3629's actual reported case, #3588's skill
+      rename) → the token is left LITERAL, unexpanded. This is NOT a
+      partial fix masquerading as success: an unexpanded ``${REYN_SKILL_DIR}``
+      is unambiguously a placeholder to the model, never mistaken for a
+      live path the way a frozen absolute string was (the exact defect
+      #3629 reports) — the class of failure changes from "silently wrong"
+      to "visibly unresolved", which is the improvement this function
+      claims, no more.
+    - *content* has no location token left to match (a non-skill turn, or
+      one that never had one) → returned unchanged, cheap no-op.
+
+    Never touches already-poisoned pre-#3629 history — those entries were
+    persisted with the token ALREADY baked into ``content`` as a plain
+    string; there is no token left for this function to find, by
+    construction (#3629 architect ruling: existing poisoned rows are
+    intentionally never rewritten or annotated).
+    """
+    candidate = Path(skill_source_path)
+    if not candidate.is_absolute():
+        candidate = project_dir / candidate
+    try:
+        exists = candidate.is_file()
+    except OSError:
+        exists = False
+    if not exists:
+        return content
+    skill_dir = candidate.resolve().parent
+    token_ctx = PluginTokenContext(
+        plugin_root=resolve_plugin_root(skill_dir),
+        project_dir=project_dir,
+        skill_dir=skill_dir,
+    )
+    full_map = resolve_token_map(token_ctx, alias_claude=alias_claude)
+    location_map = {k: v for k, v in full_map.items() if k in LOCATION_TOKEN_NAMES}
+    return expand_with_map(content, location_map)
 
 
 __all__ = [
@@ -261,4 +371,5 @@ __all__ = [
     "is_skill_body_path",
     "resolve_plugin_root",
     "load_skill_body",
+    "refresh_location_tokens",
 ]

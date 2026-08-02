@@ -155,15 +155,63 @@ def test_edit_existing_file_unchanged(tmp_path, monkeypatch):
 # ── parent-dir edge cases ──────────────────────────────────────────────────────
 
 
-def test_read_not_found_in_nested_missing_dir(tmp_path, monkeypatch):
-    """Tier 2: missing parent dir → suggestions empty, no crash."""
+def test_read_not_found_in_nested_missing_dir_suggests_nearest_ancestor(tmp_path, monkeypatch):
+    """Tier 2: (#3629) a missing PARENT dir — not just missing siblings — now
+    returns the nearest EXISTING ancestor as a suggestion, asserted by VALUE
+    (the workspace root itself, since nothing under it exists here), rather
+    than the pre-#3629 empty list. This is "no parent", the case a rename,
+    move, or plugin reinstall produces — see ``_nearest_existing_ancestor``'s
+    docstring (file.py) for why it must be distinguished from "no
+    neighbours" (test_read_not_found_in_nested_existing_but_empty_dir,
+    below), which legitimately still returns ``[]``."""
     monkeypatch.chdir(tmp_path)
     ctx = _make_ctx(tmp_path)
 
     result = _run(handle(_read("nonexistent_dir/file.md"), ctx))
 
     assert result["status"] == "not_found"
+    assert result["suggestions"] == ["./"]
+
+
+def test_read_not_found_in_nested_existing_but_empty_dir(tmp_path, monkeypatch):
+    """Tier 2: (#3629) an EXISTING but empty parent dir is "no neighbours",
+    not "no parent" — the suggestions list stays legitimately empty rather
+    than falling back to an ancestor (that fallback exists to recover a
+    missing STRUCTURE, not to pad a genuinely-empty directory)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "empty_dir").mkdir()
+    ctx = _make_ctx(tmp_path)
+
+    result = _run(handle(_read("empty_dir/file.md"), ctx))
+
+    assert result["status"] == "not_found"
     assert result["suggestions"] == []
+
+
+def test_read_not_found_under_renamed_skill_dir_suggests_current_ancestor(tmp_path, monkeypatch):
+    """Tier 2: (#3629 strip-falsify) the reported scenario, reproduced
+    directly — a skill directory is renamed (mirroring #3588's
+    underscore-to-hyphen shipped-skill rename) and a later read against the
+    OLD (now-vanished) path is asked for suggestions.
+
+    Asserted by VALUE: the suggestion names the CURRENT ancestor
+    (``skills/``, which still exists and now contains the renamed dir) —
+    not merely "suggestions is non-empty". Before the #3629 fix this
+    returned ``[]`` (RED — see this module's git history / the PR that
+    introduced this test for the pre-fix measurement)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "skills" / "reyn_cheat_sheet").mkdir(parents=True)
+    (tmp_path / "skills" / "reyn_cheat_sheet" / "SKILL.md").write_text("body", encoding="utf-8")
+    # The rename #3588 performed: reyn_cheat_sheet -> reyn-cheat-sheet.
+    (tmp_path / "skills" / "reyn_cheat_sheet").rename(tmp_path / "skills" / "reyn-cheat-sheet")
+    ctx = _make_ctx(tmp_path)
+
+    # A read against the OLD, now-dead path (as an old history entry would
+    # still name it — history is immutable, #3629's whole premise).
+    result = _run(handle(_read("skills/reyn_cheat_sheet/reference.md"), ctx))
+
+    assert result["status"] == "not_found"
+    assert result["suggestions"] == ["skills/"]
 
 
 def test_read_not_found_in_nested_existing_dir(tmp_path, monkeypatch):
