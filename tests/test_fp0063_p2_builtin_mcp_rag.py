@@ -363,3 +363,190 @@ def test_chunker_default_lands_in_2026_persistent_rag_band() -> None:
     # `size` isn't guaranteed, but it must not silently reproduce the
     # 800-1024 ephemeral figure).
     assert all(c["token_count"] <= 512 for c in chunks[:-1])
+
+
+# ---------------------------------------------------------------------------
+# #3644 -- start_index/end_index persist as first-class columns, and `query`
+# recovers a hit's chunk TEXT by slicing metadata.source_path at those
+# offsets. Before this fix a query hit's chunk body was unrecoverable: the
+# store has no text column (by design), and the chunker's start_index/
+# end_index were computed but discarded before reaching upsert.
+# ---------------------------------------------------------------------------
+
+
+def test_query_recovers_chunk_text_by_value_from_real_chunker_offsets(
+    tmp_path: Path,
+) -> None:
+    """Tier 2b: #3644 -- end-to-end through the REAL chunker: chunk a real
+    file's content, upsert the first chunk WITH its start_index/end_index,
+    and assert `query`'s recovered `text` equals the chunker's own chunk
+    text BY VALUE (not merely "the two sides agree" -- an independently
+    computed expected substring, per testing policy's by-value requirement
+    -- §16 verification-hazards). ``overlap_ratio=0`` so the chunker's
+    ``.text`` has no suffix-merged overlap span, keeping the raw
+    ``[start_index:end_index]`` slice of the ORIGINAL file exactly equal to
+    what was chunked (chunker_server.py's own documented offset contract)."""
+    source = tmp_path / "doc.txt"
+    original_text = (
+        "Reyn is an operating system for LLM agents. "
+        "Every action is typed, permissioned, audited, and recoverable. "
+        "Chunks carry their own offsets into the original text."
+    )
+    source.write_text(original_text, encoding="utf-8")
+
+    chunks = chunk_text(original_text, size=12, overlap_ratio=0.0)
+    first = chunks[0]
+    # Non-vacuity: the first chunk must be a PARTIAL slice of the document
+    # (not the whole thing), so this test can only pass if a real multi-chunk
+    # split happened and the offsets genuinely narrow the recovered span.
+    assert first["end_index"] < len(original_text), (
+        "the first chunk must not span the entire document -- otherwise "
+        "this test cannot tell offset-based recovery apart from just "
+        "reading the whole file"
+    )
+    # Independently-derived expected substring -- computed from the SAME
+    # offsets the chunker returned, applied to the raw text this test wrote
+    # to disk, not merely re-reading `first["text"]` back at itself.
+    expected_text = original_text[first["start_index"]:first["end_index"]]
+    assert expected_text == first["text"], (
+        "sanity: chunker offsets with overlap_ratio=0 must reproduce its "
+        "own chunk text exactly, or this test's premise is wrong"
+    )
+
+    db_path = str(tmp_path / "rag.sqlite")
+    item = {
+        "source_path": str(source),
+        "source_type": "generic",
+        "content_hash": first["content_hash"],
+        "chunk_index": first["chunk_index"],
+        "size_tokens": first["token_count"],
+        "start_index": first["start_index"],
+        "end_index": first["end_index"],
+    }
+    with SqliteVecStore(db_path) as store:
+        store.upsert([item], [[1.0, 0.0]], _MODEL, parent_context=_PARENT)
+        results = store.query([1.0, 0.0], top_k=1)
+
+    assert results[0]["metadata"]["start_index"] == first["start_index"]
+    assert results[0]["metadata"]["end_index"] == first["end_index"]
+    assert results[0]["text_unavailable_reason"] is None
+    # THE assertion this test exists for: recovered text equals the KNOWN
+    # expected substring by VALUE (chonkie's real recursive splitter at
+    # size=12/overlap=0 on this fixed fixture text -- measured, not guessed).
+    assert results[0]["text"] == expected_text
+    assert results[0]["text"] == "Reyn is an o"
+
+
+def test_query_strip_falsify_wrong_offsets_do_not_recover_the_right_text(
+    tmp_path: Path,
+) -> None:
+    """Tier 2b: #3644 STRIP-FALSIFICATION -- break the fix by upserting with
+    the WRONG offsets (simulating an offset-computation regression) and show
+    the recovered text is RED -- it does NOT equal the true chunk text. This
+    proves the by-value assertion in the sibling test is discriminating
+    (would fail if offsets were wired wrong) rather than vacuously true."""
+    source = tmp_path / "doc.txt"
+    original_text = "The quick brown fox jumps over the lazy dog."
+    source.write_text(original_text, encoding="utf-8")
+    true_text = original_text[4:9]
+    assert true_text == "quick"
+
+    db_path = str(tmp_path / "rag.sqlite")
+    wrong_item = {
+        "source_path": str(source),
+        "content_hash": "h",
+        "chunk_index": 0,
+        "size_tokens": 1,
+        "start_index": 10,  # WRONG -- true span is [4:9]
+        "end_index": 15,
+    }
+    with SqliteVecStore(db_path) as store:
+        store.upsert([wrong_item], [[1.0]], _MODEL, parent_context=_PARENT)
+        result = store.query([1.0], top_k=1)[0]
+
+    assert result["text"] != true_text, (
+        "RED (expected if this fails): recovering text from the WRONG "
+        "offsets accidentally reproduced the true chunk text, which would "
+        "make the by-value assertion in the sibling test vacuous"
+    )
+    assert result["text"] == "brown"
+
+
+def test_query_recovers_exact_slice_by_value(tmp_path: Path) -> None:
+    """Tier 2b: #3644 -- minimal, hand-computed by-value case (no chunker
+    involved): known text, known offsets, exact expected string."""
+    source = tmp_path / "doc.txt"
+    source.write_text("The quick brown fox jumps over the lazy dog.", encoding="utf-8")
+    db_path = str(tmp_path / "rag.sqlite")
+    item = {
+        "source_path": str(source),
+        "content_hash": "h",
+        "chunk_index": 0,
+        "size_tokens": 1,
+        "start_index": 4,
+        "end_index": 9,
+    }
+    with SqliteVecStore(db_path) as store:
+        store.upsert([item], [[1.0]], _MODEL, parent_context=_PARENT)
+        result = store.query([1.0], top_k=1)[0]
+
+    assert result["text"] == "quick"
+    assert result["text_unavailable_reason"] is None
+
+
+def test_query_null_offset_is_decision_enabling_not_silent(tmp_path: Path) -> None:
+    """Tier 2b: #3644 -- a chunk upserted with NO start_index/end_index
+    (the "old row" / offset-less-caller case) must be reported through a
+    DECISION-ENABLING reason, never a silent empty string (architect: "that
+    would be the fifth instance of the class" -- absent vs unknown, this
+    repo's recurring failure mode). NULL is stored (not defaulted to 0,
+    itself a legitimate offset), and `text_unavailable_reason` names the
+    concrete cause and what to do next."""
+    source = tmp_path / "doc.txt"
+    source.write_text("some content", encoding="utf-8")
+    db_path = str(tmp_path / "rag.sqlite")
+    item_no_offsets = _sample_item()  # no start_index/end_index key at all
+    assert "start_index" not in item_no_offsets and "end_index" not in item_no_offsets
+
+    with SqliteVecStore(db_path) as store:
+        store.upsert([item_no_offsets], [[1.0]], _MODEL, parent_context=_PARENT)
+        result = store.query([1.0], top_k=1)[0]
+        listed = store.list_metadata()
+
+    # NULL, not 0 -- 0 would be indistinguishable from a real zero offset.
+    assert listed[0]["metadata"]["start_index"] is None
+    assert listed[0]["metadata"]["end_index"] is None
+    assert result["text"] is None
+    reason = result["text_unavailable_reason"]
+    assert reason is not None and reason != "", (
+        "a NULL offset must be reported with a decision-enabling reason, "
+        "never a silent empty string"
+    )
+    assert "start_index" in reason and "re-ingest" in reason
+
+
+def test_query_missing_source_file_is_decision_enabling_not_silent(
+    tmp_path: Path,
+) -> None:
+    """Tier 2b: #3644 -- offsets ARE recorded but source_path can no longer
+    be read (moved/deleted since ingest, or -- as documented -- a binary
+    source markitdown converted, whose raw bytes cannot decode as the
+    chunked text). Reported with a concrete cause, never a silent empty
+    string or a crash."""
+    db_path = str(tmp_path / "rag.sqlite")
+    item = {
+        "source_path": str(tmp_path / "does-not-exist.txt"),
+        "content_hash": "h",
+        "chunk_index": 0,
+        "size_tokens": 1,
+        "start_index": 0,
+        "end_index": 5,
+    }
+    with SqliteVecStore(db_path) as store:
+        store.upsert([item], [[1.0]], _MODEL, parent_context=_PARENT)
+        result = store.query([1.0], top_k=1)[0]
+
+    assert result["text"] is None
+    reason = result["text_unavailable_reason"]
+    assert reason is not None and reason != ""
+    assert "does-not-exist.txt" in reason
