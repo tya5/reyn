@@ -246,6 +246,17 @@ def _session_visibility_items(session) -> "list[dict] | None":
     Both are re-read from the session on every snapshot (the #3338 per-frame pane
     rebuild), so neither is a latched "as of turn N" value.
 
+    #3615 — a THIRD ``denied_reason``, ``"unknown"``: the read model's own
+    ``envelope_unknown`` rows (no envelope source to test the capability against —
+    see ``CapabilityVisibility.capability_visibility_state``'s docstring). Rendered
+    the same non-flippable ``[--]`` way as ``"envelope"`` / ``"turn_context"`` — an
+    operator cannot toggle a row whose authorization could not be determined any
+    more than one the envelope actively denies — but with its own annotation, because
+    the operator's next move differs from either: this is not "edit the profile" or
+    "wait for context to clear", it is "the session was built without a way to check
+    this; the report is not confirmed." Folding it into ``authorized`` (the pre-#3615
+    behaviour) said the opposite of the truth.
+
     Returns **None** — not ``[]`` — when the seam is absent or raised (#3378
     requirement 4): the renderer must be able to tell "this session wires no
     visibility state" from "it wires state and nothing is narrowed", which an empty
@@ -276,6 +287,7 @@ def _session_visibility_items(session) -> "list[dict] | None":
             for key, reason in (
                 ("denied_by_envelope", "envelope"),
                 ("denied_by_turn_context", "turn_context"),
+                ("unknown", "unknown"),
             )
             for d in (state.get(key) or [])
         ]
