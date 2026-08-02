@@ -718,14 +718,34 @@ Handler lifecycle (`op_runtime/load_skill.py`):
    `${REYN_PROJECT_DIR}`/`${CLAUDE_*}` aliases unconditionally, and
    `${env:VAR}` only when `VAR` is declared on `ctx.permission_decl.
    env_expand` (#3198, deny-by-default) — an undeclared or unset name's
-   token is left unexpanded, never blanked.
+   token is left unexpanded, never blanked. **#3629**: this is the fully-
+   expanded string returned as `content` (what the model reads THIS
+   turn, unchanged); `load_skill_body` ALSO returns a second, persist-safe
+   variant with `${REYN_SKILL_DIR}`/`${REYN_PLUGIN_ROOT}` (+ `${CLAUDE_*}`
+   aliases) left LITERAL, plus the location-token map, surfaced as this
+   op result's `content_history`/`token_map`/`skill_source_path` fields —
+   see step 8 below for why.
 7. **Self-bounding**: an oversized body is truncated to the resolver's
    inline cap (`control_ir_inline_cap`) rather than blowing the context;
    `status: "truncated"` + a `note` on that path.
+8. **#3629 — persist-safe history, not the expanded value**: `content` is
+   what the current turn's LLM call sees; `content_history` (present only
+   alongside a set provenance) is what `router_loop.py`'s tool-result
+   assembly persists to `history.jsonl` instead — history is immutable, so
+   baking an absolute path into it froze a value that a later rename/move
+   (#3588 was one instance) could turn stale forever, with no way for the
+   model to tell a stale absolute path from a live one. A wire-serialise
+   pass (`RouterHistoryBuffer._serialise_turn` →
+   `reyn.plugins.skill_load.refresh_location_tokens`) re-resolves the
+   literal tokens fresh, against the CURRENT filesystem, every time a
+   persisted entry is replayed — `token_map` is audit-completeness
+   metadata only (never a re-expansion source).
 
 Result fields: `status` (`"ok"` / `"truncated"` / `"not_found"` / `"error"`),
 `path`, `content`, plus `total_chars`/`_truncated`/`note` on a truncated
-result and `encoding` when a non-UTF-8 codec was used.
+result, `encoding` when a non-UTF-8 codec was used, and (#3629)
+`content_history`/`token_map`/`skill_source_path` when a provenance class
+matched (step 6).
 
 Events emitted: `tool_executed` (`op="load_skill"`) always; `skill_body_loaded`
 (`provenance`, `env_tokens_expanded`/`env_names_expanded`,
