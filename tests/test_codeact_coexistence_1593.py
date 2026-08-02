@@ -97,7 +97,9 @@ class _FakeHost:
     def resolve_model(self, name: str) -> str:
         return "fake-model"
 
-    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+    async def put_outbox(
+        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+    ) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
 
     def append_history_entry(self, *, role: str, content: str, meta: dict, **kw) -> None:

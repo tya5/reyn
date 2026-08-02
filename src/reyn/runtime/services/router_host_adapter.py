@@ -1470,7 +1470,9 @@ class RouterHostAdapter:
             name=name,
         ))
 
-    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+    async def put_outbox(
+        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+    ) -> None:
         from reyn.runtime.chat_message import ChatMessage, _now_iso
         from reyn.runtime.outbox import OutboxMessage
         # #1652: centralised reasoning handling for agent replies. The router
@@ -1519,7 +1521,18 @@ class RouterHostAdapter:
         # the canned text in history maintains alternation; the
         # cascading-attractor mitigation needs to live elsewhere
         # (= context build / classifier-side, tracked as follow-up).
-        if kind == "agent" and text:
+        #
+        # #3633: ``persist`` (default True) makes this append an EXPLICIT
+        # per-call-site choice rather than an implicit blanket rule. A caller
+        # whose text is already persisted through a different path (e.g.
+        # router_loop's tool-turn display bubble — the SAME text is persisted
+        # a few lines later as the canonical record by
+        # ``append_history_entry`` in ``RouterLoop.feedback()``, complete
+        # with ``tool_calls``) passes ``persist=False`` so the display-only
+        # outbox emit does not ALSO write to history.jsonl. Do not add a new
+        # unconditional persist path here without checking whether the text
+        # is already recorded elsewhere.
+        if kind == "agent" and text and persist:
             # Issue #383: chat history now uses ``role="assistant"`` +
             # ``content=`` (= wire shape mirror); the OutboxMessage above
             # keeps ``kind="agent"`` since that's the TUI-facing

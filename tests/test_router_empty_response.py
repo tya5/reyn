@@ -111,7 +111,9 @@ class FakeRouterHost:
     async def send_to_agent(self, *, to: str, request: str, depth: int, chain_id: str) -> None:
         pass
 
-    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+    async def put_outbox(
+        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+    ) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
 
     async def file_read(self, path: str) -> str:
