@@ -8,9 +8,11 @@ completeness = full-repo grep, not a src/tests-only sweep) so a future PR
 cannot silently reintroduce a reference to the removed backend without this
 test going RED:
 
-  1. **``src`` / ``tests`` / ``pyproject.toml`` / ``uv.lock``**: the ST
-     symbol set below must be **bare grep-zero** (0 hits, no exception) —
-     this file included (see the self-exclusion note below).
+  1. **``src`` / ``tests`` / ``pyproject.toml``**: the ST symbol set below
+     must be **bare grep-zero** (0 hits, no exception) — this file included
+     (see the self-exclusion note below). ``uv.lock`` was scanned here too
+     until #3618 removed it from the repo entirely (the ``uv`` dependency
+     itself was never authorised, see that issue).
   2. **``docs``**: two-tier — ``docs/deep-dives/decisions/`` and
      ``docs/deep-dives/proposals/`` are historical records and are
      excluded outright; everywhere else in ``docs``, an ST-symbol mention
@@ -163,7 +165,7 @@ def _docs_scan_paths() -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
-# 1. Real-repo gate: src / tests / pyproject.toml / uv.lock — bare grep-zero
+# 1. Real-repo gate: src / tests / pyproject.toml — bare grep-zero
 # ---------------------------------------------------------------------------
 
 
@@ -189,10 +191,12 @@ def test_st_symbols_bare_grep_zero_in_tests() -> None:
 
 
 def test_st_symbols_bare_grep_zero_in_packaging() -> None:
-    """Tier 2: #3128 — ``pyproject.toml`` and ``uv.lock`` carry no ST
-    symbol (the ``local-embed`` extra + its pinned deps were removed by
-    PR-B; this pins that removal survives packaging drift)."""
-    paths = [REPO_ROOT / "pyproject.toml", REPO_ROOT / "uv.lock"]
+    """Tier 2: #3128 — ``pyproject.toml`` carries no ST symbol (the
+    ``local-embed`` extra + its pinned deps were removed by PR-B; this pins
+    that removal survives packaging drift). ``uv.lock`` was removed
+    entirely by #3618 (the ``uv`` dependency itself was never authorised),
+    so it is no longer part of this repo's packaging surface to scan."""
+    paths = [REPO_ROOT / "pyproject.toml"]
     hits = _find_bare_hits(paths)
     assert not hits, (
         f"stale ST-removal reference(s) found in packaging files: {hits}"
