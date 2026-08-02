@@ -660,7 +660,7 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
         "reyn.runtime.router_loop.call_llm_tools", _make_llm_stub([invoke, text]),
     )
 
-    await session._handle_user_message("run hello", chain_id="chain-2575")
+    await session._handle_inbox_text("run hello", chain_id="chain-2575")
 
     tool_messages = [m for m in session.history if m.role == "tool"]
     assert tool_messages, "expected a tool-result history entry"

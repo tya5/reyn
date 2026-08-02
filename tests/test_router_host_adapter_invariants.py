@@ -20,37 +20,19 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
 )
 
 # ---------------------------------------------------------------------------
 # Minimal stubs and helpers
 # ---------------------------------------------------------------------------
+# #3607/#3482: the adapter takes the session's op-context SUPPLIER plus the
+# mcp-gateway bundle. These module-level constants are the inert instances the
+# tests below reuse — the real classes, kept default-free, with the defaulting
+# in caller code (see McpGatewayInputs / RouterOpContextSource docstrings).
+from tests._support.router_host_adapter import make_op_context_source  # noqa: E402
 
-# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
-# bundled into two frozen, default-free dataclasses. These module-level
-# constants are the "all fields unset" instances the tests below reuse —
-# the bundle classes themselves stay default-free (see RouterOpContextInputs
-# / McpGatewayInputs docstrings), the defaulting lives here in caller code.
-_EMPTY_OP_CTX = RouterOpContextInputs(
-    allowed_mcp=None,
-    base_available_skills_fn=None,
-    budget_gateway=None,
-    compact_now=None,
-    contextual_permission=None,
-    hook_bus=None,
-    hook_dispatcher=None,
-    hot_reloader=None,
-    multimodal_config=None,
-    presentation_renderer_factory=None,
-    render_template_bounds=None,
-    sandbox_backend_instance=None,
-    sandbox_policy=None,
-    turn_origin_fn=None,
-    workspace_base_dir=None,
-    workspace_state_dir=None,
-)
+_EMPTY_OP_CTX = make_op_context_source()
 _EMPTY_MCP_GATEWAY = McpGatewayInputs(
     mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
 )
@@ -121,14 +103,20 @@ def test_adapter_protocol_conformance(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 2: memory_path / memory_dir delegation
+# Test 2: the memory capability is handed over whole
 # ---------------------------------------------------------------------------
 
-def test_memory_path_delegation_matches_service(tmp_path):
-    """Tier 2: adapter.memory_path returns the same value as MemoryService.memory_path.
+def test_adapter_exposes_the_memory_capability_itself(tmp_path):
+    """Tier 2: adapter.memory IS the injected MemoryService, and the adapter
+    exposes no file primitive in its place.
 
-    Asserts no double-mapping or path transformation between the adapter
-    delegation surface and the service's own method.
+    #3607: the adapter used to expose ``memory_path`` / ``memory_dir`` plus
+    four file-op methods, out of which the router loop assembled the memory
+    operations. What the router needs is the operations — so the capability
+    is handed over whole, and the primitives it was assembled from are not
+    on the host surface at all. The second assertion is the load-bearing
+    one: re-adding a ``file_write`` delegate here re-opens the layering hole
+    even if ``memory`` is also present.
     """
     events = EventLog(subscribers=[])
     workspace = tmp_path / "agents" / "test-agent"
@@ -146,8 +134,16 @@ def test_memory_path_delegation_matches_service(tmp_path):
         memory=memory,
     )
 
-    assert adapter.memory_path("shared", "test_slug") == memory.memory_path("shared", "test_slug")
-    assert adapter.memory_dir("agent") == memory.memory_dir("agent")
+    assert adapter.memory is memory
+    assert adapter.memory.memory_path("shared", "s") == memory.memory_path("shared", "s")
+    for primitive in (
+        "file_read", "file_write", "file_delete", "file_regenerate_index",
+        "memory_path", "memory_dir", "scan_for_block",
+    ):
+        assert not hasattr(adapter, primitive), (
+            f"the router host must not expose {primitive!r}: memory operations "
+            f"belong to the memory capability, not to the router's host surface"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +186,7 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         agent_name="alpha",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -207,10 +203,6 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=tmp_path / "agents" / "alpha",
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -273,7 +265,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         agent_name="alpha2",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=sentinel,
         mcp_servers=None,
         project_context="",
@@ -283,10 +275,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -336,7 +324,9 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         agent_name="bus-test",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=make_op_context_source(
+            intervention_bus_factory=lambda: sentinel_bus,
+        ),
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -346,10 +336,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(
@@ -398,7 +384,7 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         agent_name="nobus-test",
         agent_role="role",
         output_language=None,
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers=None,
         project_context="",
@@ -408,10 +394,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(

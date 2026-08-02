@@ -38,8 +38,9 @@ binding site, ``Session._run_router_loop``):
   only creates the agent, and a spawned session's LLM work runs through its
   own run loop.)
 - **Genuinely turnless**, and recorded under no turn: the ``/compact`` slash
-  command (it short-circuits to ``Session._compact_now_for_op`` before the
-  router, so its compaction call has no turn), and the dev/dogfood surfaces
+  command (a client-side command, dispatched without ever entering the inbox
+  since #3595 S5, that calls ``Session._compact_now_for_op`` directly — so its
+  compaction call has no turn), and the dev/dogfood surfaces
   (``reyn.dev.dogfood``), which pass ``recorder=None`` and are not recorded
   at all.
 """

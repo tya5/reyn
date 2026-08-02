@@ -246,25 +246,41 @@ class _SentinelTransport(_Transport):
 
 @pytest.fixture()
 def clipboard(tmp_path, monkeypatch):
-    """A REAL ``pbcopy`` on ``PATH`` recording its stdin (the #3362 witness
+    """A REAL ``xclip`` on ``PATH`` recording its stdin (the #3362 witness
     shape: environment arrangement, not a mock — ``copy_to_clipboard`` really
     spawns it). Atomic write (temp + rename) so a poller never reads a
-    half-written sink."""
+    half-written sink.
+
+    #3616 ①: ``copy_to_clipboard`` is a thin pyperclip wrapper, and
+    pyperclip's own backend selection is PLATFORM-gated (only tries
+    ``pbcopy`` on Darwin), so a same-named fake binary is invisible to it on
+    Linux CI. Pinning the backend explicitly via pyperclip's public
+    ``set_clipboard("xclip")`` — then faking ``xclip`` — is portable across
+    both. See the identical fixture in
+    ``test_textual_chat_copy_rewind_3362.py`` for the full rationale."""
+    import pyperclip
+
+    original_copy, original_paste = pyperclip.copy, pyperclip.paste
+
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sink = tmp_path / "clipboard.txt"
-    script = bindir / "pbcopy"
+    script = bindir / "xclip"
     script.write_text(
         "#!/bin/sh\n/bin/cat > " + str(sink) + ".part\n"
         "/bin/mv " + str(sink) + ".part " + str(sink) + "\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    pyperclip.set_clipboard("xclip")
 
     def read():
         return sink.read_text() if sink.exists() else None
 
-    return read
+    try:
+        yield read
+    finally:
+        pyperclip.copy, pyperclip.paste = original_copy, original_paste
 
 
 @pytest.mark.asyncio
@@ -273,7 +289,7 @@ async def test_copy_after_a_long_restore_reaches_the_newest_reply(clipboard) -> 
     ``COPY_BUFFER_MAX``, ``/copy`` (1 = newest) copies the NEWEST reply.
 
     Witnessed through the real public path (the ``__copy_last_reply__``
-    sentinel + a real ``pbcopy`` stand-in), never the ring's internals.
+    sentinel + a real ``xclip`` stand-in), never the ring's internals.
     Falsification: pre-#3486, the hydrate seeding's ``reversed`` + ``append``
     made ``deque(maxlen)`` evict from the NEWEST side once the reply count
     crossed the cap, so this copied the (cap+1)-th-newest reply instead —

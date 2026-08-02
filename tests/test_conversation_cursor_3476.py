@@ -7,14 +7,15 @@ bindings, not re-tested here), Enter/Space copies the cursor entry directly
 to the clipboard, and ``r`` opens ``/rewind`` through the ordinary submit
 seam. What these tests pin (real ``TextualChatApp`` + a real minimal
 ``ClientTransport``, public surface only — pressed keys, ``FlowView.highlighted``,
-a real ``pbcopy`` stand-in, the transport's own submitted-text log):
+a real ``xclip`` stand-in, the transport's own submitted-text log):
 
 - Shift+Tab reaches the conversation pane with the cursor on the LAST entry
   (``highlight_last`` is flowview's own mount-time default once ``highlight=True``);
 - Enter/Space copies the CURSOR entry's own text — any kind, not just an
   agent reply, and NOT through the ``/copy`` ring;
-- ``r`` submits bare ``/rewind`` through the app's normal submit seam (the
-  SAME path an ordinary composer-typed ``/rewind`` would take) — never a
+- ``r`` runs bare ``/rewind`` through the app's normal submit seam (the
+  SAME path an ordinary composer-typed ``/rewind`` would take — since #3595 S5
+  that path interprets the line client-side and runs it) — never a
   per-entry targeted jump (there is no chat-seq/WAL-seq correlation to make
   one; #3476 issue comment).
 """
@@ -38,6 +39,8 @@ from reyn.runtime.outbox import OutboxMessage
 class _Transport(ClientTransport):
     def __init__(self) -> None:
         self.submitted: list[str] = []
+        # #3595 S5: a slash the app dispatches is RUN as a command here.
+        self.commands: list[str] = []
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -51,6 +54,10 @@ class _Transport(ClientTransport):
 
     async def submit_user_text(self, text: str) -> None:
         self.submitted.append(text)
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        self.commands.append(f"/{name} {args}".rstrip())
+        return True
 
     async def answer_intervention_text(self, text: str) -> bool:
         return False
@@ -79,23 +86,41 @@ class _Transport(ClientTransport):
 
 @pytest.fixture()
 def clipboard(tmp_path, monkeypatch):
-    """A REAL ``pbcopy`` on ``PATH`` recording its stdin — the #3362/#3476⑤
-    witness shape (environment arrangement, not a mock)."""
+    """A REAL ``xclip`` on ``PATH`` recording its stdin — the #3362/#3476⑤
+    witness shape (environment arrangement, not a mock).
+
+    #3616 ①: ``copy_to_clipboard`` is a thin pyperclip wrapper, and
+    pyperclip's own backend selection is PLATFORM-gated (only tries
+    ``pbcopy`` on Darwin), so a same-named fake binary is invisible to it on
+    Linux CI. Pinning the backend explicitly via pyperclip's public
+    ``set_clipboard("xclip")`` — then faking ``xclip`` — is portable across
+    both, since ``init_xclip_clipboard()``'s ``Popen(['xclip', ...])`` is a
+    plain PATH lookup once pinned, independent of host OS. See the identical
+    fixture in ``test_textual_chat_copy_rewind_3362.py`` for the full
+    rationale."""
+    import pyperclip
+
+    original_copy, original_paste = pyperclip.copy, pyperclip.paste
+
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sink = tmp_path / "clipboard.txt"
-    script = bindir / "pbcopy"
+    script = bindir / "xclip"
     script.write_text(
         "#!/bin/sh\n/bin/cat > " + str(sink) + ".part\n"
         "/bin/mv " + str(sink) + ".part " + str(sink) + "\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    pyperclip.set_clipboard("xclip")
 
     def read():
         return sink.read_text() if sink.exists() else None
 
-    return read
+    try:
+        yield read
+    finally:
+        pyperclip.copy, pyperclip.paste = original_copy, original_paste
 
 
 async def _focus_flow(pilot, app) -> "FlowView":
@@ -184,9 +209,9 @@ async def test_r_opens_rewind_through_the_ordinary_submit_seam() -> None:
 
         await pilot.press("r")
         await pilot.pause()
-        assert transport.submitted == ["/rewind"], (
-            f"'r' did not submit bare /rewind through the normal seam: "
-            f"{transport.submitted!r}"
+        assert transport.commands == ["/rewind"], (
+            f"'r' did not run bare /rewind through the normal seam: "
+            f"{transport.commands!r}"
         )
 
 

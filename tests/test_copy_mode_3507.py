@@ -257,36 +257,51 @@ async def test_copy_mode_yank_writes_through_reyns_local_clipboard(
 
     Exercised through the public ``write_clipboard`` seam rather than by driving
     motions: the motions are flowview's contract, the sink is reyn's. The tool
-    is a REAL ``pbcopy`` on PATH (environment arrangement, not a mock)."""
+    is a REAL ``xclip`` on PATH (environment arrangement, not a mock).
+
+    #3616 ①: ``copy_to_clipboard`` is a thin pyperclip wrapper whose backend
+    selection is PLATFORM-gated (pyperclip only tries ``pbcopy`` on Darwin),
+    so a same-named fake binary would be invisible to it on Linux CI. The
+    backend is pinned explicitly via pyperclip's own public
+    ``set_clipboard("xclip")`` API, which makes the fake portable across
+    hosts — see ``test_textual_chat_copy_rewind_3362.py``'s ``clipboard``
+    fixture for the full rationale."""
     import os
     import stat
 
+    import pyperclip
+
+    original_copy, original_paste = pyperclip.copy, pyperclip.paste
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sink = tmp_path / "clip.txt"
-    script = bindir / "pbcopy"
+    script = bindir / "xclip"
     script.write_text(
         "#!/bin/sh\n/bin/cat > " + str(sink) + ".part\n"
         "/bin/mv " + str(sink) + ".part " + str(sink) + "\n"
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    pyperclip.set_clipboard("xclip")
 
-    app = TextualChatApp(transport=_Transport())
-    async with app.run_test(size=(80, 20)) as pilot:
-        flow = await _seeded(pilot, app)
-        wrote = flow.write_clipboard("yanked from copy mode")
-        assert wrote is True, (
-            "the sink reported failure — reyn's clipboard tool did not accept the "
-            "text, or the default OSC 52 path is still in use"
-        )
-        for _ in range(60):
-            await pilot.pause()
-            if sink.exists():
-                break
-        assert sink.exists() and sink.read_text() == "yanked from copy mode", (
-            "copy mode's yank did not reach reyn's local clipboard tool"
-        )
+    try:
+        app = TextualChatApp(transport=_Transport())
+        async with app.run_test(size=(80, 20)) as pilot:
+            flow = await _seeded(pilot, app)
+            wrote = flow.write_clipboard("yanked from copy mode")
+            assert wrote is True, (
+                "the sink reported failure — reyn's clipboard tool did not accept the "
+                "text, or the default OSC 52 path is still in use"
+            )
+            for _ in range(60):
+                await pilot.pause()
+                if sink.exists():
+                    break
+            assert sink.exists() and sink.read_text() == "yanked from copy mode", (
+                "copy mode's yank did not reach reyn's local clipboard tool"
+            )
+    finally:
+        pyperclip.copy, pyperclip.paste = original_copy, original_paste
 
 
 @pytest.mark.asyncio

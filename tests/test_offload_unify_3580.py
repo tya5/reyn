@@ -243,3 +243,74 @@ def test_the_force_close_reserve_follows_its_config() -> None:
         "reserving a smaller increment did not let the turn run longer — "
         "max_inline_bytes is not reaching the force-close decision"
     )
+
+
+# ── the shipped defaults are a three-surface contract ──────────────────────
+#
+# Everything above asserts that a field CHANGES something. None of it pins what
+# the shipped value IS — measured by breaking `max_inline_bytes` from 16384 to
+# 1: all seven tests above stayed green, as did the config-mirror gate (it
+# checks fields are DOCUMENTED, not that the numbers agree) and the two
+# pre-existing suites that touch the constant. Nothing in the repo noticed.
+#
+# That matters because `max_inline_bytes` feeds the turn budget's force-close
+# reserve, so a silently-changed default moves when force-close fires — while
+# the docs and the example config keep advertising the old number.
+#
+# The numbers live HERE, and all three surfaces are compared against them. An
+# equality between two of the surfaces would be blind to both drifting the same
+# way, which is the shape this whole block exists to close.
+
+_SHIPPED_DEFAULTS: "dict[str, float]" = {
+    "max_inline_bytes": 16_384,
+    "preview_head_chars": 6_000,
+    "preview_tail_chars": 2_000,
+    "cap_ceil_tokens": 4_096,
+    "cap_alpha": 0.5,
+    "structured_inline_max_chars": 2_000,
+    "structured_preview_chars": 600,
+}
+
+
+def test_the_code_ships_the_documented_defaults() -> None:
+    """Tier 1: surface 1 of 3 — the dataclass."""
+    shipped = _build_offload_config({})
+
+    actual = {name: getattr(shipped, name) for name in _SHIPPED_DEFAULTS}
+    assert actual == _SHIPPED_DEFAULTS
+
+
+def test_the_reference_documents_the_shipped_defaults() -> None:
+    """Tier 1: surface 2 of 3 — `reyn.yaml`'s field table.
+
+    An operator reads the table to decide whether they need to set anything at
+    all, so a table that disagrees with the code is worse than no table.
+    """
+    import re
+    from pathlib import Path
+
+    table = Path("docs/reference/config/reyn-yaml.md").read_text(encoding="utf-8")
+    for name, expected in _SHIPPED_DEFAULTS.items():
+        row = re.search(rf"\| `{re.escape(name)}` \| \w+ \| `([0-9.]+)` \|", table)
+        assert row is not None, f"{name} has no row in reyn-yaml.md's offload table"
+        assert float(row.group(1)) == float(expected), (
+            f"reyn-yaml.md documents {name}={row.group(1)}, code ships {expected}"
+        )
+
+
+def test_the_example_config_shows_the_shipped_defaults() -> None:
+    """Tier 1: surface 3 of 3 — `reyn.local.yaml.example`.
+
+    The example is what an operator copies, so a stale number there is one they
+    paste into their own config believing it is the default.
+    """
+    import re
+    from pathlib import Path
+
+    example = Path("reyn.local.yaml.example").read_text(encoding="utf-8")
+    for name, expected in _SHIPPED_DEFAULTS.items():
+        line = re.search(rf"^#\s+{re.escape(name)}:\s*([0-9.]+)", example, re.M)
+        assert line is not None, f"{name} is not shown in reyn.local.yaml.example"
+        assert float(line.group(1)) == float(expected), (
+            f"the example shows {name}={line.group(1)}, code ships {expected}"
+        )

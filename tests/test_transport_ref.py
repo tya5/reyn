@@ -148,10 +148,10 @@ async def test_run_one_iteration_processes_single_kind(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     processed: list[str] = []
 
-    async def _fake_handle_user_message(self, text, *, chain_id):
+    async def _fake_handle_inbox_text(self, text, *, chain_id):
         processed.append(text)
 
-    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_inbox_text", _fake_handle_inbox_text)
 
     # Enqueue two "user" messages.
     await session._put_inbox("user", {"text": "first"})
@@ -206,7 +206,7 @@ async def test_run_one_iteration_dispatches_all_known_kinds(tmp_path, monkeypatc
     async def _record_agent_response(self, payload):
         dispatched.append("agent_response")
 
-    monkeypatch.setattr(Session, "_handle_user_message", _record_user)
+    monkeypatch.setattr(Session, "_handle_inbox_text", _record_user)
     monkeypatch.setattr(Session, "_handle_agent_request", _record_agent_request)
     monkeypatch.setattr(Session, "_handle_agent_response", _record_agent_response)
 
@@ -231,11 +231,11 @@ async def test_run_wraps_run_one_iteration(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     processed: list[str] = []
 
-    async def _fake_handle_user_message(self, text, *, chain_id):
+    async def _fake_handle_inbox_text(self, text, *, chain_id):
         processed.append(text)
         await self._put_outbox(OutboxMessage(kind="agent", text=f"echo:{text}"))
 
-    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_inbox_text", _fake_handle_inbox_text)
 
     await session._put_inbox("user", {"text": "ping"})
     await session.inbox.put(("shutdown", {}))  # out-of-band, no WAL entry
@@ -357,10 +357,10 @@ async def test_message_bus_request_pumps_until_quiescent(tmp_path, monkeypatch):
     """
     session = _make_session(tmp_path)
 
-    async def _fake_handle_user_message(self, text, *, chain_id):
+    async def _fake_handle_inbox_text(self, text, *, chain_id):
         await self._put_outbox(OutboxMessage(kind="agent", text=f"echo:{text}"))
 
-    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_inbox_text", _fake_handle_inbox_text)
 
     bus = MessageBus()
     replies = await bus.request(
@@ -386,12 +386,12 @@ async def test_message_bus_collects_multiple_outbox_messages(tmp_path, monkeypat
     """
     session = _make_session(tmp_path)
 
-    async def _fake_handle_user_message(self, text, *, chain_id):
+    async def _fake_handle_inbox_text(self, text, *, chain_id):
         # Both "agent" kinds are queued even when is_attached=False.
         await self._put_outbox(OutboxMessage(kind="agent", text="first_fragment"))
         await self._put_outbox(OutboxMessage(kind="agent", text="done"))
 
-    monkeypatch.setattr(Session, "_handle_user_message", _fake_handle_user_message)
+    monkeypatch.setattr(Session, "_handle_inbox_text", _fake_handle_inbox_text)
 
     bus = MessageBus()
     replies = await bus.request(
@@ -459,9 +459,11 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
         return await original_put_inbox(self, kind, payload)
 
     # #3595 step 1b: the seam is _handle_inbox_text, the shared turn body every
-    # text-bearing inbox kind reaches (_handle_user_message is the OPERATOR entry
-    # above it and calls straight into this). Patching the body keeps this test on
-    # the code both the old kind="user" route and the new external kind end at.
+    # text-bearing inbox kind reaches. S5 then deleted the operator entry that
+    # used to sit above it (_handle_user_message, whose only remaining content
+    # was the slash short-circuit), so this IS the whole path now. Patching the
+    # body keeps this test on the code both the old kind="user" route and the
+    # new external kind end at.
     async def _fake_handle_inbox_text(self, text, *, chain_id):
         from reyn.runtime.chat_message import ChatMessage
         self._append_history(ChatMessage(

@@ -131,7 +131,7 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
 
     session._chat_events.emit = capture  # type: ignore[assignment]
 
-    _run(session._handle_user_message("hello", chain_id="chain-x"))
+    _run(session._handle_inbox_text("hello", chain_id="chain-x"))
 
     msgs = _drain_outbox(session)
     kinds = [m.kind for m in msgs]
@@ -187,12 +187,12 @@ def test_router_succeeds_within_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(RouterLoop, "run", fake_router_run)
 
     # First turn: one router call, counter at 1, no exception.
-    _run(session._handle_user_message("first message", chain_id="c1"))
+    _run(session._handle_inbox_text("first message", chain_id="c1"))
     assert call_count["n"] == 1
     assert session.router_invocations_this_turn == 1
 
     # Second turn: counter resets to 0 then increments to 1 — well under cap.
-    _run(session._handle_user_message("second message", chain_id="c2"))
+    _run(session._handle_inbox_text("second message", chain_id="c2"))
     assert call_count["n"] == 2
     assert session.router_invocations_this_turn == 1
 

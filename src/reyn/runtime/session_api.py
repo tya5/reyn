@@ -240,7 +240,8 @@ async def run_agent_step(
     #3595 step 1: that kind used to be ``"user"``, i.e. the prompt claimed a
     human had typed it at a client, which is what made every registered slash
     command executable from a model's output (``Session._handle_user_message``
-    hands a ``/``-prefixed line to slash dispatch before any router turn). See
+    handed a ``/``-prefixed line to slash dispatch before any router turn; S5
+    deleted that entry, so no inbox text is interpreted at all now). See
     ``TurnOrigin.AGENT_STEP``.
 
     With ``schema`` unset, returns the joined ``kind="agent"`` reply text

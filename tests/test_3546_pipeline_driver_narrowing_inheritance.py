@@ -82,13 +82,18 @@ expiry mechanical rather than remembered: the four sites that still pass nothing
 re-argued on the merits — no spawner to inherit from (``resolve_session``); a value
 would OVERWRITE the recovering session's own durable layer, since the primitive
 persists what it is given (the recovery pair); and, for ``spawn_session_recorded``, the
-injection has to happen at a LATER point than the primitive offers. ★ That last one is
-measured, not judged: routing its ``narrowing`` through the new channel REDs two
+injection happens at a LATER point than the primitive offers. ★ That last one was
+measured, not judged: routing its ``narrowing`` through the new channel REDded two
 existing behavioural tests, because ``refresh_config_projections()`` runs in between and
 its ``reapply_visibility_override`` re-resolves-from-base-and-SETs — with no registry
-back-reference there is no base, so it lands on ALLOW-ALL and discards the injection.
+back-reference there was no base, so it landed on ALLOW-ALL and discarded the injection.
 "The channel exists, therefore use it" would have been a shape argument in the third
-direction. The ``_S3561`` legs assert reachability only, never anything about what the
+direction. ★ #3593 ① removed that discard (no base obtained ⇒ the live envelope is
+PRESERVED, never overwritten with a fabricated one), and re-measured: under the fix both
+of those tests stay GREEN with the value routed down the channel. The site keeps its
+current ordering — #3593 ① is scoped to the fail-open write and deliberately does not
+move a spawn seam's injection point — so the exemption below now rests on "not moved,
+pending its own PR", not on "the refresh would eat it". The ``_S3561`` legs assert reachability only, never anything about what the
 child inherits, so they are orthogonal to #3562's and stay green through it — verified
 by running them (both the pre-#3595 leg and, after the rebase, its #3596 inverse plus
 the operator control), not assumed.
@@ -386,15 +391,20 @@ _EXEMPT_RECOVERY_REENTRY = (
 )
 _EXEMPT_RECORDED_SEAM_INJECTS_LATER = (
     "the recorded seam writes + injects its OWN ``narrowing`` a few statements after "
-    "the spawn, and that ordering is MEASURED (#3562): it must happen AFTER its "
+    "the spawn. That ordering was MEASURED (#3562): it had to happen AFTER its "
     "``refresh_config_projections()``, whose ``reapply_visibility_override`` "
     "re-resolves the envelope from base and SETs it — on a session with no registry "
-    "back-reference there is no base, so it sets ALLOW-ALL and discards anything "
+    "back-reference there was no base, so it set ALLOW-ALL and discarded anything "
     "injected earlier. Handing the value down the primitive's channel was tried and "
     "REDded tests/test_2103_s1bc_session_spawn_tool.py::"
     "test_spawn_session_recorded_enforces_narrowing_on_live_session and "
     "tests/test_pipeline_a2_spawn_ephemeral_session.py::"
-    "test_spawn_ephemeral_session_narrowing_applied, both with an empty live tool_deny."
+    "test_spawn_ephemeral_session_narrowing_applied, both with an empty live tool_deny. "
+    "#3593 (1) removed that discard — no base obtained now PRESERVES the live envelope "
+    "instead of overwriting it — and re-measured: both tests stay GREEN with the value "
+    "routed down the channel. The site is unchanged because #3593 (1) is scoped to the "
+    "fail-open write, not because the refresh would still eat it; moving the injection "
+    "is a behavioural change owed its own PR."
 )
 _NARROWING_EXEMPT_SITES: "dict[tuple[str, str], str]" = {
     ("reyn/runtime/registry.py", "spawn_session_recorded"): (

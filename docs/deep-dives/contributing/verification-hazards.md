@@ -447,6 +447,67 @@ issue that already settled it, including any rejected alternative and the
 reason it was rejected; re-deriving from code alone re-litigates a decision
 someone already made and recorded.
 
+## 15. A declared field, a complete implementation, and a passing test all look alive — regardless of whether anything calls them
+
+`MemoryService.remember` / `.forget` / `.read_body` were fully implemented,
+docstringed, and one of them had a Tier-2 test that explicitly asserted it
+was exercised by "a live consumer." Their actual production caller count was
+**zero** — three near-duplicate router-loop privates did the real work,
+reimplementing the same rules (a threat-scan reject, frontmatter
+construction, index ingest) independently. `RouterCallerState.memory_service`
+existed as a declared field for the same reason: wired by nobody, because the
+wiring had gone to three separate `*_fn` callables instead (#3608).
+
+Worse inside the same defect: a security check with a HAND-MIRRORED test
+double has a test path that never touches the real thing. Two call sites
+copied `scan_for_block`'s scan-then-emit sequence by hand into fake host
+objects (`_BlockHost`) rather than driving the real method — so the test
+suite could go green forever even if the real `scan_for_block` diverged from
+its copies, because nothing ever asserted the copies matched.
+
+A field, an implementation, and a test all being present is necessary for
+"this is live" but nowhere near sufficient — none of the three states whether
+anything on the production path actually calls it. This is a different axis
+from §1 (which object a measurement touches) and §14 (whether a completion
+claim's own referent was checked): here the artifact itself is completely
+real and correctly built, and the gap is that its EXISTENCE was mistaken for
+its USE.
+
+**Apply**: when a mechanism looks fully built — field declared, method
+implemented with a docstring, test passing — count its production callers
+before trusting that it does anything. Existence of the field, the
+implementation, or the test does not count toward that number. Also check
+whether a test that exercises "the same behavior" does so through the REAL
+call path or a hand-mirrored copy of it — a copy that never diverges from
+the real thing under test is not proof they stayed in sync, only that no one
+has yet made them diverge.
+
+## 16. An equality assertion is blind to both sides being wrong the same way
+
+A PR unifying two code paths ("door A" and "door B" build the same object)
+naturally reaches for an equivalence test: build via both doors, assert the
+results match. That assertion is structurally unable to catch the case where
+BOTH doors are wrong IDENTICALLY. A strip that regressed one door's
+`agent_id` back to `None` left the equality arm GREEN — both doors produced
+`None`, so they still "agreed" — while a separate identity-specific
+assertion (`test_the_agent_identity_reaches_the_registry_dispatch_door`)
+went RED, because it asserted the actual VALUE reaching a consumer, not
+whether the two doors matched each other (#3610).
+
+Two arms are required for this class of unification test, not one: an
+equality arm (do the two paths still produce the same thing, guarded
+against vacuity — a real change must show through the fingerprint) AND at
+least one VALUE arm that asserts a specific field reaches a specific
+consumer with a specific expected value, independent of the other door
+entirely. The equality arm alone cannot distinguish "both doors correct" from
+"both doors wrong in the same way" — a value arm is the only assertion form
+that can.
+
+**Apply**: when testing "these two paths build equivalent output," don't
+stop at the equality assertion. Add at least one assertion that names an
+actual expected value for a load-bearing field, reached through only ONE of
+the paths, independent of whatever the other path currently produces.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.

@@ -24,13 +24,13 @@ fails at construction rather than silently at first use — the #1402
 completeness-by-construction discipline the ``PresentationConsumer`` seam uses.
 
 ⚠️ That guarantee covers the abstract METHOD SET, not each method's semantics,
-and there is now one implementation that satisfies it without being a client:
+and there is one implementation that satisfies it without being a client:
 :class:`~reyn.interfaces.transport.session_bound.SessionBoundTransport` (#3595
-S4) is the SEND side only — a session builds it over itself so slash handlers,
-which are client-layer code, can already depend on this seam while the dispatch
-still lives in ``Session``. Its :meth:`frames` raises rather than returning an
-empty stream, which is the loudest failure available to a method whose contract
-is "produce frames"; it goes away with the dispatch in #3595 S5.
+S4) is the SEND side only — a session builds it over itself so a slash handler,
+which is client-layer code, depends on this seam even when the client that
+asked for the command is on the far end of a wire. Its :meth:`frames` raises
+rather than returning an empty stream, which is the loudest failure available to
+a method whose contract is "produce frames".
 """
 from __future__ import annotations
 
@@ -126,44 +126,37 @@ class ClientTransport(ABC):
     async def cancel_inflight(self) -> None:
         """Cooperatively cancel the in-flight turn (ctrl-c seam)."""
 
-    async def deliver_pending_answer(self, text: str) -> bool:
-        """Attempt DIRECT, un-queued delivery of ``text`` as an ``/answer``
-        command for a pending intervention (#3327). Returns ``True`` iff
-        delivered THIS way — the caller must NOT also call
-        :meth:`submit_user_text` for the same ``text``. Returns ``False``
-        when ``text`` is not an ``/answer`` command, or nothing is pending —
-        the caller then falls through to the ordinary queued
-        :meth:`submit_user_text` path, UNCHANGED (#3300's sent-queue keeps
-        gating every other submission).
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        """Run the registered slash command ``name`` with ``args``; ``True`` iff
+        it ran (#3595 S5).
 
-        Answering a pending intervention acts on EXISTING state, not a new
-        turn — queuing it behind :meth:`submit_user_text` can deadlock: with
-        a turn blocked awaiting that SAME intervention, the inbox item can
-        only be dequeued once the intervention resolves (chicken-and-egg,
-        #3327's keyboard-only-user repro).
+        The seam the shared client-side slash layer
+        (:func:`reyn.interfaces.slash.dispatch.maybe_dispatch_slash`) calls once
+        it has turned typed text into a command. It takes a NAME already
+        resolved against the process-local registry, never the raw line — the
+        interpretation is the client's, the execution happens wherever the
+        session is:
 
-        NOT abstract (mirrors :meth:`cancel_queued`): added after several
-        narrow-purpose ``ClientTransport`` stubs already existed across the
-        test suite; the default no-op preserves their behavior unchanged.
-        ``InProcessTransport`` overrides it with the real bypass.
+        - ``InProcessTransport`` runs it against the attached session directly;
+        - ``AgUiTransport`` POSTs a typed ``slash_command`` payload, and the
+          server's AG-UI endpoint runs it there. This is what keeps ``/model``
+          working on a ``--connect`` attach without any transport ever
+          re-testing ``startswith("/")`` — a client holds no ``Session``, and
+          the eleven commands that still read session state could not run
+          client-side at all.
 
-        ``AgUiTransport`` deliberately does NOT override this — not a gap,
-        verified (#3327 co-vet): the REMOTE answer path was never
-        queue-gated to begin with. The plain ``--connect`` client
-        (``stream_client.route_input_line``) already routes a bare (non-``/``)
-        line straight to ``answer_intervention_text`` — un-queued — whenever
-        ``pending_intervention_head()`` is set, no ``/answer`` needed; the
-        AG-UI web surface has its own direct ``TOOL_CALL_RESULT`` POST
-        (``agui/endpoint.py``'s ``_handle_answer`` → ``answer_intervention_by_id``).
-        The #3327 deadlock is a Textual-chat-ONLY defect: #3299 P2
-        deliberately removed the equivalent bare-text-answers-the-head
-        branch from the Composer (the ``pending_intervention_head()`` read
-        this class's own docstring above still mentions) as the
-        no-double-input fix for that arc — leaving the Composer, alone among
-        reyn's clients, with no un-queued answer path until THIS method
-        added one back (scoped to ``/answer``, not bare text, to keep
-        #3300's queue-everything invariant otherwise intact). AG-UI needs no
-        parallel bypass because its answer path was never removed.
+        ``False`` means "not run HERE" (no attached session, a transport with
+        no execution side, an unknown name on the far end); the caller surfaces
+        that rather than silently dropping the line.
+
+        Executing a slash command is un-queued by construction: a client-side
+        layer has no inbox to queue it on. See the dispatch module docstring for
+        why the #3327 ``/answer`` fast path this method replaces is generalized
+        rather than preserved.
+
+        NOT abstract (mirrors :meth:`cancel_queued`): several narrow-purpose
+        ``ClientTransport`` stubs across the test suite pre-date it, and the
+        default keeps their behavior unchanged.
         """
         return False
 

@@ -157,7 +157,7 @@ def test_router_loop_total_usage_propagates_to_session(tmp_path, monkeypatch):
         return _text_result("こんにちは")
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _stub_call_llm_tools)
-    _run(session._handle_user_message("hello", chain_id="c1"))
+    _run(session._handle_inbox_text("hello", chain_id="c1"))
 
     assert session.total_usage.prompt_tokens > 0, (
         "RouterLoop usage was not propagated to session._total_usage (Bug 2 not fixed)"

@@ -626,6 +626,29 @@ async def agui_submit(request: Request, agent_name: str):
             # surface already showed. See `AgUiTransport.submit_user_text` /
             # `remote_client.py`'s `send`.
             return JSONResponse({"status": "ok", "msg_id": msg_id})
+    elif ptype == "slash_command":
+        # #3595 S5: the REMOTE half of the shared client-side slash layer. The
+        # client interpreted the operator's line and resolved it against its own
+        # registry; what arrives here is a command NAME plus its argument
+        # string, so nothing on the server side tests a leading ``/``. The name
+        # is re-resolved against THIS process's registry — a client on a
+        # different build must not be able to name something this one does not
+        # have — and an unknown name answers ``ran: False`` rather than raising.
+        #
+        # A remote client holds no ``Session``, so eleven of the registered
+        # commands (the S4 residue: /model, /cost, /image, …) can only run where
+        # the session is. Executing them here is what keeps a ``--connect``
+        # attach's slash catalog identical to a local one; it rides the same
+        # ``authorize_write`` gate above that a turn submit does, which is the
+        # gate they already passed when they rode ``user_message``.
+        from reyn.interfaces.slash.dispatch import execute_slash_command
+        name = str(payload.get("name", "")).strip()
+        if name:
+            ran = await execute_slash_command(
+                session._slash_context(), name, str(payload.get("args", "")),
+            )
+            return JSONResponse({"status": "ok", "ran": ran})
+        return JSONResponse({"status": "ok", "ran": False})
     elif ptype == "cancel_inflight":
         cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(cancel_fn):
