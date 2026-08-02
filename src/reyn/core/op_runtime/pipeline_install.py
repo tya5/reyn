@@ -459,6 +459,10 @@ async def handle(
         getattr(ctx, "hot_reloader", None),
         source="pipeline_install",
         is_addition=_is_addition,
+        # #3636: names this specific pipeline so two pipelines installed back-to-back
+        # (e.g. a plugin bundling several) don't render as an indistinguishable
+        # repeat in state_change history.
+        detail=safe_name,
     )
 
     return {
