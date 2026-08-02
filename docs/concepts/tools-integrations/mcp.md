@@ -297,6 +297,12 @@ See [Concepts: permission model](../runtime/permission-model.md) → "Collapse a
 
 > Legacy `permissions.mcp_install: ...` keys in older `reyn.yaml` files are accepted with a `DeprecationWarning` and translate to the equivalent gates during the migration window.
 
+### Pre-commit probe gate: `permissions.mcp` (#3552)
+
+A chat-driven install with a live per-session reloader does not just write config — it PROBES the server first (spawn/connect + `list_tools`) so a failed/cancelled/denied probe leaves `.reyn/config/mcp.yaml` unchanged (probe-then-commit; see [the CLI reference](../../reference/cli/mcp.md) → "Persistence asymmetry"). That probe is a LIVE connection to a model/plugin-supplied server name, made *before* the config becomes authoritative — before #3552, `file.write` + `http.get` above were the only gates on the install, and neither is the MCP axis, so the probe reached the network with no MCP-axis check at all.
+
+The probe now calls `require_mcp` FIRST — the exact same gate (interactive "Allow access to MCP server X?" approval, persisted the same way in `.reyn/approvals.yaml`, plus any per-session `ContextualLayer` narrowing) documented below under "Runtime gate", applied to the server name about to be probed rather than one already configured. So a network reach to an as-yet-unapproved server can no longer happen at either time — pre-commit probe or post-install use — without crossing this same gate. A deny raises a decision-enabling `PermissionError` (naming the server and how to grant it), surfaced as `status:"denied"` (the same shape a permission denial anywhere else in `op_runtime` produces), never a silent skip.
+
 ### Runtime gate: `permissions.mcp`
 
 MCP tool calls cross two checks before they leave the process:

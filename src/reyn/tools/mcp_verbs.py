@@ -451,11 +451,20 @@ async def _handle_mcp_install_local(
     # primary local-stdio use would never get same-turn use of its just-installed
     # server. A PURE ADDITION on a live per-session reloader PROBES the server first
     # (spawn/connect + list_tools) and writes ONLY on a successful probe (a
-    # failed/cancelled probe leaves nothing written — no half-install); a same-name
-    # overwrite or no per-session reloader keeps the existing deferred behavior. The
-    # per-session reloader (ctx.hot_reloader, #2761 PR-2) is reached via the router's
-    # op-context factory (the single tool→op ctx source); absent (test / CLI) → deferred.
-    # ``_op_ctx`` is built once, above the permission gate (which needs it too).
+    # failed/cancelled/denied probe leaves nothing written — no half-install); a
+    # same-name overwrite or no per-session reloader keeps the existing deferred
+    # behavior. The per-session reloader (ctx.hot_reloader, #2761 PR-2) is reached
+    # via the router's op-context factory (the single tool→op ctx source); absent
+    # (test / CLI) → deferred. ``_op_ctx`` is built once, above the permission gate
+    # (which needs it too).
+    #
+    # #3552: this is the SIBLING probe call site to ``mcp_install``'s own — same
+    # ``probe_mcp_server``, same pre-#3552 hole (a live connection to a
+    # model/LLM-supplied ``name`` before ``.reyn/config/mcp.yaml`` becomes
+    # authoritative, gated by nothing on the MCP axis). The gate lives INSIDE
+    # ``probe_mcp_server`` itself now, so passing the resolver/bus/contextual here
+    # is what turns it on for this call site too — a fix confined to only the
+    # ``mcp_install`` op's call site would have left this path unlatched.
     from reyn.core.cancellable import Cancelled
     from reyn.core.op_runtime.mcp_install import probe_mcp_server
     from reyn.runtime.hot_reload import dispatch_install_reload, is_pure_addition
@@ -471,6 +480,11 @@ async def _handle_mcp_install_local(
                 # mcp_install_local writes .reyn/config/mcp.yaml directly, bypassing the
                 # mcp_install op entirely, so it needs its own cancel_event wiring).
                 cancel_event=getattr(_op_ctx, "cancel_event", None),
+                # #3552: gate the live connection through require_mcp, same as the
+                # mcp_install op's call site.
+                permission_resolver=resolver,
+                bus=getattr(_op_ctx, "intervention_bus", None),
+                contextual=getattr(_op_ctx, "contextual_permission", None),
             )
         except Cancelled:
             # #2813: uniform status:"cancelled" (matches the mcp/resource op cancel surface
