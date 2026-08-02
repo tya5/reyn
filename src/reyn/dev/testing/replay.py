@@ -73,6 +73,19 @@ Set ``REYN_LLM_RECORD=1`` before running pytest to call the real LLM/embedding
 provider and write fixtures. If a fixture file is absent, record mode is
 activated automatically (first-run fixture generation).
 
+#3634: regenerating in place REPLACES a call's stale entry, not appends
+alongside it. Before #3634, :meth:`flush` only ever appended, so re-recording
+a call whose TOOL SCHEMA changed (including a description-only edit — the
+schema hash covers the whole tool payload) produced a new key while the old
+entry stayed on disk; the fixture then matched both the old and the new
+schema and never went RED again, regardless of which one the code actually
+implements. See ``reyn.dev.testing.replay_stacking`` for the grouping rule
+that lets :meth:`flush` tell "this session re-recorded that exact call under
+a new key" (drop the old one) from "a different call recorded by a sibling
+test sharing this same fixture file" (keep it) — and
+``tests/test_replay_fixture_no_stacking_3634.py`` for the CI gate that fails
+if any committed fixture holds a stacked group anyway.
+
 Sensitive data note
 -------------------
 ``prompt_preview`` is capped at 200 characters and is purely informational.
@@ -94,6 +107,7 @@ from reyn.dev.testing.replay_preconditions import (
     ReplayRequest,
     default_preconditions,
 )
+from reyn.dev.testing.replay_stacking import group_signature
 
 if TYPE_CHECKING:
     pass
@@ -303,8 +317,37 @@ class LLMReplay:
     def flush(self) -> None:
         """Write pending record-mode entries to the fixture file.
 
-        Appends new entries; existing entries are not rewritten.  The
-        fixture directory is created automatically.
+        #3634: REPLACES, not appends. A naive append made regenerating a
+        fixture in place — the documented procedure — stack schema
+        generations: re-recording a call whose tool schema changed produced
+        a NEW key while the OLD entry (recorded against the old schema)
+        stayed on disk, so the fixture then matched both generations and
+        stopped measuring anything (a stale fixture goes RED and gets
+        noticed; a stacked one stays GREEN). The fix drops two kinds of
+        on-disk entry before writing:
+
+        1. Any entry whose ``key`` matches a key THIS session (re-)recorded —
+           an unchanged call re-recorded verbatim would otherwise leave a
+           byte-identical duplicate line every time (harmless to a replay
+           lookup, which collapses same-key entries into one dict slot, but
+           still fixture bloat / git-diff noise for no reason).
+        2. Any completion entry whose :func:`replay_stacking.group_signature`
+           (model + tool_choice + per-message digests, i.e. everything the
+           key hashes over EXCEPT ``tools`` — the one component a schema
+           change is expected to move) matches an entry this session
+           recorded — that is an EARLIER generation of a call this run
+           superseded, the #3634 stacking case proper.
+
+        Every other on-disk entry (a genuinely different call, e.g. one
+        recorded by a SIBLING test sharing this same fixture file —
+        ``llm_tools/text_only.jsonl`` is read by four separate tests) is
+        preserved untouched: this is a surgical replace of only what this
+        session (re-)recorded, not a wholesale truncate, so cross-test
+        accumulation into one shared fixture file still works. An on-disk
+        entry predating #3473 carries no ``key_components`` fingerprint and
+        so cannot be grouped by rule 2 — it is preserved unconditionally
+        unless rule 1 (exact key match) applies, degrading to the old
+        append-only safety rather than silently deleting un-groupable data.
 
         #3473: in RECORD mode each precondition is asked to :meth:`capture` the
         live environment here — at the END of recording, when whatever
@@ -312,7 +355,9 @@ class LLMReplay:
         recorded run to do so. The snapshots are written as ``"environment"``
         lines and are what a later replay injects. A replay-mode flush
         captures nothing: it would append this machine's environment to a
-        committed fixture, which is the opposite of the guarantee.
+        committed fixture, which is the opposite of the guarantee. (In
+        practice a replay-mode flush is always a no-op: only record-mode
+        calls ever populate ``self._pending``.)
         """
         captured = [
             {"kind": "environment", "name": precondition.name, "value": snapshot}
@@ -324,8 +369,56 @@ class LLMReplay:
         if not self._pending and not captured:
             return
         self.fixture_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.fixture_path.open("a", encoding="utf-8") as fh:
-            for entry in [*captured, *self._pending]:
+
+        if self.mode != "record":
+            # Unreachable in practice (see docstring) — kept as the safe
+            # append fallback rather than silently rewriting a fixture no
+            # replay-mode caller asked to change.
+            with self.fixture_path.open("a", encoding="utf-8") as fh:
+                for entry in [*captured, *self._pending]:
+                    fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            self._pending.clear()
+            return
+
+        session_groups = {
+            group_signature(entry["key_components"])
+            for entry in self._pending
+            if entry.get("kind", "completion") == "completion"
+            and isinstance(entry.get("key_components"), dict)
+        }
+        # Every key this session (re-)recorded, completion AND embedding
+        # alike -- an on-disk entry sharing one of these keys is about to be
+        # rewritten verbatim by the fresh pending copy, so keeping the old
+        # line too would be a byte-identical duplicate (harmless to replay,
+        # since a dict lookup collapses it, but still a fixture that grows a
+        # line every time an UNCHANGED call is re-recorded).
+        session_keys = {entry["key"] for entry in self._pending}
+
+        kept_existing: list[dict[str, Any]] = []
+        if self.fixture_path.exists():
+            for raw_line in self.fixture_path.read_text(encoding="utf-8").splitlines():
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except Exception:
+                    # Corrupt line — same silent-skip policy as `_load`.
+                    continue
+                key = entry.get("key")
+                if key in session_keys:
+                    continue  # this session re-recorded this exact call — drop the old copy
+                if entry.get("kind", "completion") == "completion":
+                    components = entry.get("key_components")
+                    if (
+                        isinstance(components, dict)
+                        and group_signature(components) in session_groups
+                    ):
+                        continue  # stale earlier-generation duplicate — drop
+                kept_existing.append(entry)
+
+        with self.fixture_path.open("w", encoding="utf-8") as fh:
+            for entry in [*kept_existing, *captured, *self._pending]:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         self._pending.clear()
 

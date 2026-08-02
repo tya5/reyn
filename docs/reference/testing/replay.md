@@ -43,9 +43,11 @@ Restores the original `litellm.acompletion` / `litellm.aembedding`. Safe to call
 
 ### `flush()`
 
-Writes pending record-mode entries to `fixture_path`. Appends to the existing file; creates the file and parent directories if they do not exist. No-op in replay mode.
+Writes pending record-mode entries to `fixture_path`; creates the file and parent directories if they do not exist. No-op in replay mode.
 
-In **record** mode it additionally asks each precondition to *capture* the live environment and writes one `"environment"` line per captured snapshot (#3473) — at the end of recording, when whatever populates that environment has had the whole run to do so. A replay-mode `flush()` captures nothing: appending this machine's environment to a committed fixture is the opposite of the guarantee.
+**Replaces, not appends (#3634).** Regenerating a fixture in place — re-running a `mode="record"` test against unchanged code, no manual delete required — no longer stacks: an on-disk entry is dropped, not kept alongside the fresh one, when it shares this session's exact key (an unchanged call re-recorded verbatim) or shares the same `reyn.dev.testing.replay_stacking.group_signature` (model + `tool_choice` + per-message digests — i.e. everything the key hashes over EXCEPT `tools`) as a call this session just recorded — that second case is an EARLIER schema generation of a call this run superseded. Every other on-disk entry — e.g. one recorded by a sibling test that shares this same fixture file — is preserved untouched, so re-recording one test in a multi-test fixture file does not erase its siblings. Before #3634, `flush()` unconditionally appended, so regenerating in place after a tool schema change (including a description-only edit) left the OLD entry on disk alongside the new one and the fixture matched both schema generations — green either way, measuring neither; `tests/test_replay_fixture_no_stacking_3634.py` is the CI gate against that class recurring.
+
+In **record** mode it additionally asks each precondition to *capture* the live environment and writes one `"environment"` line per captured snapshot (#3473) — at the end of recording, when whatever populates that environment has had the whole run to do so. A replay-mode `flush()` captures nothing: writing this machine's environment into a committed fixture is the opposite of the guarantee.
 
 ### Context manager
 

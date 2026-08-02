@@ -525,12 +525,21 @@ python -m pytest tests/test_replay_my_area.py -v
 # Fixture written to tests/fixtures/llm/my_area/my_scenario.jsonl
 ```
 
-**After intentional prompt drift**: delete the fixture and re-record:
+**After intentional prompt drift**: re-record with `REYN_LLM_RECORD=1` —
+deleting first is no longer required (#3634 made `LLMReplay.flush()` replace
+a re-recorded/superseded entry instead of appending alongside it, so
+regenerating in place cannot stack schema generations any more):
 
 ```bash
-rm tests/fixtures/llm/my_area/my_scenario.jsonl
 REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
 ```
+
+Deleting first (`rm tests/fixtures/llm/my_area/my_scenario.jsonl`) still
+works if you prefer an explicit "starting from nothing," but it is a
+preference, not a correctness requirement — see `write-replay-tests.md`
+Step 4 and ``reyn.dev.testing.replay.LLMReplay.flush``'s own docstring for
+the mechanism, and `tests/test_replay_fixture_no_stacking_3634.py` for the
+CI gate that would catch it if a stacked fixture landed anyway.
 
 ### Drift detection — required for each area
 
