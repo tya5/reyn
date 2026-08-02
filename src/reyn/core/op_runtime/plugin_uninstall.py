@@ -112,6 +112,11 @@ async def handle(op: PluginUninstallIROp, ctx: OpContext) -> dict:
                     }[registry_kind]
                     await dispatch_install_reload(
                         getattr(ctx, "hot_reloader", None), source=seam_source, is_addition=False,
+                        # #3636: names the entries this drop removed (consistency with
+                        # the install-side callers — these three calls already carry
+                        # distinct `source` values so they don't alias like #3636's
+                        # pipeline_install case, but the qualifier is still useful).
+                        detail=", ".join(removed[registry_kind]),
                     )
 
         ctx.events.emit("plugin_uninstall_registry_dropped", name=name, removed=removed)

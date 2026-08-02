@@ -692,6 +692,9 @@ async def _register_mcp(
         await dispatch_install_reload(
             getattr(ctx, "hot_reloader", None), source="mcp_install_local",
             is_addition=True,
+            # #3636: names the server(s) this call registered so it doesn't render
+            # as an indistinguishable repeat of another mcp_install_local reload.
+            detail=", ".join(registered),
         )
     return registered
 
