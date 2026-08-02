@@ -39,28 +39,30 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Input, Static
 
+from reyn.interfaces.inline.textual_chat import palette
+
 
 class SearchBar(Horizontal):
     """The ctrl+f search bar: query input + ``n/M`` match count."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = palette.css("""
     SearchBar {
         display: none;
         height: 1;
-        background: $panel;
+        background: @surface@;
         padding: 0 1;
     }
     SearchBar Input {
         width: 1fr;
-        background: $panel;
+        background: @surface@;
     }
     SearchBar #search-count {
         width: auto;
         height: 1;
-        color: $text-muted;
+        color: @quiet@;
         padding: 0 0 0 1;
     }
-    """
+    """)
 
     class QueryChanged(Message):
         """The query text changed — the app recomputes matches incrementally."""

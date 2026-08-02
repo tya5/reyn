@@ -37,6 +37,8 @@ from textual.content import Content
 from textual.message import Message
 from textual.widgets import OptionList, Static
 
+from reyn.interfaces.inline.textual_chat import palette
+
 #: Max characters of a point's ``ts`` shown in a row — the WAL timestamp is a
 #: free-form string read straight off the WAL entry, so it is truncated rather
 #: than allowed to push ``kind`` off a narrow terminal.
@@ -70,26 +72,26 @@ def rewind_row_text(point: "dict") -> str:
 class RewindPicker(Vertical):
     """The collapsed-by-default ``/rewind`` checkpoint region."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = palette.css("""
     RewindPicker {
         height: auto;
         max-height: 12;
-        background: $panel;
+        background: @surface@;
         padding: 0;
     }
     RewindPicker OptionList {
         height: auto;
         max-height: 10;
-        background: $panel;
+        background: @surface@;
         border: none;
         padding: 0;
     }
     RewindPicker #rewind-picker-title {
         height: auto;
-        color: $text-muted;
+        color: @quiet@;
         padding: 0 1;
     }
-    """
+    """)
 
     BINDINGS = [("escape", "dismiss", "Cancel rewind")]
 
