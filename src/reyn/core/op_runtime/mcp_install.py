@@ -8,15 +8,21 @@ Handler logic (one-shot, no sub-phases):
      bool-axis ``require_mcp_install`` this line used to name was removed by
      the #571 permission-collapse arc (Phase 5) and no longer exists on
      ``PermissionResolver``; per-server granularity is enforced at call time
-     by the ``permissions.mcp`` gate instead.
+     by the ``permissions.mcp`` gate instead — including at the PROBE in step
+     5 (#3552: before that fix, the probe's live connection ran before
+     ``require_mcp`` was ever consulted, so this sentence was true only for
+     the POST-install ``mcp`` op, not for this handler's own pre-commit
+     network reach).
   4. Prompt for secret env vars via intervention_bus; persist with secrets.store
   5. Reload (#2761 PR-3): a PURE ADDITION on a live per-session reloader takes the
-     IMMEDIATE mid-turn path — PROBE the server (spawn/connect + list_tools) FIRST,
-     write mcp.servers.<name> ONLY on a successful probe (probe-then-commit: a
-     failed/cancelled probe leaves nothing written — no half-install), then
-     apply_now so its tools are resolvable this same turn. A same-name overwrite
-     (the documented re-install fix) or no per-session reloader keeps the deferred
-     turn-boundary path (write + request_reload), unchanged.
+     IMMEDIATE mid-turn path — MCP-gate (#3552: ``require_mcp``, same axis + same
+     interactive operator-approval a live tool call to the server already goes
+     through) then PROBE the server (spawn/connect + list_tools), write
+     mcp.servers.<name> ONLY on a successful probe (probe-then-commit: a
+     failed/cancelled/denied probe leaves nothing written — no half-install),
+     then apply_now so its tools are resolvable this same turn. A same-name
+     overwrite (the documented re-install fix) or no per-session reloader keeps
+     the deferred turn-boundary path (write + request_reload), unchanged.
   6. Emit mcp_server_installed event (P6)
 
 Scope → file mapping:
@@ -165,6 +171,9 @@ def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
 async def probe_mcp_server(
     server_name: str, server_entry: dict, *, agent_id: str | None = None,
     cancel_event: "asyncio.Event | None" = None,
+    permission_resolver: "object | None" = None,
+    bus: "object | None" = None,
+    contextual: "object | None" = None,
 ) -> "str | None":
     """#2761 PR-3: probe a prospective MCP server (spawn/connect + ``list_tools``)
     BEFORE its config is committed — the probe-then-commit atomicity gate.
@@ -173,6 +182,34 @@ async def probe_mcp_server(
     tools) or an error string on failure — including a Ctrl-C cancel (#2813; see
     below). The caller writes the config ONLY on ``None`` — so a failed OR
     cancelled probe leaves NOTHING written (no half-install, no rollback).
+
+    #3552: **MCP-axis gate BEFORE any network reach.** Before #3552 this function
+    went straight to ``gateway.list_tools`` — a live connect + ``list_tools`` call
+    to a model-supplied ``server_name`` — gated by nothing but the caller's
+    ``file.write``/``http.get`` checks (neither of which is the MCP axis). Config
+    becomes authoritative only at the COMMIT step (5c in ``handle()``, strictly
+    after this probe returns), so the probe reached the network before the
+    install's own permission gate applied at all — a capability (network reach to
+    an arbitrary MCP server) that never passed the gatekeeper. When
+    ``permission_resolver`` is given, this now calls
+    :meth:`~reyn.security.permissions.permissions.PermissionResolver.require_mcp`
+    FIRST, with a decl that self-declares exactly ``mcp=[server_name]`` (mirrors
+    the per-call self-declare pattern ``Session._mcp_read_resource`` etc. already
+    use for a runtime-determined server name — the static per-agent ``decl.mcp``
+    allowlist cannot pre-enumerate a name the registry only reveals now). The
+    REAL gate is the same one that already protects live tool calls to an
+    installed server: the interactive ``"Allow access to MCP server X?"``
+    operator-approval (persisted in ``approvals.yaml``) plus any per-session
+    ``ContextualLayer`` narrowing (``contextual``). A denial raises
+    ``PermissionError`` and is deliberately NOT caught here — like ``Cancelled``
+    below, it propagates to the install caller uncaught, which (via
+    ``op_runtime.execute_op``'s single ``except PermissionError`` boundary, or the
+    equivalent for the ``mcp_install_local`` verb path) turns it into a
+    decision-enabling ``status:"denied"`` naming the server and how to grant it —
+    never a silent skip. ``permission_resolver=None`` (a test / trusted-CLI ctx
+    with no resolver at all) preserves the pre-#3552 behavior unchanged, matching
+    every other gate in this module (see step 3's ``ctx.permission_resolver is
+    not None`` guard).
 
     Routed through the crash-safe :class:`~reyn.mcp.gateway.MCPGateway` seam (#2421):
     open + list + teardown inside one contain-all boundary + a per-server timeout,
@@ -196,6 +233,20 @@ async def probe_mcp_server(
     branches on transport (mirrors ``RouterHostAdapter.mcp_list_tools``, #3447)."""
     from reyn.mcp.client import expand_env  # noqa: PLC0415
     from reyn.mcp.gateway import MCPFault, MCPGateway  # noqa: PLC0415
+
+    if permission_resolver is not None:
+        from reyn.security.permissions.permissions import PermissionDecl  # noqa: PLC0415
+
+        # Self-declared ``mcp=[server_name]`` — the AgentLayer/ProfileLayer ∩
+        # therefore imposes no restriction beyond "this call is about this one
+        # server"; the actual security decision is require_mcp's interactive
+        # operator-approval + ContextualLayer narrowing, exactly as it is for a
+        # live tool call to an already-installed server. This call happens
+        # BEFORE ``gateway.list_tools`` below — the network reach this fixes.
+        await permission_resolver.require_mcp(
+            PermissionDecl(mcp=[server_name]), server_name, bus,
+            contextual=contextual,
+        )
 
     expanded = expand_env(server_entry)
     if not isinstance(expanded, dict):
@@ -608,6 +659,14 @@ async def handle(
             _probe_err = await probe_mcp_server(
                 server_name, server_entry, agent_id=getattr(ctx, "agent_id", None),
                 cancel_event=ctx.cancel_event,
+                # #3552: gate the probe's live connection through the same
+                # MCP-axis check (require_mcp) a live tool call to an
+                # installed server already goes through — a network reach
+                # must not precede the gatekeeper just because the config
+                # is not yet authoritative.
+                permission_resolver=ctx.permission_resolver,
+                bus=ctx.intervention_bus,
+                contextual=getattr(ctx, "contextual_permission", None),
             )
         except Cancelled:
             # #2813: Ctrl-C during the probe → uniform status:"cancelled" (matches the
