@@ -132,7 +132,7 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
-        await session._handle_user_message("hello", chain_id="chain-001")
+        await session._handle_inbox_text("hello", chain_id="chain-001")
 
     _run(run())
 
@@ -154,7 +154,7 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
 
     async def run():
-        await session._handle_user_message("hello", chain_id="chain-002")
+        await session._handle_inbox_text("hello", chain_id="chain-002")
 
     _run(run())
 
@@ -239,10 +239,12 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
         "chat_id", "agent_name", "agent_role",
         "list_available_agents",
         "get_memory_index", "get_file_permissions", "get_mcp_servers",
-        "memory_path", "memory_dir",
+        # #3607: the memory-store capability, in place of the two path helpers
+        # (memory_path / memory_dir) + four file primitives (file_read /
+        # file_write / file_delete / file_regenerate_index) the router used to
+        # assemble the memory operations out of.
+        "memory",
         "send_to_agent", "put_outbox",
-        "file_read", "file_write", "file_delete",
-        "file_regenerate_index",
         "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
         "resolve_model",
     ]

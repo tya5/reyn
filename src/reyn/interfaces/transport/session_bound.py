@@ -7,14 +7,16 @@ already exists — :class:`~reyn.interfaces.transport.client_transport.ClientTra
 whose :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.put_display`
 docstring has always named the ``/copy`` result as one of its payloads.
 
-The dispatch, however, still lives in ``Session._maybe_handle_slash`` until
-#3595 S5 removes it, so the handlers run on the SERVER side of that seam with no
-client transport in reach. This class is that gap: the session builds one over
-ITSELF and hands it to the handler, so handler code can already be written
-against the transport contract while the call site is still session-side. When
-S5 moves dispatch into the client, the client passes its OWN transport
-(``InProcessTransport`` / ``AgUiTransport``) and this class is deleted — nothing
-downstream of the handler signature changes.
+#3595 S5 moved the dispatch into the client, and a LOCAL client now passes its
+OWN transport (``InProcessTransport``). ★ This class survives for the REMOTE
+case, and for a reason that belongs to the residue rather than to the dispatch:
+a ``--connect`` client holds no ``Session``, so the commands that still read
+session state (``SlashContext.session`` — the declared, shrinking residue) can
+only run on the server's side of the wire. The AG-UI endpoint's
+``slash_command`` arm runs them there, against a command NAME the client already
+resolved, and this is the seam it hands them. It is deleted when
+``SlashContext.session`` is — at which point every command runs client-side and
+a remote client needs nothing but the registry it already has.
 
 **Send side only.** :meth:`frames` raises: a session cannot consume its own
 display stream, and a caller reaching for it is a caller that should be holding

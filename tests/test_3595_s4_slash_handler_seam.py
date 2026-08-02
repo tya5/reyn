@@ -464,23 +464,28 @@ async def test_a_handler_needs_no_session_to_reply() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_session_seam_still_lands_a_reply_on_the_session_outbox(tmp_path) -> None:
+async def test_the_session_built_seam_still_lands_a_reply_on_the_session_outbox(
+    tmp_path,
+) -> None:
     """Tier 2: the session-built transport routes display to the session's own
     outbox — S4 moved the dependency, not the destination.
 
     Drives the PRODUCTION construction (``Session._slash_context``) rather than
-    the test transport, because the claim being made is about production
-    routing: an operator's ``/help`` has to reach the same queue it reached
-    before, or "no behaviour change" is false regardless of what the unit tests
-    above show.
+    the test transport, because the claim is about production routing. ★ After
+    #3595 S5 this construction is the REMOTE path specifically: a ``--connect``
+    client holds no ``Session``, so the AG-UI endpoint runs the command here and
+    its reply reaches that client by riding ``session.outbox`` — the queue it
+    reached before. A LOCAL client passes its own transport instead, which the
+    S5 file covers.
     """
+    from reyn.interfaces.slash.dispatch import execute_slash_command
     from tests._support.agent_session import make_session
 
     session = make_session(agent_name="default", snapshot_path=tmp_path / "snap.json")
     session.is_attached = True
-    consumed = await session._maybe_handle_slash("/help")
+    ran = await execute_slash_command(session._slash_context(), "help", "")
 
-    assert consumed, "/help must be consumed by slash dispatch"
+    assert ran, "/help must be executed by the server-side slash executor"
     displayed: list[OutboxMessage] = []
     while not session.outbox.empty():
         displayed.append(session.outbox.get_nowait())

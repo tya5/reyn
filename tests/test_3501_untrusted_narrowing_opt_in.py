@@ -362,7 +362,7 @@ async def test_the_tool_result_the_model_reads_carries_the_three_parts(
             _text_result("done"),
         ]),
     )
-    await session._handle_user_message("look it up then remember it", chain_id="c1")
+    await session._handle_inbox_text("look it up then remember it", chain_id="c1")
 
     (denied,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     content = str(denied.content)

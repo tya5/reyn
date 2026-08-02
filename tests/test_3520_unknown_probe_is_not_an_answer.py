@@ -47,7 +47,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
 )
 from reyn.runtime.services.mcp_cache_file import cache_file_path, read_cache
@@ -57,24 +56,9 @@ _TOOL = "convert_to_markdown"
 _TOOLS = [{"name": _TOOL, "description": "convert a uri to markdown"}]
 _AGENTS = [{"name": "researcher", "role": "Research agent", "cluster": "default"}]
 
-_EMPTY_OP_CTX = RouterOpContextInputs(
-    allowed_mcp=None,
-    base_available_skills_fn=None,
-    budget_gateway=None,
-    compact_now=None,
-    contextual_permission=None,
-    hook_bus=None,
-    hook_dispatcher=None,
-    hot_reloader=None,
-    multimodal_config=None,
-    presentation_renderer_factory=None,
-    render_template_bounds=None,
-    sandbox_backend_instance=None,
-    sandbox_policy=None,
-    turn_origin_fn=None,
-    workspace_base_dir=None,
-    workspace_state_dir=None,
-)
+from tests._support.router_host_adapter import make_op_context_source  # noqa: E402
+
+_EMPTY_OP_CTX = make_op_context_source()
 _EMPTY_MCP_GATEWAY = McpGatewayInputs(
     mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
 )
@@ -152,7 +136,7 @@ def _make_adapter(*, tmp_path: Path, state_dir: Path, probe) -> RouterHostAdapte
         agent_name="test-agent",
         agent_role="test",
         output_language="en",
-        op_context_inputs=_EMPTY_OP_CTX,
+        op_context_source=_EMPTY_OP_CTX,
         permission_resolver=None,
         mcp_servers={_SERVER: {"description": "markitdown"}},
         project_context="",
@@ -162,10 +146,6 @@ def _make_adapter(*, tmp_path: Path, state_dir: Path, probe) -> RouterHostAdapte
         journal=None,
         agent_registry=None,
         agent_workspace_dir=workspace,
-        file_read=_null_file_read,
-        file_write=_null_file_write,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
         send_to_agent_inputs=SendToAgentInputs(

@@ -22,6 +22,10 @@ Consumer analysis (why zero-consumer):
 ``intervention_resolved`` is covered in
 ``test_intervention_handler_invariants.py``; the remaining three are
 covered here.
+
+#3595 S5: the dispatch these drive is the shared CLIENT-side layer, so
+"reaches the outbox" now means "reaches the client's display stream" — the
+same queue the CUI renders from, one hop earlier than ``session.outbox``.
 """
 from __future__ import annotations
 
@@ -30,8 +34,10 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.slash import drain_display, local_transport
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,11 +52,6 @@ def _make_session(tmp_path: Path) -> Session:
     )
 
 
-def _drain_outbox(session: Session) -> list:
-    out = []
-    while not session.outbox.empty():
-        out.append(session.outbox.get_nowait())
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -71,10 +72,11 @@ async def test_quit_handler_emits_no_quit_sentinel(tmp_path, monkeypatch) -> Non
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    consumed = await session._maybe_handle_slash("/quit")
+    transport, display = local_transport(session)
+    consumed = await maybe_dispatch_slash(transport, "/quit")
     assert consumed is True
 
-    outbox_kinds = [m.kind for m in _drain_outbox(session)]
+    outbox_kinds = [m.kind for m in drain_display(display)]
     assert "__quit__" not in outbox_kinds, (
         "__quit__ must NOT reach the outbox — no live consumer; "
         "the inline CUI intercepts quit at the input level"
@@ -91,10 +93,11 @@ async def test_exit_handler_emits_no_quit_sentinel(tmp_path, monkeypatch) -> Non
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    consumed = await session._maybe_handle_slash("/exit")
+    transport, display = local_transport(session)
+    consumed = await maybe_dispatch_slash(transport, "/exit")
     assert consumed is True
 
-    outbox_kinds = [m.kind for m in _drain_outbox(session)]
+    outbox_kinds = [m.kind for m in drain_display(display)]
     assert "__quit__" not in outbox_kinds, (
         "__quit__ must NOT reach the outbox via /exit either"
     )
@@ -112,10 +115,11 @@ async def test_donut_emits_system_reply_not_tui_sentinel(tmp_path, monkeypatch) 
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    consumed = await session._maybe_handle_slash("/donut")
+    transport, display = local_transport(session)
+    consumed = await maybe_dispatch_slash(transport, "/donut")
     assert consumed is True
 
-    messages = _drain_outbox(session)
+    messages = drain_display(display)
     outbox_kinds = [m.kind for m in messages]
     assert "__donut__" not in outbox_kinds, (
         "__donut__ must NOT reach the outbox — no live consumer"
@@ -137,10 +141,11 @@ async def test_matrix_emits_system_reply_not_tui_sentinel(tmp_path, monkeypatch)
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    consumed = await session._maybe_handle_slash("/matrix")
+    transport, display = local_transport(session)
+    consumed = await maybe_dispatch_slash(transport, "/matrix")
     assert consumed is True
 
-    messages = _drain_outbox(session)
+    messages = drain_display(display)
     outbox_kinds = [m.kind for m in messages]
     assert "__matrix__" not in outbox_kinds, (
         "__matrix__ must NOT reach the outbox — no live consumer"

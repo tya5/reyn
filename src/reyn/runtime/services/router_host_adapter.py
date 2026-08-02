@@ -12,7 +12,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.config.chat import TimeoutConfig
 from reyn.core.events.events import EventLog
@@ -23,6 +23,9 @@ from reyn.runtime.services.mcp_cache_file import (
     answered_only,
 )
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
+
+if TYPE_CHECKING:
+    from reyn.runtime.router_op_context import RouterOpContextSource
 
 logger = logging.getLogger(__name__)
 
@@ -38,42 +41,6 @@ _DEFAULT_MCP_PROBE_SECONDS = TimeoutConfig().mcp_probe_seconds
 
 
 @dataclass(frozen=True)
-class RouterOpContextInputs:
-    """#3482: the 16 ``RouterHostAdapter.__init__`` params whose ONLY reader
-    is :meth:`RouterHostAdapter.make_router_op_context` (measured by AST on
-    ``origin/main`` at 890e22d2 — class-internal ``self._<field>`` usage
-    sites, no external ``host.<attr>`` reader for any of these 16). The
-    adapter is a pure RELAY for this cluster: it never inspects or branches
-    on any of these fields itself, it only carries them from Session's
-    construction call to the single call site inside
-    ``make_router_op_context`` (``src/reyn/runtime/services/router_host_adapter.py``).
-
-    Pure value object, no default field values (a default would let a
-    caller's silent omission absorb a wiring change unnoticed — the
-    byte-identical-refactor invariant #3082 established for this bundle
-    family) and no construction logic (assembling these 16 values stays the
-    CALLER's job, same as before this bundle existed).
-    """
-
-    allowed_mcp: "list[str] | None"
-    base_available_skills_fn: "Callable[[], Any] | None"
-    budget_gateway: Any
-    compact_now: Any
-    contextual_permission: Any
-    hook_bus: Any
-    hook_dispatcher: Any
-    hot_reloader: Any
-    multimodal_config: Any
-    presentation_renderer_factory: "Callable[[], Any] | None"
-    render_template_bounds: Any
-    sandbox_backend_instance: Any
-    sandbox_policy: "dict | None"
-    turn_origin_fn: "Callable[[], str | None] | None"
-    workspace_base_dir: "Path | None"
-    workspace_state_dir: "Path | None"
-
-
-@dataclass(frozen=True)
 class McpGatewayInputs:
     """#3482: the 3 raw gateway-identity inputs (#3447) whose ONLY reader is
     :meth:`RouterHostAdapter._mcp_list_via_gateway` (measured on current
@@ -84,8 +51,11 @@ class McpGatewayInputs:
     name-prefix grouping: the three arrived together in #3447 (the Path A
     fold) and are carried together to the same one construction site.
 
-    Pure value object — no defaults, no construction logic (see
-    :class:`RouterOpContextInputs`'s docstring for the rationale)."""
+    Pure value object, no default field values (a default would let a caller's
+    silent omission absorb a wiring change unnoticed — the byte-identical
+    -refactor invariant #3082 established for this bundle family) and no
+    construction logic (assembling the values stays the CALLER's job, same as
+    before the bundle existed). The rationale applies to every bundle below."""
 
     mcp_connection_service: Any
     mcp_agent_id: "str | None"
@@ -100,7 +70,7 @@ class SendToAgentInputs:
     method reads both and nothing else does, so they travel together.
 
     Pure value object — no defaults, no construction logic (see
-    :class:`RouterOpContextInputs`'s docstring for the rationale)."""
+    :class:`McpGatewayInputs`'s docstring for the rationale)."""
 
     send_to_agent: "Callable[..., Awaitable[None]]"
     delegation_tracker: "Callable[[], list[dict] | None]"
@@ -128,12 +98,11 @@ class LiveSessionIdInputs:
     callback that supersedes it. The property picks between them, which is why
     neither is meaningful without the other.
 
-    ``session_id`` is ALSO read by ``make_router_op_context``, but that member
-    is an already-bundled consumer (``RouterOpContextInputs``); counting a
-    landed bundle's hub a second time manufactures equality between params
-    that in fact travel to different dedicated accessors, so it is excluded
-    from consumer sets (#3482 firm: exclude the hub by ROLE, not by a
-    param-count threshold — ``run``/``run_loop`` are turn paths, not hubs).
+    #3607: ``session_id`` used to have a second reader —
+    ``make_router_op_context`` threaded the CONSTRUCTION-TIME value into every
+    OpContext while this property preferred the live callback, so a spawned
+    session's ops carried the stale id. The op-context supplier now reads the
+    live callback, and this pair's consumer set is the one accessor again.
 
     Pure value object — no defaults, no construction logic."""
 
@@ -157,10 +126,12 @@ class RouterHostAdapter:
     output_language:
         BCP-47 code or None. Stored as a plain attribute (not property) per
         the RouterLoopHost Protocol.
-    op_context_inputs:
-        :class:`RouterOpContextInputs` — the 16 fields whose only reader is
-        ``make_router_op_context`` (#3482), bundled because the adapter is a
-        pure relay for this cluster (see the class's docstring).
+    op_context_source:
+        The session's :class:`~reyn.runtime.router_op_context.RouterOpContextSource`
+        — the op-context capability itself, shared with ``Session`` rather than
+        copied. #3607: the adapter used to receive 16 separate materials and
+        assemble its own OpContext from them; a supplier is the finished thing,
+        so there is nothing left to assemble differently from the other caller.
     permission_resolver:
         PermissionResolver instance (or None) for config-derived gates.
     mcp_servers:
@@ -172,7 +143,15 @@ class RouterHostAdapter:
     resolver:
         ModelResolver instance for ``resolve_model``.
     memory:
-        MemoryService instance for ``memory_path`` / ``memory_dir``.
+        The session's :class:`MemoryService` — the memory-store capability
+        (``remember`` / ``forget`` / ``read_body``), exposed whole as
+        ``host.memory``. #3607: the adapter used to receive four file
+        primitives (``file_read`` / ``file_write`` / ``file_delete`` /
+        ``file_regenerate_index``) instead, whose ONLY consumers were three
+        RouterLoop privates that re-implemented the memory operations —
+        domain rules (threat scan, frontmatter, index regen, knowledge
+        ingest) included — on top of them. The rules moved to MemoryService
+        and the primitives left the adapter with them.
     journal:
         SnapshotJournal instance for plan-lifecycle persistence.
     agent_registry:
@@ -182,14 +161,6 @@ class RouterHostAdapter:
         lookup source, exposed via ``get_pipeline_registry()``.
     agent_workspace_dir:
         Path to ``.reyn/agents/<agent_name>`` — used for ``get_memory_index``.
-    file_read:
-        Async callback ``(path: str) -> dict``.
-    file_write:
-        Async callback ``(path: str, content: str) -> dict``.
-    file_delete:
-        Async callback ``(path: str) -> dict``.
-    file_regenerate_index:
-        Async callback ``(*, path, output_path, entry_template, header) -> dict``.
     mcp_call_tool:
         Async callback ``(server: str, tool: str, args: dict) -> dict``.
     mcp_read_resource:
@@ -271,7 +242,7 @@ class RouterHostAdapter:
         agent_name: str,
         agent_role: str,
         output_language: str | None,
-        op_context_inputs: RouterOpContextInputs,
+        op_context_source: "RouterOpContextSource",
         permission_resolver: Any,               # PermissionResolver | None
         mcp_servers: dict | None,
         project_context: str,
@@ -285,11 +256,6 @@ class RouterHostAdapter:
         presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         agent_workspace_dir: Path,
-        # File op callbacks
-        file_read: Callable[..., Awaitable[dict]],
-        file_write: Callable[..., Awaitable[dict]],
-        file_delete: Callable[..., Awaitable[dict]],
-        file_regenerate_index: Callable[..., Awaitable[dict]],
         # MCP op callbacks
         mcp_call_tool: Callable[..., Awaitable[dict]],
         # #2597 slice ②a: resources consumption (read/templates) — defaults to
@@ -384,25 +350,12 @@ class RouterHostAdapter:
         # by ``CapabilityVisibility.reapply_skill_visibility`` to the
         # per-session VISIBILITY-FILTERED view (a UX menu concern — which
         # skills the operator chose to hide from `## Skills` / `skill_list`).
-        # It is therefore the wrong source for a TRUST decision. See
-        # ``base_available_skills_fn`` below, which is what
-        # ``make_router_op_context`` uses for the `file` op's skill-load
-        # provenance gate instead.
+        # It is therefore the wrong source for a TRUST decision — the `file`
+        # op's skill-load provenance gate reads the BASE set through the
+        # op-context supplier's ``available_skills_fn`` instead (#3196 co-vet
+        # round 2), so hiding a skill from the menu cannot change whether it
+        # is trusted.
         available_skills: Any = None,
-        # #3196 co-vet round 2: a LIVE callback returning the BASE
-        # registered-skill set (config `skills.entries`, before the
-        # per-session visibility filter above is ever applied) — Session
-        # wires ``lambda: self._available_skills`` (its own base field,
-        # never mutated by visibility toggling). `make_router_op_context`
-        # threads THIS (not the mutable `self._available_skills` field
-        # above) into `OpContext.available_skills`, so the `file` op's
-        # skill-load provenance gate answers the SAME "is this a
-        # config-registered skill" question regardless of whether the
-        # operator has hidden it from the menu — visibility is a UX
-        # concern; it must never gate a trust decision. None (test
-        # construction) falls back to `self._available_skills` at call
-        # time, preserving prior behavior for callers that don't wire it.
-        # (``base_available_skills_fn`` moved into ``op_context_inputs`` #3482.)
         # B25-S5-1: when True, RouterLoop awaits the action embedding index
         # build synchronously on the first turn before computing the D14
         # search_actions visibility gate. Off by default (= lazy bg build).
@@ -416,7 +369,6 @@ class RouterHostAdapter:
         # config-deny path still raises, interactive prompt path raises
         # the documented RuntimeError telling the caller a bus is needed).
         intervention_bus_factory: Callable[[], Any] | None = None,
-        # (``presentation_renderer_factory`` moved into ``op_context_inputs`` #3482.)
         # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
         # injected from Session (mirror the inter_agent_messaging injection) so the spawn SEAM can
         # route a spawn-limit exceed through the same mode-driven on_limit framework as
@@ -424,8 +376,6 @@ class RouterHostAdapter:
         # unattended (reject), the C3 hard-deny posture.
         handle_chat_limit_checkpoint: "Callable[..., Any] | None" = None,
         safety_extensions: "dict[str, float] | None" = None,
-        # (``multimodal_config`` / ``render_template_bounds`` moved into
-        # ``op_context_inputs`` #3482.)
         # #1652: ReasoningConfig (continuity/display/recent_turns) + the session
         # callback that renders the bounded prior-reasoning text section (reads
         # history + applies the continuity gate). None → reasoning disabled.
@@ -448,7 +398,6 @@ class RouterHostAdapter:
         offload_enabled: bool = False,
         offload_structured_inline_max_chars: int | None = None,
         offload_structured_preview_chars: int | None = None,
-        # (``compact_now`` moved into ``op_context_inputs`` #3482.)
         # #272/#1128 context-size signal: callable () -> {free_window,
         # effective_trigger} (exact tokens) for the OS-injected SP header.
         # ``None`` = no signal rendered (e.g. test stubs).
@@ -478,20 +427,13 @@ class RouterHostAdapter:
         # FP-0050 / #1822: content-threat scan + fence config. None (test hosts)
         # → defaults (disabled-safe via the methods' guards).
         threat_scan: Any = None,
-        # (``contextual_permission`` / ``hot_reloader`` moved into
-        # ``op_context_inputs`` #3482 — ``hot_reloader`` is ALSO exposed as
-        # the public ``self.hot_reloader`` attribute below, unchanged.)
     ) -> None:
-        self._op_ctx = op_context_inputs
+        self._op_ctx_source = op_context_source
         self._mcp_gateway = mcp_gateway_inputs
         self._send_to_agent_in = send_to_agent_inputs
         self._put_outbox_in = put_outbox_inputs
         self._live_sid_in = live_session_id_inputs
         self._threat_scan = threat_scan
-        # #2073 S3: exposed (public) so RouterLoop threads it onto the tool ctx, so a
-        # self-reload tool reloads THIS session (per-session, not a process global).
-        # (source: op_context_inputs.hot_reloader — #3482 bundle)
-        self.hot_reloader = self._op_ctx.hot_reloader
         self._turn_budget_engine = turn_budget_engine
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
@@ -541,11 +483,6 @@ class RouterHostAdapter:
         self._presentation_registry = presentation_registry
         self._record_spawned_task = record_spawned_task   # #2103 S1bc-exec
         self._workspace_dir = Path(agent_workspace_dir)
-        # File callbacks
-        self._file_read_cb = file_read
-        self._file_write_cb = file_write
-        self._file_delete_cb = file_delete
-        self._file_regenerate_index_cb = file_regenerate_index
         # MCP callbacks
         self._mcp_call_tool_cb = mcp_call_tool
         self._mcp_read_resource_cb = mcp_read_resource
@@ -567,11 +504,9 @@ class RouterHostAdapter:
         self._action_embedding_index = action_embedding_index
         self._embedding_provider = embedding_provider
         self._embedding_model_class = embedding_model_class
-        # (``budget_gateway`` / ``base_available_skills_fn`` / ``sandbox_backend_instance`` /
-        # ``workspace_base_dir`` / ``workspace_state_dir`` / ``sandbox_policy`` /
-        # ``presentation_renderer_factory`` / ``multimodal_config`` / ``render_template_bounds`` /
-        # ``compact_now`` all live on ``self._op_ctx`` — #3482 RouterOpContextInputs bundle;
-        # ``make_router_op_context`` reads them there directly, its sole consumer role.)
+        # (#3607: every material the chat-router OpContext is built from lives
+        # on ``self._op_ctx_source`` — the Session's ONE supplier, shared not
+        # copied. Nothing on this adapter mirrors it.)
         # #2548 PR-A: enabled skill registry snapshot for the ## Skills block.
         self._available_skills = available_skills
         # FP-0034 Phase 2
@@ -605,9 +540,6 @@ class RouterHostAdapter:
         self._offload_enabled = offload_enabled
         self._offload_structured_inline_max_chars = offload_structured_inline_max_chars
         self._offload_structured_preview_chars = offload_structured_preview_chars
-        # #1470: per-turn cancel event set by RouterLoopDriver._set_cancel_event.
-        # None until RouterLoopDriver registers itself at construction time.
-        self._cancel_event: asyncio.Event | None = None
         # #272/#1128 context-size signal: live budget provider (or None).
         self._context_window_status = context_window_status
 
@@ -667,28 +599,10 @@ class RouterHostAdapter:
         from reyn.security.content_guard import fence_if_enabled
         return fence_if_enabled(content, self._threat_scan)
 
-    def scan_for_block(self, content: str, *, scope: str = "strict"):
-        """FP-0050/#1822 S4a (Class B): return the first block-severity threat
-        match in ``content`` at ``scope``, or None. Used at agent-write seams
-        (memory write) to REJECT a poisoned write before it persists. Emits a
-        ``threat_block`` event on a hit. No-op (None) when disabled; fail-open.
-        """
-        cfg = self._threat_scan
-        if cfg is None or not getattr(cfg, "enabled", False):
-            return None
-        from reyn.security.content_guard import first_blocking_match, scan_for_threats
-        try:
-            matches = scan_for_threats(content, cfg, scope=scope)
-        except Exception:  # noqa: BLE001 — fail-open
-            if getattr(cfg, "fail_open", True):
-                return None
-            raise
-        hit = first_blocking_match(matches, getattr(cfg, "block_severity", "block"))
-        if hit is not None:
-            self._events.emit(
-                "threat_block", pattern_id=hit.pattern_id, severity=hit.severity, scope=hit.scope,
-            )
-        return hit
+    # #3607: ``scan_for_block`` — the agent-write (memory) leg of the same
+    # FP-0050 guard — moved to ``MemoryService.scan_for_block``. It had exactly
+    # one caller, ``RouterLoop._remember``, and it is a rule ABOUT a memory
+    # write, not about a tool result: it belongs with the operation it rejects.
 
     def _is_turn_cancel_requested(self) -> bool:
         """#1468: True when the session has requested a cooperative turn cancel.
@@ -1157,15 +1071,18 @@ class RouterHostAdapter:
             return {"error": str(exc)}
         return read_text(target, path)
 
-    # --- Memory file paths ---
+    # --- Memory capability ---
 
-    def memory_path(self, layer: str, slug: str) -> str:
-        """Resolve layer + slug to file path via MemoryService."""
-        return self._memory.memory_path(layer, slug)
+    @property
+    def memory(self) -> Any:
+        """The session's :class:`MemoryService` — handed to the router whole.
 
-    def memory_dir(self, layer: str) -> str:
-        """Directory for the layer's memory files via MemoryService."""
-        return self._memory.memory_dir(layer)
+        #3607: the two path delegates that used to live here
+        (``memory_path`` / ``memory_dir``) existed so RouterLoop could
+        assemble memory file paths itself. It no longer assembles anything:
+        it calls ``host.memory.remember`` / ``.forget`` / ``.read_body``.
+        """
+        return self._memory
 
     # --- Action callbacks ---
 
@@ -1644,59 +1561,16 @@ class RouterHostAdapter:
             return ""
         return self._reasoning_continuity_section_fn() or ""
 
-    # --- File ops ---
-
-    async def file_read(self, path: str) -> str:
-        """Returns content string (with a trailing note appended when the
-        underlying read was truncated or carried an unrecognized op status)
-        or a JSON error.
-
-        #3193 co-vet finding: this method flattens the ``_file_read_cb``
-        dict to a bare string — the same choke point ``read_file``'s
-        registry-dispatch sibling had to fix for the identical reason
-        (#3191/#3192; #3429 then deleted that sibling outright, routing the
-        chat path through ``file_to_canonical`` instead — this adapter method
-        is NOT on that path, see the consumer list below):
-        flattening to a string BEFORE the caller sees the dict
-        silently drops any sibling key (``truncated``/``note``/
-        ``_unknown_op_status``) unless this method explicitly re-attaches it.
-        The #3193 classifier fix made ``_file_read_cb`` start forwarding
-        those keys — this adapter was the one place still discarding them on
-        the way to the LLM (verified: two of ``_file_read``'s live
-        consumers, ``MemoryService.read_body`` and this method — the router
-        chat path predating the #2782/#3082 registry-dispatch migration —
-        forward the dict onward; only this one collapsed it to a bare
-        string without re-attaching the signal).
-        """
-        import json
-        res = await self._file_read_cb(path)
-        if "content" in res:
-            content = res["content"]
-            if res.get("truncated") and res.get("note"):
-                content = f"{content}\n\n... {res['note']}"
-            elif "_unknown_op_status" in res:
-                content = (
-                    f"{content}\n\n... note: this read returned an unrecognized "
-                    f"op status ({res['_unknown_op_status']!r}) — content may be "
-                    f"incomplete; re-read to confirm if in doubt."
-                )
-            return content
-        return json.dumps(res)
-
-    async def file_write(self, path: str, content: str) -> dict:
-        return await self._file_write_cb(path, content)
-
-    async def file_delete(self, path: str) -> dict:
-        return await self._file_delete_cb(path)
-
-    async def file_regenerate_index(self, path: str, output_path: str,
-                                     entry_template: str, header: str) -> dict:
-        return await self._file_regenerate_index_cb(
-            path=path,
-            output_path=output_path,
-            entry_template=entry_template,
-            header=header,
-        )
+    # #3607: the four file-op delegates (``file_read`` / ``file_write`` /
+    # ``file_delete`` / ``file_regenerate_index``) lived here only so
+    # RouterLoop could re-implement `remember`/`forget`/`read_memory_body`
+    # on top of them. The memory operations are now MemoryService's, and
+    # they call the SAME session callbacks directly (Session wires them
+    # into MemoryService, as it always did) — one hop fewer, and the router
+    # host no longer offers the LLM's loop a general file primitive it had
+    # no business holding. ``file_read``'s #3193 dict→string flattening
+    # went with it: MemoryService.read_body returns a dict, so the
+    # truncation signal rides as sibling keys instead of appended prose.
 
     # --- MCP ops ---
 
@@ -1779,10 +1653,12 @@ class RouterHostAdapter:
         gateway = (
             MCPGateway(
                 pool=self._mcp_gateway.mcp_connection_service, agent_id=mcp_agent_id,
-                cancel_event=self._cancel_event,
+                cancel_event=self._op_ctx_source.cancel_event,
             )
             if not ephemeral
-            else MCPGateway(agent_id=mcp_agent_id, cancel_event=self._cancel_event)
+            else MCPGateway(
+                agent_id=mcp_agent_id, cancel_event=self._op_ctx_source.cancel_event,
+            )
         )
         result = await gateway_call(gateway)
         self._events.emit(event_kind, server=server, count=len(result))
@@ -2373,111 +2249,40 @@ class RouterHostAdapter:
                 )
         return merged
 
+    @property
+    def hot_reloader(self) -> Any:
+        """#2073 S3: this session's HotReloader, so a self-reload tool reloads
+        THIS session and not a process global. RouterLoop reads it off the host
+        (``getattr(host, "hot_reloader", None)``) and threads it onto the tool
+        ctx. Delegates to the op-context supplier, which is the one holder."""
+        return self._op_ctx_source.hot_reloader
+
     def make_router_op_context(self) -> Any:
-        """Build an OpContext for router-initiated file / MCP / web ops.
+        """Ask the session's op-context supplier for a chat-router OpContext.
 
-        Public method (ADR-0026 Phase 3.5): the unified registry handlers
-        in ``src/reyn/tools/`` delegate to op_runtime via this factory so
-        the OpContext carries the operator-declared PermissionDecl and the
-        Workspace with ``actor="chat_router"``. Without this, handlers
-        would synthesize a ``PermissionDecl()`` empty default and op_runtime
-        permission gates would deny operations.
+        Public method (ADR-0026 Phase 3.5): the unified registry handlers in
+        ``src/reyn/tools/`` reach op_runtime through this factory (bound as
+        ``RouterCallerState.op_context_factory``), so the OpContext carries the
+        operator-declared PermissionDecl and the Workspace with
+        ``actor="chat_router"``. Without it, handlers would synthesize an empty
+        ``PermissionDecl()`` and op_runtime's permission gates would deny.
 
-        Uses the injected events log and permission resolver. The actor
-        ``"chat_router"`` is used for permission key lookups. PermissionDecl
-        is populated from the agent's effective permissions so that op_runtime
-        layer permission checks actually gate access.
+        #3607: the adapter used to assemble the OpContext itself from 16
+        injected materials, while ``Session`` assembled a DIFFERENT one (twelve
+        fields apart) from the same values held as its own attributes. This is
+        now the same supplier the Session uses, so the two cannot diverge.
         """
-        from reyn.runtime.router_op_context import build_router_op_context
-
-        # #3482: op_ctx is the RouterOpContextInputs bundle — this method is the
-        # SOLE reader of all 16 of its fields (the measured cluster the bundle
-        # was formed from). Local alias only for readability below.
-        op_ctx = self._op_ctx
-
-        # #1412: single-sourced via build_router_op_context (shared with
-        # Session). RouterHostAdapter wires intervention_bus inline (via the
-        # factory) + media/multimodal/compact (the registry-dispatch path serves
-        # web/media ops). agent_id is unset here (registry-dispatch lacks one) —
-        # a #1412 follow-up gap candidate, preserved behaviorally.
-        bus = (
-            self._intervention_bus_factory()
-            if self._intervention_bus_factory is not None
-            else None
-        )
-        presentation_renderer = (
-            op_ctx.presentation_renderer_factory()
-            if op_ctx.presentation_renderer_factory is not None
-            else None
-        )
-        return build_router_op_context(
-            events=self._events,
-            permission_resolver=self._perm,
-            file_permissions=self._get_file_permissions_for_router(),
-            mcp_servers=self._get_mcp_servers_for_router(),
-            mcp_servers_flat=self._mcp_servers_flat(),
-            allowed_mcp=op_ctx.allowed_mcp,
-            workspace_base_dir=op_ctx.workspace_base_dir,
-            workspace_state_dir=op_ctx.workspace_state_dir,
-            environment_backend=self._environment_backend,
-            sandbox_backend=op_ctx.sandbox_backend_instance,
-            sandbox_policy=op_ctx.sandbox_policy,
-            agent_id=None,
-            intervention_bus=bus,
-            presentation_renderer=presentation_renderer,
-            # FP-0054 PR-C: the adapter's CURRENT registry snapshot (hot-reload swaps it).
-            presentation_registry=self._presentation_registry,
-            multimodal_config=op_ctx.multimodal_config,
-            render_template_bounds=op_ctx.render_template_bounds,  # #2679: operator render_template output cap
-            media_store=self._media_store,
-            compact_now=op_ctx.compact_now,
-            cancel_event=self._cancel_event,
-            threat_scan=self._threat_scan,
-            contextual_permission=op_ctx.contextual_permission,  # #1827 S3
-            # #1953 dynamic-wire: the REAL chat-session id, threaded so
-            # emit_hook_event builds the LLM's own session-scoped namespace.
-            session_id=self._live_sid_in.session_id,
-            hook_dispatcher=op_ctx.hook_dispatcher,  # #1800 slice 5c
-            hook_bus=op_ctx.hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
-            # proposal 0060 Phase 1 (A7): a live callback read (varies per turn, so
-            # a fixed init value would be stale — cf. live_session_id_fn).
-            # This is the router-dispatched install path (skill_install_*
-            # / pipeline / presentation_install_local → this factory), so it
-            # is the load-bearing wiring for A9's per-handler provenance stamp.
-            turn_origin=(
-                op_ctx.turn_origin_fn() if op_ctx.turn_origin_fn else None
-            ),
-            # #2761 PR-2: the per-session HotReloader so an install op (skill/pipeline)
-            # can apply a pure-addition reload IMMEDIATELY (mid-turn) → the new entry is
-            # resolvable this turn. This is the router-dispatched install path
-            # (skill_install_* / pipeline ops → build_legacy_op_context →
-            # this factory), so it is the load-bearing wiring for PR-2.
-            hot_reloader=op_ctx.hot_reloader,
-            # FP-0063 PC: the live router-dispatched `embed` tool resolves THIS
-            # factory, so this is the load-bearing wiring for embedding-cost
-            # recording (all three scopes fan out from the gateway).
-            budget_gateway=op_ctx.budget_gateway,
-            # #3196 co-vet round 2: the BASE registered-skill set, NOT
-            # `self._available_skills` (that field is the per-session
-            # VISIBILITY-FILTERED view, mutated in place by
-            # `CapabilityVisibility.reapply_skill_visibility` — a UX menu
-            # concern). The `file` op's skill-load provenance gate is a
-            # TRUST decision ("is this a config-registered skill body at
-            # all") and must not depend on whether the operator hid the
-            # skill from the menu — visibility must never gate trust.
-            available_skills=(
-                op_ctx.base_available_skills_fn()
-                if op_ctx.base_available_skills_fn is not None
-                else self._available_skills
-            ),
-        )
+        return self._op_ctx_source.build()
 
     def _set_cancel_event(self, event: asyncio.Event) -> None:
         """#1470: called by RouterLoopDriver at construction to register the
-        per-turn cancel event. make_router_op_context threads it into OpContext
-        so sandboxed_exec backends can observe cancel_inflight() mid-subprocess.
+        per-turn cancel event, which the op-context supplier threads into every
+        OpContext it builds so sandboxed_exec backends can observe
+        cancel_inflight() mid-subprocess. Registered on the SUPPLIER, not
+        copied here: ``_mcp_list_via_gateway`` needs the same event, and two
+        holders of one value is the drift shape #3607 removed.
         """
-        self._cancel_event = event
+        self._op_ctx_source.set_cancel_event(event)
 
     def make_intervention_bus(self) -> "Any | None":
         """Return the current intervention bus for safety-limit checkpoints.
@@ -2516,7 +2321,6 @@ class RouterHostAdapter:
 # ---------------------------------------------------------------------------
 
 ROUTER_HOST_ADAPTER_BUNDLE_TYPES: "tuple[str, ...]" = (
-    "RouterOpContextInputs",
     "McpGatewayInputs",
     "SendToAgentInputs",
     "PutOutboxInputs",

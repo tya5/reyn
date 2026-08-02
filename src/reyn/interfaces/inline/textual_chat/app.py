@@ -307,6 +307,11 @@ class _StreamingReply:
     visible: bool = True
     handle: "VisibilityHandle | None" = None
     last_repaint: float = 0.0
+    #: Set when the TURN ended, whatever ended it. The record STAYS in the map
+    #: — a terminal completion frame that arrives after the turn-end event still
+    #: has to find it to write the authoritative full text. This flag says only
+    #: "no further chunks are coming", which is what the #3530 marker reads.
+    settled: bool = False
 
     @property
     def pending(self) -> bool:
@@ -328,10 +333,14 @@ class TextualChatApp(App):
 
     The app drains ``transport.frames()`` in a worker, appending each display
     frame to the retained model (event frames are consumed but not yet drawn);
-    a Composer submit routes back through the transport. The user's own line is
-    NOT echoed locally — it returns as a ``kind="user"`` frame on the same
-    stream, so the model is fed entirely from frames and stays equivalent to the
-    plain renderer's turn sequence.
+    a Composer submit routes back through the transport. The user's own TURN
+    line is NOT echoed locally — it returns as a ``kind="user"`` frame on the
+    same stream, so the model is fed entirely from frames and stays equivalent
+    to the plain renderer's turn sequence. A COMMAND line is the exception and
+    has to be: it emits no ``user_submitted`` chat-event, so nothing would ever
+    send that frame back. The shared client-side slash layer writes the echo
+    through ``put_display`` (#3595 S5) — still a frame on the same stream, so
+    the model is still fed entirely from frames.
 
     Phase 2 adds state-coloured gutters: a tool-call row transitions RUNNING →
     SUCCESS/ERROR (amber → green/coral) as its correlated frames arrive, a
@@ -475,10 +484,11 @@ class TextualChatApp(App):
     and unchanged — had no way back: ``Tab``/``Shift+Tab`` only cycle
     Composer↔MenuBar, and the Composer's own ``↓``/``↑`` targeted the menu
     and sent-queue, never the panel. Two fixes close this, both #3327: (1)
-    :meth:`_submit` now tries ``/answer`` through
-    :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.deliver_pending_answer`
-    — a DIRECT, un-queued delivery — before the queued path, so it can
-    always resolve the intervention it targets regardless of turn state; (2)
+    :meth:`_submit` runs ``/answer`` as a COMMAND rather than submitting it as
+    a turn — a DIRECT, un-queued delivery, so it can always resolve the
+    intervention it targets regardless of turn state. #3595 S5 replaced the
+    ``/answer``-only fast path this used to name with the shared client-side
+    slash layer, which runs every command that way; (2)
     the Composer's ``↑`` (first line, per :class:`Composer`'s own
     ``_on_key``) now focuses the pending :class:`InterventionPanel` FIRST,
     ahead of the sent-queue, whenever one is showing — the SAME idiom that
@@ -1725,9 +1735,15 @@ class TextualChatApp(App):
         ordinal to resolve and no reason to go through the ring."""
         from reyn.runtime.outbox import OutboxMessage
 
-        ok, status = await copy_to_clipboard_async(event.entry.item.text)
+        # #3616 ①: pyperclip's plain bool return carries no tool label, so the
+        # failure branch gets a real message instead of the empty string the
+        # old (ok, tool_label) contract left behind when no tool was found.
+        ok = await copy_to_clipboard_async(event.entry.item.text)
         self._ingest_frame(
-            OutboxMessage(kind="status", text=status if not ok else "copied to clipboard")
+            OutboxMessage(
+                kind="status",
+                text="copied to clipboard" if ok else "clipboard copy failed",
+            )
         )
 
     async def on_key(self, event) -> None:
@@ -1857,7 +1873,7 @@ class TextualChatApp(App):
         silently look like it worked (OSC 52, the default, cannot be
         acknowledged at all)."""
         try:
-            ok, _tool = copy_to_clipboard(text)
+            ok = copy_to_clipboard(text)
         except Exception:
             logger.exception("textual chat: copy-mode clipboard write failed")
             return False
@@ -2306,6 +2322,39 @@ class TextualChatApp(App):
                     "textual chat: could not set orphaned-tool state"
                 )
         self._running_tools.clear()
+
+    def _sweep_orphaned_streaming_replies(self) -> None:
+        """Release any streamed reply still marked in-flight at a TURN BOUNDARY.
+
+        The sibling of :meth:`_sweep_orphaned_running_tools`, and the same
+        argument applies: a record in :attr:`_streaming_replies` means "more
+        chunks are coming", and #3530 blinks the row's marker on exactly that.
+        The terminal completion frame normally clears it — but that is only ONE
+        of the ways a stream ends. ``Ctrl+C`` cancels the turn through the
+        transport without any terminal frame, so the record survived and the
+        marker blinked forever (owner report, 2026-08-02).
+
+        Fixing the cancel path alone would have left the next one. Both maps are
+        therefore released at the SAME boundary the tool sweep already uses:
+        once the turn is settled/completed/cancelled there can be no further
+        chunks for that turn's reply, whatever ended it — a terminal frame, a
+        cancel, an error, or a dropped connection all land on one of those three
+        events. That is a property of the turn, not a list of causes to keep
+        extending.
+
+        ★ The record is MARKED, never removed. Clearing the map was the first
+        attempt and it lost text: the terminal completion frame writes the
+        authoritative full body inside ``if streaming is not None``, so a
+        turn-end event arriving first would delete the record and skip that
+        write entirely (caught by #3570's repaint test, which freezes the clock
+        so the final text can only land through that frame). Only the "still
+        streaming" claim is withdrawn — which is what the marker reads — and the
+        record stays for whatever still needs to find it.
+        """
+        if not self._streaming_replies:
+            return
+        for record in self._streaming_replies.values():
+            record.settled = True
 
     def _begin_running_indicator(self, entry: "Entry[OutboxMessage]") -> None:
         """Start the live spinner + elapsed body for a RUNNING tool entry (②).
@@ -2885,7 +2934,8 @@ class TextualChatApp(App):
         Shares :meth:`_streaming_record_for`'s identity check, so a row whose
         chain_id was reused by a successor entry is not reported as streaming.
         """
-        return self._streaming_record_for(entry) is not None
+        record = self._streaming_record_for(entry)
+        return record is not None and not record.settled
 
     def _on_streaming_entry_shown(self, entry: "Entry[OutboxMessage]") -> None:
         """★The replay leg (#3283 ③): a streamed reply's row scrolled back INTO
@@ -3181,6 +3231,12 @@ class TextualChatApp(App):
                             logger.exception(
                                 "textual chat: orphaned-tool sweep failed"
                             )
+                        try:
+                            self._sweep_orphaned_streaming_replies()
+                        except Exception:
+                            logger.exception(
+                                "textual chat: orphaned-stream sweep failed"
+                            )
                 else:
                     msg = frame.message
                     if msg.kind == "__end__":
@@ -3287,30 +3343,33 @@ class TextualChatApp(App):
         :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
         (:meth:`on_intervention_panel_choice_selected` /
         :meth:`on_intervention_panel_text_submitted`) — its own, never-queued
-        transport funnel — for anyone who can reach the panel, plus ONE
-        Composer-typed exception: ``/answer`` (#3327). ``/answer`` acts on an
-        EXISTING pending intervention, not a new turn, so it is tried FIRST
-        through :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.deliver_pending_answer`
-        — a direct, un-queued delivery — before falling through to the
-        ordinary new-turn path below. This is load-bearing, not cosmetic:
-        #3327 found that a Composer submit landing while a turn is blocked on
-        an intervention is durably queued (the #3300 sent-queue) but the
-        queue only DRAINS once that SAME turn frees — which requires that
-        SAME intervention to resolve. A queued ``/answer`` therefore chases
-        its own precondition and can never fire; a keyboard-only user who
-        ``Esc``-dismissed the panel (#3299 P1's documented escape hatch, which
-        returns focus WITHOUT answering) had no way back at all before this
-        fix. Every OTHER submission (a fresh turn, or ``/answer`` typed with
-        nothing pending) is UNCHANGED: ``deliver_pending_answer`` returns
-        ``False`` and ``submit_user_text`` durably queues the line on the
-        inbox — visible in the sent-queue region (#3300 P2b, this module) and
-        cancelable there (#3300 Y-client, ``↑`` from the composer to focus
-        it when nothing is pending, ``Enter`` on a highlighted row to
-        cancel) — rather than losing it. Errors are contained and surfaced as
-        an error frame the pump renders — a silent input drop is the worst
-        failure for a chat box."""
+        transport funnel — for anyone who can reach the panel.
+
+        #3595 S5: a ``/``-prefixed line is a COMMAND, and the TUI interprets it
+        itself through the layer both reyn clients share
+        (:func:`~reyn.interfaces.slash.dispatch.maybe_dispatch_slash`) rather
+        than submitting the string for the session to interpret. It is run
+        immediately and never queued, which SUBSUMES #3327's ``/answer`` fast
+        path: that fix existed because a queued ``/answer`` chases its own
+        precondition — the #3300 sent-queue only drains once the blocking turn
+        frees, and that turn frees only when the intervention the ``/answer``
+        targets resolves — so a keyboard-only user who ``Esc``-dismissed the
+        panel (#3299 P1's documented escape hatch, which returns focus WITHOUT
+        answering) had no way back at all. That argument was never specific to
+        ``/answer``, and a client-side layer has no inbox to queue any command
+        on.
+
+        A bare (non-``/``) submission is UNCHANGED: ``submit_user_text``
+        durably queues it on the inbox — visible in the sent-queue region
+        (#3300 P2b, this module) and cancelable there (#3300 Y-client, ``↑``
+        from the composer to focus it when nothing is pending, ``Enter`` on a
+        highlighted row to cancel) — rather than losing it. That is the
+        invariant #3300 protects, and slash leaving the queue does not touch
+        it. Errors are contained and surfaced as an error frame the pump
+        renders — a silent input drop is the worst failure for a chat box."""
         try:
-            if await self._transport.deliver_pending_answer(text):
+            from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
+            if await maybe_dispatch_slash(self._transport, text):
                 return
             await self._transport.submit_user_text(text)
         except Exception as exc:

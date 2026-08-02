@@ -70,10 +70,13 @@ async def handle_copy_sentinel(recent_replies, arg: str) -> OutboxMessage:
     """
     text, status = resolve_copy_target(recent_replies, arg)
     if text is not None:
-        ok, tool = await copy_to_clipboard_async(text)
+        # #3616 ①: pyperclip exposes no public "which backend won" API, so the
+        # status line can no longer name the tool — only report success/failure.
+        ok = await copy_to_clipboard_async(text)
         status = (
-            f"copied reply to clipboard ({tool})" if ok
-            else "no clipboard tool found — install pbcopy / xclip / wl-copy / xsel"
+            "copied reply to clipboard" if ok
+            else "clipboard copy failed — no clipboard tool available "
+            "(Linux needs xclip, xsel, or wl-clipboard installed)"
         )
     return OutboxMessage(kind="status", text=status)
 

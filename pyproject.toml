@@ -83,6 +83,14 @@ dependencies = [
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
     "fastmcp==3.4.2",        # MCP client is a first-class capability Session.__init__ always constructs (import chain: session -> mcp.connection_service -> mcp.message_handler -> fastmcp), so fastmcp is effectively required — promoted from the former [mcp] extra so a core `reyn chat` no longer ImportErrors on fresh installs.
+    "pyperclip>=1.9",        # #3616 ①: cross-platform clipboard, replacing a
+                              # hand-rolled pbcopy/wl-copy/xclip/xsel/clip
+                              # dispatch table whose Windows arm piped UTF-8
+                              # to clip.exe (which decodes stdin under the OEM
+                              # code page, garbling non-ASCII). pyperclip's
+                              # Windows backend writes CF_UNICODETEXT directly.
+                              # Linux still needs xclip/xsel/wl-clipboard on
+                              # PATH — pyperclip does not vendor them either.
 ]
 
 [project.urls]
@@ -239,14 +247,6 @@ sample_line = "reyn.gateway.sample_line:register_router"
 #
 # When the SDK isn't installed, ``register_router`` returns ``None``
 # with a clear log message so reyn boots without crashing.
-
-[tool.uv]
-# Keep local `uv lock` runs compatible with the CI `lock-check` gate's pinned
-# uv version (see .github/workflows/test.yml). uv is pre-1.0 and has bumped
-# the lockfile format across minor releases; without this, a contributor
-# on a newer/older uv minor could re-lock uv.lock into a format the
-# CI-pinned uv rejects, making a locally-green `uv lock --check` fail in CI.
-required-version = ">=0.11,<0.12"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

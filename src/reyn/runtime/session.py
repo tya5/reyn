@@ -69,6 +69,7 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.outbox_hub import OutboxHub
 from reyn.runtime.pending_op_view import PendingOpView
 from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
+from reyn.runtime.router_op_context import RouterOpContextSource
 from reyn.runtime.services import (
     BudgetGateway,
     ChainManager,
@@ -78,10 +79,10 @@ from reyn.runtime.services import (
     InterventionRegistry,
     LiveSessionIdInputs,
     McpGatewayInputs,
+    MemoryKnowledgeSync,
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    RouterOpContextInputs,
     SendToAgentInputs,
     SnapshotJournal,
 )
@@ -3069,51 +3070,6 @@ class Session:
         # id, not text (avoids same-text collision). See agui-transport.md.
         return msg_id
 
-    async def maybe_deliver_answer_command(self, text: str) -> bool:
-        """#3327: run an ``/answer`` command IMMEDIATELY, bypassing the inbox,
-        when there is a pending intervention to answer.
-
-        ``/answer`` is not a new turn — it acts on EXISTING pending state — so
-        it must not ride the same inbox queue a fresh turn does. When a turn is
-        blocked awaiting an intervention (the router's ``ask_user``/permission
-        await), that turn is the SOLE consumer of the inbox
-        (:meth:`run_one_iteration` does not call :meth:`_drain_to_wake` again
-        until the current turn settles), so a queued ``/answer`` can only be
-        dequeued once that SAME intervention resolves — a chicken-and-egg
-        deadlock a keyboard-only Textual-chat user could not escape (#3327:
-        ``Esc`` dismisses the intervention panel without answering, per #3299
-        P1's documented escape hatch, and the ``/answer`` fallback then hung
-        forever behind its own precondition).
-
-        This reuses the SAME unqueued, direct-delivery funnel
-        (:meth:`_maybe_handle_slash` → :meth:`_deliver_answer_to` /
-        :meth:`answer_intervention_by_id`) the
-        :class:`~reyn.interfaces.inline.textual_chat.intervention_panel.InterventionPanel`
-        already uses for its own (never-queued) answer delivery — concurrency
-        with an in-flight turn task is therefore already proven safe, not new.
-
-        Returns ``False`` — do nothing — unless ``text`` names the ``answer``
-        slash command AND at least one intervention is currently pending;
-        the caller then falls through to the ordinary ``submit_user_text``
-        queued path, UNCHANGED. This keeps the bypass narrow (#3300's
-        sent-queue keeps gating every OTHER Composer submission, including an
-        ``/answer`` typed while nothing is pending, or an unrelated slash
-        command / new turn typed during a busy turn — the regression risk of
-        widening this bypass beyond ``/answer`` specifically)."""
-        first_line = text.partition("\n")[0]
-        if not first_line.startswith("/"):
-            return False
-        body = first_line[1:].lstrip()
-        if not body:
-            return False
-        cmd = body.split(maxsplit=1)[0]
-        if cmd != "answer":
-            return False
-        if not self._interventions.list_active():
-            return False
-        await self._maybe_handle_slash(text)
-        return True
-
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
         from_sid: "str | None" = None,
@@ -3756,34 +3712,34 @@ class Session:
         reads every OTHER dependency as ``self._X`` / ``self.X`` directly,
         exactly as the inline construction did. ``contextual_permission`` is
         the one EXPLICIT param (#3121 step3 Extract Class): it is the RAW
-        constructor-supplied initial value (RouterHostAdapter freezes its own
-        copy at construction, same as the pre-extraction code — later toggles
-        via ``CapabilityVisibility`` do not retroactively update it, matching
-        byte-identical pre-#3121 behavior), threaded explicitly because
+        constructor-supplied initial value, threaded explicitly because
         ``CapabilityVisibility`` (which owns the LIVE composed value everywhere
         else) needs ``router_host`` — THIS call's output — so it cannot exist
-        yet when this builder runs. Defaults to ``None`` (= no narrowing) so a
+        yet when this builder runs. It is the FALLBACK the op-context
+        supplier's ``contextual_permission_fn`` uses until
+        ``CapabilityVisibility`` exists, after which the supplier reads the
+        live composed value (#3607 — the adapter used to freeze this raw value
+        for the whole session, so an operator's later narrowing never reached a
+        registry-dispatched op). Defaults to ``None`` (= no narrowing) so a
         bare ``_build_router_waist()`` (e.g. a builder-contract test) stays
         constructible; the sole production caller, ``__init__``, always passes
         the real constructor value.
 
-        ★ Two of the values threaded in are DEFERRED lambdas, NOT eager values
-        — ``live_session_id_inputs.live_session_id_fn`` /
-        ``op_context_inputs.turn_origin_fn`` (both #3482 bundle fields; being
-        inside a frozen dataclass changes nothing about when they resolve)
-        keep resolving ``self._session_id`` / ``self._current_turn_origin``
-        at CALL time, not here: ``_current_turn_origin`` already carries a
-        pre-turn DEFAULT at construction (``"auto_improvement"``, set at
-        :1083 — BEFORE this builder runs), but it is then REASSIGNED per turn
-        inside ``run_one_iteration`` (far after ``__init__`` returns) — an
-        eager-captured value here would freeze the pre-turn default forever,
-        never seeing a real turn's origin; ``live_session_id_fn``
-        is deferred because a spawned session's live session id can change
-        AFTER this constructor runs (the cached ``self._session_id`` read
-        here is stale for that case — see the inline comment above
-        ``record_spawned_task`` below). Eager-izing either would freeze a
-        per-turn value at construction time — the Family 3/5 deferred/eager
-        pitfall repeated here for a third and heavier family.
+        ★ Several of the values threaded in are DEFERRED, NOT eager — the
+        ``*_fn`` fields of ``RouterOpContextSource`` (#3607) and
+        ``live_session_id_inputs.live_session_id_fn`` (#3482) keep resolving
+        ``self._<attr>`` at CALL time, not here. ``_current_turn_origin``
+        already carries a pre-turn DEFAULT at construction
+        (``"auto_improvement"``, set at :1083 — BEFORE this builder runs), but
+        it is then REASSIGNED per turn inside ``run_one_iteration`` (far after
+        ``__init__`` returns) — an eager-captured value here would freeze the
+        pre-turn default forever, never seeing a real turn's origin;
+        ``live_session_id_fn`` is deferred because a spawned session's live
+        session id can change AFTER this constructor runs (the cached
+        ``self._session_id`` read here is stale for that case — see the inline
+        comment above ``record_spawned_task`` below). Eager-izing any of them
+        would freeze a per-turn value at construction time — the Family 3/5
+        deferred/eager pitfall repeated here for a third and heavier family.
         ``record_spawned_task`` (a bound method) and the two tracker lambdas
         (``send_to_agent_inputs.delegation_tracker`` /
         ``put_outbox_inputs.agent_replies_tracker``) are likewise kept
@@ -3804,36 +3760,82 @@ class Session:
             max_inline_bytes=self._offload_config.max_inline_bytes,
         )
 
-        # #3482: the 16-param op-context cluster (measured: sole reader is
-        # RouterHostAdapter.make_router_op_context) bundled into one frozen,
-        # default-free dataclass — pure output→input value object, same
-        # values/order as the flat kwargs this replaces (byte-identical).
-        _op_context_inputs = RouterOpContextInputs(
-            allowed_mcp=self._allowed_mcp,
-            base_available_skills_fn=lambda: self._available_skills,
-            budget_gateway=self._budget,
-            compact_now=self._compact_now_for_op,
-            contextual_permission=contextual_permission,  # #1827 S3 → control-IR OpContext (raw initial value, see docstring)
-            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c (router path)
-            hot_reloader=self._hot_reloader,  # #2073 S3 → per-session reload route (tool ctx)
-            multimodal_config=self._multimodal_config,
-            # FP-0054 PR-B / #2708 P1: give the router OpContext a real PresentationRenderer
-            # so a `present` op reaches the surface's sink instead of PR-A's null surface.
-            # Built per make_router_op_context() call. The sink is obtained from the
-            # surface's declared PresentationConsumer (orphan-impossible:
-            # OutboxPresentationRenderer is constructible ONLY inside
-            # OutboxPresentationConsumer.sink) — bound to THIS Session via sink(self).
-            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
-            render_template_bounds=self._render_template_bounds,
-            sandbox_backend_instance=self._sandbox_backend,
-            sandbox_policy=(
+        # #3607: the ONE chat-router op-context supplier for this Session.
+        # Both entry points that hand an OpContext to a chat-router op —
+        # ``Session._make_router_op_context`` (the _file_op / MCP callbacks)
+        # and ``RouterHostAdapter.make_router_op_context`` (the registry
+        # dispatch's ``op_context_factory``) — are one-line delegations to
+        # ``.build()`` on THIS object, so they cannot hand out different
+        # capabilities. Before, each assembled its own, and twelve fields had
+        # already diverged. Every ``*_fn`` here is read at build time: see the
+        # class docstring for why a snapshot of any of them is right on turn 1
+        # and wrong afterwards.
+        self._router_op_context_source = RouterOpContextSource(
+            events=self._chat_events,
+            permission_resolver=self._perm,
+            file_permissions_fn=self._get_file_permissions_for_router,
+            mcp_servers_fn=self._get_mcp_servers_for_router,
+            mcp_servers_flat_fn=self._mcp_servers_flat,
+            # #1827: live — ``_reapply_per_agent_capability`` REPLACES the
+            # allowlist mid-session, and a narrowing that only reached one of
+            # the two op-context doors is not a narrowing.
+            allowed_mcp_fn=lambda: self._allowed_mcp,
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
+            environment_backend=self._environment_backend,
+            sandbox_backend=self._sandbox_backend,
+            # #1339: live — ``_sandbox_config`` is the resolved operator policy
+            # and a reload can replace it.
+            sandbox_policy_fn=lambda: (
                 self._sandbox_config.policy if self._sandbox_config is not None
                 else None
             ),
+            # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
+            agent_id=self._agent.agent_id,
+            # FP-0022 fix (#53) / #3049: bridge-aware — resolved per call so an
+            # attached pipeline driver's op reaches the ORIGINATOR's operator.
+            intervention_bus_factory=self._make_router_intervention_bus,
+            # FP-0054 PR-B / #2708 P1: a real PresentationRenderer so a `present`
+            # op reaches the surface's sink instead of PR-A's null surface. The
+            # sink comes from the surface's declared PresentationConsumer
+            # (orphan-impossible: OutboxPresentationRenderer is constructible
+            # ONLY inside OutboxPresentationConsumer.sink) — bound to THIS
+            # Session via sink(self).
+            presentation_renderer_factory=lambda: self._presentation_consumer.sink(self),
+            # FP-0054 PR-C: live — ``_reapply_presentations`` swaps the registry
+            # so a newly-registered template is visible on the next op.
+            presentation_registry_fn=lambda: self._presentation_registry,
+            multimodal_config=self._multimodal_config,
+            media_store_fn=lambda: self._media_store,  # #383/#2409
+            compact_now=self._compact_now_for_op,  # #272/#1128
+            threat_scan=self._safety.threat_scan,  # FP-0050/#1822
+            # #1827 S3: live — ``CapabilityVisibility`` owns the composed value
+            # but needs ``router_host``, i.e. THIS builder's output, so it does
+            # not exist yet. Until it does, the constructor's raw value is the
+            # narrowing in force (byte-identical to the pre-#3607 adapter,
+            # which froze that value forever).
+            contextual_permission_fn=lambda: (
+                self._capability_visibility.contextual_permission
+                if getattr(self, "_capability_visibility", None) is not None
+                else contextual_permission
+            ),
+            # #1953: live — a spawned session's real id is assigned after this
+            # constructor runs, and ops must namespace under the real one.
+            session_id_fn=lambda: self._session_id,
+            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
+            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2
+            # proposal 0060 Phase 1 (A7): live — ``_current_turn_origin`` carries
+            # a pre-turn default here and is REASSIGNED per turn in
+            # ``run_one_iteration``; an eager read would freeze the default.
             turn_origin_fn=lambda: self._current_turn_origin,
-            workspace_base_dir=self._workspace_base_dir,
-            workspace_state_dir=self._workspace_state_dir,
+            hot_reloader=self._hot_reloader,  # #2073 S3 / #2761 PR-2
+            render_template_bounds=self._render_template_bounds,  # #2679
+            budget_gateway=self._budget,  # FP-0063 PC
+            # #3196 co-vet round 2: the BASE registered set, deliberately NOT the
+            # visibility-filtered view — the `file` op's skill-load provenance
+            # gate is a TRUST decision and must not depend on whether the
+            # operator hid the skill from the menu.
+            available_skills_fn=lambda: self._available_skills,
         )
         # #3482/#3447: the 3-param mcp-gateway cluster (sole reader:
         # RouterHostAdapter._mcp_list_via_gateway) — a real consumer-set
@@ -3872,7 +3874,7 @@ class Session:
             turn_budget_engine=_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
-            op_context_inputs=_op_context_inputs,  # #3482
+            op_context_source=self._router_op_context_source,  # #3607
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
             live_session_id_inputs=_live_session_id_inputs,  # #3482
             agent_name=self.agent_name,
@@ -3902,10 +3904,6 @@ class Session:
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
             agent_workspace_dir=self.workspace_dir,
-            file_read=self._file_read,
-            file_write=self._file_write,
-            file_delete=self._file_delete,
-            file_regenerate_index=self._file_regenerate_index,
             mcp_call_tool=self._mcp_call_tool,
             # #2597 slice ②a: resources consumption (read/templates).
             mcp_read_resource=self._mcp_read_resource,
@@ -3943,9 +3941,9 @@ class Session:
             ),
             # #187: the FS env-backend instance for the LIVE router OpContext
             # Workspace (the registry file-dispatch factory). Same source as
-            # the chat OpContext (#1410). (workspace_base_dir/workspace_state_dir/
-            # sandbox_backend_instance/sandbox_policy/multimodal_config/
-            # render_template_bounds now live in op_context_inputs, #3482.)
+            # the chat OpContext (#1410) — which now reads it off the shared
+            # op-context supplier; the adapter keeps its own reference because
+            # its container-repo helpers read it directly.
             environment_backend=self._environment_backend,
             # #1652: reasoning config (display/continuity/recent_turns gates) +
             # the bounded prior-reasoning section renderer (reads this session's
@@ -3971,7 +3969,6 @@ class Session:
             # threaded beside the flag through the same static-config seam.
             offload_structured_inline_max_chars=self._offload_config.structured_inline_max_chars,
             offload_structured_preview_chars=self._offload_config.structured_preview_chars,
-            # (``compact_now`` now lives in op_context_inputs, #3482.)
             # #272/#1128 context-size signal: live exact-token budget so the
             # router SP can show the LLM the free window (header).
             context_window_status=self.context_window_status,
@@ -3982,7 +3979,6 @@ class Session:
             # parent's operator; root/detached -> self-bound), single-sourced via
             # _make_router_intervention_bus. docs/concepts/runtime/intervention-delivery.md#the-single-construction-seam
             intervention_bus_factory=self._make_router_intervention_bus,
-            # (``presentation_renderer_factory`` now lives in op_context_inputs, #3482.)
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),
@@ -4273,14 +4269,20 @@ class Session:
         construction that used to run inline in ``__init__`` — same object,
         same keyword args, same (unmoved) position.
 
-        This is a single independent leaf component (like Family 8a's
-        ``inter_agent_messaging``) — every arg is an eager ``self._X``
-        (Family 1's ``self._chat_events``, already set on ``self`` by this
-        point) or a bound method / property already available at
-        construction time (``self._file_write`` / ``self._file_read`` /
-        ``self._file_delete`` / ``self._file_regenerate_index`` /
-        ``self.workspace_dir``). No deferred lambda, no intra-family
-        local-vs-self split.
+        Most args are an eager ``self._X`` (Family 1's ``self._chat_events``,
+        already set on ``self`` by this point) or a bound method / property
+        already available at construction time (``self._file_write`` /
+        ``self._file_read`` / ``self._file_delete`` /
+        ``self._file_regenerate_index`` / ``self.workspace_dir``).
+
+        ★ ONE deferred lambda, and it is required: ``knowledge_sync``'s
+        ``op_context_fn`` resolves ``self._router_host`` at CALL time. The
+        waist (Family 6a) has not run yet at this builder's call site — see
+        the PRE-WAIST note below — so an eager read would raise
+        ``AttributeError`` here; and even after the waist exists, an OpContext
+        is per-turn state that must not be snapshotted (#3607: this is the
+        SAME context factory ``RouterLoop._remember`` used to reach through
+        ``self.host.make_router_op_context()``, unchanged).
 
         ★ PRE-WAIST placement: this builder's call site (in ``__init__``)
         MUST stay before ``_build_router_waist`` runs (Family 6a), which
@@ -4297,6 +4299,14 @@ class Session:
             file_read=self._file_read,
             file_delete=self._file_delete,
             file_regenerate_index=self._file_regenerate_index,
+            # FP-0050 / #1822 S4a: the memory-write threat scan config — the
+            # same ``self._safety.threat_scan`` the adapter gets for the
+            # tool-result legs of the same guard.
+            threat_scan=self._safety.threat_scan,
+            knowledge_sync=MemoryKnowledgeSync(
+                op_context_fn=lambda: self._router_host.make_router_op_context(),
+                events=self._chat_events,
+            ),
         )
         return memory
 
@@ -4740,8 +4750,13 @@ class Session:
             return False  # single-agent / no profile → nothing per-agent to reapply
         if prof.allowed_mcp == self._allowed_mcp:
             return False
+        # #3607: ONE holder. The router OpContext's ``allowed_mcp`` is read off
+        # this attribute at build time, so assigning it IS reapplying the gate.
+        # There used to be a second assignment here, onto the adapter — dead
+        # since #3482 moved the adapter's ``allowed_mcp`` into a FROZEN bundle:
+        # it created an attribute nothing read, so the narrowing reached the
+        # Session door and silently not the registry-dispatch one.
         self._allowed_mcp = prof.allowed_mcp
-        self._router_host._allowed_mcp = prof.allowed_mcp          # MCP gate (decl source)
         return True
 
     async def _reapply_new_agent(self, in_set: dict) -> bool:
@@ -5441,7 +5456,13 @@ class Session:
         each iteration boundary (too coarse to interrupt a mid-flight LLM
         call — see ``cancel_inflight``'s docstring)."""
         if kind == TurnOrigin.CLIENT_INPUT:
-            await self._handle_user_message(
+            # #3595 S5: the same arm every other text-bearing member takes.
+            # ``_handle_user_message`` used to sit here and short-circuit a
+            # ``/``-prefixed line into slash dispatch before the turn; with the
+            # interpretation moved client-side there is nothing left for a
+            # CLIENT_INPUT-specific entry to do, so it is gone rather than kept
+            # as a forwarder.
+            await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
             )
@@ -5461,10 +5482,13 @@ class Session:
             # to arrive as ``kind="user"`` (``session_api.run_agent_step``), which
             # is what put model-authored text through ``_handle_user_message``'s
             # ``startswith("/")`` slash dispatch — every registered slash command
-            # executable from model output. Its own kind routes it to the turn
-            # body directly: the short-circuit is not skipped by a flag, it is
-            # not on this path at all (#3595 / owner: "inbox につまれたものは
-            # スラッシュコマンドとして解釈されない").
+            # executable from model output. Its own kind took it off that entry
+            # in step 1; S5 then deleted the entry itself, so the separation no
+            # longer carries the protection — no inbox member reaches a slash
+            # dispatch, because ``Session`` has none (#3595 / owner: "inbox に
+            # つまれたものはスラッシュコマンドとして解釈されない"). The member
+            # stays because "who wrote this" is still a real distinction the
+            # turn-origin stamp below reads.
             await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -5476,13 +5500,17 @@ class Session:
             # (``mcp.server.send_to_agent_impl``, reached by the MCP
             # ``send_to_agent`` tool and the A2A JSON-RPC router). Both used to
             # arrive as ``kind="user"``, which is the claim
-            # ``_handle_user_message`` acts on by handing a ``/``-prefixed line to
-            # slash dispatch — so a Slack message reading ``/reset`` executed the
-            # command, and anyone able to post to the webhook could run any of the
-            # registered slash commands. Its own kind routes it to the turn body
-            # directly: the short-circuit is not skipped by a flag, it is not on
-            # this path at all (#3595 / owner: "inbox につまれたものはスラッシュ
-            # コマンドとして解釈されない").
+            # ``_handle_user_message`` acted on by handing a ``/``-prefixed line
+            # to slash dispatch — so a Slack message reading ``/reset`` executed
+            # the command, and anyone able to post to the webhook could run any
+            # of the registered slash commands. Step 1b took these producers off
+            # that entry; S5 deleted the entry itself, so the hole is closed
+            # twice over and by construction (#3595 / owner: "inbox につまれた
+            # ものはスラッシュコマンドとして解釈されない"). Slash stays
+            # unexposed to these producers by product decision, not by omission
+            # (owner, 2026-08-01: 「現時点では slash に公開不要」) — exposing it
+            # later means routing them through the shared CLIENT-side slash
+            # layer, never re-testing ``startswith("/")`` at a transport.
             await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -5511,13 +5539,14 @@ class Session:
             # (``session_api.run_pipeline_attached``). It claimed CLIENT_INPUT
             # until #3595 S2 — a statement about which member the table above
             # runs a turn for, not about who wrote the message; nobody did.
-            # Routing it here rather than through ``_handle_user_message`` is
-            # what the rename BUYS, and it is behaviour-neutral for this
-            # producer specifically: the only step in between is
+            # Routing it here rather than through ``_handle_user_message`` was
+            # what the rename BOUGHT, and it was behaviour-neutral for this
+            # producer specifically: the only step in between was
             # ``text.startswith("/")``, and this producer's text is always
             # ``""``. That is why the slash defect could never surface here,
-            # and why the fix is not "close a hole" but "stop the one honest
-            # member from having two meanings".
+            # and why the fix was not "close a hole" but "stop the one honest
+            # member from having two meanings". S5 has since deleted that step
+            # entirely, so every text-bearing member now takes this same call.
             await self._handle_inbox_text(
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or _new_chain_id(),
@@ -5556,8 +5585,15 @@ class Session:
     async def _handle_pipeline_result(self, payload: dict) -> None:
         """IS-2: surface an async pipeline's terminal result (``pipeline_result``)
         to the LLM as one router turn — the driver already formatted the
-        OS-framed ``text``."""
-        await self._handle_user_message(
+        OS-framed ``text``.
+
+        #3595 S5 closed a finding recorded here: this path used to go through
+        ``_handle_user_message``, so a pipeline's result text was slash
+        -interpreted. Nothing protected it but the formatter's ``[pipeline] run
+        …`` framing never starting with ``/`` — a property of the formatter, not
+        a gate. With no interpretation left in ``Session`` the property is no
+        longer load-bearing."""
+        await self._handle_inbox_text(
             payload.get("text", ""),
             chain_id=payload.get("chain_id") or _new_chain_id(),
         )
@@ -5708,60 +5744,32 @@ class Session:
         # #1128 PR-a: compaction runs synchronously now, not as a background
         # task — see docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
-    async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
-        """An OPERATOR-authored line: interpret it, then run the turn.
-
-        #3595 step 1 split this in two. Everything above the
-        ``_handle_inbox_text`` call interprets text *as an operator command
-        surface* — the slash dispatch. Everything below it is the turn itself,
-        which every text-bearing inbox kind needs. Only text whose kind claims
-        an operator typed it may enter here; a non-operator producer calls
-        ``_handle_inbox_text`` directly, so it cannot execute a slash command
-        by writing one (owner ruling: "inbox につまれたものはスラッシュコマンド
-        として解釈されない。されるんだとするとそれが不具合").
-
-        #3595 step 1b moved the last three text-bearing producers off ``"user"``
-        onto that direct route: a chat webhook and an MCP / A2A peer
-        (``TurnOrigin.EXTERNAL_MESSAGE``) and a cron fire
-        (``TurnOrigin.CRON``). Slash is deliberately not exposed to
-        any of them (owner, 2026-08-01: 「現時点では slash に公開不要」) — if it
-        ever is, it goes through a shared CLIENT-side slash layer, never through
-        a transport re-testing ``startswith("/")``.
-
-        Sibling entry: ``_handle_pipeline_result`` still calls THIS method, so a
-        pipeline's OS-framed result text is still slash-interpreted. Its framing
-        (``[pipeline] run …``) means no such text can currently start with
-        ``/``, but that is a property of the formatter, not a gate — recorded as
-        a finding on #3595, deliberately not changed here (it would also change
-        that path's ``:skill`` and pending-intervention-answer behaviour, which
-        is a different rollback shape).
-        """
-        # Slash commands (`/list`, `/tasks kill <id>`, `/answer <id> <text>`)
-        # take precedence over both the active-intervention router and a
-        # fresh router turn.
-        if text.startswith("/"):
-            if await self._maybe_handle_slash(text):
-                return
-        await self._handle_inbox_text(text, chain_id=chain_id)
-
     async def _handle_inbox_text(self, text: str, *, chain_id: str) -> None:
         """Run ONE turn on ``text`` — the shared body under every text-bearing
-        inbox kind, with the SLASH dispatch above it rather than in it
-        (#3595 step 1).
+        inbox kind, and the ONLY thing ``Session`` does with inbox text (#3595).
 
-        Extracted from ``_handle_user_message``, which now calls it after that
-        dispatch, unchanged for operators. ``kind="agent_step"`` reaches it
-        directly: an agent step's prompt is model-readable CONTENT, so it gets a
-        turn and never an OS-executed command.
+        ★ There is no operator-command surface above this method any more. S5
+        deleted ``_handle_user_message``, whose entire remaining content was a
+        ``text.startswith("/")`` short-circuit into slash dispatch, and with it
+        the ``/answer`` pre-queue fast path that was the second entry to the same
+        dispatch. Interpreting a string as a command is CLIENT work
+        (:mod:`reyn.interfaces.slash.dispatch`), so ``TurnOrigin.CLIENT_INPUT``
+        now arrives here exactly like every other text-bearing member — the
+        owner's ruling, in its final form: "inbox につまれたものはスラッシュ
+        コマンドとして解釈されない。されるんだとするとそれが不具合".
 
-        The split point is the slash block and nothing else, so this body still
-        carries the ``:skill`` invocation and the pending-intervention answer
-        route exactly as the agent-step path met them before — both remain
-        reachable from an agent step's prompt. Neither dispatches a registered
-        command (a `:` invocation composes skill text and falls THROUGH into the
-        turn below; an intervention answer is a typed reply to a question this
-        session itself asked), which is why closing the slash leg alone is the
-        step-1 scope; #3595 records them as findings for the later steps.
+        S1–S3 made a producer unable to CLAIM ``CLIENT_INPUT`` without being a
+        declared client-input seam; S5 makes the claim carry no command
+        privilege at all, so the two gates are independent rather than stacked:
+        even a producer that legitimately claims ``CLIENT_INPUT`` (a webhook
+        never can, but ``run-once``'s stdin does) cannot execute a command by
+        writing one.
+
+        This body carries the ``:skill`` invocation and the pending-intervention
+        answer route. Neither is a registered command (a ``:`` invocation
+        composes skill text and falls THROUGH into the turn below; an
+        intervention answer is a typed reply to a question this session itself
+        asked), which is why they stay here while slash left.
         """
         # #3100: operator-explicit `:skill [:skill2 ...] [trailing]` skill
         # invocation — a namespace separate from `/` (Axis 4: syntactic
@@ -6842,28 +6850,34 @@ class Session:
                 meta={"chain_id": chain_id},
             ))
 
-    # ── slash command dispatch ──────────────────────────────────────────────────
+    # ── slash command support (no dispatch: that is client-side, #3595 S5) ──────
 
     def _resolve_intervention_id(self, prefix: str) -> tuple[str | None, list[str]]:
         """Resolve a unique intervention id by prefix in the intervention registry."""
         return self._interventions.resolve_id_prefix(prefix)
 
     def _slash_context(self) -> "SlashContext":
-        """Build what a slash handler is handed (#3595 S4).
+        """Build what a slash handler is handed when it runs SERVER-side (#3595).
 
         A slash handler is CLIENT-layer code — the owner's design is that a
         client interprets ``/``-prefixed text and maps it onto published
         operations, and that ``Session`` never interprets a string — so what it
         depends on is ``ClientTransport``, the seam every reyn client already
-        writes through. This method exists because the dispatch has not moved
-        yet (#3595 S5 deletes it, together with the ``/answer`` fast path above,
-        so ``/answer`` is never left with two entry points): until then the
-        session builds the client's seam over ITSELF and hands it over, so
-        handler code is already written against the contract it will keep.
+        writes through. After S5 the interpretation is entirely the client's
+        (:mod:`reyn.interfaces.slash.dispatch`), and a LOCAL client passes its
+        own transport, never this.
+
+        ★ This survives S5 for the REMOTE case only, and the reason is a
+        property of the residue rather than of the dispatch: a ``--connect``
+        client holds no ``Session``, so the eleven commands that still read
+        session state cannot run on its side of the wire at all. The AG-UI
+        endpoint's ``slash_command`` arm — which receives a command NAME the
+        client already resolved, never a string to sniff — runs them here and
+        builds their context with this method. It goes away when
+        ``SlashContext.session`` does.
 
         ``session=self`` is the declared residue, not a design element — see
-        :class:`~reyn.interfaces.slash.SlashContext`. When S5 lands, the client
-        passes its own transport and this method goes with the dispatch.
+        :class:`~reyn.interfaces.slash.SlashContext`.
         """
         from reyn.interfaces.slash import SlashContext
         from reyn.interfaces.transport.session_bound import SessionBoundTransport
@@ -6875,105 +6889,12 @@ class Session:
             session=self,
         )
 
-    async def _maybe_handle_slash(self, text: str) -> bool:
-        """Dispatch `/command args...` lines. Returns True when consumed.
-
-        Delegates to the SlashRegistry in `reyn.interfaces.slash` so new commands
-        can be added without touching this method.
-
-        Unknown slash commands also return True (with a hint on outbox) to
-        keep the router from running on user typos like "/halp".
-
-        Multi-line slash input: slash commands today are line-oriented and
-        do not accept multi-line args. When the user submits `/cmd …\nmore`,
-        the trailing content was previously bundled into `args` and then
-        silently dropped by handlers that ignore their args (e.g. `/cost`,
-        `/help`, `/list`). We now warn before dispatching and feed the
-        handler only the first line, so the user sees that the extra lines
-        were not part of the command.
-        """
-        from reyn.interfaces.slash import REGISTRY
-
-        first_line, sep, rest = text.partition("\n")
-        if sep and rest.strip():
-            await self._put_outbox(OutboxMessage(
-                kind="system",
-                text=(
-                    f"note: {first_line.split(maxsplit=1)[0]} ignored extra "
-                    "lines; only the first line is treated as the command."
-                ),
-            ))
-        text = first_line
-
-        body = text[1:].lstrip()
-        if not body:
-            known = ", ".join(f"/{n}" for n in REGISTRY.names())
-            await self._put_outbox(OutboxMessage(
-                kind="system",
-                text=f"known commands: {known}",
-            ))
-            return True
-        parts = body.split(maxsplit=1)
-        cmd = parts[0]
-        args = parts[1] if len(parts) > 1 else ""
-        slash_cmd = REGISTRY.get(cmd)
-        if slash_cmd is None:
-            # Suggest the 3 closest matches rather than dumping the full 20+ command catalog
-            # into the error line — the full list previously truncated mid-name, hiding the
-            # actionable suggestions. ``suggest_for_unknown`` is a pure helper in
-            # ``reyn.interfaces.slash`` so the suggestion contract is testable standalone.
-            from reyn.interfaces.slash import suggest_for_unknown
-            suggestions = suggest_for_unknown(cmd)
-            known = ", ".join(f"/{n}" for n in suggestions)
-            # ``kind="error"`` so the TUI renders an inline error (✗ glyph,
-            # severity colour, scroll-away). The previous ``kind="system"``
-            # rendered as a dim grey line indistinguishable from a successful
-            # slash-command reply — a typo'd command silently looked OK.
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"unknown command /{cmd}; try: {known}",
-            ))
-            return True
-        # Wave-13 T2-3: recall hint. Reads `outbox._queue` (asyncio.Queue's PRIVATE
-        # deque) read-only, best-effort — keep the surrounding try/except, or a
-        # CPython internals change breaks slash dispatch, not just the hint.
-        pre_size = self.outbox.qsize()
-        try:
-            await slash_cmd.handler(self._slash_context(), args)
-        except Exception as e:
-            # A slash handler raising must not kill the session run loop: run()'s
-            # `while await run_one_iteration()` has no `except`, so an uncaught
-            # error here ends session.run() and silently drops every later inbox
-            # message (the front-end keeps accepting input but never replies).
-            # Surface a clean error and treat the command as consumed so the loop
-            # continues. (CancelledError is BaseException → shutdown still cancels.)
-            logger.exception("slash handler /%s failed", cmd)
-            detail = f"{type(e).__name__}: {e}"
-            if len(detail) > 72:
-                detail = detail[:69] + "…"
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"/{cmd} failed: {detail}",
-            ))
-            return True
-        try:
-            new_items = list(self.outbox._queue)[pre_size:]  # type: ignore[attr-defined]
-            had_error = any(
-                getattr(item, "kind", None) == "error" for item in new_items
-            )
-        except Exception:
-            had_error = False
-        if had_error:
-            await self._put_outbox(OutboxMessage(
-                kind="status",
-                text=f"↑ to recall `/{cmd}`",
-                meta={"source": "slash_recall_hint"},
-            ))
-        return True
-
-    # NOTE: the slash handlers (list / answer / agents / attach / cost / budget)
-    # live in ``src/reyn/runtime/slash/`` per the cli-redesign plan.
-    # ``_resolve_intervention_id`` / ``_deliver_answer_to`` stay here as
-    # session-state helpers the slash modules call back into.
+    # NOTE: the slash handlers live in ``src/reyn/interfaces/slash/`` and the
+    # dispatch that reaches them is CLIENT-side (#3595 S5,
+    # ``interfaces/slash/dispatch.py``). ``_resolve_intervention_id`` /
+    # ``_deliver_answer_to`` stay here as session-state helpers the slash
+    # modules call back into through ``SlashContext.session`` — the declared,
+    # shrinking residue enumerated in ``tests/test_3595_s4_slash_handler_seam.py``.
 
     async def _maybe_handle_skill_invoke(
         self, text: str,
@@ -7091,9 +7012,11 @@ class Session:
         return False, composed
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
-    # _make_router_op_context + 3 helpers remain on Session because the
-    # session's internal MCP/file callbacks (_mcp_list_tools, _mcp_call_tool,
-    # _file_op) use them. The adapter has its own private copies.
+    # These 3 resolvers remain on Session because the session's internal
+    # MCP/file callbacks (_mcp_list_tools, _mcp_call_tool, _file_op) use them,
+    # and because the op-context supplier reads them as bound methods (so the
+    # roster it advertises follows a mid-session mcp_install). The adapter has
+    # its own copies for the surfaces it serves directly.
 
     def _get_file_permissions_for_router(self) -> dict | None:
         """Return file permissions in the form {read: [paths], write: [paths]}
@@ -7143,65 +7066,16 @@ class Session:
         return result
 
     def _make_router_op_context(self) -> "OpContext":
-        """Build a minimal OpContext for router-initiated file/MCP ops.
+        """Ask this session's op-context supplier for a chat-router OpContext.
 
-        Uses the session's events log and permission resolver. The actor
-        "chat_router" is used for permission key lookups — it matches what the
-        PermissionResolver uses to gate paths. All .reyn/ paths are in the
-        default write zone so memory ops pass without additional approval.
-
-        PermissionDecl is populated from the agent's effective permissions
-        (file_read / file_write from config, mcp from configured servers) so
-        that op_runtime layer permission checks actually gate access rather than
-        silently allowing everything through an empty decl.
+        The internal MCP / file callbacks below (``_file_op``,
+        ``_mcp_call_tool`` and siblings) reach op_runtime through here. #3607:
+        this used to assemble its own OpContext — the same object
+        ``RouterHostAdapter.make_router_op_context`` assembled separately, and
+        the two had diverged on twelve fields, so an op's capabilities depended
+        on which door it came through. Both are now one call on one supplier.
         """
-        from reyn.runtime.router_op_context import build_router_op_context
-
-        # #1412: single-sourced via build_router_op_context (shared with
-        # RouterHostAdapter). Session wires intervention_bus POST-HOC on the
-        # returned ctx (the MCP-op caller), so it is None at construction here;
-        # media/multimodal/compact ops go via the registry / RouterHostAdapter
-        # path (None here) — behavior-preserving.
-        return build_router_op_context(
-            events=self._chat_events,
-            permission_resolver=self._perm,
-            file_permissions=self._get_file_permissions_for_router(),
-            mcp_servers=self._get_mcp_servers_for_router(),
-            mcp_servers_flat=self._mcp_servers_flat(),
-            allowed_mcp=self._allowed_mcp,
-            workspace_base_dir=self._workspace_base_dir,
-            workspace_state_dir=self._workspace_state_dir,
-            environment_backend=self._environment_backend,
-            sandbox_backend=self._sandbox_backend,
-            sandbox_policy=(
-                self._sandbox_config.policy
-                if getattr(self, "_sandbox_config", None) is not None
-                else None
-            ),
-            agent_id=self._agent.agent_id,
-            # #2708 P1: this builder serves file/MCP ops (_file_op / MCP), which no
-            # `present` op reaches — so the present sink is EXPLICITLY None (the required
-            # kwarg forces the decision, no silent omission). The visible present path is
-            # RouterHostAdapter.make_router_op_context, which wires the surface consumer's sink.
-            presentation_renderer=None,
-            # #2409: forward the media store (the public twin RouterHostAdapter.make_router_op_context
-            # already does — session.py:1826). Without it the chat-router MCP path got media_store=None
-            # → MCP ImageContent couldn't be saved as a path-ref → a large image was inlined as
-            # base64 to the LLM instead of a small path-ref (the clean-payload/offload gate needs the
-            # image out of the inline body).
-            media_store=self._media_store,
-            contextual_permission=self._capability_visibility.contextual_permission,  # #1827 S3 → control-IR OpContext
-            hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c: complete-by-construction (both router callers)
-            hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2: emit_hook_event's publish target (both router op-ctx builders complete-by-construction)
-            turn_origin=self._current_turn_origin,  # proposal 0060 Phase 1 (A7): OS-authoritative provenance source (enumerate ALL op-ctx builders)
-            hot_reloader=self._hot_reloader,  # #2761 PR-2: per-session reloader (both router op-ctx builders complete-by-construction)
-            render_template_bounds=self._render_template_bounds,  # #2679: operator bounds (both router op-ctx builders complete-by-construction)
-            budget_gateway=self._budget,  # FP-0063 PC: embedding-cost recording entry point (enumerate ALL op-ctx builders; the load-bearing one for `embed` is RouterHostAdapter's)
-            # #3196 co-vet round 2: pass the BASE registered set — deliberately NOT run through
-            # the visibility filter (that's RouterHostAdapter's own copy, a UX/menu concern).
-            # Filtering here would conflate a trust/provenance decision with a display decision.
-            available_skills=self._available_skills,
-        )
+        return self._router_op_context_source.build()
 
     def _make_router_intervention_bus(self):
         """The chat-router intervention bus for a router-initiated op, resolved
@@ -7731,7 +7605,8 @@ class Session:
         #3475: this is ALSO where the FP-0037 MCP-tools-cache priming chain
         (yaml refresh / disk reload / lazy probe) runs, for the same reason —
         it is the one place every turn kind funnels through BEFORE the first
-        LLM call of the turn. Previously only ``_handle_user_message`` ran this
+        LLM call of the turn. Previously only the CLIENT_INPUT entry
+        (``_handle_user_message``, deleted by #3595 S5) ran this
         chain, so a turn arriving as ``hook`` or ``agent_request`` (a freshly
         spawned worker's first inbound message, e.g.) built its `tools=`
         payload against a never-primed cache — no `mcp_tool_name` enum on

@@ -2809,13 +2809,19 @@ class AgentRegistry:
         # the value this spawn imposes (inheritance) — one write, one injection, no
         # second seam where the two could disagree.
         #
-        # ⚠️ The injection is only durable for a caller that does not then run
+        # ⚠️ This injection USED to be non-durable for a caller that then ran
         # ``refresh_config_projections()``: that refresh's
         # ``reapply_visibility_override`` re-resolves from base and SETs, and on a
-        # session with no registry back-reference there is no base to re-resolve, so it
-        # sets ALLOW-ALL and discards this. That is why ``spawn_session_recorded``
-        # deliberately does NOT pass ``narrowing`` here and re-injects after its own
-        # refresh instead — measured, see the note at its ``spawn_session`` call.
+        # session with no registry back-reference there was no base to re-resolve, so it
+        # set ALLOW-ALL and discarded this. #3593 ① removed the discard at its source —
+        # with no base obtained, that method now PRESERVES the live envelope (it has no
+        # standing to overwrite it) instead of writing a fabricated one, and says so.
+        # ``spawn_session_recorded`` still does NOT pass ``narrowing`` here and re-injects
+        # after its own refresh; #3593 ① did not re-litigate that ordering (measured
+        # there: with the preserve fix in place, routing the value down this channel no
+        # longer REDs the two tests that pinned the ordering — deciding whether to move it
+        # is a separate change with its own review). See the note at its
+        # ``spawn_session`` call.
         if narrowing:
             self._persist_session_narrowing(name, new_sid, narrowing)
         inject = getattr(session, "apply_per_session_narrowing", None)
@@ -2858,19 +2864,29 @@ class AgentRegistry:
         parent surface, ask_user reaches the parent's live operator), ``AuditOnlyNoSurface``
         (detached/headless — present audit-only, ask_user a typed refusal), or ``ReviewedNA``
         (``None``/``None`` self-bound, reviewed sites only). No silent default (#2708 P3-item3)."""
-        # #3562: this seam does NOT hand ``narrowing`` down the primitive's new channel,
-        # and the reason is measured rather than stylistic. Its own write + re-inject
-        # (below) must stay AFTER ``refresh_config_projections()``: that refresh fires
+        # #3562: this seam does NOT hand ``narrowing`` down the primitive's new channel.
+        # The original reason was measured: its own write + re-inject (below) had to stay
+        # AFTER ``refresh_config_projections()``, because that refresh fires
         # ``reapply_visibility_override``, which re-resolves the envelope from base and
-        # SETs it — and when the session has no registry back-reference there IS no base
-        # to re-resolve, so it sets an ALLOW-ALL envelope and silently discards anything
+        # SETs it — and when the session had no registry back-reference there was no base
+        # to re-resolve, so it set an ALLOW-ALL envelope and silently discarded anything
         # injected before it. Passing the narrowing down was tried and falsified by
         # tests/test_2103_s1bc_session_spawn_tool.py::
         # test_spawn_session_recorded_enforces_narrowing_on_live_session and
         # tests/test_pipeline_a2_spawn_ephemeral_session.py::
         # test_spawn_ephemeral_session_narrowing_applied — both went RED with an empty
-        # ``tool_deny`` on the live session. The primitive's channel is for callers that
-        # do not run that refresh (``/session new``, #3562).
+        # ``tool_deny`` on the live session.
+        #
+        # ⚠️ #3593 ① removed that discard: with no base obtained,
+        # ``reapply_visibility_override`` now preserves the live envelope instead of
+        # overwriting it with a fabricated one. Re-measured under the fix — routing the
+        # value down the primitive's channel keeps both of those tests GREEN — so the
+        # ordering below is no longer FORCED by the refresh. It is left exactly as it is
+        # here: #3593 ① is scoped to the fail-open write, and moving a spawn seam's
+        # narrowing injection is a behavioural change that deserves its own PR and its
+        # own review. Read this as "no longer forced, deliberately not moved", not as
+        # "still impossible". The primitive's channel is for callers that do not run that
+        # refresh (``/session new``, #3562).
         sid = self.spawn_session(
             name,
             presentation_consumer=presentation_consumer,

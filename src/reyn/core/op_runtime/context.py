@@ -131,9 +131,9 @@ class OpContext:
     # it had 0 writers across all OpContext constructions, so its "Threaded by
     # the OpContext builders" comment was false the whole time.)
     #
-    # Threaded by ``build_router_op_context`` (both router op-ctx builders).
-    # The load-bearing one for `embed` is RouterHostAdapter's — that is the
-    # factory the router-dispatched embed TOOL resolves. None (direct/test
+    # Threaded by ``build_router_op_context``, whose single caller is the
+    # session's ``RouterOpContextSource`` — so it reaches the router-dispatched
+    # `embed` TOOL's factory by construction. None (direct/test
     # construction) = the call is priced into the returned metadata but not
     # recorded into any aggregate.
     budget_gateway: object | None = None

@@ -1,64 +1,59 @@
-"""Cross-platform clipboard helper for the inline CUI (`/copy`).
+"""Cross-platform clipboard helper for the inline CUI (`/copy`) and copy mode.
 
-Platform-agnostic: tries each known clipboard binary in order and returns the
-label of the first that succeeded. Users need only ONE on PATH; the function
-never raises — an empty ``tool_label`` means "no clipboard tool available;
-install pbcopy / xclip / wl-copy / xsel".
+Thin wrapper over `pyperclip <https://pypi.org/project/pyperclip/>`_ (#3616 ①)
+rather than a hand-rolled per-OS dispatch table. The previous version
+re-implemented pyperclip's own job — probing ``pbcopy`` / ``wl-copy`` /
+``xclip`` / ``xsel`` / ``clip`` via ``shutil.which`` and shelling out with
+``subprocess`` — and its own Windows arm piped UTF-8 bytes to ``clip.exe``,
+which decodes stdin under the OS's OEM code page (CP932 for Japanese, etc.)
+rather than UTF-8, garbling any non-ASCII text. pyperclip's Windows backend
+writes ``CF_UNICODETEXT`` directly, so ``clip.exe`` and code-page
+interpretation never enter the path. The fix closes the class (reyn owning
+clipboard-platform differences) rather than patching the Windows arm alone.
+
+``copy_to_clipboard`` never raises: pyperclip raises ``PyperclipException``
+when no backend is available (or a backend call fails), and that — like any
+other exception a backend might surface — is caught here and turned into
+``False``, so a failed copy stays observable to the caller instead of
+propagating or silently reading as success.
+
+pyperclip has no public, stable "which backend won" API (only
+``is_available()`` and a private module-level function reference), so the
+former ``(ok, tool_label)`` contract's label half is gone: callers get a
+plain ``bool``. Every caller of the old label was audited and updated
+(#3616 ①) — see ``_copy_sentinel.py`` and ``textual_chat/app.py``.
 """
 from __future__ import annotations
 
-# Order of clipboard tools we try. First match that succeeds wins.
-# Each entry is (binary_name, argv_tail, label).
-_CLIPBOARD_TOOLS: tuple[tuple[str, list[str], str], ...] = (
-    ("pbcopy",   [],            "pbcopy"),                # macOS
-    ("wl-copy",  [],            "wl-copy"),               # Wayland
-    ("xclip",    ["-selection", "clipboard"], "xclip"),   # X11
-    ("xsel",     ["--clipboard", "--input"], "xsel"),     # X11 fallback
-    ("clip",     [],            "clip"),                  # Windows
-)
 
+def copy_to_clipboard(text: str) -> bool:
+    """Copy ``text`` to the system clipboard via pyperclip. Returns whether it
+    succeeded.
 
-def copy_to_clipboard(text: str) -> tuple[bool, str]:
-    """Pipe ``text`` to a platform clipboard tool. Returns ``(ok, tool_label)``.
-
-    Looked up via ``shutil.which`` so the user only needs one of the
-    binaries on PATH. We avoid hard-coding the OS because users may run,
-    e.g., xclip inside a Linux VM regardless of the host platform.
-
-    BLOCKING: ``subprocess.run`` is synchronous and can hold the calling
-    thread for up to ~2 s (timeout). Callers inside an async event loop
-    should use :func:`copy_to_clipboard_async` instead.
+    BLOCKING: pyperclip's macOS/Linux backends shell out to a platform tool
+    (``pbcopy``/``xclip``/``wl-copy``/``xsel``) via a synchronous
+    ``subprocess.Popen(...).communicate()``. Callers inside an async event
+    loop should use :func:`copy_to_clipboard_async` instead.
     """
-    import shutil
-    import subprocess
+    import pyperclip
 
-    for binary, tail, label in _CLIPBOARD_TOOLS:
-        path = shutil.which(binary)
-        if path is None:
-            continue
-        try:
-            subprocess.run(
-                [path, *tail],
-                input=text.encode("utf-8"),
-                check=True,
-                timeout=2.0,
-            )
-            return True, label
-        except Exception:
-            continue
-    return False, ""
+    try:
+        pyperclip.copy(text)
+        return True
+    except Exception:
+        return False
 
 
-async def copy_to_clipboard_async(text: str) -> tuple[bool, str]:
+async def copy_to_clipboard_async(text: str) -> bool:
     """Async variant — off-loads :func:`copy_to_clipboard` to a thread executor.
 
-    The blocking subprocess (timeout=2 s) runs on the default executor so
-    the event loop stays free to drain other outbox events (streaming
-    chunks, status messages, traces). Without this off-load, a single
-    ``/copy`` could freeze the TUI for up to 2 seconds per clipboard
-    tool attempted.
+    pyperclip's macOS/Linux backends shell out to a subprocess; off-loading
+    keeps the event loop free to drain other outbox events (streaming
+    chunks, status messages, traces) while that subprocess runs. Without
+    this off-load, a single ``/copy`` or copy-mode yank could freeze the TUI
+    for as long as the subprocess takes.
 
-    Returns the same ``(ok, tool_label)`` shape as the sync version.
+    Returns the same ``bool`` shape as the sync version.
     """
     import asyncio
     loop = asyncio.get_event_loop()

@@ -19,7 +19,12 @@ the client seam, :class:`~reyn.interfaces.transport.client_transport.ClientTrans
 ``reply()`` writes through it. See :class:`SlashContext` for what the
 ``session`` field is still doing there and why it is temporary.
 
-The TUI palette and session dispatch read from `REGISTRY` directly,
+★ The interpretation itself lives in :mod:`reyn.interfaces.slash.dispatch`
+(#3595 S5) — one shared layer both the CUI and the TUI call, rather than a
+dispatch inside ``Session`` that every text-bearing inbox producer could reach.
+``Session`` has no slash entry point at all any more.
+
+The TUI palette and the client dispatch read from `REGISTRY` directly,
 so registered commands are immediately available everywhere.
 """
 from __future__ import annotations
@@ -141,9 +146,9 @@ REGISTRY: SlashRegistry = SlashRegistry()
 def suggest_for_unknown(cmd: str, *, names: list[str] | None = None) -> list[str]:
     """Return up to ~3 closest-match suggestions for a typo'd slash command.
 
-    Used by :meth:`Session._maybe_handle_slash` — the OS's one slash
-    dispatch method (``runtime/session.py``; the ``Session._dispatch_slash``
-    this line used to name has never existed) — to build the inline error
+    Used by :func:`reyn.interfaces.slash.dispatch.maybe_dispatch_slash` — the
+    one client-side slash dispatch (#3595 S5 moved it out of ``Session``, where
+    it lived as ``_maybe_handle_slash``) — to build the inline error
     body when ``/<cmd>`` doesn't resolve. The suggestion list is
     intentionally tight: prefix-matches (= commands whose name starts with
     the typed token) come first, then fuzzy similarity matches
