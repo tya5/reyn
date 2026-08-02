@@ -38,6 +38,7 @@ from reyn.interfaces.repl.renderer import (
 
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
+from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
 from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
@@ -156,6 +157,43 @@ def _intervention_head(msg: "OutboxMessage") -> RenderableType:
     if detail:
         parts.append(Text(_neutralized_label(str(detail)), style=_CC_DIM))
     return parts[0] if len(parts) == 1 else Group(*parts)
+
+
+#: Width of a pipeline row's progress bar, in cells. Small on purpose: the row
+#: shares a line with the pipeline's name and step, and a bar that dominates it
+#: would say less than the numbers beside it already do.
+_PIPELINE_BAR_CELLS = 12
+
+
+def _pipeline_row(meta: dict) -> "Text":
+    """One pipeline RUN's row: name, a bar, and where the run is.
+
+    Built from the numbers in ``meta`` rather than from the frame's text. The
+    forwarder composes a sentence too, and parsing that back would couple this
+    to its wording — the numbers are what the row is actually about.
+
+    A run whose ``total_steps`` is unknown gets the step count with no bar,
+    rather than a bar over a guessed denominator: a progress bar that is not
+    measuring anything is worse than none.
+    """
+    name = str(meta.get("pipeline_name") or "pipeline")
+    kind = str(meta.get("step_kind") or "?")
+    index = meta.get("step_index")
+    total = meta.get("total_steps")
+    done = (index or 0) + (1 if meta.get("step_event") == "pipeline_step_completed" else 0)
+
+    out = Text()
+    out.append(name, style="bold")
+    if isinstance(total, int) and total > 0:
+        filled = max(0, min(_PIPELINE_BAR_CELLS, round(done / total * _PIPELINE_BAR_CELLS)))
+        out.append("  ")
+        out.append("━" * filled)
+        out.append("─" * (_PIPELINE_BAR_CELLS - filled), style=_CC_DIM)
+        out.append(f"  {done}/{total}")
+    else:
+        out.append(f"  step {done}")
+    out.append(f"  {kind}", style=_CC_DIM)
+    return out
 
 
 def _tool_head(msg: "OutboxMessage") -> Text:
@@ -315,6 +353,8 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
     if kind == "presentation":
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
         return render_presentation_nodes(meta.get("nodes", [])), None
+    if meta.get(_PIPELINE_RUN_KEY) is not None:
+        return _pipeline_row(meta), None
     # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
     # (the pending/resolved placeholder — #3299 P1), so it never reaches here.
     if kind == "tool_call_started":

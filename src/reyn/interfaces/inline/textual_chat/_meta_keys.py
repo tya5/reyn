@@ -80,8 +80,15 @@ RUNNING_SINCE_KEY = "_running_since"
 #: value. This is a decision (owner-adjudicated on #3283), not an oversight.
 ELAPSED_SECS_KEY = "_elapsed_secs"
 
+#: Marks a row as one pipeline RUN'S progress rather than a one-off status
+#: line, and carries the run id. Set app-side when a step frame is folded in
+#: (``_coalesce_pipeline_step``); the presenter reads it to render the run's
+#: state instead of the latest frame's text.
+PIPELINE_RUN_KEY = "_pipeline_run_id"
+
 __all__ = [
     "ELAPSED_SECS_KEY",
+    "PIPELINE_RUN_KEY",
     "ORPHANED_RESULT_KIND",
     "RESULT_KIND_KEY",
     "EXPANDED_KEY",

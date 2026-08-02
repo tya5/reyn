@@ -69,6 +69,7 @@ from reyn.interfaces.transport.frames import FrameTag
 from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
+from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
 from .chrome import (
     _MENU_TABS,
     Composer,
@@ -883,6 +884,9 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
+        #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
+        #: that run folds into it (:meth:`_coalesce_pipeline_step`).
+        self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
         # ALL pending interventions' flow entries (#3299 P2 — was single-slot
         # in P1, overwritten by a second concurrent pending intervention, an
         # architect self-review finding: ``outstanding_interventions`` is a
@@ -2223,6 +2227,15 @@ class TextualChatApp(App):
         plain-fallback turn sequence."""
         kind = msg.kind
         meta = msg.meta or {}
+        # A pipeline's step frames fold into ONE row, keyed by the run. A
+        # 15-step run emits 30 of them (a started/completed pair per step), and
+        # appended individually they bury the conversation they are progress
+        # FOR. ``lifecycle_forwarder`` already sends them as transient
+        # ``status`` with the ``run_id`` in meta — the key was there, nothing
+        # consumed it.
+        if kind == "status" and meta.get("source") == "pipeline":
+            if self._coalesce_pipeline_step(msg):
+                return
         op_id = meta.get("op_id")
         if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
             started = self._running_tools.pop(op_id, None)
@@ -2304,6 +2317,15 @@ class TextualChatApp(App):
             logger.exception("textual chat: could not stop running-tool animation")
         started_meta = started.item.meta or {}
         result_meta = result_msg.meta or {}
+        if started_meta.get("tool") == "run_pipeline":
+            # Settle every open run: the step frames cannot say which of them
+            # was the last, and an attached ``run_pipeline`` call owns exactly
+            # one run — the same assumption ``lifecycle_forwarder`` unsubscribes
+            # on. Any row still open here belongs to a run that has ended.
+            for run_id in list(self._pipeline_runs):
+                self._settle_pipeline_run(
+                    run_id, failed=result_msg.kind == "tool_call_failed"
+                )
         merged = {k: v for k, v in started_meta.items() if k != _RUNNING_SINCE_KEY}
         merged[_RESULT_KIND_KEY] = result_msg.kind
         merged[_RESULT_META_KEY] = result_meta
@@ -2326,6 +2348,59 @@ class TextualChatApp(App):
             started.set_state(
                 EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
             )
+
+    def _coalesce_pipeline_step(self, msg: "OutboxMessage") -> bool:
+        """Fold one pipeline step frame into that run's single row.
+
+        Returns ``True`` when the frame was absorbed, ``False`` to let the
+        caller append it as an ordinary entry — a frame with no ``run_id`` has
+        no row to belong to, and dropping it would lose progress rather than
+        tidy it.
+
+        The row shows the run's own state (``rag_ingest.ingest  ▸ 7/15
+        transform``) rather than the latest line'"'"'s text, so a reader sees where
+        the run IS, not what it most recently said. Progress is read from the
+        frame'"'"'s own numbers; the forwarder already puts them in the text, but
+        parsing a display string back into numbers is the kind of coupling that
+        breaks silently the first time the wording changes.
+        """
+        meta = msg.meta or {}
+        run_id = meta.get("run_id")
+        if not run_id:
+            return False
+        entry = self._pipeline_runs.get(run_id)
+        item = replace(msg, meta={**meta, _PIPELINE_RUN_KEY: run_id})
+        if entry is None:
+            entry = self._flow.append(item)
+            self._pipeline_runs[run_id] = entry
+            try:
+                self._flow.start_entry_animation(entry)
+            except Exception:
+                logger.exception("textual chat: could not start pipeline animation")
+            return True
+        try:
+            entry.set_item(item)
+        except Exception:
+            logger.exception("textual chat: could not update pipeline row")
+        return True
+
+    def _settle_pipeline_run(self, run_id: str, *, failed: bool) -> None:
+        """Stop a run'"'"'s row animating and give it a terminal state.
+
+        Driven by the ``run_pipeline`` tool call completing — the same signal
+        ``lifecycle_forwarder`` unsubscribes on — because the step frames
+        themselves cannot say "and that was the last one": the final
+        ``pipeline_step_completed`` is indistinguishable from any other until
+        the tool returns.
+        """
+        entry = self._pipeline_runs.pop(run_id, None)
+        if entry is None:
+            return
+        try:
+            self._flow.stop_entry_animation(entry)
+        except Exception:
+            logger.exception("textual chat: could not stop pipeline animation")
+        entry.set_state(EntryState.ERROR if failed else EntryState.SUCCESS)
 
     def _sweep_orphaned_running_tools(self) -> None:
         """Force-settle any tool row still RUNNING at a TURN BOUNDARY (#72).

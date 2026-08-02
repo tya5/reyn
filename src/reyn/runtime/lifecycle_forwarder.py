@@ -387,7 +387,18 @@ class ChatLifecycleForwarder:
             marker, suffix = "✓", " done"
         progress = f"{n}/{total_steps}" if total_steps else str(n)
         text = f"[{marker} {pipeline_name}: step {progress} ({step_kind}){suffix}]"
-        meta = {"source": "pipeline", "run_id": data.get("run_id")}
+        # The numbers travel in meta, not only inside ``text``: a display that
+        # wants a progress bar should read them, never parse them back out of a
+        # sentence whose wording is free to change.
+        meta = {
+            "source": "pipeline",
+            "run_id": data.get("run_id"),
+            "pipeline_name": pipeline_name,
+            "step_index": step_index,
+            "total_steps": total_steps,
+            "step_kind": step_kind,
+            "step_event": event_type,
+        }
         try:
             self.outbox.put_nowait(OutboxMessage(kind="status", text=text, meta=meta))
         except asyncio.QueueFull:
