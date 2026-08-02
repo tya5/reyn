@@ -293,6 +293,32 @@ baked, and doing so is a no-op once P2 starts baking them (a baked body has
 no `${...}` left to match). `${REYN_PROJECT_DIR}` and `${env:VAR_NAME}` are
 genuinely dynamic and are always resolved fresh, never baked.
 
+**#3629 — "stable location" describes the copy-time bake, not what a load
+persists to history.** The load-time-expanded VALUE (the string
+`load_skill` returns) still goes into `.reyn/agents/<id>/history.jsonl` as
+the tool result — and history is immutable. A rename or move of the
+plugin/skill directory after that point (#3588's shipped-skill rename above
+was one instance) used to leave the OLD absolute path baked into an old
+history entry forever, replayed to the model every later turn with no way
+to tell it apart from a live one. Since #3629, what gets **persisted**
+differs from what the model reads that turn: `${REYN_SKILL_DIR}`/
+`${REYN_PLUGIN_ROOT}` (+ their `${CLAUDE_*}` aliases) are left LITERAL in
+the persisted entry (`reyn.plugins.skill_load.load_skill_body`'s
+`persisted` return value; the resolved values ride along as
+audit-completeness metadata, `token_map`, never as a re-expansion source),
+and a wire-serialise pass re-resolves them FRESH against the current
+filesystem every time that entry is replayed
+(`reyn.plugins.skill_load.refresh_location_tokens`, wired into
+`RouterHistoryBuffer._serialise_turn`) — the same "resolved fresh each
+call, never baked into a durable copy" discipline `${REYN_PROJECT_DIR}`
+already had, extended to the two tokens that were missing it.
+`${REYN_PROJECT_DIR}`/`${env:VAR_NAME}` needed no change; they were already
+safe by this measure. Already-persisted (pre-#3629) history is neither
+rewritten nor annotated — the fix is forward-only; see
+[Not-found suggestions surface the current structure](#not-found-suggestions-surface-the-current-structure)
+below for what happens when the model tries to act on one of those old,
+now-dead paths.
+
 Reuses `reyn.plugins.tokens` (`PluginTokenContext` / `expand_reyn_tokens`) —
 the same expansion primitive an mcp server's spawn config and a pipeline's
 `ctx` params use (ADR §3.4's "uniform across capabilities" split) — rather
@@ -398,6 +424,25 @@ last check enforces a one-level-deep invariant: L1 (menu) -> L2 (router,
 leaf — a link from inside a reference to yet another file would be
 unreachable anyway (only `SKILL.md` gets token expansion), so an
 L3-to-L3 link is always a bug, not a valid deeper level.
+
+## Not-found suggestions surface the current structure
+
+#3629: already-persisted history is never rewritten (see the "stable
+location" note above), so a renamed/moved skill directory leaves old
+history entries pointing at a path that no longer exists — history
+outliving the filesystem is accepted as a permanent, forward-only-fixed
+cost. What changed instead is the surface where that stale reference
+actually causes harm: when the model tries to read a path whose PARENT
+directory is itself gone (not just empty — see the distinction below),
+`file.read`'s `not_found` result's `suggestions` list (`_nearby_files`,
+`src/reyn/core/op_runtime/file.py`) includes the nearest EXISTING ancestor
+directory instead of an empty list, so the model can discover the current
+structure on the spot rather than guessing a replacement path from a dead
+one. This is deliberately general (renames, moves, plugin reinstalls all
+produce the same "parent is gone" shape) — it distinguishes "no parent" (a
+renamed/moved directory — this fallback fires) from "no neighbours" (an
+existing-but-empty directory — the suggestions list legitimately stays
+`[]`, unchanged from before #3629).
 
 ## Hot-reload
 
