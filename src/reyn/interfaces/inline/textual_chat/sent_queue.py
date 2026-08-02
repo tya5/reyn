@@ -84,6 +84,8 @@ from textual.content import Content
 from textual.message import Message
 from textual.widgets import Static
 
+from reyn.interfaces.inline.textual_chat import palette
+
 from .presenter import _neutralized_label
 
 
@@ -94,19 +96,22 @@ class SentQueue(Vertical):
 
     can_focus = True
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = palette.css("""
     SentQueue {
         height: auto;
         max-height: 6;
-        color: $text-muted;
+        color: @quiet@;
         padding: 0 1;
     }
     SentQueue Static { height: auto; }
-    SentQueue Static.-selected {
-        background: $accent 30%;
-        color: $text;
-    }
-    """
+    /* Selection is an ATTRIBUTE plus a marker in the row's own text, never a
+       filled background. ``background: $accent 30%`` was the previous rule and
+       under the ansi themes the alpha is DROPPED, so it painted a solid ANSI
+       green bar with default-coloured text on top — reported as unreadable.
+       #3490 settled the same question on the conversation: surviving the style
+       merge is necessary and not sufficient, the mark has to be CONTENT. */
+    SentQueue Static.-selected { text-style: @selected-style@; }
+    """)
 
     BINDINGS = [
         Binding("up", "select_prev", "Previous queued", show=False),
@@ -131,6 +136,7 @@ class SentQueue(Vertical):
     def on_mount(self) -> None:
         self.display = False
         self._rows: "dict[str, Static]" = {}
+        self._labels: "dict[str, str]" = {}
         self._selected_index = 0
 
     def show_item(self, msg_id: str, text: str) -> None:
@@ -143,7 +149,8 @@ class SentQueue(Vertical):
         if msg_id in self._rows:
             self.remove_item(msg_id)
         label = _neutralized_label(text)
-        row = Static(Content(f"⧗ {label}"))
+        self._labels[msg_id] = label
+        row = Static(Content(f"  ⧗ {label}"))
         self._rows[msg_id] = row
         self.mount(row)
         self.display = True
@@ -154,6 +161,7 @@ class SentQueue(Vertical):
         """Remove a queued item's row (the PROMOTE exit or the ``inbox_cancel``
         REMOVE exit, #3300 Y-client). No-op for an unknown ``msg_id``.
         Collapses the region back to hidden once the last item is gone."""
+        self._labels.pop(msg_id, None)
         row = self._rows.pop(msg_id, None)
         if row is not None:
             row.remove()
@@ -208,9 +216,19 @@ class SentQueue(Vertical):
         self._selected_index = max(0, min(self._selected_index, last))
 
     def _apply_highlight(self) -> None:
+        """Mark the selected row, in its TEXT as well as its style.
+
+        The marker is what makes selection legible where a background cannot
+        go (see the CSS above); the two-space indent on unselected rows keeps
+        the queue text aligned so the marker reads as a pointer rather than as
+        the rows shifting."""
         order = list(self._rows.keys())
         for i, msg_id in enumerate(order):
-            self._rows[msg_id].set_class(i == self._selected_index, "-selected")
+            selected = i == self._selected_index
+            row = self._rows[msg_id]
+            row.set_class(selected, "-selected")
+            lead = f"{palette.SELECTED_MARKER} " if selected else "  "
+            row.update(Content(f"{lead}⧗ {self._labels[msg_id]}"))
 
     def action_select_prev(self) -> None:
         if self._selected_index > 0:

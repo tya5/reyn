@@ -1690,7 +1690,11 @@ presentations:
 
 ## `embedding` block
 
-RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
+RAG embedding model classes and batch settings.
+
+`enabled` is the one switch and it is **off by default** — nothing else in this
+block turns embedding on. Once it is on, the built-in defaults cover the OpenAI
+path, so a fresh install with `OPENAI_API_KEY` needs no further changes.
 
 > **Non-OpenAI embeddings behind a LiteLLM proxy.** If your embedding
 > class routes through a LiteLLM proxy to a non-OpenAI provider (e.g. an

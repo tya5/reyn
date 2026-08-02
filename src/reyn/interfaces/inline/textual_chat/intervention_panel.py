@@ -108,6 +108,8 @@ from textual.widgets import (
     Tabs,
 )
 
+from reyn.interfaces.inline.textual_chat import palette
+
 from .presenter import _neutralized_label
 
 if TYPE_CHECKING:
@@ -154,10 +156,10 @@ class InterventionPanel(Vertical):
     #: widget state. Only ``TabbedContent`` itself (which DOES default to
     #: ``height: auto`` — ``TabbedContent.DEFAULT_CSS`` — so overriding it is
     #: a no-op override, kept for documentation clarity) needs a rule here.
-    DEFAULT_CSS = """
+    DEFAULT_CSS = palette.css("""
     InterventionPanel {
         height: auto;
-        border: round $warning;
+        border: round @attention@;
         padding: 0 1;
         margin-top: 1;
     }
@@ -166,17 +168,17 @@ class InterventionPanel(Vertical):
     }
     InterventionPanel .iv-pane-title {
         text-style: bold;
-        color: $warning;
+        color: @attention@;
     }
     InterventionPanel .iv-pane-detail {
-        color: $text-muted;
+        color: @quiet@;
     }
     InterventionPanel RadioSet {
         border: none;
         height: auto;
         padding: 0;
     }
-    """
+    """)
 
     #: ``Esc``/``Tab`` stay ordinary (non-priority) bindings — the escape
     #: hatch, unchanged from P1/P2. ``Left``/``Right`` are PRIORITY bindings
