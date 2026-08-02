@@ -77,6 +77,32 @@ INTERVENTION_DETAIL_META_KEY = "intervention_detail"
 #: answered" for a closed-set intervention; this key always carries it.
 INTERVENTION_ANSWER_META_KEY = "intervention_answer"
 
+# #3629: stamped on a ``role="tool"`` ``load_skill`` result's persisted entry
+# ONLY (``router_loop.py``'s tool-result assembly, mirroring the
+# ``TOOL_STATUS_META_KEY`` pattern above — the ONE place that already knows
+# a mapper set ``history_text``/``history_meta``, canonical.py's
+# ``load_skill_to_canonical``). ``content`` for such an entry keeps
+# ``${REYN_SKILL_DIR}``/``${REYN_PLUGIN_ROOT}`` (+ ``CLAUDE_*`` aliases)
+# LITERAL rather than baked to an absolute value that a later rename/move
+# would freeze forever (history is immutable) — these two keys are what a
+# wire-serialise pass (``router_history_buffer.py``'s ``_serialise_turn`` →
+# ``reyn.plugins.skill_load.refresh_location_tokens``) needs to re-resolve
+# the tokens FRESH, against the CURRENT filesystem, every time the entry is
+# replayed.
+#
+# ``TOKEN_MAP_META_KEY`` is audit-completeness ONLY (#3629 architect
+# ruling: LLM-payload trace dumping is opt-in via ``REYN_LLM_TRACE_DUMP``,
+# so history is the only ALWAYS-ON record of what a turn's tokens actually
+# resolved to at the time) — a wire-serialise pass MUST NOT read substitution
+# VALUES from it; it re-derives fresh values from ``SKILL_SOURCE_PATH_META_KEY``
+# every time (a frozen value can only repeat what was already stale; only a
+# re-resolvable identity can self-heal — see ``refresh_location_tokens``'s
+# docstring). Like every other ``meta`` key, this NEVER reaches the LLM
+# (``RouterHistoryBuffer._serialise_turn`` builds the wire dict from
+# ``role``/``content``/``tool_calls``/``tool_call_id``/``name`` only).
+TOKEN_MAP_META_KEY = "token_map"
+SKILL_SOURCE_PATH_META_KEY = "skill_source_path"
+
 
 @dataclass(init=False)
 class ChatMessage:

@@ -4074,6 +4074,14 @@ class Session:
             action_retrieval=self._action_retrieval,
             non_interactive=self._non_interactive,
             reasoning=self._reasoning,  # #1652/② native reasoning re-attach + bound
+            # #3629: live workspace root, resolved at wire-serialise time — a
+            # callable (never the resolved value) so a rewind/checkout swap
+            # between turns is reflected. Mirrors ``Workspace.__init__``'s own
+            # ``base_dir or Path.cwd()`` default (``self._workspace_base_dir``
+            # is the agent-level override, ``None`` when unset — the SAME
+            # value ``ctx.workspace.base_dir`` resolves to for the ops this
+            # buffer's history entries came from).
+            project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
         )
 
         compaction_controller = CompactionController(

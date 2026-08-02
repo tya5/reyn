@@ -30,6 +30,26 @@ expansion mechanism itself (no asymmetry between capability types, §3.4).
 Any ``${...}`` token this module does not recognise (an env var for
 ``expand_env``, a pipeline ``ctx`` param, an unset field) is left untouched
 — the two expansion layers compose by each ignoring what the other owns.
+
+**#3629 — "stable location" only describes the copy-time bake, not
+persistence.** ``REYN_SKILL_DIR``/``REYN_PLUGIN_ROOT`` being "resolved once
+at copy time" says nothing about what happens to a VALUE this module
+expands into a skill body at LOAD time (``skill_load.py``, invocation-time,
+same as the dynamic params) once that expanded string is persisted to
+``.reyn/agents/<id>/history.jsonl`` — history is immutable, so a rename or
+move after that point leaves the OLD absolute path baked into an old
+history entry forever, replayed to the model on every later turn with no
+way to tell it apart from a live path. This module's mechanism (expand a
+literal token into a value) is unaffected either way; the fix (#3629) lives
+one layer up, in ``skill_load.py``/the history-persistence boundary: the
+location tokens (``REYN_SKILL_DIR``/``REYN_PLUGIN_ROOT``, plus their
+``CLAUDE_*`` aliases — see :data:`LOCATION_TOKEN_NAMES`) are kept literal
+in what gets PERSISTED and re-expanded fresh, against the current
+filesystem, every time a persisted turn is re-serialised for the wire
+(``router_history_buffer.py``'s :func:`~reyn.plugins.skill_load.
+refresh_location_tokens`) — the same "expanded fresh each call, never
+baked into a durable copy" discipline this module already documents for
+``REYN_PROJECT_DIR``, extended to the two tokens that were missing it.
 """
 from __future__ import annotations
 
@@ -52,6 +72,18 @@ CLAUDE_ALIAS_MAP: dict[str, str] = {
     "CLAUDE_SKILL_DIR": "REYN_SKILL_DIR",
     "CLAUDE_PROJECT_DIR": "REYN_PROJECT_DIR",
 }
+
+# #3629: the token NAMES (canonical + CLAUDE_* alias spellings) that must
+# never be baked into what gets PERSISTED to history — see the module
+# docstring's "stable location only describes the copy-time bake" note.
+# ``REYN_PROJECT_DIR``/``CLAUDE_PROJECT_DIR`` are deliberately absent: the
+# architect's #3629 measurement found PROJECT_DIR already safe (never
+# baked into a durable copy, resolved fresh from the live workspace on
+# every call) — only the two location tokens share SKILL_DIR's defect.
+LOCATION_TOKEN_NAMES: frozenset[str] = frozenset({
+    "REYN_SKILL_DIR", "REYN_PLUGIN_ROOT",
+    "CLAUDE_SKILL_DIR", "CLAUDE_PLUGIN_ROOT",
+})
 
 
 @dataclass(frozen=True)
@@ -137,3 +169,30 @@ def _expand(obj: Any, token_map: dict[str, str]) -> Any:
     if isinstance(obj, list):
         return [_expand(v, token_map) for v in obj]
     return obj
+
+
+def resolve_token_map(ctx: PluginTokenContext, *, alias_claude: bool = False) -> dict[str, str]:
+    """Public wrapper over the token-name → value map :func:`expand_reyn_tokens`
+    substitutes from (#3629).
+
+    Callers that need to expand a SUBSET of the recognised tokens (e.g.
+    ``skill_load.py`` expanding ``REYN_PROJECT_DIR`` immediately while
+    leaving the location tokens literal for persistence — see
+    :data:`LOCATION_TOKEN_NAMES`) build their own partial map by filtering
+    this one, then call :func:`expand_with_map` — never re-derive the
+    value computation independently (``PluginTokenContext.tokens()`` +
+    the ``CLAUDE_*`` alias rule stay the single source).
+    """
+    return _resolve_token_map(ctx, alias_claude=alias_claude)
+
+
+def expand_with_map(obj: Any, token_map: dict[str, str]) -> Any:
+    """Public wrapper over the same recursive substitution
+    :func:`expand_reyn_tokens` uses internally, taking an already-resolved
+    ``token_map`` directly (#3629) — for a caller that wants to expand only
+    a SUBSET of the tokens :func:`resolve_token_map` would return (see that
+    function's docstring). A token name absent from *token_map* is left
+    untouched, exactly like an unrecognised token — the caller controls
+    "subset" purely by which keys it omits, not by a second code path.
+    """
+    return _expand(obj, token_map)
