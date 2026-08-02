@@ -673,9 +673,17 @@ second hand-rolled column:
   cursor (#3476 ⑥), which is also what `ctrl+f` search moves (#3493) rather
   than keeping a second selection of its own, so two different rows can never
   both be marked *by construction* instead of by a gating rule that has to
-  stay correct. `FlowView(selectable=…)` is left off for the same reason:
-  native click-to-select would be a third way to move an "addressed" position
-  that carries no mark. The state glyph keeps its own `EntryState` colour —
+  stay correct. **flowview 0.11.0 (#3624) merged keyboard highlight and mouse
+  selection into that one `selectable=` cursor** — previously `highlight=`
+  (keyboard-only) and `selectable=` (mouse-only) were independent flags, and
+  reyn left `selectable=` off specifically to keep a click from moving the
+  addressed position; that separation no longer exists upstream, so
+  `FlowView(selectable=True)` now enables the cursor for BOTH inputs and a
+  click both moves and commits it, same as Enter/Space. reyn keeps the
+  addressed-row rail's *single-position* invariant regardless (a click just
+  becomes a second way to move it, same as an arrow key) — see "Textual TUI
+  keyboard cursor" below for the copy-on-commit hazard this merge introduced
+  and how it is contained. The state glyph keeps its own `EntryState` colour —
   being addressed is a POSITION, not an outcome, so the mark must not repaint
   the state vocabulary. The rail's colour is `_CC_TEXT` (`"default"`), so it
   forces no colour of its own and follows the theme's foreground. A named ANSI
@@ -693,7 +701,7 @@ second hand-rolled column:
   double as a divider; what differs is DISTANCE, since the right margin is a
   place most lines stop short of, unlike the line start the left rail met. The
   app supplies
-  `ReynRightGutter(is_marked=…)`, which reads `FlowView.highlighted` live on every gutter
+  `ReynRightGutter(is_marked=…)`, which reads `FlowView.current` live on every gutter
   repaint, and re-derives the affected rows' gutters via
   `FlowView.refresh_gutter` on each `Highlighted` and on focus changes (the
   gutter cache is keyed on a decor revision that neither a cursor move nor a
@@ -701,7 +709,7 @@ second hand-rolled column:
   the row it was first painted on). The rail shows only while the pane is
   actually being addressed — FlowView focused, or the search bar open; the
   position persists either way. **Why the rail is gutter CONTENT
-  and not a `flowview--selected`/`--cursor` component style**: flowview applies
+  and not a `flowview--highlight` component style**: flowview applies
   a component style as `Segment.apply_style(segments, style)` ==
   `style + segment.style` — a BASE *beneath* each segment's own attributes,
   with no `post_style` — so a background there is swallowed on exactly the rows
@@ -709,8 +717,9 @@ second hand-rolled column:
   merge (it is what #3476 ⑤/⑥ originally shipped) but inverts fg/bg into a
   near-white block over the palette, so surviving the merge is necessary and
   not sufficient.
-  Both classes (`flowview--selected` / `flowview--highlight`, the latter named
-  `flowview--cursor` before 0.7.0) are therefore left **undeclared**, and
+  That class (`flowview--highlight` — `flowview--cursor` before 0.7.0,
+  `flowview--selected` a synonym from 0.11.0 until #3624 / flowview 0.12.0
+  dropped the alias) is therefore left **undeclared**, and
   flowview 0.6.1 onward honours
   that: an undeclared component class paints nothing, because the row overlay
   uses the *partial* component style (only the rules an app actually declared).
@@ -948,38 +957,58 @@ keys are registered in `SEARCHBAR_KEYS`
 (`textual_chat/chrome.py`) so the Help pane sources them from where they are
 defined.
 
-### Textual TUI keyboard cursor (#3476)
+### Textual TUI keyboard cursor (#3476, #3624)
 
-The conversation pane carries an entry-level **highlight**
-(`FlowView(highlight=True)`) — flowview 0.7.0's name for what 0.6.x called the
-keyboard *cursor*, renamed upstream to free "cursor" for the per-character text
-cursor of copy mode (below). It is reached the way that focus state was already
-reachable — Textual's own `Shift+Tab` focus cycling, with `Esc` returning to
-the composer (machine-verified by the Esc-sufficiency gate) — never a new
-focus path. While FlowView does not hold focus these keys are unaffected; the
-composer's own `PageUp`/`PageDown` scroll delegation calls actions on the view
-directly and does not depend on the cursor at all.
+The conversation pane carries an entry-level **cursor**
+(`FlowView(selectable=True)`) — flowview 0.11.0 unified what used to be two
+independent flags, keyboard-only `highlight=` and mouse-only `selectable=`
+(0.7.0's name for what 0.6.x called `cursor=`), into ONE `current` entry driven
+by *both* inputs; 0.12.0 (#3624) then removed the `highlight=` alias entirely,
+so `selectable=True` is now the only spelling and it enables the mouse
+alongside the keyboard whether reyn wants the mouse leg or not (see the hazard
+below). The pane is reached the way that focus state was already reachable —
+Textual's own `Shift+Tab` focus cycling, with `Esc` returning to the composer
+(machine-verified by the Esc-sufficiency gate) — never a new focus path. While
+FlowView does not hold focus these keys are unaffected; the composer's own
+`PageUp`/`PageDown` scroll delegation calls actions on the view directly and
+does not depend on the cursor at all.
 
-| Key | Effect |
+| Key / input | Effect |
 |-----|--------|
 | `↑` `↓` `PgUp` `PgDn` `Home` `End` | Move the cursor (flowview's own bindings) |
 | `Enter` / `Space` | Copy the cursor entry's text to the clipboard |
+| a click | Move the cursor to the clicked entry (flowview 0.11.0+; does **not** copy — see below) |
 | `r` | Open `/rewind` |
 | `Esc` | Back to the composer |
 
-Arriving at the pane arms the highlight on the **newest** entry rather than
-leaving it invisible until the first arrow press: flowview's `move_highlight`
-starts from `highlighted=None` and only lands on an entry once a direction key
-moves it (`Textual`'s own, unrelated `TextArea.move_cursor` is a same-named
-different API and not this one), which is a real gap for a feature whose whole
-point is a visible position indicator. A remembered position is kept across
-visits — leaving and re-entering resumes where you were.
+Arriving at the pane arms the cursor on the **newest** entry rather than
+leaving it invisible until the first arrow press: flowview's `move_current`
+starts from `current=None` and only lands on an entry once a direction key (or
+click) moves it (`Textual`'s own, unrelated `TextArea.move_cursor` is a
+same-named different API and not this one), which is a real gap for a feature
+whose whole point is a visible position indicator. A remembered position is
+kept across visits — leaving and re-entering resumes where you were.
 
-**Copy** (`FlowView.Activated`) is a direct, ring-free path: `/copy N`
-addresses one of the last `COPY_BUFFER_MAX` **agent replies** by ordinal,
-whereas the cursor points at one exact, arbitrary entry of any kind (a user
-line, a tool result), so there is no ordinal to resolve and no reason to go
-through the ring.
+**Copy (Enter/Space only) — a click must not trigger it (#3624).** flowview
+0.11.0 made `Selected` fire on **every commit**: Enter, Space, *and a click*,
+with nothing in the event that says which one it was (`Selected.__init__`
+takes only `flow_view`/`entry`). reyn's pre-0.11.0 intent — Enter/Space on the
+cursor entry copies it to the clipboard — cannot be read off `Selected`
+directly any more: doing so would let one stray click silently overwrite
+whatever the user had copied in a **different application**, possibly
+credentials. reyn does not register `on_flow_view_selected` at all. Instead
+`textual_chat/app.py` defines `_CursorFlowView`, a thin `FlowView` subclass
+that overrides `action_activate` — the method flowview's own `BINDINGS` bind
+Enter/Space to (`Binding("enter", "activate", …)`) — to additionally post a
+private `_FlowViewKeyCommitted` message alongside the `super()` call. A click
+never runs `action_activate`: `FlowView.on_click` calls `self.activate()`
+directly, bypassing the action/binding system entirely, so the override sees
+only the keyboard path. `TextualChatApp.on_flow_view_key_committed` is what
+performs the clipboard write, keyed off that message rather than `Selected`.
+This is a direct, ring-free path: `/copy N` addresses one of the last
+`COPY_BUFFER_MAX` **agent replies** by ordinal, whereas the cursor points at
+one exact, arbitrary entry of any kind (a user line, a tool result), so there
+is no ordinal to resolve and no reason to go through the ring.
 
 **`r`** submits a bare `/rewind` through the ordinary submit seam — the same
 path a composer-typed `/rewind` takes, so the checkpoint picker and rewind's
@@ -1003,10 +1032,19 @@ position was a whole entry, so selecting *part* of a long reply had no keyboard
 route at all.
 
 Everything inside copy mode is **flowview's own keymap** (`hjkl w b e 0 $ ^ gg
-G v V y zz zt zb Ctrl-E Ctrl-Y Esc`, live only while copy mode is active, and
-`*` / `n` / `N` to search the selection). reyn declares **no motion binding of
-its own** — deliberately, so the keymap cannot drift from upstream's; a test
-asserts that absence. `c` is the one key reyn adds, and it is the key
+G v V y zz zt zb Ctrl-E Ctrl-Y Ctrl-D Ctrl-U Ctrl-F Ctrl-B Esc`, live only
+while copy mode is active, and `*` / `n` / `N` to search the selection). reyn
+declares **no motion binding of its own** — deliberately, so the keymap cannot
+drift from upstream's; a test asserts that absence. One consequence: the
+half/full-page scroll bindings (`Ctrl-D`/`Ctrl-U`/`Ctrl-F`/`Ctrl-B`, flowview
+0.10.0) were adopted **automatically** by the same no-own-bindings rule — a
+version bump that extends upstream's keymap needs no reyn-side change (#3624:
+looked at, adopted implicitly rather than as a separate feature decision).
+`FlowView(copy_mode=True)` (0.10.0's always-on-at-mount variant) is a
+**declined** adoption: reyn's `c` toggle (below) is the deliberate entry
+point, and starting the pane in copy mode by default would bypass the
+ordinary conversation-cursor keys (`↑`/`↓`/Enter/copy, above) entirely rather
+than layering on top of them. `c` is the one key reyn adds, and it is the key
 upstream's own `examples/copy_mode.py` uses to enter.
 
 The interaction that matters for this surface: copy mode **starts on the

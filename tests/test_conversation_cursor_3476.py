@@ -1,4 +1,4 @@
-"""#3476 ⑥ — the conversation pane's keyboard cursor (``highlight=True``).
+"""#3476 ⑥ — the conversation pane's keyboard cursor (``selectable=True``).
 
 The visual affordance #3470 deferred to this PR: FlowView is reachable via
 Shift+Tab (established there), and this PR gives that focus state a keyboard
@@ -6,11 +6,11 @@ cursor — ↑/↓/PageUp/PageDown/Home/End move it (flowview's own built-in
 bindings, not re-tested here), Enter/Space copies the cursor entry directly
 to the clipboard, and ``r`` opens ``/rewind`` through the ordinary submit
 seam. What these tests pin (real ``TextualChatApp`` + a real minimal
-``ClientTransport``, public surface only — pressed keys, ``FlowView.highlighted``,
+``ClientTransport``, public surface only — pressed keys, ``FlowView.current``,
 a real ``xclip`` stand-in, the transport's own submitted-text log):
 
 - Shift+Tab reaches the conversation pane with the cursor on the LAST entry
-  (``highlight_last`` is flowview's own mount-time default once ``highlight=True``);
+  (``current_last`` is flowview's own mount-time default once ``selectable=True``);
 - Enter/Space copies the CURSOR entry's own text — any kind, not just an
   agent reply, and NOT through the ``/copy`` ring;
 - ``r`` runs bare ``/rewind`` through the app's normal submit seam (the
@@ -136,7 +136,7 @@ async def _focus_flow(pilot, app) -> "FlowView":
 @pytest.mark.asyncio
 async def test_shift_tab_arms_the_cursor_on_the_last_entry() -> None:
     """Tier 2b: reaching FlowView via Shift+Tab starts the cursor on the
-    newest (last) entry — flowview's own ``highlight=True`` mount default."""
+    newest (last) entry — flowview's own ``selectable=True`` mount default."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -144,16 +144,16 @@ async def test_shift_tab_arms_the_cursor_on_the_last_entry() -> None:
             app.conversation.append(OutboxMessage(kind="agent", text=text))
         await pilot.pause()
         flow = await _focus_flow(pilot, app)
-        assert flow.highlighted is not None and flow.highlighted.item.text == "three", (
-            f"cursor did not start on the newest entry: {flow.highlighted!r}"
+        assert flow.current is not None and flow.current.item.text == "three", (
+            f"cursor did not start on the newest entry: {flow.current!r}"
         )
 
 
 @pytest.mark.asyncio
 async def test_enter_copies_the_cursor_entry_directly(clipboard) -> None:
-    """Tier 2b: Enter (Activated) copies the CURSOR entry's own text — a
-    TOOL-kind entry here, proving this bypasses the agent-only /copy ring
-    entirely (the ring cannot address a tool row at all)."""
+    """Tier 2b: Enter (a keyboard commit — #3624) copies the CURSOR entry's
+    own text — a TOOL-kind entry here, proving this bypasses the agent-only
+    /copy ring entirely (the ring cannot address a tool row at all)."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -161,7 +161,7 @@ async def test_enter_copies_the_cursor_entry_directly(clipboard) -> None:
         app.conversation.append(OutboxMessage(kind="tool_call_completed", text="tool output XYZ"))
         await pilot.pause()
         flow = await _focus_flow(pilot, app)
-        assert flow.highlighted.item.text == "tool output XYZ", (
+        assert flow.current.item.text == "tool output XYZ", (
             "setup: cursor is not on the tool entry"
         )
 

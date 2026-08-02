@@ -99,13 +99,13 @@ async def test_c_enters_copy_mode_on_the_highlighted_entry() -> None:
     async with app.run_test(size=(80, 20)) as pilot:
         flow = await _seeded(pilot, app)
         assert not flow.copy_mode, "test setup: already in copy mode"
-        started_on = flow.highlighted
+        started_on = flow.current
         assert started_on is not None and started_on.item.text == "newest reply"
 
         await pilot.press("c")
         await pilot.pause()
         assert flow.copy_mode, "'c' did not enter copy mode"
-        assert flow.highlighted is started_on, (
+        assert flow.current is started_on, (
             "entering copy mode moved the highlight off the entry the user was on"
         )
 

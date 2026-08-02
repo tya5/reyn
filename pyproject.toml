@@ -66,19 +66,38 @@ dependencies = [
     # LAZILY on the TTY path only, so the plain / --cui / non-TTY / CI paths never
     # touch textual or flowview and stay green even if flowview fails to resolve.
     "textual>=0.80",
-    # v0.9.0 (1440fc8). 0.5.0: animated jumps, body_width/effective gutter
-    # widths. 0.6.0: empty state, scroll_to_entry(align=), opt-in keyboard
-    # cursor, ReachedTop/ReachedBottom infinite scroll, insert_many/extend.
-    # 0.9.0: O(1) differential reflow (Viewport.invalidate_height_of dirties
-    # only the prefix-sum offsets from the changed entry onward) — internal,
-    # so reyn's existing set_item path gets it with no call-site change; plus
-    # Entry.patch_rows / Presentation(strips=) (NOT wired here — deferred
-    # pending #3539) and body-only text selection (the gutter is decoration,
-    # so a yank no longer carries gutter glyphs). All additive; defaults
+    # v0.12.0 (5a72da0), up from v0.9.0 (#3624). 0.5.0: animated jumps,
+    # body_width/effective gutter widths. 0.6.0: empty state,
+    # scroll_to_entry(align=), opt-in keyboard cursor, ReachedTop/ReachedBottom
+    # infinite scroll, insert_many/extend. 0.9.0: O(1) differential reflow
+    # (Viewport.invalidate_height_of dirties only the prefix-sum offsets from
+    # the changed entry onward) — internal, so reyn's existing set_item path
+    # gets it with no call-site change; plus Entry.patch_rows /
+    # Presentation(strips=) (NOT wired here — deferred pending #3539) and
+    # body-only text selection (the gutter is decoration, so a yank no longer
+    # carries gutter glyphs). 0.10.0: copy mode half/full-page scroll
+    # (Ctrl-D/U/F/B) — adopted implicitly (reyn declares no motion binding of
+    # its own, so upstream's keymap growing is a no-op change here); and
+    # FlowView(copy_mode=True) — looked at, DECLINED (reyn's `c` toggle is the
+    # deliberate entry point; always-on would bypass the ordinary
+    # conversation-cursor keys). 0.11.0: keyboard highlight and mouse
+    # selection unified into one `selectable=` cursor — a click now MOVES and
+    # COMMITS it, so `Selected` fires on a click exactly like Enter/Space with
+    # nothing to tell them apart; reyn no longer reads `Selected` for its
+    # clipboard-copy handler (a naive port would let a stray click overwrite
+    # the user's clipboard) — see `_CursorFlowView` in
+    # `textual_chat/app.py` and "Textual TUI keyboard cursor" in
+    # `docs/reference/runtime/agui-transport.md`. 0.12.0: removed the 0.11.0
+    # back-compat aliases (`highlight=`, `.highlighted`/`.selected`,
+    # `.select()`, `.clear_selection()`, `.highlight_entry()`/`move_highlight()`
+    # /`highlight_first()`/`highlight_last()`, `FlowView.Activated`,
+    # `flowview--selected`) — pure rename onto the 0.11.0 names reyn had
+    # already adopted, no further behaviour change. All additive; defaults
     # unchanged (cursor=False, empty=None, animate=False) — #3476 adoption arc.
-    # The SHA is the *commit*, not the tag object: v0.9.0 is a LIGHTWEIGHT tag
-    # (no `^{}` peel in `git ls-remote`), unlike the annotated v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@1440fc8b273a23326e50b532b646bf3b26f31be4",
+    # The SHA is the *commit*, not the tag object: v0.12.0 is a LIGHTWEIGHT tag
+    # (no `^{}` peel in `git ls-remote`), same as v0.9.0, unlike the annotated
+    # v0.7.0/v0.8.0.
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@5a72da086f1e8e3fc0c93b0806b53a5fd5fb1c7f",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
