@@ -245,3 +245,103 @@ async def test_the_streaming_marker_does_not_borrow_the_running_colour() -> None
             "the streaming marker changed colour as well as moving "
             f"({settled_colour} -> {streaming_colour}) — motion alone is the cue"
         )
+
+
+# ── a stream ends in more ways than one ────────────────────────────────────
+#
+# #3530 read "still streaming" off `_streaming_replies` and blinked on it,
+# which is right — but it treated the TERMINAL COMPLETION FRAME as the only way
+# that state ends. `Ctrl+C` cancels through the transport without producing one,
+# so the record survived and the marker blinked forever (owner report,
+# 2026-08-02, reproduced below).
+#
+# The fix is not "also handle cancel". Every way a stream can stop — a terminal
+# frame, a cancel, an error, a dropped connection — surfaces as one of the three
+# TURN-END events, which is where the tool-row sweep already lives. Releasing
+# both maps at that one boundary is a property of the turn rather than a list of
+# causes that the next unlisted cause would escape.
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_stream_stops_blinking() -> None:
+    """Tier 2b: the marker settles when the turn ends without a terminal frame.
+
+    Driven through the turn-end sweep rather than by clearing the map directly:
+    the defect was never in what the blink reads, it was in nothing telling it
+    the wait was over.
+    """
+    clock = _DrivenClock()
+    app = TextualChatApp(transport=_Transport(), clock=clock)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        app._handle_agent_delta_event(_delta("c9", "half a reply"))
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+
+        assert await _markers_over_one_blink(pilot, app, flow, clock) >= set(
+            _RUNNING_FRAMES
+        ), "setup: the row was not blinking before the turn ended"
+
+        app._sweep_orphaned_streaming_replies()
+        await pilot.pause()
+
+        assert await _markers_over_one_blink(pilot, app, flow, clock) == {"●"}, (
+            "the marker kept animating after the turn ended without a terminal "
+            "frame — a cancelled stream is still waiting for chunks that will "
+            "never arrive"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_cancelled_reply_keeps_the_text_it_received() -> None:
+    """Tier 2b: settling the marker does not discard what already arrived.
+
+    The cheap fix would be to drop the entry along with the record. What the
+    user typed for and half-received is theirs — only the "more is coming"
+    claim is withdrawn.
+    """
+    clock = _DrivenClock()
+    app = TextualChatApp(transport=_Transport(), clock=clock)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        app._handle_agent_delta_event(_delta("c10", "the part that did arrive"))
+        await pilot.pause()
+
+        app._sweep_orphaned_streaming_replies()
+        await pilot.pause()
+
+        flow = app.query_one(FlowView)
+        painted = "\n".join(
+            "".join(s.text for s in flow.render_line(y))
+            for y in range(flow.size.height)
+        )
+        assert "the part that did arrive" in painted
+
+
+@pytest.mark.asyncio
+async def test_every_turn_end_event_releases_the_stream() -> None:
+    """Tier 2b: the release rides the turn boundary, not one named cause.
+
+    Asserted across all three turn-end events because the defect was a missing
+    CAUSE, and a fix pinned to the one cause that was reported would leave the
+    others exactly as broken.
+    """
+    from reyn.interfaces.inline.textual_chat.app import _TURN_END_EVENT_TYPES
+
+    assert _TURN_END_EVENT_TYPES, "setup: no turn-end events to check"
+
+    for end_event in sorted(_TURN_END_EVENT_TYPES):
+        clock = _DrivenClock()
+        app = TextualChatApp(transport=_Transport(), clock=clock)
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            app._handle_agent_delta_event(_delta("c11", "partial"))
+            await pilot.pause()
+            flow = app.query_one(FlowView)
+
+            app._sweep_orphaned_streaming_replies()
+            await pilot.pause()
+
+            assert await _markers_over_one_blink(pilot, app, flow, clock) == {"●"}, (
+                f"the stream stayed marked in-flight after {end_event}"
+            )
