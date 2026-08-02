@@ -130,6 +130,8 @@ models:
 | `extra_body` | no | Provider-specific payload (e.g. `thinking` for reasoning models). |
 | `reasoning_effort` | no | Reasoning budget for the model: `minimal` / `low` / `medium` / `high` / `disable` / `none`. **Validated at load** (see below). |
 | `extends` | no | Inherit from a named class and deep-merge overrides (see below). |
+| `api_base` | no | Per-class endpoint override — a routing field, not forwarded as a litellm kwarg. |
+| `provider` | no | Per-class litellm `custom_llm_provider` — a routing field, not forwarded as a litellm kwarg. |
 | *(any other field)* | no | Silently passed through to litellm (passthrough policy). |
 
 > **Cost limit**: use `max_completion_tokens`, not `max_tokens`.  `max_tokens` is a legacy
