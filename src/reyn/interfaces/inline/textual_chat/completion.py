@@ -132,6 +132,8 @@ from typing import TYPE_CHECKING
 
 from textual.widgets import OptionList
 
+from reyn.interfaces.inline.textual_chat import palette
+
 from .presenter import _neutralized_label, option_content_rows
 
 if TYPE_CHECKING:
@@ -549,16 +551,16 @@ class CompletionPopup(OptionList, can_focus=False):
     :meth:`sync` and reads :attr:`owns_keys` before claiming a navigation key.
     """
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS = palette.css("""
     CompletionPopup {
         display: none;
         height: auto;
         max-height: 10;
-        background: $panel;
+        background: @surface@;
         border: none;
         padding: 0;
     }
-    """
+    """)
 
     def on_mount(self) -> None:
         self.display = False

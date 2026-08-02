@@ -318,7 +318,13 @@ async def test_sent_queue_updates_live_as_deltas_arrive() -> None:
         await pilot.pause()
 
         sent_queue = app.query_one(SentQueue)
-        assert {"alpha", "beta"} <= {t.split(" ", 1)[-1] for t in sent_queue.rendered_texts()}
+        # Split on the queued glyph, not the first space: a row now carries a
+        # selection marker ahead of it (selection is CONTENT, not a background
+        # — see SentQueue.DEFAULT_CSS), so the leading token count varies with
+        # which row is highlighted.
+        assert {"alpha", "beta"} <= {
+            t.split("⧗ ", 1)[-1] for t in sent_queue.rendered_texts()
+        }
 
         await transport.push_event(_turn_started(chain_id="c1", seq=3))
         await pilot.pause()

@@ -53,6 +53,7 @@ from textual_flowview import (
     FlowView,
 )
 
+from reyn.interfaces.inline.textual_chat import palette
 from reyn.interfaces.repl._clipboard import (
     copy_to_clipboard,
     copy_to_clipboard_async,
@@ -651,7 +652,7 @@ class TextualChatApp(App):
         ("c", "copy_mode", "Copy mode (vim-style text cursor)"),
     ]
 
-    CSS = """
+    CSS = palette.css("""
     /* #3503: the app paints NO ground of its own — the terminal's background
        shows through. Measured before this: ``#inputrow`` / ``#inputgutter`` /
        ``SentQueue`` / ``MenuBar`` all declare ``transparent`` already, yet all
@@ -664,7 +665,7 @@ class TextualChatApp(App):
        rewind picker), and the presenter's deliberate ROW TINTS
        (``_CC_USER_BG`` / ``_CC_ERR_BG``) are unaffected — those are content,
        not ground. */
-    App { background: ansi_default; }
+    App { background: @app-background@; }
     Screen { layout: vertical; background: transparent; }
     FlowView {
         height: 1fr;
@@ -700,13 +701,13 @@ class TextualChatApp(App):
         height: auto;
         max-height: 8;
         margin-top: 1;
-        border-top: solid #3d434f;
-        border-bottom: solid #3d434f;
+        border-top: solid @rule@;
+        border-bottom: solid @rule@;
     }
     #inputgutter {
         width: 2;
         height: auto;
-        color: $text-muted;
+        color: @quiet@;
     }
     Composer {
         height: 3;
@@ -733,7 +734,7 @@ class TextualChatApp(App):
     }
     StatusLine {
         height: 1;
-        color: $text-muted;
+        color: @quiet@;
         padding: 0 1;
     }
     /* #3326: when StatusLine SHARES a row with Tab widgets (MenuBar._repack's
@@ -791,7 +792,7 @@ class TextualChatApp(App):
        kept bold so the active tab stays identifiable without the brightness
        jump. */
     MenuBar Tab.-active {
-        color: $text-muted;
+        color: @quiet@;
         text-style: bold;
     }
     /* No separator rule between the menu row and its drawer — they read as one
@@ -799,7 +800,7 @@ class TextualChatApp(App):
     #drawer {
         height: auto;
         max-height: 12;
-        background: $panel;
+        background: @surface@;
         padding: 0;
     }
     /* OptionList ships an all-round default border — strip it so the drawer
@@ -807,12 +808,12 @@ class TextualChatApp(App):
     #drawer OptionList {
         height: auto;
         max-height: 12;
-        background: $panel;
+        background: @surface@;
         border: none;
         padding: 0;
     }
     #drawer Static { height: auto; padding: 1 0; }
-    """
+    """)
 
     #: Per-entry BODY animation rate (Hz) for the live RUNNING-tool indicator
     #: (Phase ②). Drives ``FlowView.animate_entry`` so the spinner + elapsed body
@@ -1385,7 +1386,7 @@ class TextualChatApp(App):
         # marker-carrying values and the marker survives — measured: no
         # ``48;2;`` truecolor background escape codes anywhere in a real
         # terminal capture after this switch, versus 2 residue regions
-        # before. A LOCALIZED per-selector ``background: ansi_default;``
+        # before. A LOCALIZED per-selector ``background: @app-background@;``
         # override (mirroring how #3504 fixed ``App``) was tried first and
         # does NOT work: the literal ``ansi_default`` value fails to
         # propagate when declared on anything other than ``App`` itself
