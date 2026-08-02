@@ -52,10 +52,40 @@
 # resolves against the built-in catalog or ``reyn.yaml`` ``models:``; a
 # string containing "/" is passed through to LiteLLM as-is.
 # -----------------------------------------------------------------------------
+# An entry may also be a MAPPING. ``model`` is the only required key; every
+# other key except ``extends`` / ``api_base`` / ``provider`` is forwarded to
+# ``litellm.acompletion`` unchanged and unvalidated (a typo therefore surfaces
+# as a litellm failure, not a reyn config error). Full field table:
+# docs/reference/config/reyn-yaml.md § `models` block.
+#
+# The passthrough is also the escape hatch for when litellm does not RECOGNISE
+# a model (``my-new-model`` below). Litellm fetches its model catalog over the
+# network at import and falls back to the copy bundled in the package when that
+# fetch fails; a model too new to appear in the bundled copy is then treated as
+# unknown, and litellm rejects parameters it would otherwise allow:
+#
+#   litellm.UnsupportedParamsError: openai does not support parameters:
+#   ['tool_choice'], for model=<your-model>
+#
+# Because this depends on whether that fetch succeeded, the same config can work
+# on one run and fail on the next. Naming the parameters carries them through
+# the check either way. Prefer that over litellm's other suggestion,
+# ``drop_params: true`` — that one DISCARDS the rejected parameter rather than
+# passing it, silently changing behaviour (dropping ``tool_choice`` changes how
+# the model calls tools).
+# -----------------------------------------------------------------------------
 # models:
 #   light:    openai/gpt-4o-mini
 #   standard: claude-sonnet            # built-in catalog reference
-#   strong:   anthropic/claude-3-7-sonnet
+#
+#   strong:                            # mapping form
+#     model: anthropic/claude-3-7-sonnet
+#     temperature: 0.0
+#     max_completion_tokens: 16000     # preferred over max_tokens
+#
+#   my-new-model:
+#     model: some-model-too-new-for-litellm
+#     allowed_openai_params: ["tool_choice"]
 
 
 # -----------------------------------------------------------------------------
