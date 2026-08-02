@@ -85,6 +85,33 @@ def _config(*, left: bool = True, right: bool = True) -> ReynConfig:
     return ReynConfig(chat=ChatConfig(gutters=GutterConfig(left=left, right=right)))
 
 
+async def _drain_presenter_workers(app: TextualChatApp) -> None:
+    """Deterministically wait for FlowView's in-flight ``present()`` workers
+    to finish, rather than assuming ``pilot.pause()`` was enough (#3590).
+
+    ``pilot.pause()`` decides "idle" by comparing wall-clock time against
+    process CPU time (``textual._wait.wait_for_idle``) — a wall-clock proxy,
+    not a completion signal. Under CI contention it can return control to the
+    test before a scheduled ``run_worker`` task (FlowView's
+    ``flowview-present-{entry.id}`` group, started synchronously by
+    ``_present_entry`` but executed on the event loop later) has actually
+    run, so a stale-width present lands AFTER the snapshot point instead of
+    before it. ``App.workers`` is Textual's own public completion signal for
+    exactly this; filtered to the presenter's own worker group (NOT
+    ``wait_for_complete()`` unfiltered, which would hang forever on the
+    app's own infinite ``frames`` pump worker —
+    ``TextualChatApp`` starts it with ``run_worker(self._pump_frames(),
+    name="frames", exclusive=True)`` and it never completes for the life
+    of the app)."""
+    presenting = [w for w in app.workers if w.group.startswith("flowview-present-")]
+    if presenting:
+        # ``wait_for_complete(workers)`` falls back to waiting on EVERY
+        # worker in the manager when ``workers`` is falsy (its own
+        # ``workers or self``) — an empty list must short-circuit here, or
+        # this would hang forever on the app's infinite ``frames`` worker.
+        await app.workers.wait_for_complete(presenting)
+
+
 def _offenders(
     app: TextualChatApp, *, bounds: "tuple[int, int] | None" = None
 ) -> "dict[str, tuple[int, int, int, int]]":
@@ -314,7 +341,16 @@ async def test_the_body_is_actually_re_presented_at_the_recovered_width() -> Non
     merely reporting a larger number while the rendered rows stay laid out for
     the old width. Read off the real collaboration seam
     (:class:`_WidthRecordingPresenter`, a real ``ReynPresenter`` subclass that
-    records what FlowView hands ``present()``)."""
+    records what FlowView hands ``present()``).
+
+    The snapshot point (``seen_before``) and the read point (``after``) both
+    sit past :func:`_drain_presenter_workers`, not merely past a second
+    ``pilot.pause()`` — #3590: two unrelated PRs each showed a stray
+    pre-toggle width (``{66, 78}`` instead of ``{78}``) landing in the
+    "after" window under CI contention. The stray width was the FIRST
+    present (triggered by the ``op-reflow`` push) completing AFTER the
+    snapshot instead of before it, because ``pilot.pause()``'s cpu-idle
+    heuristic is a wall-clock proxy, not a worker-completion signal."""
     transport = QueueTransport()
     presenter = _WidthRecordingPresenter()
     app = TextualChatApp(transport=transport, presenter=presenter)
@@ -322,12 +358,14 @@ async def test_the_body_is_actually_re_presented_at_the_recovered_width() -> Non
         await pilot.pause()
         await transport.push(_started("op-reflow"))
         await pilot.pause()
+        await _drain_presenter_workers(app)
         flow = app._flow
         seen_before = len(presenter.widths)
         recovered = flow.body_width + RIGHT_GUTTER_WIDTH
 
         await pilot.press(RIGHT_KEY)
         await pilot.pause()
+        await _drain_presenter_workers(app)
         after = presenter.widths[seen_before:]
         assert after, "hiding the gutter re-presented nothing — the body never reflowed"
         assert set(after) == {recovered}, (
