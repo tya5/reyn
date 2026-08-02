@@ -132,13 +132,39 @@ models:
 | `extends` | no | Inherit from a named class and deep-merge overrides (see below). |
 | `api_base` | no | Per-class endpoint override — a routing field, not forwarded as a litellm kwarg. |
 | `provider` | no | Per-class litellm `custom_llm_provider` — a routing field, not forwarded as a litellm kwarg. |
+| `stream` / `stream_options` | no | **Not settable.** Reyn owns the streaming decision itself (a per-call litellm capability query); either key on a model def is **rejected at load** — see below. |
 | *(any other field)* | no | Silently passed through to litellm (passthrough policy). |
 
 > **Cost limit**: use `max_completion_tokens`, not `max_tokens`.  `max_tokens` is a legacy
 > soft hint that many providers ignore; it has no enforcement power on OpenAI o1+ or
 > Anthropic models.  `max_completion_tokens` is enforced at the API level.
 
-**Field policy**: `model` is the only required field. Most other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof); typos cause silent litellm failures, not reyn errors. The one exception is `reasoning_effort`, which is validated at load (below).
+**Field policy**: `model` is the only required field. Most other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof); typos cause silent litellm failures, not reyn errors. Two exceptions are validated at load instead: `reasoning_effort` (below) and `stream` / `stream_options` (below), the latter **rejected outright** rather than merely value-checked.
+
+### `stream` / `stream_options` (not settable)
+
+Reyn decides whether a call streams — a per-call litellm capability query made
+inside the single completion funnel (`recorded_acompletion`), never a model-def
+setting. Declaring `stream` or `stream_options` on a model definition does
+**not** turn streaming on (the capability query still decides that); it only
+lets the key ride the kwargs passthrough into whichever branch the query
+picks. On the non-streaming branch this made litellm hand back a stream
+object that reyn read as a finished reply, surfacing as:
+
+```
+EmptyLLMResponseError: LLM returned a 200 response with empty choices
+(model=...); provider response: <litellm...CustomStreamWrapper object...>
+```
+
+Both keys are **rejected at config load** (`ValueError`, fail-fast) rather
+than reaching litellm:
+
+```yaml
+models:
+  strong:
+    model: openai/gpt-5
+    stream: true   # ValueError at load — remove this key
+```
 
 ### `reasoning_effort` (per-model reasoning budget)
 
