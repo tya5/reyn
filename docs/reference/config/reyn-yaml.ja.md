@@ -126,11 +126,38 @@ models:
 | `extra_body` | いいえ | プロバイダー固有のペイロード（例：推論モデルの `thinking`）。 |
 | `reasoning_effort` | いいえ | モデルの推論バジェット: `minimal` / `low` / `medium` / `high` / `disable` / `none`。**ロード時にバリデーション**（下記参照）。 |
 | `extends` | いいえ | 名前付きクラスから継承し、オーバーライドを deep merge（下記参照）。 |
+| `stream` / `stream_options` | いいえ | **設定不可。** ストリーミングするかどうかは reyn 自身が決めます（呼び出しごとの litellm capability query）。どちらのキーもモデル定義に書くと**ロード時に reject**されます（下記参照）。 |
 | *（その他のフィールド）* | いいえ | litellm にそのまま渡されます（パススルーポリシー）。 |
 
 > **コスト制限**: `max_tokens` ではなく `max_completion_tokens` を使用してください。`max_tokens` は多くのプロバイダーが無視するレガシーのソフトヒントです。`max_completion_tokens` は API レベルで強制されます（OpenAI o1+ および Anthropic モデル）。
 
-**フィールドポリシー**: `model` のみ必須です。ほとんどのフィールドはバリデーションなしで `litellm.acompletion` に直接渡されます（未知のフィールドも silent に転送されます — future-proof）。タイポは reyn エラーではなく silent な litellm 失敗を引き起こします。唯一の例外は `reasoning_effort` で、ロード時にバリデーションされます（下記）。
+**フィールドポリシー**: `model` のみ必須です。ほとんどのフィールドはバリデーションなしで `litellm.acompletion` に直接渡されます（未知のフィールドも silent に転送されます — future-proof）。タイポは reyn エラーではなく silent な litellm 失敗を引き起こします。ロード時にバリデーションされる例外は2つ: `reasoning_effort`（下記）と `stream` / `stream_options`（下記） — 後者は値チェックではなく**完全に reject**されます。
+
+### `stream` / `stream_options`（設定不可）
+
+ストリーミングするかどうかは reyn が決めます — 単一の completion 経路
+（`recorded_acompletion`）内で行われる、呼び出しごとの litellm capability
+query です。モデル定義側で `stream` あるいは `stream_options` を宣言しても
+ストリーミングは有効になりません（capability query が依然として決定します）
+— そのキーが kwargs のパススルーに乗って、query が選んだどちらかの分岐に
+届くだけです。非ストリーミング分岐では、これによって litellm がストリーム
+オブジェクトを返し、reyn がそれを完了した返答として読んでしまい、
+以下のように表面化していました:
+
+```
+EmptyLLMResponseError: LLM returned a 200 response with empty choices
+(model=...); provider response: <litellm...CustomStreamWrapper object...>
+```
+
+両キーとも litellm に届く前に**コンフィグロード時に reject**されます
+（`ValueError`、fail-fast）:
+
+```yaml
+models:
+  strong:
+    model: openai/gpt-5
+    stream: true   # ロード時に ValueError — このキーを削除してください
+```
 
 ### `reasoning_effort`（モデルごとの推論バジェット）
 
