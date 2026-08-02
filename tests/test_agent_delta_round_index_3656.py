@@ -212,7 +212,18 @@ async def test_a_delta_without_a_round_index_behaves_as_before() -> None:
             )
         await pilot.pause()
 
-        assert _reply_rows(app) == ["ab"]
+        rows = _reply_rows(app)
+
+        # The property is that the two deltas share a row, NOT what that row
+        # currently displays: with no round_index they key alike, and #3570's
+        # repaint budget decides whether the second chunk has been painted yet.
+        # Asserting "ab" made this fail intermittently (2 of 6 runs) for a
+        # reason unrelated to rounds — the same mistake the single-round test
+        # above already corrected.
+        assert rows, "a streamed reply must produce a row"
+        assert all(row == rows[0] for row in rows), (
+            f"deltas with no round_index were split across rows: {rows!r}"
+        )
 
 
 def test_the_round_index_survives_the_agui_boundary() -> None:
