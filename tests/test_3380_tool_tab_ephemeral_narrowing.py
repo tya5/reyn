@@ -29,6 +29,8 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.untrusted_narrowing import narrowing_on
@@ -51,12 +53,33 @@ _UNTRUSTED_DENIED_TOOL = "delegate_to_agent"
 def _session(tmp_path: Path) -> Session:
     # #3501: the ephemeral narrowing is opt-in; a test whose subject is how it
     # renders has to turn it on.
-    return make_session(
-        agent_name="alpha",
-        state_log=StateLog(tmp_path / "state.wal"),
-        snapshot_path=tmp_path / "snap.json",
-        safety=narrowing_on(),
-    )
+    #
+    # #3615: a REAL registry back-reference (even with nothing bound — no topology
+    # profile for "alpha") is required for ``capability_visibility_state``'s ENVELOPE
+    # axis to be genuinely DETERMINED rather than merely defaulted. Before #3615, a
+    # registry-less session's un-narrowed tools read as "authorized" by the same
+    # allow-everything default the fix closes off (``ContextualLayer(None)`` is (top))
+    # — this file's own control arm asserted that "authorized" without ever having
+    # resolved an envelope. This module's subject is the TURN-CONTEXT axis, which is
+    # independent of envelope resolution (composes only ``ephemeral_contextual``), so
+    # giving it a real, resolvable (if unbound) envelope isolates that from the defect
+    # #3615 fixes, rather than accidentally exercising it.
+    state_log = StateLog(tmp_path / "state.wal")
+    holder: dict = {}
+
+    def _factory(profile: AgentProfile) -> Session:
+        return make_session(
+            agent_name=profile.name,
+            state_log=state_log,
+            snapshot_path=tmp_path / "snap.json",
+            safety=narrowing_on(),
+            registry=holder.get("reg"),
+        )
+
+    reg = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
+    holder["reg"] = reg
+    AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
+    return reg.get_or_load("alpha")
 
 
 def _mark_untrusted(s: Session) -> None:

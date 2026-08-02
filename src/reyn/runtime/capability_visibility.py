@@ -617,7 +617,31 @@ class CapabilityVisibility:
         would state a lasting fact about a transient one.
 
         ``ephemeral_contextual=None`` (the default, and every non-``Session`` caller) →
-        ``denied_by_turn_context`` is empty and the other three keys are unchanged."""
+        ``denied_by_turn_context`` is empty and the other three keys are unchanged.
+
+        #3615 — ``envelope_unknown`` / ``unknown``: the READ-model twin of #3593. When
+        there is no envelope source to read the base from (no ``registry`` back-reference
+        — the same condition ``reapply_visibility_override`` preserves rather than
+        widens on), a legitimate ``base_ctx is None`` (declared: "no narrowing layer",
+        ``resolved_profile_for``'s own documented ``(None, frozenset())``-when-no-layer
+        return) is INDISTINGUISHABLE, downstream, from "the base could not be
+        determined" — both compose against ``ContextualLayer(None)``, which is ⊤ (allows
+        everything). Reporting the latter as ``authorized`` is exactly the write-side
+        defect's read-model shape: an absent input rendered as a permissive answer.
+        Every tool/mcp/category row that would otherwise be classified authorized/denied
+        is placed in ``unknown`` instead (skills are the one kind never envelope-gated
+        here — see the loop below — so they are unaffected), ``denied_by_envelope`` is
+        empty (it cannot be honestly answered without a base), and ``envelope_unknown``
+        is ``True`` so a consumer can render "cannot determine" rather than silently
+        reading an empty denial list as "nothing is denied". Surfaced loudly (WARNING),
+        the same discipline as the write side.
+
+        ``denied_by_turn_context`` is the one exception: it composes ONLY
+        ``ephemeral_contextual`` (a caller-supplied argument, unrelated to
+        ``self._registry``), so it stays fully determined even when the envelope is
+        unknown — a row the ephemeral gate denies is reported there, not swept into
+        ``unknown``, because that denial is a fact regardless of what the envelope
+        would have said."""
         from typing import cast
 
         from reyn.security.permissions.effective import (
@@ -631,11 +655,16 @@ class CapabilityVisibility:
         # concrete type ContextualLayer expects (registry.py:3509 documents ContextualPermission).
         base_ctx: "ContextualPermission | None" = None
         base_excl: "frozenset[str]" = frozenset()
-        if self._registry is not None and hasattr(self._registry, "resolved_profile_for"):
+        envelope_unknown = not (
+            self._registry is not None and hasattr(self._registry, "resolved_profile_for")
+        )
+        if not envelope_unknown:
             raw_ctx, base_excl = self._registry.resolved_profile_for(
                 self._agent_name, sid=self._session_id_provider(),
             )
             base_ctx = cast("ContextualPermission | None", raw_ctx)
+        else:
+            self._surface_unreadable_envelope_source_for_read()
         ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
         # #3380: the ephemeral gate, asked ONLY for what the envelope already allows —
         # so a capability the envelope denies keeps its durable reason even while the
@@ -648,9 +677,22 @@ class CapabilityVisibility:
         authorized: "list[dict]" = []
         denied: "list[dict]" = []
         denied_turn: "list[dict]" = []
+        unknown: "list[dict]" = []
 
         def _place(axis: "CapabilityAxis", row: dict) -> None:
-            if not ctx.allows(axis, row["name"]):
+            if envelope_unknown:
+                # #3615: no base to test the ENVELOPE axis against — classifying into
+                # authorized/denied_by_envelope would be a guess dressed as an answer.
+                # The TURN-CONTEXT axis is independent of the envelope source (``eph``
+                # composes only ``ephemeral_contextual``, a caller-supplied argument
+                # that has nothing to do with ``self._registry``), so a turn-context
+                # denial is still a determined fact and must not be swallowed into
+                # "unknown" — only the row's envelope-standing is undetermined.
+                if not eph.allows(axis, row["name"]):
+                    denied_turn.append(row)
+                else:
+                    unknown.append(row)
+            elif not ctx.allows(axis, row["name"]):
                 denied.append(row)
             elif not eph.allows(axis, row["name"]):
                 denied_turn.append(row)
@@ -664,9 +706,13 @@ class CapabilityVisibility:
             if n:
                 _place(CapabilityAxis.MCP, {"kind": "mcp", "name": n})
         for category in CATEGORIES:
-            if category not in base_excl:
+            if envelope_unknown:
+                unknown.append({"kind": "category", "name": category})
+            elif category not in base_excl:
                 authorized.append({"kind": "category", "name": category})
-        # #2548 PR-B: skills are togglable per-session; the registered base set is the envelope.
+        # #2548 PR-B: skills are togglable per-session; the registered base set is the
+        # envelope — never gated by resolved_profile_for, so #3615's envelope_unknown
+        # does not apply here (unaffected by whether the base could be read).
         for entry in (self._available_skills_provider() or []):
             authorized.append({"kind": "skill", "name": entry.name})
 
@@ -680,7 +726,32 @@ class CapabilityVisibility:
             "hidden_by_session": hidden,
             "denied_by_envelope": denied,
             "denied_by_turn_context": denied_turn,
+            "unknown": unknown,
+            "envelope_unknown": envelope_unknown,
         }
+
+    def _surface_unreadable_envelope_source_for_read(self) -> None:
+        """#3615: the READ-model twin of ``_surface_unreadable_envelope_source`` —
+        say out loud that ``capability_visibility_state`` could not determine the
+        envelope, rather than let the resulting "everything reported as authorized"
+        pass without a trace. Same WARNING-not-audit-event reasoning as the write
+        side (a wiring fact about construction, not a workspace action; see that
+        method's docstring) — kept as a separate method (not a shared call) because
+        the two report DIFFERENT observable consequences (preserved live gate vs. an
+        ``unknown`` read-model bucket) and a future edit to one message must not
+        silently also change the other's wording."""
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "#3615: capability_visibility_state() could not resolve the envelope for "
+            "agent %r (sid %r) — no envelope source to read the base from. Reporting "
+            "these rows as UNKNOWN, not authorized: the absence of a base is not "
+            "evidence of an unrestricted envelope. A session on the security-core path "
+            "is expected to carry the registry back-reference: reaching this means a "
+            "construction site built one without it.",
+            self._agent_name,
+            self._session_id_provider(),
+        )
 
     def persist_visibility_override(self, toggle_store_dir: "Path") -> None:
         """#2285 step2: persist the visibility override to ``<state dir>/visibility.yaml`` — a store

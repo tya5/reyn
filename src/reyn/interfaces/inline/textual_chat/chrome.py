@@ -680,15 +680,22 @@ def agent_pane_options(
 
 
 def _denied_note(reason: "str | None") -> str:
-    """The annotation for a non-flippable ``[--]`` row, by ``denied_reason`` (#3380).
+    """The annotation for a non-flippable ``[--]`` row, by ``denied_reason`` (#3380,
+    ``"unknown"`` added by #3615).
 
     ``"turn_context"`` states the CONDITION rather than the fact, because the
     condition is also the remedy — the narrowing lifts when the untrusted entry
     leaves the active context, and an operator told only "denied" would go looking
-    for a profile to edit that does not deny it. An unrecognised/absent reason falls
-    back to the envelope wording, which is what every pre-#3380 row meant."""
+    for a profile to edit that does not deny it. ``"unknown"`` (#3615) is neither a
+    profile denial nor a lifting condition — the session's envelope source could not
+    be read, so authorization could not be determined at all; saying "denied" here
+    would claim a firmer answer than the read model actually has. An
+    unrecognised/absent reason falls back to the envelope wording, which is what
+    every pre-#3380 row meant."""
     if reason == "turn_context":
         return "denied while untrusted content is in context"
+    if reason == "unknown":
+        return "authorization could not be determined for this session"
     return "denied by capability profile"
 
 
