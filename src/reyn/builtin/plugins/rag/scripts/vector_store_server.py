@@ -34,7 +34,8 @@ Five gates satisfied by construction (proposal 0063 P2 spec):
    ``WHERE`` over the metadata columns, joined against the KNN match.
 4. **Metadata passthrough** -- the ``reyn_rag_chunks`` table carries the
    full ``ChunkMetadata`` shape (source_path/source_type/content_hash/
-   embedding_model/chunk_index/size_tokens/parent_context/extra).
+   embedding_model/chunk_index/size_tokens/parent_context/start_index/
+   end_index/extra).
 5. **Generic ops for a pipeline-owned diff** -- ``list_metadata`` (no
    vectors, Chroma ``get(where=...)`` shape), ``upsert`` (replaces by
    (source_path, chunk_index), no duplication), ``delete``. The
@@ -46,6 +47,33 @@ Five gates satisfied by construction (proposal 0063 P2 spec):
    breach that line: a key FORMULA is not diff semantics -- the pipeline
    still decides WHICH chunks are new/changed/removed, and reads opaque
    ``id`` values back out of ``list_metadata`` to drive ``delete``.
+
+**#3644 -- ``start_index``/``end_index`` are first-class INTEGER columns,
+not ``extra`` fields.** The chunker (``chunker_server.chunk_text``) computes
+these as offsets into the text it was handed but, before #3644, nothing
+persisted them -- a query hit's chunk body was UNRECOVERABLE (the store
+never keeps ``text``, by design; gate 4 above). Re-running the chunker to
+recover it is not viable (non-deterministic without the exact ingest-time
+chunk_size/overlap_ratio, and the owner ruled it out directly). ``extra`` was
+considered and rejected: (1) ``extra``'s own contract is "passthrough reyn
+does not interpret" (see the module-level ``METADATA_COLUMNS`` note below),
+but the recovery path in ``query()`` DOES read these offsets, so ``extra``'s
+contract would be violated the moment it did; (2) ``embedding_model`` is
+already a real per-chunk column enforcing C4, so this store already defines
+schema for values it cares about -- offsets are no different; (3) decisively,
+``extra.get("start_index")`` returning ``None`` cannot distinguish "this row
+predates offset persistence" from "this chunker/caller never had offsets" --
+a real column makes a NULL and a missing column two distinct, inspectable
+facts. See ``SqliteVecStore._recover_text`` for how a NULL offset is
+reported (never a silent empty string).
+
+No migration path is provided (owner ruling: "後方互換は技術負債", "現時点
+ではその課金は気にしなくて良い。私しか使ってないから。" -- backward
+compatibility is technical debt, and the sole user does not need one). A
+sqlite file created by a pre-#3644 build of this server has no
+``start_index``/``end_index`` columns; opening it with this build and
+upserting into it will raise, which is the intended signal to re-ingest into
+a fresh file rather than a silent schema drift.
 
 ``SqliteVecStore`` holds the storage logic as a plain Python class so it
 can be exercised directly (no MCP transport needed) by tests; the module-
@@ -78,6 +106,14 @@ METADATA_COLUMNS: tuple[str, ...] = (
     "chunk_index",
     "size_tokens",
     "parent_context",
+    # #3644 -- offsets into the text the chunker was handed (pre-overlap-
+    # merge), INTEGER and nullable. A row upserted before #3644 (impossible
+    # for a fresh db -- see the module docstring's "no migration" note --
+    # but reachable if a caller's `items` dict simply omits them) carries
+    # NULL here, distinct from "column absent" (`extra`'s failure mode this
+    # PR moved away from).
+    "start_index",
+    "end_index",
 )
 
 
@@ -202,6 +238,8 @@ class SqliteVecStore:
                 chunk_index INTEGER NOT NULL DEFAULT 0,
                 size_tokens INTEGER NOT NULL DEFAULT 0,
                 parent_context TEXT,
+                start_index INTEGER,
+                end_index INTEGER,
                 extra TEXT NOT NULL DEFAULT '{}'
             )
             """
@@ -280,6 +318,13 @@ class SqliteVecStore:
         model-CLASS alias), so the column can never disagree with the vectors
         beside it (FP-0057 C4). ``parent_context`` tags every row with the
         ingest root, scoping a later "what did THIS folder ingest" query.
+
+        ``start_index``/``end_index`` (#3644, optional per item) are the
+        chunker's own offsets into the text it chunked; when an item omits
+        either, the column is stored as SQL NULL rather than defaulted to 0
+        -- 0 is a legitimate offset, and defaulting would make a chunk that
+        genuinely starts at 0 indistinguishable from one that never recorded
+        an offset at all.
         """
         import sqlite_vec  # noqa: PLC0415
 
@@ -301,13 +346,19 @@ class SqliteVecStore:
             self._ensure_vec_table(len(vector))
             self._delete_one(rag_id)
             extra = metadata.get("extra") or {}
+            # #3644: NULL, not 0, when absent -- 0 is a legitimate offset (a
+            # chunk that genuinely starts at the top of its source), so
+            # defaulting a missing value to 0 would make it indistinguishable
+            # from a real chunk_index==0 -- start_index==0 chunk.
+            start_index = metadata.get("start_index")
+            end_index = metadata.get("end_index")
             self._conn.execute(
                 """
                 INSERT INTO reyn_rag_chunks
                     (rag_id, source_path, source_type, content_hash,
                      embedding_model, chunk_index, size_tokens,
-                     parent_context, extra)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     parent_context, start_index, end_index, extra)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rag_id,
@@ -318,6 +369,8 @@ class SqliteVecStore:
                     int(metadata.get("chunk_index", 0)),
                     int(metadata.get("size_tokens", 0)),
                     metadata.get("parent_context"),
+                    None if start_index is None else int(start_index),
+                    None if end_index is None else int(end_index),
                     json.dumps(extra),
                 ),
             )
@@ -407,6 +460,49 @@ class SqliteVecStore:
             out.append({"id": rag_id, "metadata": meta})
         return out
 
+    @staticmethod
+    def _recover_text(
+        source_path: str, start_index: int | None, end_index: int | None,
+    ) -> tuple[str | None, str | None]:
+        """Recover a chunk's body by slicing ``source_path`` at
+        ``[start_index:end_index]`` (#3644 -- the store itself never keeps
+        chunk text, gate 4 in the module docstring). Returns
+        ``(text, unavailable_reason)`` -- exactly one is non-``None``.
+
+        A ``NULL`` offset is reported with a DECISION-ENABLING reason (never
+        a silent empty string -- silence here would be the fifth instance of
+        the "absent vs unknown" class this repo tracks): it names exactly
+        why recovery failed and, when possible, what to do about it. This
+        also means a source that ``markitdown`` CONVERTED before chunking
+        (pdf/docx/pptx/xlsx -- the ingest pipeline runs every input through
+        markitdown first) legitimately fails here too: ``start_index``/
+        ``end_index`` are offsets into the CONVERTED text the chunker saw,
+        not the original file's raw bytes, so slicing the raw file only
+        reproduces the indexed span when the two coincide (the common case:
+        a plain .txt/.md source, where conversion is close to identity).
+        For a genuinely binary source this manifests as a decode failure,
+        reported below rather than returned as silently-wrong text.
+        """
+        if start_index is None or end_index is None:
+            return None, (
+                "no start_index/end_index recorded for this chunk (#3644) -- "
+                "it was ingested by a caller/build that predates offset "
+                "persistence. Text cannot be recovered from a NULL offset; "
+                "re-ingest this source into a fresh store to record offsets "
+                "going forward."
+            )
+        try:
+            full_text = Path(source_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return None, (
+                f"could not recover text: reading source_path {source_path!r} "
+                f"as utf-8 text failed ({exc}). If this source was converted "
+                "by markitdown before chunking (e.g. pdf/docx/pptx/xlsx), the "
+                "persisted offsets index the CONVERTED text, not the original "
+                "file's bytes, so slicing the raw file cannot recover it."
+            )
+        return full_text[start_index:end_index], None
+
     def query(
         self,
         vector: list[float],
@@ -414,8 +510,13 @@ class SqliteVecStore:
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """top-k nearest-neighbor query with an optional plain-SQL metadata
-        WHERE filter. Returns ``[{"id", "distance", "metadata"}, ...]``
-        ordered nearest-first.
+        WHERE filter. Returns ``[{"id", "distance", "metadata", "text",
+        "text_unavailable_reason"}, ...]`` ordered nearest-first.
+        ``text`` (#3644) is recovered by slicing ``metadata.source_path`` at
+        ``[metadata.start_index:metadata.end_index]``; when recovery is not
+        possible ``text`` is ``None`` and ``text_unavailable_reason`` names
+        why (never a silent empty string -- see
+        :meth:`_recover_text`).
 
         The KNN ``k`` bound is set to the store's total row count (not
         ``top_k``) so the metadata filter is applied to the FULL
@@ -457,7 +558,16 @@ class SqliteVecStore:
             rag_id = row[0]
             meta = self._row_to_metadata(row[1:-1], (*METADATA_COLUMNS, "extra"))
             distance = row[-1]
-            out.append({"id": rag_id, "distance": distance, "metadata": meta})
+            text, reason = self._recover_text(
+                meta.get("source_path", ""), meta.get("start_index"), meta.get("end_index"),
+            )
+            out.append({
+                "id": rag_id,
+                "distance": distance,
+                "metadata": meta,
+                "text": text,
+                "text_unavailable_reason": reason,
+            })
         return out
 
 
@@ -485,12 +595,18 @@ def build_server() -> Any:
         """Insert or replace vector+metadata items in the sqlite-vec store
         at db_path. `items` and `vectors` are PARALLEL ARRAYS: item[i] is
         stored with vector[i]. Each item: {"source_path": str,
-        "content_hash": str, "chunk_index": int, "size_tokens": int}.
-        `embedding_model` must name the model that actually produced these
-        vectors (stamped on every row); `parent_context` tags each row with
-        the ingest root. A chunk is keyed by (source_path, chunk_index) and
-        an existing one is replaced (never duplicated). Raises if
-        len(items) != len(vectors)."""
+        "content_hash": str, "chunk_index": int, "size_tokens": int,
+        "start_index": int (optional), "end_index": int (optional)}.
+        `start_index`/`end_index` (#3644) are the chunker's own offsets into
+        the text it chunked -- pass them through so `query`'s results can
+        recover this chunk's body later; an item that omits either is
+        stored with a NULL offset (never defaulted to 0, which is itself a
+        legitimate offset) and `query` reports that chunk's text as
+        unavailable rather than guessing. `embedding_model` must name the
+        model that actually produced these vectors (stamped on every row);
+        `parent_context` tags each row with the ingest root. A chunk is
+        keyed by (source_path, chunk_index) and an existing one is replaced
+        (never duplicated). Raises if len(items) != len(vectors)."""
         with SqliteVecStore(db_path) as store:
             n = store.upsert(
                 items, vectors, embedding_model, parent_context=parent_context,
@@ -507,8 +623,18 @@ def build_server() -> Any:
         """top-k nearest-neighbor query against db_path, with an optional
         plain-SQL equality filter over ChunkMetadata columns (source_path,
         source_type, content_hash, embedding_model, chunk_index,
-        size_tokens, parent_context). Returns nearest-first
-        [{"id", "distance", "metadata"}, ...]."""
+        size_tokens, parent_context, start_index, end_index). Returns
+        nearest-first [{"id", "distance", "metadata", "text",
+        "text_unavailable_reason"}, ...]. `text` (#3644) is the chunk's own
+        body, recovered by slicing metadata.source_path at
+        [metadata.start_index:metadata.end_index] -- this store never keeps
+        chunk text itself. When recovery is not possible (e.g. a chunk
+        upserted with no offsets, or source_path is no longer readable as
+        the original text -- the chunker's offsets index the text it was
+        actually handed, which for a markitdown-converted source is the
+        CONVERTED markdown, not the original file's raw bytes), `text` is
+        null and `text_unavailable_reason` names why -- never a silent
+        empty string."""
         with SqliteVecStore(db_path) as store:
             return store.query(vector, top_k=top_k, filters=filters)
 

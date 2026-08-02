@@ -12,7 +12,13 @@ and inspect (`sqlite3 docs.sqlite '.schema'`). Ingest populates **three
 tables**:
 
 **`reyn_rag_chunks`** -- one row per chunk, all the metadata (but **not** the
-chunk text -- there is no text column, by design):
+chunk text itself -- there is still no text column, by design: FP-0057/0063
+rules out reyn double-persisting the user's document body). **#3644**:
+`start_index`/`end_index` ARE persisted (real INTEGER columns, not `extra`)
+-- they are a POINTER into `source_path`, not a copy of its content, so this
+does not reopen the no-text-column decision. This is what makes `query`
+below able to recover a hit's chunk text without re-running the chunker
+(non-deterministic, ruled out) or storing the body a second time.
 
 | column | type | meaning |
 |---|---|---|
@@ -24,7 +30,16 @@ chunk text -- there is no text column, by design):
 | `chunk_index` | `INTEGER NOT NULL DEFAULT 0` | 0-based position within `source_path`. |
 | `size_tokens` | `INTEGER NOT NULL DEFAULT 0` | token count of the chunk. |
 | `parent_context` | `TEXT` | the ingest root -- a scope tag for "which folder this ingest covered". |
+| `start_index` | `INTEGER` (nullable) | offset into the text the chunker chunked where this chunk begins. `NULL` means "no offset recorded" (a pre-#3644 row/caller) -- distinct from `0`, a legitimate offset. |
+| `end_index` | `INTEGER` (nullable) | offset where this chunk ends. Same NULL-vs-0 distinction as `start_index`. |
 | `extra` | `TEXT NOT NULL DEFAULT '{}'` | JSON blob for extension metadata. |
+
+**#3644 -- no migration for existing sqlite files.** These two columns only
+exist in a table `CREATE TABLE IF NOT EXISTS` builds fresh; a database file
+written by a pre-#3644 server keeps its old schema, and upserting into it
+will error rather than silently drift. **Re-ingest into a fresh file** to
+pick up offset persistence (the owner's ruling: no backward-compatibility
+machinery for a single-operator tool).
 
 **`reyn_rag_config`** -- a single `dim INTEGER NOT NULL`: the embedding
 **dimension**, fixed on the **first** upsert. A later upsert whose vector has
@@ -48,9 +63,17 @@ kept in **positional (parallel-array) correspondence** with
 - **Delete identifies a chunk by `(source_path, chunk_index)`** -- exactly the
   pair that composes `rag_id` -- so the add/update/remove diff (driven by
   `content_hash`) can target one chunk precisely.
-- **Query** joins the two data tables on `rowid` and returns
-  `[{id, distance, metadata}, ...]` -- `metadata` is these `reyn_rag_chunks`
-  columns, minus the never-stored text.
+- **Query** joins the two data tables on `rowid` and returns `[{id, distance,
+  metadata, text, text_unavailable_reason}, ...]` -- `metadata` is these
+  `reyn_rag_chunks` columns. `text` (#3644) is recovered by slicing
+  `metadata.source_path` at `[metadata.start_index:metadata.end_index]`,
+  read fresh at query time -- the chunk body is still never stored a
+  second time. When recovery is not possible (no offsets recorded on that
+  row, or `source_path` cannot be read as the original text -- e.g. a
+  source markitdown converted before chunking, pdf/docx/pptx/xlsx, where
+  the offsets index the CONVERTED markdown rather than the file's raw
+  bytes), `text` is `null` and `text_unavailable_reason` names why, rather
+  than a silent empty string.
 
 ### Re-running ingest is cheap -- and is how you update
 
