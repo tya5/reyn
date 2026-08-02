@@ -9,6 +9,14 @@ aligned.
 
 Falsify: removing the request_reload call makes test_local_install_schedules_reload
 fail (pending stays False) while no-reloader and entry-shape tests remain green.
+
+#3636: the hand-rolled ``_FakeReloader`` stand-in this file used to construct
+was replaced with a REAL ``HotReloader`` (cheaply constructible — a
+``project_root`` + an ``EventLog``) after it silently drifted out of sync
+with ``HotReloader.request_reload``'s signature (the #3636 fix added an
+optional ``detail`` kwarg; the hand-rolled fake didn't accept it and raised
+``TypeError`` — exactly the signature-drift class a faked callable is meant
+to catch, per ``docs/deep-dives/contributing/testing.md`` § Mock vs Fake).
 """
 from __future__ import annotations
 
@@ -16,19 +24,9 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from reyn.core.events.events import EventLog
+from reyn.runtime.hot_reload import HotReloader
 from reyn.tools.types import ToolContext
-
-
-class _FakeReloader:
-    """Minimal HotReloader stand-in — tracks request_reload calls."""
-
-    def __init__(self) -> None:
-        self.pending = False
-        self.sources: list[str] = []
-
-    def request_reload(self, *, source: str) -> None:
-        self.pending = True
-        self.sources.append(source)
 
 
 def _ctx(project_root: Path) -> ToolContext:
@@ -53,7 +51,7 @@ def _ctx(project_root: Path) -> ToolContext:
 
 
 def _run_install(
-    reloader: _FakeReloader | None,
+    reloader: "HotReloader | None",
     project_root: Path,
     name: str = "local-test",
     command: str = "python",
@@ -77,12 +75,24 @@ def _run_install(
 
 
 def test_local_install_schedules_reload(tmp_path: Path) -> None:
-    """Tier 2: mcp_install_local calls request_reload — installed server visible next turn."""
-    reloader = _FakeReloader()
+    """Tier 2: mcp_install_local calls request_reload — installed server visible next turn.
+
+    Drives the real HotReloader through to ``apply_pending`` (the turn-boundary
+    apply) and asserts the emitted ``config_reloaded`` P6 event carries
+    ``source="mcp_install_local"`` — confirming request_reload was scheduled
+    with the right source via the PUBLIC events log, not a private-state read.
+    """
+    events = EventLog()
+    reloader = HotReloader(project_root=tmp_path, events=events)
     result = _run_install(reloader, tmp_path)
     assert result["status"] == "ok", f"install failed: {result}"
     assert reloader.pending is True, "request_reload must fire — server won't appear without reload"
-    assert "mcp_install_local" in reloader.sources
+
+    asyncio.run(reloader.apply_pending())
+    # Tuple-unpack: raises ValueError if there isn't EXACTLY one — a
+    # behavioural assertion (one reload, not a repeat), not a length pin.
+    (reload_event,) = [e for e in events.all() if e.type == "config_reloaded"]
+    assert reload_event.data["source"] == "mcp_install_local"
 
 
 def test_local_install_no_reload_when_no_active_reloader(tmp_path: Path) -> None:
@@ -93,7 +103,7 @@ def test_local_install_no_reload_when_no_active_reloader(tmp_path: Path) -> None
 
 def test_local_install_returns_entry_shape(tmp_path: Path) -> None:
     """Tier 2: result carries the registered entry so callers can confirm what was written."""
-    reloader = _FakeReloader()
+    reloader = HotReloader(project_root=tmp_path, events=EventLog())
     result = _run_install(reloader, tmp_path)
     data = result["data"]
     assert data["kind"] == "mcp_install_local"
@@ -106,7 +116,7 @@ def test_local_install_writes_config_to_disk(tmp_path: Path) -> None:
     """Tier 2: the server entry actually lands in .reyn/config/mcp.yaml."""
     from reyn.core.op_runtime.mcp_install import _read_yaml_config, _scope_to_path
 
-    reloader = _FakeReloader()
+    reloader = HotReloader(project_root=tmp_path, events=EventLog())
     _run_install(reloader, tmp_path, name="my-server", command="node")
     config_path = _scope_to_path("local", tmp_path)
     data = _read_yaml_config(config_path)

@@ -677,6 +677,9 @@ async def handle(
     # rebuilds next turn (discovery vs resolution) — the install op *uses* it this turn.
     await dispatch_install_reload(
         _reloader, source="mcp_install", is_addition=_is_addition,
+        # #3636: names this specific server so two servers installed back-to-back
+        # don't render as an indistinguishable repeat in state_change history.
+        detail=server_name,
     )
 
     return {
