@@ -137,6 +137,15 @@ frontmatter): the producer's declared type drives the offload store's `mime_type
 resolving the ref. Inline data (`data_inline`) has no content-type source and always
 degrades straight to diff-sniff → shape, unchanged.
 
+An object's default view is a `keyvalue` card over its **scalar** keys, followed
+by a `text` label and its own view for each **nested** value — a list of objects
+becomes a `table` there just as it would at the top level. Descent stops after 4
+levels; below that a value goes into a `keyvalue` row, which renders it as JSON
+(the same floor a `table`'s cells have). Before this, the whole object became one
+`keyvalue` card, so any nested value hit that floor immediately and identical
+rows rendered as a table or as a JSON blob depending only on whether the caller
+wrapped them in an object.
+
 The fallback fires on an all-miss view or an unknown view name. The ack reports the
 **requested** view's stats plus a `note` naming the stage that actually rendered.
 

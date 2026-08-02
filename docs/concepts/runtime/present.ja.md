@@ -104,7 +104,8 @@ write-gate と同じ「構造による安全」哲学である。**v1 は表示�
 1. **登録 view** — オペレータのレジストリの名前付き view。
 2. **インライン blueprint** — LLM が書いたコンポーネントツリー。op 検証で構造的にゲートされる。
 3. **デフォルトビューア** — データの*形*から合成された blueprint（`list[dict]` → `table`、
-   `dict` → `keyvalue`、スカラ → `text`、diff-sniff → `diff`）。同じ bind → guard → render
+   `dict` → スカラのキーを `keyvalue` に、入れ子の値ごとにそれ自身のノードを追加、
+   スカラ → `text`、diff-sniff → `diff`）。同じ bind → guard → render
    経路を通る。
 4. **ジェネリック** — 最終キャッチ: 構造化データは YAML として `text` に、プレーンテキストは
    そのまま。
