@@ -135,6 +135,36 @@ def _patch_repo_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     monkeypatch.setattr(_rr_mod, "resolve_reyn_root", lambda: root)
 
 
+async def _await_scheduled_source_build(
+    coordinator: IndexCoordinator, manifest: Any, source_id: str,
+) -> None:
+    """Deterministically wait for a background-scheduled build to reach its
+    final manifest state — no wall-clock sleep, no elapsed-time threshold
+    (#3594).
+
+    ``ensure_built(await_completion=False)`` (what
+    ``sync_repo_ingest_background`` calls) schedules ``asyncio.create_task``
+    and returns before the task has had a single event-loop tick to run —
+    the manifest entry does not exist yet, so ``search_await`` (the public
+    completion-await surface) would see "no entry" and take its no-op
+    branch, never actually awaiting anything. The bounded loop below gives
+    the scheduled task event-loop ticks (``asyncio.sleep(0)`` — a
+    cooperative yield, not a timed wait) until the manifest entry exists
+    (``_run_build``'s first line is ``await self._set_state(source_id,
+    "building")``, so the entry appears as soon as the task gets to run at
+    all); ``search_await`` then hands off to the coordinator's own
+    ``_bg_tasks`` await, which is the actual completion signal. The loop
+    bound (2000 ticks) is a safety net against a genuinely broken scheduler,
+    not a timing budget — if the entry never appears, ``search_await`` still
+    no-ops and the caller's own state assertion goes red for the real
+    reason (state never reached "clean"), rather than this helper hanging."""
+    for _ in range(2000):
+        if await manifest.get(source_id) is not None:
+            break
+        await asyncio.sleep(0)
+    await coordinator.search_await(source_id)
+
+
 # ── 1. static/background, non-blocking ──────────────────────────────────
 
 
@@ -163,36 +193,31 @@ def test_sync_repo_ingest_background_does_not_block_the_triggering_call(
     op_ctx = _make_op_ctx(ws_root)
     events = EventLog()
 
-    import time
-
-    async def _trigger_then_wait() -> tuple[float, Any, Any]:
-        start = time.monotonic()
-        await sync_repo_ingest_background(coordinator, op_ctx, events=events)
-        elapsed = time.monotonic() - start
-        # Let the background tasks actually run to completion — comfortably
-        # longer than the provider's artificial delay. This is a direct
-        # ``asyncio.sleep`` rather than ``search_await`` deliberately: right
-        # after ``ensure_built(await_completion=False)`` schedules a task,
-        # the task has not had a single event-loop tick to run yet, so the
-        # manifest entry does not exist — ``search_await`` treats a missing
-        # entry as "nothing to await" (its no-op branch) and would return
-        # immediately without ever giving the task a chance to run. A real
-        # caller never hits this race (it calls ``search_await`` on a LATER
-        # turn, after many intervening event-loop iterations); this test
-        # sidesteps it the same way by giving the loop real time to run the
-        # scheduled tasks before reading final state.
-        await asyncio.sleep(provider.delay + 0.2)
+    async def _trigger_then_wait() -> tuple[list[tuple[str, ...]], Any, Any]:
         manifest = get_source_manifest(ws_root)
-        return elapsed, await manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID), await manifest.get(
-            KNOWLEDGE_REPO_SRC_SOURCE_ID,
+        await sync_repo_ingest_background(coordinator, op_ctx, events=events)
+        # The caller must not have blocked on the embed work. If it had,
+        # ``provider.embed`` would already have been called by the time this
+        # await returns — checked directly on the provider's own call log,
+        # never on an elapsed-time threshold (#3594: a wall-clock bound here
+        # produced false failures under CI load, since "scheduled but not
+        # yet run" and "genuinely slow to schedule" look identical to a
+        # timer but NOT to this call-log check).
+        calls_right_after_trigger = list(provider.calls)
+        await _await_scheduled_source_build(coordinator, manifest, KNOWLEDGE_REPO_DOC_SOURCE_ID)
+        await _await_scheduled_source_build(coordinator, manifest, KNOWLEDGE_REPO_SRC_SOURCE_ID)
+        return (
+            calls_right_after_trigger,
+            await manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID),
+            await manifest.get(KNOWLEDGE_REPO_SRC_SOURCE_ID),
         )
 
-    elapsed, doc_entry, src_entry = _run(_trigger_then_wait())
+    calls_right_after_trigger, doc_entry, src_entry = _run(_trigger_then_wait())
 
-    assert elapsed < 0.15, (
-        f"sync_repo_ingest_background took {elapsed:.3f}s to return with a "
-        "0.3s provider delay — it must have blocked on the embed work "
-        "instead of only scheduling a background task (§8)"
+    assert calls_right_after_trigger == [], (
+        f"sync_repo_ingest_background's own await already reached the embed "
+        f"provider ({calls_right_after_trigger!r}) — it must have blocked "
+        "on the embed work instead of only scheduling a background task (§8)"
     )
     assert doc_entry is not None and doc_entry.state == "clean"
     assert src_entry is not None and src_entry.state == "clean"
