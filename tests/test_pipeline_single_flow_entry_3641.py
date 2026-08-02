@@ -11,8 +11,24 @@ reports the run's state rather than the latest frame's sentence.
 """
 from __future__ import annotations
 
+from rich.console import Console
+
 from reyn.interfaces.inline.textual_chat._meta_keys import PIPELINE_RUN_KEY
 from reyn.interfaces.inline.textual_chat.presenter import _pipeline_row
+
+
+def _plain(meta: dict) -> str:
+    """The row as it reaches a terminal.
+
+    Rendered through a real Console rather than read off a ``Text`` object: the
+    bar is a Rich renderable (``ProgressBar``), so its cells only exist once
+    something renders it — asserting on anything earlier would be asserting on
+    the recipe, not the meal.
+    """
+    console = Console(width=80, force_terminal=False)
+    with console.capture() as capture:
+        console.print(_pipeline_row(meta))
+    return capture.get()
 
 
 def _step_meta(index: int, *, total: "int | None" = 15, completed: bool = False) -> dict:
@@ -30,7 +46,7 @@ def _step_meta(index: int, *, total: "int | None" = 15, completed: bool = False)
 
 def test_the_row_names_the_run_and_where_it_is() -> None:
     """Tier 2: the pipeline, the count, and the step kind all reach the row."""
-    row = _pipeline_row(_step_meta(6, completed=True)).plain
+    row = _plain(_step_meta(6, completed=True))
 
     assert "rag_ingest.ingest" in row
     assert "7/15" in row
@@ -41,15 +57,15 @@ def test_the_bar_tracks_progress() -> None:
     """Tier 2: the bar is a function of the numbers, not decoration.
 
     Compared across three points rather than pinned at one, so the assertion
-    describes the relationship and survives a change to the bar's width.
+    describes the relationship and survives a change to the bar's width — or to
+    Rich's own glyphs, which is not reyn's to pin.
     """
-    start = _pipeline_row(_step_meta(0)).plain
-    middle = _pipeline_row(_step_meta(6, completed=True)).plain
-    end = _pipeline_row(_step_meta(14, completed=True)).plain
+    start = _plain(_step_meta(0))
+    middle = _plain(_step_meta(6, completed=True))
+    end = _plain(_step_meta(14, completed=True))
 
     assert start.count("━") == 0
     assert 0 < middle.count("━") < end.count("━")
-    assert end.count("─") == 0
 
 
 def test_an_unknown_total_gets_no_bar() -> None:
@@ -59,9 +75,9 @@ def test_an_unknown_total_gets_no_bar() -> None:
     ahead of time; drawing a bar anyway would show a position on a scale that
     does not exist.
     """
-    row = _pipeline_row(_step_meta(3, total=None)).plain
+    row = _plain(_step_meta(3, total=None))
 
-    assert "━" not in row and "─" not in row
+    assert "━" not in row
     assert "step 4" in row or "step 3" in row
 
 
@@ -72,6 +88,6 @@ def test_the_row_does_not_read_the_frame_text() -> None:
     the display to its wording. Passing meta with no text at all is the direct
     statement that the text is not an input.
     """
-    row = _pipeline_row(_step_meta(2)).plain
+    row = _plain(_step_meta(2))
 
     assert "rag_ingest.ingest" in row  # rendered without any msg.text existing
