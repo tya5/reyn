@@ -73,6 +73,17 @@
 # ``drop_params: true`` — that one DISCARDS the rejected parameter rather than
 # passing it, silently changing behaviour (dropping ``tool_choice`` changes how
 # the model calls tools).
+#
+# Do NOT set ``stream`` here. Reyn owns that decision — it asks litellm whether
+# the model can stream and then either streams and reconstructs the reply, or
+# collects it whole. A ``stream: true`` in the entry is forwarded into the
+# collect-whole branch, so litellm hands back a stream object that reyn reads as
+# a finished reply and finds empty:
+#
+#   EmptyLLMResponseError: LLM returned a 200 response with empty choices
+#   (model=...); provider response: <...CustomStreamWrapper object...>
+#
+# The key does not enable streaming — it only produces that error.
 # -----------------------------------------------------------------------------
 # models:
 #   light:    openai/gpt-4o-mini
