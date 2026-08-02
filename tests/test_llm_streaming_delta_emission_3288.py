@@ -256,7 +256,7 @@ def test_default_shaped_gemini_call_actually_enters_the_streaming_branch(monkeyp
     reasoning_effort attached, Gemini model — exactly what `RouterLoop`'s
     primary reply sends under reyn.yaml's default model classes) genuinely
     drives the streaming loop, witnessed via REAL chunk consumption
-    (`chunk_witness`), not merely that `_streaming_capable` returns True in
+    (`chunk_witness`), not merely that `_streaming_enabled` returns True in
     isolation (a terminal-state assertion that would pass even if this call
     never reached the streaming branch at all — see verification-hazards.md
     §10).
@@ -264,7 +264,7 @@ def test_default_shaped_gemini_call_actually_enters_the_streaming_branch(monkeyp
     Historical note (#3288 comment thread, #3325): before #3325, reyn's own
     `/v1/responses` bridge (#1678) had no provider check and fired for EVERY
     tools+reasoning_effort call, silently rewriting this exact Gemini call
-    to `responses/gemini-2.5-flash-lite`, which `_streaming_capable` could
+    to `responses/gemini-2.5-flash-lite`, which `_streaming_capability` could
     not recognize (unmapped in litellm's model map) — the default-config
     streaming regression this test guards against. #3325 fixed that with a
     provider gate; the #3288 follow-up investigation then deleted reyn's

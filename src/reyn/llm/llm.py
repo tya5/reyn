@@ -1663,7 +1663,7 @@ def _may_need_responses_endpoint(model: str) -> bool:
     Reuses the SAME derivation this repo's #3325 fix (and the now-deleted
     ``_requires_responses_bridge``) used: ``litellm.get_llm_provider``,
     queried WITHOUT an explicit ``custom_llm_provider`` (``None``) — the same
-    transport-independence discipline ``_streaming_capable`` documents.
+    transport-independence discipline ``_streaming_capability`` documents.
     reyn's proxy routing (``proxy_kwargs()``) forces
     ``custom_llm_provider="openai"`` on the wire for ALL models when an
     operator proxy is configured, so deriving "is this OpenAI/Azure?" from
@@ -1744,8 +1744,10 @@ def _emit_chat_cost_events(
 # ---------------------------------------------------------------------------
 
 
-def _streaming_capable(model: str, has_tools: bool) -> bool:
-    """Capability-gated streaming decision (#3288 ③a) — a litellm inline
+def _streaming_capability(model: str, has_tools: bool) -> "bool | None":
+    """What the CATALOG says this model can do — not whether a call streams.
+
+    A litellm inline
     capability query, mirroring the existing ``litellm.supports_response_schema``
     precedent (``router_loop.py``'s structured-output precheck). NEVER a
     hardcoded provider/model-name check (owner design principle) — this is
@@ -1773,13 +1775,43 @@ def _streaming_capable(model: str, has_tools: bool) -> bool:
     "no capability" for the very providers this feature targets. Capability
     is a property of the MODEL, not of the transport used to reach it.
 
-    Any lookup failure (unmapped model name, litellm internal error) is
-    caught and treated as "unknown" — returns False (whole-collect
-    fallback). Conservative by construction, never an optimistic guess.
+    **A model absent from litellm's catalog is UNKNOWN, not incapable.**
+    ``supports_native_streaming`` collapses those two into one ``False``: for a
+    model it finds, an unset ``supports_native_streaming`` field defaults to
+    ``True``, but a model it cannot find at all falls into its ``except`` and
+    returns ``False``. Reading that ``False`` as "cannot stream" makes catalog
+    membership decide a capability, and the two have no relation — one is a
+    property of the model, the other of how current the shipped table is.
+
+    Reyn makes that especially load-bearing: ``reyn/__init__.py`` sets
+    ``LITELLM_LOCAL_MODEL_COST_MAP`` by default to silence litellm's startup
+    network fetch, so the catalog is the copy BUNDLED with the installed
+    litellm. A model newer than that snapshot is therefore permanently absent,
+    not intermittently — every model too new for the pinned table would have
+    streamed only if the operator opted back into the remote fetch.
+
+    Asking for a whole response is not the safe direction either. A provider
+    that only ever streams (measured on a Codex-backed endpoint: SSE arrives
+    even when ``stream`` is not requested) must then have its stream folded
+    into one response by litellm's bridge — a translation nobody asked for,
+    and where the reply was observed to be lost entirely. "Conservative" has to
+    mean "do not assert what we did not measure", and an absent catalog row
+    measures nothing.
+
+    Returns ``None`` for "the catalog does not say" — a THIRD answer, not a
+    ``False``. Capability is what the model can do; whether a given call
+    streams is a policy question that reads this and decides. They were one
+    function, so an absent catalog row silently became a policy outcome;
+    :func:`_streaming_enabled` is where the decision lives now, and it is the
+    only thing call sites ask.
     """
     try:
         import litellm  # noqa: PLC0415
         from litellm.utils import supports_native_streaming  # noqa: PLC0415
+        try:
+            litellm.get_model_info(model=model, custom_llm_provider=None)
+        except Exception:  # noqa: BLE001 — absent from the catalog, nothing more
+            return None
         if not supports_native_streaming(model=model, custom_llm_provider=None):
             return False
         if has_tools and not litellm.supports_function_calling(
@@ -1787,8 +1819,48 @@ def _streaming_capable(model: str, has_tools: bool) -> bool:
         ):
             return False
         return True
-    except Exception:  # noqa: BLE001 — unknown capability → conservative fallback
-        return False
+    except Exception:  # noqa: BLE001 — could not ask; still not a "cannot"
+        return None
+
+
+def _streaming_enabled(
+    model: str, has_tools: bool, override: "bool | None" = None,
+) -> bool:
+    """Whether THIS call streams — the policy decision (#3288 ③a).
+
+    Reads :func:`_streaming_capability` and resolves its three answers:
+
+    - ``False`` — the catalog states the model cannot stream natively (the
+      reasoning-only endpoints that reject ``stream=True`` outright). Honoured:
+      it is a real statement about the model.
+    - ``True`` — stream.
+    - ``None`` — the catalog does not say. Stream.
+
+    ``None`` resolving to "stream" is the part that carries a reason. Absence
+    from the catalog is a fact about the shipped table, not about the model,
+    and reyn pins that table: ``reyn/__init__.py`` sets
+    ``LITELLM_LOCAL_MODEL_COST_MAP`` by default to silence litellm's startup
+    network fetch, so a model newer than the installed snapshot is absent on
+    every run, permanently.
+
+    Nor is "collect the whole response" the cautious direction. A provider that
+    only ever streams (measured on a Codex-backed endpoint: SSE arrives with no
+    ``stream`` in the request) then needs its stream folded into one response by
+    litellm's bridge — a translation nobody asked for, and where the reply was
+    observed to be dropped entirely. Declining to stream asserts just as much as
+    streaming does; it only looks safer.
+
+    ``override`` is the operator's answer, from a model class's ``stream:``
+    field, and it WINS over the catalog in both directions. An operator can
+    know something the shipped table does not — that is the ordinary case for
+    a model too new for it, and refusing their answer would leave them arguing
+    with a snapshot they cannot edit. A wrong override costs one provider
+    error; deferring to a stale table cost a silently dropped reply.
+    """
+    if override is not None:
+        return override
+    capability = _streaming_capability(model, has_tools)
+    return capability is not False
 
 
 async def recorded_acompletion(
@@ -1804,6 +1876,7 @@ async def recorded_acompletion(
     emit_cost_events: bool = False,  # #1683: chat path opts in (kernel emits via LLMCallRecorder)
     routing: dict | None = None,  # #309: per-class api_base/provider; None → global proxy_kwargs()
     on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: opt-in per-chunk content-delta callback (see _stream_and_reconstruct)
+    stream_override: "bool | None" = None,  # a model class's ``stream:`` — operator policy, NOT a litellm kwarg
 ) -> object:
     """Single cost-observability chokepoint for ALL ``litellm.acompletion`` calls (#1190).
 
@@ -1823,7 +1896,7 @@ async def recorded_acompletion(
     ``on_content_delta`` (#3288 ③b): an OPT-IN, per-call callback invoked
     SYNCHRONOUSLY with each non-empty content-delta string as ``_stream_and_reconstruct``
     (③a) drains the chunk stream — never invoked on the whole-collect (non-streaming)
-    path, so it is capability-gated by construction (see ``_streaming_capable``: no
+    path, so it is capability-gated by construction (see ``_streaming_enabled``: no
     capability ⇒ no streaming ⇒ this callback never fires). ``None`` (every caller
     except ``RouterLoop``'s primary reply call) is byte-identical to today. A raising
     callback is caught and logged — a broken display-event emit must never break the
@@ -2158,11 +2231,16 @@ async def recorded_acompletion(
         # #3288 ③a: capability-gated streaming loop, INSIDE the single #1190
         # funnel (the two ``litellm.acompletion`` call sites remain exactly
         # this one and the Router branch above — no second completion
-        # call-site was added). The decision is a litellm capability query
-        # (``_streaming_capable``), never a hardcoded provider check.
-        # Unknown/uncertain capability → the existing whole-collect call
-        # below (conservative fallback, byte-identical to pre-③a behavior).
-        _capable = _streaming_capable(effective_model, has_tools=bool(call_kwargs.get("tools")))
+        # call-site was added). The decision is ``_streaming_enabled`` — a
+        # policy over a litellm capability query, never a hardcoded provider
+        # check. A capability the catalog does not state is NOT read as
+        # "cannot": see ``_streaming_enabled`` for why whole-collect is not
+        # the cautious direction it looks like.
+        _capable = _streaming_enabled(
+            effective_model,
+            has_tools=bool(call_kwargs.get("tools")),
+            override=stream_override,
+        )
         # Permanent, one-line-per-call debug signal for the gate DECISION itself
         # (not just "streamed but the callback never fired" — the #3288 follow-up
         # gap: the gate silently deciding NOT to stream had no observable trace at
@@ -2304,7 +2382,7 @@ async def call_llm_tools(
       - thinking disabled (Gemini #17949 multi-turn parallel + thinking bug)
 
     Streaming (#3288 ③a) is decided per-call by ``recorded_acompletion`` via
-    a litellm capability query (see ``_streaming_capable``) — NOT forced off
+    a capability-informed policy (see ``_streaming_enabled``) — NOT forced off
     here. The historical Gemini streaming+tools bug (litellm#21041) is
     absorbed by that capability check, not by this function.
 
@@ -2479,6 +2557,7 @@ async def call_llm_tools(
             routing=_routing,  # #309 per-class api_base/provider (else global wins)
             response_format=response_format,  # 0062: None for every op-loop tool call
             on_content_delta=on_content_delta,  # #3288 ③b: forwarded straight through
+            stream_override=spec.stream,  # operator policy from the model class
         )
 
     # #2210 HIGH layer: when the per-call HTTP timeout + the Router/Reyn retries are ALL

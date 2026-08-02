@@ -74,19 +74,25 @@
 # passing it, silently changing behaviour (dropping ``tool_choice`` changes how
 # the model calls tools).
 #
-# Do NOT set ``stream`` (or ``stream_options``) here. Reyn owns that decision —
-# it asks litellm whether the model can stream and then either streams and
-# reconstructs the reply, or collects it whole. Setting the key does NOT enable
-# streaming (the gate still decides that); it only reaches the wrong branch and
-# breaks it. This is rejected at config-load (#3627), so the entry fails fast
-# with a message naming the reason, rather than reaching litellm and surfacing
-# as an empty-response error mid-run:
+# ``stream`` is the exception to the passthrough: it is a REYN field, consumed
+# by the streaming decision and never forwarded to litellm. Reyn normally
+# decides per call by asking litellm whether the model can stream; ``stream:``
+# is your answer and it wins in both directions — ``true`` streams whatever the
+# catalog says, ``false`` never streams. Omit it to leave the decision to reyn.
+#
+# You will need it more often than that sounds. Reyn pins litellm's model table
+# to the snapshot bundled with the installed package (to avoid a startup network
+# fetch), so a model newer than that snapshot is simply absent from it. Absence
+# is not a statement that the model cannot stream — reyn no longer treats it as
+# one — but where the table is actively wrong, this is how you say so.
+#
+# ``stream_options`` is still rejected at load: it has no reyn meaning, and as a
+# passthrough kwarg it reaches the collect-whole branch and makes litellm return
+# a stream object that reyn reads as a finished reply, surfacing as an error
+# naming neither the key nor the config:
 #
 #   EmptyLLMResponseError: LLM returned a 200 response with empty choices
 #   (model=...); provider response: <...CustomStreamWrapper object...>
-#
-# (a stream object read as a finished reply — the shape the load-time reject
-# now prevents rather than merely documents against).
 # -----------------------------------------------------------------------------
 # models:
 #   light:    openai/gpt-4o-mini
@@ -100,6 +106,7 @@
 #   my-new-model:
 #     model: some-model-too-new-for-litellm
 #     allowed_openai_params: ["tool_choice"]
+#     stream: true                     # reyn field — the catalog has no row to read
 
 
 # -----------------------------------------------------------------------------

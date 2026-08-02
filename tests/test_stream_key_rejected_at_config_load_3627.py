@@ -66,27 +66,45 @@ def test_stream_rejection_message_explains_the_failure_mode():
     assert "CustomStreamWrapper" in msg
 
 
-def test_stream_key_rejected_at_resolver_startup():
-    """Tier 1: #3627 — the fail-fast also fires through ModelResolver
-    startup (the path a real reyn.local.yaml `models:` entry takes),
-    naming the offending model."""
-    with pytest.raises(ValueError, match="gpt-5.6-luna"):
-        ModelResolver(
-            {"gpt-5.6-luna": {"model": "gpt-5.6-luna", "stream": True}}
-        )
+def test_a_model_class_stream_field_is_accepted_and_consumed():
+    """Tier 1: an operator-declared ``stream:`` loads, and does NOT reach kwargs.
+
+    This assertion is inverted from what #3627 pinned, by owner decision: an
+    operator who configured the endpoint can know things litellm's pinned
+    snapshot does not, so they get to state the answer. What #3627 was
+    protecting against — the key riding ``spec.kwargs`` into
+    ``litellm.acompletion`` — is closed more firmly than by rejecting it:
+    ``stream`` is a consumed ModelSpec field now, so there is no longer a
+    kwargs path for it to take. The construction-time rejection above still
+    stands for anything that puts one there directly.
+    """
+    resolver = ModelResolver(
+        {"gpt-5.6-luna": {"model": "gpt-5.6-luna", "stream": True}}
+    )
+    spec = resolver.resolve("gpt-5.6-luna")
+
+    assert spec.stream is True
+    assert "stream" not in spec.kwargs
 
 
-def test_stream_key_rejected_through_reyn_config_models_layer():
-    """Tier 1: #3627 — the rejection fires through ``ReynConfig.models`` ->
-    ``ModelResolver`` (the actual reyn.local.yaml `models:` load path), not
-    just via a hand-constructed ModelSpec/mapping."""
+def test_the_stream_field_survives_the_reyn_config_models_layer():
+    """Tier 1: it arrives through the real ``reyn.local.yaml`` load path.
+
+    Asserted through ``ReynConfig.models`` -> ``ModelResolver`` rather than a
+    hand-built mapping, because an operator writes YAML — a field that parsed
+    in isolation but was dropped by the config layer would look identical from
+    a unit test and do nothing in a real run.
+    """
     from reyn.config import ReynConfig
 
     cfg = ReynConfig(models={
         "gpt-5.6-luna": {"model": "gpt-5.6-luna", "stream": True},
     })
-    with pytest.raises(ValueError, match="reyn decides"):
-        ModelResolver(cfg.models)
+
+    spec = ModelResolver(cfg.models).resolve("gpt-5.6-luna")
+
+    assert spec.stream is True
+    assert "stream" not in spec.kwargs
 
 
 def test_stream_key_rejected_through_extends_merge_path():

@@ -98,7 +98,7 @@ def test_gemini_combo_model_passed_through_unchanged(monkeypatch) -> None:
     (the exact default-config primary-reply shape) reaches
     `litellm.acompletion` with the model UNCHANGED. This was the #3288
     default-config streaming bug: reyn's own bridge used to rewrite this to
-    a `responses/`-prefixed string `_streaming_capable` could not recognize.
+    a `responses/`-prefixed string `_streaming_capability` could not recognize.
     Deletion removes the rewrite for EVERY model, not just Gemini, so this
     is now unconditionally true rather than provider-gated."""
     captured: dict = {}
