@@ -69,19 +69,30 @@ description). Same switch, same verification — the NEW fixtures against the OL
 schema raise ``MissingFixture`` attributing the drift to ``present: schema
 differs (08b2323ddf3a -> 4ab741e16061)``.
 
-**Delete the fixture files before regenerating.** ``REYN_FP0063_ARC_WITNESS_GENERATE=1``
-records into whatever is already there, so regenerating in place APPENDS: the
-old keys survive alongside the new ones and the fixture then matches BOTH the
-old and the new schema — green either way, witnessing neither. Measured here:
+**Historical hazard, fixed by #3634 — regenerating in place used to APPEND.**
+``REYN_FP0063_ARC_WITNESS_GENERATE=1`` used to record into whatever was already
+there, and ``LLMReplay.flush`` only ever appended: the old keys survived
+alongside the new ones and the fixture then matched BOTH the old and the new
+schema — green either way, witnessing neither. Measured at the time (#3630):
 regenerating in place took ``turn1`` from 6 keys to 8 with all 6 old ones intact,
-and the result passed against the pre-change ``present`` schema. Deleting first
-produced 2 keys, and that fixture fails against the old schema as it should.
+and the result passed against the pre-change ``present`` schema; deleting the
+file first produced 2 keys, and that fixture failed against the old schema as
+it should. The same measurement showed the committed fixture had ALREADY been
+accumulating this way: ``turn1`` carried the SAME two logical calls three times
+over with six distinct keys, i.e. three schema generations layered by earlier
+in-place regenerations, any of which would have satisfied a run.
 
-The same measurement says the committed fixture had been accumulating: ``turn1``
-carried the SAME two logical calls three times over with six DISTINCT keys, i.e.
-three schema generations layered by the earlier in-place regenerations, any of
-which would have satisfied a run. The counts this re-key leaves (``turn1`` 2
-keys, ``turn2`` 3) are the arc's actual call count, not a reduction in coverage.
+#3634 made this class of accumulation impossible instead of merely
+work-around-able: ``LLMReplay.flush`` now REPLACES an on-disk entry with the
+freshly-recorded one when a completion this session just recorded shares its
+``reyn.dev.testing.replay_stacking.group_signature`` (model + tool_choice +
+per-message digests — i.e. everything the key hashes over except ``tools``,
+the one component a schema change is expected to move), so regenerating THIS
+file in place with ``REYN_FP0063_ARC_WITNESS_GENERATE=1`` (no manual delete
+required) now leaves exactly the arc's actual call count (``turn1`` 2 keys,
+``turn2`` 3), not a reduction in coverage — and
+``tests/test_replay_fixture_no_stacking_3634.py`` is the CI gate that fails if
+any committed fixture (this one or any other) holds a stacked group anyway.
 
 Why the fixture responses are AUTHORED, not live-recorded (disclosed, not
 silently passed off as a live LLM transcript -- same disclosure norm as this
