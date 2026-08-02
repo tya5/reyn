@@ -168,7 +168,10 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
     CustomName(
         "reyn.event.agent_delta", EVENT_NS, "the event data object",
         "one streamed LLM content-delta chunk (#3288 ③b) — carries the raw "
-        "delta text + chain_id; a NON-PERSISTENT, purely additive notification "
+        "delta text, chain_id, and round_index (which LLM round of the turn "
+        "produced it, #3656: a turn that calls a tool emits more than one "
+        "assistant message, and the rounds are told apart by this); a "
+        "NON-PERSISTENT, purely additive notification "
         "(the owner-ratified L4 chat-event route, replacing the earlier "
         "OutboxMessage-kind ADR wording) — the single source of truth stays "
         "the completed full-text kind=\"agent\" OutboxMessage emitted exactly "

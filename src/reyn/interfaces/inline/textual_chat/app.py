@@ -969,7 +969,7 @@ class TextualChatApp(App):
         # place a streamed reply's entry is removed from this map outside a
         # session switch, so a chain_id can never leak past its turn's
         # completion.
-        self._streaming_replies: "dict[str, _StreamingReply]" = {}
+        self._streaming_replies: "dict[tuple[str, object], _StreamingReply]" = {}
         # #3570: the one-shot timer that BOUNDS a repaint deferral, or ``None``
         # when nothing is deferred. Not per-session state (it holds no session
         # identity and its callback iterates whatever is in-flight at the time),
@@ -2251,7 +2251,10 @@ class TextualChatApp(App):
             # ``recent_replies.appendleft(msg.text)`` on the same kind.
             self._recent_replies.appendleft(msg.text)
             chain_id = meta.get("chain_id")
-            streaming = self._streaming_replies.pop(chain_id, None) if chain_id else None
+            # The completion carries no round, so it settles the LAST round of
+            # this chain — the one whose text it holds. Any earlier round is
+            # already complete on screen and only needs releasing.
+            streaming = self._pop_last_streaming_round(chain_id) if chain_id else None
             if streaming is not None:
                 # Release the ③ visibility tracker BEFORE the final write: the
                 # record is already out of the map, so no callback could find it
@@ -2460,6 +2463,45 @@ class TextualChatApp(App):
                     "textual chat: could not set orphaned-tool state"
                 )
         self._running_tools.clear()
+
+    def _close_earlier_streaming_rounds(self, chain_id: str, round_index: object) -> None:
+        """Finish any record of *chain_id* from a round before *round_index*.
+
+        A new round's first delta is the only signal that the previous round is
+        over — its terminal frame arrives once per TURN, not once per round. The
+        entry keeps everything it accumulated; it simply stops being a target for
+        further text and releases its visibility tracker.
+        """
+        try:
+            stale = [
+                key for key in self._streaming_replies
+                if key[0] == chain_id and key[1] != round_index
+            ]
+        except (TypeError, IndexError):  # pragma: no cover - malformed key
+            return
+        for key in stale:
+            record = self._streaming_replies.pop(key, None)
+            if record is not None:
+                record.release()
+
+    def _pop_last_streaming_round(self, chain_id: str) -> "_StreamingReply | None":
+        """Pop the highest-round record for *chain_id*, releasing any others.
+
+        Returns the record the completion frame should settle. Earlier rounds
+        are released rather than settled: the completion's authoritative text is
+        the LAST message of the turn, so writing it into an earlier entry would
+        replace that round's own words with a later round's.
+        """
+        keys = [key for key in self._streaming_replies if key[0] == chain_id]
+        if not keys:
+            return None
+        last = max(keys, key=lambda k: k[1])
+        for key in keys:
+            if key != last:
+                record = self._streaming_replies.pop(key, None)
+                if record is not None:
+                    record.release()
+        return self._streaming_replies.pop(last, None)
 
     def _sweep_orphaned_streaming_replies(self) -> None:
         """Release any streamed reply still marked in-flight at a TURN BOUNDARY.
@@ -2985,7 +3027,22 @@ class TextualChatApp(App):
         text = str(data.get("text", ""))
         if not chain_id or not text:
             return
-        existing = self._streaming_replies.get(chain_id)
+        # Correlate on (chain_id, round_index), not chain_id alone. A turn that
+        # calls a tool produces MORE THAN ONE assistant message — measured on a
+        # real turn: 140 deltas, three tool calls, then 300 deltas, and the two
+        # texts land in history as two separate assistant messages (210 and 653
+        # chars). Keyed by chain_id alone, the second round's deltas flowed into
+        # the entry created before the tool row, so what the model wrote AFTER
+        # reading a tool result appeared ABOVE the call that produced it (#3656).
+        #
+        # ``round_index`` is the producer's own loop counter, not something
+        # inferred here: ``_emit_agent_delta`` runs inside the round. Absent (an
+        # older producer, or a replayed frame) it reads 0, which reproduces the
+        # previous single-entry behaviour rather than failing.
+        round_index = data.get("round_index", 0)
+        key = (chain_id, round_index)
+        self._close_earlier_streaming_rounds(chain_id, round_index)
+        existing = self._streaming_replies.get(key)
         if existing is None:
             from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
 
@@ -2999,7 +3056,7 @@ class TextualChatApp(App):
             record = _StreamingReply(
                 entry=entry, text=text, rendered=text, last_repaint=self._clock()
             )
-            self._streaming_replies[chain_id] = record
+            self._streaming_replies[key] = record
             self._track_streaming_visibility(record)
             return
         # ★Accumulate FIRST and unconditionally — the visibility gate below may
@@ -3045,17 +3102,27 @@ class TextualChatApp(App):
     def _streaming_record_for(self, entry: "Entry[OutboxMessage]") -> "_StreamingReply | None":
         """The tracked record for ``entry``, or ``None`` if it is no longer
         in flight (already finalized, or reset by a session switch) — the lookup
-        both visibility callbacks share, keyed by the entry's own
-        ``meta["chain_id"]``. Identity-checked: a record found under that
-        chain_id but pointing at a DIFFERENT entry is not this entry's, so a
-        stale callback can never write into a successor's row."""
+        both visibility callbacks share.
+
+        Found by ENTRY IDENTITY within the chain, not by key: a turn now holds
+        one record per round (#3656), and the entry's meta carries only the
+        chain_id — so a chain_id lookup would find at most one of them and, for
+        the others, silently report "not in flight". That is not a miss that
+        raises: the record simply keeps its ``visible=True`` default and every
+        off-screen delta repaints. Measured exactly that way while making the
+        change (an off-screen reply took 2 repaints for 6 deltas where it should
+        take 0), which is why the scan is over records rather than a key.
+
+        The identity check is what it always was and still load-bearing: a
+        record pointing at a DIFFERENT entry is not this entry's, so a stale
+        callback can never write into a successor's row."""
         chain_id = (entry.item.meta or {}).get("chain_id")
         if not chain_id:
             return None
-        record = self._streaming_replies.get(chain_id)
-        if record is None or record.entry is not entry:
-            return None
-        return record
+        for key, record in self._streaming_replies.items():
+            if key[0] == chain_id and record.entry is entry:
+                return record
+        return None
 
     def _is_streaming_entry(self, entry: "Entry[OutboxMessage]") -> bool:
         """Whether ``entry`` is a reply still receiving chunks — what
