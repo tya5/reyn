@@ -38,6 +38,7 @@ from reyn.interfaces.repl.renderer import (
 
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
+from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
 from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
@@ -156,6 +157,65 @@ def _intervention_head(msg: "OutboxMessage") -> RenderableType:
     if detail:
         parts.append(Text(_neutralized_label(str(detail)), style=_CC_DIM))
     return parts[0] if len(parts) == 1 else Group(*parts)
+
+
+#: Width of a pipeline row's progress bar, in cells. Small on purpose: the row
+#: shares a line with the pipeline's name and step, and a bar that dominates it
+#: would say less than the numbers beside it already do.
+_PIPELINE_BAR_CELLS = 12
+
+
+def _pipeline_row(meta: dict) -> "RenderableType":
+    """One pipeline RUN's row: name, a bar, and where the run is.
+
+    The bar is ``rich.progress_bar.ProgressBar`` — Rich's own, not a hand-rolled
+    ``"\u2501" * n``. A reimplementation looks equivalent at a glance and is
+    not: the real one renders a HALF-cell tip (``\u2578``), so the bar advances
+    at twice the resolution its width suggests — most of what makes a 12-cell
+    bar worth drawing at all.
+
+    Built from the numbers in ``meta`` rather than from the frame's text. The
+    forwarder composes a sentence too, and parsing that back would couple this
+    to its wording — the numbers are what the row is actually about.
+
+    A run whose ``total_steps`` is unknown gets the step count with no bar,
+    rather than a bar over a guessed denominator: a bar that is not measuring
+    anything is worse than none.
+    """
+    from rich.progress_bar import ProgressBar
+    from rich.table import Table
+
+    name = str(meta.get("pipeline_name") or "pipeline")
+    kind = str(meta.get("step_kind") or "?")
+    index = meta.get("step_index")
+    total = meta.get("total_steps")
+    done = (index or 0) + (
+        1 if meta.get("step_event") == "pipeline_step_completed" else 0
+    )
+
+    if not (isinstance(total, int) and total > 0):
+        return Text.assemble((name, "bold"), (f"  step {done}  ", ""), (kind, _CC_DIM))
+
+    row = Table.grid(padding=(0, 1))
+    for _ in range(4):
+        row.add_column()
+    row.add_row(
+        Text(name, style="bold"),
+        # Styles defer to the terminal rather than taking Rich's default
+        # magenta/green: a themed default is the user's to choose, and the bar
+        # is not one of the two places this CUI claims a colour of its own.
+        ProgressBar(
+            total=total,
+            completed=done,
+            width=_PIPELINE_BAR_CELLS,
+            style=_CC_DIM,
+            complete_style="",
+            finished_style="",
+        ),
+        Text(f"{done}/{total}"),
+        Text(kind, style=_CC_DIM),
+    )
+    return row
 
 
 def _tool_head(msg: "OutboxMessage") -> Text:
@@ -315,6 +375,8 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
     if kind == "presentation":
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
         return render_presentation_nodes(meta.get("nodes", [])), None
+    if meta.get(_PIPELINE_RUN_KEY) is not None:
+        return _pipeline_row(meta), None
     # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
     # (the pending/resolved placeholder — #3299 P1), so it never reaches here.
     if kind == "tool_call_started":
