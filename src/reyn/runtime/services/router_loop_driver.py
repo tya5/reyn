@@ -217,13 +217,23 @@ class RouterLoopDriver:
         ``[consolidation] + new turn`` instead of the raw head/tail that just
         overflowed.  ``user_text`` is unused here (the new message is re-applied
         by the loop's next ``_run_with_shrink``); kept for symmetry / future audit.
+
+        #3599: ``covers_through_seq`` used to be ``next_seq()-1`` unconditionally
+        — "everything up to right now is covered" — regardless of whether
+        ``_force_close_wrap_up``'s bounded fallback actually shrank the input
+        below that. Now it is exactly what ``_force_close_wrap_up`` reports it
+        fed the LLM (never more), and any range that fallback shrinkage
+        dropped from the summarisation input is logged on the SAME event so
+        the loss is legible, not silently absorbed into a watermark that
+        claims otherwise.
         """
         from reyn.runtime.chat_message import ChatMessage, _now_iso
         from reyn.runtime.session import _render_summary_for_storage
 
         resolved_model = self._resolver.resolve(self._effective_router_model_class()).model
-        consolidation = await self._force_close_wrap_up(loop, resolved_model)
-        covers = max(self._next_seq_fn() - 1, 0)
+        consolidation, covers, dropped_seq_ranges = await self._force_close_wrap_up(
+            loop, resolved_model
+        )
         structured = {"consolidation": consolidation}
         msg = ChatMessage(
             role="summary",
@@ -236,9 +246,17 @@ class RouterLoopDriver:
             "router_force_close_handoff",
             covers_through_seq=covers,
             consolidation_chars=len(consolidation),
+            # #3599: [start_seq, end_seq] pairs the fallback shrank OUT of the
+            # summarisation input — [] when the top-tier candidate (no
+            # shrink) succeeded. A later reader can tell "summarised" from
+            # "silently dropped" instead of trusting a watermark that no
+            # longer distinguishes them.
+            dropped_seq_ranges=[list(r) for r in dropped_seq_ranges],
         )
 
-    async def _force_close_wrap_up(self, loop: Any, resolved_model: str) -> str:
+    async def _force_close_wrap_up(
+        self, loop: Any, resolved_model: str
+    ) -> "tuple[str, int, list[tuple[int, int]]]":
         """Produce the capped consolidation via the force-close wrap-up call.
 
         Made to FIT by a bounded fallback that shrinks the input if the
@@ -247,15 +265,43 @@ class RouterLoopDriver:
         ``[summary + raw_middle + tail]`` → ``[summary + tail]`` → ``[summary]``.
         If even summary-only overflows, the model is RUNTIME sub-viable → raise,
         surfaced as a genuine dead-end by the handoff loop.
+
+        #3599: returns ``(text, covers_through_seq, dropped_seq_ranges)``.
+        ``covers_through_seq`` is derived from the turns THIS call actually fed
+        the winning candidate to — never ``next_seq()-1`` regardless of which
+        tier won, mirroring the normal-compaction sibling's
+        ``compute_covers_through_seq`` / ``candidates[-1].seq`` bound
+        (``compaction_controller.py``) instead of trusting the global seq
+        counter. Floored at the prior summary's own ``covers_through_seq`` so
+        the watermark never regresses (continuity, same as that sibling's
+        carry-forward). ``dropped_seq_ranges`` names the raw_middle/tail seq
+        span(s) the fallback shrank OUT of the input when a lower tier wins
+        (empty when the top tier succeeds).
+
+        Note (#3599, scoped out of this fix — reported, not silently folded
+        in): ``head`` (the earliest token-budget slice from
+        ``decompose_history_for_retry``) is NEVER part of ANY candidate here,
+        in every tier, not only under fallback — a distinct, pre-existing gap
+        this PR does not change the semantics of. See the PR description.
         """
         from reyn.runtime.session import _render_summary_for_storage
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
 
-        _head, _raw_middle, _tail, _summary_dict = (
+        _head, _raw_middle, _tail, _summary_dict, _seq_by_id = (
             self._history_buffer.decompose_history_for_retry()
         )
+
+        def _max_seq(_turns: list[dict]) -> int:
+            return max((_seq_by_id.get(id(t), 0) for t in _turns), default=0)
+
+        def _seq_span(_turns: list[dict]) -> "tuple[int, int] | None":
+            _seqs = [s for s in (_seq_by_id.get(id(t), 0) for t in _turns) if s]
+            return (min(_seqs), max(_seqs)) if _seqs else None
+
+        _prev_cover = int((_summary_dict or {}).get("covers_through_seq", 0))
+
         _summary_msg: list[dict] = []
         if _summary_dict:
             _summary_msg = [{
@@ -265,18 +311,24 @@ class RouterLoopDriver:
                     + _render_summary_for_storage(_summary_dict)
                 ),
             }]
+        # (input, turns actually fed, turns the fallback shrank away) per tier.
         _candidates = [
-            _summary_msg + _raw_middle + _tail,
-            _summary_msg + _tail,
-            _summary_msg,
+            (_summary_msg + _raw_middle + _tail, _raw_middle + _tail, []),
+            (_summary_msg + _tail, _tail, _raw_middle),
+            (_summary_msg, [], _raw_middle + _tail),
         ]
         _last_exc: Exception | None = None
-        for _inp in _candidates:
+        for _inp, _fed, _dropped_by_fallback in _candidates:
             try:
                 _result = await loop._force_close_call(
                     _inp, resolved_model=resolved_model
                 )
-                return _result.content or ""
+                _covers = max(_prev_cover, _max_seq(_fed))
+                _dropped_span = _seq_span(_dropped_by_fallback)
+                _dropped: list[tuple[int, int]] = (
+                    [_dropped_span] if _dropped_span is not None else []
+                )
+                return _result.content or "", _covers, _dropped
             except Exception as _exc:
                 if not any(kw in str(_exc).lower() for kw in (
                     "context", "token", "length", "limit", "too long", "too large",
@@ -326,7 +378,7 @@ class RouterLoopDriver:
             )
             from reyn.services.compaction.engine import retry_loop as _retry_loop
             engine = self._compaction_controller._engine
-            _head, _raw_middle, _tail, _summary_dict = (
+            _head, _raw_middle, _tail, _summary_dict, _ = (
                 self._history_buffer.decompose_history_for_retry()
             )
             _new_msg = {"role": "user", "content": user_text}

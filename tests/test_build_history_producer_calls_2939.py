@@ -105,7 +105,7 @@ def test_decompose_history_for_retry_materialises_the_producer_once():
     history.insert(0, ChatMessage(role="summary", content="earlier conversation"))
     buf, calls = _buffer(history, "openai/gpt-4o")
 
-    head, _raw_middle, _tail, _summary = buf.decompose_history_for_retry()
+    head, _raw_middle, _tail, _summary, _seq_by_id = buf.decompose_history_for_retry()
 
     assert head, "sanity: the decomposition is non-empty"
     assert calls["n"] == 1, (

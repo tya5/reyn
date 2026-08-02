@@ -3,7 +3,7 @@
 Owns:
 
   - build_history              — slice history into OpenAI-style messages
-  - decompose_history_for_retry — head/raw_middle/tail/summary for retry_loop
+  - decompose_history_for_retry — head/raw_middle/tail/summary/seq_by_id for retry_loop
   - build_system_prompt        — assemble the router system prompt string
   - _serialise_turn            — materialise one ChatMessage to a wire dict
 
@@ -476,8 +476,9 @@ class RouterHistoryBuffer:
 
     def decompose_history_for_retry(
         self,
-    ) -> tuple[list[dict], list[dict], list[dict], dict | None]:
-        """Decompose current history into (head, raw_middle, tail, summary) for retry_loop.
+    ) -> tuple[list[dict], list[dict], list[dict], dict | None, dict[int, int]]:
+        """Decompose current history into (head, raw_middle, tail, summary,
+        seq_by_id) for retry_loop.
 
         #1128 step 3: mirrors :meth:`build_history`'s token-budget
         elide threshold (effective_trigger) and exposes the elided ``raw_middle``
@@ -489,6 +490,14 @@ class RouterHistoryBuffer:
         When total token estimate <= effective_trigger the full history goes into
         ``head`` with empty ``raw_middle`` / ``tail`` — there is nothing to elide,
         and retry_loop's shrink can still trim ``head``.
+
+        #3599: ``seq_by_id`` maps ``id(wire_dict) -> ChatMessage.seq`` for every
+        turn in ``head + raw_middle + tail`` (built off the same ``turns`` /
+        ``wire_turns`` pairing already computed here, so no extra serialise
+        pass). It lets a caller that only receives a SUBSET of these wire dicts
+        (e.g. the force-close wrap-up fallback, which may feed the LLM only
+        ``tail`` or neither) recover exactly which seqs that subset covers,
+        instead of assuming the full decomposition was used.
         """
         from reyn.services.compaction.engine import (
             estimate_tokens_for_any_turn,
@@ -509,6 +518,15 @@ class RouterHistoryBuffer:
         # #2957 PR-B: serialise once up front — same canonical-quantity
         # rationale as build_history (see ``_serialise_turn``'s docstring).
         wire_turns = [self._serialise_turn(m) for m in turns]
+
+        # #3599: pair each wire dict back to its source ChatMessage's seq —
+        # zip is positionally safe (wire_turns[i] was built FROM turns[i]
+        # above, same order, one-to-one). id() keys are only ever looked up
+        # against wire dicts drawn from THIS SAME wire_turns list (never
+        # across calls / after GC of the list), so no id-reuse hazard.
+        seq_by_id: dict[int, int] = {
+            id(wt): t.seq for wt, t in zip(wire_turns, turns)
+        }
 
         total = sum(
             estimate_tokens_for_any_turn(wt, self._model, use_chars4=use_chars4)
@@ -540,7 +558,7 @@ class RouterHistoryBuffer:
         # #1652/②: bound native reasoning across the ordered carriers (the strip
         # is in-place, so the shared dicts in head/raw_middle/tail are bounded).
         self._bound_wire_reasoning(head + raw_middle + tail)
-        return head, raw_middle, tail, summary_dict
+        return head, raw_middle, tail, summary_dict, seq_by_id
 
     def build_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.
