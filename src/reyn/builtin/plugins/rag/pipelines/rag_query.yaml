@@ -35,10 +35,16 @@
 #                          `mcp.servers` (default reyn_vector_store).
 #
 # Output: `ctx.result` -- either the top-k list
-# `[{"id", "distance", "metadata"}, ...]` (nearest-first) or a
-# decision-enabling blocked message: a missing/misnamed `db` param, an
-# unreachable vector-store server, or (#2955 follow-up) a failed query
-# embed -- each distinguished by cause, never a single generic string.
+# `[{"id", "distance", "metadata", "text", "text_unavailable_reason"}, ...]`
+# (nearest-first) or a decision-enabling blocked message: a missing/misnamed
+# `db` param, an unreachable vector-store server, or (#2955 follow-up) a
+# failed query embed -- each distinguished by cause, never a single generic
+# string. `text` (#3644) is each hit's chunk body, recovered by the
+# vector-store server itself slicing `metadata.source_path` at
+# `[metadata.start_index:metadata.end_index]` -- the store never persists
+# chunk text (FP-0057/0063). When recovery is not possible (no offsets
+# recorded, or source_path is no longer readable) `text` is null and
+# `text_unavailable_reason` names why -- never a silent empty string.
 schema: PreflightCheck
 fields:
   status: {type: enum, values: ["ok"]}

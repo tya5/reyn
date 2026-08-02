@@ -298,8 +298,9 @@ description: >-
   ingest's for_each fan-out. Returns this file's OUTCOME:
   {source_path, items, skipped_reason} -- `items` is the candidate chunk
   list ([{source_path, text, content_hash, chunk_index, size_tokens,
-  est_tokens}, ...]; the chunker returns content_hash/chunk_index/est_tokens
-  itself (#2972), so the only work left is tagging each chunk with the file
+  est_tokens, start_index, end_index}, ...]; the chunker returns
+  content_hash/chunk_index/est_tokens/start_index/end_index itself (#2972,
+  #3644), so the only work left is tagging each chunk with the file
   it came from), and `skipped_reason` is "" for an ingested file or the
   operator-facing reason string for a skipped one (the single skipped/not
   representation -- all three ways to yield nothing report through it).
@@ -438,6 +439,13 @@ steps:
   # est_tokens already ride the chunker's own output (#2972) -- R1 could
   # compute none of them (no hash, no enumerate, no string length), which is
   # what used to force this step to shell out to python.
+  #
+  # #3644: start_index/end_index also ride the chunker's own output
+  # (chunker_server.py's chunk_text has ALWAYS computed these -- this was a
+  # pure wiring gap, not new computation) so _ingest_embed_and_upsert can
+  # pass them to the vector store's upsert, making a query hit's chunk text
+  # recoverable later (source_path sliced at [start_index:end_index]).
+  # Before this, the offsets were computed and immediately discarded here.
   - transform:
       value: >-
         map(ctx.chunked.structured.result, c -> {source_path: ctx.source_path,
@@ -445,7 +453,9 @@ steps:
                                                  content_hash: c.content_hash,
                                                  chunk_index: c.chunk_index,
                                                  size_tokens: c.token_count,
-                                                 est_tokens: c.est_tokens})
+                                                 est_tokens: c.est_tokens,
+                                                 start_index: c.start_index,
+                                                 end_index: c.end_index})
       output: items
 
   # #3010 cause-3 (mojibake): this file's first chunk's text, VERBATIM --
@@ -857,15 +867,22 @@ steps:
   # `items` and `vectors` ride as PARALLEL ARRAYS -- upsert pairs them by
   # index server-side (#2972). R1 has no index-zip, which is what used to
   # force a python shell-out between these two steps.
-  # `text` is projected away: the store has no column for it, and shipping
-  # every chunk's body over stdio a second time (it already went to the
-  # chunker and the embedder) is pure waste.
+  # `text` itself is projected away: the store still has no column for it
+  # (FP-0057/0063 -- reyn does not double-persist the user's document
+  # body), and shipping every chunk's body over stdio a second time (it
+  # already went to the chunker and the embedder) is pure waste. Instead
+  # (#3644) `start_index`/`end_index` ride along -- a POINTER into
+  # source_path, not a copy of its content -- so a later `query` can
+  # recover this chunk's text by slicing source_path, instead of the text
+  # being unrecoverable at query time (the defect #3644 closes).
   - transform:
       value: >-
         map(ctx.to_upsert, i -> {source_path: i.source_path,
                                  content_hash: i.content_hash,
                                  chunk_index: i.chunk_index,
-                                 size_tokens: i.size_tokens})
+                                 size_tokens: i.size_tokens,
+                                 start_index: i.start_index,
+                                 end_index: i.end_index})
       output: upsert_items
   - tool:
       name: call_mcp_tool

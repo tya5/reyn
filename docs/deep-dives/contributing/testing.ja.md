@@ -387,12 +387,20 @@ python -m pytest tests/test_replay_my_area.py -v
 # フィクスチャが tests/fixtures/llm/my_area/my_scenario.jsonl に書き込まれます
 ```
 
-**意図的なプロンプトのドリフト後**: フィクスチャを削除して再記録します:
+**意図的なプロンプトのドリフト後**: `REYN_LLM_RECORD=1` で再記録します —
+事前の削除はもう不要です（#3634 で `LLMReplay.flush()` が「追記」でなく
+「再記録/置き換え済みエントリを置換」するようになったため、その場での
+再生成が schema 世代を積み重ねることはなくなりました）:
 
 ```bash
-rm tests/fixtures/llm/my_area/my_scenario.jsonl
 REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
 ```
+
+事前削除（`rm tests/fixtures/llm/my_area/my_scenario.jsonl`）も引き続き
+動作しますが、それは好みの問題であり正しさの要件ではありません — 詳細は
+`write-replay-tests.md` の Step 4 と `LLMReplay.flush` 自身の docstring、
+積層したフィクスチャが再度混入した場合に検出する CI ゲートである
+`tests/test_replay_fixture_no_stacking_3634.py` を参照してください。
 
 ### ドリフト検出 — 各エリアで必須
 

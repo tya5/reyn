@@ -57,11 +57,16 @@ the operator must add a `write_paths` entry to `reyn_vector_store`'s config
 unless they already have**; relay a denial rather than retrying. The
 alternative you can act on is a cwd-relative `output_db`.
 
-Returns `[{id, distance, metadata}, ...]`, **nearest first**. `metadata`
-carries `source_path` / `chunk_index` / `content_hash` / `embedding_model`.
-**It does not carry the chunk text** -- the store has no column for it. To
-quote a hit, read `metadata.source_path` with the ordinary file read op.
-(Full schema: `corpus-internals-schema-tuning-and-backend-swap.md`.)
+Returns `[{id, distance, metadata, text, text_unavailable_reason}, ...]`,
+**nearest first**. `metadata` carries `source_path` / `chunk_index` /
+`content_hash` / `embedding_model` / `start_index` / `end_index`. **`text`
+(#3644) is the hit's own chunk body**, already recovered for you -- no
+need to re-read `source_path` yourself. When it cannot be recovered (a
+chunk upserted before offset persistence, or `source_path` no longer
+readable as the original chunked text), `text` is `null` and
+`text_unavailable_reason` names the concrete cause -- check that field
+before assuming an empty quote means the chunk had no content. (Full
+schema: `corpus-internals-schema-tuning-and-backend-swap.md`.)
 
 ### One sqlite file = one embedding model
 

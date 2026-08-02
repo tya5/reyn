@@ -704,6 +704,58 @@ def test_rag_query_returns_the_ingested_chunk_as_top_result(
     assert top_k[0]["metadata"]["source_path"] == str(target.resolve())
 
 
+def test_rag_query_recovers_ingested_chunk_text_by_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    out_of_process_reyn: str,
+) -> None:
+    """Tier 2b: #3644 -- end-to-end WIRING through the real pipeline files
+    (rag_ingest.yaml's ``_ingest_chunk_file``/``_ingest_embed_and_upsert``
+    steps, then rag_query.yaml's ``_query_body``): the chunker's
+    start_index/end_index survive the full ingest -> upsert -> query round
+    trip and the vector-store server recovers the ingested file's chunk
+    TEXT, asserted BY VALUE against the exact fixture content this test
+    wrote to disk (not merely "the two sides agree" -- see the by-value
+    ban on equality-only assertions, testing.md §16).
+
+    Before #3644, ``_ingest_chunk_file``'s ``items`` transform and
+    ``_ingest_embed_and_upsert``'s ``upsert_items`` transform both dropped
+    the chunker's own start_index/end_index on the floor -- this test would
+    have failed with a KeyError/None metadata before those two steps were
+    wired (strip-falsifying either one reproduces that)."""
+    monkeypatch.chdir(tmp_path)
+    project_root = _write_project(tmp_path, out_of_process_reyn)
+    docs_dir = project_root / "docs"
+    docs_dir.mkdir()
+    target = docs_dir / "notes.txt"
+    body = "Reyn is an operating system for LLM agents."
+    target.write_text(body, encoding="utf-8")
+
+    _run_ingest(project_root, capsys)
+
+    args = _ns(
+        name="rag_query.query",
+        input=json.dumps({
+            "query_text": "what is reyn",
+            "db": str(project_root / "rag.sqlite"),
+            "top_k": 1,
+        }),
+        project=str(project_root), async_=False,
+    )
+    run_run(args)
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    top_k = result["named_stores"]["result"]
+    assert len(top_k) > 0
+    hit = top_k[0]
+    assert hit["metadata"]["start_index"] == 0
+    assert hit["metadata"]["end_index"] == len(body)
+    assert hit["text_unavailable_reason"] is None
+    # THE by-value assertion: the recovered text equals the EXACT fixture
+    # content this test wrote to disk -- an independently-known expected
+    # string, not a value re-derived from the code under test.
+    assert hit["text"] == body
+
+
 # ---------------------------------------------------------------------------
 # 3b. #2955 weak-model-hardening follow-up: a missing/misnamed `db` query
 # param is diagnosed correctly, not misdiagnosed as an unreachable server.
