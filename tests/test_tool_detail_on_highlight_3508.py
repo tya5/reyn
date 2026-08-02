@@ -171,7 +171,7 @@ async def test_an_ordinary_row_is_untouched_by_the_highlight() -> None:
         before = _painted(flow)
 
         await _focus(pilot, app)
-        entry = flow.highlighted
+        entry = flow.current
         assert entry is not None, "setup: the highlight never arrived"
         assert (entry.item.meta or {}).get("_expanded") is None, (
             "an ordinary row was marked expanded — only rows with a folded "

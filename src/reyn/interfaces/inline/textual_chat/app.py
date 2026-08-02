@@ -43,6 +43,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.message import Message
 from textual.widgets import ContentSwitcher, OptionList, Static
 from textual_flowview import (
     Anchor,
@@ -325,6 +326,48 @@ class _StreamingReply:
         handle, self.handle = self.handle, None
         if handle is not None:
             handle.stop()
+
+
+class KeyCommitted(Message, namespace="flow_view"):
+    """#3624 — posted ONLY when the cursor is committed by keyboard (Enter /
+    Space), never by a click. See :meth:`_CursorFlowView.action_activate`.
+
+    flowview >=0.11.0 unified the keyboard highlight and mouse selection into
+    one ``current`` cursor: a click now MOVES *and* COMMITS it, so upstream's
+    own ``Selected`` fires on a click exactly the same as on Enter/Space, and
+    carries no field that tells the two apart (verified against
+    ``textual_flowview/_view.py``: ``Selected.__init__`` takes only
+    ``flow_view``/``entry``). Reading ``Selected`` as "copy this entry to the
+    clipboard" — reyn's pre-0.11.0 intent — would therefore let one stray
+    click silently overwrite content the user copied from a DIFFERENT
+    application. This message recovers the distinction reyn actually needs at
+    the one place upstream itself keeps the two call paths apart: the
+    BINDING-driven ``action_activate`` (Enter/Space only — bound in
+    ``FlowView.BINDINGS``) versus ``on_click``'s direct call to
+    ``self.activate()`` (bypasses the action system entirely, so overriding
+    ``action_activate`` cannot see it)."""
+
+    def __init__(self, flow_view: "FlowView[object]", entry: "Entry[object]") -> None:
+        self.flow_view = flow_view
+        self.entry = entry
+        super().__init__()
+
+    @property
+    def control(self) -> "FlowView[object]":
+        return self.flow_view
+
+
+class _CursorFlowView(FlowView["OutboxMessage"]):
+    """FlowView with the Enter/Space commit split from the click commit
+    (#3624) — posts :class:`KeyCommitted` in addition to upstream's
+    ``Selected``, so :meth:`TextualChatApp.on_flow_view_key_committed` can
+    copy on a KEYBOARD commit without also firing on a click."""
+
+    def action_activate(self) -> None:
+        entry = self.current
+        super().action_activate()
+        if entry is not None:
+            self.post_message(KeyCommitted(self, entry))
 
 
 class TextualChatApp(App):
@@ -627,19 +670,22 @@ class TextualChatApp(App):
         height: 1fr;
         scrollbar-size-vertical: 0;
     }
-    /* #3496 / flowview#5: ``flowview--highlight`` / ``--selected`` are left
-       UNDECLARED on purpose — the addressed row is marked in the gutter (see
-       ReynRightGutter's ``is_marked``), never by restyling the row. flowview 0.6.1
-       honours that: an undeclared component class paints nothing, because the
-       row overlay uses the *partial* component style. Under 0.6.0 it did not
-       (an undeclared class resolved to a CONCRETE inherited style and was
-       painted, turning the addressed row near-black), which needed a subclass
-       suppressing the accessor; the pin bump removed that workaround.
-       ``test_the_addressed_row_keeps_its_own_background`` is what holds this —
-       it fails if the row's own colours are ever disturbed again, whichever
-       side causes it. */
-    /* #3490: NO ``flowview--selected`` / ``--cursor`` component style. Both
-       are deliberately left unstyled (flowview's own default) and the
+    /* #3496 / flowview#5: ``flowview--highlight`` (``--selected`` was its
+       0.11.x synonym for the SAME class; 0.12.0 / #3624 removed the alias, so
+       only ``--highlight`` exists now — both names painted the identical row
+       either way) is left UNDECLARED on purpose — the addressed row is marked
+       in the gutter (see ReynRightGutter's ``is_marked``), never by restyling
+       the row. flowview 0.6.1 honours that: an undeclared component class
+       paints nothing, because the row overlay uses the *partial* component
+       style. Under 0.6.0 it did not (an undeclared class resolved to a
+       CONCRETE inherited style and was painted, turning the addressed row
+       near-black), which needed a subclass suppressing the accessor; the pin
+       bump removed that workaround. ``test_the_addressed_row_keeps_its_own_background``
+       is what holds this — it fails if the row's own colours are ever
+       disturbed again, whichever side causes it. */
+    /* #3490: NO ``flowview--highlight`` / ``--cursor`` component style
+       (``--selected`` was the same class's 0.11.x name before #3624 dropped
+       the alias). Deliberately left unstyled (flowview's own default) and the
        addressed row is marked in the GUTTER instead — see ReynRightGutter's
        ``is_marked``. A component style cannot do this job: flowview applies it
        via ``Strip.apply_style``, i.e. ``style + segment.style``, so it is only
@@ -1023,7 +1069,7 @@ class TextualChatApp(App):
         # Held so the frame pump can start/stop the per-entry BODY animation
         # (``animate_entry``/``stop_entry_animation``) that drives a RUNNING tool
         # row's live spinner + elapsed (Phase ②).
-        self._flow: "FlowView[OutboxMessage]" = FlowView(
+        self._flow: "FlowView[OutboxMessage]" = _CursorFlowView(
             model=self.conversation,
             presenter=self._presenter,
             decorator=ReynGutter(
@@ -1082,7 +1128,13 @@ class TextualChatApp(App):
             # composer's own PageUp/PageDown delegation, #3470, calls
             # actions on ``self._flow`` directly and never depends on this
             # flag).
-            highlight=True,
+            # #3624: flowview 0.11.0 unified this with mouse-driven selection
+            # (a click now moves+commits the SAME cursor) — ``selectable=``
+            # is the current name (``highlight=`` was removed in 0.12.0).
+            # See ``_CursorFlowView``/``KeyCommitted`` above for how
+            # reyn keeps the copy-on-Enter/Space intent without also copying
+            # on a click.
+            selectable=True,
             # #3507 / flowview 0.8.0 (#7): copy mode's yank writes through THIS
             # sink instead of the default OSC 52. reyn already owns a local
             # clipboard path (``pbcopy``/``xclip``/``wl-copy``/``xsel``) that
@@ -1529,7 +1581,7 @@ class TextualChatApp(App):
             # #3490: re-opening onto the SAME hit moves the cursor to where it
             # already is, which flowview treats as a no-op (no ``Highlighted``),
             # so the gated rail would not come back on its own.
-            self._remark_entry(self._flow.highlighted)
+            self._remark_entry(self._flow.current)
 
     @staticmethod
     def _search_predicate(query: str):
@@ -1559,11 +1611,11 @@ class TextualChatApp(App):
         if not hits:
             self._search_bar.set_count(0, 0)
             return
-        current = flow.highlighted
+        current = flow.current
         if jump or current not in hits:
             current = hits[-1]
-            flow.highlight_entry(current)
-            # ``highlight_entry`` only guarantees visibility (minimal scroll); a search
+            flow.set_current(current)
+            # ``set_current`` only guarantees visibility (minimal scroll); a search
             # hit is centred so the context above and below it is readable.
             flow.scroll_to_entry(current, align="center", animate=True)
         self._search_bar.set_count(hits.index(current) + 1, len(hits))
@@ -1586,14 +1638,14 @@ class TextualChatApp(App):
         # Origin passed EXPLICITLY: these default to the selection, which this
         # app no longer uses (#3493 — the cursor is the single addressed position).
         target = (
-            flow.find_previous(pred, before=flow.highlighted)
+            flow.find_previous(pred, before=flow.current)
             if event.older
-            else flow.find_next(pred, after=flow.highlighted)
+            else flow.find_next(pred, after=flow.current)
         )
         if target is None:
             self._search_bar.set_count(0, 0)
             return
-        flow.highlight_entry(target)
+        flow.set_current(target)
         flow.scroll_to_entry(target, align="center", animate=True)
         hits = flow.find(pred)
         self._search_bar.set_count(hits.index(target) + 1, len(hits))
@@ -1604,7 +1656,7 @@ class TextualChatApp(App):
         # into the pane resumes navigating from there. The rail stops showing
         # because neither gate in :meth:`_is_addressed_entry` holds any more,
         # not because the position was thrown away.
-        self._remark_entry(self._flow.highlighted)
+        self._remark_entry(self._flow.current)
         self.query_one(Composer).focus()
 
     # ── #3490: the addressed-row rail ──────────────────────────────────────
@@ -1628,7 +1680,7 @@ class TextualChatApp(App):
         this whole issue (#3490) is about the mark not intruding on the
         conversation's own design when it has nothing to say."""
         flow = getattr(self, "_flow", None)
-        if flow is None or entry is not flow.highlighted:
+        if flow is None or entry is not flow.current:
             return False
         bar = getattr(self, "_search_bar", None)
         return flow.has_focus or (bar is not None and bar.display)
@@ -1652,7 +1704,7 @@ class TextualChatApp(App):
         the composer, a Tab step onward). The cursor POSITION is kept — only
         the mark goes, because nothing is being addressed any more."""
         if event.widget is getattr(self, "_flow", None):
-            self._remark_entry(self._flow.highlighted)
+            self._remark_entry(self._flow.current)
 
     def on_flow_view_highlighted(self, event: "FlowView.Highlighted") -> None:
         """#3490: move the rail with the highlight — repaint the row it left as
@@ -1708,31 +1760,41 @@ class TextualChatApp(App):
     def on_descendant_focus(self, event: "events.DescendantFocus") -> None:
         """Arm the keyboard cursor the moment FlowView gains focus (Shift+Tab
         landing on it, #3470), rather than leaving it invisible until the
-        first arrow press: flowview's own :meth:`~textual_flowview.FlowView.move_highlight`
-        starts from ``cursor=None`` and only lands on an entry once a
+        first arrow press: flowview's own :meth:`~textual_flowview.FlowView.move_current`
+        starts from ``current=None`` and only lands on an entry once a
         direction key moves it — a real but easy-to-miss affordance gap for
         a feature whose whole point is a visible position indicator.
-        ``highlight_last`` (not ``highlight_first``) so arrival highlights the
+        ``current_last`` (not ``current_first``) so arrival highlights the
         newest entry, matching where a resumed/live conversation's attention
         already is."""
         if event.widget is not self._flow:
             return
-        if self._flow.highlighted is None:
-            self._flow.highlight_last()
+        if self._flow.current is None:
+            self._flow.current_last()
         else:
             # #3490: the position was remembered from a previous visit, so no
             # cursor MOVE happens and no ``Highlighted`` fires — but the rail is
             # focus-gated, so the row still needs its gutter re-derived to
             # bring the rail back.
-            self._remark_entry(self._flow.highlighted)
+            self._remark_entry(self._flow.current)
 
-    async def on_flow_view_activated(self, event: "FlowView.Activated") -> None:
+    async def on_flow_view_key_committed(self, event: "KeyCommitted") -> None:
         """Enter/Space on the cursor entry: copy ITS text directly.
 
         A direct, ring-free path — ``/copy N`` addresses one of the last
         ``COPY_BUFFER_MAX`` AGENT replies by ordinal; the cursor instead
         points at one exact, arbitrary entry (any kind), so there is no
-        ordinal to resolve and no reason to go through the ring."""
+        ordinal to resolve and no reason to go through the ring.
+
+        #3624: this handles ``KeyCommitted``, NOT upstream's own
+        ``FlowView.Selected`` — flowview >=0.11.0 posts ``Selected`` on a
+        click too (mouse and keyboard now share one ``current`` cursor), and
+        it carries nothing that would let this handler tell a click from an
+        Enter/Space press. Reading ``Selected`` directly here would silently
+        copy the addressed entry to the clipboard on a stray click, clobbering
+        whatever the user had copied from a DIFFERENT application. Deliberately
+        not registering ``on_flow_view_selected`` at all — the click case must
+        stay a no-op, not a differently-routed copy."""
         from reyn.runtime.outbox import OutboxMessage
 
         # #3616 ①: pyperclip's plain bool return carries no tool label, so the

@@ -511,7 +511,7 @@ SEARCHBAR_KEYS: "list[tuple[str, str]]" = [
 ]
 
 #: The conversation pane's keyboard cursor (#3476 ⑥, reached the SAME way as
-#: ``SENTQUEUE_KEYS`` — Shift+Tab focus-cycling, ``app.py``'s ``highlight=True``).
+#: ``SENTQUEUE_KEYS`` — Shift+Tab focus-cycling, ``app.py``'s ``selectable=True``).
 #: ↑/↓/PageUp/PageDown/Home/End are flowview's OWN built-in cursor bindings
 #: (not re-declared here — this ledger only lists what reyn adds on top).
 CONVERSATION_CURSOR_KEYS: "list[tuple[str, str]]" = [

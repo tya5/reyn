@@ -585,8 +585,9 @@ class ReynRightGutter:
     whether an entry is the ADDRESSED one — the keyboard cursor's position,
     which is also where search puts it (#3493: one position, so never two marked
     rows). A marked entry gets :data:`_MARK_RAIL` drawn down its whole post-wrap
-    height, which is why the mark lives in a GUTTER at all rather than in a
-    ``flowview--selected``/``--highlight`` component style — a reason unchanged
+    height, which is why the mark lives in a GUTTER at all rather than in the
+    ``flowview--highlight`` component style (``--selected`` was its 0.11.x
+    synonym; #3624 / flowview 0.12.0 dropped the alias) — a reason unchanged
     by the move to this side: a component style is applied as a *base* under
     each segment's own attributes (``Segment.apply_style`` =
     ``style + segment.style``; flowview passes no ``post_style``), so a
