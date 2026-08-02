@@ -641,9 +641,22 @@
 
 
 # -----------------------------------------------------------------------------
-# embedding: RAG embedding settings. Built-in defaults
-# cover the common OpenAI path so users can start indexing after
-# ``pip install reyn`` + ``OPENAI_API_KEY`` with no edits required.
+# embedding: RAG embedding settings.
+#
+# ``enabled`` is the ONE switch, and it is OFF by default. Nothing else in this
+# block turns embedding on — the rest only chooses how it behaves once it is.
+# Until you set it, the embedding-backed semantic-discovery layer stays dark:
+# ``search_actions``, knowledge retrieval, and the FP-0063 plugin's
+# ``rag_ingest`` embed step. Plain ``list_*`` discovery and the load / read /
+# invoke verbs are unaffected either way.
+#
+#   embedding:
+#     enabled: true
+#
+# Off by default because embedding needs a provider and costs money per call —
+# a predictable-safe default, not an oversight. With it on, the built-in
+# classes cover the common OpenAI path, so ``pip install reyn`` +
+# ``OPENAI_API_KEY`` needs no further edits.
 #
 # Built-in classes:
 #   light, standard → openai/text-embedding-3-small
@@ -656,6 +669,7 @@
 # ``search_actions`` visibility gate falls back to hidden gracefully).
 # -----------------------------------------------------------------------------
 # embedding:
+#   enabled: true                 # ← the switch; everything below is inert without it
 #   default_class: standard
 #   classes:
 #     light:    openai/text-embedding-3-small
