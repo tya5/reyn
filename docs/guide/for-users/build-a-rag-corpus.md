@@ -87,7 +87,7 @@ reyn pipe run rag_query.query \
 
 The ingest reports what it did: `files_scanned`, `chunks_upserted`, `chunks_removed`, `chunks_unchanged_skipped`, the resolved `embedding_model`, and the spend (`tokens_embedded` / `cost_usd` / `priced`). A `cost_usd` of `null` with `priced: false` means the model has no price entry — the cost is **unknown**, not zero.
 
-The query returns `[{id, distance, metadata}, ...]`, nearest first. `metadata` carries `source_path` / `chunk_index` / `content_hash` / `embedding_model` — **not the chunk text**; use `source_path` to go read the original.
+The query returns `[{id, distance, metadata, text, text_unavailable_reason}, ...]`, nearest first. `metadata` carries `source_path` / `chunk_index` / `content_hash` / `embedding_model` / `start_index` / `end_index`. `text` is the hit's chunk body, already recovered for you; if it's `null`, `text_unavailable_reason` says why (e.g. this chunk predates offset persistence — see `corpus-internals-schema-tuning-and-backend-swap.md`).
 
 ### If a server isn't reachable
 

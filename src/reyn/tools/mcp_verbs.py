@@ -524,6 +524,9 @@ async def _handle_mcp_install_local(
 
     await dispatch_install_reload(
         _reloader, source="mcp_install_local", is_addition=_is_addition,
+        # #3636: names this specific server so two servers installed back-to-back
+        # don't render as an indistinguishable repeat in state_change history.
+        detail=name,
     )
 
     # P6 audit-event. The op path has always emitted ``mcp_server_installed``;
