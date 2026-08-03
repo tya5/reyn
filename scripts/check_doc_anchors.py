@@ -66,6 +66,10 @@ DOCS = REPO / "docs"
 SITE = REPO / "site"
 MKDOCS_YML = REPO / ".mkdocs" / "mkdocs.yml"
 
+# Inline `[text](path#anchor)` / `[text](#anchor)` only — reference-style
+# links (`[text][ref]`) and raw `<a id="...">` anchors are not extracted
+# (repo-wide count as of this gate landing: 0 reference-style, 0 raw HTML
+# anchors, 461 inline — lead-coder measured, #3667).
 LINK_RE = re.compile(r"\]\(([^)\s]+\.md#[^)\s]+|#[^)\s]+)\)")
 ID_RE = re.compile(r'id="([^"]+)"')
 
@@ -160,17 +164,37 @@ def main() -> int:
 
             html_path = _md_to_html_path(str(target_rel.as_posix()))
             ids = _get_ids(html_path, id_cache)
-            if ids is not None and anchor not in ids:
+            if ids is None:
+                # A non-excluded target with no built HTML should be
+                # impossible — mkdocs --strict already fails the build for
+                # a docs/ page it can't build, before this script runs.
+                # Enforced, not just declared: `_is_excluded` is a
+                # prefix/exact match against gitignore-STYLE patterns
+                # (docstring, line 74) but doesn't actually interpret
+                # globs — a future glob pattern in exclude_docs would make
+                # a real exclusion invisible to `_is_excluded` (False) AND
+                # to the `ids is None` check silently skipped, so a link
+                # into that now-unbuilt page would pass through neither
+                # category and never be checked at all. Fail loud instead
+                # of let that gap open silently.
+                assert False, (  # noqa: B011
+                    f"{rel} -> {link}: target has no built HTML and is not "
+                    "recognized as excluded. Either mkdocs --strict should "
+                    "have failed already, or exclude_docs grew a pattern "
+                    "_is_excluded's prefix/exact match can't interpret "
+                    "(e.g. a glob) — fix _is_excluded, don't ignore this."
+                )
+            if anchor not in ids:
                 anchor_not_found.append((str(rel), link))
-            # ids is None (no HTML at that path) with a non-excluded target
-            # would mean mkdocs itself failed to build a page docs/ has —
-            # --strict already fails the build for that before this script
-            # runs, so it cannot happen here.
 
-    assert total_links > 0, (
-        "Extracted ZERO markdown links from docs/ — the link-extraction "
-        "regex is almost certainly broken (docs/ has hundreds of real "
-        "cross-references). Fix the regex before trusting this gate."
+    assert total_links >= 400, (
+        f"Extracted only {total_links} anchor-bearing links from docs/ — "
+        "the repo-wide count was 461 when this gate landed (#3667). `> 0` "
+        "only catches total regex breakage; a partial regression (e.g. one "
+        "of the two LINK_RE alternatives silently stops matching) would "
+        "still pass a `> 0` guard while quietly checking a fraction of "
+        "docs/. This floor is deliberately below 461 to tolerate organic "
+        "doc growth/removal, not a hardcoded count pin."
     )
 
     print(f"checked {total_links} anchor-bearing links")
