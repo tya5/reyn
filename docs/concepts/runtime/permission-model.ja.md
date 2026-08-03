@@ -236,7 +236,7 @@ permission system は OS runtime の一部であり、 OS の上に乗る別レ�
 | `mcp` | `list[str]` | per-server | MCP 呼び出し時 implicit | サーバー名の allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
 | `tool` | `list[str]` | per-tool | `require_tool()` | 名前指定 tool allowlist |
-| `shell` | *(live gate なし)* | — | — | **Doc drift、ここでは未修正のまま flag のみ**: この行はかつて bool `permissions.shell` 軸の gate site として `require_shell()` を挙げていた。`require_shell()` は現行コードベースに存在しない（`grep -rn "require_shell"` は `src/` 全体で 0 件）— この行がかつて指していた subprocess-exec gate は、raw `shell` op が撤廃された際（#1352-A/#1352-L3）に retire 済み。subprocess access は現在、`sandboxed_exec` の seam で `SandboxPolicy.allow_subprocess`（`permissions:` dict のエントリではなく、sandbox config 側で宣言）により bound される。この行が支えていた、今や stale な rationale については下記 [`shell` だけが bool である理由](#shell-だけが-bool-である理由) 参照。 |
+| `shell` | *(live gate なし)* | — | — | **Doc drift、ここでは未修正のまま flag のみ**: この行はかつて bool `permissions.shell` 軸の gate site として `require_shell()` を挙げていた。`require_shell()` は現行コードベースに存在しない（`grep -rn "require_shell"` は `src/` 全体で 0 件）— この行がかつて指していた subprocess-exec gate は、raw `shell` op が撤廃された際（#1352-A/#1352-L3）に retire 済み。subprocess access は現在、`sandboxed_exec` の seam で `SandboxPolicy.allow_subprocess`（`permissions:` dict のエントリではなく、sandbox config 側で宣言）により bound される。この行が支えていた、今や stale な rationale については下記 [`shell` だけが bool である理由](#shell-bool) 参照。 |
 | `allowed_mcp` | `list[str] \| None` | ACL filter | MCP 呼び出し時 implicit | per-agent restriction、 `mcp` 軸と cross-cut |
 
 ### `shell` だけが bool である理由
@@ -293,7 +293,7 @@ side-effect を実行する surface を強制力の強い順に:
 - **内部 OS code** はワークフローコードと同じ `reyn.api.safe.*` primitive を、 呼び出し起点ワークフローの PermissionDecl に対して使う。 inside / outside の区別はない — OS は自身の permission 機構を一様に使う。
 - **python step** は常に safe-mode で honor system: AST validation が `import os` を弾き、 `reyn.api.safe.*` が宣言済 path / host / key を check する。 通常の author が accidentally bypass することはないが、 metaprogramming を使う motivated な author はなお escape できるため、 真の境界は subprocess 分離と `run_op` / `reyn.api.safe.*` サーフェスの permission gate。 unsandboxed mode は存在しない: `mode: unsafe` の宣言はロード時に reject される。 生の host アクセスが本当に必要な step は、 その I/O を `run_op` に分離する。
 
-## 業界比較
+## 業界比較 {#industry-comparison}
 
 | Platform | 宣言 shape | runtime ask | 粒度 | 強制レイヤー |
 |---|---|---|---|---|
@@ -333,7 +333,7 @@ Phase 7 は `http.get` 軸を `file.write` と同じ prompt model に揃えて a
 
 `web_fetch` op handler は legacy `require_web_fetch` でなく `require_http_get` 経由化、 chat router の PermissionDecl は `http.get: [{host: "*"}]` 宣言で LLM-driven fetch を wildcard branch に流す。 `reyn.api.safe.http` subprocess path は preprocessor で wildcard entry を strip — sync subprocess は prompt 不可なので wildcard host fetch は `web_fetch` op route 必須。
 
-これで 2 surface（`safe.http` ワークフロー内部 + `web_fetch` LLM-driven）が 1 軸 + 1 prompt model に統一される。 browser extension `host_permissions`（= 宣言 + install-time prompt）+ Web Permissions API（= runtime per-feature prompt）の合成 pattern に対応 — [業界比較](#業界比較) 参照。
+これで 2 surface（`safe.http` ワークフロー内部 + `web_fetch` LLM-driven）が 1 軸 + 1 prompt model に統一される。 browser extension `host_permissions`（= 宣言 + install-time prompt）+ Web Permissions API（= runtime per-feature prompt）の合成 pattern に対応 — [業界比較](#industry-comparison) 参照。
 
 | 観点 | Pre-Phase-7 | Post-Phase-7 |
 |---|---|---|
@@ -369,7 +369,7 @@ FP-0016 Component D は、当時 `run_skill` op（現在は削除済み）経由
 — `security/secrets/store.py` の `ScopedSecretStore` / `CredentialScopeError` クラス自体は
 まだ存在しますが、`OpContext.secret_store` は現行ランタイムで常に `None` です。現在
 クレデンシャルスコーピングの enforcement は機能していません。シークレットアクセスは
-[`secret.write` 宣言軸](#宣言軸の-taxonomy) と `~/.reyn/secrets.env` に対する
+[`secret.write` 宣言軸](#taxonomy) と `~/.reyn/secrets.env` に対する
 OS レベルのファイルパーミッションでのみゲートされています。
 
 ## パーミッションシステムではないもの
