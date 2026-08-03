@@ -84,8 +84,14 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 # `<doc-basename>.md#<anchor>` inside a src/reyn/*.py comment or docstring —
 # e.g. ``# ..., see session-construction.md#family-1-audit-event-spine-p6``.
+# Scope: bare-word ``foo.md#anchor`` mentions only — not a reference-style
+# markdown link and not a quoted/URL-wrapped form, both absent from
+# src/reyn/*.py today (measured at #3667/#3126 co-vet, 2026-08).
 _CODE_ANCHOR_REF_RE = re.compile(r"([A-Za-z0-9_./-]+\.md)#([^\s()\[\]{}'\"<>,;]+)")
-# ``[text](#anchor)`` — a same-file markdown link.
+# ``[text](#anchor)`` — a same-file markdown link. Inline syntax only — a
+# reference-style link (``[text][ref]``) or a raw ``<a href="#anchor">``
+# is not extracted (repo-wide count when this note was added: 0 of either
+# form, per lead-coder's measurement, #3667).
 _DOC_LINK_RE = re.compile(r"\]\(#([^)\s]+)\)")
 
 
@@ -200,6 +206,24 @@ _DOC_LINKS: list[tuple[Path, int, str]] = [
     for md in _MD_FILES
     for lineno, anchor in _doc_internal_links(md)
 ]
+
+# Floors, not exact pins (#3667 co-vet) — measured 109 code-comment refs /
+# 203 doc-internal links when added. `> 0` alone only catches TOTAL
+# extraction failure; a partial regex regression (one alternative in
+# _CODE_ANCHOR_REF_RE / _DOC_LINK_RE silently stops matching) would still
+# pass a bare non-zero check while quietly covering a fraction of the repo.
+# Deliberately below the measured counts to tolerate organic doc/comment
+# growth and removal.
+assert len(_CODE_REFS) >= 60, (
+    f"Extracted only {len(_CODE_REFS)} code-comment anchor refs from "
+    "src/reyn/ — measured 109 when this floor was added. Check "
+    "_CODE_ANCHOR_REF_RE before trusting this gate."
+)
+assert len(_DOC_LINKS) >= 120, (
+    f"Extracted only {len(_DOC_LINKS)} same-file doc-internal links from "
+    "docs/ — measured 203 when this floor was added. Check _DOC_LINK_RE "
+    "before trusting this gate."
+)
 
 
 def _slugs_for(doc_path: Path) -> set[str]:
