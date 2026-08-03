@@ -25,7 +25,7 @@ reyn web [OPTIONS]
 | `--log-level LEVEL` | `info` | `critical` / `error` / `warning` / `info` / `debug` / `trace`. |
 | `--default-design SLUG` | unset | Sets `REYN_WEB_DEFAULT_DESIGN` for the OpenUI shell. |
 | `--enable SURFACE` | unset | Opt a surface in (repeatable — `--enable a2a --enable mcp`). Surfaces: `agui` / `webui` / `health` / `api` / `resources` (secure-default ON), `a2a` / `mcp` (secure-default OFF). |
-| `--disable SURFACE` | unset | Opt a surface out (repeatable). Precedence: `--enable`/`--disable` > `web.surfaces` config > secure-default — see [reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2). |
+| `--disable SURFACE` | unset | Opt a surface out (repeatable). Precedence: `--enable`/`--disable` > `web.surfaces` config > secure-default — see [reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2). |
 
 ## Requirements
 
@@ -50,7 +50,7 @@ Exits 1 with an install hint if FastAPI or Uvicorn is missing.
 A2A and MCP are broad machine-integration ports (peer agents / external LLM
 clients reaching into this process) and are **off by default** — every other
 surface above is on by default. See [`--enable`/`--disable`](#options) and
-[reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2).
+[reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2).
 
 ## Authentication
 
