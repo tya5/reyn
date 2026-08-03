@@ -1169,11 +1169,23 @@ def status_line_text(
     render VISIBLY DIFFERENT text (not merely different in a way only a log
     reader would notice) — a permanently-``"connecting"``-looking client on a
     genuine failure is exactly what the owner ruling forbids.
+
+    #3671 P3 review (lead-coder): deliberately plain text, no decorative
+    glyph — ``⏳`` measures East-Asian-Width ``W`` (2 terminal cells) while
+    every other character on this ONE always-visible, ``│``-delimited row is
+    ``N``/``Na`` (1 cell); glyph width also varies by terminal/font, and this
+    line has zero such glyphs today, so it would be the first. A 1-cell
+    misjudgement on the narrowest-terminal case (owner's own environment)
+    breaks the whole row, not just this segment. Visual decoration is
+    explicitly a separate, still-open owner decision (#3642) — this PR lands
+    the MECHANISM only; a glyph can be added later without touching the
+    mechanism, but a broken row on a still-forming feature would cast doubt
+    on the mechanism itself.
     """
     if attach_state == "connecting":
-        return f"⏳ connecting… │ agent {agent_name}"
+        return f"connecting… │ agent {agent_name}"
     if attach_state == "failed":
-        return f"✗ attach failed (see log) │ agent {agent_name}"
+        return f"attach failed (see log) │ agent {agent_name}"
 
     # #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on
     # a persistent durability failure — ``Session.halted_reason``), a
