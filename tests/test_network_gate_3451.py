@@ -208,11 +208,11 @@ def test_record_env_var_still_authorizes_the_bootstrap_reach(
 ):
     """Tier 1: #3662 — the ONE real constraint #3451 named (record mode calls
     back into its own captured "original", which with this gate installed IS
-    the gate wrapper) must still work: REYN_LLM_RECORD=1 lets a call through
-    regardless of any marker. Proven by the refused-port error surfacing
-    (real reach happened) rather than UnpinnedNetworkReach. If this test
-    ever goes red, fixture generation itself is broken — no "probably still
-    works"."""
+    the gate wrapper) must still work: a test carrying @pytest.mark.replay,
+    WITH REYN_LLM_RECORD=1, lets its own call through. Proven by the
+    refused-port error surfacing (real reach happened) rather than
+    UnpinnedNetworkReach. If this test ever goes red, fixture generation
+    itself is broken — no "probably still works"."""
     monkeypatch.setenv("REYN_LLM_RECORD", "1")
     result = _run_inner(
         pytester,
@@ -221,6 +221,7 @@ def test_record_env_var_still_authorizes_the_bootstrap_reach(
         import pytest
         from reyn.dev.testing.network_gate import UnpinnedNetworkReach
 
+        @pytest.mark.replay("fixtures/llm/nonexistent/doesnt_matter.jsonl")
         async def test_reach():
             import litellm
             try:
@@ -235,6 +236,46 @@ def test_record_env_var_still_authorizes_the_bootstrap_reach(
                 raise
             except Exception:
                 pass  # any OTHER exception (refused connection) is expected
+        """,
+        tmp_path / "events.jsonl",
+    )
+    result.assert_outcomes(passed=1)
+
+
+def test_record_env_alone_without_marker_still_rejected(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    """Tier 1: #3662 block-fix — REYN_LLM_RECORD=1 authorizes ONLY the
+    @replay-marked test being recorded, never the whole suite. Without the
+    conjunction (marker AND env), a mid-fix version of this gate let ANY
+    test through for the duration of `REYN_LLM_RECORD=1 pytest` (this
+    module's own error message suggests exactly that command, unscoped to a
+    single node) — silently reopening #3445's 51/38 unpinned-reach cases.
+    A test with no marker at all must still be rejected even with the env
+    var set."""
+    monkeypatch.setenv("REYN_LLM_RECORD", "1")
+    result = _run_inner(
+        pytester,
+        monkeypatch,
+        """
+        import pytest
+        from reyn.dev.testing.network_gate import UnpinnedNetworkReach
+
+        async def test_reach():
+            import litellm
+            # Precise assertion: must be UnpinnedNetworkReach specifically
+            # (blocked before any socket), not some OTHER exception from a
+            # real reach that happened to also fail (e.g. a missing API
+            # key) — that would pass `failed=1` for the WRONG reason and
+            # miss exactly the bug this test exists to catch.
+            with pytest.raises(UnpinnedNetworkReach):
+                await litellm.acompletion(
+                    model="openai/gpt-4o-mini",
+                    messages=[{"role": "user", "content": "hi"}],
+                    api_base="http://127.0.0.1:9",
+                    api_key="dummy",
+                    num_retries=0,
+                )
         """,
         tmp_path / "events.jsonl",
     )
