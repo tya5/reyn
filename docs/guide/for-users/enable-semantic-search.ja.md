@@ -146,7 +146,7 @@ strong    litellm  openai/text-embedding-3-large   .reyn/cache/index/actions    
 
 **クラスを切り替えても古い結果が返る** — Reyn のアクションインデックスは一度に 1 つの埋め込みクラスを保持します。クラスの切り替えは次セッションで自動的に再埋め込みをトリガーしますが、`reyn embeddings rebuild` で先行して強制できます。
 
-**LLM が古い `mcp.server` / `agent.peer` カテゴリに言及する** — LLM の学習データが Reyn の collapse リファクタより前である可能性があります。Reyn 0.4 以降の `list_actions(category=["mcp.server"])` は [レガシー → 現行のマッピングを含む明示的なエラー](../../concepts/tools-integrations/universal-catalog.md#category-validation--legacy-redirect) を返すため、LLM は 1 回のリトライで自己修正します。
+**LLM が古い `mcp.server` / `agent.peer` カテゴリに言及する** — LLM の学習データが Reyn の collapse リファクタより前である可能性があります。Reyn 0.4 以降の `list_actions(category=["mcp.server"])` は [レガシー → 現行のマッピングを含む明示的なエラー](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) を返すため、LLM は 1 回のリトライで自己修正します。
 
 ## 関連情報
 

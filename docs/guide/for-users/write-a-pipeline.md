@@ -76,7 +76,7 @@ up a newly-registered pipeline.
 If the file fails to parse, or two entries declare the same `pipeline:` name,
 loading fails loudly, naming the offending entry — a typo never silently
 drops a pipeline you meant to ship. See
-[Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-fail-loud)
+[Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-per-entry-isolated-visible-but-non-fatal)
 for the full table.
 
 ## 3. Invoke it
