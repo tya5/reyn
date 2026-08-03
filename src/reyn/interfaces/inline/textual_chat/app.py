@@ -90,6 +90,7 @@ from .gutter import (
     ReynRightGutter,
 )
 from .intervention_panel import InterventionPanel
+from .loop_probe import LoopTripwire
 from .presenter import (
     _RESULT_KIND_KEY,
     _RESULT_META_KEY,
@@ -885,6 +886,9 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
+        #: Watches how late the event loop runs (#3539). Always on; see
+        #: ``loop_probe`` for why it is not opt-in.
+        self._loop_tripwire = LoopTripwire()
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1375,6 +1379,41 @@ class TextualChatApp(App):
         snapshot = self._snapshot() if snap is _UNSET else snap
         return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
 
+    async def _watch_loop_responsiveness(self) -> None:
+        """Report ONCE if the event loop stops running on time (#3539).
+
+        Always on. The symptom this watches for arrives unannounced, so an
+        opt-in probe would only ever be enabled after the occurrence someone
+        wanted to measure — #3638 closed that way. The cost is one float
+        comparison per tick against a measured baseline where a 10 ms task
+        never exceeded 12 ms over 463 chunks, so a healthy stream never trips
+        it.
+
+        The notice is decision-enabling rather than a bare complaint: it says
+        how long, and how to record the detail next time.
+        """
+        import asyncio  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+        from .loop_probe import _TICK_SECONDS  # noqa: PLC0415
+
+        last = time.perf_counter()
+        while True:
+            await asyncio.sleep(_TICK_SECONDS)
+            now = time.perf_counter()
+            lateness_ms = (now - last - _TICK_SECONDS) * 1000
+            last = now
+            notice = self._loop_tripwire.observe(lateness_ms)
+            if notice is not None:
+                try:
+                    self._ingest_frame(
+                        OutboxMessage(kind="system", text=notice, meta={})
+                    )
+                except Exception:
+                    logger.exception("textual chat: loop tripwire notice failed")
+
     def on_mount(self) -> None:
         # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
         # terminal's true default), but two chrome regions still painted a
@@ -1434,6 +1473,14 @@ class TextualChatApp(App):
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
         # clock leaves a static, correct amber gutter (see the Phase-2 strip gate).
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
+        # #3539: started alongside the frame pump rather than earlier in this
+        # method — the worker manager is what makes a coroutine here actually
+        # run, and a call placed before the pump's own is silently never
+        # awaited (measured: the tripwire stayed at 0.0 ms through a 400 ms
+        # synchronous stall).
+        self.run_worker(
+            self._watch_loop_responsiveness(), name="loop-tripwire", exclusive=False
+        )
         # Drawer starts collapsed — the default chrome is just the focusable
         # menu row (#3326: which also carries the status-values segment when
         # there's room — see MenuBar._repack). It only becomes visible when a

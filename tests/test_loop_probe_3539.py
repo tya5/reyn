@@ -1,0 +1,221 @@
+"""Tier 2: the loop instrumentation is quiet by default and useful when it is not.
+
+#3539 stalled twice for reasons this module answers. The symptom ("the UI froze
+during a stream") arrives unannounced, so an opt-in probe is always enabled one
+occurrence too late — #3638 closed exactly that way. And when numbers were
+finally taken, they could not be compared to the owner's environment, because
+nobody had recorded which axes differed.
+
+So: a tripwire that is always on and costs a float comparison, and detail behind
+``REYN_PROF_DUMP``. These pin both halves — that the default path writes nothing
+and touches no file, and that the tripwire speaks exactly once, with a magnitude
+and a next step.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import AsyncIterator
+
+import pytest
+from textual_flowview import FlowView
+
+from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat.loop_probe import (
+    LoopTripwire,
+    dump_path,
+    environment_axes,
+    write_record,
+)
+from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+from reyn.runtime.outbox import OutboxMessage
+from reyn.schemas.models import Event
+
+
+class QueueTransport(ClientTransport):
+    """A real, minimal :class:`ClientTransport` fed one frame at a time from a
+    queue (the idiom shared with ``tests/test_3288_3c_tui_delta_coalesce.py``)."""
+
+    def __init__(self) -> None:
+        self._queue: "asyncio.Queue[object]" = asyncio.Queue()
+
+    async def push_event(self, event: Event) -> None:
+        await self._queue.put(EventFrame(event))
+
+    async def push_display(self, msg: OutboxMessage) -> None:
+        await self._queue.put(DisplayFrame(msg))
+
+    def start(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def close(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    async def frames(self) -> "AsyncIterator[object]":
+        while True:
+            yield await self._queue.get()
+
+    async def submit_user_text(self, text: str) -> None:  # pragma: no cover
+        pass
+
+    async def answer_intervention_text(self, text: str) -> bool:  # pragma: no cover
+        return False
+
+    async def answer_intervention_choice(self, choice_id: str) -> bool:  # pragma: no cover
+        return False
+
+    def has_session(self) -> bool:
+        return True
+
+    def pending_intervention_head(self) -> "object | None":
+        return None
+
+    def put_display(self, msg: "OutboxMessage") -> None:  # pragma: no cover
+        pass
+
+    async def cancel_inflight(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    async def shutdown(self) -> None:  # pragma: no cover - trivial
+        pass
+
+
+def test_detail_is_off_unless_a_path_is_named(monkeypatch) -> None:
+    """Tier 2: no env var, no destination — the detail layer is inert.
+
+    Asserted on ``dump_path`` rather than on the absence of a file, because a
+    probe that computed a record and then discarded it would pass a
+    file-absence check while still paying for the record on every delta.
+    """
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+
+    assert dump_path() is None
+
+
+def test_write_record_touches_nothing_when_off(monkeypatch, tmp_path: Path) -> None:
+    """Tier 2: the default path creates no file anywhere.
+
+    The directory is checked before and after so this fails on a stray write to
+    a default location, not only on a write to the path a test named.
+    """
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    monkeypatch.chdir(tmp_path)
+    before = set(tmp_path.iterdir())
+
+    write_record("chunk", wait_ms=1.0, work_ms=0.3)
+
+    assert set(tmp_path.iterdir()) == before
+
+
+def test_write_record_writes_when_a_path_is_named(monkeypatch, tmp_path: Path) -> None:
+    """Tier 2: switched on, a record lands and carries its environment.
+
+    The axes are asserted as present rather than by value — which platform is
+    running the suite is not this test's business, but that a later capture can
+    be compared to an earlier one is.
+    """
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+
+    write_record("chunk", wait_ms=17.8, work_ms=0.31)
+
+    record = json.loads(target.read_text(encoding="utf-8").splitlines()[0])
+    assert record["kind"] == "chunk"
+    assert record["wait_ms"] == 17.8
+    assert record["env"], "a record with no environment axes cannot be compared later"
+
+
+def test_the_environment_axes_name_what_differed() -> None:
+    """Tier 2: the axes #3539 needed are the ones collected.
+
+    #3539 could not be settled because the owner's environment and the
+    measuring one differed along axes nobody had written down. Platform and
+    flowview version are the two available without a live session; the
+    per-record fields (model, provider) are supplied by the caller.
+    """
+    axes = environment_axes()
+
+    assert "platform" in axes
+    assert "python" in axes
+
+
+def test_the_tripwire_stays_quiet_on_a_healthy_loop() -> None:
+    """Tier 2: a healthy stream never trips it.
+
+    The measured baseline is a 10 ms-period task never exceeding 12 ms over 463
+    chunks. A tripwire that fired on those would be read as noise and ignored,
+    which is the same as not having one.
+    """
+    tripwire = LoopTripwire()
+
+    assert all(tripwire.observe(lateness) is None for lateness in (0.1, 5.0, 12.0, 40.0))
+    assert not tripwire.fired
+
+
+def test_it_speaks_once_with_a_magnitude_and_a_next_step() -> None:
+    """Tier 2: the first crossing says how bad, and what to do about it.
+
+    Once, deliberately: a freeze is one event to the person watching it, and a
+    notice repeated per tick would bury the reply it is about. The message is
+    checked for the magnitude and the env var because a bare "something was
+    slow" leaves the reader exactly where #3539 already was.
+    """
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    first = tripwire.observe(1800.0)
+    second = tripwire.observe(2400.0)
+
+    assert first is not None
+    assert "1.8s" in first
+    assert "REYN_PROF_DUMP" in first
+    assert second is None, "a freeze is one event, not one per tick"
+
+
+def test_the_worst_lateness_survives_the_tick_that_saw_it() -> None:
+    """Tier 2: the magnitude is retained, not just the fact.
+
+    "It stalled" with no number cannot be compared to another run — which is
+    the failure this module exists to stop repeating.
+    """
+    tripwire = LoopTripwire()
+
+    for lateness in (10.0, 900.0, 30.0):
+        tripwire.observe(lateness)
+
+    assert tripwire.max_lateness_ms == 900.0
+
+
+@pytest.mark.asyncio
+async def test_the_app_actually_shows_the_notice_when_the_loop_stalls() -> None:
+    """Tier 2b: the tripwire is REACHED from the running app, not just correct.
+
+    The unit tests above prove the tripwire computes the right answer. They
+    would all pass with nothing wired to it — the shape #3539's own history
+    keeps producing (a mechanism that exists and is never reached at the moment
+    it is for). So this blocks the event loop for real and asserts the row
+    appears in the conversation.
+    """
+    import time
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        # A synchronous sleep: the loop cannot run the watcher while this holds
+        # it, which is exactly the condition being detected.
+        time.sleep(0.4)
+        for _ in range(6):
+            await pilot.pause()
+
+        rows = [str(e.item.text) for e in app.query_one(FlowView).entries]
+
+        assert any("unresponsive" in row for row in rows), (
+            f"the loop stalled and the app said nothing: {rows!r}"
+        )
+        assert any("REYN_PROF_DUMP" in row for row in rows), (
+            "the notice must say how to capture the detail next time"
+        )

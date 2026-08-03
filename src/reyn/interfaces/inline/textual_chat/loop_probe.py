@@ -1,0 +1,149 @@
+"""Event-loop responsiveness instrumentation for the inline CUI (#3539).
+
+Two layers, because they answer different questions and only one of them can be
+switched on in advance.
+
+**A tripwire that is always on.** The symptom this exists for — "the UI froze
+while a reply streamed" — arrives unannounced, so an opt-in probe is only ever
+enabled *after* someone has already lost the occurrence they wanted to measure.
+#3638 closed exactly that way: by the time anyone could look, the symptom had
+stopped happening. The tripwire therefore runs unconditionally and costs a
+comparison against a float per tick; when the loop is late by more than
+:data:`_TRIPWIRE_MS` it says so ONCE, and says what to do next.
+
+**Detail behind an env var.** Everything that costs more than a comparison —
+per-chunk wait/work split, per-delta handler timing — is written only when
+``REYN_PROF_DUMP`` names a file. Naming a path rather than taking a boolean
+matches ``REYN_LLM_TRACE_DUMP``, the instrumentation idiom already in the tree,
+and it makes "where did it go" answerable without reading this module.
+
+**Environment axes travel with the numbers.** A measurement that cannot be
+compared to another measurement is a number, not evidence. #3539 stalled at
+"the condition is unidentified" precisely because the owner's environment and
+the measuring environment differed along axes nobody had written down: which
+provider, which terminal size, how many sessions at once. Every record here
+carries those, so the next capture can be held against this one.
+
+Measured baseline this was built against (real TUI, real model, 463 chunks):
+work 0.31 ms/chunk, wait 17.84 ms/chunk, **0** loop stalls over 12 ms. The
+tripwire is silent on a healthy loop by construction, not by tuning.
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Any
+
+#: A loop tick later than this is worth telling someone about. Set well above
+#: the measured healthy ceiling (a 10 ms-period task never exceeded 12 ms over
+#: 463 chunks) so an ordinary stream never trips it — the tripwire's value is
+#: that it stays quiet, and a threshold that fires on healthy runs would be
+#: read as noise and ignored.
+_TRIPWIRE_MS = 250.0
+
+#: How often the tripwire wakes. Long enough to cost nothing, short enough that
+#: a stall a human would notice cannot hide between two ticks.
+_TICK_SECONDS = 0.05
+
+_DUMP_ENV = "REYN_PROF_DUMP"
+
+
+def dump_path() -> "str | None":
+    """The detail-probe output path, or ``None`` when detail is off.
+
+    Read at call time rather than captured at import, so a long-lived session
+    can be told to start recording without a restart — the same reason
+    ``REYN_LLM_TRACE_DUMP`` is read per call.
+    """
+    return os.environ.get(_DUMP_ENV) or None
+
+
+def environment_axes() -> "dict[str, Any]":
+    """The axes a later measurement has to match on to be comparable.
+
+    Not diagnostics for their own sake: #3539 could not be settled because the
+    owner's environment and the measuring one differed along axes nobody had
+    recorded, so two sets of numbers could not be held against each other. Each
+    field here is one of those axes, and each is read defensively — a probe that
+    raises while collecting context would destroy the occurrence it exists to
+    capture.
+    """
+    axes: "dict[str, Any]" = {}
+    try:
+        import platform
+
+        axes["platform"] = platform.platform()
+        axes["python"] = platform.python_version()
+    except Exception:  # noqa: BLE001 - context is never worth an exception
+        pass
+    try:
+        import textual_flowview
+
+        axes["flowview"] = getattr(textual_flowview, "__version__", "unknown")
+    except Exception:  # noqa: BLE001
+        pass
+    for var in ("TERM", "TERM_PROGRAM", "COLUMNS", "LINES"):
+        value = os.environ.get(var)
+        if value:
+            axes[var.lower()] = value
+    return axes
+
+
+def write_record(kind: str, **fields: Any) -> None:
+    """Append one detail record, with the environment axes attached.
+
+    No-op when detail is off. Best-effort by construction: an instrument that
+    can break the thing it measures is worse than no instrument.
+    """
+    path = dump_path()
+    if not path:
+        return
+    try:
+        record = {"kind": kind, "ts": time.time(), **fields, "env": environment_axes()}
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, default=str) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+class LoopTripwire:
+    """Watches how late the event loop runs, and speaks once when it is late.
+
+    Holds the maximum lateness seen so it survives past the tick that saw it —
+    a stall reported as "it happened" with no magnitude cannot be compared to
+    anything, which is the failure this whole module is a response to.
+    """
+
+    def __init__(self, *, threshold_ms: float = _TRIPWIRE_MS) -> None:
+        self._threshold_ms = threshold_ms
+        self._max_lateness_ms = 0.0
+        self._fired = False
+
+    @property
+    def max_lateness_ms(self) -> float:
+        """The worst lateness observed so far, in milliseconds."""
+        return self._max_lateness_ms
+
+    @property
+    def fired(self) -> bool:
+        """Whether the threshold has been crossed at least once."""
+        return self._fired
+
+    def observe(self, lateness_ms: float) -> "str | None":
+        """Record one tick's lateness; return a message the FIRST time it is bad.
+
+        Returns ``None`` on every later crossing as well as on healthy ticks: a
+        freeze is one event to a person watching it, and repeating the notice
+        per tick would bury the reply the notice is about.
+        """
+        if lateness_ms > self._max_lateness_ms:
+            self._max_lateness_ms = lateness_ms
+        if lateness_ms <= self._threshold_ms or self._fired:
+            return None
+        self._fired = True
+        write_record("tripwire", lateness_ms=round(lateness_ms, 1))
+        return (
+            f"the interface was unresponsive for {lateness_ms / 1000:.1f}s "
+            f"— re-run with {_DUMP_ENV}=<path> to record what it was doing"
+        )
