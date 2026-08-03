@@ -174,9 +174,11 @@ async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
     assert loop.attempts == 2
     (fired,) = [e for e in events if e.type == "router_force_close_handoff"]
     assert fired.data["covers_through_seq"] == expected_covers
-    assert fired.data["dropped_seq_ranges"] == [
-        expected_dropped_span, expected_head_span,
-    ]
+    # #3658: order is not a declared contract — compare as a set of spans,
+    # not a pinned sequence (see PR #3661 review).
+    assert sorted(map(tuple, fired.data["dropped_seq_ranges"])) == sorted(
+        map(tuple, [expected_dropped_span, expected_head_span])
+    )
 
 
 @pytest.mark.asyncio

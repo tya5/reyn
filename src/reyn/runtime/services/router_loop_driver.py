@@ -348,6 +348,9 @@ class RouterLoopDriver:
                 ]
                 _head_span = _seq_span(_head_claimed_unfed)
                 if _head_span is not None:
+                    # Appended after the fallback-dropped span — list ORDER
+                    # is not a declared contract, only membership is; a
+                    # caller must not rely on head sorting first/last.
                     _dropped.append(_head_span)
                 return _result.content or "", _covers, _dropped
             except Exception as _exc:
