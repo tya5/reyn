@@ -70,8 +70,12 @@ which is the failure this whole mechanism exists to make impossible.
 Record mode
 -----------
 Set ``REYN_LLM_RECORD=1`` before running pytest to call the real LLM/embedding
-provider and write fixtures. If a fixture file is absent, record mode is
-activated automatically (first-run fixture generation).
+provider and write fixtures — including first-run fixture generation. #3662:
+a missing fixture file no longer activates record mode on its own (a fixture
+absent for an unrelated reason — an accidental delete, a bad rebase — used to
+fall back to a real, unauthorized network call instead of a loud failure);
+the caller (``tests/conftest.py::_llm_replay``) now requires the explicit
+env var either way.
 
 #3634: regenerating in place REPLACES a call's stale entry, not appends
 alongside it. Before #3634, :meth:`flush` only ever appended, so re-recording
