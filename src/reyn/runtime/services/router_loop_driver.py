@@ -246,9 +246,11 @@ class RouterLoopDriver:
             "router_force_close_handoff",
             covers_through_seq=covers,
             consolidation_chars=len(consolidation),
-            # #3599: [start_seq, end_seq] pairs the fallback shrank OUT of the
-            # summarisation input — [] when the top-tier candidate (no
-            # shrink) succeeded. A later reader can tell "summarised" from
+            # #3599/#3658: [start_seq, end_seq] pairs the fallback shrank OUT
+            # of the summarisation input, PLUS (#3658) any head seqs this
+            # call's own watermark claims covering but never fed — []/[] when
+            # the top-tier candidate (no shrink) succeeded and head had
+            # nothing new. A later reader can tell "summarised" from
             # "silently dropped" instead of trusting a watermark that no
             # longer distinguishes them.
             dropped_seq_ranges=[list(r) for r in dropped_seq_ranges],
@@ -278,11 +280,19 @@ class RouterLoopDriver:
         span(s) the fallback shrank OUT of the input when a lower tier wins
         (empty when the top tier succeeds).
 
-        Note (#3599, scoped out of this fix — reported, not silently folded
-        in): ``head`` (the earliest token-budget slice from
+        #3658: ``head`` (the earliest token-budget slice from
         ``decompose_history_for_retry``) is NEVER part of ANY candidate here,
-        in every tier, not only under fallback — a distinct, pre-existing gap
-        this PR does not change the semantics of. See the PR description.
+        in every tier, not only under fallback. ``dropped_seq_ranges`` also
+        names the ``head`` seqs in ``(prev_cover, covers]`` — the ONLY head
+        seqs this call's own watermark claims responsibility for without
+        actually feeding them. A head seq ``<= prev_cover`` is already
+        accounted for by the PRIOR summary (not lost by this call); a head
+        seq ``> covers`` is not claimed as covered by this call EITHER, so
+        reporting it dropped would be a lie in the other direction (claiming
+        coverage this call never asserted). No tier branch is needed: at the
+        summary-only tier, ``covers == prev_cover`` (nothing new got fed, see
+        above), so the interval is empty BY CONSTRUCTION, not by a special
+        case.
         """
         from reyn.runtime.session import _render_summary_for_storage
         from reyn.services.compaction.engine import (
@@ -328,6 +338,20 @@ class RouterLoopDriver:
                 _dropped: list[tuple[int, int]] = (
                     [_dropped_span] if _dropped_span is not None else []
                 )
+                # #3658: head seqs THIS call's own watermark claims covering
+                # (prev_cover, covers] but never fed. Empty at the
+                # summary-only tier because covers == prev_cover there —
+                # not a tier branch, the intersection itself is empty.
+                _head_claimed_unfed = [
+                    t for t in _head
+                    if _prev_cover < _seq_by_id.get(id(t), 0) <= _covers
+                ]
+                _head_span = _seq_span(_head_claimed_unfed)
+                if _head_span is not None:
+                    # Appended after the fallback-dropped span — list ORDER
+                    # is not a declared contract, only membership is; a
+                    # caller must not rely on head sorting first/last.
+                    _dropped.append(_head_span)
                 return _result.content or "", _covers, _dropped
             except Exception as _exc:
                 if not any(kw in str(_exc).lower() for kw in (
