@@ -30,21 +30,22 @@ _LITELLM_LOGGER_NAMES = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
 
 _litellm_ready = False
 # #3671 P1: ownership + Future, not a lock (owner directive: prefer a
-# non-lock exclusion where one exists — a lock held across the ~1.8s setup
-# body is real embug surface: if the code inside were ever changed to
-# re-enter `ensure_litellm_ready()`, a plain `threading.Lock` deadlocks).
-# `dict.setdefault` is a SINGLE dict operation, atomic under the GIL by
-# construction — the first caller's `Future` wins and is stored; every
-# later caller's `setdefault` sees that SAME Future already present and
-# gets it back instead of its own throwaway one. Whoever's Future came back
-# as the winner OWNS the setup body; everyone else just calls `.result()`
-# and blocks until the owner calls `.set_result(...)` — which happens only
-# AFTER the real work finishes, so this is not merely lock-free, it also
-# closes the "ready meant started, not finished" bug (lead-coder finding)
-# by construction: a Future literally cannot be waited-past before
-# `set_result` runs. #3671 P2/P3 (a startup-warming thread, not added by
-# this PR) will need this exact "await the owner's finish" primitive
-# anyway, so this is not new machinery introduced just for P1.
+# non-lock exclusion where one exists). NOTE: a re-entrant call from the
+# owner's OWN thread would deadlock on `.result()` just as badly as a plain
+# `threading.Lock` would — a Future is NOT reentrancy-safe, so that is not
+# the real advantage here (lead-coder finding, corrected 2026-08-03).
+# The real advantage: `dict.setdefault` is a SINGLE dict operation, atomic
+# under the GIL by construction — the first caller's `Future` wins and is
+# stored; every later caller's `setdefault` sees that SAME Future already
+# present and gets it back instead of its own throwaway one. Whoever's
+# Future came back as the winner OWNS the setup body; everyone else just
+# calls `.result()` and blocks until the owner calls `.set_result(...)` —
+# which happens only AFTER the real work finishes. A Future literally
+# cannot be waited-past before `set_result` runs, so "ready" cannot mean
+# *started* instead of *finished* — the bug lead-coder found is closed by
+# construction, not by discipline. #3671 P2/P3 (a startup-warming thread,
+# not added by this PR) will need this exact "await the owner's finish"
+# primitive anyway, so this is not new machinery introduced just for P1.
 _ready_registry: "dict[str, Future]" = {}
 
 
