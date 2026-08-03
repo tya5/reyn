@@ -597,22 +597,33 @@ wire.
 | `reyn.event.user_submitted`          | a user turn was submitted (#3300 P1 C) — RAW text + chain_id + msg_id + seq + meta; each surface neutralizes at its render boundary. `msg_id`/`seq` are the #3300 P2a sent-queue correlation id + order-race-gate token |
 | `reyn.event.intervention_answer_submitted` | an intervention answer was resolved (#3300, event-ifying the LAST outbox `kind="user"` broadcast site — `InterventionHandler.deliver_answer_to`) — RAW text (the raw answer, or the matched choice's label) + `intervention_id` + meta; each surface neutralizes at its render boundary, following the `user_submitted` precedent exactly. Unlike `user_submitted`, this has no sent-queue staging step — an intervention answer was never a queued inbox item, so it renders straight to the flow |
 | `reyn.event.inbox_cancel`            | an UNDISPATCHED queued user message was cancelled by id (#3300 P3, via the `cancel_queued` client message) — carries `msg_id` + `seq`; the server-authoritative sent-queue removal signal (never a client-local "cancel succeeded" response), exclusive with `turn_started` for the same `msg_id` |
-| `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta) + `chain_id`. The plain codec's `CUSTOM` mapping (see the note above); on the actual AG-UI wire (`encode_frame_wire_streaming`, #3288 ③d) this rides `TEXT_MESSAGE_CONTENT` instead — see *Text lifecycle* above for the full streamed-message contract (END-only completion, reconstruction authority, late-joiner closure) |
+| `reyn.event.agent_delta`             | one streamed LLM content-delta chunk (#3288 ③b) — carries `text` (the raw per-chunk delta), `chain_id`, and `round_index` (which LLM round of the turn produced it, #3656). A turn that calls a tool emits more than one assistant message, and `chain_id` alone cannot tell them apart; the producer runs inside the round, so the index is a fact it holds rather than one a consumer reconstructs from frame order. The plain codec's `CUSTOM` mapping (see the note above); on the actual AG-UI wire (`encode_frame_wire_streaming`, #3288 ③d) this rides `TEXT_MESSAGE_CONTENT` instead — see *Text lifecycle* above for the full streamed-message contract (END-only completion, reconstruction authority, late-joiner closure) |
 
 ### Textual TUI streamed-reply rendering (#3288 ③c, #3283 ③)
 
 The Textual TUI (`interfaces/inline/textual_chat/app.py`) is the L7 consumer
 `agent_delta` was forwarded ahead of (see the note above): `TextualChatApp.
-_handle_agent_delta_event` coalesces N deltas for one reply into exactly ONE
-`FlowView` entry, keyed by `chain_id` — the SAME authoritative correlation id
-`RouterLoop._emit_agent_delta` stamps on every delta and the terminal
-`kind="agent"` `OutboxMessage` carries in its own `meta`. The first delta for
-a `chain_id` appends a new entry; every later delta for that same `chain_id`
-updates that SAME entry in place (`Entry.set_item`) rather than appending a
-second row. The terminal completion (a DISPLAY frame, not an event) then
-FINALIZES that same entry with the completion's authoritative full text
-(never the deltas — L9 whole-persist's source of truth) and stops tracking
-the `chain_id`, rather than appending a second entry of its own — this is
+_handle_agent_delta_event` coalesces N deltas into ONE `FlowView` entry **per
+LLM ROUND**, keyed by `(chain_id, round_index)` (#3656). `chain_id` is the
+turn; `round_index` is which round within it, and a turn that calls a tool has
+more than one — 140 deltas, three tool calls, then 300 deltas was the measured
+case, and its two texts are two separate assistant messages in history. Keyed
+by `chain_id` alone, the second round's deltas flowed into the entry created
+BEFORE the tool row, so what the model wrote after reading a tool result
+appeared above the call that produced it.
+
+The first delta for a `(chain_id, round_index)` appends a new entry; every
+later delta for the same pair updates that SAME entry in place
+(`Entry.set_item`) rather than appending a second row. A delta from a LATER
+round closes the previous round's record — the entry keeps its text and simply
+stops being a target, since the terminal frame arrives once per TURN, not once
+per round. A delta with no `round_index` (an older producer, a replayed frame)
+reads 0 and therefore coalesces exactly as before.
+
+The terminal completion (a DISPLAY frame, not an event) then FINALIZES the
+LAST round's entry with the completion's authoritative full text (never the
+deltas — L9 whole-persist's source of truth) and releases any earlier round,
+rather than appending a second entry of its own — this is
 what keeps a mid-stream-joining client (one that only ever received the TAIL
 of a reply's deltas, see *Text lifecycle*'s late-joiner closure above) to
 exactly one final entry instead of a duplicate. The plain/repl renderer has

@@ -1064,6 +1064,10 @@ class RouterLoop:
     ):
         self.host = host
         self.chain_id = chain_id
+        # Bumped per LLM round in ``run_loop``; initialised here so a delta
+        # emitted from any other entry point carries 0 rather than raising —
+        # narration must never break the turn it describes.
+        self._delta_round_index = 0
         self.max_iterations = max_iterations
         # #1672: an UNSET router_model follows the configured model (no hidden
         # "light" tier) — resolve the "router" purpose class via the host's
@@ -1279,11 +1283,33 @@ class RouterLoop:
         returns (L9 whole-persist: the completed full text is what gets
         appended to history and put on the outbox, exactly once).
 
+        ``round_index`` is which LLM round of this turn produced the chunk,
+        and it is the reason this method is a bound method rather than a free
+        function: it runs INSIDE the round (``on_content_delta=self.
+        _emit_agent_delta``), so the round is a fact it already holds. A
+        consumer that wants to separate "what the model said before calling a
+        tool" from "what it said after reading the result" would otherwise have
+        to re-derive that boundary from the ARRIVAL ORDER of unrelated frames —
+        reconstructing a fact the producer had, which is the coupling this
+        field exists to remove.
+
+        A monotonic index rather than a boundary flag, deliberately: a dropped
+        flag is undetectable (nothing changes until the next one), while a
+        dropped index shows as a gap. It is not ``stop_reason`` either —
+        stop_reason says why a round ended, and the boundary is its
+        CONSEQUENCE; naming the consequence keeps a consumer from having to
+        learn every cause that can produce one.
+
         Best-effort: a failing chat-event emit must never abort the
         in-flight LLM call it is merely narrating.
         """
         try:
-            self.host.events.emit("agent_delta", text=text, chain_id=self.chain_id)
+            self.host.events.emit(
+                "agent_delta",
+                text=text,
+                chain_id=self.chain_id,
+                round_index=self._delta_round_index,
+            )
         except Exception:  # noqa: BLE001 — narration must never break the turn
             logger.exception("router: agent_delta chat-event emit failed")
 
@@ -1768,12 +1794,17 @@ class RouterLoop:
         # convergence. ``_represent_rounds`` feeds the defensive backstop.
         _represented: set = set()
         _represent_rounds: int = 0
+        # Which LLM round of this turn the deltas below belong to. Monotonic
+        # across the WHOLE turn (never reset by the outer re-entry loop), so a
+        # consumer can tell rounds apart and see a gap if one is lost.
+        self._delta_round_index = 0
 
         # FP-0005 max_iterations checkpoint: outer while allows re-entry after
         # an approved extension. _loop_cancelled tracks cancel-break vs exhaustion.
         _loop_cancelled = False
         while True:
          for _iteration in range(self.max_iterations):
+            self._delta_round_index += 1
             # #1468: cooperative turn-cancel checkpoint. Checked BEFORE the LLM
             # call so a cancel_inflight() fired between tool iterations stops the
             # chain at the next boundary (= after the current tool completes, not
