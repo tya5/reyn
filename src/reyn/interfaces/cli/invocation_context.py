@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from pathlib import Path
 
 from reyn.config import ReynConfig, SafetyConfig, load_config
 from reyn.llm.model_resolver import ModelResolver
@@ -21,21 +20,12 @@ class InvocationContext:
     resolver: ModelResolver
 
     @classmethod
-    def from_args(
-        cls, args: argparse.Namespace, *, project_root: "Path | None" = None
-    ) -> "InvocationContext":
+    def from_args(cls, args: argparse.Namespace) -> "InvocationContext":
         # #2683: ``LITELLM_API_BASE`` export folded into ``load_config()`` — the
         # single canonical writer (universal chokepoint). The former inline copy
         # here was purely redundant (``load_config`` above already exported it via
         # idempotent ``setdefault``); a single-writer AST guard now enforces this.
-        #
-        # #3671 P4 item A: ``project_root`` is OPTIONAL — most callers still pass
-        # nothing and ``load_config()`` walks the filesystem itself (unchanged
-        # behavior). A caller that already computed the project root (e.g.
-        # ``chat.py``, which needs it before this call anyway for the log
-        # redirect) can pass it through instead of paying for a second,
-        # independent ``_find_project_root`` walk inside ``load_config``.
-        config = load_config(project_root=project_root)
+        config = load_config()
         return cls(config=config, resolver=ModelResolver(
             config.models,
             default_class=config.model,

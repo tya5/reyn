@@ -449,10 +449,7 @@ def run(args: argparse.Namespace) -> None:
     if is_interactive:
         _setup_interactive_logging(project_root)
 
-    # #3671 P4 item A: pass the project_root already computed above so
-    # load_config() doesn't independently re-walk the filesystem to find the
-    # same reyn.yaml ancestor a second time.
-    session_cfg = InvocationContext.from_args(args, project_root=project_root)
+    session_cfg = InvocationContext.from_args(args)
     # #2708 P3.2b: the missing-cred pre-check moved OFF this per-surface startup
     # gate and ONTO the single LLM funnel (``recorded_acompletion``). It now
     # fires on the FIRST LLM call (early for any LLM run) and surfaces as a typed
@@ -518,11 +515,7 @@ def run(args: argparse.Namespace) -> None:
     # and pass the SAME instance to BOTH Session seams (FS environment_backend
     # + exec sandbox_backend) — the #1200 single-shared-sandbox invariant. A
     # launched container is torn down at process exit.
-    # #3671 P4 item A: same project_root reuse as above — a 3rd independent
-    # _find_project_root walk for the SAME value this function already has.
-    env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(
-        args, project_root=project_root
-    )
+    env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(args)
     if env_cleanup is not None:
         import atexit
         atexit.register(env_cleanup)
