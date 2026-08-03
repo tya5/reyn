@@ -87,7 +87,7 @@ steps:
 
 | キー | 必須 | 意味 |
 |-----|------|------|
-| `pipeline` | 必須 | 宣言された名前。登録時、および `call`/`match` ステップのターゲットにとって authoritative — [Pipeline registration § 宣言された名前が authoritative](../../concepts/runtime/pipeline-registration.md#the-declared-name-is-authoritative) 参照。 |
+| `pipeline` | 必須 | 宣言された名前。登録時、および `call`/`match` ステップのターゲットにとって authoritative — [Pipeline registration § 宣言された名前が authoritative](../../concepts/runtime/pipeline-registration.md#namespacing-entry-keypipeline-name) 参照。 |
 | `description` | 任意 | 人間可読な要約。登録済み pipeline が `pipeline__<name>` カタログアクションとして列挙される際、名前と併せて LLM に提示される。デフォルトは空。 |
 | `steps` | 必須 | 順に実行される、空でないステップのリスト(下記の「ステップ種別」と「合成プリミティブ」参照)。 |
 
@@ -95,7 +95,7 @@ steps:
 
 ## 形式文法 {#formal-grammar}
 
-以下の EBNF は**規範的な、現行の**文法です — 初期の設計提案からではなく、`parse_pipeline_dsl`(`src/reyn/core/pipeline/parser.py`)から直接導出されています。今日パーサが受け付けるものを正確にカバーしています: これに適合する定義はクリーンに parse でき、違反は拒否されます。YAML のマッピングキーは無順序です — 以下の線形な並びは可読性のためであり、位置的な要求ではありません。`NAME` は識別子的な bare 文字列、`EXPR` は [R1 expression](#r1-expression-言語) のソース文字列、`TPL` は `agent.prompt` のテンプレート文字列(`{ctx.dotted.path}` / `{pipe}` 補間、R1 ではない)です。
+以下の EBNF は**規範的な、現行の**文法です — 初期の設計提案からではなく、`parse_pipeline_dsl`(`src/reyn/core/pipeline/parser.py`)から直接導出されています。今日パーサが受け付けるものを正確にカバーしています: これに適合する定義はクリーンに parse でき、違反は拒否されます。YAML のマッピングキーは無順序です — 以下の線形な並びは可読性のためであり、位置的な要求ではありません。`NAME` は識別子的な bare 文字列、`EXPR` は [R1 expression](#r1-expression) のソース文字列、`TPL` は `agent.prompt` のテンプレート文字列(`{ctx.dotted.path}` / `{pipe}` 補間、R1 ではない)です。
 
 ```ebnf
 Document      ::= YamlDoc ("---" YamlDoc)*        (* テキスト全体で PipelineDoc はちょうど 1 つ *)
@@ -184,7 +184,7 @@ FieldType     ::= "{" "type:" ("bool" | "string") "}"
 
 ### `transform`
 
-純粋なステップです: `value` は現在のコンテキスト(`ctx`/`pipe` — [ステップ間のデータフロー](#data-flow-between-steps)参照)に対して [R1 expression](#r1-expression-言語) として評価され、その結果がこのステップの pipe data になります(`output` が設定されていれば、その named store にも書き込まれます)。
+純粋なステップです: `value` は現在のコンテキスト(`ctx`/`pipe` — [ステップ間のデータフロー](#data-flow-between-steps)参照)に対して [R1 expression](#r1-expression) として評価され、その結果がこのステップの pipe data になります(`output` が設定されていれば、その named store にも書き込まれます)。
 
 ```yaml
 - transform: {value: "'Hello, ' + ctx.name + '!'", output: greeting}
@@ -206,7 +206,7 @@ FieldType     ::= "{" "type:" ("bool" | "string") "}"
 | キー | 必須 | 意味 |
 |-----|------|------|
 | `name` | 必須 | ツール / アクション名(リテラル文字列)。 |
-| `args` | 任意 | 引数名 → 値 のマッピング。各値は `!expr` タグが付いていない限り**リテラル**([リテラル vs `!expr`](#リテラル-vs-expr)参照)。 |
+| `args` | 任意 | 引数名 → 値 のマッピング。各値は `!expr` タグが付いていない限り**リテラル**([リテラル vs `!expr`](#vs-expr)参照)。 |
 | `schema` | 任意 | 結果が適合すべき登録済み schema 名(`verify: schema` — [Schema](#schema-verify-schema)参照)。不適合はステップを失敗させる(下記の `text`/`structured` 変換前の、生のツール結果に対してチェックされる)。 |
 | `output` | 任意 | 結果を書き込む named store。 |
 
@@ -233,7 +233,7 @@ offload したり cap したりは絶対にしません。pipeline ステップ�
 
 **`meta` を安全に読む。** `meta` は producer がシグナルを出さないと存在しないため、
 そうした producer に対して素の `ctx.<name>.meta.<field>` パスは**例外を投げます**
-(素のパスは safe navigation ではありません — [R1 式言語](#r1-expression-言語)
+(素のパスは safe navigation ではありません — [R1 式言語](#r1-expression)
 参照)。これは意図的です: シグナルに依存するステップは、黙って既定値を読むのではなく、
 大きな音を立てて失敗すべきだからです。シグナルが本当に任意の場合は `get(...)` を使います:
 
@@ -290,7 +290,7 @@ LLM 駆動の leaf ステップです: `prompt`(テンプレート文字列)が�
 | キー | 必須 | 意味 |
 |-----|------|------|
 | `prompt` | 必須 | テンプレート文字列 — `{ctx.dotted.path}` / `{pipe}` 参照が補間される(値のみ、演算子なし — これは R1 expression ではなく文字列補間)。 |
-| `identity` | 任意 | 実行するエージェント identity。デフォルトは run の起動者。**登録済み** pipeline は任意の identity を指定できるが、**inline で エージェントが生成した** pipeline は起動者自身の identity のみ指定可能 — 別のエージェントの identity を指定すると capability escalation として静的解析ゲートに拒否される([Ad-hoc inline 起動](#ad-hoc-inline-起動)参照)。 |
+| `identity` | 任意 | 実行するエージェント identity。デフォルトは run の起動者。**登録済み** pipeline は任意の identity を指定できるが、**inline で エージェントが生成した** pipeline は起動者自身の identity のみ指定可能 — 別のエージェントの identity を指定すると capability escalation として静的解析ゲートに拒否される([Ad-hoc inline 起動](#ad-hoc-inline)参照)。 |
 | `capabilities` | 任意 | `{tools: [NAME*]}` — ephemeral session のツール surface を narrowing する。restrict-only: pipeline のステップが起動者自身の envelope を超えることは決してない。 |
 | `schema` | 任意 | `tool` と同じ `verify: schema` セマンティクスを、parse された JSON 応答に適用。 |
 | `output` | 任意 | 結果を書き込む named store。 |
@@ -505,7 +505,7 @@ fields:
 
 `minimum`/`maximum` は schema 登録時にチェックされ(`minimum` は `maximum` を超えてはならず、指定する場合はどちらも数値でなければならない)、値の validate 時にも強制されます — 境界(両端含む)の外の値は `out_of_range` エラーになります(`missing_required` / `type_mismatch` / `enum_invalid` / `unresolved_ref` / `unknown_type` と並ぶ種別)。`number` のみが対象です: `bool`/`string` には自然な範囲という概念が無く、`string` の長さ上限や `list`/array の要素数上限は別の(まだ需要が実証されていない)話です。
 
-`tool`/`agent` ステップの `schema: NAME` キーは、その結果(`agent` の場合は parse された JSON 応答)が適合すべき登録済み schema を指定します — 不適合はステップを失敗させます。同じ DSL ドキュメント集合内で宣言された schema(独立した `schema:` ドキュメント)は、[ad-hoc な inline pipeline](#ad-hoc-inline-起動) でもこれを可能にするものです。その schema は同じ定義文字列と共に移動するためです。
+`tool`/`agent` ステップの `schema: NAME` キーは、その結果(`agent` の場合は parse された JSON 応答)が適合すべき登録済み schema を指定します — 不適合はステップを失敗させます。同じ DSL ドキュメント集合内で宣言された schema(独立した `schema:` ドキュメント)は、[ad-hoc な inline pipeline](#ad-hoc-inline) でもこれを可能にするものです。その schema は同じ定義文字列と共に移動するためです。
 
 ## 起動
 
@@ -518,7 +518,7 @@ pipeline を起動するツールは 4 つあります。いずれも同じ実�
 | `run_pipeline_inline` | inline、ad-hoc な `definition` 文字列 | 同期 — attached、terminal まで block |
 | `run_pipeline_inline_async` | inline、ad-hoc な `definition` 文字列 | 非同期 — detached、即座に返る |
 
-### 登録済み起動
+### 登録済み起動 {#registered-launch}
 
 `run_pipeline(name, input?)` と `run_pipeline_async(name, input?)` は登録された名前で pipeline を検索します([Pipeline registration](../../concepts/runtime/pipeline-registration.md)参照)。`input` は pipeline の最初のステップの初期 named context(`ctx.*`)をシードします — シード入力を必要としない pipeline では省略できます。登録されていない `name` は明確に失敗します。
 

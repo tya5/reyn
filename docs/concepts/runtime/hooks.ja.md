@@ -107,7 +107,7 @@ hooks:
 - **`template_push`** — 設定の Jinja2 テンプレートから組み立てるプッシュ指示。
 - **`exec`** — 純粋な副作用として実行するサンドボックス argv（出力は無視）。#3226 Phase 4 で `shell_exec` からリネーム(命名の誠実化のみ — セキュリティ上の変更ではない。この仕組みは元々 `/bin/sh -c <文字列>` を一度も実行しておらず、常に `shell=False` で argv を実行していた)。payload は **argv リストのみ**(クリーンブレイク — 文字列形式の後方互換は無い)。
 - **`exec_capture`** — **stdout が JSON プッシュ指示**であるサンドボックス argv。`template_push` と同じ経路でプッシュされます(違いは指示のソースのみ: キャプチャした stdout か Jinja2 レンダーか)。#3226 Phase 4 で `shell_push` からリネーム、同じく argv リストのみの payload。
-- **`pipeline_launch`** — 発火イベントのテンプレート変数からレンダリングした input で、登録済みの [pipeline](pipelines.ja.md) を起動します。詳細は下記の [Pipeline launch](#pipeline-起動pipeline_launch) を参照。
+- **`pipeline_launch`** — 発火イベントのテンプレート変数からレンダリングした input で、登録済みの [pipeline](pipelines.ja.md) を起動します。詳細は下記の [Pipeline launch](#pipeline-pipeline_launch) を参照。
 
 ## 4 つのケイパビリティ
 
@@ -119,11 +119,11 @@ hooks:
 
 ### E — 自己継続（`wake: true` のプッシュ）
 
-C と同じですが、`wake: true` フラグがランループに新しいターンを即座に開くよう指示します。これがフックの差別化ケイパビリティです: `turn_end` フックは人間の入力なしにエージェントを再起動できます。[ループバルブ](#ループバルブ) で制限されます。`template_push` または `exec_capture` が `wake: true` のときに生成されます。
+C と同じですが、`wake: true` フラグがランループに新しいターンを即座に開くよう指示します。これがフックの差別化ケイパビリティです: `turn_end` フックは人間の入力なしにエージェントを再起動できます。[ループバルブ](#loop-valve) で制限されます。`template_push` または `exec_capture` が `wake: true` のときに生成されます。
 
 ### F — 外部副作用（`exec`）
 
-サンドボックス内でコマンドを実行します。reyn は JSON イベントをコマンドの stdin に書き込み、stdout と stderr は**無視**します。外部状態の更新（ログエントリの書き込み・メトリクスの発信・Webhook へのポスト）に使います。安全モデルは [サンドボックス](#サンドボックス) を参照してください。
+サンドボックス内でコマンドを実行します。reyn は JSON イベントをコマンドの stdin に書き込み、stdout と stderr は**無視**します。外部状態の更新（ログエントリの書き込み・メトリクスの発信・Webhook へのポスト）に使います。安全モデルは [サンドボックス](#sandbox) を参照してください。
 
 ### 計算されたプッシュ（`exec_capture`）
 
@@ -144,7 +144,7 @@ hooks:
 
 - `name` — pipeline の登録名。ディスパッチ時に解決されます。登録されていない場合、フックは警告をログして起動をスキップします — ライフサイクル/外部イベントポイントは他のフック失敗と全く同様に、正常に完了します。
 - `input_template` — 任意。`dict` の場合、その文字列リーフ(再帰的に)がそれぞれテンプレート変数に対して Jinja2 レンダリングされます。プレーンな文字列の場合、一度レンダリングされ、その出力が JSON オブジェクトとしてパースされます(`exec_capture` の「stdout は JSON」契約を反映)。省略時は、pipeline は input なしで起動します。
-- **非同期 / detached** で、どのフックポイント(ライフサイクルでも `mcp_resource_updated` でも)からも動作します: 起動は [`run_pipeline_async`](../../reference/runtime/pipeline-dsl.ja.md#_6) と同じ経路です — フックは fire-and-continue し、pipeline は自身の crash-recoverable な driver-session で実行され、結果は後でこのセッション自身のインボックスに `pipeline_result` メッセージとして届きます。
+- **非同期 / detached** で、どのフックポイント(ライフサイクルでも `mcp_resource_updated` でも)からも動作します: 起動は [`run_pipeline_async`](../../reference/runtime/pipeline-dsl.ja.md#registered-launch) と同じ経路です — フックは fire-and-continue し、pipeline は自身の crash-recoverable な driver-session で実行され、結果は後でこのセッション自身のインボックスに `pipeline_result` メッセージとして届きます。
 
 ### クロスセッションプッシュ
 
@@ -181,7 +181,7 @@ hooks:
 
 各フックは独自の `try/except` ブロックでラップされます。フックの失敗はフック名に属して記録されますが、ライフサイクルポイントを中断したり LLM 出力に伝播したりしません。
 
-## ループバルブ
+## ループバルブ {#loop-valve}
 
 E（自己継続）は暴走するフック駆動セッションを防ぐために制限されています:
 
@@ -192,7 +192,7 @@ E（自己継続）は暴走するフック駆動セッションを防ぐため�
 
 バルブは障壁ではなく安全網です。適切に設計された自己継続フックはキャップに達する前に完了します。バルブはバグや予期しないワークフローの動作によって開きっぱなしになるループを捕捉します。
 
-## サンドボックス
+## サンドボックス {#sandbox}
 
 `exec`/`exec_capture` フックは、Control IR の `sandboxed_exec` op と同じバックエンド非依存のサンドボックス抽象化の中で実行されます: Seatbelt（macOS）、Landlock/seccomp（Linux）、Noop（非対応プラットフォーム）、またはコンテナバックエンド。
 
