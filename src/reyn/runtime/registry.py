@@ -297,6 +297,15 @@ class AgentRegistry:
         # recorded failure. Cleared at the top of `attach()` so a fresh
         # attach attempt is never shadowed by a stale prior failure.
         self._background_attach_error: str | None = None
+        # #3671 P4 item C-1: post-WAL-replay snapshots `restore_all(only_names
+        # =...)` deferred instead of building+running immediately — applied
+        # once, lazily, the first time `get_or_load` actually constructs that
+        # (name, DEFAULT_SID) session (an `attach()` or a delegation target's
+        # `ensure_running()`, both of which call `get_or_load`). Entries are
+        # POPPED on use, so a name that's never reached this run just never
+        # gets its Session built at all — the deferred cost, not just a
+        # delayed one.
+        self._pending_restore: "dict[tuple[str, str], AgentSnapshot]" = {}
         # Ensure default exists so `reyn chat` (no name) works out of the box.
         if not (self._dir / DEFAULT_AGENT_NAME / PROFILE_FILENAME).is_file():
             AgentProfile.new(DEFAULT_AGENT_NAME, role="").save(
@@ -1039,7 +1048,9 @@ class AgentRegistry:
                     sids.add(self._decode_sid_from_dir(child.name))
         return sorted(sids)
 
-    async def restore_all(self) -> dict[str, AgentSnapshot]:
+    async def restore_all(
+        self, *, only_names: "set[str] | None" = None
+    ) -> dict[str, AgentSnapshot]:
         """Reconstruct each known agent's runtime state from snapshot + WAL.
 
         Algorithm:
@@ -1059,6 +1070,29 @@ class AgentRegistry:
         re-materialises both substrates as-of-N — every startup path that calls
         ``restore_all`` gets crash-recovery by construction. No-op without a
         rewind record.
+
+        ``only_names`` (#3671 P4 item C-1): steps 1-4 (WAL replay + the
+        durable snapshot re-save) are UNCONDITIONAL regardless of this param —
+        every agent's on-disk snapshot is brought current either way, so
+        durability is unaffected. Only step 5's DEFAULT-session build
+        (``get_or_load`` + ``restore_state`` + ``ensure_running`` — a full
+        Session construction plus a live running task) is scoped: with
+        ``only_names`` given, an in-flight agent NOT in the set has its
+        post-replay snapshot stashed in ``self._pending_restore`` instead of
+        being built now; ``get_or_load`` applies it (``restore_state``, once)
+        the first time that agent is actually reached — an explicit
+        ``attach()``, or a delegation target via ``ensure_running()`` (both
+        call ``get_or_load`` internally) — never left un-hydrated, just
+        deferred to first real use. ``None`` (every caller except ``chat.py``,
+        e.g. ``mcp.py`` — which must be able to serve ANY agent name on
+        arbitrary MCP calls, not one known target) is the real, still-eager
+        behavior — not a compat default kept only to avoid a signature break.
+
+        Deliberately UNSCOPED by ``only_names``: a SPAWNED (non-default-sid)
+        session's build in step 5's other branch, and ``_rewake_pipeline_runs``
+        below — both genuinely separate mechanisms from the default-session
+        case above (see their own comments), narrowed out of this PR's scope
+        rather than bundled in.
         """
         if self._state_log is None:
             return {}
@@ -1142,6 +1176,12 @@ class AgentRegistry:
                     and not snap.outstanding_interventions):
                 continue
             if sid == _DEFAULT_SID:
+                # #3671 P4 item C-1: an in-flight agent OUTSIDE only_names is
+                # deferred — its snapshot is durably saved above already
+                # (step 4), so nothing is lost by not building+running it now.
+                if only_names is not None and name not in only_names:
+                    self._pending_restore[(name, sid)] = snap
+                    continue
                 session = self.get_or_load(name)
                 session.restore_state(snap)
                 await self.ensure_running(name)
@@ -2600,6 +2640,15 @@ class AgentRegistry:
         loader = getattr(session, "load_persisted_toggles", None)
         if callable(loader):
             loader()
+        # #3671 P4 item C-1: apply a deferred restore_all(only_names=...)
+        # snapshot on FIRST construction — this is the one place both
+        # `attach()` and `ensure_running()` (delegation targets) converge, so
+        # a single hook here covers both "first real use" triggers for the
+        # default session. Pop (not peek): applies exactly once per Session
+        # lifetime, same as the toggle-load above.
+        pending = self._pending_restore.pop((name, _DEFAULT_SID), None)
+        if pending is not None:
+            session.restore_state(pending)
         return session
 
     def _construct_session(

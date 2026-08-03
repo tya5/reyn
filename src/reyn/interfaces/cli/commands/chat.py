@@ -88,7 +88,12 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
     try:
         if not skip_restore:
             try:
-                await registry.restore_all()
+                # #3671 P4 item C-1: only THIS agent's in-flight state is
+                # built+run eagerly — every other in-flight agent's WAL
+                # replay still happens (durability unaffected) but its
+                # Session build is deferred to first real use (a later
+                # /attach or delegation), off this run's D0 critical path.
+                await registry.restore_all(only_names={name})
             except SchemaVersionError as e:
                 msg = f"background restore failed (schema mismatch): {e}"
                 logger.error(
@@ -671,7 +676,9 @@ def run(args: argparse.Namespace) -> None:
     async def _safe_restore() -> bool:
         """Returns True on success, False if the operator should retry."""
         try:
-            await registry.restore_all()
+            # #3671 P4 item C-1: only the target agent's in-flight state is
+            # built eagerly — see the sibling call in `_background_attach`.
+            await registry.restore_all(only_names={name})
             return True
         except SchemaVersionError as e:
             print(f"\nSchema version mismatch: {e}\n", file=sys.stderr)
