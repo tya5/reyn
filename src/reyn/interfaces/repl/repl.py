@@ -28,11 +28,22 @@ from .renderer import ChatRenderer
 logger = logging.getLogger(__name__)
 
 
-async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=None) -> None:
-    """Attach to the default agent (or pre-attached one) and run the REPL.
+async def run_repl(
+    registry: AgentRegistry, renderer: ChatRenderer, *, name: str, config=None
+) -> None:
+    """Run the REPL against ``registry``, targeting agent ``name``.
 
-    Caller is expected to have called `await registry.attach(name)` before
-    invoking this function so the user lands on a known agent.
+    #3671 P2: the caller no longer has to attach before calling this — the
+    client is allowed to render (and the user to see the shell) while
+    ``registry.attach(name)`` is still running in the background (restoring
+    WAL-derived state can take a while for a project with many in-flight
+    agents). Every seam below already tolerated an unattached registry
+    (``InProcessTransport``'s accessors guard on ``_attached() is None``,
+    ``_wire_focus_listeners(None)`` is a no-op, ``RegistryReadModel.snapshot``
+    returns ``None`` with nothing attached) — ``name`` (the caller's intended
+    target, known before attach can possibly succeed) replaces the
+    now-removed hard requirement that an attached :class:`Session` already
+    exist, purely for the banner / Textual app's own display label.
 
     ``config`` is the loaded ReynConfig (or None). When supplied it is threaded
     read-only to the status snapshot (``interfaces/repl/status.py``'s
@@ -46,10 +57,6 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=No
     the banner + renderer-loop selection + output loop identically for local and
     remote. Only the transport lifecycle and the cost summary stay here.
     """
-    attached = registry.attached_session()
-    if attached is None:
-        raise RuntimeError("run_repl requires an attached agent; call registry.attach() first")
-
     # The transport is the client's sole seam to the session. It composes the
     # two pre-existing render paths behind ONE unified frame stream:
     #  - the display outbox (session.outbox → forwarder → repl_outbox), and
@@ -78,7 +85,7 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer, *, config=No
             transport=transport,
             renderer=renderer,
             read_model=read_model,
-            agent_name=attached.agent_name,
+            agent_name=name,
             is_tty=sys.stdin.isatty(),
             config=config,
         )
