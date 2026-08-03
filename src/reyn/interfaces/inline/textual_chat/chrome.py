@@ -1152,21 +1152,39 @@ def pane_payload(
     return help_pane_lines(app_bindings)
 
 
-def status_line_text(snap: "dict | None", agent_name: str) -> str:
+def status_line_text(
+    snap: "dict | None", agent_name: str, *, attach_state: "str | None" = None
+) -> str:
     """The slim ``model │ agent │ cost │ ctx`` status-values line, from the live
     status snapshot (F5b: the running cost + context percent are visible here even
-    when the drawer is closed). Falls back to the threaded ``agent_name`` and
-    ``—``/``$0.0000``/``—`` when no snapshot is available yet (pre-session).
+    when the drawer is closed).
 
-    #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on a
-    persistent durability failure — ``Session.halted_reason``), a ``HALTED``
-    banner segment is PREPENDED ahead of the usual values — this line is the
-    ONE always-visible (never-collapsed) chrome region, so it is the surface an
-    idle operator (not currently submitting anything) will proactively see the
-    halt on, rather than only learning it from the next op's raised
-    ``DurabilityHaltError``. Purely observability — the halt itself is already
-    enforced synchronously elsewhere (``_fail_stop_if_durability_dead`` /
-    ``run_one_iteration``); this never gates or delays anything."""
+    ``attach_state`` (#3671 P3): ``"connecting"`` / ``"failed"`` / ``None``
+    (attached — the ordinary case). Owner ruling: "not yet attached" and
+    "this is the answer" must never render as the same thing, so a non-``None``
+    ``attach_state`` short-circuits BEFORE any ``model``/``cost``/``ctx`` field
+    is read — there is no attached session behind those numbers yet, so this
+    never risks rendering a placeholder (``$0.0000`` / ``—``) that could be
+    misread as a real, confirmed value. ``"connecting"`` and ``"failed"``
+    render VISIBLY DIFFERENT text (not merely different in a way only a log
+    reader would notice) — a permanently-``"connecting"``-looking client on a
+    genuine failure is exactly what the owner ruling forbids.
+    """
+    if attach_state == "connecting":
+        return f"⏳ connecting… │ agent {agent_name}"
+    if attach_state == "failed":
+        return f"✗ attach failed (see log) │ agent {agent_name}"
+
+    # #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on
+    # a persistent durability failure — ``Session.halted_reason``), a
+    # ``HALTED`` banner segment is PREPENDED ahead of the usual values — this
+    # line is the ONE always-visible (never-collapsed) chrome region, so it is
+    # the surface an idle operator (not currently submitting anything) will
+    # proactively see the halt on, rather than only learning it from the next
+    # op's raised ``DurabilityHaltError``. Purely observability — the halt
+    # itself is already enforced synchronously elsewhere
+    # (``_fail_stop_if_durability_dead`` / ``run_one_iteration``); this never
+    # gates or delays anything.
     snap = snap or {}
     model = snap.get("model_active_class") or snap.get("model") or "—"
     agent = snap.get("attached_name") or agent_name

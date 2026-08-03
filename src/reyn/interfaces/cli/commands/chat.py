@@ -76,14 +76,12 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
     (not a nested closure) so it is independently testable — see
     ``tests/test_startup_client_before_attach_3671_p2.py``.
 
-    #3671 P2 review (lead-coder): today a failure here is genuinely
-    invisible to the operator — ``_setup_interactive_logging`` (below)
-    routes this logger to a file, not the screen, so the client is left
-    silently waiting forever with ``has_session() == False``. That is a
-    real UX gap, but distinguishing "still connecting" from "failed"
-    on-screen is a ``has_session()``-*consuming* UI concern, i.e. P3's
-    scope (P2 is the ordering change only, no UI touched). Recorded as a
-    P3 requirement, not fixed here.
+    #3671 P3: this now ALSO calls ``registry.record_background_attach_error``
+    on every failure path (in addition to logging), so a client reading
+    ``ClientTransport.attach_failed()`` can distinguish "still connecting"
+    from "gave up" on screen — closing the P2-review-recorded UX gap
+    (``_setup_interactive_logging`` routes this logger to a file, not the
+    screen, so the log line alone was never operator-visible).
     """
     from reyn.core.events.agent_snapshot import SchemaVersionError
 
@@ -92,17 +90,20 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
             try:
                 await registry.restore_all()
             except SchemaVersionError as e:
+                msg = f"background restore failed (schema mismatch): {e}"
                 logger.error(
-                    f"background restore failed (schema mismatch): {e} — "
-                    "client stays up with no attached agent; rerun after resolving it"
+                    f"{msg} — client stays up with no attached agent; "
+                    "rerun after resolving it"
                 )
+                registry.record_background_attach_error(msg)
                 return
         await registry.attach(name)
-    except Exception:
+    except Exception as e:
         logger.exception(
             "#3671 P2: background restore/attach failed — "
             "client stays up with no attached agent"
         )
+        registry.record_background_attach_error(f"{type(e).__name__}: {e}")
 
 
 def register(sub) -> None:
