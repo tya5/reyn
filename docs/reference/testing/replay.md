@@ -281,5 +281,11 @@ Mode resolution:
 | Condition | Mode |
 |---|---|
 | `REYN_LLM_RECORD=1` in env | `"record"` |
-| Fixture file does not exist | `"record"` (first-run bootstrap) |
 | Otherwise | `"replay"` |
+
+#3662: a missing fixture file no longer falls back to `"record"` mode on its
+own — first-run fixture generation and re-recording are now the same
+explicit step (`REYN_LLM_RECORD=1`). A `"replay"`-mode test whose fixture
+file does not exist fails at fixture setup, before `LLMReplay.install()`
+runs, with the exact command to re-run (never a silent, unauthorized real
+network call — see `reyn.dev.testing.network_gate`).

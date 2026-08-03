@@ -38,12 +38,29 @@ Installed once per pytest session (``pytest_configure``, wired from
 ``LLM_NETWORK_BOUNDARY_ATTRS`` is wrapped. A call reaching the wrapper means
 one of two things happened:
 
-1. The test is ``@pytest.mark.replay``-pinned: ``LLMReplay.install()`` has
-   already REPLACED this wrapper for the test's duration (see
-   ``tests/conftest.py::_llm_replay``) — the wrapper is not even in the call
-   path, so this module never sees the call.
-2. The test is NOT replay-pinned. The wrapper checks whether the currently
-   running test carries ``@pytest.mark.allow_real_network(reason=...)``. If
+1. The test is ``@pytest.mark.replay``-pinned AND in replay mode:
+   ``LLMReplay.install()`` has already REPLACED this wrapper for the test's
+   duration (see ``tests/conftest.py::_llm_replay``) — the wrapper is not
+   even in the call path, so this module never sees the call. (In replay
+   mode a cache miss raises ``MissingFixture`` from ``LLMReplay`` itself,
+   never reaching a real socket either.)
+2. The test is ``@pytest.mark.replay``-pinned AND ``REYN_LLM_RECORD=1`` is
+   set (record mode): ``LLMReplay._record()``/``_record_embedding()`` call
+   back into what they captured as "the original litellm.<attr>" — which,
+   with this gate installed FIRST (``pytest_configure`` runs before any
+   test's ``_llm_replay`` fixture), IS this wrapper. The wrapper checks
+   ``os.environ.get("REYN_LLM_RECORD") == "1"`` directly and forwards to the
+   real litellm function — the ONE case #3451 built this bootstrap path for.
+   #3662 correction: earlier, ``@pytest.mark.replay`` PRESENCE alone (marker
+   check, not the env var) was treated as this same authorization — on the
+   theory that a fixture file merely being absent was equivalent to an
+   operator-invoked recording. It was not: #3451's own bootstrap reason is
+   about record mode calling itself, not about why a fixture is missing, and
+   a missing/deleted/corrupted fixture is not evidence of operator intent.
+   That path let a real, unpinned call through silently (#3660/#3662).
+3. The test is NOT replay-pinned (or is replay-pinned but not currently
+   recording). The wrapper checks whether the currently running test carries
+   ``@pytest.mark.allow_real_network(reason=...)``. If
    not, it raises ``UnpinnedNetworkReach`` instead of letting the call reach
    a real socket — turning #3445's silent 38 into a loud, attributable
    failure. If it does carry the marker, the call is forwarded to the real
@@ -147,18 +164,32 @@ def _make_gate(attr: str, original: Any):
     @functools.wraps(original)
     async def _gate(*args: Any, **kwargs: Any) -> Any:
         node = _current_node
-        replay_marker = node.get_closest_marker("replay") if node is not None else None
-        if replay_marker is not None:
+        if os.environ.get("REYN_LLM_RECORD") == "1":
             # #3451 record-mode bootstrap: `LLMReplay._record()` calls back
             # into what it captured as "the original litellm.<attr>" — which,
             # with this gate installed, IS this wrapper (install() runs before
-            # any test's `_llm_replay` fixture). A `@replay`-marked test
-            # recording its first fixture (REYN_LLM_RECORD=1, or a missing
-            # fixture file — see tests/conftest.py::_llm_replay) is an
-            # intentional, operator-invoked real call; the marker itself is
-            # the authorization, no separate `allow_real_network` needed and
-            # no registry bookkeeping (this is not the exception REGISTRY,
-            # it's the fixture-generation workflow @replay already owns).
+            # any test's `_llm_replay` fixture). Without letting THIS ONE
+            # signal through, an operator-invoked recording run would block
+            # itself. `REYN_LLM_RECORD=1` is that signal: the operator typed
+            # it, so it is an intentional, operator-invoked real call.
+            #
+            # #3662: this used to ALSO treat `node.get_closest_marker("replay")
+            # is not None` as authorization on its own — on the theory that a
+            # test merely CARRYING the marker, with its fixture file missing,
+            # was equivalent to an operator-invoked recording (the comment
+            # here used to read "REYN_LLM_RECORD=1, or a missing fixture
+            # file"). It was not: the bootstrap constraint above is about
+            # RECORD MODE calling itself, not about a fixture happening to be
+            # absent. A test can carry `@pytest.mark.replay` and have its
+            # fixture deleted or corrupted by an accident that has nothing to
+            # do with operator intent (#3660's fixture-dependence audit
+            # deleted one to test it) — the marker-based check let that real
+            # call through silently, swallowed by litellm's own retry/backoff,
+            # the test staying green. Of #3451's one named reason (the
+            # bootstrap self-block above), only the `REYN_LLM_RECORD=1` half
+            # was ever actually derived from it; "a missing fixture file" was
+            # listed alongside it without its own justification. Gating on
+            # the explicit env var only closes that half.
             return await original(*args, **kwargs)
 
         marker = node.get_closest_marker(ALLOW_MARKER_NAME) if node is not None else None

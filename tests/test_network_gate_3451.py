@@ -152,3 +152,90 @@ def test_allow_marked_without_reason_is_rejected(
         tmp_path / "events.jsonl",
     )
     result.assert_outcomes(failed=1)
+
+
+# ── #3662: @replay marker presence must NOT itself authorize a real reach ───
+#
+# The gate used to treat `node.get_closest_marker("replay") is not None` as
+# authorization on its own (the #3451 bootstrap rationale: record mode calls
+# back into what it captured as "the original litellm.<attr>", which with
+# this gate installed IS this wrapper, so letting record-mode through is what
+# stops recording from blocking itself). That rationale only justifies the
+# EXPLICIT, operator-typed `REYN_LLM_RECORD=1` signal — a test merely
+# CARRYING the marker says nothing about operator intent (its fixture could
+# be missing/corrupted by accident, #3660/#3662). These two tests assert
+# behaviourally (does a real connection get attempted — a refused loopback
+# port surfaces its OWN connection-refused error distinct from
+# UnpinnedNetworkReach) rather than on message text (Tier 4).
+
+
+def test_replay_marker_alone_no_longer_authorizes_a_real_reach(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    """Tier 1: #3662 — a test carrying @pytest.mark.replay, with
+    REYN_LLM_RECORD unset, must be rejected by the gate the same as any
+    other unpinned test. Before the fix this reached a real loopback
+    connection attempt (proven by the refused-port error surfacing instead
+    of UnpinnedNetworkReach); after the fix UnpinnedNetworkReach fires
+    BEFORE any socket is touched."""
+    monkeypatch.delenv("REYN_LLM_RECORD", raising=False)
+    result = _run_inner(
+        pytester,
+        monkeypatch,
+        """
+        import pytest
+        from reyn.dev.testing.network_gate import UnpinnedNetworkReach
+
+        @pytest.mark.replay("fixtures/llm/nonexistent/doesnt_matter.jsonl")
+        async def test_reach():
+            import litellm
+            with pytest.raises(UnpinnedNetworkReach):
+                await litellm.acompletion(
+                    model="openai/gpt-4o-mini",
+                    messages=[{"role": "user", "content": "hi"}],
+                    api_base="http://127.0.0.1:9",
+                    api_key="dummy",
+                    num_retries=0,
+                )
+        """,
+        tmp_path / "events.jsonl",
+    )
+    result.assert_outcomes(passed=1)
+
+
+def test_record_env_var_still_authorizes_the_bootstrap_reach(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    """Tier 1: #3662 — the ONE real constraint #3451 named (record mode calls
+    back into its own captured "original", which with this gate installed IS
+    the gate wrapper) must still work: REYN_LLM_RECORD=1 lets a call through
+    regardless of any marker. Proven by the refused-port error surfacing
+    (real reach happened) rather than UnpinnedNetworkReach. If this test
+    ever goes red, fixture generation itself is broken — no "probably still
+    works"."""
+    monkeypatch.setenv("REYN_LLM_RECORD", "1")
+    result = _run_inner(
+        pytester,
+        monkeypatch,
+        """
+        import pytest
+        from reyn.dev.testing.network_gate import UnpinnedNetworkReach
+
+        async def test_reach():
+            import litellm
+            try:
+                await litellm.acompletion(
+                    model="openai/gpt-4o-mini",
+                    messages=[{"role": "user", "content": "hi"}],
+                    api_base="http://127.0.0.1:9",
+                    api_key="dummy",
+                    num_retries=0,
+                )
+            except UnpinnedNetworkReach:
+                raise
+            except Exception:
+                pass  # any OTHER exception (refused connection) is expected
+        """,
+        tmp_path / "events.jsonl",
+    )
+    result.assert_outcomes(passed=1)

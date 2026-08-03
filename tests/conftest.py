@@ -20,8 +20,12 @@ Environment variables
     OTHER test's entries untouched, so re-running one test under
     ``REYN_LLM_RECORD=1`` does not erase its siblings' recordings.
 
-Record mode is also activated automatically when a fixture file is missing
-(first-run bootstrap).
+#3662: a missing fixture file no longer activates record mode automatically.
+First-run fixture creation is now the SAME explicit step as re-recording:
+run with ``REYN_LLM_RECORD=1``. A fixture missing for any OTHER reason (an
+accidental delete, a bad rebase) used to fall back to a real, unauthorized
+network call instead of a loud, attributable failure — see
+``reyn.dev.testing.network_gate``'s module docstring and #3660/#3662.
 
 Environment identity
 --------------------
@@ -429,14 +433,21 @@ def _llm_replay(request: pytest.FixtureRequest):
     fixture_path = Path(__file__).parent / fixture_rel
 
     force_record = os.environ.get("REYN_LLM_RECORD") == "1"
-    mode: str
-    if force_record:
-        mode = "record"
-    elif not fixture_path.exists():
-        # First-run: no fixture yet — record automatically.
-        mode = "record"
-    else:
-        mode = "replay"
+    mode: str = "record" if force_record else "replay"
+
+    # #3662: a missing fixture file used to auto-activate record mode — the
+    # convenience of "write a new @replay test, run it, fixture appears"
+    # doubled as a silent fallback to a real, unauthorized network call for
+    # a fixture missing for any OTHER reason. Fail loud here, before
+    # `LLMReplay.install()` ever runs, with the exact next command — first-run
+    # creation is now the SAME explicit step as re-recording.
+    if not force_record and not fixture_path.exists():
+        pytest.fail(
+            f"Replay fixture not found: {fixture_path}\n"
+            f"Re-run with: REYN_LLM_RECORD=1 python -m pytest {request.node.nodeid}\n"
+            "(this makes a real LLM call and writes the fixture — #3662: a "
+            "missing fixture no longer records automatically)."
+        )
 
     from reyn.dev.testing.replay import LLMReplay
 
