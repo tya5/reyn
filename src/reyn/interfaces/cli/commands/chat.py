@@ -534,6 +534,14 @@ def run(args: argparse.Namespace) -> None:
         interactive=sys.stdin.isatty(),
     )
 
+    # #3671 P4 item A: computed ONCE and captured by both consumers below
+    # (`_session_factory`'s per-agent build AND the `AgentRegistry`
+    # constructor) — `from_config` rebuilds the pipeline/presentation/skill
+    # registries from disk each call; the two call sites were passing the
+    # exact same `(session_cfg.config, project_root)` pair and doing that
+    # I/O twice for an identical result.
+    factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
+
     def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # Captured CLI defaults — registry doesn't need to know them.
         # #1827 S3: resolve the agent's topology capability_profile → contextual
@@ -576,7 +584,7 @@ def run(args: argparse.Namespace) -> None:
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / action_retrieval / embedding / router / retry /
             # tool-use-scheme) — one source point for all five sites.
-            factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
+            factory_config=factory_config,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
@@ -632,7 +640,7 @@ def run(args: argparse.Namespace) -> None:
         state_log=state_log,
         # #2093: the uniform reyn.yaml-derived registry config bundle
         # (delegation_capability_default) — one source point.
-        factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
+        factory_config=factory_config,
     )
 
     name = args.agent_name or DEFAULT_AGENT_NAME
