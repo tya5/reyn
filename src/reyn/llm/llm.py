@@ -647,30 +647,45 @@ class LLMToolCallResult:
 # Retryable: infrastructure / transient errors where the same call may succeed.
 # Non-retryable: semantic / auth / quota errors (4xx) where retry won't help.
 # Resolved lazily so importing this module does not trigger `import litellm`.
+# #3671 P1: single check-then-set on ONE global holding the complete tuple —
+# already the correct shape (see ``_get_retryable_litellm_exceptions``'s own
+# docstring below), no lock needed: the checked value and the assigned
+# value are the SAME variable, assigned in one atomic STORE, so a reader
+# only ever observes ``None`` or the fully-built tuple, never a partial one.
 _RETRYABLE_LITELLM_EXCEPTIONS: tuple | None = None
 
 # Resolved lazily so importing this module does not trigger `import httpx` (its
 # CLI pretty-printing subtree — rich.progress / rich.syntax / pygments — costs
 # ~90ms and reyn never invokes it; cold-start sweep companion to #2930's
 # litellm chokepoint, see litellm_bootstrap.py's module docstring).
-_HTTPX_READ_TIMEOUT_EXC: "type[BaseException] | None" = None
-_HTTPX_CONNECT_ERROR_EXC: "type[BaseException] | None" = None
+#
+# #3671 P1: this used to be TWO separate globals (`_HTTPX_READ_TIMEOUT_EXC` /
+# `_HTTPX_CONNECT_ERROR_EXC`), checked via ONE of them directly — the same
+# "invariant split across two variables" bug shape as the version of
+# ``ensure_litellm_ready`` lead-coder found, not a mere missing lock: a
+# thread scheduled between the two assignment statements could hand a
+# concurrent caller a tuple with one member still ``None`` (a caller doing
+# ``isinstance(exc, connect_err_type)`` with ``connect_err_type is None``
+# raises ``TypeError``, not a clean non-match). Adding a lock around the
+# two-variable version would only have hidden this, not fixed it, per owner
+# directive (prefer a non-lock fix that removes the actual defect over
+# excluding around it). The real fix: ONE global holding the complete pair,
+# assigned in a single atomic STORE — same shape as
+# `_RETRYABLE_LITELLM_EXCEPTIONS` above.
+_HTTPX_EXC_TYPES: "tuple[type[BaseException], type[BaseException]] | None" = None
 
 
 def _get_httpx_exc_types() -> "tuple[type[BaseException], type[BaseException]]":
     """Return ``(httpx.ConnectError, httpx.ReadTimeout)``, loading httpx lazily.
 
-    Cached in _HTTPX_CONNECT_ERROR_EXC / _HTTPX_READ_TIMEOUT_EXC after first call.
-    Kept as two distinct classes (not a pre-built isinstance tuple) so callers
-    can select only the subset they mean — e.g. ``_is_llm_timeout_exc`` cares
-    about ReadTimeout only, not ConnectError.
+    Cached in ``_HTTPX_EXC_TYPES`` after first call — see that global's own
+    comment for why it is ONE tuple, not two separate globals (#3671 P1).
     """
-    global _HTTPX_READ_TIMEOUT_EXC, _HTTPX_CONNECT_ERROR_EXC
-    if _HTTPX_READ_TIMEOUT_EXC is None:
+    global _HTTPX_EXC_TYPES
+    if _HTTPX_EXC_TYPES is None:
         import httpx  # noqa: PLC0415
-        _HTTPX_READ_TIMEOUT_EXC = httpx.ReadTimeout
-        _HTTPX_CONNECT_ERROR_EXC = httpx.ConnectError
-    return _HTTPX_CONNECT_ERROR_EXC, _HTTPX_READ_TIMEOUT_EXC
+        _HTTPX_EXC_TYPES = (httpx.ConnectError, httpx.ReadTimeout)
+    return _HTTPX_EXC_TYPES
 
 def _env_num(name: str, default: "int | float", lo: "int | float", hi: "int | float",
              cast):
@@ -931,6 +946,14 @@ def _get_retryable_litellm_exceptions() -> tuple:
     """Return the tuple of retryable litellm exceptions, loading litellm lazily.
 
     Cached in _RETRYABLE_LITELLM_EXCEPTIONS after first call.
+
+    #3671 P1: unsynchronized check-then-set, deliberately left without a
+    lock (owner directive: no lock without a real correctness need) — the
+    checked global and the assigned global are the SAME variable, in one
+    atomic STORE, so a concurrent reader only ever observes ``None`` or the
+    complete tuple. A concurrent racer can redundantly rebuild the tuple
+    (import litellm + reconstruct it again), never observe a wrong or
+    partial value.
     """
     global _RETRYABLE_LITELLM_EXCEPTIONS
     if _RETRYABLE_LITELLM_EXCEPTIONS is None:
