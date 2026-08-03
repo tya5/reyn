@@ -7,6 +7,8 @@ instances; switching agents mid-REPL via `/attach <name>` happens through it.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -19,6 +21,8 @@ from reyn.runtime.turn_origin import TurnOrigin
 
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
+
+logger = logging.getLogger(__name__)
 
 # #187: send_to_agent_impl timeout for the one-shot (`reyn run-once`) drive. The
 # autonomous SWE agent may iterate for many minutes; the external bound is the
@@ -646,30 +650,65 @@ def run(args: argparse.Namespace) -> None:
         )
     )
 
-    async def _main_chat() -> None:
-        # PR21: replay WAL into per-agent snapshots before any new state
-        # changes happen. Agents with restored state get their inbox /
-        # pending_chains repopulated and their main loop started here.
-        # PR-resume-ux β U3: --no-restore skips this for debugging.
-        # PR-resume-ux β U4: clean exit on schema version mismatch.
+    async def _restore_and_attach() -> bool:
+        """Returns True on success, False if the operator should retry (schema
+        mismatch — the caller does `sys.exit(1)`, only valid for the one-shot
+        path; the interactive path below treats a False here as "stay up with
+        no session", see `_background_attach`)."""
         if not skip_restore:
             if not await _safe_restore():
-                sys.exit(1)
+                return False
         await registry.attach(name)
-        # #187: one-shot mode (`reyn run-once`). The scoped session built above
-        # (grant / exclude_tools / env_backend / high router_max_iterations) is
-        # now ATTACHED in the registry. Instead of the line-by-line REPL, read
-        # the WHOLE stdin as a single user message and drive the agent to
-        # completion via send_to_agent_impl — the same programmatic drive MCP /
-        # A2A use (registry.get_or_load returns this attached scoped session, no
-        # fresh unscoped build), then print the final reply and exit.
+        return True
+
+    async def _background_attach() -> None:
+        """#3671 P2: run restore_all()+attach() OFF the render path so the
+        client can come up (and the user can see the shell) while a
+        project with many in-flight agents is still replaying WAL state —
+        previously this ran synchronously before `run_repl` even started,
+        putting every in-flight agent's full Session construction on the
+        startup critical path. `run_repl` already tolerates
+        `has_session() == False` for as long as this takes (#3671 P2). Any
+        failure here is caught and logged, not raised — the whole point of
+        moving this off the critical path is that the client must survive a
+        restore/attach failure instead of never having started."""
+        try:
+            if not await _restore_and_attach():
+                logger.error(
+                    "background restore failed (schema mismatch) — "
+                    "client stays up with no attached agent; rerun after resolving it"
+                )
+        except Exception:
+            logger.exception(
+                "#3671 P2: background restore/attach failed — "
+                "client stays up with no attached agent"
+            )
+
+    async def _main_chat() -> None:
         if getattr(args, "once", False):
-            # #2783: this branch used to return (or sys.exit) with NO teardown of
-            # any kind — unlike run_repl (below), which always routes through
-            # registry.shutdown() on /quit/EOF. That left MCP connections,
-            # FsWatcher, StateLog and EventStore all unclosed on every
-            # `reyn run-once` invocation. try/finally so a limit-abort's
-            # sys.exit(2) still runs teardown before the process exits.
+            # #187: one-shot mode (`reyn run-once`) keeps the old synchronous
+            # ordering — there is no client to render early for a one-shot
+            # run, and `_run_once` needs a fully attached session regardless.
+            # PR21/PR-resume-ux β U3/U4: replay WAL into per-agent snapshots
+            # before any new state changes happen; clean exit on schema
+            # mismatch.
+            if not await _restore_and_attach():
+                sys.exit(1)
+            # #187: the scoped session built above (grant / exclude_tools /
+            # env_backend / high router_max_iterations) is now ATTACHED in
+            # the registry. Instead of the line-by-line REPL, read the WHOLE
+            # stdin as a single user message and drive the agent to
+            # completion via send_to_agent_impl — the same programmatic
+            # drive MCP / A2A use (registry.get_or_load returns this
+            # attached scoped session, no fresh unscoped build), then print
+            # the final reply and exit.
+            # #2783: this branch used to return (or sys.exit) with NO
+            # teardown of any kind — unlike run_repl (below), which always
+            # routes through registry.shutdown() on /quit/EOF. That left MCP
+            # connections, FsWatcher, StateLog and EventStore all unclosed
+            # on every `reyn run-once` invocation. try/finally so a
+            # limit-abort's sys.exit(2) still runs teardown before the
+            # process exits.
             try:
                 _once_result = await _run_once(registry, name)
                 sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
@@ -682,6 +721,19 @@ def run(args: argparse.Namespace) -> None:
             finally:
                 await registry.shutdown()
             return
-        await run_repl(registry, renderer=renderer, config=session_cfg.config)
+
+        # #3671 P2: restore_all()+attach() run in the BACKGROUND — run_repl
+        # is started immediately, before either has necessarily finished
+        # (has_session() reads False on the transport until `attach`
+        # completes). Awaited in `finally` below (not cancelled): cancelling
+        # mid-`restore_all` could interrupt a WAL replay / snapshot write
+        # partway through, so the exit path waits for whatever amount of the
+        # background work is still in flight rather than risking that.
+        attach_task = asyncio.create_task(_background_attach())
+        try:
+            await run_repl(registry, renderer=renderer, config=session_cfg.config, name=name)
+        finally:
+            with contextlib.suppress(asyncio.CancelledError):
+                await attach_task
 
     run_async(_main_chat())
