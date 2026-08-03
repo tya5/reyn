@@ -24,12 +24,23 @@ Coverage caveat (measured, not assumed): grouping requires each entry's
 #3473 ``key_components`` fingerprint. An entry recorded before #3473 carries
 none and cannot be grouped precisely — ``replay_stacking.stacked_groups``
 silently excludes it rather than guessing, so a pre-#3473 fixture that
-happens to ALSO be stacked would report zero groups here. As of #3634, 32 of
-the 34 committed fixture files under ``tests/fixtures/llm`` predate #3473 and
-are therefore UNMEASURABLE by this gate (not "measured clean") — every
-fixture recorded or re-recorded from here on carries the fingerprint, so this
-gap only affects fixtures nobody has touched since #3473 landed and it
-shrinks every time one of those is legitimately re-recorded.
+happens to ALSO be stacked would report zero groups here. #3645 deleted the
+26 pre-#3473 fixtures that were orphaned (no owning test); of the 8 that
+remained, a follow-up (delete-first, re-record — the automatic replace in
+``LLMReplay.flush`` cannot reap a pre-#3473 on-disk entry, since it has no
+``key_components`` to group by, so an in-place re-record without deleting
+first would itself have stacked) brought 3 to measured-clean
+(``intervention_guard/safety_limit_no_listener.jsonl``,
+``llm_tools/text_only.jsonl``, ``llm_tools/tool_call.jsonl``). The remaining
+3 (``skill_install/config_write_bus_approves.jsonl``,
+``skill_install/hotreload_no_per_session_reloader.jsonl``,
+``skill_install/unset_turn_origin_fails_safe.jsonl``) will SKIP permanently,
+not as a residual gap: they hold embedding calls only, and #3634's stacking
+mode requires a ``tools`` schema, which an embedding call never carries — see
+the ``iter_completion_entries`` check below, which distinguishes "no
+completion entries, not applicable" from "completion entries present but
+unfingerprinted" so this permanent skip is never mistaken for unfinished
+work.
 """
 from __future__ import annotations
 
@@ -37,7 +48,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.dev.testing.replay_stacking import has_fingerprinted_entries, stacked_groups
+from reyn.dev.testing.replay_stacking import (
+    has_fingerprinted_entries,
+    iter_completion_entries,
+    stacked_groups,
+)
 
 _FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "llm"
 _FIXTURE_FILES = sorted(_FIXTURES_ROOT.rglob("*.jsonl"))
@@ -59,6 +74,13 @@ def test_fixture_holds_no_stacked_generations(fixture_path: Path) -> None:
     legacy fixture read as verified.
     """
     if not has_fingerprinted_entries(fixture_path):
+        if not iter_completion_entries(fixture_path):
+            pytest.skip(
+                f"{fixture_path.name} holds no completion entries (embedding-"
+                "only fixture) — the stacking failure mode #3634 gates does "
+                "not apply: an embedding call has no `tools`, the one "
+                "component a schema change moves."
+            )
         pytest.skip(
             f"{fixture_path.name} predates #3473 (no key_components "
             "fingerprint on any entry) — stacking cannot be precisely "

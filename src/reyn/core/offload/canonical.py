@@ -88,6 +88,23 @@ class CanonicalToolResult(TypedDict, total=False):
     meta: dict
     content_type: "str | None"
 
+    # #3629 — an OPTIONAL persist-only alternate to ``text``. When present, the
+    # router-loop tool-result assembly persists THIS to ``history.jsonl``
+    # instead of the (possibly-capped, rendered) ``text`` — never both, never
+    # neither: absent means "persist the same thing as this turn shows",
+    # exactly every OTHER mapper's existing behavior (byte-identical, zero
+    # change). ``load_skill_to_canonical`` is the one mapper that sets it, so
+    # a skill body's location tokens (``${REYN_SKILL_DIR}``/
+    # ``${REYN_PLUGIN_ROOT}``) can be persisted literal (never baked to an
+    # absolute value) while ``text`` still shows the model the fully-resolved
+    # path THIS turn. ``history_meta`` rides alongside it — NEVER copied into
+    # the visible ``meta``/frontmatter (that would put it in front of the
+    # model); the router loop stashes it directly on the persisted
+    # ``ChatMessage.meta`` instead (never sent over the wire, see
+    # ``chat_message.py``'s meta-key docstrings).
+    history_text: str
+    history_meta: dict
+
 
 # A canonical mapper: an invoked producer's raw result dict → the canonical shape.
 CanonicalMapper = Callable[[dict], CanonicalToolResult]
@@ -745,14 +762,36 @@ def load_skill_to_canonical(result: dict) -> CanonicalToolResult:
 
     SUCCESS shape only — FP-0056 v2 piece #1 routes any error (``status``
     error/not_found, which carries an ``error`` field) through the shared
-    ``error_to_canonical`` seam before this mapper runs."""
+    ``error_to_canonical`` seam before this mapper runs.
+
+    #3629: when ``load_skill``'s op result carries ``content_history`` (only
+    when a provenance class matched, ``reyn.core.op_runtime.load_skill``'s
+    own gate), this mapper ALSO sets ``history_text``/``history_meta`` — the
+    persist-safe body (location tokens left literal) + the token map/source
+    path a later wire-serialise re-resolves fresh from
+    (``router_history_buffer.py`` /
+    ``reyn.plugins.skill_load.refresh_location_tokens``). ``text`` stays the
+    fully-expanded body regardless — the model reads exactly what it always
+    did THIS turn; only what gets PERSISTED differs."""
     meta: dict[str, Any] = {}
     for key in ("path", "status", "truncated", "total_chars"):
         value = result.get(key)
         if value is not None:
             meta[key] = value
     text = _explicit_empty(result.get("content", "") or "", "(empty skill body)", meta)
-    return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
+    canonical: CanonicalToolResult = {
+        "text": text, "attachments": [], "source_ref": None, "meta": meta,
+    }
+    content_history = result.get("content_history")
+    if content_history is not None:
+        canonical["history_text"] = _explicit_empty(
+            content_history, "(empty skill body)", {},
+        )
+        canonical["history_meta"] = {
+            "token_map": result.get("token_map") or {},
+            "skill_source_path": result.get("skill_source_path"),
+        }
+    return canonical
 
 
 def reyn_repo_to_canonical(result: dict) -> CanonicalToolResult:

@@ -43,9 +43,24 @@ emitted on rejection (no state change occurred).
 
 On a successful apply, `config_reloaded` is emitted with:
 
-- `source` — `"operator"` (from `/reload`) or `"llm_op"` (from `hooks_add`)
+- `source` — the triggering caller: `"operator"` (`/reload`), `"llm_op"`
+  (`hooks_add`), `"spawn_refresh"` (`apply_all`, the ephemeral/spawn
+  action-boundary), or an install op's own label (`"pipeline_install"`,
+  `"skill_install"`, `"presentation_install"`, `"mcp_install"`,
+  `"mcp_install_local"`)
 - `components` — list of changed seam names
 - `failed` — list of seam names that raised
+- `detail` (#3636, optional, default `None`) — a single-entity qualifier an
+  install call site may supply (e.g. the specific pipeline/skill/server name),
+  threaded through `HotReloader.apply_now`/`request_reload` via
+  `dispatch_install_reload`'s `detail=` kwarg. Without it, two DIFFERENT
+  installs of the same `source` kind in quick succession (e.g. a plugin
+  bundling two pipelines) emit two correct-but-indistinguishable
+  `config_reloaded` events that collapse to byte-identical `state_change`
+  history text — an adjacent-duplicate-shaped artifact of lost resolution,
+  not an actual double-write (see the session.py
+  `_STATE_CHANGE_EVENT_MAPPINGS["config_reloaded"]` formatter, which folds
+  `detail` into the summary when present).
 
 Every config change is an evented, replay-capable state change (P6).
 

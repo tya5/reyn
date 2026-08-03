@@ -667,10 +667,27 @@ async def _register_mcp(
         is_addition = is_pure_addition(name, servers)
         reloader = getattr(ctx, "hot_reloader", None)
         if is_addition and reloader is not None:
-            probe_err = await probe_mcp_server(
-                name, entry, agent_id=getattr(ctx, "agent_id", None),
-                cancel_event=getattr(ctx, "cancel_event", None),
-            )
+            try:
+                probe_err = await probe_mcp_server(
+                    name, entry, agent_id=getattr(ctx, "agent_id", None),
+                    cancel_event=getattr(ctx, "cancel_event", None),
+                    # #3552: this is the THIRD sibling call site sharing
+                    # probe_mcp_server's pre-#3552 hole (a live connection to a
+                    # plugin-declared server name before mcp.yaml is
+                    # authoritative, with no MCP-axis gate at all). Threading
+                    # the resolver/bus/contextual here is what turns the fix
+                    # on for plugin-bundled MCP registration too.
+                    permission_resolver=ctx.permission_resolver,
+                    bus=ctx.intervention_bus,
+                    contextual=getattr(ctx, "contextual_permission", None),
+                )
+            except PermissionError:
+                # A denied MCP-axis gate is treated the same as any other
+                # probe failure — skip this one server (nothing written for
+                # it), not the whole plugin install; the operator already
+                # saw a decision-enabling deny (require_mcp's message) via
+                # whatever surfaced the prompt/log for this call.
+                continue
             if probe_err is not None:
                 # Probe-then-commit: skip this one server (nothing written
                 # for it) rather than fail the whole plugin install — other
@@ -692,6 +709,9 @@ async def _register_mcp(
         await dispatch_install_reload(
             getattr(ctx, "hot_reloader", None), source="mcp_install_local",
             is_addition=True,
+            # #3636: names the server(s) this call registered so it doesn't render
+            # as an indistinguishable repeat of another mcp_install_local reload.
+            detail=", ".join(registered),
         )
     return registered
 

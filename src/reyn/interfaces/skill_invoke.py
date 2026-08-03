@@ -305,19 +305,26 @@ def resolve_skill_body(
             p = p / "SKILL.md"
         content = p.read_text(encoding="utf-8")
 
-    # #3196/#3198: `load_skill_body` now returns
-    # `(body, env_names_expanded, env_names_denied)` so `file.handle`'s
-    # audit-event can report names+counts without ever logging a value. The
-    # `:` invoke path's own trust boundary is the already-registered `entry`
-    # this body resolved from (never an arbitrary path) — its own
-    # `skill_invoke_body_loaded` audit-event (session.py) does not need
-    # either list, so both are discarded here.
-    body, _env_names_expanded, _env_names_denied = load_skill_body(
-        content,
-        skill_path=path,
-        project_dir=project_dir,
-        alias_claude=True,
-        permission_decl=permission_decl,
+    # #3196/#3198/#3629: `load_skill_body` now returns `(body,
+    # persisted_body, location_token_map, env_names_expanded,
+    # env_names_denied)` — `persisted_body`/`location_token_map` exist so
+    # the `load_skill` OP's history persistence can leave location tokens
+    # literal (#3629); this `:` invoke path returns `body` (the plain,
+    # fully-expanded text, unchanged from before #3629) straight to its
+    # caller, which is NOT the `load_skill` op's history-persistence path —
+    # out of scope here, same as the env name lists this comment already
+    # discarded. The `:` invoke path's own trust boundary is the
+    # already-registered `entry` this body resolved from (never an
+    # arbitrary path); its own `skill_invoke_body_loaded` audit-event
+    # (session.py) does not need any of the three discarded values.
+    body, _persisted_body, _location_token_map, _env_names_expanded, _env_names_denied = (
+        load_skill_body(
+            content,
+            skill_path=path,
+            project_dir=project_dir,
+            alias_claude=True,
+            permission_decl=permission_decl,
+        )
     )
     return body
 

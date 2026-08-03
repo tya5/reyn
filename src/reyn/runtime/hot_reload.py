@@ -144,6 +144,7 @@ class HotReloader:
         self._validate: "Callable[[dict], str | None]" = validate or validate_in_set
         self._pending = False
         self._pending_source: "str | None" = None
+        self._pending_detail: "str | None" = None
 
     @property
     def pending(self) -> bool:
@@ -167,14 +168,22 @@ class HotReloader:
         None``; a non-None reason rejects the reload atomically (no seam runs)."""
         self._validate = fn
 
-    def request_reload(self, *, source: str) -> None:
+    def request_reload(self, *, source: str, detail: "str | None" = None) -> None:
         """Schedule a reload at the next turn boundary (operator command / LLM-op).
 
         Idempotent within a turn: repeated requests collapse into one apply (1 turn
         = 1 config snapshot). ``source`` is recorded on the ``config_reloaded`` event
-        for the audit trail (e.g. ``"operator"`` / ``"llm_op"``)."""
+        for the audit trail (e.g. ``"operator"`` / ``"llm_op"``). ``detail`` (#3636)
+        is an optional single-entity qualifier (e.g. the specific skill/pipeline name
+        an install call is about) surfaced on the ``config_reloaded`` event so two
+        DIFFERENT installs collapsing into one deferred apply don't render as an
+        indistinguishable repeat in history — see :meth:`apply_now`'s docstring for
+        the full rationale. Repeated requests collapsing means only the LAST caller's
+        ``detail`` survives to the eventual apply (same imprecision the pre-existing
+        ``source`` collapse already has — not new)."""
         self._pending = True
         self._pending_source = source
+        self._pending_detail = detail
         _log.info(
             "hot-reload scheduled (source=%s) — applies at the next turn boundary", source,
         )
@@ -193,8 +202,10 @@ class HotReloader:
         if not self._pending:
             return None
         source = self._pending_source
+        detail = self._pending_detail
         self._pending = False
         self._pending_source = None
+        self._pending_detail = None
 
         # Safety boundary: re-read ONLY the IN-set (.reyn/*.yaml). The OUT-set
         # (reyn.yaml) is never opened here, so a reload cannot touch it.
@@ -232,16 +243,19 @@ class HotReloader:
 
         if self._events is not None:
             # P6 audit (review-focus b): every config change is an evented,
-            # replay-capable state change.
+            # replay-capable state change. ``detail`` (#3636) is the optional
+            # single-entity qualifier collapsed requests carry (see
+            # request_reload's docstring) — None when not supplied.
             self._events.emit(
                 "config_reloaded",
                 source=source or "unknown",
                 components=applied,
                 failed=failed,
+                detail=detail,
             )
         return {"source": source, "applied": applied, "failed": failed}
 
-    async def apply_now(self, *, source: str) -> "dict":
+    async def apply_now(self, *, source: str, detail: "str | None" = None) -> "dict":
         """#2761 PR-2: apply an install's reload IMMEDIATELY (mid-turn), running ONLY
         the seam(s) that ``source`` affects — NOT the whole reload (that is
         :meth:`apply_pending`'s turn-boundary job).
@@ -263,7 +277,21 @@ class HotReloader:
 
         Returns a ``{"source", "applied", "failed"}`` summary (or, on a rejected
         IN-set, additionally ``"rejected"``). An unknown / unmapped ``source`` applies
-        nothing (defensive — callers pass a known install source)."""
+        nothing (defensive — callers pass a known install source).
+
+        ``detail`` (#3636): an optional single-entity qualifier — e.g. the specific
+        pipeline/skill/server name this call installed — carried onto the emitted
+        ``config_reloaded`` event and, from there, into the ``state_change`` history
+        summary (session.py's ``_STATE_CHANGE_EVENT_MAPPINGS["config_reloaded"]``).
+        Without it, TWO DIFFERENT installs of the same ``source`` kind in quick
+        succession (e.g. a plugin bundling two pipelines — ``plugin_install`` calls
+        this per-pipeline) emit two genuinely distinct ``config_reloaded`` events that
+        render as an IDENTICAL history string ("Reyn configuration was hot-reloaded
+        (source: pipeline_install)." twice) — an adjacent-duplicate-shaped artifact of
+        lost resolution, not an actual double-write of the same fact (#3636's
+        investigation: the owner's real events log shows two distinct
+        ``pipeline_installed`` events, ``rag_ingest`` then ``rag_query``, each with its
+        own correct ``config_reloaded``)."""
         target_seams = _INSTALL_SOURCE_SEAMS.get(source)
         if not target_seams:
             return {"source": source, "applied": [], "failed": []}
@@ -306,6 +334,7 @@ class HotReloader:
                 source=source or "unknown",
                 components=applied,
                 failed=failed,
+                detail=detail,
             )
         return {"source": source, "applied": applied, "failed": failed}
 
@@ -357,7 +386,8 @@ class HotReloader:
 
         if self._events is not None:
             self._events.emit(
-                "config_reloaded", source="spawn_refresh", components=applied, failed=failed,
+                "config_reloaded",
+                source="spawn_refresh", components=applied, failed=failed, detail=None,
             )
         return {"source": "spawn_refresh", "invoked": invoked, "applied": applied, "failed": failed}
 
@@ -387,6 +417,7 @@ async def dispatch_install_reload(
     *,
     source: str,
     is_addition: bool,
+    detail: "str | None" = None,
 ) -> None:
     """#2761 PR-2: route an install op's post-write reload.
 
@@ -403,14 +434,19 @@ async def dispatch_install_reload(
     The per-session ``ctx_reloader`` is preferred over the process-global
     :func:`get_active_hot_reloader` for the immediate path specifically, because the
     process-global is the *last-registered* session's reloader (a multi-session
-    footgun the deferred path tolerates but the immediate path must not)."""
+    footgun the deferred path tolerates but the immediate path must not).
+
+    ``detail`` (#3636): forwarded verbatim to :meth:`HotReloader.apply_now` /
+    :meth:`HotReloader.request_reload` — see ``apply_now``'s docstring for why this
+    exists (distinguishing two same-``source`` installs that would otherwise render
+    as an indistinguishable repeat in ``state_change`` history)."""
     if is_addition and ctx_reloader is not None:
-        await ctx_reloader.apply_now(source=source)
+        await ctx_reloader.apply_now(source=source, detail=detail)
         return
     # Deferred / clobber-update / no-per-session-reloader path — unchanged behavior.
     reloader = get_active_hot_reloader()
     if reloader is not None:
-        reloader.request_reload(source=source)
+        reloader.request_reload(source=source, detail=detail)
 
 
 __all__ = [

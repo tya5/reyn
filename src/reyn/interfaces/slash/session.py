@@ -53,11 +53,27 @@ def _inherited_restriction_lines(reg, name: str, sid: str) -> "list[str]":
     happening (``tests/test_3562_slash_session_new_narrowing_inheritance.py``); this
     surface has its own separate test, for its own separate claim.
 
-    Empty when the child session is not retrievable (nothing truthful to say)."""
+    Empty when the child session is not retrievable (nothing truthful to say).
+
+    #3615 — ``envelope_unknown``: when the child's read model could not resolve an
+    envelope to test against (no registry back-reference), ``denied_by_envelope`` and
+    the tool count in ``authorized`` are BOTH silent about it (the former is
+    legitimately empty — nothing could be tested — and the latter is legitimately
+    zero, since #3615 moves ungated rows to ``unknown`` rather than ``authorized``).
+    Read at face value, that pair says "nothing denied, no tools left", which this
+    function would previously have reported as "no tools remain available in it" —
+    a confident wrong answer for a session whose report is simply unconfirmed, not
+    one that was actually narrowed to nothing. Checked first and reported honestly
+    instead."""
     child = reg.get_session(name, sid)
     if child is None:
         return []
     state = child.capability_visibility_state()
+    if state.get("envelope_unknown"):
+        return [
+            "  ↳ this session's capability report could not be confirmed (no "
+            "envelope source); inherited narrowing may not be reflected"
+        ]
     denied = sorted(row["name"] for row in state["denied_by_envelope"])
     tools_left = sum(1 for row in state["authorized"] if row["kind"] == "tool")
     lines: "list[str]" = []

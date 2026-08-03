@@ -81,19 +81,28 @@ AGENT = "chrome-3338-agent"
 async def _real_snapshot(tmp_path: Path) -> "tuple[dict, Session, AgentRegistry]":
     """A snapshot dict produced by the REAL ``interfaces/repl/status.py``
     ``_snapshot()`` off a REAL attached ``Session``. Every key/typed value below
-    therefore comes from production code, never from a hand-written literal."""
+    therefore comes from production code, never from a hand-written literal.
+
+    #3615: the session factory passes the registry back-reference (``holder``
+    pattern, matching every unconditional ``build_scoped_chat_session`` production
+    caller — chat.py / mcp.py) so ``capability_visibility_state``'s envelope axis
+    is genuinely RESOLVED rather than reported ``unknown`` for want of a
+    back-reference the real attach path always provides."""
     state_log = StateLog(tmp_path / "state.wal")
+    holder: dict = {}
 
     def _factory(profile: AgentProfile) -> Session:
         return make_session(
             agent_name=profile.name,
             state_log=state_log,
             snapshot_path=tmp_path / f"{profile.name}_snapshot.json",
+            registry=holder.get("reg"),
         )
 
     registry = AgentRegistry(
         project_root=tmp_path, session_factory=_factory, state_log=state_log
     )
+    holder["reg"] = registry
     AgentProfile.new(AGENT, role="").save(tmp_path / ".reyn" / "agents" / AGENT)
     session = await registry.attach(AGENT)
     snap = _snapshot(registry)

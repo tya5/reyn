@@ -276,6 +276,12 @@ async op-handler client (`reyn.core.registry.client`) と safe-mode skill-intern
 
 > 旧 `permissions.mcp_install: ...` キーは `reyn.yaml` で `DeprecationWarning` 付きで受理され、 migration window 期間中は等価な gate に translate されます。
 
+### Pre-commit probe ゲート: `permissions.mcp`（#3552）
+
+live per-session reloader を伴う chat 駆動の install は config を書くだけでなく、 先に server を probe します（spawn/connect + `list_tools`）— 失敗/cancel/deny された probe は `.reyn/config/mcp.yaml` を変更しません（probe-then-commit; [CLI reference](../../reference/cli/mcp.md) → "Persistence asymmetry" 参照）。 この probe は config が authoritative になる *前* に、 model/plugin 供給の server 名へ張られる LIVE な接続です — #3552 以前は上記の `file.write` + `http.get` だけが install の gate で、 どちらも MCP 軸ではないため、 probe は MCP 軸のチェックを一切経ずにネットワークへ到達していました。
+
+probe は今、 先に `require_mcp` を呼び出します — 下の「ランタイムゲート」に書かれているのと全く同じゲート（interactive な "Allow access to MCP server X?" 承認、 同じく `.reyn/approvals.yaml` に永続化、 加えて per-session `ContextualLayer` narrowing）を、 既に設定済みの server ではなく、 これから probe される server 名に対して適用したものです。 したがって pre-commit probe と install 後の use のどちらの時点でも、 未承認の server へのネットワーク到達はこの同一ゲートを経由せずには起こり得ません。 deny は decision-enabling な `PermissionError`（server 名とその許可方法を明示）を raise し、 `op_runtime` の他のどの permission denial とも同じ形の `status:"denied"` として現れます — 無言でスキップされることはありません。
+
 ### ランタイムゲート: `permissions.mcp`
 
 MCP 呼び出しはプロセスを離れる前に 2 つのチェックを通過します：

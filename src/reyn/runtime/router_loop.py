@@ -3271,6 +3271,8 @@ class RouterLoop:
         )
         from reyn.core.offload.seam import build_offload_body, render_tool_result
         from reyn.runtime.chat_message import (
+            SKILL_SOURCE_PATH_META_KEY,
+            TOKEN_MAP_META_KEY,
             TOOL_ERROR_KIND_META_KEY,
             TOOL_ERROR_MESSAGE_META_KEY,
             TOOL_STATUS_ERROR,
@@ -3328,6 +3330,14 @@ class RouterLoop:
             scan_target: str
             _tool_error_kind: "str | None" = None
             _tool_error_message: "str | None" = None
+            # #3629: an ALTERNATE persisted-content string + its meta, set ONLY
+            # when the canonical mapper (`load_skill_to_canonical`) supplied
+            # ``history_text``/``history_meta`` — every other mapper leaves this
+            # ``None``, so persistence is byte-identical to ``content_str`` for
+            # them, unchanged. See ``CanonicalToolResult.history_text``'s
+            # docstring (canonical.py) for why this exists.
+            _persist_content_str: "str | None" = None
+            _history_meta_extra: dict = {}
             # Unwrap dispatch-envelope layers ({status, data} with nothing else) until the op
             # result (the dict carrying ``kind``) is reached. One layer for op_runtime ops
             # (bare {kind:…} wrapped once by dispatch_tool); two for tool-registry handlers whose
@@ -3426,8 +3436,21 @@ class RouterLoop:
                         # recover it from the stored ref's file extension.
                         text = _cap(text, content_type=content_type)
                     content_str = render_tool_result(frontmatter, text)
+                    # #3629: `load_skill_to_canonical` is the one mapper that sets
+                    # `history_text` — the SAME frontmatter, un-capped (a skill body is
+                    # already read-bounded upstream by `load_skill`'s own
+                    # `control_ir_inline_cap`, so a second offload-store cap pass here
+                    # would risk a second, independent offload ref for content that
+                    # never needs one in practice). `history_meta` carries no LLM-visible
+                    # text — it becomes ChatMessage.meta keys only, never frontmatter.
+                    _history_text = canonical.get("history_text")
+                    if _history_text is not None:
+                        _persist_content_str = render_tool_result(frontmatter, _history_text)
+                        _history_meta_extra = dict(canonical.get("history_meta") or {})
             if post_text:
                 content_str = f"{content_str}\n\n---\n{post_text}"
+                if _persist_content_str is not None:
+                    _persist_content_str = f"{_persist_content_str}\n\n---\n{post_text}"
             # FP-0050/#1822 S2: scan-all on the FULL content BEFORE cap truncates
             # (so injection can't hide past the size cap). Detection completeness.
             _scan = getattr(host, "scan_tool_result", None)
@@ -3439,6 +3462,8 @@ class RouterLoop:
                 _fence = getattr(host, "fence_tool_result", None)
                 if _fence is not None:
                     content_str = _fence(content_str)
+                    if _persist_content_str is not None:
+                        _persist_content_str = _fence(_persist_content_str)
             out.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
@@ -3467,10 +3492,21 @@ class RouterLoop:
                 _tool_meta[TOOL_ERROR_MESSAGE_META_KEY] = _tool_error_message
                 if _tool_error_kind is not None:
                     _tool_meta[TOOL_ERROR_KIND_META_KEY] = _tool_error_kind
+            # #3629: persist the location-tokens-literal variant + its token
+            # map/source-path (never the wire ``content_str`` shown above) when
+            # the canonical mapper supplied one — see ``_persist_content_str``'s
+            # comment above and ``CanonicalToolResult.history_text``'s docstring.
+            if "token_map" in _history_meta_extra:
+                _tool_meta[TOKEN_MAP_META_KEY] = _history_meta_extra["token_map"]
+            if "skill_source_path" in _history_meta_extra:
+                _tool_meta[SKILL_SOURCE_PATH_META_KEY] = _history_meta_extra["skill_source_path"]
             if _append_entry is not None:
                 _append_entry(
                     role="tool",
-                    content=content_str,
+                    content=(
+                        _persist_content_str if _persist_content_str is not None
+                        else content_str
+                    ),
                     meta=_tool_meta,
                     tool_call_id=tc["id"],
                     name=tc.get("function", {}).get("name"),

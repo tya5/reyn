@@ -373,10 +373,33 @@ def _format_sender_label(sender: str | None) -> str:
     return sender
 
 
+def _format_config_reloaded(data: dict) -> str:
+    """#3636: ``config_reloaded``'s summary formatter — a callable (not a plain
+    ``str.format`` template) because ``detail`` is OPTIONAL (present only when the
+    triggering install call supplied a single-entity qualifier; see
+    ``hot_reload.HotReloader.apply_now``'s docstring). Two DIFFERENT installs of the
+    same ``source`` kind (e.g. a plugin bundling two pipelines) each emit their own
+    correct ``config_reloaded``; without this qualifier both render as the byte-
+    identical "Reyn configuration was hot-reloaded (source: pipeline_install)." —
+    an adjacent-duplicate-shaped artifact of lost resolution, not an actual
+    double-write (#3636's investigation traced the owner's real events log: two
+    distinct ``pipeline_installed`` events, ``rag_ingest`` then ``rag_query``, each
+    with its own ``config_reloaded``)."""
+    source = data.get("source", "unknown")
+    detail = data.get("detail")
+    if detail:
+        return f"Reyn configuration was hot-reloaded (source: {source}: {detail})."
+    return f"Reyn configuration was hot-reloaded (source: {source})."
+
+
 # #398 v4 emitter family: op-emitted-event → state_change dispatch table.
 # See docs/reference/runtime/session-construction.md#misc-lifecycle-wiring
-# (mechanism + sister-mechanism note); per-entry rationale below.
-_STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
+# (mechanism + sister-mechanism note); per-entry rationale below. The template slot
+# is normally a ``str.format``-compatible string (receives ``event.data`` as
+# kwargs); ``config_reloaded`` uses a callable instead because its ``detail`` field
+# is optional (#3636) — a plain template would ``KeyError`` (silently skipped) on
+# any emit site that didn't supply it.
+_STATE_CHANGE_EVENT_MAPPINGS: dict[str, "tuple[str, str | Callable[[dict], str]]"] = {
     # MCP server install success (= ``reyn.core.op_runtime.mcp_install``
     # emits this on the events log after writing the config).
     "mcp_server_installed": (
@@ -400,10 +423,11 @@ _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
         "index_drop",
         "Indexed source '{source}' was removed.",
     ),
-    # Config hot-reload (#2073) — see docs/concepts/runtime/config-hot-reload.md#p6-event
+    # Config hot-reload (#2073) — see docs/concepts/runtime/config-hot-reload.md#p6-event.
+    # Formatter is a callable, not a template string — see _format_config_reloaded (#3636).
     "config_reloaded": (
         "config_watcher",
-        "Reyn configuration was hot-reloaded (source: {source}).",
+        _format_config_reloaded,
     ),
     # Future emitter slots (= add when wired):
     # "sp_version_changed": ("sp_loader",   "Agent system prompt was updated to version {version}."),
@@ -2769,10 +2793,13 @@ class Session:
 
         Extension shape (= one dict entry per new emitter):
           ``_STATE_CHANGE_EVENT_MAPPINGS[event_type] = (source, template)``
-        where ``template`` is a ``str.format``-compatible string and
-        receives the event's ``data`` dict as kwargs. New emitters
-        only need to (a) emit a known event type on the chat events
-        log and (b) register their (source, template) in the mapping.
+        where ``template`` is EITHER a ``str.format``-compatible string
+        (receives the event's ``data`` dict as kwargs) OR a callable
+        ``(data: dict) -> str`` for formatters that need optional-field
+        handling a plain template can't express (#3636 — see
+        ``_format_config_reloaded``). New emitters only need to (a) emit
+        a known event type on the chat events log and (b) register
+        their (source, template) in the mapping.
 
         Defensive: malformed event payloads (= missing template keys,
         wrong types) are silently skipped — observability must not
@@ -2783,7 +2810,10 @@ class Session:
             return
         source, template = mapping
         try:
-            summary = template.format(**(event.data or {}))
+            if callable(template):
+                summary = template(event.data or {})
+            else:
+                summary = template.format(**(event.data or {}))
         except (KeyError, ValueError, AttributeError):
             return
         self.notify_state_change(summary, source=source)
@@ -4044,6 +4074,14 @@ class Session:
             action_retrieval=self._action_retrieval,
             non_interactive=self._non_interactive,
             reasoning=self._reasoning,  # #1652/② native reasoning re-attach + bound
+            # #3629: live workspace root, resolved at wire-serialise time — a
+            # callable (never the resolved value) so a rewind/checkout swap
+            # between turns is reflected. Mirrors ``Workspace.__init__``'s own
+            # ``base_dir or Path.cwd()`` default (``self._workspace_base_dir``
+            # is the agent-level override, ``None`` when unset — the SAME
+            # value ``ctx.workspace.base_dir`` resolves to for the ops this
+            # buffer's history entries came from).
+            project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
         )
 
         compaction_controller = CompactionController(

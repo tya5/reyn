@@ -44,6 +44,20 @@ provenance classes still succeeds with plain, unexpanded content — no
 ``skill_body_loaded`` event fires (fails CLOSED: no expansion, never open).
 This mirrors the pre-extraction ``file.read`` fallback exactly (an
 unregistered ``SKILL.md``-shaped path was never a hard error there either).
+
+**#3629 — the result carries a second, persist-safe content variant when a
+provenance class matched.** ``content`` stays the fully-expanded body (what
+the model reads THIS turn, unchanged from before #3629). ``content_history``
+/ ``token_map`` / ``skill_source_path`` (present only when ``content_history
+is not None``, i.e. a provenance class matched) are what
+``load_skill_to_canonical`` threads onto the persisted history entry
+instead — the location tokens (``${REYN_SKILL_DIR}``/``${REYN_PLUGIN_ROOT}``)
+are left literal in ``content_history`` rather than baked to an absolute
+value, so a later rename/move (#3588 was one instance) can never freeze a
+now-dead path into ``.reyn/agents/<id>/history.jsonl``, which is immutable
+by design. See ``reyn.plugins.skill_load.load_skill_body``'s docstring for
+the full mechanism and ``refresh_location_tokens`` for how a persisted entry
+re-resolves fresh on replay.
 """
 from __future__ import annotations
 
@@ -172,21 +186,33 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
     if provenance is None and _config_registered_skill_body_provenance(ctx, resolved_path):
         provenance = "config_entry"
 
+    # #3629: set only when `load_skill_body` actually ran (below) — the
+    # persist-safe (location tokens left literal) body + the token map the
+    # caller (`router_loop.py`'s tool-result assembly) stashes on the
+    # persisted history entry's `meta`, plus the identity `content_history`
+    # can be re-resolved against on replay. `None` here (unregistered path,
+    # the `else` branch below) means "nothing to persist differently" — the
+    # ordinary `content` is used for both current-turn and history, exactly
+    # as before #3629.
+    content_history: "str | None" = None
+    location_token_map: "dict[str, str] | None" = None
     if provenance is not None:
-        content, env_names_expanded, env_names_denied = load_skill_body(
-            content,
-            skill_path=resolved_path,
-            project_dir=ctx.workspace.base_dir,
-            # SKILL.md is the one open standard (agentskills.io) multiple
-            # hosts share, so every skill-load IS the ingestion boundary
-            # ADR 0064 §3.6 scopes the `${CLAUDE_*}` alias to — there is no
-            # narrower "this one is Claude-authored" signal to gate on.
-            alias_claude=True,
-            # #3198: the allowlist gate on WHAT a body that already cleared
-            # the #3196 provenance gate may read from os.environ.
-            # ctx.permission_decl is a required (non-Optional) OpContext
-            # field — always present.
-            permission_decl=ctx.permission_decl,
+        content, content_history, location_token_map, env_names_expanded, env_names_denied = (
+            load_skill_body(
+                content,
+                skill_path=resolved_path,
+                project_dir=ctx.workspace.base_dir,
+                # SKILL.md is the one open standard (agentskills.io) multiple
+                # hosts share, so every skill-load IS the ingestion boundary
+                # ADR 0064 §3.6 scopes the `${CLAUDE_*}` alias to — there is
+                # no narrower "this one is Claude-authored" signal to gate on.
+                alias_claude=True,
+                # #3198: the allowlist gate on WHAT a body that already
+                # cleared the #3196 provenance gate may read from os.environ.
+                # ctx.permission_decl is a required (non-Optional) OpContext
+                # field — always present.
+                permission_decl=ctx.permission_decl,
+            )
         )
         # NEVER include the expanded/denied VALUES here — an audit-event is
         # not a second secret-storage location (#3196 firm design, extended
@@ -219,6 +245,18 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
             model_str = None
     cap = control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.actor)
 
+    # #3629: `content_history`/`token_map` (set above, only when
+    # `load_skill_body` ran) ride along in the SAME field shape regardless of
+    # the truncated/ok branch below — `load_skill_to_canonical` reads them
+    # off the raw result dict, never off `content` itself.
+    history_fields: dict = {}
+    if content_history is not None:
+        history_fields["content_history"] = (
+            content_history[:cap] if len(content_history) > cap else content_history
+        )
+        history_fields["token_map"] = location_token_map
+        history_fields["skill_source_path"] = op.path
+
     if len(content) > cap:
         truncated_content = content[:cap]
         ctx.events.emit(
@@ -238,6 +276,7 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
                 f"{op.path!r}."
             ),
             **enc_field,
+            **history_fields,
         }
 
     ctx.events.emit("tool_executed", op="load_skill", path=op.path)
@@ -247,6 +286,7 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
         "status": "ok",
         "content": content,
         **enc_field,
+        **history_fields,
     }
 
 

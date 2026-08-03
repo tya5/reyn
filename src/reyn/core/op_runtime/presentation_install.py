@@ -175,6 +175,9 @@ async def handle(
         getattr(ctx, "hot_reloader", None),
         source="presentation_install",
         is_addition=_is_addition,
+        # #3636: names this specific presentation so two installed back-to-back
+        # don't render as an indistinguishable repeat in state_change history.
+        detail=name,
     )
 
     return {

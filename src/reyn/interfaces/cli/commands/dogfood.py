@@ -504,12 +504,18 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         _reg_cell: list = []
 
         def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None) -> Session:
-            # #1827 S3: resolve the agent's topology capability_profile. The registry
-            # cell may be empty during bootstrap → (None, ∅) = byte-identical.
-            _reg = _reg_cell[0] if _reg_cell else None
-            _ctx_perm, _profile_excluded = (
-                _reg.resolved_profile_for(profile.name) if _reg else (None, frozenset())
-            )
+            # #3593 ②: this closure is only ever invoked as ``self._factory(...)`` from
+            # ``AgentRegistry._construct_session`` (registry.py), which requires an
+            # already-returned ``AgentRegistry`` instance to call — and that instance is
+            # exactly ``_reg_cell[0]``, appended immediately below, BEFORE ``reg`` is
+            # returned to this function's caller. So by the time this factory ever runs,
+            # ``_reg_cell`` is always populated; the previous `if _reg_cell else None`
+            # guard defended a window that cannot occur (nothing calls this factory
+            # directly — verified: `_session_factory` has no other reference than the
+            # `session_factory=` kwarg below). Read directly rather than re-deriving a
+            # bootstrap case that does not exist.
+            _reg = _reg_cell[0]
+            _ctx_perm, _profile_excluded = _reg.resolved_profile_for(profile.name)
             s = build_scoped_chat_session(
                 # #2708 P1: the dogfood eval harness is headless with no outbox/present
                 # drain at all — a reviewed NA surface. Null is byte-identical (present
@@ -532,7 +538,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652
-                registry=_reg_cell[0] if _reg_cell else None,
+                registry=_reg,  # #3593 ②: always the real registry — see the note above
                 allowed_mcp=profile.allowed_mcp,
                 events_config=config.events,
                 state_log=None,  # no WAL for dogfood dispatch

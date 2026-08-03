@@ -3,7 +3,7 @@
 Owns:
 
   - build_history              — slice history into OpenAI-style messages
-  - decompose_history_for_retry — head/raw_middle/tail/summary for retry_loop
+  - decompose_history_for_retry — head/raw_middle/tail/summary/seq_by_id for retry_loop
   - build_system_prompt        — assemble the router system prompt string
   - _serialise_turn            — materialise one ChatMessage to a wire dict
 
@@ -132,6 +132,48 @@ def _materialise_path_ref_content(
     return materialised
 
 
+def _refresh_skill_location_tokens(
+    content: "str | list[dict]", meta: Any, project_dir_fn: "Callable[[], Any] | None",
+) -> "str | list[dict]":
+    """#3629: re-expand ``${REYN_SKILL_DIR}``/``${REYN_PLUGIN_ROOT}`` (+
+    ``CLAUDE_*`` aliases) in a persisted ``load_skill`` tool-result entry,
+    against the CURRENT filesystem, every time this turn's history is
+    serialised for the wire — the "dynamic param" discipline
+    (``reyn.plugins.tokens``'s ``REYN_PROJECT_DIR`` classification)
+    extended to the two location tokens that used to get baked to an
+    absolute value once and persisted forever.
+
+    No-op (content returned unchanged) unless ALL of:
+    ``content`` is a ``str`` (a tool message never uses the multimodal
+    list-of-parts shape — mirrors :func:`_materialise_path_ref_content`'s
+    own type gate), ``meta`` carries ``SKILL_SOURCE_PATH_META_KEY`` (set
+    only by ``router_loop.py``'s tool-result assembly when
+    ``load_skill_to_canonical`` supplied ``history_text``/``history_meta``
+    — see ``chat_message.py``'s key docstrings), and *project_dir_fn* is
+    not ``None`` (a legacy/test double with no workspace access degrades to
+    "never refresh", same fail-closed idiom ``_materialise_path_ref_content``
+    uses for a ``None`` ``media_store``).
+
+    Pre-#3629 history has no ``SKILL_SOURCE_PATH_META_KEY`` at all — this
+    function never touches it, matching the architect's ruling that
+    already-poisoned entries are neither rewritten nor annotated.
+    """
+    if not isinstance(content, str) or not isinstance(meta, dict) or project_dir_fn is None:
+        return content
+    from reyn.runtime.chat_message import SKILL_SOURCE_PATH_META_KEY
+    skill_source_path = meta.get(SKILL_SOURCE_PATH_META_KEY)
+    if not skill_source_path:
+        return content
+    project_dir = project_dir_fn()
+    if project_dir is None:
+        return content
+    from reyn.plugins.skill_load import refresh_location_tokens
+    return refresh_location_tokens(
+        content, skill_source_path=skill_source_path, project_dir=project_dir,
+        alias_claude=True,
+    )
+
+
 def resolve_effective_trigger_and_budgets(
     compaction_controller: Any, model: str, events: Any,
 ) -> "tuple[int, int, int]":
@@ -178,6 +220,7 @@ class RouterHistoryBuffer:
         action_retrieval: Any,            # ActionRetrievalConfig — .universal_wrappers_enabled
         non_interactive: bool,
         reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
+        project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -192,6 +235,12 @@ class RouterHistoryBuffer:
         # (native re-attach) instead of a router-SP text section. ReasoningConfig
         # gates it (.continuity) and bounds it (.recent_turns). None → off.
         self._reasoning = reasoning
+        # #3629: live, not cached — the same "resolve at the moment it's needed"
+        # discipline as ``_model`` above (a rewind/checkout/reinstall between
+        # turns must be reflected, never the construction-time workspace).
+        # ``None`` (a legacy/test double with no workspace access) degrades to
+        # "never refresh location tokens" — _serialise_turn's own None-check.
+        self._project_dir_fn = project_dir_fn
 
     @property
     def _model(self) -> str:
@@ -248,6 +297,12 @@ class RouterHistoryBuffer:
         # _migrate_legacy_chat_message) → normalise on read.
         role = "assistant" if m.role == "agent" else m.role
         content = _materialise_path_ref_content(m.content, self._media_store)
+        # #3629: fresh, every serialise — re-resolve any location token a
+        # persisted `load_skill` entry left literal, against the CURRENT
+        # filesystem (see _refresh_skill_location_tokens's docstring).
+        content = _refresh_skill_location_tokens(
+            content, getattr(m, "meta", None), self._project_dir_fn,
+        )
         msg: dict = {"role": role, "content": content}
         if m.tool_calls is not None:
             msg["tool_calls"] = m.tool_calls
@@ -476,8 +531,9 @@ class RouterHistoryBuffer:
 
     def decompose_history_for_retry(
         self,
-    ) -> tuple[list[dict], list[dict], list[dict], dict | None]:
-        """Decompose current history into (head, raw_middle, tail, summary) for retry_loop.
+    ) -> tuple[list[dict], list[dict], list[dict], dict | None, dict[int, int]]:
+        """Decompose current history into (head, raw_middle, tail, summary,
+        seq_by_id) for retry_loop.
 
         #1128 step 3: mirrors :meth:`build_history`'s token-budget
         elide threshold (effective_trigger) and exposes the elided ``raw_middle``
@@ -489,6 +545,14 @@ class RouterHistoryBuffer:
         When total token estimate <= effective_trigger the full history goes into
         ``head`` with empty ``raw_middle`` / ``tail`` — there is nothing to elide,
         and retry_loop's shrink can still trim ``head``.
+
+        #3599: ``seq_by_id`` maps ``id(wire_dict) -> ChatMessage.seq`` for every
+        turn in ``head + raw_middle + tail`` (built off the same ``turns`` /
+        ``wire_turns`` pairing already computed here, so no extra serialise
+        pass). It lets a caller that only receives a SUBSET of these wire dicts
+        (e.g. the force-close wrap-up fallback, which may feed the LLM only
+        ``tail`` or neither) recover exactly which seqs that subset covers,
+        instead of assuming the full decomposition was used.
         """
         from reyn.services.compaction.engine import (
             estimate_tokens_for_any_turn,
@@ -509,6 +573,15 @@ class RouterHistoryBuffer:
         # #2957 PR-B: serialise once up front — same canonical-quantity
         # rationale as build_history (see ``_serialise_turn``'s docstring).
         wire_turns = [self._serialise_turn(m) for m in turns]
+
+        # #3599: pair each wire dict back to its source ChatMessage's seq —
+        # zip is positionally safe (wire_turns[i] was built FROM turns[i]
+        # above, same order, one-to-one). id() keys are only ever looked up
+        # against wire dicts drawn from THIS SAME wire_turns list (never
+        # across calls / after GC of the list), so no id-reuse hazard.
+        seq_by_id: dict[int, int] = {
+            id(wt): t.seq for wt, t in zip(wire_turns, turns)
+        }
 
         total = sum(
             estimate_tokens_for_any_turn(wt, self._model, use_chars4=use_chars4)
@@ -540,7 +613,7 @@ class RouterHistoryBuffer:
         # #1652/②: bound native reasoning across the ordered carriers (the strip
         # is in-place, so the shared dicts in head/raw_middle/tail are bounded).
         self._bound_wire_reasoning(head + raw_middle + tail)
-        return head, raw_middle, tail, summary_dict
+        return head, raw_middle, tail, summary_dict, seq_by_id
 
     def build_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.

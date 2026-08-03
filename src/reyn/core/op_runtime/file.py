@@ -142,14 +142,58 @@ async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> d
     }
 
 
+def _nearest_existing_ancestor(ws, start: str) -> "str | None":
+    """Walk *start*'s parents (project-relative) until one exists as a
+    directory, or return ``None`` if none does — including the workspace
+    root itself in the walk (``Path(...).parents`` always ends at ``"."``).
+
+    #3629: the decision-enabling half of the not-found suggestion fix. A
+    renamed/moved/reinstalled directory means ``path``'s own parent is gone
+    too, not just its siblings — the caller (:func:`_nearby_files`) uses
+    this to distinguish that case ("no parent" — an ancestor is the only
+    thing left to point at) from "no neighbours" (parent exists but is
+    empty, where an empty suggestion list is already the correct, honest
+    answer). Never raises: a denied/erroring ``stat_path`` at any level is
+    treated as "does not exist" and the walk continues upward.
+    """
+    for ancestor in Path(start).parents:
+        candidate = str(ancestor)
+        try:
+            stat = ws.stat_path(candidate)
+        except (PermissionError, OSError):
+            continue
+        if stat is not None and stat.get("is_dir"):
+            return candidate
+    return None
+
+
 def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LIMIT) -> list[str]:
     """List sibling files under the parent of *path*, for use as not_found suggestions.
 
-    Returns project-relative paths from ``Workspace.glob_files``. Empty list
-    when the parent dir doesn't exist, permission is denied, or the glob
-    yields nothing — never raises.
+    Returns project-relative paths from ``Workspace.glob_files`` when the
+    parent directory exists (possibly empty — "no neighbours" legitimately
+    yields ``[]``).
+
+    #3629: when the parent directory itself does NOT exist — a rename, a
+    move, or a plugin reinstall to a different location, exactly the case
+    that leaves an absolute path baked into history pointing at nothing —
+    that is "no parent", not "no neighbours", and an empty list gives the
+    model nothing to recover with (it cannot tell "this directory is simply
+    empty" from "this whole path is gone"). In that case, return the
+    nearest EXISTING ancestor (see :func:`_nearest_existing_ancestor`) as a
+    single suggestion, so the model can discover the current structure
+    on the spot instead of guessing a replacement path. Permission denials
+    and OS errors at any point still degrade to ``[]``, never raise.
     """
     parent = str(Path(path).parent) if str(Path(path).parent) not in ("", ".") else "."
+    if parent != ".":
+        try:
+            parent_stat = ws.stat_path(parent)
+        except (PermissionError, OSError):
+            parent_stat = None
+        if parent_stat is None or not parent_stat.get("is_dir"):
+            ancestor = _nearest_existing_ancestor(ws, parent)
+            return [f"{ancestor}/"] if ancestor is not None else []
     pattern = f"{parent}/*" if parent != "." else "*"
     try:
         return ws.glob_files(pattern, max_results=max_results)

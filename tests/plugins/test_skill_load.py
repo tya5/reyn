@@ -111,7 +111,7 @@ def test_load_skill_body_expands_reyn_tokens_to_distinct_real_paths(tmp_path):
         "project=${REYN_PROJECT_DIR}"
     )
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         content, skill_path=skill_path, project_dir=project_dir,
     )
 
@@ -136,7 +136,7 @@ def test_load_skill_body_claude_alias_matches_reyn_token_value(tmp_path):
     project_dir.mkdir()
 
     content = "${CLAUDE_SKILL_DIR}|${REYN_SKILL_DIR}"
-    expanded, _env_expanded, _env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, _env_expanded, _env_denied = load_skill_body(
         content, skill_path=skill_path, project_dir=project_dir, alias_claude=True,
     )
 
@@ -153,7 +153,7 @@ def test_load_skill_body_claude_alias_off_leaves_token_untouched(tmp_path):
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, _env_expanded, _env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, _env_expanded, _env_denied = load_skill_body(
         "${CLAUDE_SKILL_DIR}", skill_path=skill_path, project_dir=project_dir,
         alias_claude=False,
     )
@@ -173,7 +173,7 @@ def test_load_skill_body_expands_env_token_when_allowlisted(tmp_path, monkeypatc
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         "value=${env:REYN_SKILL_LOAD_TEST_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
         permission_decl=PermissionDecl(env_expand=["REYN_SKILL_LOAD_TEST_TOKEN"]),
@@ -196,7 +196,7 @@ def test_load_skill_body_env_token_denied_by_default_empty_allowlist(tmp_path, m
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         "value=${env:REYN_SKILL_LOAD_TEST_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
         # permission_decl omitted entirely -- the default-deny path.
@@ -221,7 +221,7 @@ def test_load_skill_body_env_token_denied_by_default_multiple_names(tmp_path, mo
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, _env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, _env_denied = load_skill_body(
         f"value=${{env:{var_name}}}", skill_path=skill_path, project_dir=project_dir,
     )
 
@@ -244,7 +244,7 @@ def test_load_skill_body_env_allowlist_is_selective(tmp_path, monkeypatch):
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         "a=${env:REYN_SKILL_LOAD_ALLOWED_VAR} b=${env:REYN_SKILL_LOAD_DENIED_VAR}",
         skill_path=skill_path, project_dir=project_dir,
         permission_decl=PermissionDecl(env_expand=["REYN_SKILL_LOAD_ALLOWED_VAR"]),
@@ -266,7 +266,7 @@ def test_load_skill_body_env_allowlist_wildcard_expands_any_name(tmp_path, monke
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         "v=${env:REYN_SKILL_LOAD_WILDCARD_VAR}",
         skill_path=skill_path, project_dir=project_dir,
         permission_decl=PermissionDecl(env_expand=["*"]),
@@ -288,7 +288,7 @@ def test_load_skill_body_unset_allowlisted_env_token_left_untouched(tmp_path, mo
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         "${env:REYN_SKILL_LOAD_TEST_UNSET_TOKEN}",
         skill_path=skill_path, project_dir=project_dir,
         permission_decl=PermissionDecl(env_expand=["REYN_SKILL_LOAD_TEST_UNSET_TOKEN"]),
@@ -312,7 +312,7 @@ def test_load_skill_body_bare_var_not_expanded_even_when_set(tmp_path, monkeypat
     project_dir = tmp_path / "some-project"
     project_dir.mkdir()
 
-    expanded, env_expanded, env_denied = load_skill_body(
+    expanded, _persisted, _loc_map, env_expanded, env_denied = load_skill_body(
         "example: ${SOME_VAR}", skill_path=skill_path, project_dir=project_dir,
         permission_decl=PermissionDecl(env_expand=["*"]),
     )

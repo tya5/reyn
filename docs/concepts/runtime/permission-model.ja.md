@@ -260,7 +260,7 @@ criterion: **capability が有限の I/O scope（file path / host / secret key�
 
 bool 軸は per-instance approval surface を持っていた（= `mcp_install:<server_id>` のように server ごとに key 化）。 collapse 後:
 
-- **MCP の per-server 粒度は保持される**: call 時点で既存 `permissions.mcp: [<server>]` 軸が依然として per-server gate を効かせる。 server install（= `.reyn/config/mcp.yaml` への write）は 1 段階の grant になるが、 specific server を使う段階で再度 per-server check が走るため、 server package の download + execute は call-time gate の範疇に収まる。
+- **MCP の per-server 粒度は保持される**: call 時点で既存 `permissions.mcp: [<server>]` 軸が依然として per-server gate を効かせる。 server install（= `.reyn/config/mcp.yaml` への write）は 1 段階の grant になるが、 specific server を使う段階で再度 per-server check が走るため、 server package の download + execute は call-time gate の範疇に収まる — **この範囲には `mcp_install` 自身の pre-commit probe も含む（#3552）**: 修正前は config が authoritative になる COMMIT の *前* に、 probe（live connect + `list_tools`）が model/plugin 供給の server 名へ無条件に到達しており、 その probe 自体は `require_mcp` を一度も経由しなかった — "install は config を書くだけ、 実権限は use 時" という前提が、 probe という自分自身の pre-commit network reach には効いていなかった。 probe 内部で `require_mcp`（同じ interactive "Allow access to MCP server X?" 承認 + `ContextualLayer` narrowing）を先に呼ぶことで、 install-probe 時点の reach も use 時点の reach と同じ gate を通るようになった。
 - **cron の per-job 粒度は減る**: 「`.reyn/config/cron.yaml` に書ける」 の 1 段階に集約される。 ただし cron 発火で起動されるワークフローは実行時に自身の permission gate を再度通るため、 下流の保護は bypass されない。
 - **index の per-source 粒度は減る**: post-write gate に相当するものはない。 drop は destructive op であり、 per-source 区別は security ではなく operator UX の話だったので、 粒度減は accept する。
 

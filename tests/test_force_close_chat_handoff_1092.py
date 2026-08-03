@@ -161,7 +161,9 @@ async def test_wrap_up_bounded_fallback_fits(tmp_path) -> None:
     for t in ("U1", "A1", "U2", "A2"):
         _push(session, "user" if t.startswith("U") else "assistant", t)
     loop = _FailFirstLoop(fail_first=2)
-    out = await session._loop_driver._force_close_wrap_up(loop, resolved_model="m")
+    out, _covers, _dropped = await session._loop_driver._force_close_wrap_up(
+        loop, resolved_model="m"
+    )
     assert out == _CONSOL
     assert loop.attempts == 3  # 2 over-large candidates fell back, 3rd fit
 
