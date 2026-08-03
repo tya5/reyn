@@ -16,8 +16,8 @@ registry — see the two tests below, which witness that tolerance directly on
 the REAL production seams, no mocks), and `chat.py` now starts `run_repl`
 immediately while a background task performs the restore/attach.
 
-Two things are proven here, matching the two acceptance conditions from the
-#3671 P2 dispatch:
+Three things are proven here, matching the acceptance conditions from the
+#3671 P2 dispatch (the third added in #3675's review round):
 
 1. `has_session()` (the transport's own public read of "is anything
    attached") is observably `False` before `attach()` and `True` after — the
@@ -27,6 +27,10 @@ Two things are proven here, matching the two acceptance conditions from the
    completes without raising `RuntimeError`, with the client seeing
    `agent_name` derived from the caller's intended target (not from an
    attached `Session`, which doesn't exist in this scenario).
+3. A background `attach()` failure genuinely does NOT crash the caller — the
+   RESULT tested (per lead-coder's #3675 review: "test the result, not the
+   presence of try/except"), driven through the real, now-module-level
+   `chat._background_attach` with a `session_factory` that raises.
 
 Real `AgentRegistry` + real `Session` throughout (`tests/_support/agent_session
 .make_session`, the same helper `test_registry_focus_listener_rewire.py` and
@@ -43,6 +47,7 @@ import asyncio
 
 import pytest
 
+from reyn.interfaces.cli.commands.chat import _background_attach
 from reyn.interfaces.repl import repl as repl_mod
 from reyn.interfaces.repl.renderer import ChatRenderer
 from reyn.interfaces.transport.in_process import InProcessTransport
@@ -141,13 +146,13 @@ async def test_run_repl_survives_background_attach_racing_the_render_start(tmp_p
         # give the background attach task a chance to actually run
         await asyncio.sleep(0)
 
-    async def _background_attach() -> None:
+    async def _simulated_background_attach() -> None:
         await release_attach.wait()
         await reg.attach("alpha")
 
     monkeypatch.setattr(repl_mod, "run_chat_client", _fake_run_chat_client)
 
-    attach_task = asyncio.create_task(_background_attach())
+    attach_task = asyncio.create_task(_simulated_background_attach())
     try:
         await repl_mod.run_repl(reg, ChatRenderer(), name="alpha", config=None)
     finally:
@@ -156,3 +161,31 @@ async def test_run_repl_survives_background_attach_racing_the_render_start(tmp_p
 
     assert seen["has_session_at_render_start"] is False
     assert reg.attached_session() is not None, "background attach must still land"
+
+
+@pytest.mark.asyncio
+async def test_background_attach_failure_leaves_client_alive_with_no_session(tmp_path):
+    """Tier 2: acceptance condition ② — the REAL `chat.py` `_background_attach`
+    (module-level since #3675's review, so it is directly callable here — no
+    private-closure workaround needed), driven with a `session_factory` that
+    raises on attach (a real production failure mode: e.g. a corrupt on-disk
+    profile, a bad recovery build). lead-coder's review of #3675 specifically
+    asked for the RESULT to be tested, not the presence of a try/except: does
+    `_background_attach` actually complete without raising, leaving the
+    registry unattached, rather than propagating and killing the caller (which
+    in production is the task `_main_chat` awaits — an uncaught exception
+    there would tear down the whole client, the opposite of 'client
+    survives')."""
+
+    def _failing_factory(profile: AgentProfile) -> Session:
+        raise RuntimeError("simulated attach failure (#3675 P2 review)")
+
+    reg = AgentRegistry(project_root=tmp_path, session_factory=_failing_factory)
+    reg.create("alpha")
+
+    await _background_attach(reg, "alpha", skip_restore=True)  # must not raise
+
+    assert reg.attached_session() is None, (
+        "attach genuinely failed — the registry must stay unattached, not "
+        "half-attached or attached-to-a-broken-session"
+    )

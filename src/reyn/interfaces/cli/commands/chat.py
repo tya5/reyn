@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -64,6 +63,46 @@ async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> 
         inbox_kind=TurnOrigin.CLIENT_INPUT,
     )
     return result if isinstance(result, dict) else {"reply": result or ""}
+
+
+async def _background_attach(registry, name: str, *, skip_restore: bool) -> None:
+    """#3671 P2: run restore_all()+attach() OFF the render path so the client
+    can come up before a project with many in-flight agents finishes
+    replaying WAL state (``restore_all()`` synchronously builds a full
+    ``Session`` for every in-flight agent — see its own docstring, step 5).
+    Any failure here is caught and logged, never raised: the whole point of
+    moving this off the critical path is that the client survives a
+    restore/attach failure instead of never having started. Module-level
+    (not a nested closure) so it is independently testable — see
+    ``tests/test_startup_client_before_attach_3671_p2.py``.
+
+    #3671 P2 review (lead-coder): today a failure here is genuinely
+    invisible to the operator — ``_setup_interactive_logging`` (below)
+    routes this logger to a file, not the screen, so the client is left
+    silently waiting forever with ``has_session() == False``. That is a
+    real UX gap, but distinguishing "still connecting" from "failed"
+    on-screen is a ``has_session()``-*consuming* UI concern, i.e. P3's
+    scope (P2 is the ordering change only, no UI touched). Recorded as a
+    P3 requirement, not fixed here.
+    """
+    from reyn.core.events.agent_snapshot import SchemaVersionError
+
+    try:
+        if not skip_restore:
+            try:
+                await registry.restore_all()
+            except SchemaVersionError as e:
+                logger.error(
+                    f"background restore failed (schema mismatch): {e} — "
+                    "client stays up with no attached agent; rerun after resolving it"
+                )
+                return
+        await registry.attach(name)
+    except Exception:
+        logger.exception(
+            "#3671 P2: background restore/attach failed — "
+            "client stays up with no attached agent"
+        )
 
 
 def register(sub) -> None:
@@ -661,29 +700,6 @@ def run(args: argparse.Namespace) -> None:
         await registry.attach(name)
         return True
 
-    async def _background_attach() -> None:
-        """#3671 P2: run restore_all()+attach() OFF the render path so the
-        client can come up (and the user can see the shell) while a
-        project with many in-flight agents is still replaying WAL state —
-        previously this ran synchronously before `run_repl` even started,
-        putting every in-flight agent's full Session construction on the
-        startup critical path. `run_repl` already tolerates
-        `has_session() == False` for as long as this takes (#3671 P2). Any
-        failure here is caught and logged, not raised — the whole point of
-        moving this off the critical path is that the client must survive a
-        restore/attach failure instead of never having started."""
-        try:
-            if not await _restore_and_attach():
-                logger.error(
-                    "background restore failed (schema mismatch) — "
-                    "client stays up with no attached agent; rerun after resolving it"
-                )
-        except Exception:
-            logger.exception(
-                "#3671 P2: background restore/attach failed — "
-                "client stays up with no attached agent"
-            )
-
     async def _main_chat() -> None:
         if getattr(args, "once", False):
             # #187: one-shot mode (`reyn run-once`) keeps the old synchronous
@@ -725,15 +741,26 @@ def run(args: argparse.Namespace) -> None:
         # #3671 P2: restore_all()+attach() run in the BACKGROUND — run_repl
         # is started immediately, before either has necessarily finished
         # (has_session() reads False on the transport until `attach`
-        # completes). Awaited in `finally` below (not cancelled): cancelling
-        # mid-`restore_all` could interrupt a WAL replay / snapshot write
-        # partway through, so the exit path waits for whatever amount of the
-        # background work is still in flight rather than risking that.
-        attach_task = asyncio.create_task(_background_attach())
+        # completes).
+        attach_task = asyncio.create_task(_background_attach(registry, name, skip_restore=skip_restore))
         try:
             await run_repl(registry, renderer=renderer, config=session_cfg.config, name=name)
         finally:
-            with contextlib.suppress(asyncio.CancelledError):
-                await attach_task
+            # #3671 P2 review fix (lead-coder): `asyncio.shield` so a
+            # cancellation delivered to US while waiting here (Ctrl-C, most
+            # likely exactly while startup feels slow — the scenario this
+            # PR targets) does NOT also cancel `attach_task` — a
+            # half-done WAL replay / snapshot write must not be cut off
+            # partway through just because the operator wants the CLIENT to
+            # exit. If OUR OWN wait is cancelled (e.g. a second Ctrl-C
+            # during an already-cancelling shutdown), that CancelledError
+            # is deliberately NOT swallowed here — asyncio convention is to
+            # never eat a real cancellation, and a repeated cancel is the
+            # operator asking to exit NOW, not "wait a little longer" (a
+            # `contextlib.suppress(CancelledError)` here previously made
+            # this look like "waited to completion" when it had actually
+            # bailed out early without waiting at all — see #3675 review).
+            # `attach_task` is left running detached in that case.
+            await asyncio.shield(attach_task)
 
     run_async(_main_chat())
