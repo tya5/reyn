@@ -449,7 +449,10 @@ def run(args: argparse.Namespace) -> None:
     if is_interactive:
         _setup_interactive_logging(project_root)
 
-    session_cfg = InvocationContext.from_args(args)
+    # #3671 P4 item A: pass the project_root already computed above so
+    # load_config() doesn't independently re-walk the filesystem to find the
+    # same reyn.yaml ancestor a second time.
+    session_cfg = InvocationContext.from_args(args, project_root=project_root)
     # #2708 P3.2b: the missing-cred pre-check moved OFF this per-surface startup
     # gate and ONTO the single LLM funnel (``recorded_acompletion``). It now
     # fires on the FIRST LLM call (early for any LLM run) and surfaces as a typed
@@ -515,7 +518,11 @@ def run(args: argparse.Namespace) -> None:
     # and pass the SAME instance to BOTH Session seams (FS environment_backend
     # + exec sandbox_backend) — the #1200 single-shared-sandbox invariant. A
     # launched container is torn down at process exit.
-    env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(args)
+    # #3671 P4 item A: same project_root reuse as above — a 3rd independent
+    # _find_project_root walk for the SAME value this function already has.
+    env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(
+        args, project_root=project_root
+    )
     if env_cleanup is not None:
         import atexit
         atexit.register(env_cleanup)
@@ -533,6 +540,14 @@ def run(args: argparse.Namespace) -> None:
         file_zone_root=ws_base_dir,
         interactive=sys.stdin.isatty(),
     )
+
+    # #3671 P4 item A: computed ONCE and captured by both consumers below
+    # (`_session_factory`'s per-agent build AND the `AgentRegistry`
+    # constructor) — `from_config` rebuilds the pipeline/presentation/skill
+    # registries from disk each call; the two call sites were passing the
+    # exact same `(session_cfg.config, project_root)` pair and doing that
+    # I/O twice for an identical result.
+    factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
 
     def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # Captured CLI defaults — registry doesn't need to know them.
@@ -576,7 +591,7 @@ def run(args: argparse.Namespace) -> None:
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / action_retrieval / embedding / router / retry /
             # tool-use-scheme) — one source point for all five sites.
-            factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
+            factory_config=factory_config,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
@@ -632,7 +647,7 @@ def run(args: argparse.Namespace) -> None:
         state_log=state_log,
         # #2093: the uniform reyn.yaml-derived registry config bundle
         # (delegation_capability_default) — one source point.
-        factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
+        factory_config=factory_config,
     )
 
     name = args.agent_name or DEFAULT_AGENT_NAME

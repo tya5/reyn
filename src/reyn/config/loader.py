@@ -462,8 +462,18 @@ def _validate_skill_visibility(cfg: "ReynConfig") -> None:
             )
 
 
-def load_config(cwd: Path | None = None) -> ReynConfig:
-    """Load and merge config from all sources. CLI flags are applied by the caller."""
+def load_config(
+    cwd: Path | None = None, *, project_root: Path | None = None
+) -> ReynConfig:
+    """Load and merge config from all sources. CLI flags are applied by the caller.
+
+    ``project_root`` (#3671 P4 item A): a caller that already computed the
+    project root (e.g. ``chat.py``, which needs it before this call anyway
+    for the log redirect) can pass it through to skip a second, independent
+    ``_find_project_root`` filesystem walk below. ``None`` (every existing
+    caller) preserves the original behavior exactly — this function still
+    finds it itself from ``cwd``.
+    """
     cwd = (cwd or Path.cwd()).resolve()
 
     # ADR-0030: load ~/.reyn/secrets.env into os.environ before YAML is
@@ -495,7 +505,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     merged = _merge(merged, user_global, tier_label="user_global")
 
     # Project + local
-    project_root = _find_project_root(cwd)
+    if project_root is None:
+        project_root = _find_project_root(cwd)
     if project_root:
         project = _load_yaml(project_root / "reyn.yaml")
         merged = _merge(merged, project, tier_label="project")

@@ -68,8 +68,16 @@ def register_env_backend_args(p: argparse.ArgumentParser) -> None:
                    ))
 
 
-def build_environment_backend(args: argparse.Namespace, *, launcher=None):
+def build_environment_backend(
+    args: argparse.Namespace, *, launcher=None, project_root: "Path | None" = None
+):
     """Build the EnvironmentBackend + workspace dirs + optional cleanup.
+
+    ``project_root`` (#3671 P4 item A): a caller that already computed the
+    project root (e.g. ``chat.py``) can pass it through so the host / docker-
+    LAUNCH branches below skip their own independent ``_find_project_root``
+    filesystem walk. ``None`` (every existing caller) preserves the original
+    behavior exactly.
 
     Returns ``(backend, workspace_base_dir, workspace_state_dir, cleanup)``:
 
@@ -100,8 +108,9 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
         # #2427: anchor workspace_state_dir (events/WAL) on project_root too — same base-split
         # class: a subdir invocation (cwd != project_root) landed state under <cwd>/.reyn instead
         # of <project_root>/.reyn. Mirror the docker-LAUNCH pattern (line below).
-        from reyn.config import _find_project_root
-        project_root = _find_project_root(Path.cwd()) or Path.cwd()
+        if project_root is None:
+            from reyn.config import _find_project_root
+            project_root = _find_project_root(Path.cwd()) or Path.cwd()
         return None, project_root, project_root / ".reyn", None
 
     if backend_kind == "docker":
@@ -147,8 +156,10 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
         )
         # _find_project_root returns None when no reyn.yaml is found up the tree;
         # fall back to cwd so the mount source + state_dir are a real host path
-        # (NOT the bogus "None/.reyn" that str(None) would produce).
-        project_root = _find_project_root(Path.cwd())
+        # (NOT the bogus "None/.reyn" that str(None) would produce). Skip the
+        # walk entirely when the caller already resolved it (#3671 P4 item A).
+        if project_root is None:
+            project_root = _find_project_root(Path.cwd())
         workspace_root = str(project_root if project_root is not None else Path.cwd())
         try:
             cli_mounts = [parse_mount_spec(m) for m in (getattr(args, "mounts", None) or [])]
