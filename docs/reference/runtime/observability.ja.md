@@ -50,7 +50,7 @@ pip install reyn[observability]
 
 SDK 未インストールでエンドポイントを設定した場合は一度だけ警告を出し、未 attach
 （fail-open）のままです。各フィールドは
-[`observability` 設定ブロック](../config/reyn-yaml.md#observability-ブロック)を
+[`observability` 設定ブロック](../config/reyn-yaml.md#observability-block)を
 参照してください。
 
 ## イベント → テレメトリ マッピング
@@ -117,4 +117,4 @@ observability:
   する P6 監査イベントの Source-of-Truth。
 - [`.reyn/` ディレクトリレイアウト](reyn-dir-layout.md) — recovery-core と audit の
   区別; OTEL は recovery-core state を追加しません。
-- [設定: `observability` ブロック](../config/reyn-yaml.md#observability-ブロック)。
+- [設定: `observability` ブロック](../config/reyn-yaml.md#observability-block)。

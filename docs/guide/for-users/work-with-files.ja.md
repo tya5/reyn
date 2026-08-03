@@ -10,7 +10,7 @@ Reyn はプロジェクト内のファイルを読み、それについての質
 
 ---
 
-## 始める前に: 一度だけの設定
+## 始める前に: 一度だけの設定 {#before-you-start-one-time-setup}
 
 ファイルアクセスは `filesystem` MCP サーバーを経由します。まだなければ、以下のブロックを `reyn.yaml` に追加してください:
 
@@ -120,7 +120,7 @@ Reyn は 1 ターンあたり最大 5 ファイルを読みます。それ以上
 
 **読み取りのたびに「permission denied」**
 
-`reyn.yaml` の `permissions:` ブロックに `mcp.filesystem: allow` を追加するか（上の [設定](#始める前に-一度だけの設定) を参照）、TUI セッション中にインタラクティブなプロンプトへ `[y]` で答えてください。
+`reyn.yaml` の `permissions:` ブロックに `mcp.filesystem: allow` を追加するか（上の [設定](#before-you-start-one-time-setup) を参照）、TUI セッション中にインタラクティブなプロンプトへ `[y]` で答えてください。
 
 **「path outside project scope」エラー**
 

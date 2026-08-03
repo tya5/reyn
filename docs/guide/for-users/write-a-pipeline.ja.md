@@ -38,7 +38,7 @@ pipelines:
 
 あるいは、同等の効果として、エージェントに `pipeline_install_local(path="pipelines/greet.yaml")` を呼んでもらうこともできます — これはファイルを parse し、名前を検証し、`.reyn/config/pipelines.yaml` に同種のエントリを書き込みます。どちらの方法でも、変更は次のターン境界で hot-reload によって反映されます — 新しく登録した pipeline を反映させるのに**セッションの再起動は不要**です。
 
-ファイルの parse に失敗した場合、または 2 つのエントリが同じ `pipeline:` 名を宣言した場合、読み込みは問題のエントリを名指しして大きく失敗します — タイプミスが、出荷するつもりだった pipeline を静かに消すことはありません。詳細な表は [Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-fail-loud) を参照してください。
+ファイルの parse に失敗した場合、または 2 つのエントリが同じ `pipeline:` 名を宣言した場合、読み込みは問題のエントリを名指しして大きく失敗します — タイプミスが、出荷するつもりだった pipeline を静かに消すことはありません。詳細な表は [Pipeline registration § Failure behavior](../../concepts/runtime/pipeline-registration.md#failure-behavior-per-entry-isolated-visible-but-non-fatal) を参照してください。
 
 ## 3. 起動する
 

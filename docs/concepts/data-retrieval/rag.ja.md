@@ -24,7 +24,7 @@ reyn は RAG **framework foundation** を提供します — 5 つの primitive 
 
 **TL;DR:** 検索は自動 — LLM が必要な情報を組み込みの `semantic_search` ツールで自動的に取得します。source を作るには自分のファイルを読んで `index_update()` を呼ぶ短い safe-mode Python step が必要です（一発コマンドの indexing skill はもうバンドルされていません）。
 
-## クイックスタート
+## クイックスタート {#quick-start}
 
 コーパスの indexing は一度だけ実行する小さなスクリプト — ファイルを読んで chunk に分割し、`index_update` に渡します（`python` step、デフォルトは safe mode）：
 
@@ -54,7 +54,7 @@ iu.index_update(
 )
 ```
 
-`index_update` は append/replace の切り替えではなく **reconcile**（差分整合）です — add/update/remove/skip の契約は英語版 [Concepts: RAG](rag.md#chunking-is-your-own-code) を参照してください（同じ chunk での再実行は re-embed せず、`content_hash` が変わった `source_path` はその chunk だけ再 embed して古い hash を削除します）。
+`index_update` は append/replace の切り替えではなく **reconcile**（差分整合）です — add/update/remove/skip の契約は英語版 [Concepts: RAG](rag.md) を参照してください（同じ chunk での再実行は re-embed せず、`content_hash` が変わった `source_path` はその chunk だけ再 embed して古い hash を削除します）。
 
 ```bash
 # チャットを開始する — LLM は必要に応じて chunk を semantic_search で取得する
@@ -125,7 +125,7 @@ drop_source(source="my_docs")
 
 ## Chunking は自分のコードで書く
 
-バンドルされた chunker や LLM 主導の戦略選択はもうありません — [クイックスタート](#クイックスタート)の chunking ロジック（段落分割）は自分で書いてコーパスに合わせて調整する plain Python です。専門的なコーパス（Python ソースコード、SQL スキーマ、構造化 YAML）には、`index_update` を呼ぶ前にその corpus に合った分割ロジック（例: ソースコード用の AST ベース分割、Markdown 用の見出しベース分割）を差し込んでください。
+バンドルされた chunker や LLM 主導の戦略選択はもうありません — [クイックスタート](#quick-start)の chunking ロジック（段落分割）は自分で書いてコーパスに合わせて調整する plain Python です。専門的なコーパス（Python ソースコード、SQL スキーマ、構造化 YAML）には、`index_update` を呼ぶ前にその corpus に合った分割ロジック（例: ソースコード用の AST ベース分割、Markdown 用の見出しベース分割）を差し込んでください。
 
 chunking ステップは自分の `python` step 内で決定論的に実行されます。LLM の関与はなく、attractor surface もありません。`index_update` が add/update/remove/skip の reconcile・embedding・index 書き込みを処理し、それより上流（ファイル読み込み、chunk 分割）はすべて普通の Python です。1 回の呼び出しには、(再)index する `source_path` の現在の chunk 集合すべてを渡してください — 削除検出には reconcile がそのパスの完全な集合を見る必要があります。
 
