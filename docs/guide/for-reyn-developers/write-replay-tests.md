@@ -270,14 +270,17 @@ regenerating in place after a schema change (even a `description`-only edit)
 left the OLD entry on disk alongside the new one: the fixture then matched
 BOTH the old and the new schema and stayed green regardless of which one the
 code implements — worse than a stale fixture, which at least goes RED. Delete
-the fixture first if you prefer an explicit "starting from nothing" (conftest
-auto-detects the missing file and switches to record mode), but it is no
-longer required for correctness:
+the fixture first if you prefer an explicit "starting from nothing," but
+**#3662 removed the missing-file-implies-record-mode fallback**: a deleted
+fixture now makes the test fail LOUD at fixture setup (before
+`LLMReplay.install()` runs) with the exact `REYN_LLM_RECORD=1` command to
+re-run, rather than silently switching modes on your behalf — you still need
+`REYN_LLM_RECORD=1` explicitly, delete or no delete:
 
 ```bash
 rm tests/fixtures/llm/my_area/text_only.jsonl
-python -m pytest tests/test_replay_my_area.py -v
-# conftest sees file missing → switches to record mode automatically
+REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
+# without REYN_LLM_RECORD=1 this now fails loud instead of auto-recording
 ```
 
 Commit the new fixture alongside the change. Reviewers can diff the
