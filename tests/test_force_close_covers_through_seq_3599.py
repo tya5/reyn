@@ -1,5 +1,7 @@
 """Tier 2: force-close ``covers_through_seq`` must not exceed what the wrap-up
-call actually fed the LLM (#3599).
+call actually fed the LLM (#3599), and ``dropped_seq_ranges`` must also name
+any ``head`` seqs the watermark claims covering without ever feeding them
+(#3658).
 
 ``_force_close_wrap_up`` has a 3-tier bounded fallback that shrinks its input
 on overflow: ``[summary + raw_middle + tail]`` -> ``[summary + tail]`` ->
@@ -8,6 +10,16 @@ on overflow: ``[summary + raw_middle + tail]`` -> ``[summary + tail]`` ->
 right now is covered" — regardless of which tier actually won, so a fallback
 that dropped ``raw_middle`` (or ``raw_middle`` + ``tail``) from the
 summarisation input still had its watermark claim the FULL range as covered.
+
+#3658: ``head`` (the earliest token-budget slice) is NEVER part of any
+candidate, in every tier — but it was entirely absent from
+``dropped_seq_ranges`` too, so a head seq the watermark ended up claiming as
+covered (because ``covers`` advanced past it) was reported nowhere as lost.
+The fix adds the ``head`` seqs in ``(prev_cover, covers]`` — the only ones
+this call's OWN watermark claims responsibility for without feeding — to
+``dropped_seq_ranges``. At the summary-only tier ``covers == prev_cover``,
+so this interval is empty BY CONSTRUCTION (an intersection, not a tier
+branch) — see ``test_tier3_fallback_pins_covers_to_prior_watermark_not_next_seq``.
 
 Driven through the real ``_force_close_handoff`` + real ``_force_close_wrap_up``
 against a hand-written fake RouterLoop (a collaborator double, not a Mock)
@@ -88,10 +100,10 @@ def _push_8_turns(session) -> None:
 @pytest.mark.asyncio
 async def test_top_tier_success_covers_matches_actually_fed_seqs(tmp_path) -> None:
     """Tier 2: when the FULL candidate (raw_middle + tail, no fallback) wins,
-    covers_through_seq equals the max seq actually fed — byte-identical to the
-    pre-fix value here (tail already reaches the newest seq), no dropped
-    ranges. Establishes the non-regression baseline before the fallback cases
-    below actually change behaviour."""
+    covers_through_seq equals the max seq actually fed. #3658: ``head`` is
+    still never fed, and here ``covers`` (== max of raw_middle+tail) advances
+    past head's own seq, so head's span IS claimed-but-unfed and must be
+    reported."""
     session = _make_session(tmp_path, t_max=_T_MAX)
     _push_8_turns(session)
     head, raw_middle, tail, _summary, seq_by_id = (
@@ -103,6 +115,10 @@ async def test_top_tier_success_covers_matches_actually_fed_seqs(tmp_path) -> No
         "the fallback tiers below"
     )
     expected_covers = max(seq_by_id[id(t)] for t in raw_middle + tail)
+    expected_head_span = [
+        min(seq_by_id[id(t)] for t in head),
+        max(seq_by_id[id(t)] for t in head),
+    ]
     events = _capture_events(session)
     loop = _FailFirstThenSucceed(fail_first=0)  # top tier succeeds immediately
 
@@ -111,7 +127,12 @@ async def test_top_tier_success_covers_matches_actually_fed_seqs(tmp_path) -> No
     assert loop.attempts == 1
     (fired,) = [e for e in events if e.type == "router_force_close_handoff"]
     assert fired.data["covers_through_seq"] == expected_covers
-    assert fired.data["dropped_seq_ranges"] == []
+    assert fired.data["dropped_seq_ranges"] == [expected_head_span], (
+        "head is never fed to any candidate (#3658); covers advanced past "
+        "head's seq here, so head's span is claimed-but-unfed and must "
+        "appear in dropped_seq_ranges even though the top tier itself "
+        "dropped nothing"
+    )
 
 
 @pytest.mark.asyncio
@@ -124,7 +145,8 @@ async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
     formula's next_seq()-1 here, since tail holds the newest turn) — the
     requirement is asserted BY VALUE (not "old == new"), and the dropped
     raw_middle span must be reported so the loss is legible, not silently
-    absorbed."""
+    absorbed. #3658: covers also advances past head's own seq here, so
+    head's span is claimed-but-unfed too, alongside raw_middle."""
     session = _make_session(tmp_path, t_max=_T_MAX)
     _push_8_turns(session)
     head, raw_middle, tail, _summary, seq_by_id = (
@@ -140,6 +162,10 @@ async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
         min(seq_by_id[id(t)] for t in raw_middle),
         max(seq_by_id[id(t)] for t in raw_middle),
     ]
+    expected_head_span = [
+        min(seq_by_id[id(t)] for t in head),
+        max(seq_by_id[id(t)] for t in head),
+    ]
     events = _capture_events(session)
     loop = _FailFirstThenSucceed(fail_first=1)  # top tier overflows once, tier2 fits
 
@@ -148,7 +174,9 @@ async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
     assert loop.attempts == 2
     (fired,) = [e for e in events if e.type == "router_force_close_handoff"]
     assert fired.data["covers_through_seq"] == expected_covers
-    assert fired.data["dropped_seq_ranges"] == [expected_dropped_span]
+    assert fired.data["dropped_seq_ranges"] == [
+        expected_dropped_span, expected_head_span,
+    ]
 
 
 @pytest.mark.asyncio
@@ -162,7 +190,14 @@ async def test_tier3_fallback_pins_covers_to_prior_watermark_not_next_seq(
     unconditionally recorded ``next_seq() - 1`` (== 8), claiming the entire
     conversation was summarised when NONE of it reached the wrap-up call —
     the exact defect #3599 names. Both raw_middle's and tail's seq span are
-    reported as dropped."""
+    reported as dropped.
+
+    #3658: head's span is ABSENT from dropped_seq_ranges here — not because
+    this tier special-cases head away, but because the (prev_cover, covers]
+    interval that gates it is empty BY CONSTRUCTION at this tier (covers ==
+    prev_cover == 0, nothing new got fed). ``head`` itself is asserted
+    non-empty below so the absence is provably the intersection collapsing,
+    not head having nothing to offer in the first place."""
     session = _make_session(tmp_path, t_max=_T_MAX)
     _push_8_turns(session)
     head, raw_middle, tail, _summary, seq_by_id = (
@@ -172,6 +207,11 @@ async def test_tier3_fallback_pins_covers_to_prior_watermark_not_next_seq(
         "test premise: this construction must produce a non-empty "
         "raw_middle AND tail for the tier-3 fallback (both dropped) to "
         "mean anything"
+    )
+    assert head, (
+        "test premise: head must be non-empty so that its absence from "
+        "dropped_seq_ranges below is provably due to the (prev_cover, "
+        "covers] interval being empty, not head being trivially empty"
     )
     next_seq_minus_1 = session._next_seq - 1
     assert next_seq_minus_1 == max(seq_by_id[id(t)] for t in raw_middle + tail), (
@@ -196,6 +236,14 @@ async def test_tier3_fallback_pins_covers_to_prior_watermark_not_next_seq(
         "(claiming full coverage) even though the wrap-up input was shrunk "
         "to the persisted summary alone — nothing new was fed to the LLM"
     )
+    # #3658: head's (prev_cover, covers] gate is 0 < seq <= 0 here — empty by
+    # construction (an intersection), not a tier branch that special-cases
+    # head away. Assert the interval's own emptiness, not just its effect.
+    _prev_cover_this_call = 0
+    assert not [
+        t for t in head
+        if _prev_cover_this_call < seq_by_id[id(t)] <= fired.data["covers_through_seq"]
+    ]
     assert fired.data["dropped_seq_ranges"] == [expected_dropped_span]
     # The installed summary message itself must carry the same bounded value
     # (this is what downstream consumers like Session._uncompacted_tool_call_
