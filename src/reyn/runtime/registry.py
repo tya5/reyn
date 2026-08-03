@@ -289,6 +289,14 @@ class AgentRegistry:
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
+        # #3671 P3: the ONE place a caller doing a BACKGROUND attach (P2's
+        # `chat.py._background_attach`, running off the render path) can
+        # record that its attach ultimately failed, so a client reading
+        # `has_session() is False` can distinguish "still connecting" from
+        # "gave up" (see `ClientTransport.attach_failed`). `None` = no
+        # recorded failure. Cleared at the top of `attach()` so a fresh
+        # attach attempt is never shadowed by a stale prior failure.
+        self._background_attach_error: str | None = None
         # Ensure default exists so `reyn chat` (no name) works out of the box.
         if not (self._dir / DEFAULT_AGENT_NAME / PROFILE_FILENAME).is_file():
             AgentProfile.new(DEFAULT_AGENT_NAME, role="").save(
@@ -3097,6 +3105,13 @@ class AgentRegistry:
         """Switch the attached agent to `name`. Loads + starts session.run()
         and the outbox forwarder for the new agent if not already running.
         Old agent stays in `self._tasks` (background)."""
+        # #3671 P3: a fresh attach attempt (or its `get_or_load` below, which
+        # can itself raise) is never shadowed by a PRIOR background attempt's
+        # recorded failure — clear it up front rather than only on success,
+        # so a caller retrying after `record_background_attach_error` sees a
+        # clean "connecting" state again immediately, not "failed" until
+        # this attempt ALSO finishes.
+        self._background_attach_error = None
         new_session = self.get_or_load(name)
         sid = _DEFAULT_SID  # FP-0043 S3: attach(name) focuses the default session
         key = (name, sid)
@@ -3261,6 +3276,23 @@ class AgentRegistry:
         if self._attached is None:
             return None
         return self._peek_session(self._attached[0], self._attached[1])
+
+    def record_background_attach_error(self, error: str) -> None:
+        """#3671 P3: called by a caller doing a BACKGROUND attach (P2's
+        `chat.py._background_attach`) when it gives up, so `attach_failed()`
+        below can tell a client apart "still connecting" from "gave up" —
+        both look identical from `has_session()` alone (`False` either way).
+        A caller that never does a background attach never calls this; a
+        transport reading `attach_failed()` before ANY attach was even
+        attempted correctly still sees `False` (== "connecting")."""
+        self._background_attach_error = error
+
+    def attach_failed(self) -> bool:
+        """#3671 P3: whether the most recent attach attempt is KNOWN to have
+        given up (vs. still in flight, or having never started) — see
+        `record_background_attach_error`. Cleared at the top of every
+        `attach()` call, so a retry is never shadowed by a stale failure."""
+        return self._background_attach_error is not None
 
     def running_tasks(self) -> list[asyncio.Task]:
         """All non-completed tasks (session.run + forwarders) for shutdown drain."""

@@ -146,7 +146,7 @@ strong    litellm  openai/text-embedding-3-large   .reyn/cache/index/actions    
 
 **Swapping classes returns stale results** — Reyn's action index stores one embedding class at a time. Class swaps trigger automatic re-embedding on the next session, but you can force it eagerly with `reyn embeddings rebuild`.
 
-**Old `mcp.server` / `agent.peer` category mentioned by the LLM** — the LLM's training data may pre-date a Reyn collapse refactor. `list_actions(category=["mcp.server"])` post-Reyn-0.4 returns an [explicit error with a legacy → current mapping](../../concepts/tools-integrations/universal-catalog.md#category-validation--legacy-redirect) so the LLM self-corrects in a single retry.
+**Old `mcp.server` / `agent.peer` category mentioned by the LLM** — the LLM's training data may pre-date a Reyn collapse refactor. `list_actions(category=["mcp.server"])` post-Reyn-0.4 returns an [explicit error with a legacy → current mapping](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) so the LLM self-corrects in a single retry.
 
 ## Related
 

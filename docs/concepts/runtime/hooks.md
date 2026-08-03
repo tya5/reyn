@@ -480,7 +480,7 @@ Shell output is intentionally ignored. Reyn does not support transform-hooks
 truncation, and content fencing stay at the OS layer where they are visible,
 evented, and auditable (see
 [secret-handling](secret-handling.md) and
-[content-layer defense](../../reference/config/reyn-yaml.md#content-layer)).
+[content-layer defense](../../reference/config/reyn-yaml.md#safetythreat_scan-fields)).
 
 ## Awaited-dispatch architecture
 

@@ -141,7 +141,7 @@ session_spawn(
 
 `max_depth` と `max_children` には別々のスポーナーごとの拡張キーがあります：一方のオペレーター承認された増加が暗黙的に他方を広げることはありません。
 
-[reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) と [safety.on_limit](../../reference/config/reyn-yaml.md#safetyonlimit-fields) で完全なスキーマを確認してください。
+[reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) と [safety.on_limit](../../reference/config/reyn-yaml.md#safetyon_limit-fields) で完全なスキーマを確認してください。
 
 ---
 

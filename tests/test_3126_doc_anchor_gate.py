@@ -16,10 +16,23 @@ comment or doc link is covered automatically.
 
 Two renderers, two slug algorithms — the caveat this gate exists to encode:
 
-- **mkdocs** (`markdown.extensions.toc.slugify_unicode`, ``unicode_slugs=True``
-  is the actual runtime behavior — confirmed empirically below): collapses
-  consecutive hyphens, so an em-dash with a space on each side produces a
-  *single* hyphen.
+- **mkdocs** (`markdown.extensions.toc.slugify` — the ASCII-only default;
+  ``.mkdocs/mkdocs.yml``'s ``toc:`` block sets only ``permalink: true``, no
+  ``slugify:`` override, so `TocExtension`'s own default applies, confirmed
+  live: ``TocExtension().getConfig("slugify")`` returns ``slugify``, not
+  ``slugify_unicode``): collapses consecutive hyphens, so an em-dash with a
+  space on each side produces a *single* hyphen, AND strips non-ASCII
+  characters entirely — a CJK-only heading slugifies to ``""``, which
+  `unique()` (imported for real, same as mkdocs' own treeprocessor calls)
+  turns into an opaque, order-dependent ``_1``/``_2``/... fallback id. This
+  gate previously imported ``slugify_unicode`` instead and asserted a pure-CJK
+  heading survives unchanged (#3667 co-vet, lead-coder + docs-maintainer,
+  2026-08): that model was never actually checked against a real mkdocs
+  build, only against itself — a live build showed real ids like
+  ``ad-hoc-inline`` (CJK suffix dropped) where the old model computed
+  ``ad-hoc-inline-起動``, so citations correct under the old model were
+  silently broken on the published site. Confirmed the real function
+  produces the exact real-world id in both cases before making this fix.
 - **GitHub's own renderer**: does NOT collapse consecutive hyphens, so the
   same em-dash heading gets a *double* hyphen there.
 
@@ -48,7 +61,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from markdown.extensions.toc import slugify_unicode, unique
+from markdown.extensions.toc import slugify, unique
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _REPO_ROOT / "docs"
@@ -71,8 +84,14 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 # `<doc-basename>.md#<anchor>` inside a src/reyn/*.py comment or docstring —
 # e.g. ``# ..., see session-construction.md#family-1-audit-event-spine-p6``.
+# Scope: bare-word ``foo.md#anchor`` mentions only — not a reference-style
+# markdown link and not a quoted/URL-wrapped form, both absent from
+# src/reyn/*.py today (measured at #3667/#3126 co-vet, 2026-08).
 _CODE_ANCHOR_REF_RE = re.compile(r"([A-Za-z0-9_./-]+\.md)#([^\s()\[\]{}'\"<>,;]+)")
-# ``[text](#anchor)`` — a same-file markdown link.
+# ``[text](#anchor)`` — a same-file markdown link. Inline syntax only — a
+# reference-style link (``[text][ref]``) or a raw ``<a href="#anchor">``
+# is not extracted (repo-wide count when this note was added: 0 of either
+# form, per lead-coder's measurement, #3667).
 _DOC_LINK_RE = re.compile(r"\]\(#([^)\s]+)\)")
 
 
@@ -108,7 +127,7 @@ def _github_slugify(text: str) -> str:
 def heading_slugs(md_path: Path, *, use_github: bool) -> set[str]:
     """The full set of real, resolvable anchors for every heading in
     *md_path*: either mirroring mkdocs' `toc` extension (canonical
-    ``slugify_unicode`` + its ``unique`` dedup counter, both imported for
+    ``slugify`` + its ``unique`` dedup counter, both imported for
     real — never reimplemented/faked) or GitHub's renderer, per
     *use_github*. Also picks up explicit ``<a id="...">``/``<a name="...">``
     HTML anchors and attr_list ``{#id}`` heading-id overrides, both real
@@ -139,7 +158,7 @@ def heading_slugs(md_path: Path, *, use_github: bool) -> set[str]:
         slug = (
             _github_slugify(heading_text)
             if use_github
-            else slugify_unicode(heading_text, "-")
+            else slugify(heading_text, "-")
         )
         slugs.add(unique(slug, seen_ids))
     return slugs
@@ -187,6 +206,24 @@ _DOC_LINKS: list[tuple[Path, int, str]] = [
     for md in _MD_FILES
     for lineno, anchor in _doc_internal_links(md)
 ]
+
+# Floors, not exact pins (#3667 co-vet) — measured 109 code-comment refs /
+# 203 doc-internal links when added. `> 0` alone only catches TOTAL
+# extraction failure; a partial regex regression (one alternative in
+# _CODE_ANCHOR_REF_RE / _DOC_LINK_RE silently stops matching) would still
+# pass a bare non-zero check while quietly covering a fraction of the repo.
+# Deliberately below the measured counts to tolerate organic doc/comment
+# growth and removal.
+assert len(_CODE_REFS) >= 60, (
+    f"Extracted only {len(_CODE_REFS)} code-comment anchor refs from "
+    "src/reyn/ — measured 109 when this floor was added. Check "
+    "_CODE_ANCHOR_REF_RE before trusting this gate."
+)
+assert len(_DOC_LINKS) >= 120, (
+    f"Extracted only {len(_DOC_LINKS)} same-file doc-internal links from "
+    "docs/ — measured 203 when this floor was added. Check _DOC_LINK_RE "
+    "before trusting this gate."
+)
 
 
 def _slugs_for(doc_path: Path) -> set[str]:
@@ -318,15 +355,21 @@ def test_caveat_github_and_mkdocs_diverge_on_consecutive_hyphens(
     assert "faking-a-datastate-object--same-ban-sharper-failure-mode" in github_slugs
 
 
-def test_unicode_heading_slug_preserved_by_canonical_slugify(tmp_path: Path) -> None:
-    """Tier 1: mkdocs' toc ``unicode_slugs=True`` runtime behavior — a
-    pure-Japanese heading resolves UNCHANGED. This only happens with
-    ``unicode_slugs=True`` (the default ``slugify`` would produce an empty
-    string), confirming the gate imports ``slugify_unicode`` — the function
-    mkdocs' `toc` extension actually calls — not the ASCII-only sibling."""
+def test_pure_cjk_heading_falls_back_to_opaque_ordered_id(tmp_path: Path) -> None:
+    """Tier 1: mkdocs' actual runtime slugify (the ASCII-only default —
+    ``.mkdocs/mkdocs.yml`` sets no ``slugify:`` override) strips a pure-CJK
+    heading's text to ``""``; `unique()` then assigns an opaque,
+    ORDER-DEPENDENT ``_1``/``_2``/... id — the same fallback mkdocs' own
+    treeprocessor uses, since `unique` is imported for real, not
+    reimplemented. Confirmed against a live build: this is why a
+    pure-Japanese heading's citation must use an explicit
+    ``{#custom-id}`` override, never the heading text itself, and why
+    inserting a heading above shifts every anchor below it silently."""
     doc = tmp_path / "sample.md"
-    doc.write_text("## 判断フロー\n", encoding="utf-8")
-    assert "判断フロー" in heading_slugs(doc, use_github=False)
+    doc.write_text("## 判断フロー\n## 別の見出し\n", encoding="utf-8")
+    slugs = heading_slugs(doc, use_github=False)
+    assert "判断フロー" not in slugs
+    assert {"_1", "_2"} <= slugs
 
 
 def test_attr_list_explicit_id_overrides_autoslug(tmp_path: Path) -> None:

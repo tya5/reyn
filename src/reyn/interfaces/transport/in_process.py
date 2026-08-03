@@ -160,6 +160,12 @@ class InProcessTransport(ClientTransport):
     def has_session(self) -> bool:
         return self._attached() is not None
 
+    def attach_failed(self) -> bool:
+        # #3671 P3: delegates to the registry's own recorded state (set by
+        # `chat.py._background_attach` on failure, cleared at the top of
+        # every `attach()` call) — the transport holds no separate copy.
+        return bool(self._registry.attach_failed())
+
     def pending_intervention_head(self) -> "object | None":
         s = self._attached()
         return s.interventions.head() if s is not None else None

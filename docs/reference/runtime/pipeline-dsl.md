@@ -122,7 +122,7 @@ steps:
 Here `interrogate` is a sibling pipeline co-located in the same file (a
 dot-less `call` target resolves to a same-file sibling; a cross-file target
 uses the qualified `other_key.name` form — see [Pipeline
-registration](../../concepts/runtime/pipeline-registration.md#callmatch-target-resolution--the-dotno-dot-rule)).
+registration](../../concepts/runtime/pipeline-registration.md#callmatch-target-resolution-the-dotno-dot-rule)).
 It reads the current suspect as
 `ctx.suspect` — `pass: {suspect: item}` evaluated the bare-path expression
 `item` against the `for_each` scope's context (which carries `item`
@@ -496,7 +496,7 @@ its final output out as this step's result.
 
 | Key | Required | Meaning |
 |-----|----------|---------|
-| `pipeline` | yes | A static literal pipeline name — never a runtime expression. Dot-less = a same-file sibling (`{entry-key}.name`); dotted = a global (`other_key.name`) — see [target resolution](../../concepts/runtime/pipeline-registration.md#callmatch-target-resolution--the-dotno-dot-rule). An unresolved/unregistered target fails at load or step time. |
+| `pipeline` | yes | A static literal pipeline name — never a runtime expression. Dot-less = a same-file sibling (`{entry-key}.name`); dotted = a global (`other_key.name`) — see [target resolution](../../concepts/runtime/pipeline-registration.md#callmatch-target-resolution-the-dotno-dot-rule). An unresolved/unregistered target fails at load or step time. |
 | `pass` | no | A flat `{NAME: EXPR}` mapping. The callee's context is built **fresh** from only these bindings — a `NAME` not bound by any entry is structurally invisible to the callee. Each entry's `EXPR` is an R1 expression evaluated against the caller's current context (`ctx`/`pipe`/`item`/`acc` — whatever is in scope, exactly like `transform.value`), and the result is bound to `NAME` in the callee's `ctx` (see [Data flow between steps](#data-flow-between-steps)). A failing expression fails the step, naming the entry. |
 | `output` | no | Named store to write the callee's final result to. |
 

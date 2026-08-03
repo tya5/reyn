@@ -44,7 +44,7 @@ Agent Card に含まれる情報：
 | メソッド / 機能 | 状態 | 備考 |
 |---|---|---|
 | `message/send`（同期返信） | ✅ | デフォルトモード。ピアは最終返信テキストまで待機します。 |
-| `message/send`（`async_mode: true` による非同期） | ✅ | A2A `Task` envelope を返し、ピアはポーリングまたは購読します。下記 [タスクライフサイクル](#タスクライフサイクルと非同期実行) 参照。 |
+| `message/send`（`async_mode: true` による非同期） | ✅ | A2A `Task` envelope を返し、ピアはポーリングまたは購読します。下記 [タスクライフサイクル](#task-lifecycle-and-async-execution) 参照。 |
 | `GET /a2a/tasks/{run_id}`（ステータスポーリング） | ✅ | `running` / `input-required` / `completed` / `failed` / `cancelled` を返します。 |
 | `POST /a2a/tasks/{run_id}/cancel` | ✅ | 内部 `asyncio.Task` をキャンセル（idempotent）。 |
 | `GET /a2a/tasks/{run_id}/events`（SSE ストリーム） | ✅ | Reyn ネイティブのストリーミング窓口。終了状態でクローズ。 |
@@ -67,7 +67,7 @@ MCP と A2A は、どちらも「外部 LLM が Reyn と通信する」という
 
 Reyn にとってこれは主にワイヤーフォーマットの選択であり、基盤となるエンジンは同じです。外部システムがツール呼び出しを持つ LLM であれば MCP を選択してください。外部システム自体が agent であれば A2A を選択してください。
 
-## タスクライフサイクルと非同期実行
+## タスクライフサイクルと非同期実行 {#task-lifecycle-and-async-execution}
 
 A2A ピアは実行中に `ask_user` を発する skill と対話できるようになりました。
 以前のバージョンは同期実行のみをサポートしており、`message/send` は

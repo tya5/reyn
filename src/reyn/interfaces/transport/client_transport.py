@@ -113,6 +113,25 @@ class ClientTransport(ABC):
     def has_session(self) -> bool:
         """Whether a session is currently attached (client input guard)."""
 
+    def attach_failed(self) -> bool:
+        """#3671 P3: whether the attach this transport is waiting on is KNOWN
+        to have given up — vs. still in flight, or never attempted (both of
+        which read ``False`` here, same as ``has_session()`` does for them).
+        A client with ``has_session() is False`` uses this to distinguish
+        "still connecting" from "gave up" (owner ruling: a client must never
+        paint a genuine failure as an indefinite loading state).
+
+        NOT abstract (mirrors :meth:`cancel_queued` / :meth:`run_slash_command`
+        above): several narrow-purpose ``ClientTransport`` stubs across the
+        test suite pre-date this method, and only `InProcessTransport` (#3671
+        P2's own background-attach path) has anything meaningful to report —
+        a remote (``AgUiTransport``) attach either already succeeded by the
+        time ``--connect`` returns or the connection attempt itself raised,
+        so there is no separate "connecting in the background" phase to fail
+        remotely; the default ``False`` (paired with its own ``has_session()``)
+        is correct there, not a placeholder."""
+        return False
+
     @abstractmethod
     def pending_intervention_head(self) -> "object | None":
         """The oldest pending intervention handle, or None — client routing input."""

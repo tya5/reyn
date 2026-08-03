@@ -1371,13 +1371,29 @@ class TextualChatApp(App):
             app_bindings=self._app_binding_help(),
         )
 
+    def _attach_state(self) -> "str | None":
+        """#3671 P3 (B0, shared by the header AND the composer submit-gate —
+        see ``on_composer_submitted``): the tri-state
+        ``"connecting" | "failed" | None`` (``None`` = attached) read off the
+        SAME ``transport.has_session()`` / ``transport.attach_failed()`` seam
+        both consumers use, so the two never disagree about whether a session
+        is up. Owner ruling: "not yet" and "this is the answer" must never
+        render the same — ``None`` here is the ONLY state that lets a
+        consumer show a real value; both non-``None`` states must degrade to
+        an explicit placeholder, never a stale or fabricated one."""
+        if self._transport.has_session():
+            return None
+        return "failed" if self._transport.attach_failed() else "connecting"
+
     def _status_text(self, snap: "dict | None | object" = _UNSET) -> str:
         """The status-values line (``model │ agent │ cost │ ctx``), from the live
         status snapshot (F5b: running cost + context percent are visible even with
         the drawer closed). Falls back to the threaded ``agent_name`` pre-session.
         Pass ``snap`` to reuse an already-read snapshot (one read per frame)."""
         snapshot = self._snapshot() if snap is _UNSET else snap
-        return status_line_text(snapshot, self._agent_name)  # type: ignore[arg-type]
+        return status_line_text(
+            snapshot, self._agent_name, attach_state=self._attach_state()
+        )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:
         """Report ONCE if the event loop stops running on time (#3539).
@@ -3577,14 +3593,42 @@ class TextualChatApp(App):
 
     async def on_composer_submitted(self, event: "Composer.Submitted") -> None:
         text = event.value.strip()
-        self.query_one(Composer).clear_and_reset()
         if not text:
+            self.query_one(Composer).clear_and_reset()
             return
         if text in {"/quit", "/exit"}:
+            self.query_one(Composer).clear_and_reset()
             await self._transport.shutdown()
             self.exit()
             return
+        # #3671 P3 (decision 4B): block ORDINARY submission until attach()
+        # completes. Deliberately does NOT clear the composer — the typed
+        # text must survive, unlike the two branches above — and does NOT
+        # touch `submit_user_text` / the #3300 sent-queue at all: there is no
+        # session yet to queue against, so this is a genuinely separate path,
+        # not a variant of the queue-cancel "restore text" mechanic. Reuses
+        # the SAME `has_session()`/`attach_failed()` pair the header (B0,
+        # `_attach_state`) reads, so the two surfaces can never disagree.
+        if not self._transport.has_session():
+            self._notify_blocked_on_attach()
+            return
+        self.query_one(Composer).clear_and_reset()
         await self._submit(text)
+
+    def _notify_blocked_on_attach(self) -> None:
+        """#3671 P3: tell the operator WHY their Enter did nothing, matching
+        the header's connecting/failed distinction (owner ruling: a genuine
+        failure must never be papered over as an indefinite "still loading")
+        rather than silently dropping the keystroke."""
+        if self._transport.attach_failed():
+            text = "attach failed (see log) — your message was kept; retry once resolved"
+        else:
+            text = "still connecting — your message will send once ready"
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+        try:
+            self._transport.put_display(OutboxMessage(kind="status", text=text))
+        except Exception:
+            pass
 
     async def _submit(self, text: str) -> None:
         """Route one submitted line through the transport send seam.

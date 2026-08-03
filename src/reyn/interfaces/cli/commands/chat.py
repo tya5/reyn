@@ -7,6 +7,7 @@ instances; switching agents mid-REPL via `/attach <name>` happens through it.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -19,6 +20,8 @@ from reyn.runtime.turn_origin import TurnOrigin
 
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
+
+logger = logging.getLogger(__name__)
 
 # #187: send_to_agent_impl timeout for the one-shot (`reyn run-once`) drive. The
 # autonomous SWE agent may iterate for many minutes; the external bound is the
@@ -60,6 +63,47 @@ async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> 
         inbox_kind=TurnOrigin.CLIENT_INPUT,
     )
     return result if isinstance(result, dict) else {"reply": result or ""}
+
+
+async def _background_attach(registry, name: str, *, skip_restore: bool) -> None:
+    """#3671 P2: run restore_all()+attach() OFF the render path so the client
+    can come up before a project with many in-flight agents finishes
+    replaying WAL state (``restore_all()`` synchronously builds a full
+    ``Session`` for every in-flight agent — see its own docstring, step 5).
+    Any failure here is caught and logged, never raised: the whole point of
+    moving this off the critical path is that the client survives a
+    restore/attach failure instead of never having started. Module-level
+    (not a nested closure) so it is independently testable — see
+    ``tests/test_startup_client_before_attach_3671_p2.py``.
+
+    #3671 P3: this now ALSO calls ``registry.record_background_attach_error``
+    on every failure path (in addition to logging), so a client reading
+    ``ClientTransport.attach_failed()`` can distinguish "still connecting"
+    from "gave up" on screen — closing the P2-review-recorded UX gap
+    (``_setup_interactive_logging`` routes this logger to a file, not the
+    screen, so the log line alone was never operator-visible).
+    """
+    from reyn.core.events.agent_snapshot import SchemaVersionError
+
+    try:
+        if not skip_restore:
+            try:
+                await registry.restore_all()
+            except SchemaVersionError as e:
+                msg = f"background restore failed (schema mismatch): {e}"
+                logger.error(
+                    f"{msg} — client stays up with no attached agent; "
+                    "rerun after resolving it"
+                )
+                registry.record_background_attach_error(msg)
+                return
+        await registry.attach(name)
+    except Exception as e:
+        logger.exception(
+            "#3671 P2: background restore/attach failed — "
+            "client stays up with no attached agent"
+        )
+        registry.record_background_attach_error(f"{type(e).__name__}: {e}")
 
 
 def register(sub) -> None:
@@ -490,6 +534,14 @@ def run(args: argparse.Namespace) -> None:
         interactive=sys.stdin.isatty(),
     )
 
+    # #3671 P4 item A: computed ONCE and captured by both consumers below
+    # (`_session_factory`'s per-agent build AND the `AgentRegistry`
+    # constructor) — `from_config` rebuilds the pipeline/presentation/skill
+    # registries from disk each call; the two call sites were passing the
+    # exact same `(session_cfg.config, project_root)` pair and doing that
+    # I/O twice for an identical result.
+    factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
+
     def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # Captured CLI defaults — registry doesn't need to know them.
         # #1827 S3: resolve the agent's topology capability_profile → contextual
@@ -532,7 +584,7 @@ def run(args: argparse.Namespace) -> None:
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / action_retrieval / embedding / router / retry /
             # tool-use-scheme) — one source point for all five sites.
-            factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
+            factory_config=factory_config,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
@@ -588,7 +640,7 @@ def run(args: argparse.Namespace) -> None:
         state_log=state_log,
         # #2093: the uniform reyn.yaml-derived registry config bundle
         # (delegation_capability_default) — one source point.
-        factory_config=SessionFactoryConfig.from_config(session_cfg.config, project_root),
+        factory_config=factory_config,
     )
 
     name = args.agent_name or DEFAULT_AGENT_NAME
@@ -646,30 +698,42 @@ def run(args: argparse.Namespace) -> None:
         )
     )
 
-    async def _main_chat() -> None:
-        # PR21: replay WAL into per-agent snapshots before any new state
-        # changes happen. Agents with restored state get their inbox /
-        # pending_chains repopulated and their main loop started here.
-        # PR-resume-ux β U3: --no-restore skips this for debugging.
-        # PR-resume-ux β U4: clean exit on schema version mismatch.
+    async def _restore_and_attach() -> bool:
+        """Returns True on success, False if the operator should retry (schema
+        mismatch — the caller does `sys.exit(1)`, only valid for the one-shot
+        path; the interactive path below treats a False here as "stay up with
+        no session", see `_background_attach`)."""
         if not skip_restore:
             if not await _safe_restore():
-                sys.exit(1)
+                return False
         await registry.attach(name)
-        # #187: one-shot mode (`reyn run-once`). The scoped session built above
-        # (grant / exclude_tools / env_backend / high router_max_iterations) is
-        # now ATTACHED in the registry. Instead of the line-by-line REPL, read
-        # the WHOLE stdin as a single user message and drive the agent to
-        # completion via send_to_agent_impl — the same programmatic drive MCP /
-        # A2A use (registry.get_or_load returns this attached scoped session, no
-        # fresh unscoped build), then print the final reply and exit.
+        return True
+
+    async def _main_chat() -> None:
         if getattr(args, "once", False):
-            # #2783: this branch used to return (or sys.exit) with NO teardown of
-            # any kind — unlike run_repl (below), which always routes through
-            # registry.shutdown() on /quit/EOF. That left MCP connections,
-            # FsWatcher, StateLog and EventStore all unclosed on every
-            # `reyn run-once` invocation. try/finally so a limit-abort's
-            # sys.exit(2) still runs teardown before the process exits.
+            # #187: one-shot mode (`reyn run-once`) keeps the old synchronous
+            # ordering — there is no client to render early for a one-shot
+            # run, and `_run_once` needs a fully attached session regardless.
+            # PR21/PR-resume-ux β U3/U4: replay WAL into per-agent snapshots
+            # before any new state changes happen; clean exit on schema
+            # mismatch.
+            if not await _restore_and_attach():
+                sys.exit(1)
+            # #187: the scoped session built above (grant / exclude_tools /
+            # env_backend / high router_max_iterations) is now ATTACHED in
+            # the registry. Instead of the line-by-line REPL, read the WHOLE
+            # stdin as a single user message and drive the agent to
+            # completion via send_to_agent_impl — the same programmatic
+            # drive MCP / A2A use (registry.get_or_load returns this
+            # attached scoped session, no fresh unscoped build), then print
+            # the final reply and exit.
+            # #2783: this branch used to return (or sys.exit) with NO
+            # teardown of any kind — unlike run_repl (below), which always
+            # routes through registry.shutdown() on /quit/EOF. That left MCP
+            # connections, FsWatcher, StateLog and EventStore all unclosed
+            # on every `reyn run-once` invocation. try/finally so a
+            # limit-abort's sys.exit(2) still runs teardown before the
+            # process exits.
             try:
                 _once_result = await _run_once(registry, name)
                 sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
@@ -682,6 +746,30 @@ def run(args: argparse.Namespace) -> None:
             finally:
                 await registry.shutdown()
             return
-        await run_repl(registry, renderer=renderer, config=session_cfg.config)
+
+        # #3671 P2: restore_all()+attach() run in the BACKGROUND — run_repl
+        # is started immediately, before either has necessarily finished
+        # (has_session() reads False on the transport until `attach`
+        # completes).
+        attach_task = asyncio.create_task(_background_attach(registry, name, skip_restore=skip_restore))
+        try:
+            await run_repl(registry, renderer=renderer, config=session_cfg.config, name=name)
+        finally:
+            # #3671 P2 review fix (lead-coder): `asyncio.shield` so a
+            # cancellation delivered to US while waiting here (Ctrl-C, most
+            # likely exactly while startup feels slow — the scenario this
+            # PR targets) does NOT also cancel `attach_task` — a
+            # half-done WAL replay / snapshot write must not be cut off
+            # partway through just because the operator wants the CLIENT to
+            # exit. If OUR OWN wait is cancelled (e.g. a second Ctrl-C
+            # during an already-cancelling shutdown), that CancelledError
+            # is deliberately NOT swallowed here — asyncio convention is to
+            # never eat a real cancellation, and a repeated cancel is the
+            # operator asking to exit NOW, not "wait a little longer" (a
+            # `contextlib.suppress(CancelledError)` here previously made
+            # this look like "waited to completion" when it had actually
+            # bailed out early without waiting at all — see #3675 review).
+            # `attach_task` is left running detached in that case.
+            await asyncio.shield(attach_task)
 
     run_async(_main_chat())

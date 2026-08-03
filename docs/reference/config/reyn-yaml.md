@@ -707,7 +707,7 @@ Priority chain (highest first):
 
 **Transport tiers** (secure-by-default). The gateway identifies every connection: **T1** in-process (the operator's own process, no auth); **T2** same-machine cross-process over a UNIX domain socket (`reyn web --uds PATH`) identified by OS peer credentials, or loopback TCP as a fallback; **T3** cross-machine network, which requires `web.auth.token` and runs over TLS. An intervention answer is a permission grant, so an unauthenticated connection cannot answer.
 
-### `web.surfaces` — per-surface opt-in/opt-out (FP-0058 P2)
+### `web.surfaces`: per-surface opt-in/opt-out (FP-0058 P2)
 
 `reyn web` hosts several surfaces on the one gateway process; each can be
 independently enabled or disabled. **Secure-default**: AG-UI, the web UI

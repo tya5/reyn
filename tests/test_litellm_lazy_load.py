@@ -125,8 +125,16 @@ def test_first_use_quiets_litellm_banners(tmp_path) -> None:
     # Reset the process-global one-shot guard so `ensure_litellm_ready` actually
     # runs (an earlier suite test may have tripped it); simulate the pre-first-
     # use state by clearing suppress_debug_info first.
+    # #3671 P1: `_ready_registry` (the ownership+Future election dict) is a
+    # SECOND piece of process-global one-shot state, alongside `_litellm_ready`
+    # — an earlier test's resolved Future left in the registry would make this
+    # call return via the "someone else already owns it" branch (a `.result()`
+    # on an already-done Future) instead of actually re-running setup, the
+    # exact thing this test needs to observe. Reset both together.
     saved_ready = litellm_bootstrap._litellm_ready
+    saved_registry = dict(litellm_bootstrap._ready_registry)
     litellm_bootstrap._litellm_ready = False
+    litellm_bootstrap._ready_registry.clear()
     litellm.suppress_debug_info = False
     try:
         _setup_interactive_logging(tmp_path)  # startup: file handler in place
@@ -137,6 +145,8 @@ def test_first_use_quiets_litellm_banners(tmp_path) -> None:
         root.setLevel(saved_level)
         litellm.suppress_debug_info = saved_suppress
         litellm_bootstrap._litellm_ready = saved_ready
+        litellm_bootstrap._ready_registry.clear()
+        litellm_bootstrap._ready_registry.update(saved_registry)
 
 
 def test_first_use_routes_litellm_logger_to_file_not_console(tmp_path) -> None:
@@ -166,8 +176,14 @@ def test_first_use_routes_litellm_logger_to_file_not_console(tmp_path) -> None:
     # the guard (a process singleton, not private assertion state) + re-attach
     # a bare console StreamHandler to litellm's logger to reconstruct the
     # pre-first-use state this test exercises.
+    # #3671 P1: `_ready_registry` (the ownership+Future election dict) is a
+    # SECOND piece of process-global one-shot state alongside `_litellm_ready`
+    # — see the analogous reset in `test_first_use_quiets_litellm_banners`
+    # above for why both must be reset together.
     saved_ready = litellm_bootstrap._litellm_ready
+    saved_registry = dict(litellm_bootstrap._ready_registry)
     litellm_bootstrap._litellm_ready = False
+    litellm_bootstrap._ready_registry.clear()
     litellm_logger.addHandler(logging.StreamHandler())
     try:
         _setup_interactive_logging(tmp_path)
@@ -190,6 +206,8 @@ def test_first_use_routes_litellm_logger_to_file_not_console(tmp_path) -> None:
         litellm_logger.handlers[:] = saved_litellm_handlers
         litellm_logger.propagate = saved_litellm_propagate
         litellm_bootstrap._litellm_ready = saved_ready
+        litellm_bootstrap._ready_registry.clear()
+        litellm_bootstrap._ready_registry.update(saved_registry)
 
 
 def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path, out_of_process_reyn) -> None:

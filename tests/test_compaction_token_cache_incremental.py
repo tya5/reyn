@@ -16,9 +16,17 @@ THE FIX: the unconditional clear was removed. But the clear had ALSO been the
 codebase's ONLY size bound on this cache (no other prune/maxsize existed
 anywhere) — naively removing it would trade the freeze for an unbounded
 memory leak proportional to total-distinct-turns-ever, worsening in the exact
-same "long session" scenario. The cache is now LRU-bounded
+same "long session" scenario. The cache is now bounded
 (`_TOKEN_CACHE_MAXSIZE`) instead: warm entries survive compaction (the perf
 fix) AND the cache never exceeds its bound (the memory fix).
+
+#3671 P1: eviction policy is FIFO (insertion order), not LRU (recency), as
+of that PR — a read used to bump recency on every hit, making it a
+check-then-act TOCTOU a concurrent evicting write could interleave with
+(raising `KeyError`, relevant once a planned startup-warming thread starts
+calling `estimate_tokens` concurrently). Removing the recency bump makes a
+read one atomic `dict.get()` at the cost of no longer preferring "hot"
+entries — see `test_oldest_inserted_entry_is_evicted_regardless_of_recent_access`.
 
 Asserted via PUBLIC-surface proxies, not the private `_token_cache` dict
 (Tier 4 forbids private-state assertions): "was this a cache hit" is observed
@@ -181,31 +189,54 @@ def test_cache_never_exceeds_its_bound(monkeypatch) -> None:
     assert set(counts) == expected_texts  # all 20 were really tokenized (no false hits/misses)
 
 
-def test_recently_used_entry_survives_eviction_pressure(monkeypatch) -> None:
-    """Tier 2: LRU (recency), not FIFO (insertion order) — re-touching an old
-    entry before the bound is exceeded keeps it alive past newer entries that
-    are never touched again. Proves eviction targets the LEAST-recently-used
-    entry, not simply the oldest-inserted one."""
+def test_oldest_inserted_entry_is_evicted_regardless_of_recent_access(monkeypatch) -> None:
+    """Tier 2: FIFO (insertion order), not LRU (recency) — #3671 P1 changed
+    this cache's eviction policy. The prior version bumped recency on every
+    read (``move_to_end``), which made a read a check-then-act TOCTOU: a
+    concurrent evicting write could remove the SAME key between the
+    membership check and the read, raising ``KeyError`` (a real thread-safety
+    defect once a planned startup-warming thread, #3671 P2/P3, starts calling
+    ``estimate_tokens`` concurrently with ordinary turn processing). Removing
+    the recency bump makes a read a single atomic ``dict.get()`` — no
+    TOCTOU left to race, at the deliberate cost of recency-awareness: this
+    test proves the NEW contract (re-accessing an entry does NOT protect it
+    from eviction; the oldest INSERTION is evicted first) rather than the
+    old LRU one."""
     monkeypatch.setattr(engine_mod, "_TOKEN_CACHE_MAXSIZE", 3)
     counts: dict = {}
     monkeypatch.setattr("litellm.token_counter", _counting_token_counter(counts))
-    model = "test-model-lru-order"
+    model = "test-model-fifo-order"
 
     estimate_tokens("A", model, use_chars4=False)
     estimate_tokens("B", model, use_chars4=False)
     estimate_tokens("C", model, use_chars4=False)
-    # Bound is 3, all present. Re-touch "A" — it becomes MRU, "B" becomes LRU.
-    estimate_tokens("A", model, use_chars4=False)
-    assert counts.get("A") == 1  # the re-touch was itself a cache hit
+    # Bound is 3, all present. Re-touching "A" repeatedly would have made it
+    # MRU (protected) under the old LRU policy — under FIFO it has no effect
+    # on eviction order at all.
+    for _ in range(5):
+        estimate_tokens("A", model, use_chars4=False)
+    assert counts.get("A") == 1  # every re-touch was itself a cache hit
 
-    # Insert a 4th distinct text — must evict "B" (the LRU), not "A" or "C".
+    # Insert a 4th distinct text — must evict "A" (the OLDEST insertion),
+    # not "B" or "C", regardless of "A" having just been re-accessed 5 times.
     estimate_tokens("D", model, use_chars4=False)
     assert token_cache_size() == 3
 
-    estimate_tokens("A", model, use_chars4=False)
-    assert counts.get("A") == 1  # still a hit — "A" survived eviction
+    # Check "B" and "C" (still hits) BEFORE re-touching "A" — re-fetching a
+    # MISSED "A" re-inserts it, which (cache already at its 3-entry bound)
+    # triggers its OWN eviction of whatever is then oldest. Checking survivors
+    # first avoids conflating that cascade with the eviction under test.
     estimate_tokens("B", model, use_chars4=False)
-    assert counts.get("B") == 2  # "B" was evicted — re-tokenized (a miss)
+    assert counts.get("B") == 1  # "B" survived — still a hit
+    estimate_tokens("C", model, use_chars4=False)
+    assert counts.get("C") == 1  # "C" survived — still a hit
+
+    estimate_tokens("A", model, use_chars4=False)
+    assert counts.get("A") == 2, (
+        "'A' was still a cache hit despite being the oldest insertion and "
+        "the cache being over its bound — eviction is protecting recency "
+        "again (a regression back to LRU)"
+    )
 
 
 def test_cache_is_derived_not_a_recovery_source(monkeypatch) -> None:

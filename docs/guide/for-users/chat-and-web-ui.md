@@ -234,7 +234,7 @@ reyn web --disable api             # turn off a surface that's on by default
 ```
 
 The same toggles are settable in `reyn.yaml` under `web.surfaces` (see the
-[`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2))
+[`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2))
 so an operator running the same project repeatedly doesn't need to repeat
 the CLI flags every launch. A `--enable`/`--disable` flag on the command
 line always wins over the config file.
@@ -296,6 +296,6 @@ A2A and MCP are off by default (secure-default; see [Choosing which surfaces are
 
 - [Reference: CLI / chat](../../reference/cli/chat.md) — TUI slash commands, `--connect` / `--token` flags
 - [Reference: AG-UI transport](../../reference/runtime/agui-transport.md) — the wire protocol `--connect` and the browser both use
-- [`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces--per-surface-opt-inopt-out-fp-0058-p2) — the full per-surface secure-default table and precedence rules
+- [`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2) — the full per-surface secure-default table and precedence rules
 - [Reference: reyn.yaml § web.auth](../../reference/config/reyn-yaml.md) — token / TLS / transport-tier config
 - [Concepts: A2A](../../concepts/multi-agent/a2a.md) — agent-to-agent protocol

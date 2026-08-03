@@ -101,6 +101,15 @@ jobs:
       - name: Build docs (strict)
         run: mkdocs build --strict -f .mkdocs/mkdocs.yml
 
+      # --strict catches a dangling *file* reference but never checks
+      # whether `#anchor` actually exists on the target page — that's this
+      # script's job, against the site/ this same job just built (no
+      # second build, no new dependency). See scripts/check_doc_anchors.py
+      # for the incident this closes (#3557/#3592: 42/42 line-number
+      # citations in charter.md had drifted, silently).
+      - name: Check doc anchors
+        run: python scripts/check_doc_anchors.py
+
   audit:
     name: test-tier audit
     runs-on: ubuntu-latest

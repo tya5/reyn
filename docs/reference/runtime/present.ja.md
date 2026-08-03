@@ -31,7 +31,7 @@ guard/renderer の分割）については [コンセプト: Present レイヤ](
 ```
 
 **データソース**を厳密に1つ、`view` / `blueprint` は**最大1つ**（両方省略も有効——後述の
-[任意の view/blueprint](#任意の-viewblueprint-既定レンダリング) を参照）:
+[任意の view/blueprint](#viewblueprint) を参照）:
 
 | 引数 | 型 | 備考 |
 |---|---|---|

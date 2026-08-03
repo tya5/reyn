@@ -199,7 +199,7 @@ mode-driven framework used by loop and budget caps:
 operator-approved increase in one does not silently widen the other.
 
 See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) and
-[safety.on_limit](../../reference/config/reyn-yaml.md#safetyonlimit-fields) for full schema.
+[safety.on_limit](../../reference/config/reyn-yaml.md#safetyon_limit-fields) for full schema.
 
 ---
 

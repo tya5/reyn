@@ -76,7 +76,7 @@ python scripts/dogfood_sp_render.py \
   --grep-legacy
 ```
 
-legacy リテラルが見つからない場合は exit code 0 で終了します。見つかった場合は exit code 1 で終了し、問題のある行を出力します。pre-commit hook や CI チェック向けに設計されています — [ワークフローとの統合](#ワークフローとの統合)を参照してください。
+legacy リテラルが見つからない場合は exit code 0 で終了します。見つかった場合は exit code 1 で終了し、問題のある行を出力します。pre-commit hook や CI チェック向けに設計されています — [ワークフローとの統合](#workflow-integration)を参照してください。
 
 ### `--compare-legacy` — wrapper SP と legacy SP のサイズ比較
 
@@ -149,7 +149,7 @@ stdout に `PASS` または `FAIL` を出力し、対応する exit code で終�
 | `--compare-legacy` | wrapper と legacy のサイズ比較を出力 |
 | `--legacy-check` | PASS/FAIL を出力して対応 exit code で終了 |
 
-## ワークフローとの統合
+## ワークフローとの統合 {#workflow-integration}
 
 ### コミット前 — リーク確認
 
