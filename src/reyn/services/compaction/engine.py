@@ -67,6 +67,16 @@ logger = logging.getLogger(__name__)
 # Token-counter fallback tracking (Axis 10)
 # ---------------------------------------------------------------------------
 
+# #3671 P1: read-then-written with no synchronization, safe only because
+# nothing but the main thread ever called into this module. A planned
+# startup-warming thread (#3671 P2/P3, not added by this PR) would call
+# estimate_tokens() concurrently with ordinary turn processing. Owner
+# directive: prefer non-lock exclusion where one exists over adding a lock
+# (adding locks has its own embug risk). Here: no exclusion is needed at
+# all — the worst outcome of two threads racing this exact flag is the
+# warn-once log firing twice, a cosmetic duplicate, never a wrong value or
+# a crash (unlike the two items below, both of which get a real fix, not a
+# lock).
 _token_counter_fallback_warned: bool = False
 
 # Process-lifetime cache: (model, text_hash) -> int. Keyed by a hash, not the
@@ -88,27 +98,44 @@ _token_counter_fallback_warned: bool = False
 # history, freezing the inline CUI for real seconds on a long chat. Losing
 # the clear() naively (unbounded dict) would trade that freeze for a slow
 # memory leak proportional to total-distinct-turns-ever, worsening in the
-# exact same "long session" scenario. `OrderedDict` LRU eviction (recency,
-# not insertion order — a `move_to_end` on every hit) keeps recently-touched
-# turns warm (the perf fix) while bounding total memory (the leak fix).
+# exact same "long session" scenario. `OrderedDict` eviction kept recently-
+# touched turns warm via `move_to_end` on every hit (LRU, by recency).
+#
+# #3671 P1 — LRU -> FIFO (behaviour change, stated plainly, not hidden): a
+# concurrent read's membership-check-then-``move_to_end``-then-``[]`` was a
+# check-then-act TOCTOU — a racing ``_token_cache_put`` evicting the SAME key
+# in between raised ``KeyError`` out of ``move_to_end``/``__getitem__``
+# instead of a clean miss (witnessed: 16 threads x 500 iterations,
+# maxsize=4, reliable KeyError unlocked). Owner directive: prefer a
+# non-lock fix over adding a lock. The actual defect is "reading mutates
+# the cache" (the recency bump) — remove that, and a read becomes ONE
+# ``dict.get()`` call, atomic under the GIL by construction, so the TOCTOU
+# has nothing left to race. Trade-off: eviction is now by INSERTION order
+# (oldest-inserted evicted first), not by how recently a turn was
+# re-estimated — a real behaviour change. This module's whole point is
+# capping memory for a process-lifetime cache of IMMUTABLE (model, text)
+# results (see the correctness note above) — FIFO still bounds memory
+# correctly, it just doesn't preferentially keep "hot" entries the way LRU
+# did; re-estimating an evicted-then-revisited turn is a cache miss (cheap:
+# ``estimate_tokens`` recomputes it), not a correctness issue.
 _TOKEN_CACHE_MAXSIZE = 8192
 _token_cache: "OrderedDict[tuple[str, str], int]" = OrderedDict()
 
 
 def _token_cache_get(cache_key: "tuple[str, str]") -> "int | None":
-    """LRU read: a hit bumps recency (moves to MRU end); a miss returns None."""
-    if cache_key not in _token_cache:
-        return None
-    _token_cache.move_to_end(cache_key)
-    return _token_cache[cache_key]
+    """FIFO-cache read: a miss returns None. #3671 P1: no longer bumps
+    recency (see ``_token_cache``'s own docstring) — a single ``dict.get()``
+    call, so there is no separate check-then-act step left to race."""
+    return _token_cache.get(cache_key)
 
 
 def _token_cache_put(cache_key: "tuple[str, str]", value: int) -> None:
-    """LRU write: insert/overwrite as MRU, then evict the LRU entry if the
-    bound is exceeded. A plain dict has no eviction primitive cheaper than
-    O(n) — OrderedDict.popitem(last=False) is O(1)."""
+    """FIFO-cache write: insert/overwrite in place (an overwrite does NOT
+    move an existing key — eviction order is insertion order, #3671 P1),
+    then evict the oldest entry if the bound is exceeded. A plain dict has
+    no eviction primitive cheaper than O(n) — OrderedDict.popitem(last=False)
+    is O(1)."""
     _token_cache[cache_key] = value
-    _token_cache.move_to_end(cache_key)
     if len(_token_cache) > _TOKEN_CACHE_MAXSIZE:
         _token_cache.popitem(last=False)
 
@@ -171,6 +198,13 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
         pass
     # Fallback path — reached only when litellm.token_counter raised (or, in
     # principle, returned something other than a non-negative int).
+    # #3671 P1: check-then-set on this shared global has no lock — a
+    # concurrent caller could also observe False before this one sets it
+    # True, firing the warn-once notice more than once. Left unguarded on
+    # purpose (owner directive: no lock without a real correctness need):
+    # the only consequence is a duplicate log line, never a wrong count or
+    # a crash (contrast ``_token_cache`` above and ``ensure_litellm_ready``,
+    # ``_get_httpx_exc_types`` in llm.py — those get real fixes).
     if not _token_counter_fallback_warned:
         _token_counter_fallback_warned = True
         logger.warning(
