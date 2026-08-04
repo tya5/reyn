@@ -668,6 +668,20 @@ class TextualChatApp(App):
        not ground. */
     App { background: @app-background@; }
     Screen { layout: vertical; background: transparent; }
+    /* #3542: the drag-selection band. Textual's ansi-dark defaults to
+       `ansi_bright_blue`, which the operator found too loud against the
+       conversation. Dropping to `ansi_blue` asks the terminal for a different
+       one of its sixteen slots — reyn is not overriding the user's colours
+       here and never was, it only picks which frame to request. Declared as an
+       explicit background/foreground PAIR rather than `text-style: reverse`:
+       Textual COMPOSES the selection style onto each cell, so reverse would
+       let every coloured run (tool rows, amber intervention headings, dim
+       chrome) become its own background and the band would fragment — which
+       is a different complaint than "too loud". */
+    Screen > .screen--selection {
+        background: @selection-bg@;
+        color: @selection-fg@;
+    }
     FlowView {
         height: 1fr;
         scrollbar-size-vertical: 0;
