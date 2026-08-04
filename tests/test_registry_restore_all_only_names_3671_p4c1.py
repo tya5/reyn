@@ -99,6 +99,44 @@ async def test_only_names_defers_the_non_target_agents_session_build(tmp_path, m
 
 
 @pytest.mark.asyncio
+async def test_deferred_agent_does_not_auto_resume_if_never_touched(tmp_path, monkeypatch):
+    """Tier 2: #3671 P4 item C-1 — a DELIBERATE crash-recovery semantic
+    change (lead-coder review, #3683), stated explicitly rather than left
+    implicit: before this PR, EVERY in-flight agent auto-resumed its run-loop
+    at startup (crash-recovery-by-construction). After this PR, only the
+    requested agent auto-resumes; a non-requested in-flight agent (beta —
+    e.g. one that crashed mid-delegation-turn) stays NOT running unless
+    something actually reaches it (attach or a delegation target) during
+    this process's lifetime. If nothing ever does, it never resumes this
+    run — the state is not lost (still on disk, still restorable on the
+    NEXT restore_all), but auto-resume itself does not happen. Pending
+    owner confirmation this is the intended trade-off (asked by lead-coder,
+    #3683) — this test documents the ACTUAL current behavior either way, so
+    a later reversal shows up here as an intentional test change, not a
+    silent regression."""
+    monkeypatch.chdir(tmp_path)
+    state_log = _seed_two_in_flight_agents(tmp_path)
+    registry = _registry(tmp_path, state_log)
+
+    await registry.restore_all(only_names={"alpha"})
+    # give any wrongly-scheduled task a chance to actually start
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    # A running task requires a constructed Session (`ensure_running`/
+    # `attach` both go through `get_or_load` first) — so `loaded_names()`
+    # NOT containing "beta" is itself conclusive proof no task is running
+    # for it (there is no code path to a running task that skips
+    # construction). Asserted via this PUBLIC surface, not a private
+    # `_tasks` peek.
+    assert "beta" not in registry.loaded_names(), (
+        "a never-touched, non-requested in-flight agent must NOT auto-resume "
+        "— see docstring: this is the deliberate #3671 P4 C-1 crash-recovery "
+        "semantic change (pending owner confirmation, #3683)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_deferred_agent_is_restored_on_first_attach(tmp_path, monkeypatch):
     """Tier 2: the deferred agent is NOT lost — attaching to it later applies
     the SAME restore_state it would have gotten eagerly (the stranded

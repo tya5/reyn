@@ -1074,7 +1074,7 @@ class AgentRegistry:
         ``only_names`` (#3671 P4 item C-1): steps 1-4 (WAL replay + the
         durable snapshot re-save) are UNCONDITIONAL regardless of this param —
         every agent's on-disk snapshot is brought current either way, so
-        durability is unaffected. Only step 5's DEFAULT-session build
+        the STATE itself is never lost. Only step 5's DEFAULT-session build
         (``get_or_load`` + ``restore_state`` + ``ensure_running`` — a full
         Session construction plus a live running task) is scoped: with
         ``only_names`` given, an in-flight agent NOT in the set has its
@@ -1082,17 +1082,44 @@ class AgentRegistry:
         being built now; ``get_or_load`` applies it (``restore_state``, once)
         the first time that agent is actually reached — an explicit
         ``attach()``, or a delegation target via ``ensure_running()`` (both
-        call ``get_or_load`` internally) — never left un-hydrated, just
-        deferred to first real use. ``None`` (every caller except ``chat.py``,
-        e.g. ``mcp.py`` — which must be able to serve ANY agent name on
-        arbitrary MCP calls, not one known target) is the real, still-eager
-        behavior — not a compat default kept only to avoid a signature break.
+        call ``get_or_load`` internally). ``None`` (every caller except
+        ``chat.py``, e.g. ``mcp.py`` — which must be able to serve ANY agent
+        name on arbitrary MCP calls, not one known target) is the real,
+        still-eager behavior — not a compat default kept only to avoid a
+        signature break.
 
-        Deliberately UNSCOPED by ``only_names``: a SPAWNED (non-default-sid)
-        session's build in step 5's other branch, and ``_rewake_pipeline_runs``
-        below — both genuinely separate mechanisms from the default-session
-        case above (see their own comments), narrowed out of this PR's scope
-        rather than bundled in.
+        ⚠️ DELIBERATE crash-recovery semantic change (lead-coder review,
+        #3683 — flagged here explicitly so it is never mistaken for a
+        performance-only side effect): before this param existed, EVERY
+        in-flight agent auto-RESUMED its run-loop at startup (crash-recovery-
+        by-construction). With ``only_names`` given, a non-requested in-flight
+        agent's state is preserved but its run-loop does NOT auto-resume —
+        only "first real use" (attach/delegation) resumes it, and if nothing
+        ever reaches it during this process's lifetime, it simply never runs
+        this session, even though it was mid-task when the process last
+        stopped. The state is not lost (still restorable by a LATER
+        ``restore_all`` — e.g. the next process start, or a future
+        `only_names` that includes it) but auto-resume itself does not
+        happen. See ``test_deferred_agent_does_not_auto_resume_if_never_touched``
+        (tests/test_registry_restore_all_only_names_3671_p4c1.py) for the
+        behavioral pin. Whether this trade-off is acceptable is pending
+        explicit owner confirmation as of #3683 (asked by lead-coder) — this
+        docstring states the CURRENT actual behavior either way, so a future
+        reversal is a deliberate, documented decision, not a silent one.
+
+        Deliberately UNSCOPED by ``only_names`` (so NOT subject to the same
+        deferral): a SPAWNED (non-default-sid) session's build in step 5's
+        other branch, and ``_rewake_pipeline_runs`` below. The pipeline case
+        in particular creates a real ASYMMETRY worth naming: a crashed
+        in-flight PIPELINE run still self-resumes unconditionally on every
+        ``restore_all()`` call regardless of ``only_names``, while a crashed
+        in-flight AGENT (this step) does not, unless requested or reached.
+        Both are "genuinely separate mechanisms" in the narrow sense that
+        `_rewake_pipeline_runs` doesn't share step 5's code path — but
+        whether an OPERATOR should see pipelines auto-resume while ordinary
+        agent turns do not is a real product-consistency question, not
+        resolved here; narrowed out of this PR's scope rather than silently
+        decided either way.
         """
         if self._state_log is None:
             return {}
