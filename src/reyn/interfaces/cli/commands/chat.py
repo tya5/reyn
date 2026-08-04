@@ -404,6 +404,47 @@ def _run_remote(
     )
 
 
+
+def _startup_stage(name: str):
+    """Time one startup interval (#3671).
+
+    Wraps an INTERVAL rather than a call: #3671's P4 work is removing duplicate
+    CALLS inside these phases, and a probe attached to a particular call would
+    disappear with it. A region survives that, and its number goes DOWN when a
+    duplicate is removed — which is what makes the improvement visible instead
+    of merely asserted.
+    """
+    from reyn.runtime.startup_timing import stage
+
+    return stage(name)
+
+
+def _report_startup_timing() -> None:
+    """Print the breakdown, if the operator asked for it.
+
+    Printed rather than written: the report exists for a machine whose operator
+    cannot copy files off it, so a dump would be a dead end.
+
+    To STDOUT, after the TUI has released the terminal. Measured the alternative
+    first and it does not work: the inline CUI renders THROUGH stderr, so
+    ``reyn chat 2>timing.txt`` captures the entire screen — 5.5 MB of escape
+    sequences — and the interface never appears. Anything this prints while the
+    app owns the screen is either overwritten or corrupts it, so the report
+    waits until the app has exited and the shell has the terminal back.
+    """
+    from reyn.runtime.startup_timing import (
+        TIMING,
+        enabled,
+        process_elapsed_seconds,
+    )
+
+    if not enabled():
+        return
+    wall = process_elapsed_seconds()
+    for line in TIMING.report_lines(wall):
+        print(line)
+
+
 def run(args: argparse.Namespace) -> None:
     # ADR-0039 P3: `--connect <url>` short-circuits to the remote thin client
     # before any local session machinery is built (the remote server owns the
@@ -449,7 +490,8 @@ def run(args: argparse.Namespace) -> None:
     if is_interactive:
         _setup_interactive_logging(project_root)
 
-    session_cfg = InvocationContext.from_args(args)
+    with _startup_stage("config"):
+        session_cfg = InvocationContext.from_args(args)
     # #2708 P3.2b: the missing-cred pre-check moved OFF this per-surface startup
     # gate and ONTO the single LLM funnel (``recorded_acompletion``). It now
     # fires on the FIRST LLM call (early for any LLM run) and surfaces as a typed
@@ -540,7 +582,8 @@ def run(args: argparse.Namespace) -> None:
     # registries from disk each call; the two call sites were passing the
     # exact same `(session_cfg.config, project_root)` pair and doing that
     # I/O twice for an identical result.
-    factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
+    with _startup_stage("registry"):
+        factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
 
     def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # Captured CLI defaults — registry doesn't need to know them.
@@ -634,7 +677,8 @@ def run(args: argparse.Namespace) -> None:
             s.load_history()
         return s
 
-    registry = AgentRegistry(
+    with _startup_stage("session"):
+     registry = AgentRegistry(
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
@@ -773,3 +817,4 @@ def run(args: argparse.Namespace) -> None:
             await asyncio.shield(attach_task)
 
     run_async(_main_chat())
+    _report_startup_timing()
