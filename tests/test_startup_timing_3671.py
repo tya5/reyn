@@ -167,3 +167,61 @@ def test_a_startup_that_never_reached_a_frame_still_reports(monkeypatch) -> None
     monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
 
     assert startup_timing.process_elapsed_seconds() > 0
+
+
+def test_the_report_survives_an_interrupt(monkeypatch, capsys) -> None:
+    """Tier 2: Ctrl-C during startup still prints the breakdown.
+
+    This is the case the whole feature exists for. Someone whose startup takes
+    minutes presses Ctrl-C, and an unguarded report would withhold the numbers
+    from exactly that person, in exactly that situation — the "a tool is
+    unreachable at the moment it was built for" shape this repo keeps finding.
+
+    Measured while fixing it: guarding only the final `run_async` call was not
+    enough. An interrupt during registry construction, several steps earlier,
+    still printed nothing — whatever stage is slow IS the stage the interrupt
+    lands in. Hence the guard wraps the whole of `run`.
+    """
+    import argparse
+
+    from reyn.interfaces.cli.commands import chat as chat_cmd
+
+    monkeypatch.setenv("REYN_STARTUP_TIMING", "1")
+
+    def _interrupted(_args: argparse.Namespace) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(chat_cmd, "_run", _interrupted)
+
+    try:
+        chat_cmd.run(argparse.Namespace())
+    except KeyboardInterrupt:
+        pass
+
+    assert "startup timing" in capsys.readouterr().out
+
+
+def test_the_report_survives_an_exception(monkeypatch, capsys) -> None:
+    """Tier 2: a startup that dies still reports.
+
+    `finally` rather than `except KeyboardInterrupt`, because a crash is also a
+    startup someone wants the numbers for — and it is the case where "how far
+    did it get" is hardest to reconstruct afterwards.
+    """
+    import argparse
+
+    from reyn.interfaces.cli.commands import chat as chat_cmd
+
+    monkeypatch.setenv("REYN_STARTUP_TIMING", "1")
+
+    def _boom(_args: argparse.Namespace) -> None:
+        raise RuntimeError("startup blew up")
+
+    monkeypatch.setattr(chat_cmd, "_run", _boom)
+
+    try:
+        chat_cmd.run(argparse.Namespace())
+    except RuntimeError:
+        pass
+
+    assert "startup timing" in capsys.readouterr().out
