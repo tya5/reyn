@@ -446,6 +446,25 @@ def _report_startup_timing() -> None:
 
 
 def run(args: argparse.Namespace) -> None:
+    """Entry point — wraps the whole startup so the timing report always lands.
+
+    #3671: the report exists for someone whose startup takes minutes, and what
+    that person does is press Ctrl-C. Measured: the interrupt arrives wherever
+    the startup happens to be. A first attempt guarded only the final
+    ``run_async`` call, and a Ctrl-C during registry construction — several
+    steps earlier — still printed nothing. Whatever stage is slow IS the stage
+    the interrupt lands in, so the guard has to cover all of them.
+
+    ``finally`` rather than ``except KeyboardInterrupt``: a startup that dies on
+    an exception is also one someone wants the numbers for.
+    """
+    try:
+        _run(args)
+    finally:
+        _report_startup_timing()
+
+
+def _run(args: argparse.Namespace) -> None:
     # ADR-0039 P3: `--connect <url>` short-circuits to the remote thin client
     # before any local session machinery is built (the remote server owns the
     # session; this process is pure I/O).
@@ -817,4 +836,3 @@ def run(args: argparse.Namespace) -> None:
             await asyncio.shield(attach_task)
 
     run_async(_main_chat())
-    _report_startup_timing()
