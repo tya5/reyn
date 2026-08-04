@@ -32,6 +32,44 @@ from typing import Iterator
 
 _ENV = "REYN_STARTUP_TIMING"
 
+#: When this module was first imported — the earliest instant reyn's own code
+#: can observe. Everything before it (the interpreter starting, and the import
+#: tree that reaches here) is attributed to ``import``: reyn cannot time what
+#: ran before reyn existed, and pretending otherwise would put that cost in
+#: ``unaccounted``, where it would look like a mystery rather than the one
+#: phase whose cost is structural.
+_MODULE_IMPORTED_AT = time.perf_counter()
+
+
+#: When the interface first reached the screen, or ``None`` while it has not.
+#: Startup ENDS here. Measuring to process exit instead folds the whole chat
+#: session into the report — an early wiring did exactly that and produced
+#: "first-frame 98.5%", which was true and told nobody anything.
+_FIRST_FRAME_AT: "float | None" = None
+
+
+def mark_first_frame() -> None:
+    """Record that the interface is now on screen.
+
+    Idempotent: only the FIRST call counts. A surface that re-mounts (a session
+    switch, a resize that rebuilds the app) must not move the end of startup to
+    a later moment and shrink every share that came before it.
+    """
+    global _FIRST_FRAME_AT
+    if _FIRST_FRAME_AT is None:
+        _FIRST_FRAME_AT = time.perf_counter()
+
+
+def process_elapsed_seconds() -> float:
+    """Seconds from import to the interface appearing.
+
+    Falls back to "now" when the interface never appeared — a startup that
+    failed or was interrupted still has a wall time worth reporting, and it is
+    the case where the report matters most.
+    """
+    end = _FIRST_FRAME_AT if _FIRST_FRAME_AT is not None else time.perf_counter()
+    return end - _MODULE_IMPORTED_AT
+
 #: The startup stages, in the order they run. Declared here rather than
 #: collected as they report, so the output has a stable shape an operator can
 #: read the same way twice — and so a stage that did not run is visible as

@@ -1449,6 +1449,14 @@ class TextualChatApp(App):
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
         # clock leaves a static, correct amber gutter (see the Phase-2 strip gate).
+        # #3671: the startup clock stops HERE — the first moment the interface
+        # is on screen and the operator is no longer waiting. Anything measured
+        # past this point is the session, not the startup, and folding the two
+        # together produced a "first-frame 98.5%" report that was true and
+        # useless (it was counting how long someone sat in the chat).
+        from reyn.runtime.startup_timing import mark_first_frame  # noqa: PLC0415
+
+        mark_first_frame()
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
         # Drawer starts collapsed — the default chrome is just the focusable
         # menu row (#3326: which also carries the status-values segment when

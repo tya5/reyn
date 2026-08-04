@@ -113,3 +113,57 @@ def test_the_context_manager_records_elapsed_time() -> None:
         time.sleep(0.02)
 
     assert startup_timing.TIMING.total_seconds - before >= 0.02
+
+
+def test_startup_ends_at_the_first_frame_not_at_process_exit(monkeypatch) -> None:
+    """Tier 2: the clock stops when the interface appears.
+
+    Measured the alternative first: bracketing the chat coroutine reported
+    ``first-frame 98.5%`` on a 3.56 s "startup" — it was counting how long
+    someone sat in the chat. True, and useless. Wall time is now the span from
+    import to the first frame, so a long session cannot dilute the shares of
+    everything that came before it.
+    """
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+    startup_timing.mark_first_frame()
+    at_first_frame = startup_timing.process_elapsed_seconds()
+    time.sleep(0.05)
+
+    assert startup_timing.process_elapsed_seconds() == at_first_frame
+
+
+def test_a_second_mark_does_not_move_the_end_of_startup(monkeypatch) -> None:
+    """Tier 2: only the first frame counts.
+
+    A surface that re-mounts — a session switch, a rebuild on resize — would
+    otherwise push the end of startup later and shrink every share recorded
+    before it, turning a stable report into one that drifts with usage.
+    """
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+    startup_timing.mark_first_frame()
+    first = startup_timing.process_elapsed_seconds()
+    time.sleep(0.05)
+    startup_timing.mark_first_frame()
+
+    assert startup_timing.process_elapsed_seconds() == first
+
+
+def test_a_startup_that_never_reached_a_frame_still_reports(monkeypatch) -> None:
+    """Tier 2: a failed or interrupted startup still has a wall time.
+
+    This is the case the report matters most in — an operator who never got an
+    interface needs to know how long they waited and where it went.
+    """
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+
+    assert startup_timing.process_elapsed_seconds() > 0
