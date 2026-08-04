@@ -3678,6 +3678,13 @@ async def run_textual_chat(
     users; ``alt-screen`` stays the recommended default regardless. Returns so
     the driver's caller can tear the transport down + print the cost summary.
     """
+    # #3671: the framework's own startup begins here — terminal setup, first
+    # layout, first paint. Everything before it is reyn assembling things;
+    # everything after it is Textual, and the two were indistinguishable while
+    # both sat inside ``unaccounted``.
+    from reyn.runtime.startup_timing import mark_app_constructed  # noqa: PLC0415
+
+    mark_app_constructed()
     app = TextualChatApp(
         transport=transport,
         read_model=read_model,

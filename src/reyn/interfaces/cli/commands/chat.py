@@ -835,4 +835,10 @@ def _run(args: argparse.Namespace) -> None:
             # `attach_task` is left running detached in that case.
             await asyncio.shield(attach_task)
 
+    # #3671: closes the gap between the command starting and the TUI object
+    # existing — session setup, history load, transport wiring. Measured at
+    # ~1.36s of a 2.28s startup, the largest single block that had no name.
+    from reyn.runtime.startup_timing import mark_async_entered  # noqa: PLC0415
+
+    mark_async_entered()
     run_async(_main_chat())

@@ -26,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # #3671: closes the ``import`` stage. Everything before this line is the
+    # interpreter starting plus the import tree — measured at 1.75s for
+    # ``litellm`` alone here, and the owner's machine spends ~3.4x longer in
+    # the same region. Without this mark that time lands in ``unaccounted``,
+    # where the largest phase of startup looks like a mystery.
+    from reyn.runtime.startup_timing import mark_cli_reached  # noqa: PLC0415
+
+    mark_cli_reached()
     parser = build_parser()
     args = parser.parse_args()
     try:
