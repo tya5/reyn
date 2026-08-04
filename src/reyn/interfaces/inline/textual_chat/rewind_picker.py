@@ -86,7 +86,12 @@ class RewindPicker(Vertical):
         border: none;
         padding: 0;
     }
+    /* #3523 ②: a heading should look like a heading — it labels the rows
+       below it rather than competing with them. `dim` leaves the hue to the
+       terminal (the owner's rule: adopt the meaning the terminal already has)
+       instead of pinning a colour. */
     RewindPicker #rewind-picker-title {
+        text-style: @recede@;
         height: auto;
         color: @quiet@;
         padding: 0 1;

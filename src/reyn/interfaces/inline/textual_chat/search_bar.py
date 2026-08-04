@@ -59,7 +59,11 @@ class SearchBar(Horizontal):
     SearchBar #search-count {
         width: auto;
         height: 1;
-        color: @quiet@;
+        /* #3523 ①: the count is the interface answering, not what the operator
+           typed — `alpha 1/1` should not read as two equal halves. `dim` rather
+           than a muted colour because under the ansi themes `$text-muted` is
+           the same marker as ordinary text and receded by nothing. */
+        text-style: @recede@;
         padding: 0 0 0 1;
     }
     """)
