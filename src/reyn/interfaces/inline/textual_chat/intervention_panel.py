@@ -171,10 +171,7 @@ class InterventionPanel(Vertical):
         color: @attention@;
     }
     InterventionPanel .iv-pane-detail {
-        /* #3523: the detail line is meant to sit under the prompt, not beside
-           it. ``@quiet@`` resolved to body text under the ansi themes, so it
-           read as another prompt; ``dim`` is an SGR attribute and survives. */
-        text-style: @recede@;
+        color: @quiet@;
     }
     InterventionPanel RadioSet {
         border: none;

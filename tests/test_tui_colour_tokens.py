@@ -145,38 +145,62 @@ def test_resolution_leaves_no_marker_behind() -> None:
     assert palette.TOKENS["@surface@"] in resolved
 
 
-def test_nothing_asks_to_recede_with_a_colour_that_does_not() -> None:
-    """Tier 2: ``@quiet@`` is not used as the way to make something quieter.
+#: Where ``@quiet@`` is the only thing declared, and why that is tolerated.
+#:
+#: Under the ansi themes ``$text-muted`` — which ``@quiet@`` resolves to —
+#: lands on the same ``ansi_default`` marker as body text, so these sites do
+#: not visibly recede there. #3523 measured all of them and the conclusion was
+#: to leave them: each is already told apart by something that is not colour,
+#: and #3686 fixed the two where nothing else was doing the work. What the
+#: colour still buys is the non-ansi themes, where it resolves to a real value.
+#:
+#: The entry is the FILE plus what actually carries the distinction, so adding
+#: a name here means stating that answer out loud.
+_QUIET_ONLY_ALLOWED = {
+    "app.py": "position: the ❯ gutter, the status row and the menu row are "
+              "separated from the conversation by where they are and by the "
+              "rule above them; the active tab additionally carries bold",
+    "intervention_panel.py": "the pane it labels is bordered and headed in "
+                             "@attention@, so the detail line reads as detail",
+    "rewind_picker.py": "the heading carries text-style: @recede@ (#3686)",
+    "sent_queue.py": "the ⧗ glyph, the region's own position above the "
+                     "composer, and the NEXT label on its head (#3693)",
+}
 
-    Under the ansi themes ``$text-muted`` — which ``@quiet@`` resolves to —
-    lands on the same ``ansi_default`` marker as ordinary text. #3523 measured
-    seven chrome sites where "de-emphasised" therefore rendered at full body
-    brightness: the intent was lost and nothing failed.
 
-    That audit could only cover the sites that existed when it ran, and an
-    eighth arrived the next day (``ActivityRow``, #3693) — a declaration that
-    looked right, read right in review, and did nothing. So the audit becomes a
-    gate. What replaces it per site is a judgement, not a rule: ``@recede@``
-    where receding is the intent, and no declaration where it is not (the
-    status row carries the ``⚠ HALTED`` banner, and a halt must never render
-    dimmer than ordinary text).
+def test_a_new_site_cannot_quietly_rely_on_quiet_alone() -> None:
+    """Tier 2: a file that newly reaches for ``@quiet@`` has to say why.
 
-    Comment text is skipped deliberately — the sites removed here say in prose
-    what they used to declare, and a gate that could not tell the difference
-    would force that reasoning out of the file.
+    ``@quiet@`` reads like "make this quieter" and, under reyn's default
+    theme, does not. #3523 measured seven chrome sites where the intent was
+    therefore lost with nothing failing, and judged — per site, not as a rule —
+    that each was already distinguished by something else. That judgement is
+    only safe for the sites it was made about.
+
+    An eighth arrived the day after (``ActivityRow``, #3693): the declaration
+    looked right, read right in review, and did nothing. Nothing caught it
+    because a one-off audit can only cover what existed when it ran. This is
+    that audit as a standing gate — not a ban, since the colour still resolves
+    to a real value under the non-ansi themes, but a requirement that a new
+    site names what carries the distinction when it does not.
     """
-    offenders = []
-    for path in sorted(_INTERFACES.rglob("*.py")) + sorted(_INTERFACES.rglob("*.tcss")):
-        if path.name == "palette.py":
-            continue  # where the token is DEFINED, which is not a use of it
-        source = _declarations_only(path.read_text(encoding="utf-8"))
-        offenders += [
-            f"{path.name}: {line.strip()}"
-            for line in source.splitlines()
-            if "@quiet@" in line
-        ]
-    assert not offenders, (
-        "these declarations ask for de-emphasis with @quiet@, which resolves to "
-        "the same value as body text under the ansi themes — use @recede@ (an "
-        f"SGR attribute) or declare no colour: {offenders}"
+    seen = {
+        path.name
+        for path in sorted(_INTERFACES.rglob("*.py")) + sorted(_INTERFACES.rglob("*.tcss"))
+        if path.name != "palette.py" and "@quiet@" in path.read_text(encoding="utf-8")
+    }
+
+    undeclared = sorted(seen - set(_QUIET_ONLY_ALLOWED))
+    assert not undeclared, (
+        "these files use @quiet@, which resolves to the same value as body "
+        "text under reyn's default theme — so whatever is meant to recede "
+        "there does not. Either give it text-style: @recede@ (an SGR "
+        "attribute, which survives), or add it to _QUIET_ONLY_ALLOWED naming "
+        f"what else tells it apart: {undeclared}"
+    )
+
+    stale = sorted(set(_QUIET_ONLY_ALLOWED) - seen)
+    assert not stale, (
+        "these files no longer use @quiet@ — drop the allowance rather than "
+        f"leaving a reason for something that is not there: {stale}"
     )

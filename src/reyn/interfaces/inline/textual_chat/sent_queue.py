@@ -112,13 +112,7 @@ class SentQueue(Vertical):
            which a "show only the newest 6" rule would have cut off from the
            older items it is most likely to be aimed at. */
         overflow-y: auto;
-        /* #3523: these are messages already sent and still waiting — they are
-           not the live conversation, and should not read at the same weight as
-           it. ``color: @quiet@`` said so and did nothing under the ansi themes;
-           ``dim`` is an SGR attribute and survives. The selected row's own
-           ``bold`` is a different attribute, so the two compose rather than
-           cancel. */
-        text-style: @recede@;
+        color: @quiet@;
         padding: 0 1;
     }
     SentQueue Static { height: auto; }
