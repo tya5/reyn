@@ -35,6 +35,7 @@ from reyn.core.events.progress_lifecycle import (
     format_progress_message,
 )
 from reyn.runtime.agent_locks import get_agent_lock as _get_agent_lock
+from reyn.runtime.session_pure import new_chain_id
 from reyn.runtime.turn_origin import TurnOrigin
 
 logger = logging.getLogger(__name__)
@@ -238,10 +239,9 @@ async def send_to_agent_impl(
     session = await _get_session(registry, agent_name, sid=sid)
 
     from reyn.runtime.message_bus import MessageBus  # noqa: PLC0415 — lazy import
-    from reyn.runtime.session import _new_chain_id  # noqa: PLC0415 — lazy import
     from reyn.runtime.transport import McpRef  # noqa: PLC0415 — lazy import
 
-    chain_id = _new_chain_id()
+    chain_id = new_chain_id()
     req_id = f"mcp-{chain_id}"
 
     # Serialize concurrent calls to the same agent — the lock keeps

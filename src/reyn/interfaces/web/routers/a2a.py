@@ -61,6 +61,7 @@ from reyn.runtime.a2a_routing import (
     resolve_a2a_session,
 )
 from reyn.runtime.agent_locks import get_agent_lock
+from reyn.runtime.session_pure import new_chain_id
 
 logger = logging.getLogger(__name__)
 
@@ -764,9 +765,8 @@ async def _handle_async_mode(
     ``_create_a2a_task`` shim.
     """
     from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: PLC0415
-    from reyn.runtime.session import _new_chain_id  # noqa: PLC0415
 
-    chain_id = _new_chain_id()
+    chain_id = new_chain_id()
     entry = run_registry.create(
         agent_name=agent_name,
         chain_id=chain_id,
