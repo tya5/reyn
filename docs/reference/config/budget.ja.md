@@ -68,7 +68,7 @@ cost:
 
 ### USD コスト計算
 
-USD コストは各呼び出し後に [LiteLLM の pricing lookup](https://github.com/BerriAI/litellm) で推定されます。proxy モード（LiteLLM 経由）と直接 API の両方に対応しています。対象 model の価格情報が見つからない場合、USD カウンターは `$0.0000` のままとなり、トークンのみが累積されます。トークン数は価格情報の有無にかかわらず常に正確に記録されます。
+USD コストは各呼び出し後に [LiteLLM の pricing lookup](https://github.com/BerriAI/litellm) で推定されます。proxy モード（LiteLLM 経由）と直接 API の両方に対応しています。対象 model の価格情報が見つからない場合、USD カウンターは `$0.0000` のままとなり、トークンのみが累積されます。トークン数は価格情報の有無にかかわらず常に正確に記録されます。ただし unpriced な呼び出しは無音ではありません — `BudgetTracker.agent_unpriced_calls(agent)` がその agent の unpriced 呼び出し回数を記録しており、0 でなければ表示上の `$0.0000` は実際の支出ではなく**下限**である、というシグナルになります。unpriced モデル名を含む警告もプロセスごとに一度だけログ出力されます。
 
 ## スラッシュコマンド
 
