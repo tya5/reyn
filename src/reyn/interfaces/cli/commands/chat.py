@@ -82,13 +82,32 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
     from "gave up" on screen — closing the P2-review-recorded UX gap
     (``_setup_interactive_logging`` routes this logger to a file, not the
     screen, so the log line alone was never operator-visible).
+
+    #3671 P4 item C-1 (v2, owner ruling — "resume every in-flight agent,
+    just don't make the client's own startup wait for it"): ``restore_all``
+    builds ONLY ``name`` eagerly; after ``attach(name)`` succeeds (so
+    ``has_session()`` has already flipped True and the client is already
+    live), ``registry.resume_deferred_agents()`` proactively finishes
+    building+restoring+running every OTHER in-flight agent — still fully
+    automatic, just ordered after the target so it never competes with the
+    target's own attach for this background task's time. A failure there is
+    intentionally NOT routed through ``record_background_attach_error``:
+    that seam means "the REQUESTED agent's attach failed" specifically (the
+    client-visible connecting/failed distinction, #3671 P3) — a deferred
+    OTHER agent failing to resume is a different, non-blocking failure mode,
+    logged on its own.
     """
     from reyn.core.events.agent_snapshot import SchemaVersionError
 
     try:
         if not skip_restore:
             try:
-                await registry.restore_all()
+                # #3671 P4 item C-1: only THIS agent's in-flight state is
+                # built+run eagerly here — every other in-flight agent's WAL
+                # replay still happens (durability unaffected) but its
+                # Session build is deferred; resumed below, AFTER attach(),
+                # not eliminated.
+                await registry.restore_all(only_names={name})
             except SchemaVersionError as e:
                 msg = f"background restore failed (schema mismatch): {e}"
                 logger.error(
@@ -104,6 +123,16 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
             "client stays up with no attached agent"
         )
         registry.record_background_attach_error(f"{type(e).__name__}: {e}")
+        return
+
+    if not skip_restore:
+        try:
+            await registry.resume_deferred_agents()
+        except Exception:
+            logger.exception(
+                "#3671 P4 C-1: resuming a deferred (non-target) in-flight "
+                "agent failed — the attached agent is unaffected"
+            )
 
 
 def register(sub) -> None:
@@ -404,7 +433,67 @@ def _run_remote(
     )
 
 
+
+def _startup_stage(name: str):
+    """Time one startup interval (#3671).
+
+    Wraps an INTERVAL rather than a call: #3671's P4 work is removing duplicate
+    CALLS inside these phases, and a probe attached to a particular call would
+    disappear with it. A region survives that, and its number goes DOWN when a
+    duplicate is removed — which is what makes the improvement visible instead
+    of merely asserted.
+    """
+    from reyn.runtime.startup_timing import stage
+
+    return stage(name)
+
+
+def _report_startup_timing() -> None:
+    """Print the breakdown, if the operator asked for it.
+
+    Printed rather than written: the report exists for a machine whose operator
+    cannot copy files off it, so a dump would be a dead end.
+
+    To STDOUT, after the TUI has released the terminal. Measured the alternative
+    first and it does not work: the inline CUI renders THROUGH stderr, so
+    ``reyn chat 2>timing.txt`` captures the entire screen — 5.5 MB of escape
+    sequences — and the interface never appears. Anything this prints while the
+    app owns the screen is either overwritten or corrupts it, so the report
+    waits until the app has exited and the shell has the terminal back.
+    """
+    from reyn.runtime.startup_timing import (
+        TIMING,
+        enabled,
+        process_elapsed_seconds,
+    )
+
+    if not enabled():
+        return
+    wall = process_elapsed_seconds()
+    for line in TIMING.report_lines(wall):
+        print(line)
+
+
 def run(args: argparse.Namespace) -> None:
+    """Entry point — wraps the whole startup so the timing report always lands.
+
+    #3671: the report exists for someone whose startup takes minutes, and what
+    that person does is press Ctrl-C. Measured: the interrupt arrives wherever
+    the startup happens to be. A first attempt guarded only the final
+    ``run_async`` call, and a Ctrl-C during registry construction — several
+    steps earlier — still printed nothing. Whatever stage is slow IS the stage
+    the interrupt lands in, so the guard has to cover all of them.
+
+    ``finally`` rather than ``except KeyboardInterrupt``: a startup that dies on
+    an exception is also one someone wants the numbers for.
+    """
+    try:
+        _run(args)
+    finally:
+        _report_startup_timing()
+
+
+def _run(args: argparse.Namespace) -> None:
     # ADR-0039 P3: `--connect <url>` short-circuits to the remote thin client
     # before any local session machinery is built (the remote server owns the
     # session; this process is pure I/O).
@@ -449,7 +538,8 @@ def run(args: argparse.Namespace) -> None:
     if is_interactive:
         _setup_interactive_logging(project_root)
 
-    session_cfg = InvocationContext.from_args(args)
+    with _startup_stage("config"):
+        session_cfg = InvocationContext.from_args(args)
     # #2708 P3.2b: the missing-cred pre-check moved OFF this per-surface startup
     # gate and ONTO the single LLM funnel (``recorded_acompletion``). It now
     # fires on the FIRST LLM call (early for any LLM run) and surfaces as a typed
@@ -540,7 +630,8 @@ def run(args: argparse.Namespace) -> None:
     # registries from disk each call; the two call sites were passing the
     # exact same `(session_cfg.config, project_root)` pair and doing that
     # I/O twice for an identical result.
-    factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
+    with _startup_stage("registry"):
+        factory_config = SessionFactoryConfig.from_config(session_cfg.config, project_root)
 
     def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # Captured CLI defaults — registry doesn't need to know them.
@@ -634,7 +725,8 @@ def run(args: argparse.Namespace) -> None:
             s.load_history()
         return s
 
-    registry = AgentRegistry(
+    with _startup_stage("session"):
+     registry = AgentRegistry(
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
@@ -669,9 +761,21 @@ def run(args: argparse.Namespace) -> None:
     from reyn.core.events.agent_snapshot import SchemaVersionError
 
     async def _safe_restore() -> bool:
-        """Returns True on success, False if the operator should retry."""
+        """Returns True on success, False if the operator should retry.
+
+        #3671 P4 item C-1: only the target agent's in-flight state is built
+        eagerly — see the sibling call in `_background_attach`. Deliberately
+        does NOT also call `registry.resume_deferred_agents()` (unlike
+        `_background_attach`): the one-shot path has no ongoing client whose
+        first render this would need to avoid competing with, and the
+        process exits (via `registry.shutdown()`) almost immediately after
+        `_run_once` returns — a deferred OTHER agent's state stays safely on
+        disk, resumed by whichever run (interactive or another `--once`)
+        actually reaches it next, not resumed pointlessly here just before
+        exit.
+        """
         try:
-            await registry.restore_all()
+            await registry.restore_all(only_names={name})
             return True
         except SchemaVersionError as e:
             print(f"\nSchema version mismatch: {e}\n", file=sys.stderr)
@@ -772,4 +876,10 @@ def run(args: argparse.Namespace) -> None:
             # `attach_task` is left running detached in that case.
             await asyncio.shield(attach_task)
 
+    # #3671: closes the gap between the command starting and the TUI object
+    # existing — session setup, history load, transport wiring. Measured at
+    # ~1.36s of a 2.28s startup, the largest single block that had no name.
+    from reyn.runtime.startup_timing import mark_async_entered  # noqa: PLC0415
+
+    mark_async_entered()
     run_async(_main_chat())

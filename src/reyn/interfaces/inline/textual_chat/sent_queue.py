@@ -100,6 +100,18 @@ class SentQueue(Vertical):
     SentQueue {
         height: auto;
         max-height: 6;
+        /* #3688: the cap keeps a long queue from eating the conversation, but
+           WITHOUT this the overflow was CLIPPED — a 7th row was mounted, in the
+           model, ``display=True``, and simply not on screen. Measured before
+           the fix: 9 queued items rendered 6, and the six were the OLDEST, so
+           the row that vanished was always the one the operator had just
+           submitted ("I sent it and it never appeared", owner report). Silent
+           truncation of a region whose whole job is "what you sent is still
+           waiting" is the one thing it must not do. Scrolling keeps every item
+           reachable — including by the up/down/Enter cancel bindings below,
+           which a "show only the newest 6" rule would have cut off from the
+           older items it is most likely to be aimed at. */
+        overflow-y: auto;
         color: @quiet@;
         padding: 0 1;
     }
@@ -156,6 +168,15 @@ class SentQueue(Vertical):
         self.display = True
         self._clamp_selection()
         self._apply_highlight()
+        # #3688: a new row appends at the BOTTOM, i.e. past the cap once the
+        # queue is deeper than the visible window — so without this the item
+        # the operator just submitted is precisely the one they cannot see.
+        # Only when the region is not being navigated: while it holds focus the
+        # selected row owns the viewport (``_apply_highlight`` scrolls to it),
+        # and yanking the view to the bottom mid-navigation would move the
+        # cancel target out from under them.
+        if not self.has_focus:
+            self._bring_into_view(row)
 
     def remove_item(self, msg_id: str) -> None:
         """Remove a queued item's row (the PROMOTE exit or the ``inbox_cancel``
@@ -211,6 +232,22 @@ class SentQueue(Vertical):
             return None
         return order[max(0, min(self._selected_index, len(order) - 1))]
 
+    def _bring_into_view(self, row: Static) -> None:
+        """Scroll ``row`` into the visible window, best-effort.
+
+        Deferred to after the next refresh because a row scrolled to on the
+        same beat it was mounted has no laid-out region yet, so the scroll
+        would target nothing. Guarded because this is a display convenience on
+        a region whose job is to keep showing what is queued — a scroll fault
+        must never take the queue's own rendering down with it."""
+        def _scroll() -> None:
+            try:
+                self.scroll_to_widget(row, animate=False)
+            except Exception:  # noqa: BLE001 — display convenience, never load-bearing
+                pass
+
+        self.call_after_refresh(_scroll)
+
     def _clamp_selection(self) -> None:
         last = max(len(self._rows) - 1, 0)
         self._selected_index = max(0, min(self._selected_index, last))
@@ -229,6 +266,13 @@ class SentQueue(Vertical):
             row.set_class(selected, "-selected")
             lead = f"{palette.SELECTED_MARKER} " if selected else "  "
             row.update(Content(f"{lead}⧗ {self._labels[msg_id]}"))
+            # #3688: with the region scrollable (see the CSS cap above), the
+            # selected row can sit outside the visible six — arrowing onto a row
+            # that stays off screen is the same silent-clip defect wearing a
+            # different hat, since Enter then cancels something the operator
+            # cannot see.
+            if selected:
+                self._bring_into_view(row)
 
     def action_select_prev(self) -> None:
         if self._selected_index > 0:

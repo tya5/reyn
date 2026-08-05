@@ -28,5 +28,15 @@ import os
 # fetch (e.g. sets the var to a falsey value themselves) is respected — see
 # reyn's no-uncustomizable-hardcodes rule. Must run before litellm is imported
 # anywhere; see the module docstring above for why this is the right place.
+# #3671: the earliest instant reyn's own code runs. Everything after it — the
+# whole import tree, litellm included (1.75s of a 1.9s startup here) — is
+# measurable; everything before it (interpreter start, site setup) is not, from
+# inside this process. Captured HERE rather than in the timing module because
+# that module is imported late, and a clock started then reports the import
+# phase as 0.00s — measured, and the reason this line exists.
+import time as _time
+
+STARTUP_CLOCK_ORIGIN = _time.perf_counter()
+
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 os.environ.setdefault("LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "True")

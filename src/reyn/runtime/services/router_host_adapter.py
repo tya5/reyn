@@ -22,6 +22,7 @@ from reyn.runtime.services.mcp_cache_file import (
     ToolsUnknown,
     answered_only,
 )
+from reyn.runtime.session_pure import merge_memory_indexes
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 
 if TYPE_CHECKING:
@@ -725,8 +726,7 @@ class RouterHostAdapter:
 
     def get_memory_index(self) -> dict:
         """Return merged shared + agent memory index."""
-        from reyn.runtime.session import _merge_memory_indexes
-        return _merge_memory_indexes(
+        return merge_memory_indexes(
             shared_path=Path(".reyn") / "memory" / "MEMORY.md",
             agent_path=self._workspace_dir / "memory" / "MEMORY.md",
             agent_name=self._agent_name,

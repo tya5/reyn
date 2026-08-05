@@ -54,6 +54,13 @@ TOKENS: "dict[str, str]" = {
     #: read as a divider against BOTH terminal grounds; a theme variable would
     #: follow the theme and vanish into one of them.
     "@rule@": "#3d434f",
+    #: Text that should recede: a count the interface produced, a heading that
+    #: labels a region. An SGR ATTRIBUTE, not a colour — under the ansi themes
+    #: ``$text-muted`` resolves to the same ``ansi_default`` marker as ordinary
+    #: text, so it recedes by exactly nothing (measured on #3522/#3528). ``dim``
+    #: leaves the hue to the terminal, which is the operator's to choose, and
+    #: actually changes what is drawn.
+    "@recede@": "dim",
     #: The selected row in a list the operator navigates (the sent-queue).
     #: ``bold`` rather than a background: a filled block is what
     #: ``$accent 30%`` produced once alpha was dropped — a solid ANSI-green bar

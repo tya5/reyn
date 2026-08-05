@@ -205,11 +205,11 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
     normal router path's bridge.
 
     The recovery prompt rebuilt by ``_router_main_call`` renders the structured
-    summary via ``_render_summary_for_storage`` — the same renderer that produced
+    summary via ``render_summary_for_storage`` — the same renderer that produced
     the persisted ``summary.content`` the normal path uses for its bridge.
     So the summary bridge is byte-identical across both paths.
     """
-    from reyn.runtime.session import _render_summary_for_storage
+    from reyn.runtime.session_pure import render_summary_for_storage
 
     session = _make_session(tmp_path, t_max=2800)
     structured = {
@@ -219,7 +219,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
         "session_user_facts": [],
         "artifacts_referenced": [],
     }
-    rendered = _render_summary_for_storage(structured)
+    rendered = render_summary_for_storage(structured)
     session.history.append(ChatMessage(
         role="summary",
         content=rendered,
@@ -240,7 +240,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
     # Recovery path renders the structured dict the same way.
     _h, _rm, _t, summary_dict, _seq_by_id = session._history_buffer.decompose_history_for_retry()
     recovery_bridge = (
-        "[summary of earlier conversation]\n" + _render_summary_for_storage(summary_dict)
+        "[summary of earlier conversation]\n" + render_summary_for_storage(summary_dict)
     )
     assert recovery_bridge == normal_bridge
 

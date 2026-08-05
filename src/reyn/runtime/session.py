@@ -100,6 +100,11 @@ from reyn.runtime.session_params import (
     PresentationWiring,
     ReactivityConfig,
 )
+from reyn.runtime.session_pure import (
+    merge_memory_indexes,
+    new_chain_id,
+    render_summary_for_storage,
+)
 from reyn.runtime.spawn_tracker import SpawnTracker
 from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.permissions import PermissionResolver
@@ -450,13 +455,6 @@ def _run_meta(run_id: str | None, actor: str | None) -> dict:
     }
 
 
-def _new_chain_id() -> str:
-    """Mint a fresh chain_id for a top-level user request. Each user submission
-    starts a new chain; agent_request / agent_response payloads forward the
-    chain_id they received without minting new ones."""
-    return uuid.uuid4().hex
-
-
 def _user_frame_meta(attribution: "dict | None") -> dict:
     """Build ``meta`` for a ``kind="user"`` outbox frame (ADR-0039 multi-client
     input-broadcast fix).
@@ -489,61 +487,6 @@ def _format_hook_attribution(name: str, text: str) -> str:
     consumer (C — wake=false ride-along) and ``_handle_hook_message`` (E —
     wake=true trigger) so the two paths can never drift."""
     return f"[hook:{name}] {text}"
-
-
-def _read_memory_index(path: Path) -> str:
-    """Return MEMORY.md contents at `path` or empty string if absent."""
-    try:
-        return path.read_text(encoding="utf-8") if path.is_file() else ""
-    except OSError:
-        return ""
-
-
-def _merge_memory_indexes(
-    *, shared_path: Path, agent_path: Path, agent_name: str,
-) -> dict:
-    """Combine the shared and agent-scoped MEMORY.md files into a single
-    `data.memory_index` payload (PR15).
-
-    The router phase used to read `.reyn/memory/MEMORY.md` via a preprocessor
-    `file/read` step; that step is removed because the agent-scoped path
-    `.reyn/agents/<name>/memory/MEMORY.md` is dynamic and a static phase
-    YAML cannot interpolate it. Session synthesizes the merged view
-    here and stuffs it directly into the artifact.
-
-    The two layers are kept separate in the output markdown — `(shared)` and
-    `(agent: <name>)` — so the LLM can decide which slug path to use when
-    writing new memory entries.
-    """
-    shared = _read_memory_index(shared_path).strip()
-    agent  = _read_memory_index(agent_path).strip()
-
-    if not shared and not agent:
-        return {"status": "not_found", "content": ""}
-
-    parts: list[str] = []
-    if shared:
-        parts.append(f"# Memory Index (shared)\n\n{_strip_index_header(shared)}")
-    else:
-        parts.append("# Memory Index (shared)\n\n(empty)")
-    parts.append(
-        f"# Memory Index (agent: {agent_name})\n\n"
-        f"{_strip_index_header(agent) if agent else '(empty)'}"
-    )
-    return {"status": "ok", "content": "\n\n".join(parts).strip() + "\n"}
-
-
-def _strip_index_header(content: str) -> str:
-    """Drop a leading `# Memory Index` heading (with optional trailing blank
-    lines) from a stored MEMORY.md so we don't render two headings when
-    merging. Anything else is returned verbatim."""
-    lines = content.splitlines()
-    if lines and lines[0].lstrip().startswith("# Memory Index"):
-        i = 1
-        while i < len(lines) and not lines[i].strip():
-            i += 1
-        lines = lines[i:]
-    return "\n".join(lines).strip()
 
 
 # NOTE: `_PendingChain` lives in `reyn.runtime.services.chain_manager` (PR-refactor-session-1
@@ -601,33 +544,6 @@ def _iv_meta(iv: "UserIntervention") -> dict:
 # by the by-construction floor.
 _MAX_FORCE_CLOSE_HANDOFFS = 1
 
-
-
-def _render_summary_for_storage(structured: dict) -> str:
-    """Render a chat_summary structured dict to a quick-display text blob.
-
-    Stored in ChatMessage.text so REPL traces and audit dumps don't need
-    to re-render the structured form. The slicer prefers the structured
-    form for LLM consumption — this is for human consumption only.
-    """
-    parts: list[str] = []
-    # #1092 PR-F2a: a force-close handoff consolidation carries its (free-text)
-    # body in the dedicated ``consolidation`` field — render it verbatim and
-    # first (it IS the conversation's carried-forward essence). Absent on normal
-    # compaction summaries → no output change for them (byte-identical).
-    consolidation = (structured.get("consolidation") or "").strip()
-    if consolidation:
-        parts.append(consolidation)
-    topic = (structured.get("topic_arc") or "").strip()
-    if topic:
-        parts.append(f"[topic] {topic}")
-    for key in ("decisions", "pending", "session_user_facts", "artifacts_referenced"):
-        items = structured.get(key) or []
-        if not items:
-            continue
-        parts.append(f"[{key}]")
-        parts.extend(f"  - {item}" for item in items)
-    return "\n".join(parts)
 
 
 class DurabilityHaltError(RuntimeError):
@@ -3075,7 +2991,7 @@ class Session:
         # PR14: every top-level user submission starts a fresh chain_id that
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
-        chain_id = _new_chain_id()
+        chain_id = new_chain_id()
         # #3300 P2b: meta computed once, stored additively on the inbox payload too
         # (not just emitted on the event below) — a late-joiner seeding from
         # STATE_SNAPSHOT/queued_user_messages() needs it too. See agui-transport.md.
@@ -3142,7 +3058,7 @@ class Session:
         must dedup can key on ``run_id``."""
         await self._put_inbox(TurnOrigin.PIPELINE_RESULT, {
             "run_id": run_id, "pipeline_name": pipeline_name, "status": status,
-            "text": text, "chain_id": chain_id or _new_chain_id(),
+            "text": text, "chain_id": chain_id or new_chain_id(),
             "sender": "pipeline:os",
         })
 
@@ -4111,7 +4027,7 @@ class Session:
                 ts=_now_iso(),
                 meta={"structured": structured, "covers_through_seq": covers},
             ),
-            render_summary=_render_summary_for_storage,
+            render_summary=render_summary_for_storage,
             # Feed compacted candidates' tool calls into the per-agent
             # action_usage table so the hot-list survives summarisation.
             merge_action_usage=merge_action_usage,
@@ -5502,7 +5418,7 @@ class Session:
             # as a forwarder.
             await self._handle_inbox_text(
                 payload.get("text", ""),
-                chain_id=payload.get("chain_id") or _new_chain_id(),
+                chain_id=payload.get("chain_id") or new_chain_id(),
             )
         elif kind == TurnOrigin.AGENT_REQUEST:
             await self._handle_agent_request(payload)
@@ -5529,7 +5445,7 @@ class Session:
             # turn-origin stamp below reads.
             await self._handle_inbox_text(
                 payload.get("text", ""),
-                chain_id=payload.get("chain_id") or _new_chain_id(),
+                chain_id=payload.get("chain_id") or new_chain_id(),
             )
         elif kind == TurnOrigin.EXTERNAL_MESSAGE:
             # Text that arrived over an EXTERNAL transport: a chat webhook
@@ -5551,7 +5467,7 @@ class Session:
             # layer, never re-testing ``startswith("/")`` at a transport.
             await self._handle_inbox_text(
                 payload.get("text", ""),
-                chain_id=payload.get("chain_id") or _new_chain_id(),
+                chain_id=payload.get("chain_id") or new_chain_id(),
             )
         elif kind == TurnOrigin.CRON:
             # A fired message-based cron job's text. Operator-authored (job
@@ -5563,7 +5479,7 @@ class Session:
             # ``TurnOrigin.CRON``.
             await self._handle_inbox_text(
                 payload.get("text", ""),
-                chain_id=payload.get("chain_id") or _new_chain_id(),
+                chain_id=payload.get("chain_id") or new_chain_id(),
             )
         elif kind == TurnOrigin.HOOK:
             # E (wake=true) lifecycle-hook push delivered as a turn trigger:
@@ -5587,7 +5503,7 @@ class Session:
             # entirely, so every text-bearing member now takes this same call.
             await self._handle_inbox_text(
                 payload.get("text", ""),
-                chain_id=payload.get("chain_id") or _new_chain_id(),
+                chain_id=payload.get("chain_id") or new_chain_id(),
             )
 
     def _maybe_schedule_ephemeral_vanish(self) -> None:
@@ -5633,7 +5549,7 @@ class Session:
         longer load-bearing."""
         await self._handle_inbox_text(
             payload.get("text", ""),
-            chain_id=payload.get("chain_id") or _new_chain_id(),
+            chain_id=payload.get("chain_id") or new_chain_id(),
         )
 
     async def _handle_hook_message(self, payload: dict) -> None:
@@ -5645,7 +5561,7 @@ class Session:
         single router turn runs."""
         name = payload.get("name", "hook")
         text = payload.get("text", "")
-        chain_id = payload.get("chain_id") or _new_chain_id()
+        chain_id = payload.get("chain_id") or new_chain_id()
         self._append_history(ChatMessage(
             role="system",
             content=_format_hook_attribution(name, text),
