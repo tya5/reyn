@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from collections import OrderedDict, defaultdict, deque
@@ -39,6 +40,37 @@ from reyn.llm.pricing import (
     estimate_embedding_cost,
     merge_usage_sources,
 )
+
+logger = logging.getLogger(__name__)
+
+#: Models already reported as unpriced (#3695). Once per model per process:
+#: the condition holds for every call to that model, so a per-call warning
+#: would be a flood, and a flood is read as noise and filtered out — which is
+#: indistinguishable from never having warned at all.
+_UNPRICED_MODELS_WARNED: set[str] = set()
+
+
+def _warn_unpriced_model_once(model: str) -> None:
+    """Say once, per model, that its calls are being counted as costing $0.
+
+    The counter (``BudgetTracker.agent_unpriced_calls``) records the fact for
+    a reader that asks; this is the surface for the reader who does not know
+    to ask. The embedding path's equivalent counter has existed for some time
+    and NOTHING under ``interfaces/`` reads it, so a counter alone would
+    reproduce the same silence one level over.
+    """
+    if model in _UNPRICED_MODELS_WARNED:
+        return
+    _UNPRICED_MODELS_WARNED.add(model)
+    logger.warning(
+        "no price is known for model %r — its calls are recorded with tokens "
+        "but $0.00, so the reported cost is a LOWER BOUND, not the amount "
+        "spent. reyn reads litellm's bundled cost map "
+        "(LITELLM_LOCAL_MODEL_COST_MAP), so a model newer than that snapshot "
+        "stays unpriced.",
+        model,
+    )
+
 
 # ── exceptions ──────────────────────────────────────────────────────────────
 
@@ -886,6 +918,29 @@ class BudgetTracker:
         self._config = config
         self._agent_tokens: dict[str, int] = defaultdict(int)
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
+        # #3695: how many of this agent's calls had NO price, so a reader can
+        # tell "$0.00 because these calls were free" from "$0.00 because we do
+        # not know what they cost". ``estimate_cost`` returns None for an
+        # unpriced model precisely so the two stay distinguishable
+        # (``pricing.py``: "unknown != free"), and ``record_llm`` then folded
+        # that None into 0.0 — every call adding exactly nothing to a total
+        # that still presented itself as the amount spent. Reported live by
+        # the owner: a model absent from litellm's cost map (which reyn pins
+        # to the bundled snapshot, so a NEW model is unpriced permanently)
+        # left the cost figure frozen at its last hydrated value all day.
+        #
+        # This is the mechanism the embedding path already applies
+        # (``EmbeddingCost.unpriced_calls``, "visible, not a silent $0.00") —
+        # applied here, not invented.
+        #
+        # In-memory only, resetting on restart, for the SAME scope reason
+        # ``_agent_cost_breakdown`` below records: persisting it means
+        # extending the on-disk ledger schema and triggers the CLAUDE.md
+        # recovery-feature gate. The consequence is stated rather than hidden:
+        # after a restart the hydrated total carries no unpriced marker, so
+        # this makes the live session honest and leaves the durable total's
+        # own blindness untouched.
+        self._agent_unpriced_calls: dict[str, int] = defaultdict(int)
         # Cost-panel breakdown (#cost-panel-breakdown): per-agent CostBreakdown
         # (prompt/cache-read/cache-creation/completion + savings), accumulated
         # per call in ``record_llm`` alongside ``_agent_cost_usd``. NOT ledger-
@@ -1293,8 +1348,15 @@ class BudgetTracker:
         self._call_window[model].append(time.monotonic())
 
         warn_dims: list[str] = []
-        cost_usd, _ = estimate_cost(model, usage)
-        cost_usd = cost_usd or 0.0
+        priced_cost_usd, _ = estimate_cost(model, usage)
+        # #3695: keep "unknown" distinguishable from "free" before the fold to
+        # 0.0 below. The fold itself is kept — an unpriced call must still be
+        # counted in tokens, in the ledger and against the period counters —
+        # but the fact that it was unpriced now survives it.
+        unpriced = priced_cost_usd is None
+        cost_usd = priced_cost_usd or 0.0
+        if unpriced and usage.total_tokens:
+            _warn_unpriced_model_once(model)
 
         # #1190 stage (iii): per-purpose attribution for the /budget breakdown.
         if purpose is not None:
@@ -1311,6 +1373,8 @@ class BudgetTracker:
             self._agent_tokens[agent] = new_tokens
             new_cost = self._agent_cost_usd[agent] + cost_usd
             self._agent_cost_usd[agent] = new_cost
+            if unpriced:
+                self._agent_unpriced_calls[agent] += 1
 
             # Cost-panel breakdown accumulation (session/agent/project scope
             # rows). ``estimate_cost_breakdown`` returns None for an unpriced/
@@ -1665,6 +1729,19 @@ class BudgetTracker:
         ``registry.agent_cost_usd`` (#cost-restart), the inline status bar. One counter per agent
         (summed across all its sessions in ``record_llm``), so it never N×-counts multiple sessions."""
         return self._agent_cost_usd.get(agent, 0.0)
+
+    def agent_unpriced_calls(self, agent: str) -> int:
+        """How many of ``agent``'s recorded LLM calls had no known price (#3695).
+
+        Non-zero means ``agent_cost_usd`` is a LOWER BOUND, not the amount
+        spent: those calls contributed 0. A reader that shows the cost without
+        consulting this is stating a total it cannot know — which is what the
+        owner saw as a figure that never moved.
+
+        In-memory for this process only (see ``__init__``), so it describes
+        the calls THIS run recorded, not the hydrated durable total.
+        """
+        return self._agent_unpriced_calls.get(agent, 0)
 
     def agent_tokens(self, agent: str) -> int:
         """All-time cumulative TOTAL tokens for ``agent`` (durable, ledger-hydrated). Total only —
