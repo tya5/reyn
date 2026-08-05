@@ -68,10 +68,17 @@ def activity_text(
 class ActivityRow(Static):
     """The live-turn line. Hidden whenever no turn is running."""
 
+    # No colour declaration, deliberately. The first version said
+    # ``color: @quiet@``, and measured under ``ansi-dark`` that resolves to the
+    # SAME value as ordinary text (``Color(0, 0, 0, ansi=-1)``, identical to
+    # StatusLine's) — it receded by exactly nothing, which is #3523's defect in
+    # a brand-new site. But ``dim`` is not the fix here either: this row exists
+    # to say a turn is live while the operator is reading somewhere else, so it
+    # is not a thing that should recede. Ordinary brightness is the honest
+    # rendering, and stating no colour is how it is asked for.
     DEFAULT_CSS = palette.css("""
     ActivityRow {
         height: 1;
-        color: @quiet@;
         padding: 0 1;
     }
     """)
