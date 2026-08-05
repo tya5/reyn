@@ -93,6 +93,15 @@ _CODE_ANCHOR_REF_RE = re.compile(r"([A-Za-z0-9_./-]+\.md)#([^\s()\[\]{}'\"<>,;]+
 # is not extracted (repo-wide count when this note was added: 0 of either
 # form, per lead-coder's measurement, #3667).
 _DOC_LINK_RE = re.compile(r"\]\(#([^)\s]+)\)")
+# ``[text](other.md#anchor)`` — a cross-file markdown link. Only the
+# EXCLUDED-target subset of these is this module's concern (#3672): a
+# published target is already ground-truthed against real mkdocs-built
+# HTML by ``scripts/check_doc_anchors.py``, which this gate would only
+# duplicate with the less-reliable model. An excluded target (e.g.
+# ``deep-dives/**``) is never built, so it has no HTML to check against —
+# GitHub's renderer is the only real reader of that anchor, and this
+# gate's ``_github_slugify`` is the only place that's modeled.
+_CROSS_FILE_LINK_RE = re.compile(r"\]\(([^)\s]+\.md)#([^)\s]+)\)")
 
 
 def _exclude_prefixes() -> list[str]:
@@ -185,6 +194,23 @@ def _doc_internal_links(md_path: Path) -> list[tuple[int, str]]:
     return out
 
 
+def _cross_file_links(md_path: Path) -> list[tuple[int, str, str]]:
+    """``(lineno, target_path, anchor)`` for every cross-file
+    ``[text](other.md#anchor)`` link, skipping fenced code blocks."""
+    out: list[tuple[int, str, str]] = []
+    in_fence = False
+    for i, line in enumerate(md_path.read_text(encoding="utf-8").splitlines(), 1):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for m in _CROSS_FILE_LINK_RE.finditer(line):
+            target_path, anchor = m.groups()
+            out.append((i, target_path, anchor))
+    return out
+
+
 def _code_comment_anchor_refs() -> list[tuple[Path, int, str, str]]:
     """``(py_path, lineno, doc_basename.md, anchor)`` for every
     ``<doc>.md#<anchor>`` reference under ``src/reyn/``."""
@@ -224,6 +250,63 @@ assert len(_DOC_LINKS) >= 120, (
     "docs/ — measured 203 when this floor was added. Check _DOC_LINK_RE "
     "before trusting this gate."
 )
+
+# All cross-file links, regardless of target — the floor below guards
+# _CROSS_FILE_LINK_RE itself, since the excluded-only subset filtered from
+# it can legitimately shrink to 0 (every excluded-target citation removed
+# is a valid end state, so THAT count can't carry a floor).
+_CROSS_FILE_LINKS_ALL: list[tuple[Path, int, str, str]] = [
+    (md, lineno, target_path, anchor)
+    for md in _MD_FILES
+    for lineno, target_path, anchor in _cross_file_links(md)
+]
+assert len(_CROSS_FILE_LINKS_ALL) >= 200, (
+    f"Extracted only {len(_CROSS_FILE_LINKS_ALL)} cross-file markdown links "
+    "from docs/ — check _CROSS_FILE_LINK_RE before trusting this gate."
+)
+
+
+def _resolve_cross_file_target(doc_path: Path, target_path: str) -> Path | None:
+    """The docs/-relative path *target_path* resolves to, from *doc_path* —
+    or ``None`` if it resolves outside ``docs/`` entirely (a different
+    hazard ``mkdocs build --strict`` already fails on, not this gate's
+    concern)."""
+    target_abs = (doc_path.parent / target_path).resolve()
+    try:
+        return target_abs.relative_to(_DOCS.resolve())
+    except ValueError:
+        return None
+
+
+# The one arm neither anchor gate previously covered (#3672): a link from a
+# PUBLISHED doc to a cross-file anchor whose TARGET is excluded from the
+# mkdocs build. check_doc_anchors.py only inspects published targets (an
+# excluded target is unbuilt — no HTML to check); this gate's other scopes
+# only ever look at the CITING file's own excluded-vs-published status,
+# never the cross-file target's. Verified against GitHub's real rendering
+# before adding this arm (2026-08-05, https://github.com/tya5/reyn/blob/
+# main/docs/deep-dives/contributing/testing.md and
+# .../proposals/0064-plugin-model.md and .../0066-...md — all 3 real
+# citations' `_github_slugify` predictions matched the live page's actual
+# `href="#..."` fragment exactly, including the em-dash double-hyphen case).
+#
+# Deliberately scoped to a PUBLISHED citing doc only, excluding excluded-
+# doc-to-excluded-doc links (the `docs/deep-dives/journal/**` historical
+# dogfood/insight write-ups cross-link each other constantly — 9 such
+# links found while building this arm, several already dangling). Those
+# are a separate, much larger, unowned corpus: append-only historical
+# journal entries were never held to "citation stays live" rigor, and
+# sweeping them into a newly-red gate on this PR would be a scope decision
+# for whoever owns that corpus, not a side effect of closing #3672.
+_CROSS_FILE_EXCLUDED_LINKS: list[tuple[Path, int, Path, str]] = []
+for _doc, _lineno, _target_path, _anchor in _CROSS_FILE_LINKS_ALL:
+    if _is_excluded(_doc.relative_to(_DOCS).as_posix(), _EXCLUDE_PREFIXES):
+        continue
+    _target_rel = _resolve_cross_file_target(_doc, _target_path)
+    if _target_rel is not None and _is_excluded(
+        _target_rel.as_posix(), _EXCLUDE_PREFIXES
+    ):
+        _CROSS_FILE_EXCLUDED_LINKS.append((_doc, _lineno, _DOCS / _target_rel, _anchor))
 
 
 def _slugs_for(doc_path: Path) -> set[str]:
@@ -297,6 +380,33 @@ def test_doc_internal_link_resolves(doc_path: Path, lineno: int, anchor: str) ->
     assert anchor in slugs, (
         f"{doc_path}:{lineno} links to #{anchor}, no such heading slug in this "
         f"doc. Real slugs: {sorted(slugs)}"
+    )
+
+
+# ─── scope 3: cross-file links into excluded (unbuilt) targets (#3672) ─────
+
+
+@pytest.mark.parametrize(
+    "doc_path,lineno,target_path,anchor",
+    _CROSS_FILE_EXCLUDED_LINKS,
+    ids=[
+        f"{d.relative_to(_REPO_ROOT)}:{ln}"
+        for d, ln, _, _ in _CROSS_FILE_EXCLUDED_LINKS
+    ],
+)
+def test_cross_file_link_into_excluded_target_resolves(
+    doc_path: Path, lineno: int, target_path: Path, anchor: str
+) -> None:
+    """Tier 1: a cross-file ``[text](other.md#anchor)`` link whose TARGET is
+    excluded from the mkdocs build (e.g. ``deep-dives/**``) resolves to a
+    real heading slug there — checked against GitHub's renderer (the only
+    real reader of an unbuilt page's anchor), never mkdocs' (#3672: the one
+    arm neither this file's other scopes nor ``check_doc_anchors.py``'s
+    HTML-ground-truth covered)."""
+    slugs = heading_slugs(target_path, use_github=True)
+    assert anchor in slugs, (
+        f"{doc_path}:{lineno} links to {target_path.relative_to(_DOCS)}#{anchor}, "
+        f"no such heading slug there (GitHub renderer). Real slugs: {sorted(slugs)}"
     )
 
 

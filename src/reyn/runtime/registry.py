@@ -297,6 +297,15 @@ class AgentRegistry:
         # recorded failure. Cleared at the top of `attach()` so a fresh
         # attach attempt is never shadowed by a stale prior failure.
         self._background_attach_error: str | None = None
+        # #3671 P4 item C-1: post-WAL-replay snapshots `restore_all(only_names
+        # =...)` deferred instead of building+running immediately — applied
+        # once, lazily, the first time `get_or_load` actually constructs that
+        # (name, DEFAULT_SID) session (an `attach()` or a delegation target's
+        # `ensure_running()`, both of which call `get_or_load`). Entries are
+        # POPPED on use, so a name that's never reached this run just never
+        # gets its Session built at all — the deferred cost, not just a
+        # delayed one.
+        self._pending_restore: "dict[tuple[str, str], AgentSnapshot]" = {}
         # Ensure default exists so `reyn chat` (no name) works out of the box.
         if not (self._dir / DEFAULT_AGENT_NAME / PROFILE_FILENAME).is_file():
             AgentProfile.new(DEFAULT_AGENT_NAME, role="").save(
@@ -1039,7 +1048,9 @@ class AgentRegistry:
                     sids.add(self._decode_sid_from_dir(child.name))
         return sorted(sids)
 
-    async def restore_all(self) -> dict[str, AgentSnapshot]:
+    async def restore_all(
+        self, *, only_names: "set[str] | None" = None
+    ) -> dict[str, AgentSnapshot]:
         """Reconstruct each known agent's runtime state from snapshot + WAL.
 
         Algorithm:
@@ -1059,6 +1070,56 @@ class AgentRegistry:
         re-materialises both substrates as-of-N — every startup path that calls
         ``restore_all`` gets crash-recovery by construction. No-op without a
         rewind record.
+
+        ``only_names`` (#3671 P4 item C-1): steps 1-4 (WAL replay + the
+        durable snapshot re-save) are UNCONDITIONAL regardless of this param —
+        every agent's on-disk snapshot is brought current either way, so
+        the STATE itself is never lost. Only step 5's DEFAULT-session build
+        (``get_or_load`` + ``restore_state`` + ``ensure_running`` — a full
+        Session construction plus a live running task) is scoped: with
+        ``only_names`` given, an in-flight agent NOT in the set has its
+        post-replay snapshot stashed in ``self._pending_restore`` instead of
+        being built now; ``get_or_load`` applies it (``restore_state``, once)
+        the first time that agent is actually reached — an explicit
+        ``attach()``, or a delegation target via ``ensure_running()`` (both
+        call ``get_or_load`` internally). ``None`` (every caller except
+        ``chat.py``, e.g. ``mcp.py`` — which must be able to serve ANY agent
+        name on arbitrary MCP calls, not one known target) is the real,
+        still-eager behavior — not a compat default kept only to avoid a
+        signature break.
+
+        ⚠️ DELIBERATE crash-recovery semantic change (lead-coder review,
+        #3683 — flagged here explicitly so it is never mistaken for a
+        performance-only side effect): before this param existed, EVERY
+        in-flight agent auto-RESUMED its run-loop at startup (crash-recovery-
+        by-construction). With ``only_names`` given, a non-requested in-flight
+        agent's state is preserved but its run-loop does NOT auto-resume —
+        only "first real use" (attach/delegation) resumes it, and if nothing
+        ever reaches it during this process's lifetime, it simply never runs
+        this session, even though it was mid-task when the process last
+        stopped. The state is not lost (still restorable by a LATER
+        ``restore_all`` — e.g. the next process start, or a future
+        `only_names` that includes it) but auto-resume itself does not
+        happen. See ``test_deferred_agent_does_not_auto_resume_if_never_touched``
+        (tests/test_registry_restore_all_only_names_3671_p4c1.py) for the
+        behavioral pin. Whether this trade-off is acceptable is pending
+        explicit owner confirmation as of #3683 (asked by lead-coder) — this
+        docstring states the CURRENT actual behavior either way, so a future
+        reversal is a deliberate, documented decision, not a silent one.
+
+        Deliberately UNSCOPED by ``only_names`` (so NOT subject to the same
+        deferral): a SPAWNED (non-default-sid) session's build in step 5's
+        other branch, and ``_rewake_pipeline_runs`` below. The pipeline case
+        in particular creates a real ASYMMETRY worth naming: a crashed
+        in-flight PIPELINE run still self-resumes unconditionally on every
+        ``restore_all()`` call regardless of ``only_names``, while a crashed
+        in-flight AGENT (this step) does not, unless requested or reached.
+        Both are "genuinely separate mechanisms" in the narrow sense that
+        `_rewake_pipeline_runs` doesn't share step 5's code path — but
+        whether an OPERATOR should see pipelines auto-resume while ordinary
+        agent turns do not is a real product-consistency question, not
+        resolved here; narrowed out of this PR's scope rather than silently
+        decided either way.
         """
         if self._state_log is None:
             return {}
@@ -1142,6 +1203,12 @@ class AgentRegistry:
                     and not snap.outstanding_interventions):
                 continue
             if sid == _DEFAULT_SID:
+                # #3671 P4 item C-1: an in-flight agent OUTSIDE only_names is
+                # deferred — its snapshot is durably saved above already
+                # (step 4), so nothing is lost by not building+running it now.
+                if only_names is not None and name not in only_names:
+                    self._pending_restore[(name, sid)] = snap
+                    continue
                 session = self.get_or_load(name)
                 session.restore_state(snap)
                 await self.ensure_running(name)
@@ -2600,6 +2667,15 @@ class AgentRegistry:
         loader = getattr(session, "load_persisted_toggles", None)
         if callable(loader):
             loader()
+        # #3671 P4 item C-1: apply a deferred restore_all(only_names=...)
+        # snapshot on FIRST construction — this is the one place both
+        # `attach()` and `ensure_running()` (delegation targets) converge, so
+        # a single hook here covers both "first real use" triggers for the
+        # default session. Pop (not peek): applies exactly once per Session
+        # lifetime, same as the toggle-load above.
+        pending = self._pending_restore.pop((name, _DEFAULT_SID), None)
+        if pending is not None:
+            session.restore_state(pending)
         return session
 
     def _construct_session(
@@ -3293,6 +3369,64 @@ class AgentRegistry:
         `record_background_attach_error`. Cleared at the top of every
         `attach()` call, so a retry is never shadowed by a stale failure."""
         return self._background_attach_error is not None
+
+    async def resume_deferred_agents(self) -> "list[str]":
+        """#3671 P4 item C-1 (v2, owner ruling): proactively build+restore+run
+        every in-flight agent `restore_all(only_names=...)` deferred — i.e.
+        finish what pre-C-1 `restore_all()` used to do for ALL of them,
+        unconditionally. Called by `chat.py`'s background attach task AFTER
+        `attach(name)` has already completed: the target agent is already
+        live and `has_session()` has already flipped True by the time this
+        runs, so it never delays startup — but every crashed-mid-task agent
+        still auto-resumes THIS run, matching pre-C-1 crash-recovery
+        semantics (the owner ruling: "resume everyone, just don't make
+        startup wait for it").
+
+        Two live paths reach `self._pending_restore` (lead-coder review,
+        #3683): this proactive sweep, AND `get_or_load`'s own on-demand hook
+        — genuinely BOTH reachable, not a declared-but-dead second branch:
+        the interactive client is already rendering (P2) while this sweep
+        runs as its own background task, so the operator's own `/attach
+        <other>` or a live delegation's `ensure_running(<other>)` can reach a
+        still-pending agent before this sweep gets to it. Both are safe
+        together because `self._pending_restore.pop(key, None)` is the SOLE
+        gate on every `restore_state` call for a given `(name, sid)` — this
+        is a `dict.pop`, synchronous and atomic under asyncio's single-
+        threaded cooperative scheduling (NOT thread-safe in general — that
+        guarantee is specific to this being asyncio, not a claim that would
+        hold under real OS threads). Whichever path's `pop` returns
+        non-`None` first is the sole owner for that entry; the other finds
+        `None` and skips. Separately, `attach()`/`ensure_running()` ALSO each
+        independently guard their own `asyncio.create_task(session.run())`
+        against re-creation (`if key not in self._tasks or
+        self._tasks[key].done(): ...`), so even a session already restored
+        by one path never gets a second run-task from the other.
+        """
+        resumed: "list[str]" = []
+        for name, sid in list(self._pending_restore.keys()):
+            # Pop (not peek) BEFORE constructing: `get_or_load` is synchronous
+            # (no `await` inside it), so nothing else can run between this
+            # pop and the `get_or_load` call below within THIS coroutine —
+            # no window for an on-demand `attach()`/`ensure_running()` to
+            # race THIS (name, sid) between the two lines. See the docstring
+            # above for why racing a DIFFERENT (name, sid) (there IS an
+            # `await` below, on purpose) is also safe.
+            snap = self._pending_restore.pop((name, sid), None)
+            if snap is None:
+                continue  # already consumed via on-demand attach/ensure_running
+            session = self.get_or_load(name)
+            session.restore_state(snap)
+            await self.ensure_running(name)
+            resumed.append(name)
+            # #3671 P4 C-1 v2 (owner ruling: don't compete with the client's
+            # own first render / input handling for CPU): `ensure_running`
+            # itself has no internal `await` (it only SCHEDULES tasks via
+            # `asyncio.create_task`, never blocks on them), so without this
+            # explicit yield, sweeping N deferred agents would run essentially
+            # synchronously with no chance for the render/input loop (a
+            # SEPARATE task) to actually get scheduled in between.
+            await asyncio.sleep(0)
+        return resumed
 
     def running_tasks(self) -> list[asyncio.Task]:
         """All non-completed tasks (session.run + forwarders) for shutdown drain."""
