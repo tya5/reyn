@@ -180,13 +180,13 @@ import os
 os.chdir('{WORKSPACE}')
 from pathlib import Path
 from reyn.runtime.router_system_prompt import build_system_prompt
-from reyn.runtime.session import _merge_memory_indexes
+from reyn.runtime.session_pure import merge_memory_indexes
 
 async def main():
     # Build memory index the same way ChatSession does
     shared_path = Path('.reyn/memory/MEMORY.md')
     agent_path = Path('.reyn/agents/{AGENT_NAME}/memory/MEMORY.md')
-    memory_index = _merge_memory_indexes(
+    memory_index = merge_memory_indexes(
         shared_path=shared_path,
         agent_path=agent_path,
         agent_name='{AGENT_NAME}',
