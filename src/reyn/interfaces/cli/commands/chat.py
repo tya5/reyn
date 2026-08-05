@@ -82,6 +82,20 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
     from "gave up" on screen — closing the P2-review-recorded UX gap
     (``_setup_interactive_logging`` routes this logger to a file, not the
     screen, so the log line alone was never operator-visible).
+
+    #3671 P4 item C-1 (v2, owner ruling — "resume every in-flight agent,
+    just don't make the client's own startup wait for it"): ``restore_all``
+    builds ONLY ``name`` eagerly; after ``attach(name)`` succeeds (so
+    ``has_session()`` has already flipped True and the client is already
+    live), ``registry.resume_deferred_agents()`` proactively finishes
+    building+restoring+running every OTHER in-flight agent — still fully
+    automatic, just ordered after the target so it never competes with the
+    target's own attach for this background task's time. A failure there is
+    intentionally NOT routed through ``record_background_attach_error``:
+    that seam means "the REQUESTED agent's attach failed" specifically (the
+    client-visible connecting/failed distinction, #3671 P3) — a deferred
+    OTHER agent failing to resume is a different, non-blocking failure mode,
+    logged on its own.
     """
     from reyn.core.events.agent_snapshot import SchemaVersionError
 
@@ -89,10 +103,10 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
         if not skip_restore:
             try:
                 # #3671 P4 item C-1: only THIS agent's in-flight state is
-                # built+run eagerly — every other in-flight agent's WAL
+                # built+run eagerly here — every other in-flight agent's WAL
                 # replay still happens (durability unaffected) but its
-                # Session build is deferred to first real use (a later
-                # /attach or delegation), off this run's D0 critical path.
+                # Session build is deferred; resumed below, AFTER attach(),
+                # not eliminated.
                 await registry.restore_all(only_names={name})
             except SchemaVersionError as e:
                 msg = f"background restore failed (schema mismatch): {e}"
@@ -109,6 +123,16 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
             "client stays up with no attached agent"
         )
         registry.record_background_attach_error(f"{type(e).__name__}: {e}")
+        return
+
+    if not skip_restore:
+        try:
+            await registry.resume_deferred_agents()
+        except Exception:
+            logger.exception(
+                "#3671 P4 C-1: resuming a deferred (non-target) in-flight "
+                "agent failed — the attached agent is unaffected"
+            )
 
 
 def register(sub) -> None:
@@ -674,10 +698,20 @@ def run(args: argparse.Namespace) -> None:
     from reyn.core.events.agent_snapshot import SchemaVersionError
 
     async def _safe_restore() -> bool:
-        """Returns True on success, False if the operator should retry."""
+        """Returns True on success, False if the operator should retry.
+
+        #3671 P4 item C-1: only the target agent's in-flight state is built
+        eagerly — see the sibling call in `_background_attach`. Deliberately
+        does NOT also call `registry.resume_deferred_agents()` (unlike
+        `_background_attach`): the one-shot path has no ongoing client whose
+        first render this would need to avoid competing with, and the
+        process exits (via `registry.shutdown()`) almost immediately after
+        `_run_once` returns — a deferred OTHER agent's state stays safely on
+        disk, resumed by whichever run (interactive or another `--once`)
+        actually reaches it next, not resumed pointlessly here just before
+        exit.
+        """
         try:
-            # #3671 P4 item C-1: only the target agent's in-flight state is
-            # built eagerly — see the sibling call in `_background_attach`.
             await registry.restore_all(only_names={name})
             return True
         except SchemaVersionError as e:

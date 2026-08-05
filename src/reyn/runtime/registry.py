@@ -3370,6 +3370,64 @@ class AgentRegistry:
         `attach()` call, so a retry is never shadowed by a stale failure."""
         return self._background_attach_error is not None
 
+    async def resume_deferred_agents(self) -> "list[str]":
+        """#3671 P4 item C-1 (v2, owner ruling): proactively build+restore+run
+        every in-flight agent `restore_all(only_names=...)` deferred — i.e.
+        finish what pre-C-1 `restore_all()` used to do for ALL of them,
+        unconditionally. Called by `chat.py`'s background attach task AFTER
+        `attach(name)` has already completed: the target agent is already
+        live and `has_session()` has already flipped True by the time this
+        runs, so it never delays startup — but every crashed-mid-task agent
+        still auto-resumes THIS run, matching pre-C-1 crash-recovery
+        semantics (the owner ruling: "resume everyone, just don't make
+        startup wait for it").
+
+        Two live paths reach `self._pending_restore` (lead-coder review,
+        #3683): this proactive sweep, AND `get_or_load`'s own on-demand hook
+        — genuinely BOTH reachable, not a declared-but-dead second branch:
+        the interactive client is already rendering (P2) while this sweep
+        runs as its own background task, so the operator's own `/attach
+        <other>` or a live delegation's `ensure_running(<other>)` can reach a
+        still-pending agent before this sweep gets to it. Both are safe
+        together because `self._pending_restore.pop(key, None)` is the SOLE
+        gate on every `restore_state` call for a given `(name, sid)` — this
+        is a `dict.pop`, synchronous and atomic under asyncio's single-
+        threaded cooperative scheduling (NOT thread-safe in general — that
+        guarantee is specific to this being asyncio, not a claim that would
+        hold under real OS threads). Whichever path's `pop` returns
+        non-`None` first is the sole owner for that entry; the other finds
+        `None` and skips. Separately, `attach()`/`ensure_running()` ALSO each
+        independently guard their own `asyncio.create_task(session.run())`
+        against re-creation (`if key not in self._tasks or
+        self._tasks[key].done(): ...`), so even a session already restored
+        by one path never gets a second run-task from the other.
+        """
+        resumed: "list[str]" = []
+        for name, sid in list(self._pending_restore.keys()):
+            # Pop (not peek) BEFORE constructing: `get_or_load` is synchronous
+            # (no `await` inside it), so nothing else can run between this
+            # pop and the `get_or_load` call below within THIS coroutine —
+            # no window for an on-demand `attach()`/`ensure_running()` to
+            # race THIS (name, sid) between the two lines. See the docstring
+            # above for why racing a DIFFERENT (name, sid) (there IS an
+            # `await` below, on purpose) is also safe.
+            snap = self._pending_restore.pop((name, sid), None)
+            if snap is None:
+                continue  # already consumed via on-demand attach/ensure_running
+            session = self.get_or_load(name)
+            session.restore_state(snap)
+            await self.ensure_running(name)
+            resumed.append(name)
+            # #3671 P4 C-1 v2 (owner ruling: don't compete with the client's
+            # own first render / input handling for CPU): `ensure_running`
+            # itself has no internal `await` (it only SCHEDULES tasks via
+            # `asyncio.create_task`, never blocks on them), so without this
+            # explicit yield, sweeping N deferred agents would run essentially
+            # synchronously with no chance for the render/input loop (a
+            # SEPARATE task) to actually get scheduled in between.
+            await asyncio.sleep(0)
+        return resumed
+
     def running_tasks(self) -> list[asyncio.Task]:
         """All non-completed tasks (session.run + forwarders) for shutdown drain."""
         out: list[asyncio.Task] = []
