@@ -91,9 +91,12 @@ class RewindPicker(Vertical):
        terminal (the owner's rule: adopt the meaning the terminal already has)
        instead of pinning a colour. */
     RewindPicker #rewind-picker-title {
+        /* #3523: ``@recede@`` (below, from #3686) is what makes this heading
+           read as a heading. The ``color: @quiet@`` that used to sit here did
+           nothing under the ansi themes and is removed rather than left as a
+           declaration that looks load-bearing. */
         text-style: @recede@;
         height: auto;
-        color: @quiet@;
         padding: 0 1;
     }
     """)

@@ -762,7 +762,12 @@ class TextualChatApp(App):
     #inputgutter {
         width: 2;
         height: auto;
-        color: @quiet@;
+        /* #3523: was ``color: @quiet@``, which under the ansi themes resolves
+           to the same value as body text — the marker sat at full brightness
+           beside the line being typed. ``dim`` is an SGR attribute, so it
+           survives where the colour did not, and leaves the hue to the
+           terminal. */
+        text-style: @recede@;
     }
     Composer {
         height: 3;
@@ -789,7 +794,13 @@ class TextualChatApp(App):
     }
     StatusLine {
         height: 1;
-        color: @quiet@;
+        /* #3523: the ``color: @quiet@`` here did nothing under the ansi themes,
+           but ``dim`` is NOT the replacement: ``chrome.status_line_text``
+           prepends the ``⚠ HALTED`` banner onto THIS row, and a durability
+           halt rendered dimmer than ordinary text is the one thing this line
+           must not do. No colour is the honest declaration — the row is
+           separated from the conversation by position and by the rule above
+           it, not by brightness. */
         padding: 0 1;
     }
     /* #3326: when StatusLine SHARES a row with Tab widgets (MenuBar._repack's
@@ -847,7 +858,11 @@ class TextualChatApp(App):
        kept bold so the active tab stays identifiable without the brightness
        jump. */
     MenuBar Tab.-active {
-        color: @quiet@;
+        /* #3523: the colour was a no-op under the ansi themes — measured, it
+           resolved to body text. ``bold`` below is what has actually been
+           distinguishing the active tab all along, so the declaration is
+           dropped rather than swapped: adding ``dim`` here would fight the
+           bold it sits next to. */
         text-style: bold;
     }
     /* No separator rule between the menu row and its drawer — they read as one

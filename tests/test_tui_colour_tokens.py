@@ -37,6 +37,18 @@ _DECLARATION = re.compile(
 _COLOURLESS = frozenset({"none", "transparent", "auto", "initial", "hidden"})
 
 
+def _declarations_only(sheet: str) -> str:
+    """``sheet`` with its CSS comments removed.
+
+    Block-aware rather than line-aware: a continuation line inside a ``/* */``
+    comment carries no marker of its own, so a per-line test reads it as a
+    declaration. Every site this module guards explains itself in a comment
+    that names the very token it stopped using, so telling prose from rules
+    has to be exact or the reasoning gets driven out of the files.
+    """
+    return re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)
+
+
 def _stylesheet_lines() -> "list[tuple[Path, int, str]]":
     """Every line of reyn-owned source under ``interfaces/``, with its origin.
 
@@ -131,3 +143,40 @@ def test_resolution_leaves_no_marker_behind() -> None:
 
     assert "@" not in resolved
     assert palette.TOKENS["@surface@"] in resolved
+
+
+def test_nothing_asks_to_recede_with_a_colour_that_does_not() -> None:
+    """Tier 2: ``@quiet@`` is not used as the way to make something quieter.
+
+    Under the ansi themes ``$text-muted`` — which ``@quiet@`` resolves to —
+    lands on the same ``ansi_default`` marker as ordinary text. #3523 measured
+    seven chrome sites where "de-emphasised" therefore rendered at full body
+    brightness: the intent was lost and nothing failed.
+
+    That audit could only cover the sites that existed when it ran, and an
+    eighth arrived the next day (``ActivityRow``, #3693) — a declaration that
+    looked right, read right in review, and did nothing. So the audit becomes a
+    gate. What replaces it per site is a judgement, not a rule: ``@recede@``
+    where receding is the intent, and no declaration where it is not (the
+    status row carries the ``⚠ HALTED`` banner, and a halt must never render
+    dimmer than ordinary text).
+
+    Comment text is skipped deliberately — the sites removed here say in prose
+    what they used to declare, and a gate that could not tell the difference
+    would force that reasoning out of the file.
+    """
+    offenders = []
+    for path in sorted(_INTERFACES.rglob("*.py")) + sorted(_INTERFACES.rglob("*.tcss")):
+        if path.name == "palette.py":
+            continue  # where the token is DEFINED, which is not a use of it
+        source = _declarations_only(path.read_text(encoding="utf-8"))
+        offenders += [
+            f"{path.name}: {line.strip()}"
+            for line in source.splitlines()
+            if "@quiet@" in line
+        ]
+    assert not offenders, (
+        "these declarations ask for de-emphasis with @quiet@, which resolves to "
+        "the same value as body text under the ansi themes — use @recede@ (an "
+        f"SGR attribute) or declare no colour: {offenders}"
+    )
