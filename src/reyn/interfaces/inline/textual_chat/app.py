@@ -372,6 +372,46 @@ class _CursorFlowView(FlowView["OutboxMessage"]):
             self.post_message(KeyCommitted(self, entry))
 
 
+class ScrollableDrawer(ContentSwitcher):
+    """The bottom drawer, with keys that can reach a readout taller than it.
+
+    ``ContentSwitcher`` scrolls when its stylesheet says so (see the
+    ``#drawer`` rule) but binds no key to do it, so a Help pane of 30 lines in
+    a 12-row drawer was reachable by mouse wheel and by nothing else (#3699 —
+    measured: 11 of 30 lines on screen, and the 19 missing were the keyboard
+    shortcuts the pane exists to list).
+
+    PgUp/PgDn rather than ↑/↓: ``↑`` already means "back to composer" while
+    the drawer is open (``chrome.MENUBAR_KEYS``), and rebinding it would trade
+    one unreachable thing for another. PgUp/PgDn are unbound in this context
+    and already read as "page through content" elsewhere in this app. The
+    Help pane lists them from that same ledger, so the pane that was cut off
+    now also says how to see the rest.
+
+    A pane that fits is unaffected: with nothing to scroll, these keys move
+    nothing rather than being conditionally absent.
+    """
+
+    BINDINGS = [
+        Binding("pagedown", "scroll_pane_down", "Scroll this pane", show=False),
+        Binding("pageup", "scroll_pane_up", "Scroll this pane", show=False),
+        Binding("home", "scroll_pane_home", "Top of this pane", show=False),
+        Binding("end", "scroll_pane_end", "Bottom of this pane", show=False),
+    ]
+
+    def action_scroll_pane_down(self) -> None:
+        self.scroll_page_down(animate=False)
+
+    def action_scroll_pane_up(self) -> None:
+        self.scroll_page_up(animate=False)
+
+    def action_scroll_pane_home(self) -> None:
+        self.scroll_home(animate=False)
+
+    def action_scroll_pane_end(self) -> None:
+        self.scroll_end(animate=False)
+
+
 class TextualChatApp(App):
     """The TTY conversation pane: a FlowView of the live conversation + a
     Composer, both fed/served by one :class:`ClientTransport`.
@@ -815,6 +855,18 @@ class TextualChatApp(App):
     #drawer {
         height: auto;
         max-height: 12;
+        /* #3699: the readout panes (Help/Cost/Ctx) are routinely taller than
+           this cap — Help alone is 30 non-blank lines — and without this the
+           remainder was CLIPPED: no scrollbar, no indication, nothing any key
+           could reach. Measured before the fix: 11 of Help's 30 lines on
+           screen, and the 19 missing ones were the keyboard shortcuts, i.e.
+           the reason the pane is opened at all.
+           The overflow belongs HERE rather than on the pane: a ``Static`` is
+           not a scroll container, so capping the Static instead truncates its
+           virtual size to the cap (measured: virtual height 12 for 30 lines of
+           content) and there is then nothing left to scroll to. The list panes
+           were never affected — ``OptionList`` scrolls itself. */
+        overflow-y: auto;
         background: @surface@;
         padding: 0;
     }
@@ -827,6 +879,10 @@ class TextualChatApp(App):
         border: none;
         padding: 0;
     }
+    /* #3699: deliberately NO max-height here — the pane must be allowed to be
+       its full content height so the scroll container above has something to
+       scroll to. Capping the Static instead clamps its virtual size and the
+       content past the cap stops existing rather than moving off screen. */
     #drawer Static { height: auto; padding: 1 0; }
     """)
 
@@ -1225,7 +1281,7 @@ class TextualChatApp(App):
         # downward. Phase 4 fills each pane from its canonical reyn source; each
         # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
         yield MenuBar(_MENU_TABS, id="menubar", status_text=self._status_text())
-        with ContentSwitcher(initial=None, id="drawer"):
+        with ScrollableDrawer(initial=None, id="drawer"):
             for tid, _label in _MENU_TABS:
                 yield build_drawer_pane(tid, self._pane_rows(tid))
 
@@ -1887,6 +1943,15 @@ class TextualChatApp(App):
         child = drawer.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
             child.focus()
+        else:
+            # #3699: a readout pane taller than the drawer's cap scrolls — but
+            # the scrolling is the DRAWER's (a Static is not a scroll
+            # container), so the drawer is what has to hold focus for a key to
+            # move it. Without this the content past the fold stays unreachable
+            # and merely gains a scrollbar nothing can drive, which is the same
+            # defect wearing an affordance.
+            drawer.can_focus = True
+            drawer.focus()
 
     def _refresh_pane(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> None:
         """Re-derive ``tab_id``'s pane content from the current canonical sources
