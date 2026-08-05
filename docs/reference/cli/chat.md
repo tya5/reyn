@@ -101,6 +101,16 @@ The `/attach` slash lets you watch a delegate's progress mid-chain — the previ
 
 `reyn chat` is interactive: when a sub-skill needs a permission outside the defaults, the prompt blocks until you respond via the intervention queue. Choices can be persisted to `.reyn/approvals.yaml` (see [permissions reference](../config/permissions.md)).
 
+## Diagnosing slow startup
+
+Set `REYN_STARTUP_TIMING=1` before starting `reyn chat` to get a per-stage breakdown of where startup time went:
+
+```bash
+REYN_STARTUP_TIMING=1 reyn chat
+```
+
+The report prints to stdout *after* the TUI exits (quit normally, Ctrl-C, or a startup exception all trigger it) — the interface owns the screen while it's running, so anything printed earlier would be overwritten or corrupt the display. It lists a fixed set of stages (`import`, `config`, `registry`, `plugins`, `mcp`, `session`, `client-prep`, `tui-boot`) each with its seconds and share of wall time, even a stage that took `0.00s` — a stage that never printed a line would be indistinguishable from one that ran instantly, which is the more useful fact to preserve. A final `unaccounted` line is the wall time none of the declared stages explain — the number to look at first if the breakdown itself looks unremarkable but startup was still slow. Off by default; when unset, nothing is measured, formatted, or printed.
+
 ## Examples
 
 Start a new session against the default agent:
