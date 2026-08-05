@@ -325,3 +325,40 @@ async def test_promotion_still_happens_once_and_the_label_follows_the_new_head()
         assert [str(e.item.text) for e in promoted] == ["first"], (
             "the dispatched item was promoted more or less than once"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_clock_advances_without_any_delta_arriving() -> None:
+    """Tier 2b: the elapsed time moves on its own schedule, not on traffic.
+
+    The first version had no timer: the clock was redrawn only as a side effect
+    of a delta refining the state. So through a tool call, or after the stream
+    ended, the row kept printing a number that had stopped being true while
+    still looking live — the same failure as printing an invented one, which
+    this row exists not to do.
+
+    Deliberately driven with NO frames at all. A gate that pushed deltas would
+    go green on the side-effect path this exists to replace.
+    """
+    import asyncio as _asyncio
+
+    ticks: "list[float]" = [1000.0]
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: ticks[0])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_event(_started("c1", 1))
+        await _settle(pilot)
+        row = app.query_one(ActivityRow)
+        before = str(row.render())
+
+        # Time passes; nothing arrives.
+        ticks[0] += 75.0
+        await _asyncio.sleep(ActivityRow.TICK_SECONDS * 1.4)
+        await _settle(pilot)
+
+        after = str(row.render())
+        assert after != before, (
+            f"the elapsed time did not move while the turn ran: {before!r}"
+        )
+        assert "01:15" in after, f"the clock is not tracking the real gap: {after!r}"

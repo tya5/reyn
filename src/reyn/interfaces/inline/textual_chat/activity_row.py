@@ -91,8 +91,20 @@ class ActivityRow(Static):
         self._state: "str | None" = None
         self._started_at: "float | None" = None
 
+    #: How often the elapsed clock is redrawn. One second: the clock has
+    #: one-second resolution, so a faster tick would repaint without changing
+    #: anything and a slower one would let the number lag what it claims.
+    TICK_SECONDS = 1.0
+
     def on_mount(self) -> None:
         self.display = False
+        # The clock has to advance on its OWN schedule. Without this it moved
+        # only as a side effect of ``specialise`` — i.e. only while deltas were
+        # arriving — so through a tool call, or after the stream ended, the row
+        # kept printing a number that had stopped being true while still
+        # looking live. Printing a stale duration is the same failure as
+        # printing an invented one, which this row exists not to do.
+        self.set_interval(self.TICK_SECONDS, self.tick)
 
     @property
     def state(self) -> "str | None":

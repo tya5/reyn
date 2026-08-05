@@ -3576,8 +3576,14 @@ class TextualChatApp(App):
                             )
                     elif etype in _TURN_END_EVENT_TYPES:
                         # #3693: the turn is over — the row goes, whichever of
-                        # the three terminal events arrived.
-                        self._activity.end()
+                        # the three terminal events arrived. Guarded like its
+                        # siblings below: one frame's failure must not stop the
+                        # pump, and a chrome row is the last thing that should
+                        # be able to.
+                        try:
+                            self._activity.end()
+                        except Exception:
+                            logger.exception("textual chat: activity row clear failed")
                         try:
                             self._sweep_orphaned_running_tools()
                         except Exception:
