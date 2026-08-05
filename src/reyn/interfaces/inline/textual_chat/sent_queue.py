@@ -265,7 +265,18 @@ class SentQueue(Vertical):
             row = self._rows[msg_id]
             row.set_class(selected, "-selected")
             lead = f"{palette.SELECTED_MARKER} " if selected else "  "
-            row.update(Content(f"{lead}⧗ {self._labels[msg_id]}"))
+            # #3693: the head of the queue is labelled NEXT — the thing that
+            # goes when the current turn (if any) finishes. Unconditional on
+            # whether a turn is running: the queue holds undispatched inbox
+            # items and "is a turn in flight" is a different fact, with no
+            # dependency between them. A message typed before the session
+            # attached, or between one turn settling and the next dispatch,
+            # is still the next thing to be sent — hiding the label in those
+            # windows would make it flicker on a state it does not describe.
+            # The rows themselves are unchanged: same ⧗, same order, same
+            # per-row selection and cancel (#3300's contract).
+            marker = "NEXT  " if i == 0 else "      "
+            row.update(Content(f"{marker}{lead}⧗ {self._labels[msg_id]}"))
             # #3688: with the region scrollable (see the CSS cap above), the
             # selected row can sit outside the visible six — arrowing onto a row
             # that stays off screen is the same silent-clip defect wearing a
