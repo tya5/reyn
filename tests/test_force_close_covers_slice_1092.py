@@ -18,10 +18,8 @@ No mocks: a real Session with a synthetic T_max.
 from __future__ import annotations
 
 from reyn.runtime.services.router_history_buffer import _is_force_close_consolidation
-from reyn.runtime.session import (
-    ChatMessage,
-    _render_summary_for_storage,
-)
+from reyn.runtime.session import ChatMessage
+from reyn.runtime.session_pure import render_summary_for_storage
 from tests._support.session import make_session as _make_session
 from tests._support.session import now as _now
 from tests._support.session import push as _push
@@ -31,7 +29,7 @@ def _append_force_close_summary(session, consolidation: str) -> ChatMessage:
     """Append a force-close consolidation summary (the F2b install shape)."""
     msg = ChatMessage(
         role="summary",
-        content=_render_summary_for_storage({"consolidation": consolidation}),
+        content=render_summary_for_storage({"consolidation": consolidation}),
         ts=_now(),
         meta={"structured": {"consolidation": consolidation}, "covers_through_seq": 0},
     )
@@ -117,11 +115,11 @@ def test_is_force_close_consolidation_detection() -> None:
 def test_render_consolidation_field_verbatim_and_normal_unchanged() -> None:
     """Tier 2: the renderer surfaces the consolidation verbatim; a normal
     structured dict (no consolidation) renders exactly as before (byte-identical)."""
-    assert "MY-CONSOLIDATION" in _render_summary_for_storage(
+    assert "MY-CONSOLIDATION" in render_summary_for_storage(
         {"consolidation": "MY-CONSOLIDATION"}
     )
     # normal summary: unchanged output (no `consolidation` → no new lines).
-    assert _render_summary_for_storage({"topic_arc": "T"}) == "[topic] T"
-    assert _render_summary_for_storage(
+    assert render_summary_for_storage({"topic_arc": "T"}) == "[topic] T"
+    assert render_summary_for_storage(
         {"decisions": ["d1"]}
     ) == "[decisions]\n  - d1"

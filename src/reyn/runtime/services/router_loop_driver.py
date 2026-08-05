@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
+from reyn.runtime.session_pure import render_summary_for_storage
+
 if TYPE_CHECKING:
     pass
 
@@ -228,7 +230,6 @@ class RouterLoopDriver:
         claims otherwise.
         """
         from reyn.runtime.chat_message import ChatMessage, _now_iso
-        from reyn.runtime.session import _render_summary_for_storage
 
         resolved_model = self._resolver.resolve(self._effective_router_model_class()).model
         consolidation, covers, dropped_seq_ranges = await self._force_close_wrap_up(
@@ -237,7 +238,7 @@ class RouterLoopDriver:
         structured = {"consolidation": consolidation}
         msg = ChatMessage(
             role="summary",
-            content=_render_summary_for_storage(structured),
+            content=render_summary_for_storage(structured),
             ts=_now_iso(),
             meta={"structured": structured, "covers_through_seq": covers},
         )
@@ -294,7 +295,6 @@ class RouterLoopDriver:
         above), so the interval is empty BY CONSTRUCTION, not by a special
         case.
         """
-        from reyn.runtime.session import _render_summary_for_storage
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
@@ -318,7 +318,7 @@ class RouterLoopDriver:
                 "role": "assistant",
                 "content": (
                     "[summary of earlier conversation]\n"
-                    + _render_summary_for_storage(_summary_dict)
+                    + render_summary_for_storage(_summary_dict)
                 ),
             }]
         # (input, turns actually fed, turns the fallback shrank away) per tier.
@@ -378,7 +378,6 @@ class RouterLoopDriver:
         it ONLY when it actually gives up (cap reached / sub-viable model), so a
         recoverable handoff is not mislogged as a dead-end.
         """
-        from reyn.runtime.session import _render_summary_for_storage
         from reyn.runtime.usage_shim import _RouterUsageShim
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
@@ -410,7 +409,7 @@ class RouterLoopDriver:
             async def _router_main_call(*, SP, head, summary, tail, new_msg):
                 _msgs = list(head)
                 if summary:
-                    _summary_text = _render_summary_for_storage(summary)
+                    _summary_text = render_summary_for_storage(summary)
                     _msgs.append({
                         "role": "assistant",
                         "content": (
