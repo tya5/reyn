@@ -193,7 +193,13 @@ class MemoryService:
         layer="agent"  → .reyn/agents/<agent_name>/memory
         """
         if layer == "shared":
-            return str(Path(".reyn") / "memory")
+            # #3705: derived from `self._workspace` (already anchored on the
+            # caller's real state root — `<state-root>/agents/<name>`) rather
+            # than a bare relative `Path(".reyn")`, which silently ignored
+            # it. `self._workspace.parent` = `<state-root>/agents`,
+            # `.parent.parent` = `<state-root>` — the shared (non-agent-
+            # scoped) memory dir sits directly under that.
+            return str(self._workspace.parent.parent / "memory")
         return str(self._workspace / "memory")
 
     def memory_path(self, layer: str, slug: str) -> str:

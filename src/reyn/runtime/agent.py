@@ -71,7 +71,31 @@ class Agent:
 
     @property
     def workspace_dir(self) -> Path:
-        """The agent's home directory (``.reyn/agents/<name>``) — derived from
-        the name, byte-identical to Session's former
-        ``Path(".reyn") / "agents" / self.agent_name``."""
-        return Path(".reyn") / "agents" / self.agent_name
+        """The agent's home directory (``<state-root>/agents/<name>``).
+
+        #3705: previously always ``Path(".reyn") / "agents" / self.agent_name``
+        — a LITERAL relative path, resolved against whatever the PROCESS cwd
+        happened to be at write time, regardless of ``workspace_state_dir``
+        having already been explicitly supplied on this exact object. That
+        silent override is why the owner's live `.reyn/agents/` accumulated
+        68 directories of test-fixture agents: every caller that built an
+        ``Agent``/``Session`` with an isolated ``workspace_state_dir`` (or
+        was simply standing in the wrong directory) still had this property
+        quietly resolve into the ambient cwd instead.
+
+        Now anchored on ``workspace_state_dir`` when the caller supplied one
+        (``env_backend.py`` / ``registry_bootstrap.py`` both set it to
+        ``project_root / ".reyn"`` already — this property just has to
+        respect it instead of re-deriving its own ``.reyn`` from scratch).
+        Falls back to ``Path.cwd() / ".reyn"`` ONLY when no caller supplied
+        ``workspace_state_dir`` at all — this preserves the exact prior
+        default for every caller that never set it (not a behavior change
+        for them), while making an explicitly-supplied root finally take
+        effect for the callers that do (which is the actual #3705 fix).
+        """
+        base = (
+            self.workspace_state_dir
+            if self.workspace_state_dir is not None
+            else Path.cwd() / ".reyn"
+        )
+        return base / "agents" / self.agent_name

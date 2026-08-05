@@ -1111,7 +1111,12 @@ class Session:
 
         # WAL + per-agent snapshot for crash recovery via SnapshotJournal; snapshot_path kept only for diagnostics (PR21 / PR-refactor-session-1, see session-construction.md#family-2-recovery-wal-journal)
         self._session_id = session_id
-        self._snapshot_path = snapshot_path or default_snapshot_path(self.agent_name)
+        # #3705: pass the resolved state root through so an explicitly-
+        # supplied workspace_state_dir isn't silently ignored (only used
+        # when the caller didn't already override snapshot_path itself).
+        self._snapshot_path = snapshot_path or default_snapshot_path(
+            self.agent_name, root=self._reyn_state_root,
+        )
         # generation_store / journal are now built by the CALLER (see
         # reyn.runtime.services.recovery.build_recovery) and received as
         # required params — Session no longer constructs its own recovery
@@ -1209,7 +1214,9 @@ class Session:
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
         self.events_dir = (  # PR20: chat events dir, created lazily by EventStore on first write
-            Path(".reyn") / "events" / "agents" / self.agent_name / "chat"
+            # #3705: anchored on the same root as workspace_dir — was a bare
+            # relative `Path(".reyn")`, silently ignoring workspace_state_dir.
+            self._reyn_state_root / "events" / "agents" / self.agent_name / "chat"
         )
 
         self.history: list[ChatMessage] = []
@@ -1702,6 +1709,19 @@ class Session:
     @property
     def _workspace_state_dir(self) -> "Path | None":
         return self._agent.workspace_state_dir
+
+    @property
+    def _reyn_state_root(self) -> "Path":
+        """#3705: the SAME anchor `Agent.workspace_dir` resolves against
+        (`workspace_state_dir` when the caller supplied one, else
+        `Path.cwd() / ".reyn"`) — for the few Session-owned paths that sit
+        ALONGSIDE `agents/<name>/`, not under it (`events/agents/<name>/...`),
+        so they can't just be derived from `self.workspace_dir` directly."""
+        return (
+            self._workspace_state_dir
+            if self._workspace_state_dir is not None
+            else Path.cwd() / ".reyn"
+        )
 
     @property
     def _environment_backend(self) -> Any:
@@ -3590,8 +3610,13 @@ class Session:
                 embedding_provider = _get_provider("litellm", embedding_config)
                 embedding_model_class = embedding_config.default_class
                 # FP-0057 Phase 0: unified onto IndexBackend's cache convention — clean-break, no migration. docs/reference/runtime/reyn-dir-layout.md#canonical-layout
+                # #3705: anchored on workspace_base_dir (the OpContext FS
+                # root) when the caller supplied one — was a bare
+                # `Path.cwd()`, silently ignoring it. `None` (Agent's own
+                # documented "→ host cwd" default) preserves prior behavior
+                # for callers that never set it.
                 action_embedding_index = ActionEmbeddingIndex(
-                    workspace_root=Path.cwd(),
+                    workspace_root=self._workspace_base_dir or Path.cwd(),
                 )
             except Exception:
                 # If provider construction fails for any reason (= missing
@@ -3628,8 +3653,10 @@ class Session:
                     except Exception:
                         pass
                 action_usage_tracker = ActionUsageTracker(
+                    # #3705: anchored on the same root as workspace_dir —
+                    # was a bare relative `Path(".reyn")`.
                     persist_path=(
-                        Path(".reyn") / "agents" / agent_name
+                        self._reyn_state_root / "agents" / agent_name
                         / "action_usage.json"
                     ),
                     on_ranking_changed=_on_hot_list_changed,
@@ -3850,6 +3877,10 @@ class Session:
             # spawn guard.
             record_spawned_task=self.record_spawned_task,
             agent_workspace_dir=self.workspace_dir,
+            # #3705: was never passed — the adapter fell back to its own
+            # cwd-relative default (`Path.cwd() / ".reyn" / "state"`) even
+            # when this Session had an explicit workspace_state_dir.
+            state_dir=self._reyn_state_root / "state",
             mcp_call_tool=self._mcp_call_tool,
             # #2597 slice ②a: resources consumption (read/templates).
             mcp_read_resource=self._mcp_read_resource,
