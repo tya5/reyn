@@ -51,8 +51,8 @@ LLM が保存を決定したとき、同じルーターターンで 2 つの ops
 ## 読み取りパス
 
 ```
-RouterHostAdapter.get_memory_index()   (chat/services/router_host_adapter.py)
-  └─ _merge_memory_indexes(shared_path, agent_path, agent_name)   (chat/session.py のモジュール関数)
+RouterHostAdapter.get_memory_index()   (runtime/services/router_host_adapter.py)
+  └─ merge_memory_indexes(shared_path, agent_path, agent_name)   (runtime/session_pure.py のモジュール関数)
        ├─ .reyn/memory/MEMORY.md を読む（存在すれば）
        ├─ .reyn/agents/<name>/memory/MEMORY.md を読む（存在すれば）
        └─ {status, content} を返す  ← chat_routing_request artifact に埋め込む

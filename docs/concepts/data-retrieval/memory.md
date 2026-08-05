@@ -51,8 +51,8 @@ Each layer has its own MEMORY.md on disk; the merged `(shared)` / `(agent)` head
 ## Read path
 
 ```
-RouterHostAdapter.get_memory_index()   (chat/services/router_host_adapter.py)
-  └─ _merge_memory_indexes(shared_path, agent_path, agent_name)   (module fn in chat/session.py)
+RouterHostAdapter.get_memory_index()   (runtime/services/router_host_adapter.py)
+  └─ merge_memory_indexes(shared_path, agent_path, agent_name)   (module fn in runtime/session_pure.py)
        ├─ reads .reyn/memory/MEMORY.md (if present)
        ├─ reads .reyn/agents/<name>/memory/MEMORY.md (if present)
        └─ returns {status, content}  ← embedded in chat_routing_request artifact
