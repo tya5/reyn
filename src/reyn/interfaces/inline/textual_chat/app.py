@@ -71,6 +71,7 @@ from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
+from .activity_row import ActivityRow
 from .chrome import (
     _MENU_TABS,
     Composer,
@@ -1253,6 +1254,12 @@ class TextualChatApp(App):
         # rewind picker above the queue, inside the same zone).
         # Collapsed by default (``display=False`` — see ``SentQueue.on_mount``);
         # shown while at least one message is queued, undispatched.
+        # #3693: the live-turn line sits between the rewind picker and the
+        # queue, so the zone reads past (conversation) -> now (this) -> next
+        # (queue) -> the line being typed. Non-focusable, so Tab/Esc still walk
+        # the same path to the composer they did before it existed.
+        self._activity = ActivityRow(id="activity-row", clock=self._clock)
+        yield self._activity
         self._sent_queue = SentQueue(id="sent-queue")
         yield self._sent_queue
         # #3354: the / and : completion popup sits DIRECTLY above the input row
@@ -2401,6 +2408,11 @@ class TextualChatApp(App):
             entry.set_state(EntryState.RUNNING)
             self._running_tools[op_id] = entry
             self._begin_running_indicator(entry)
+            # #3693: name the tool on the live-turn row, but only from a label
+            # the frame actually carries — an unlabelled call stays the generic
+            # state rather than inventing a name for it.
+            label = (msg.meta or {}).get("label") or (msg.text or "").strip()
+            self._activity.specialise(f"TOOL {label}" if label else "WORKING")
         elif kind in ("tool_call_failed", "error"):
             entry.set_state(EntryState.ERROR)
 
@@ -2693,6 +2705,12 @@ class TextualChatApp(App):
             turn_active=snap.get("turn_active", False),
             queue_seq=snap.get("queue_seq", 0),
         )
+        # #3693: a client that attached mid-turn knows ``turn_active`` and
+        # nothing else — no start instant, no tool, no stream. It says so and
+        # shows no clock (``started=False``), rather than timing from the
+        # moment it happened to connect.
+        if snap.get("turn_active"):
+            self._activity.begin("WORKING", started=False)
         for item in self._queue_view.queue():
             msg_id = item.get("msg_id")
             if msg_id:
@@ -2928,6 +2946,12 @@ class TextualChatApp(App):
             item for item in self._queue_view.queue()
             if item.get("chain_id") == chain_id
         ]
+        # #3693: a dispatched turn is the one fact this row is allowed to
+        # assert on its own. Set BEFORE the seq gate's early return: a
+        # ``turn_started`` this client already reflected is still a turn that
+        # is running, and returning early would leave the row hidden through
+        # the whole turn.
+        self._activity.begin("WORKING")
         applied = self._queue_view.apply_turn_started(chain_id=chain_id, seq=seq)
         if not applied:
             return
@@ -3144,6 +3168,10 @@ class TextualChatApp(App):
         text = str(data.get("text", ""))
         if not chain_id or not text:
             return
+        # #3693: content is arriving, so the live-turn row can say so. A
+        # refinement of a row that already exists, never a row of its own — a
+        # delta outside a turn must not conjure one (``specialise`` no-ops).
+        self._activity.specialise("RESPONDING")
         # Correlate on (chain_id, round_index), not chain_id alone. A turn that
         # calls a tool produces MORE THAN ONE assistant message — measured on a
         # real turn: 140 deltas, three tool calls, then 300 deltas, and the two
@@ -3547,6 +3575,9 @@ class TextualChatApp(App):
                                 "textual chat: agent_delta coalesce failed"
                             )
                     elif etype in _TURN_END_EVENT_TYPES:
+                        # #3693: the turn is over — the row goes, whichever of
+                        # the three terminal events arrived.
+                        self._activity.end()
                         try:
                             self._sweep_orphaned_running_tools()
                         except Exception:
