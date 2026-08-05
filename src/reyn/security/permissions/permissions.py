@@ -421,7 +421,16 @@ class PermissionResolver:
         self._interactive = interactive
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
         self._session: dict[str, bool] = {}
-        self._saved: dict[str, bool] = self._load_saved()
+        # #3671 P4 item D-1: lazy — disk read + YAML parse deferred to the
+        # `_saved` property's first access, not paid on every PermissionResolver
+        # construction (one is built per `reyn chat` startup, cost scales with
+        # the number of persisted approval entries). Every existing internal
+        # read (`self._saved.get(...)` / `self._saved[key] = ...` / etc.) goes
+        # through the SAME property, so there is exactly one load site — no
+        # caller can forget to trigger it, and mutation still works: the
+        # property returns the SAME dict object each time, so in-place
+        # `self._saved[key] = approved` still mutates the real stored dict.
+        self.__saved: "dict[str, bool] | None" = None
         # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
         # offloads an artifact to a state-dir path and hands the agent an
         # `artifact_ref` / `_offload_ref` pointing there, that path is outside the
@@ -496,6 +505,17 @@ class PermissionResolver:
         return len(self._on_persist_callbacks)
 
     # ── Persistence ──────────────────────────────────────────────────────────
+
+    @property
+    def _saved(self) -> dict[str, bool]:
+        """#3671 P4 item D-1: the single owner of the lazy load — reads +
+        parses `approvals.yaml` on first access only, cached for the life of
+        this resolver. Returns the SAME dict object across calls, so
+        `self._saved[key] = value` (used by `_persist`) mutates the real
+        cached dict, not a throwaway copy."""
+        if self.__saved is None:
+            self.__saved = self._load_saved()
+        return self.__saved
 
     def _load_saved(self) -> dict[str, bool]:
         if not self._approvals_path.exists():

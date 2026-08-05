@@ -1,0 +1,113 @@
+"""Tier 2: #3671 P4 item D-1 — `PermissionResolver`'s persisted-approvals
+disk read (`approvals.yaml` → `self._saved`) is deferred to first actual
+use, not paid on every `reyn chat` startup construction.
+
+Before this fix, `__init__` unconditionally called `self._load_saved()` —
+disk I/O + YAML parse, cost scaling with the number of persisted approval
+entries — even for a turn that never checks or persists any permission
+(the common case for most turns). The `_saved` property (single owner: the
+ONE place `self.__saved` is read or written) now loads on first access,
+whichever of `saved_get()` / `_persist()` / the internal read sites reaches
+it first — there is no second call site that could forget to trigger it,
+unlike an optional constructor kwarg (rejected pattern, #3681).
+
+Witnessed via a call-through spy on `_load_saved` (real behavior still
+runs; only the call COUNT and its TIMING relative to construction are
+observed) — not a private-state peek at `self.__saved` itself.
+"""
+from __future__ import annotations
+
+import pytest
+
+from reyn.security.permissions.permissions import PermissionResolver
+
+
+def _seed_approvals(tmp_path, **entries) -> None:
+    approvals_dir = tmp_path / ".reyn"
+    approvals_dir.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(f"{k}: {str(v).lower()}" for k, v in entries.items())
+    (approvals_dir / "approvals.yaml").write_text(lines + "\n", encoding="utf-8")
+
+
+def test_construction_does_not_read_approvals_yaml(tmp_path, monkeypatch):
+    """Tier 2: #3671 P4 item D-1 core witness — `PermissionResolver(...)`
+    itself never calls `_load_saved()`. A real approvals.yaml is seeded so
+    a call WOULD find real data if it fired."""
+    _seed_approvals(tmp_path, **{"safe.key": True})
+    calls = {"n": 0}
+    orig = PermissionResolver._load_saved
+
+    def _spy(self):
+        calls["n"] += 1
+        return orig(self)
+
+    monkeypatch.setattr(PermissionResolver, "_load_saved", _spy)
+
+    PermissionResolver({}, project_root=tmp_path)
+
+    assert calls["n"] == 0, (
+        f"_load_saved() was called {calls['n']} time(s) during construction — "
+        "expected 0 (deferred to first access)"
+    )
+
+
+def test_first_saved_get_triggers_exactly_one_load(tmp_path, monkeypatch):
+    """Tier 2: the FIRST read through any accessor triggers the load, and
+    only once — a second call must not re-read the file."""
+    _seed_approvals(tmp_path, **{"safe.key": True})
+    calls = {"n": 0}
+    orig = PermissionResolver._load_saved
+
+    def _spy(self):
+        calls["n"] += 1
+        return orig(self)
+
+    monkeypatch.setattr(PermissionResolver, "_load_saved", _spy)
+
+    resolver = PermissionResolver({}, project_root=tmp_path)
+    assert calls["n"] == 0
+
+    assert resolver.saved_get("safe.key") is True
+    assert calls["n"] == 1
+
+    assert resolver.saved_get("safe.key") is True
+    assert calls["n"] == 1, "a second read must reuse the cached dict, not re-load"
+
+
+def test_persist_also_triggers_lazy_load_exactly_once(tmp_path, monkeypatch):
+    """Tier 2: `_persist()` (the WRITE path, `self._saved[key] = approved`)
+    is a DIFFERENT internal call site than `saved_get()` — confirms the
+    property is the single owner for BOTH read and write sites, not just
+    the one exercised above."""
+    _seed_approvals(tmp_path, **{"other.key": False})
+    calls = {"n": 0}
+    orig = PermissionResolver._load_saved
+
+    def _spy(self):
+        calls["n"] += 1
+        return orig(self)
+
+    monkeypatch.setattr(PermissionResolver, "_load_saved", _spy)
+
+    resolver = PermissionResolver({}, project_root=tmp_path)
+    assert calls["n"] == 0
+
+    resolver._persist("new.key", True)
+    assert calls["n"] == 1
+    # the persisted entry AND the pre-existing on-disk entry are both
+    # visible — proves the load actually merged in, not just started
+    # from an empty dict.
+    assert resolver.saved_get("new.key") is True
+    assert resolver.saved_get("other.key") is False
+    assert calls["n"] == 1, "saved_get after _persist must not re-load"
+
+
+def test_saved_get_value_correctness_unchanged(tmp_path):
+    """Tier 2: no behavior change — real end-to-end value round-trip through
+    the lazy path, no spies, matching what a caller actually observes."""
+    _seed_approvals(tmp_path, **{"granted.key": True, "denied.key": False})
+    resolver = PermissionResolver({}, project_root=tmp_path)
+
+    assert resolver.saved_get("granted.key") is True
+    assert resolver.saved_get("denied.key") is False
+    assert resolver.saved_get("never.mentioned.key") is None
