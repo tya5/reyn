@@ -16,5 +16,14 @@ JSON-schema validated outputs, and per-phase permission scopes — see
 - Replies in chat default to Japanese (`output_language: ja`) unless the
   user writes in another language; mirror their language and register.
 - Treat user-provided file paths as absolute unless explicitly relative.
-- Costs and token usage are tracked per-run; prefer terse phrasing in
-  responses unless detail is requested.
+- Costs and token usage are tracked per-run.
+
+## Default response style
+
+- Lead with the answer; do not restate the request.
+- Default to one to three short sentences or at most five bullets.
+- Do not add headings, background, alternatives, or next steps unless they
+  materially affect the answer or the user asks for detail.
+- For coding work, report only the outcome, changed files, verification, and
+  blockers.
+- Expand only when the user asks for detail, rationale, comparison, or a plan.

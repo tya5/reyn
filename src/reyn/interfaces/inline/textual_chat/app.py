@@ -1449,6 +1449,14 @@ class TextualChatApp(App):
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
         # clock leaves a static, correct amber gutter (see the Phase-2 strip gate).
+        # #3671: the startup clock stops HERE — the first moment the interface
+        # is on screen and the operator is no longer waiting. Anything measured
+        # past this point is the session, not the startup, and folding the two
+        # together produced a "first-frame 98.5%" report that was true and
+        # useless (it was counting how long someone sat in the chat).
+        from reyn.runtime.startup_timing import mark_first_frame  # noqa: PLC0415
+
+        mark_first_frame()
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
         # Drawer starts collapsed — the default chrome is just the focusable
         # menu row (#3326: which also carries the status-values segment when
@@ -2804,6 +2812,20 @@ class TextualChatApp(App):
         if applied and msg_id:
             self._queue_item_meta[msg_id] = dict(data.get("meta") or {})
             self._sent_queue.show_item(msg_id, text)
+        elif not applied:
+            # #3688: the rejecting branch used to be pure absence — no row, no
+            # log, no trace of any kind. "The server dropped it", "the gate
+            # superseded it" and "it has not arrived yet" then look identical
+            # to the operator AND to anyone investigating, which is what made
+            # the owner's report expensive to attribute. The gate rejecting a
+            # stale delta is legitimate and stays silent to the operator; it
+            # stops being invisible to the LOG, which is the surface an
+            # investigation reads.
+            logger.debug(
+                "textual chat: sent-queue gate rejected user_submitted "
+                "msg_id=%s seq=%s (already reflected by a prior snapshot/delta)",
+                msg_id, seq,
+            )
 
     def _handle_turn_started_event(self, event) -> None:
         """PROMOTE exit (#3300 P2b, sent-queue exit contract §6a): a
@@ -3670,6 +3692,13 @@ async def run_textual_chat(
     users; ``alt-screen`` stays the recommended default regardless. Returns so
     the driver's caller can tear the transport down + print the cost summary.
     """
+    # #3671: the framework's own startup begins here — terminal setup, first
+    # layout, first paint. Everything before it is reyn assembling things;
+    # everything after it is Textual, and the two were indistinguishable while
+    # both sat inside ``unaccounted``.
+    from reyn.runtime.startup_timing import mark_app_constructed  # noqa: PLC0415
+
+    mark_app_constructed()
     app = TextualChatApp(
         transport=transport,
         read_model=read_model,
