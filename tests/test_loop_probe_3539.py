@@ -21,10 +21,13 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat.chrome import StatusLine
 from reyn.interfaces.inline.textual_chat.loop_probe import (
     LoopTripwire,
     dump_path,
     environment_axes,
+    stall_banner,
+    stall_log_line,
     write_record,
 )
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -169,9 +172,15 @@ def test_it_speaks_once_with_a_magnitude_and_a_next_step() -> None:
     second = tripwire.observe(2400.0)
 
     assert first is not None
-    assert "1.8s" in first
-    assert "REYN_PROF_DUMP" in first
     assert second is None, "a freeze is one event, not one per tick"
+    assert "1.8s" in stall_banner(first), (
+        "the status-line segment must carry the magnitude — a bare 'something "
+        "was slow' leaves the reader where #3539 already was"
+    )
+    assert "1.8s" in stall_log_line(first)
+    assert "REYN_PROF_DUMP" in stall_log_line(first), (
+        "the durable record must say how to capture the detail next time"
+    )
 
 
 def test_the_worst_lateness_survives_the_tick_that_saw_it() -> None:
@@ -189,14 +198,52 @@ def test_the_worst_lateness_survives_the_tick_that_saw_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_app_actually_shows_the_notice_when_the_loop_stalls() -> None:
+async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) -> None:
     """Tier 2b: the tripwire is REACHED from the running app, not just correct.
 
     The unit tests above prove the tripwire computes the right answer. They
     would all pass with nothing wired to it — the shape #3539's own history
     keeps producing (a mechanism that exists and is never reached at the moment
-    it is for). So this blocks the event loop for real and asserts the row
-    appears in the conversation.
+    it is for). So this blocks the event loop for real and asserts BOTH
+    surfaces: the status line (notice it now) and the log (read it later).
+    """
+    import logging
+    import time
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    with caplog.at_level(logging.WARNING, logger="reyn.interfaces.inline.textual_chat.app"):
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+
+            # A synchronous sleep: the loop cannot run the watcher while this
+            # holds it, which is exactly the condition being detected.
+            time.sleep(0.4)
+            for _ in range(6):
+                await pilot.pause()
+
+            status = str(app.query_one(StatusLine).render())
+
+    assert "unresponsive" in status, (
+        f"the loop stalled and the status line said nothing: {status!r}"
+    )
+    assert "REYN_PROF_DUMP" in caplog.text, (
+        "the durable record must say how to capture the detail next time — the "
+        "status line is transient, so it cannot be the only surface"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stall_never_writes_into_the_conversation() -> None:
+    """Tier 2b: the tripwire reports on the chrome, never as a flow entry.
+
+    The first version appended a ``kind="system"`` row. That is a category
+    error — the conversation records an exchange, and a watchdog reading the
+    interface is not part of it — and it had a measured cost: the inserted row
+    shifts every index into the flow, so a stall under load broke tests that
+    address entries positionally (a 400 ms stall put the notice at
+    ``entries[0]``). Stalling for real and asserting the flow is untouched is
+    the falsifiable form of "it reports somewhere else now".
     """
     import time
 
@@ -204,18 +251,21 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls() -> None:
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        before = list(app.query_one(FlowView).entries)
 
-        # A synchronous sleep: the loop cannot run the watcher while this holds
-        # it, which is exactly the condition being detected.
         time.sleep(0.4)
         for _ in range(6):
             await pilot.pause()
 
-        rows = [str(e.item.text) for e in app.query_one(FlowView).entries]
-
-        assert any("unresponsive" in row for row in rows), (
-            f"the loop stalled and the app said nothing: {rows!r}"
+        after = list(app.query_one(FlowView).entries)
+        # Non-vacuity, read off the surface the tripwire now reports on: if
+        # the wire never fired, "the conversation is unchanged" is true for
+        # the uninteresting reason and this test asserts nothing.
+        assert "unresponsive" in str(app.query_one(StatusLine).render()), (
+            "the stall did not trip the wire, so this asserts nothing — raise "
+            "the sleep or lower the threshold"
         )
-        assert any("REYN_PROF_DUMP" in row for row in rows), (
-            "the notice must say how to capture the detail next time"
+        assert after == before, (
+            "the stall added or replaced conversation entries: "
+            f"{[str(e.item.text) for e in after]!r}"
         )

@@ -130,12 +130,18 @@ class LoopTripwire:
         """Whether the threshold has been crossed at least once."""
         return self._fired
 
-    def observe(self, lateness_ms: float) -> "str | None":
-        """Record one tick's lateness; return a message the FIRST time it is bad.
+    def observe(self, lateness_ms: float) -> "float | None":
+        """Record one tick's lateness; return it the FIRST time it is bad.
 
         Returns ``None`` on every later crossing as well as on healthy ticks: a
         freeze is one event to a person watching it, and repeating the notice
         per tick would bury the reply the notice is about.
+
+        Returns the magnitude rather than a sentence because the two surfaces
+        that report it need different lengths (:func:`stall_banner` for the one
+        always-visible chrome row, :func:`stall_log_line` for the durable
+        record) — wording either one here would make this the place a caller
+        has to work around.
         """
         if lateness_ms > self._max_lateness_ms:
             self._max_lateness_ms = lateness_ms
@@ -143,7 +149,32 @@ class LoopTripwire:
             return None
         self._fired = True
         write_record("tripwire", lateness_ms=round(lateness_ms, 1))
-        return (
-            f"the interface was unresponsive for {lateness_ms / 1000:.1f}s "
-            f"— re-run with {_DUMP_ENV}=<path> to record what it was doing"
-        )
+        return lateness_ms
+
+
+def stall_banner(lateness_ms: float) -> str:
+    """The status-line segment for a stall — short, because it shares the ONE
+    always-visible chrome row with ``model │ agent │ cost │ ctx`` and a
+    narrow terminal has no room to spare.
+
+    Deliberately plain text, no glyph, for the reason ``chrome.status_line_text``
+    records: every other character on that row is 1 terminal cell wide, and a
+    1-cell misjudgement breaks the whole row rather than just this segment.
+    """
+    return f"unresponsive {lateness_ms / 1000:.1f}s"
+
+
+def stall_log_line(lateness_ms: float) -> str:
+    """The durable record of a stall — the one that survives the operator
+    looking away.
+
+    The status-line segment is what makes the stall noticeable at the moment
+    it happens; a stall is noticed by whoever is watching, and the person
+    diagnosing it later is usually not that person. This line carries the
+    magnitude AND how to record the detail on the next occurrence, which the
+    short segment has no room for.
+    """
+    return (
+        f"the interface was unresponsive for {lateness_ms / 1000:.1f}s "
+        f"— re-run with {_DUMP_ENV}=<path> to record what it was doing"
+    )

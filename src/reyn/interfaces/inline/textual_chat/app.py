@@ -889,6 +889,13 @@ class TextualChatApp(App):
         #: Watches how late the event loop runs (#3539). Always on; see
         #: ``loop_probe`` for why it is not opt-in.
         self._loop_tripwire = LoopTripwire()
+        #: The stall segment the status line carries once the tripwire has
+        #: fired, or ``None`` while the loop has stayed responsive. Set once
+        #: and kept — the tripwire speaks a single time per session
+        #: (:meth:`LoopTripwire.observe`), and a marker that cleared itself
+        #: would be gone by the time anyone looked up from the reply the stall
+        #: interrupted.
+        self._stall_banner: "str | None" = None
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1392,7 +1399,10 @@ class TextualChatApp(App):
         Pass ``snap`` to reuse an already-read snapshot (one read per frame)."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         return status_line_text(
-            snapshot, self._agent_name, attach_state=self._attach_state()
+            snapshot,
+            self._agent_name,
+            attach_state=self._attach_state(),
+            stall=self._stall_banner,
         )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:
@@ -1407,13 +1417,25 @@ class TextualChatApp(App):
 
         The notice is decision-enabling rather than a bare complaint: it says
         how long, and how to record the detail next time.
+
+        It reports on the CHROME, never into the conversation. The first
+        version appended a ``kind="system"`` row to the flow, which is a
+        category error of the shape the owner already ruled on in #3300: the
+        conversation is the record of an exchange, and a watchdog's reading of
+        the UI is not part of that exchange. It also had a cost — a row
+        inserted at an arbitrary moment shifts every index into the flow, so
+        an unlucky 250 ms stall under load broke tests that address entries
+        positionally (measured: a 400 ms stall put ``the interface was
+        unresponsive for 0.4s`` at ``entries[0]``, exactly the CI failures
+        #3668 was carrying). Two surfaces replace it, because they answer
+        different questions: the status line for "notice this now", and the
+        log for "what happened, read later" — the status line is transient,
+        so it alone could not justify a watchdog that is always on.
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
 
-        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
-
-        from .loop_probe import _TICK_SECONDS  # noqa: PLC0415
+        from .loop_probe import _TICK_SECONDS, stall_banner, stall_log_line  # noqa: PLC0415
 
         last = time.perf_counter()
         while True:
@@ -1421,12 +1443,12 @@ class TextualChatApp(App):
             now = time.perf_counter()
             lateness_ms = (now - last - _TICK_SECONDS) * 1000
             last = now
-            notice = self._loop_tripwire.observe(lateness_ms)
-            if notice is not None:
+            fired = self._loop_tripwire.observe(lateness_ms)
+            if fired is not None:
+                logger.warning("textual chat: %s", stall_log_line(fired))
                 try:
-                    self._ingest_frame(
-                        OutboxMessage(kind="system", text=notice, meta={})
-                    )
+                    self._stall_banner = stall_banner(fired)
+                    self._refresh_status()
                 except Exception:
                     logger.exception("textual chat: loop tripwire notice failed")
 
