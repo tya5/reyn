@@ -2812,6 +2812,20 @@ class TextualChatApp(App):
         if applied and msg_id:
             self._queue_item_meta[msg_id] = dict(data.get("meta") or {})
             self._sent_queue.show_item(msg_id, text)
+        elif not applied:
+            # #3688: the rejecting branch used to be pure absence — no row, no
+            # log, no trace of any kind. "The server dropped it", "the gate
+            # superseded it" and "it has not arrived yet" then look identical
+            # to the operator AND to anyone investigating, which is what made
+            # the owner's report expensive to attribute. The gate rejecting a
+            # stale delta is legitimate and stays silent to the operator; it
+            # stops being invisible to the LOG, which is the surface an
+            # investigation reads.
+            logger.debug(
+                "textual chat: sent-queue gate rejected user_submitted "
+                "msg_id=%s seq=%s (already reflected by a prior snapshot/delta)",
+                msg_id, seq,
+            )
 
     def _handle_turn_started_event(self, event) -> None:
         """PROMOTE exit (#3300 P2b, sent-queue exit contract §6a): a
