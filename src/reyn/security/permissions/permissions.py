@@ -512,7 +512,25 @@ class PermissionResolver:
         parses `approvals.yaml` on first access only, cached for the life of
         this resolver. Returns the SAME dict object across calls, so
         `self._saved[key] = value` (used by `_persist`) mutates the real
-        cached dict, not a throwaway copy."""
+        cached dict, not a throwaway copy.
+
+        #3671 P4 D-1 review (lead-coder): this IS a check-then-set
+        (`self.__saved is None` → `self.__saved = ...`), the same SHAPE as
+        the 6 races fixed in #3674 — but here it is safe WITHOUT a lock or
+        an ownership/Future pattern, and that is a claim this comment must
+        justify, not merely assert (#3674's own standard). One
+        `PermissionResolver` IS shared across multiple `Session`s (PR10) —
+        so this property IS reachable from more than one concurrently-
+        running coroutine. What makes it safe regardless: `_load_saved()`
+        contains NO `await` — the whole check-then-set body runs to
+        completion inside a single asyncio task's turn with no yield point
+        in between, so no other coroutine can observe `self.__saved` in a
+        partially-updated state or race the assignment (asyncio's
+        single-threaded cooperative scheduling — NOT a general
+        thread-safety claim; if `PermissionResolver` were ever reached from
+        a real OS thread — e.g. via `run_in_executor` — this reasoning would
+        no longer hold and this property would need the same ownership
+        treatment #3674 gave `ensure_litellm_ready`)."""
         if self.__saved is None:
             self.__saved = self._load_saved()
         return self.__saved

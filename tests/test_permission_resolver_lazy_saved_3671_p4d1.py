@@ -14,8 +14,18 @@ unlike an optional constructor kwarg (rejected pattern, #3681).
 Witnessed via a call-through spy on `_load_saved` (real behavior still
 runs; only the call COUNT and its TIMING relative to construction are
 observed) — not a private-state peek at `self.__saved` itself.
+
+#3671 P4 D-1 review (lead-coder): the lazy `_saved` property is a
+check-then-set, the same shape as the 6 races #3674 fixed — and ONE
+`PermissionResolver` is genuinely shared across multiple `Session`s (PR10),
+so it IS reachable from concurrent coroutines. Proven safe WITHOUT a lock
+(no `await` inside the check-then-set body — see the property's own
+docstring), not just asserted safe — see
+`test_saved_property_consistent_under_concurrent_coroutines` below.
 """
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -111,3 +121,37 @@ def test_saved_get_value_correctness_unchanged(tmp_path):
     assert resolver.saved_get("granted.key") is True
     assert resolver.saved_get("denied.key") is False
     assert resolver.saved_get("never.mentioned.key") is None
+
+
+@pytest.mark.asyncio
+async def test_saved_property_consistent_under_concurrent_coroutines(tmp_path):
+    """Tier 2: #3671 P4 D-1 review (lead-coder) — `_saved` is a check-then-set
+    (`self.__saved is None` → assign), the same SHAPE as the 6 races #3674
+    fixed, and ONE `PermissionResolver` is genuinely shared across multiple
+    `Session`s (PR10) — so this IS reachable from more than one concurrently
+    -running coroutine. Correctness-under-concurrency check (like
+    `_get_retryable_litellm_exceptions` in #3674): every concurrent accessor
+    must observe the SAME dict object (not two independently-built dicts,
+    which would mean a `_persist()` mutation on one could be invisible to a
+    reader holding the other) — safe because `_load_saved()` contains no
+    `await`, so the whole check-then-set body runs with no yield point a
+    sibling coroutine could interleave into (asyncio's single-threaded
+    cooperative scheduling — see the property's own docstring for the
+    non-thread-safety caveat)."""
+    _seed_approvals(tmp_path, **{"safe.key": True})
+    resolver = PermissionResolver({}, project_root=tmp_path)
+
+    async def _access():
+        # yield once before touching _saved, so all 32 coroutines are
+        # actually racing to be first, not serialized by construction order.
+        await asyncio.sleep(0)
+        return resolver._saved
+
+    results = await asyncio.gather(*(_access() for _ in range(32)))
+
+    first = results[0]
+    assert all(r is first for r in results), (
+        "every concurrent accessor must observe the SAME dict object — a "
+        "torn check-then-set would let two coroutines each build and "
+        "install their OWN dict, silently dropping whichever lost"
+    )
