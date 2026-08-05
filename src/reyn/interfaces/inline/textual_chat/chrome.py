@@ -1152,41 +1152,15 @@ def pane_payload(
     return help_pane_lines(app_bindings)
 
 
-def _with_stall(line: str, stall: "str | None") -> str:
-    """Append the loop-tripwire stall segment to a status line, if one fired.
-
-    Appended rather than prepended, unlike the ``HALTED`` banner: a halt means
-    every value ahead of it is about a session that stopped accepting ops, so
-    it has to be read first. A stall already happened and is over — it is a
-    note about the interface, not a qualifier on the numbers — so it goes
-    where it cannot push ``model``/``cost``/``ctx`` off a narrow row.
-
-    Applied to EVERY branch of :func:`status_line_text`, including the
-    pre-session ones: a freeze during a slow attach is precisely when an
-    operator most wants to know the interface stalled rather than the server
-    being slow, and that is the branch a "add it to the normal line" fix would
-    have missed.
-    """
-    return f"{line} │ {stall}" if stall else line
-
-
 def status_line_text(
     snap: "dict | None",
     agent_name: str,
     *,
     attach_state: "str | None" = None,
-    stall: "str | None" = None,
 ) -> str:
     """The slim ``model │ agent │ cost │ ctx`` status-values line, from the live
     status snapshot (F5b: the running cost + context percent are visible here even
     when the drawer is closed).
-
-    ``stall`` (#3668): the loop-tripwire's segment once it has fired, or
-    ``None``. Appended to whichever branch this returns — see
-    :func:`_with_stall`. This is where the tripwire reports, INSTEAD of the
-    conversation: a watchdog's reading of the interface is not part of the
-    exchange the flow records, and a row inserted mid-conversation also
-    shifts every index into it.
 
     ``attach_state`` (#3671 P3): ``"connecting"`` / ``"failed"`` / ``None``
     (attached — the ordinary case). Owner ruling: "not yet attached" and
@@ -1212,9 +1186,9 @@ def status_line_text(
     on the mechanism itself.
     """
     if attach_state == "connecting":
-        return _with_stall(f"connecting… │ agent {agent_name}", stall)
+        return f"connecting… │ agent {agent_name}"
     if attach_state == "failed":
-        return _with_stall(f"attach failed (see log) │ agent {agent_name}", stall)
+        return f"attach failed (see log) │ agent {agent_name}"
 
     # #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on
     # a persistent durability failure — ``Session.halted_reason``), a
@@ -1233,10 +1207,8 @@ def status_line_text(
     base = f"model {model} │ agent {agent} │ cost ${cost:.4f} │ ctx {_ctx_pct(snap)}"
     halted_reason = snap.get("halted_reason")
     if halted_reason:
-        return _with_stall(
-            f"⚠ HALTED — {halted_reason} — agent stopped accepting ops │ {base}", stall
-        )
-    return _with_stall(base, stall)
+        return f"⚠ HALTED — {halted_reason} — agent stopped accepting ops │ {base}"
+    return base
 
 
 def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:

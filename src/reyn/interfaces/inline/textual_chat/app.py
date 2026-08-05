@@ -889,13 +889,6 @@ class TextualChatApp(App):
         #: Watches how late the event loop runs (#3539). Always on; see
         #: ``loop_probe`` for why it is not opt-in.
         self._loop_tripwire = LoopTripwire()
-        #: The stall segment the status line carries once the tripwire has
-        #: fired, or ``None`` while the loop has stayed responsive. Set once
-        #: and kept — the tripwire speaks a single time per session
-        #: (:meth:`LoopTripwire.observe`), and a marker that cleared itself
-        #: would be gone by the time anyone looked up from the reply the stall
-        #: interrupted.
-        self._stall_banner: "str | None" = None
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1402,7 +1395,6 @@ class TextualChatApp(App):
             snapshot,
             self._agent_name,
             attach_state=self._attach_state(),
-            stall=self._stall_banner,
         )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:
@@ -1447,8 +1439,7 @@ class TextualChatApp(App):
             if fired is not None:
                 logger.warning("textual chat: %s", stall_log_line(fired))
                 try:
-                    self._stall_banner = stall_banner(fired)
-                    self._refresh_status()
+                    self.notify(stall_banner(fired), severity="warning")
                 except Exception:
                     logger.exception("textual chat: loop tripwire notice failed")
 

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
+from textual.widgets import Tab
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
@@ -82,6 +83,15 @@ class QueueTransport(ClientTransport):
 
     async def shutdown(self) -> None:  # pragma: no cover - trivial
         pass
+
+
+def _painted(app: TextualChatApp) -> str:
+    """Everything the compositor put on screen — the surface the operator
+    actually reads, and the only one that shows an overlay as delivered."""
+    return "\n".join(
+        "".join(segment.text for segment in strip)
+        for strip in app.screen._compositor.render_strips()
+    )
 
 
 def test_detail_is_off_unless_a_path_is_named(monkeypatch) -> None:
@@ -204,8 +214,9 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
     The unit tests above prove the tripwire computes the right answer. They
     would all pass with nothing wired to it — the shape #3539's own history
     keeps producing (a mechanism that exists and is never reached at the moment
-    it is for). So this blocks the event loop for real and asserts BOTH
-    surfaces: the status line (notice it now) and the log (read it later).
+    it is for). So this blocks the event loop for real and asserts the durable
+    record — plus, below, that the always-visible chrome row is NOT what got
+    written to.
     """
     import logging
     import time
@@ -218,54 +229,85 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
 
             # A synchronous sleep: the loop cannot run the watcher while this
             # holds it, which is exactly the condition being detected.
+            status_before = str(app.query_one(StatusLine).render())
             time.sleep(0.4)
             for _ in range(6):
                 await pilot.pause()
+            status_after = str(app.query_one(StatusLine).render())
 
-            status = str(app.query_one(StatusLine).render())
-
-    assert "unresponsive" in status, (
-        f"the loop stalled and the status line said nothing: {status!r}"
+    assert "unresponsive" in caplog.text, (
+        f"the loop stalled and nothing recorded it: {caplog.text!r}"
     )
     assert "REYN_PROF_DUMP" in caplog.text, (
-        "the durable record must say how to capture the detail next time — the "
-        "status line is transient, so it cannot be the only surface"
+        "the record must say how to capture the detail next time"
+    )
+    # #3668: and the always-visible row is untouched. Measured at 80 columns,
+    # appending the notice here took the status line from 62 to 82 characters,
+    # which flips ``status_fits_last_row`` and moves the whole segment onto a
+    # row of its own — one row of conversation, permanently, bought by a
+    # momentary hiccup. On the surface #3680 exists to protect.
+    assert status_after == status_before, (
+        "a stall changed the always-visible status row: "
+        f"{status_before!r} -> {status_after!r}"
     )
 
 
 @pytest.mark.asyncio
-async def test_a_stall_never_writes_into_the_conversation() -> None:
-    """Tier 2b: the tripwire reports on the chrome, never as a flow entry.
+async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
+    """Tier 2b: the notice takes no row from the conversation or the chrome.
 
-    The first version appended a ``kind="system"`` row. That is a category
-    error — the conversation records an exchange, and a watchdog reading the
-    interface is not part of it — and it had a measured cost: the inserted row
-    shifts every index into the flow, so a stall under load broke tests that
-    address entries positionally (a 400 ms stall put the notice at
-    ``entries[0]``). Stalling for real and asserting the flow is untouched is
-    the falsifiable form of "it reports somewhere else now".
+    The first fix put it in the flow, the second on the status line. Measured
+    at 80 columns, the status-line version took that line from 62 to 82
+    characters, which flips ``status_fits_last_row`` and moves the segment onto
+    a row of its own — one row of conversation, spent permanently, bought by a
+    momentary hiccup, on the surface #3680 exists to protect. So this pins the
+    invariant both attempts broke: after a stall, the rows are the rows.
+
+    The delivery itself (an overlay notification) is deliberately NOT asserted
+    here: ``run_test`` mounts no toast at all — measured, including for a bare
+    ``App`` with a plain ``notify()`` — so a headless assertion on it would be
+    testing the harness. It is witnessed in a real terminal instead; see the
+    PR body.
     """
+    import logging
     import time
 
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        before = list(app.query_one(FlowView).entries)
-
-        time.sleep(0.4)
-        for _ in range(6):
+    logger_name = "reyn.interfaces.inline.textual_chat.app"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
+            rows_before = len(app.query_one(FlowView).entries)
+            status_before = str(app.query_one(StatusLine).render())
+            merged_before = bool(app.query_one(StatusLine).parent.query(Tab))
 
-        after = list(app.query_one(FlowView).entries)
-        # Non-vacuity, read off the surface the tripwire now reports on: if
-        # the wire never fired, "the conversation is unchanged" is true for
-        # the uninteresting reason and this test asserts nothing.
-        assert "unresponsive" in str(app.query_one(StatusLine).render()), (
-            "the stall did not trip the wire, so this asserts nothing — raise "
-            "the sleep or lower the threshold"
-        )
-        assert after == before, (
-            "the stall added or replaced conversation entries: "
-            f"{[str(e.item.text) for e in after]!r}"
-        )
+            time.sleep(0.4)
+            for _ in range(6):
+                await pilot.pause()
+
+            rows_after = len(app.query_one(FlowView).entries)
+            status_after = str(app.query_one(StatusLine).render())
+            # The property CI actually caught: #3326 packs the status segment
+            # onto the menu row only while it fits. Asserting the RENDERED TEXT
+            # alone would miss a longer line that still happens to render, so
+            # this asserts the packing outcome itself.
+            merged_after = bool(app.query_one(StatusLine).parent.query(Tab))
+
+    # Non-vacuity: without a stall, "nothing moved" is true for the
+    # uninteresting reason and this test asserts nothing.
+    assert "unresponsive" in caplog.text, (
+        "the stall did not trip the wire — raise the sleep or lower the threshold"
+    )
+    assert rows_after == rows_before, (
+        "the stall added a conversation row"
+    )
+    assert status_after == status_before, (
+        "the stall changed the always-visible status row, which decides "
+        "whether that row merges onto the menu row at 80 columns"
+    )
+    assert merged_after == merged_before, (
+        "the stall changed whether the status segment shares the menu row — "
+        "at 80 columns that spends a row of conversation, permanently, on a "
+        "momentary hiccup"
+    )
