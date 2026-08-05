@@ -68,6 +68,16 @@ TOKENS: "dict[str, str]" = {
     #: the conversation for the same reason (#3490: the mark has to be
     #: CONTENT). Widgets pair this with a marker in the row text.
     "@selected-style@": "bold",
+    #: The drag-selection band. ``ansi_blue`` rather than Textual's default
+    #: ``ansi_bright_blue``: the operator found the bright frame too loud
+    #: against the conversation (#3542). Both are ANSI FRAMES, not colours —
+    #: what blue looks like is the terminal theme's decision and stays that
+    #: way; this only chooses which of the sixteen slots to ask for.
+    "@selection-bg@": "ansi_blue",
+    #: The text inside that band. Unchanged from Textual's default, and named
+    #: here so the pair is legible in one place: a background chosen without
+    #: its foreground beside it is how contrast regressions happen.
+    "@selection-fg@": "ansi_black",
 }
 
 #: The marker a selected row carries in its own text, so selection survives
