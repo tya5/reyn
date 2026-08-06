@@ -2106,6 +2106,18 @@ class TextualChatApp(App):
         Reads the scroll position rather than tracking a "following" flag,
         because the flag and the view can disagree — the position is the fact.
         """
+        # Deferred to after the next refresh, because the answer needs a
+        # LAID-OUT view. Measured on the same beat an entry lands, the scroll
+        # offset has not caught up with the taller content and the gap reads
+        # as "they scrolled away": a reply arriving in 30 deltas latched a
+        # baseline of 13 entries and reported 27 arrivals to a reader who
+        # never left the tail. The latch then needed another frame to clear
+        # it — and the end of a burst is exactly when no further frame comes,
+        # so the wrong baseline survived the rest of the session.
+        self.call_after_refresh(self._measure_tail_position, reset)
+
+    def _measure_tail_position(self, reset: bool = False) -> None:
+        """The half of :meth:`_refresh_tail_indicator` that reads the view."""
         try:
             flow = self.query_one(FlowView)
         except Exception:
@@ -3797,6 +3809,17 @@ class TextualChatApp(App):
                 # loop) and guarded so a snapshot read failure never kills the pump.
                 try:
                     self._refresh_live_chrome()
+                    # #3712: EVERY frame, DISPLAY and EVENT alike. A streamed
+                    # reply's first delta creates its entry through the EVENT
+                    # leg, so hooking only the display leg meant the one thing
+                    # that HAD arrived went unreported — the mirror of the
+                    # false positive above, and the reason this sits beside
+                    # ``_refresh_live_chrome``, which learned the same lesson
+                    # in #3338.
+                    try:
+                        self._refresh_tail_indicator()
+                    except Exception:
+                        logger.exception("textual chat: tail indicator failed")
                     # #3680: the inputs to the layout decision (a turn
                     # starting, an item queued) arrive on these same frames,
                     # so re-deciding here is what keeps the answer from being
