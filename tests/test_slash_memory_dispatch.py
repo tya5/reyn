@@ -99,8 +99,8 @@ async def test_memory_list_reads_through_the_resolved_reyn_state_root(tmp_path: 
 async def test_memory_list_with_no_entries_says_none_not_unresolved(tmp_path: Path) -> None:
     """Tier 2: FALSIFY the two-answers condition — a resolvable but EMPTY
     project root says "no memory entries yet", never the root-unresolved
-    message; these are different answers to different questions (owner's
-    own fix condition on #3721)."""
+    message; these are different answers to different questions
+    (lead-coder's fix condition on #3721)."""
     session = _FakeSessionWithWorkspace(tmp_path / ".reyn" / "agents" / "test")
 
     await memory_cmd(_ctx(session), "list")

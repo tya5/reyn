@@ -21,8 +21,8 @@ rather than ``ctx.session`` directly, per #3595 S4's ratchet: a NEW private
 read off the session residue field would grow exactly what that gate is
 closing. ``None`` means "not resolvable through this connection" (a
 genuinely remote transport) — surfaced as its own message, never silently
-folded into "0 memories found" (an owner-stated fix condition: those are
-different answers to different questions).
+folded into "0 memories found" (lead-coder's fix condition on #3721: those
+are different answers to different questions).
 """
 from __future__ import annotations
 
