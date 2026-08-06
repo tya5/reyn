@@ -119,13 +119,12 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
     # with the restored interventions. We verify by getting the session
     # and checking its registry has the iv re-enqueued (L5).
     session = registry.get_or_load("alpha")
-    # Yield so the restore tasks register the iv into the queue
-    for _ in range(3):
-        await asyncio.sleep(0)
-    iv_ids = [iv.id for iv in session.interventions.list_active()]
-    assert "iv_stranded" in iv_ids, (
-        f"restored intervention must be in the session's queue; got {iv_ids}"
-    )
+    # #3748: unbounded (owner policy) -- wait for the restore tasks to
+    # register the iv into the queue. No terminating assert: the loop
+    # condition IS that check, so a hang here surfaces via the kill stack
+    # showing this exact loop.
+    while "iv_stranded" not in [iv.id for iv in session.interventions.list_active()]:
+        await asyncio.sleep(0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +143,12 @@ async def test_session_restore_state_re_enqueues_intervention(tmp_path, monkeypa
         agent_name="alpha", iv_id="iv_recovered", prompt="Recovered Q?",
     )
     session.restore_state(snap)
-    # Yield so any restore-time asyncio tasks schedule
-    await asyncio.sleep(0)
+    # #3748: unbounded (owner policy) -- wait for the restore-time task to
+    # register the intervention.
+    while not session.interventions.list_active():
+        await asyncio.sleep(0.01)
 
     actives = session.interventions.list_active()
-    assert actives
     assert actives[0].id == "iv_recovered"
     assert actives[0].prompt == "Recovered Q?"
     assert actives[0].run_id == "rA"
@@ -171,9 +171,10 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
         agent_name="alpha", iv_id="iv_to_answer", prompt="Answer me",
     )
     session.restore_state(snap)
-    # Let any restore tasks start
-    for _ in range(3):
-        await asyncio.sleep(0)
+    # #3748: unbounded (owner policy) -- wait for the restore task to
+    # register the intervention before trying to answer it.
+    while not session.interventions.list_active():
+        await asyncio.sleep(0.01)
 
     consumed = await session._maybe_answer_oldest_intervention("Bob")
     assert consumed is True
@@ -189,13 +190,10 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
             if e["kind"] == "intervention_resolved"
         ]
 
-    for _ in range(200):
-        if "iv_to_answer" in _resolved_ids():
-            break
+    # #3748: unbounded (owner policy) -- WAL has the resolve event once this
+    # returns. No terminating assert: the loop condition IS that check.
+    while "iv_to_answer" not in _resolved_ids():
         await asyncio.sleep(0.01)
-
-    # WAL has the resolve event
-    assert "iv_to_answer" in _resolved_ids()
 
     # Snapshot pruned. #2279/#2339: the snapshot save that prunes ``outstanding_interventions`` is a
     # SEPARATE fire-and-forget durable write from the WAL event polled above — polling the WAL event
@@ -211,13 +209,10 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
             return False
         return "iv_to_answer" not in raw.get("outstanding_interventions", {})
 
-    for _ in range(200):
-        if _snapshot_pruned():
-            break
+    # #3748: unbounded (owner policy) -- no terminating assert: the loop
+    # condition IS that check.
+    while not _snapshot_pruned():
         await asyncio.sleep(0.01)
-
-    raw = json.loads(snap_path.read_text())
-    assert "iv_to_answer" not in raw.get("outstanding_interventions", {})
 
 
 @pytest.mark.asyncio
@@ -247,8 +242,10 @@ async def test_multiple_restored_interventions_preserve_order(tmp_path, monkeypa
     snap.applied_seq = 10
 
     session.restore_state(snap)
-    for _ in range(3):
-        await asyncio.sleep(0)
+    # #3748: unbounded (owner policy) -- wait for all 3 restored
+    # interventions to register before checking their order.
+    while len(session.interventions.list_active()) < 3:
+        await asyncio.sleep(0.01)
 
     actives = session.interventions.list_active()
     assert [iv.id for iv in actives] == ["iv_0", "iv_1", "iv_2"]
@@ -264,7 +261,11 @@ async def test_restore_state_with_no_interventions_is_noop(tmp_path, monkeypatch
     snap = AgentSnapshot.empty("alpha")
     snap.applied_seq = 0
     session.restore_state(snap)
-    for _ in range(3):
-        await asyncio.sleep(0)
-
+    # #3748: no wait -- restore_state only schedules async re-enqueue tasks
+    # when outstanding_interventions is non-empty (see its own source);
+    # with an empty snapshot nothing is scheduled, so the queue is already
+    # empty synchronously the moment restore_state returns. A negative
+    # wait here (poll N ticks, then assert absence) would have been the
+    # #3327-style hazard: patience standing in for "nothing happened",
+    # never provably correct. Asserting immediately is the actual proof.
     assert session.interventions.list_active() == []
