@@ -98,21 +98,26 @@ async def _settle(pilot, times: int = 4) -> None:
         await pilot.pause()
 
 
-async def _until(pred, *, attempts: int = 300, delay: float = 0.02) -> bool:
-    """Bounded poll (#3746-shaped fix, applied here too, see
-    ``test_the_clock_advances_without_any_delta_arriving``) — a hang exhausts
-    the budget and returns False (RED), never hangs the suite. 300 * 0.02 = 6s
-    ceiling, comfortably above ``ActivityRow.TICK_SECONDS`` (1.0s) even under
-    real CI load, while still genuinely requiring the row's own
-    ``set_interval`` timer to have fired at least once — this polls for the
-    OBSERVABLE effect of that firing, it never calls ``tick()`` directly
-    (which would pass even if ``on_mount``'s ``set_interval`` call were
-    silently removed, the exact regression this test exists to catch)."""
-    for _ in range(attempts):
-        if pred():
-            return True
-        await asyncio.sleep(delay)
-    return False
+async def _until(pred) -> None:
+    """Wait for ``pred()`` to become true — UNBOUNDED, no per-test time
+    budget (owner policy 2026-08-06,
+    ``feedback_tests_carry_no_time_limits_decompose_instead``: a test carries
+    no time limit of its own, marker or in-body; a slower environment must
+    only make this slower, never fail it — an ``attempts=N`` cap is a
+    disguised linear sleep, since past N it bets pass/fail on elapsed time
+    the same way a bare ``sleep(N)`` would). If this hangs, CI's
+    ``--timeout=120`` is the blast-radius kill-switch, not a contract this
+    test is written against — a hang there means "decompose this test or fix
+    the hang," never "the ceiling should have been bigger."
+
+    Used here (see ``test_the_clock_advances_without_any_delta_arriving``)
+    to poll for the OBSERVABLE effect of the row's own real ``set_interval``
+    timer firing — this still genuinely requires that real timer to have
+    fired at least once; it never calls ``tick()`` directly (which would
+    pass even if ``on_mount``'s ``set_interval`` call were silently removed,
+    the exact regression this test exists to catch)."""
+    while not pred():
+        await asyncio.sleep(0.01)
 
 
 # ── the row's own text: what it may and may not claim ────────────────────────
@@ -380,11 +385,12 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
         row = app.query_one(ActivityRow)
         before = str(row.render())
 
-        # Time passes; nothing arrives.
+        # Time passes; nothing arrives. Unbounded wait (see `_until`): if the
+        # elapsed time never moves, this hangs rather than failing with a
+        # message — CI's own kill-switch is what surfaces that, not a local
+        # budget pretending to know how long is "too long."
         ticks[0] += 75.0
-        assert await _until(lambda: str(row.render()) != before), (
-            f"the elapsed time did not move while the turn ran: {before!r}"
-        )
+        await _until(lambda: str(row.render()) != before)
 
         after = str(row.render())
         assert "01:15" in after, f"the clock is not tracking the real gap: {after!r}"
