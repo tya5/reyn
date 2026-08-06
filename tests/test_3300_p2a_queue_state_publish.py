@@ -390,3 +390,72 @@ async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path):
 
     release.set()
     await asyncio.wait_for(turn_task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue_model(
+    tmp_path,
+):
+    """Tier 2: #3688 — a message submitted WHILE an earlier turn is still
+    in-flight (dispatched, not yet finished) must still be accepted by
+    ``RemoteQueueView``'s seq gate.
+
+    #3688's own hypothesis (unverified when filed): the already-applied
+    ``turn_started`` for the in-flight turn advances ``_last_seq``, so a
+    LATER ``user_submitted``'s seq could be <= that value and get silently
+    dropped by the ``seq <= self._last_seq`` gate — reproducing the owner's
+    "message sent while streaming never appears in the sent queue" report.
+
+    FALSIFY: this test drives the exact interleaving (submit → dispatch →
+    turn stays in-flight (hanging, standing in for "still streaming") →
+    submit AGAIN) through a real ``Session`` (`_bump_queue_seq()` is a
+    plain, synchronous, monotonically-increasing counter — the SAME single
+    counter every queue-delta emission call increments, in call order, with
+    no `await` between check-and-increment), and asserts the SECOND
+    submission's delta is accepted, not dropped. It passes today: the
+    seq-gate mechanism itself is not the defect. That does not close #3688
+    — the owner's symptom is real — it REDIRECTS it, per the issue's own
+    decision tree, to the render side (``apply_user_submitted``'s caller
+    returning True but the sent-queue widget not showing the item), which
+    this test does not cover.
+    """
+    session = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
+    call_started, release = _install_hanging_run_turn(session)
+
+    view = RemoteQueueView()
+    view.apply_snapshot(queue=[], turn_active=False, queue_seq=0)
+
+    captured: list = []
+    session.subscribe_chat_events(lambda ev: captured.append(ev))
+
+    await session.submit_user_text("alpha")
+    ev = next(e for e in captured if e.type == "user_submitted")
+    view.apply_user_submitted(
+        msg_id=ev.data["msg_id"], chain_id=ev.data["chain_id"],
+        text=ev.data["text"], seq=ev.data["seq"],
+    )
+
+    turn_task = asyncio.create_task(session.run_one_iteration())
+    await asyncio.wait_for(call_started.wait(), timeout=5)
+
+    ts = next(e for e in captured if e.type == "turn_started")
+    view.apply_turn_started(chain_id=ts.data["chain_id"], seq=ts.data["seq"])
+    assert view.queue() == []  # alpha dispatched; turn now "streaming" (hung)
+
+    # The reply is in flight (streaming) — submit a SECOND message now.
+    captured.clear()
+    await session.submit_user_text("beta")
+    ev2 = next(e for e in captured if e.type == "user_submitted")
+    applied = view.apply_user_submitted(
+        msg_id=ev2.data["msg_id"], chain_id=ev2.data["chain_id"],
+        text=ev2.data["text"], seq=ev2.data["seq"],
+    )
+
+    assert applied is True, (
+        f"#3688 reproduced: mid-stream user_submitted (seq={ev2.data['seq']}, "
+        f"last_seq={view._last_seq}) was rejected by the seq gate"
+    )
+    assert [i["text"] for i in view.queue()] == ["beta"]
+
+    release.set()
+    await asyncio.wait_for(turn_task, timeout=5)
