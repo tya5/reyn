@@ -270,6 +270,21 @@ def _pane_ids_in_order(panel: InterventionPanel) -> "list[str]":
     return [pane.id for pane in panel.query(TabPane) if pane.id is not None]
 
 
+async def _settle_until(pilot, until) -> None:
+    """Pump until ``until()`` is true, or until the budget runs out.
+
+    The budget is generous and is only SPENT when the condition is genuinely
+    slow, so a healthy run costs one pass. Modelled on
+    ``tests/test_textual_chat_copy_rewind_3362.py``'s ``_settle``, and on
+    #3651's rule: wait for a signal, never for a wall-clock guess.
+    """
+    for _ in range(150):
+        await pilot.pause()
+        if until():
+            return
+        await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
 async def test_choice_intervention_panel_selection_delivers_correct_choice_id() -> None:
     """Tier 2b: F1 permission-band reachability — a closed-set intervention
@@ -362,7 +377,14 @@ async def test_composer_submit_during_pending_intervention_is_always_a_new_turn(
         await pilot.pause()
         await pilot.press("y", "e", "s")
         await pilot.press("enter")
-        await pilot.pause()
+        # #3720: wait for the submit to ARRIVE, not for one turn of the loop.
+        # A bare ``pause()`` asserts that the send completes within a single
+        # pass of the event loop, which is a property of the machine rather
+        # than of the code — it went red once on CI's 3.11 runner and green on
+        # a rerun of the same commit. The predicate never weakens the
+        # assertion: if the submit never lands, the assert below still fails,
+        # just after waiting rather than before.
+        await _settle_until(pilot, lambda: transport.submitted)
 
     assert transport.submitted == ["yes"]
     assert transport.answered_choice == []
