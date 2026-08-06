@@ -246,7 +246,7 @@ async def test_repaints_stop_tracking_arrivals_without_dropping_text(
 
 @pytest.mark.asyncio
 async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
-    tmp_path,
+    tmp_path, monkeypatch,
 ) -> None:
     """Tier 2: ★repaints follow the number of REPLIES in flight, not the number
     of deltas — on a backlog that is *mixed*, not a clean run of one chain.
@@ -271,6 +271,29 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
     emit (``host.events.emit("agent_delta", ...)``, the SAME call
     ``RouterLoop._emit_agent_delta`` makes) and the tool frames ride
     ``repl_outbox`` (the display path the registry forwarder feeds).
+
+    ★ #3746 fix: ``_schedule_streaming_catchup`` is neutralized here. With
+    ``clock`` frozen, ``_repaint_streaming_reply_within_budget``'s own
+    comparison (``self._clock() - record.last_repaint``) never crosses the
+    budget, so the DIRECT flush path never fires during this loop — every
+    repaint the old assertion measured came exclusively from the catch-up
+    TIMER, which is armed via Textual's real ``set_timer`` (real wall-clock,
+    NOT the injected clock — confirmed by reading ``message_pump.py``). The
+    "frozen: no repaint can be due" comment above was true for the budget
+    check but not for this second path, so the repaint count this test
+    measured was actually "how many real 33ms windows elapsed while
+    processing 200 arrivals on this machine, under this load" — environment-
+    and load-dependent by construction, not a stable per-arrival ratio.
+    Measured directly: 2-4 repaints across 15 local runs (Python 3.12), a
+    CI run hit exactly 20 (the `arrivals // 10` threshold this test used to
+    assert against) once. The catch-up timer's own real-time behavior is
+    already dedicated-tested by
+    ``test_a_deferred_repaint_is_painted_within_the_budget_window`` above,
+    so this test does not need to also exercise it — disabling it here
+    makes THIS test's own claim (chain interleaving + tool frames do not
+    defeat per-chain coalescing) assert on the fully deterministic path
+    instead of racing a real timer against however long a real backlog
+    drain happens to take.
     """
     chains = ("chain-a", "chain-b")
     per_chain = 100
@@ -279,6 +302,13 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
     registry, transport, app = await _build(
         tmp_path, clock=clock, app_cls=_DeltaCountingApp
     )
+    # #3746: see the docstring above — the catch-up timer is real-wall-clock
+    # driven regardless of the frozen `clock`, so it is the ONLY source of
+    # non-determinism left once the budget check itself never fires. A no-op
+    # here is safe per the method's own contract ("the budget is an
+    # OPTIMISATION... failing to arm the timer must degrade... never break
+    # the pump") and covered in isolation by the sibling test above.
+    monkeypatch.setattr(app, "_schedule_streaming_catchup", lambda: None)
     session = registry.attached_session()
     try:
         async with app.run_test(size=(100, 50)) as pilot:
@@ -304,13 +334,18 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
 
             # Every reply is on screen from its first delta (the append carries
             # it, which is why the count below starts from a painted row, not a
-            # blank one); ``revision`` then counts only the RE-paints.
+            # blank one); ``revision`` then counts only the RE-paints. With the
+            # catch-up timer neutralized and the budget clock frozen, NO repaint
+            # can happen during this loop at all — asserting exactly 0 is the
+            # deterministic, environment-independent form of the same claim the
+            # old approximate `< arrivals // 10` threshold was reaching for.
             assert all(_CHUNK in str(e.item.text) for e in entries.values())
             repaints = sum(e.revision for e in entries.values())
-            assert repaints < arrivals // 10, (
+            assert repaints == 0, (
                 f"{repaints} repaints for {arrivals} deltas across {len(chains)} "
-                "replies — repaints must follow the replies in flight, not the "
-                "arrivals"
+                "replies with the catch-up timer disabled and the budget clock "
+                "frozen — no repaint should be possible at all; the direct "
+                "budget-check path fired when it should not have"
             )
 
             # ...and nothing was dropped: one more delta per chain, past the
