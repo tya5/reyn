@@ -113,12 +113,17 @@ def mark_async_entered() -> None:
         _ASYNC_ENTERED_AT = time.perf_counter()
 
 
-#: The 4 narrow ``client-prep:*`` brackets `mark_app_constructed` sums to
-#: compute ``client-prep:other`` (#3735 regression fix) — every named
-#: sub-stage of the wide ``mark_async_entered`` → ``mark_app_constructed``
-#: span EXCEPT ``client-prep:other`` itself (summing that too would be
-#: circular: it is defined as what these do not already cover).
+#: The narrow ``client-prep:*`` brackets `mark_app_constructed` sums to
+#: compute ``client-prep:other`` (#3735 regression fix; ``litellm-import``
+#: added #3671 follow-up after a real-run measurement showed the original 4
+#: brackets left ~59-60% of the wide span in ``client-prep:other``, and
+#: ``llm.py``'s ``run_async`` lazily imports litellm BEFORE any of the other
+#: 4 brackets even start) — every named sub-stage of the wide
+#: ``mark_async_entered`` → ``mark_app_constructed`` span EXCEPT
+#: ``client-prep:other`` itself (summing that too would be circular: it is
+#: defined as what these do not already cover).
 _CLIENT_PREP_NAMED_STAGES: "tuple[str, ...]" = (
+    "client-prep:litellm-import",
     "client-prep:transport",
     "client-prep:read-model",
     "client-prep:tui-import",
@@ -226,12 +231,33 @@ def mark_first_frame() -> None:
             TIMING.record("tui-boot", _FIRST_FRAME_AT - _APP_CONSTRUCTED_AT)
 
 
+def first_frame_reached() -> bool:
+    """Whether the interface actually appeared.
+
+    #3671 follow-up: the report must be able to tell "startup completed" from
+    "startup was interrupted/crashed before the interface appeared" — see
+    :func:`process_elapsed_seconds`'s docstring for why conflating the two
+    fooled 3 measurements in a row on real data before this existed.
+    """
+    return _FIRST_FRAME_AT is not None
+
+
 def process_elapsed_seconds() -> float:
-    """Seconds from import to the interface appearing.
+    """Seconds from import to the interface appearing, OR to now.
 
     Falls back to "now" when the interface never appeared — a startup that
-    failed or was interrupted still has a wall time worth reporting, and it is
-    the case where the report matters most.
+    failed or was interrupted still has a wall time worth reporting. This
+    value alone cannot distinguish the two cases: call :func:`first_frame_
+    reached` and label the number accordingly before showing it to anyone
+    (``report_lines`` does this). A caller that shows this number under a
+    "TOTAL (start -> interface on screen)" label without checking
+    ``first_frame_reached()`` first is asserting something that may be
+    false — measured doing exactly that: a `reyn chat` interrupted mid-
+    `import litellm`, well before the interface existed, printed a
+    plausible-looking ``TOTAL 3.02s`` with EVERY client-prep stage reading
+    0.00s and no indication anything was wrong beyond a >20% ``unaccounted``
+    warning that reads identically whether the interface appeared slowly or
+    never appeared at all.
     """
     end = _FIRST_FRAME_AT if _FIRST_FRAME_AT is not None else time.perf_counter()
     return end - _MODULE_IMPORTED_AT
@@ -255,6 +281,7 @@ STAGES: "tuple[str, ...]" = (
     "plugins",
     "mcp",
     "session",
+    "client-prep:litellm-import",
     "client-prep:transport",
     "client-prep:read-model",
     "client-prep:tui-import",
@@ -318,15 +345,33 @@ class StartupTiming:
         """
         return max(0.0, wall_seconds - self.total_seconds)
 
-    def report_lines(self, wall_seconds: float) -> "list[str]":
+    def report_lines(
+        self, wall_seconds: float, *, first_frame_reached: bool = True,
+    ) -> "list[str]":
         """The report, as short lines meant to be read off a screen.
 
         One stage per line with its share, then the total and whatever is left
         over. Shares are of WALL time rather than of the measured sum, so a
         stage reading 5% of a startup dominated by something unmeasured cannot
         be misread as 5% of the problem.
+
+        ``first_frame_reached=False`` (#3671 follow-up): a startup that was
+        interrupted or crashed before the interface appeared gets a report
+        that SAYS SO, prominently, instead of a ``TOTAL`` line indistinguishable
+        from a completed one. Measured doing the wrong thing 3 times in a row
+        before this flag existed: `process_elapsed_seconds()`'s "now" fallback
+        produces a real, plausible-looking number, and the old unconditional
+        ``TOTAL ... (start \u2192 interface on screen)`` label asserted the
+        interface appeared regardless of whether it actually did.
         """
         lines = ["startup timing (REYN_STARTUP_TIMING=1)"]
+        if not first_frame_reached:
+            lines.append(
+                "  \u26a0 interface NEVER appeared \u2014 this is NOT a completed "
+                f"startup. {wall_seconds:.2f}s elapsed before the process exited "
+                "or was interrupted; the breakdown below is whatever ran in "
+                "that window, not a full startup's worth of stages."
+            )
         for stage in STAGES:
             seconds = self._elapsed.get(stage, 0.0)
             share = (seconds / wall_seconds * 100) if wall_seconds > 0 else 0.0
@@ -338,16 +383,22 @@ class StartupTiming:
         unaccounted = self.unaccounted_seconds(wall_seconds)
         share = (unaccounted / wall_seconds * 100) if wall_seconds > 0 else 0.0
         lines.append(f"  {'unaccounted':<12} {unaccounted:6.2f}s  {share:5.1f}%")
-        lines.append(
-            f"  {'TOTAL':<12} {wall_seconds:6.2f}s  (start \u2192 interface on screen)"
-        )
+        if first_frame_reached:
+            lines.append(
+                f"  {'TOTAL':<12} {wall_seconds:6.2f}s  (start \u2192 interface on screen)"
+            )
+        else:
+            lines.append(
+                f"  {'ELAPSED':<12} {wall_seconds:6.2f}s  (start \u2192 exit; NOT a "
+                "TOTAL \u2014 see the warning above)"
+            )
         # #3735: a stage breakdown that mostly reads `unaccounted` is the same
         # failure this module exists to prevent, just one level up \u2014 the
         # instrument itself must say so rather than let a large gap masquerade
         # as a tidy-looking report. Self-flagged here (not asserted/raised):
         # this is a diagnostic, and a diagnostic that crashes the startup it
         # is trying to explain is worse than the problem it reports.
-        if share >= _UNACCOUNTED_GAP_WARNING_PCT:
+        if first_frame_reached and share >= _UNACCOUNTED_GAP_WARNING_PCT:
             lines.append(
                 f"  \u26a0 unaccounted is {share:.0f}% of TOTAL \u2014 the stage "
                 "brackets likely have a coverage gap, not just untimed work"

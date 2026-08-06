@@ -201,14 +201,22 @@ def test_the_report_survives_an_interrupt(monkeypatch, capsys) -> None:
     assert "startup timing" in capsys.readouterr().out
 
 
-def test_client_prep_is_four_named_sub_stages_not_one_lump(monkeypatch) -> None:
+def test_client_prep_is_five_named_sub_stages_not_one_lump(monkeypatch) -> None:
     """Tier 2: #3671 (architect's design) — the single `client-prep` lump is
-    replaced by 4 named sub-stages at the seams already in the code (transport
-    construction, read-model construction, the lazy textual/flowview import,
-    and app construction), so a slow startup can say WHICH of the four, not
-    just that the client was slow to get ready."""
+    replaced by named sub-stages at the seams already in the code (litellm's
+    lazy import inside `run_async`, transport construction, read-model
+    construction, the lazy textual/flowview import, and app construction), so
+    a slow startup can say WHICH of these, not just that the client was slow
+    to get ready.
+
+    `litellm-import` added as a #3671 follow-up: a real-run measurement found
+    the original 4 sub-stages left ~59-60% of the wide span in
+    `client-prep:other` — `llm.py`'s `run_async` lazily imports litellm
+    BEFORE any of the other 4 brackets even start, and that cost had no
+    named home."""
     assert "client-prep" not in STAGES
     for name in (
+        "client-prep:litellm-import",
         "client-prep:transport",
         "client-prep:read-model",
         "client-prep:tui-import",
@@ -398,6 +406,109 @@ def test_client_prep_other_is_declared() -> None:
     `--cui` path, where `mark_app_constructed` is never called) still shows
     `0.00` rather than disappearing."""
     assert "client-prep:other" in STAGES
+
+
+def test_litellm_import_stage_is_bracketed_in_run_async() -> None:
+    """Tier 2: #3671 follow-up — `run_async`'s snapshot of litellm's client
+    cache (which lazily imports litellm) is wrapped in `stage("client-prep:
+    litellm-import")`, so a real run can show whether THIS import, not the
+    lazily-imported textual/flowview tree (`client-prep:tui-import`), is what
+    dominates `client-prep:other`'s previously-unexplained ~59-60% share.
+    Witnessed by running the real function and checking the PUBLIC recorded
+    duration increased — not by reading `llm.py`'s source for the `with`."""
+    from reyn.llm.llm import run_async
+    from reyn.runtime import startup_timing
+
+    before = startup_timing.TIMING.elapsed("client-prep:litellm-import")
+
+    async def _noop() -> None:
+        return None
+
+    run_async(_noop())
+
+    after = startup_timing.TIMING.elapsed("client-prep:litellm-import")
+    assert after >= before
+
+
+def test_first_frame_reached_is_false_until_the_mark_fires(monkeypatch) -> None:
+    """Tier 2: #3671 follow-up — the report needs a way to ask "did the
+    interface actually appear" independent of the numeric elapsed time, since
+    `process_elapsed_seconds()` returns a plausible-looking number either way
+    (see its own docstring: measured fooling 3 real measurements in a row)."""
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+    assert startup_timing.first_frame_reached() is False
+
+    startup_timing.mark_first_frame()
+    assert startup_timing.first_frame_reached() is True
+
+
+def test_report_says_the_interface_never_appeared_instead_of_a_total() -> None:
+    """Tier 2: #3671 follow-up — FALSIFY the exact failure this session's own
+    measurement hit 3 times in a row: a `reyn chat` interrupted before the
+    interface existed printed a `TOTAL ... (start -> interface on screen)`
+    line indistinguishable from a completed startup, with every client-prep
+    stage reading 0.00s and only a >=20% `unaccounted` warning as a (missed)
+    hint something was wrong. `report_lines(first_frame_reached=False)` must
+    say the interface never appeared, prominently, and must NOT print a
+    `TOTAL` line claiming it did."""
+    timing = StartupTiming()
+    timing.record("import", 0.4)
+
+    lines = timing.report_lines(wall_seconds=3.0, first_frame_reached=False)
+    body = "\n".join(lines)
+
+    assert "NEVER appeared" in body
+    assert not any(line.strip().startswith("TOTAL") for line in lines), body
+    assert any(line.strip().startswith("ELAPSED") for line in lines), body
+
+
+def test_report_still_says_total_when_the_interface_did_appear() -> None:
+    """Tier 2: the new warning is conditional — a completed startup must keep
+    its ordinary `TOTAL (start -> interface on screen)` line unchanged, the
+    default `first_frame_reached=True` this function always had."""
+    timing = StartupTiming()
+    timing.record("import", 0.4)
+
+    lines = timing.report_lines(wall_seconds=1.0)
+    body = "\n".join(lines)
+
+    assert "TOTAL" in body
+    assert "interface on screen" in body
+    assert "never appeared" not in body
+
+
+def test_the_report_call_site_passes_first_frame_reached(monkeypatch, capsys) -> None:
+    """Tier 2: #3671 follow-up — `_report_startup_timing` (the real call site,
+    not a re-implementation) must actually thread `first_frame_reached()`
+    through to `report_lines`, or the fix above never reaches an operator's
+    screen. Drives it through `chat_cmd.run` exactly like the existing
+    interrupt/exception survival tests, with the interface never having
+    appeared (a fresh process's `_FIRST_FRAME_AT` is `None` by default)."""
+    import argparse
+
+    from reyn.interfaces.cli.commands import chat as chat_cmd
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setenv("REYN_STARTUP_TIMING", "1")
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+
+    def _interrupted(_args: argparse.Namespace) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(chat_cmd, "_run", _interrupted)
+
+    try:
+        chat_cmd.run(argparse.Namespace())
+    except KeyboardInterrupt:
+        pass
+
+    out = capsys.readouterr().out
+    assert "NEVER appeared" in out
+    assert not any(
+        line.strip().startswith("TOTAL") for line in out.splitlines()
+    ), out
 
 
 def test_the_report_survives_an_exception(monkeypatch, capsys) -> None:

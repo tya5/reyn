@@ -464,13 +464,14 @@ def _report_startup_timing() -> None:
     from reyn.runtime.startup_timing import (
         TIMING,
         enabled,
+        first_frame_reached,
         process_elapsed_seconds,
     )
 
     if not enabled():
         return
     wall = process_elapsed_seconds()
-    for line in TIMING.report_lines(wall):
+    for line in TIMING.report_lines(wall, first_frame_reached=first_frame_reached()):
         print(line)
 
 
