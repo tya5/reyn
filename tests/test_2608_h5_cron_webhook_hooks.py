@@ -65,13 +65,13 @@ def _seed(tmp_path: Path, name: str) -> None:
     AgentProfile.new(name, role="").save(tmp_path / ".reyn" / "agents" / name)
 
 
-async def _wait_for(predicate, *, attempts: int = 100, delay: float = 0.02) -> None:
-    """Poll ``predicate()`` until True or give up — the hook fires on a
-    background task (``fire_and_forget``), not synchronously with the
-    triggering call (mirrors H1/H4's own polling helper)."""
-    for _ in range(attempts):
-        if predicate():
-            return
+async def _wait_for(predicate, *, delay: float = 0.02) -> None:
+    """Poll ``predicate()`` -- UNBOUNDED (owner policy 2026-08-06,
+    feedback_tests_carry_no_time_limits_decompose_instead): no per-test time
+    budget, marker or in-body. A slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract this waits against."""
+    while not predicate():
         await asyncio.sleep(delay)
 
 
