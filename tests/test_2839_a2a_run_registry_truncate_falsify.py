@@ -117,7 +117,7 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
     # dispatched before we can prove it survives truncation). No terminating
     # assert: the loop condition IS that check.
     while session.interventions.get(iv.id) is None:
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
     # The A2A bus mirrors input-required onto the RunEntry (real object, same
     # method production wiring calls — issue #1981/#292 side-effect contract).
@@ -164,7 +164,7 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
     # below its own source event (snapshot-backed via AgentSnapshot, not
     # WAL-derived). No terminating assert: the loop condition IS that check.
     while session2.interventions.get(iv.id) is None:
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
 
     # RunRegistry is a standalone atomic-JSON snapshot (#2839 Phase 1 firm) —
     # a fresh instance reloads it independent of the WAL entirely.
@@ -199,13 +199,12 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
         "→ router-coherent round trip survives restart + WAL truncation"
     )
 
-    # #3748: NOT converted -- confirmed by falsify-in-reverse (a genuine
+    # Out of #3748's scope: this loop's iteration count is not standing in
+    # for a pass/fail condition -- settle or force-cancel, either way the
+    # cleanup proceeds the same. Confirmed by falsify-in-reverse (a genuine
     # hang, not a slow pass) that dispatch_task does not resolve on its own
-    # here even after the intervention above was answered: cancellation is
-    # this cleanup's actual terminal action, not a fallback for a slow
-    # condition. No predicate can be honestly written for "settle, then
-    # cancel regardless" -- left as a bounded grace pump pending the
-    # decomposition pass (own PR, per lead-coder's split).
+    # after being answered, so cancellation is a real branch of this
+    # cleanup, not a timeout standing in for a predicate. Left as-is.
     for _ in range(5):
         await asyncio.sleep(0)
     if not dispatch_task.done():
