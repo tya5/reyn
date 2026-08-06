@@ -421,7 +421,16 @@ class PermissionResolver:
         self._interactive = interactive
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
         self._session: dict[str, bool] = {}
-        self._saved: dict[str, bool] = self._load_saved()
+        # #3671 P4 item D-1: lazy — disk read + YAML parse deferred to the
+        # `_saved` property's first access, not paid on every PermissionResolver
+        # construction (one is built per `reyn chat` startup, cost scales with
+        # the number of persisted approval entries). Every existing internal
+        # read (`self._saved.get(...)` / `self._saved[key] = ...` / etc.) goes
+        # through the SAME property, so there is exactly one load site — no
+        # caller can forget to trigger it, and mutation still works: the
+        # property returns the SAME dict object each time, so in-place
+        # `self._saved[key] = approved` still mutates the real stored dict.
+        self.__saved: "dict[str, bool] | None" = None
         # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
         # offloads an artifact to a state-dir path and hands the agent an
         # `artifact_ref` / `_offload_ref` pointing there, that path is outside the
@@ -496,6 +505,35 @@ class PermissionResolver:
         return len(self._on_persist_callbacks)
 
     # ── Persistence ──────────────────────────────────────────────────────────
+
+    @property
+    def _saved(self) -> dict[str, bool]:
+        """#3671 P4 item D-1: the single owner of the lazy load — reads +
+        parses `approvals.yaml` on first access only, cached for the life of
+        this resolver. Returns the SAME dict object across calls, so
+        `self._saved[key] = value` (used by `_persist`) mutates the real
+        cached dict, not a throwaway copy.
+
+        #3671 P4 D-1 review (lead-coder): this IS a check-then-set
+        (`self.__saved is None` → `self.__saved = ...`), the same SHAPE as
+        the 6 races fixed in #3674 — but here it is safe WITHOUT a lock or
+        an ownership/Future pattern, and that is a claim this comment must
+        justify, not merely assert (#3674's own standard). One
+        `PermissionResolver` IS shared across multiple `Session`s (PR10) —
+        so this property IS reachable from more than one concurrently-
+        running coroutine. What makes it safe regardless: `_load_saved()`
+        contains NO `await` — the whole check-then-set body runs to
+        completion inside a single asyncio task's turn with no yield point
+        in between, so no other coroutine can observe `self.__saved` in a
+        partially-updated state or race the assignment (asyncio's
+        single-threaded cooperative scheduling — NOT a general
+        thread-safety claim; if `PermissionResolver` were ever reached from
+        a real OS thread — e.g. via `run_in_executor` — this reasoning would
+        no longer hold and this property would need the same ownership
+        treatment #3674 gave `ensure_litellm_ready`)."""
+        if self.__saved is None:
+            self.__saved = self._load_saved()
+        return self.__saved
 
     def _load_saved(self) -> dict[str, bool]:
         if not self._approvals_path.exists():

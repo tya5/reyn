@@ -449,6 +449,13 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
 MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("← →", "move"),
     ("enter", "open"),
+    # #3699: a readout pane taller than the drawer's cap scrolls, and until
+    # this row existed the Help pane did not say how — the pane whose content
+    # was cut off was also the pane that would have told you how to see the
+    # rest. PgUp/PgDn rather than ↑/↓ because ↑ already means "back to
+    # composer" here (the row below), and this app already uses PgUp/PgDn for
+    # "page through content" on the conversation.
+    ("PgUp / PgDn", "scroll this pane"),
     ("↑", "back to composer"),
     ("esc", "back to composer"),
 ]
@@ -1230,6 +1237,10 @@ def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
             else rows
         )
         return OptionList(*options, id=tab_id)
+    # #3699 keeps this a plain ``Static``: the scrolling for an over-tall
+    # readout is done by the drawer around it (see the ``#drawer`` rule in the
+    # app stylesheet for why it cannot be done here), so this branch stays the
+    # simple "render these rows" it has always been.
     return Static(Text("\n".join(rows)), id=tab_id)
 
 
