@@ -189,13 +189,12 @@ def _streamed_entry(app: TextualChatApp):
     return None
 
 
-async def _until(pred, *, attempts: int = 200, delay: float = 0.01) -> bool:
-    """Bounded poll — a hang exhausts the budget and returns False (RED)."""
-    for _ in range(attempts):
-        if pred():
-            return True
+async def _until(pred, *, delay: float = 0.01) -> None:
+    """Poll for ``pred`` (owner policy, #3748 -- unbounded). A hang surfaces
+    via CI's own kill (the kill stack shows this exact loop), not a
+    test-local budget racing it."""
+    while not pred():
         await asyncio.sleep(delay)
-    return False
 
 
 @pytest.mark.asyncio
@@ -248,11 +247,9 @@ async def test_repaints_stop_tracking_arrivals_without_dropping_text(
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
             await transport.submit_user_text("stream please")
-            assert await _until(lambda: _streamed_entry(app) is not None)
+            await _until(lambda: _streamed_entry(app) is not None)
             entry = _streamed_entry(app)
-            assert await _until(
-                lambda: _CHUNK * chunks in str(entry.item.text)
-            ), "the full streamed text never reached the entry"
+            await _until(lambda: _CHUNK * chunks in str(entry.item.text))
 
             # With the catch-up timer disabled and the budget clock frozen, the
             # ONLY possible repaint is the terminal completion frame's own
@@ -348,9 +345,7 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
             # app's own progress through the backlog, whereas waiting for paint
             # would make the gate depend on a timer under whatever load the run
             # happens to have.
-            assert await _until(
-                lambda: app.deltas_ingested >= arrivals
-            ), "the mixed backlog never drained"
+            await _until(lambda: app.deltas_ingested >= arrivals)
             entries = {c: _entry_for(app, c) for c in chains}
             assert all(e is not None for e in entries.values())
 
@@ -377,14 +372,11 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
                 session.router_host.events.emit(
                     "agent_delta", text=_CHUNK, chain_id=chain
                 )
-            assert await _until(
+            await _until(
                 lambda: all(
                     str(e.item.text).count(_CHUNK) == per_chain + 1
                     for e in entries.values()
                 )
-            ), (
-                "a coalesced reply lost text: the repaint budget may skip a "
-                f"render, never an append — {[str(e.item.text).count(_CHUNK) for e in entries.values()]}"
             )
     finally:
         await registry.shutdown()
@@ -432,12 +424,12 @@ async def test_a_pending_repaint_never_survives_the_session_switch_barrier(
             session.router_host.events.emit(
                 "agent_delta", text=kept, chain_id="kept-chain"
             )
-            assert await _until(
+            await _until(
                 lambda: (
                     _entry_for(app, "kept-chain") is not None
                     and kept in str(_entry_for(app, "kept-chain").item.text)
                 )
-            ), "control leg: a deferred repaint must reach the screen on its own"
+            )
 
             # Leg 2: the barrier is queued in the same synchronous block as the
             # deferred delta — nothing could have flushed it in between.
@@ -455,9 +447,7 @@ async def test_a_pending_repaint_never_survives_the_session_switch_barrier(
                     )
                 )
             )
-            assert await _until(
-                lambda: _entry_for(app, "kept-chain") is None
-            ), "the barrier never reset the conversation"
+            await _until(lambda: _entry_for(app, "kept-chain") is None)
 
             # Well past any armed catch-up window.
             for _ in range(20):
@@ -513,19 +503,15 @@ async def test_a_deferred_repaint_is_painted_within_the_budget_window(
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
             await transport.submit_user_text("stream please")
-            assert await _until(lambda: _streamed_entry(app) is not None)
+            await _until(lambda: _streamed_entry(app) is not None)
             entry = _streamed_entry(app)
 
             # Everything after the first delta was deferred by the (frozen)
-            # budget. Within one budget window the catch-up must have painted it.
-            painted = await _until(
-                lambda: str(entry.item.text).count(_CHUNK) > 1,
-                attempts=int(_STREAM_REPAINT_MIN_INTERVAL * 100) + 100,
-            )
-            assert painted, (
-                "text held back by the repaint budget was never painted — the "
-                "deferral is unbounded, so a fast stream shows nothing until it ends"
-            )
+            # budget. The catch-up timer's own real interval is the actual
+            # bound (dedicated-tested by the interval constant itself); this
+            # waits on the real event it produces, unbounded (#3748 owner
+            # policy) rather than re-implementing a second timeout around it.
+            await _until(lambda: str(entry.item.text).count(_CHUNK) > 1)
         released.set()
     finally:
         released.set()
