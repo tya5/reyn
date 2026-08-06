@@ -85,6 +85,17 @@ def register(sub) -> None:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
+def _project_reyn_root() -> Path:
+    """#3716: the SAME project-root resolution `reyn chat` already uses
+    (`_find_project_root(Path.cwd()) or Path.cwd()`, then `/ ".reyn"` —
+    matching `env_backend.py`'s `workspace_state_dir` convention, #3705) —
+    `reyn memory` had no project-root resolution anywhere in its own call
+    chain before this, so every write silently followed the ambient cwd
+    with no way for a caller to override it."""
+    from reyn.config import _find_project_root
+    return (_find_project_root(Path.cwd()) or Path.cwd()) / ".reyn"
+
+
 def _layer_dir(args: argparse.Namespace) -> Path:
     """Resolve the memory directory for the layer the user picked.
 
@@ -92,10 +103,11 @@ def _layer_dir(args: argparse.Namespace) -> Path:
     Validates that the agent profile exists when `--agent` is given so we
     don't silently scan an empty directory.
     """
+    root = _project_reyn_root()
     agent = getattr(args, "agent", None)
     if agent is None:
-        return memory_dir()
-    profile_path = Path(".reyn") / "agents" / agent / "profile.yaml"
+        return memory_dir(root=root)
+    profile_path = root / "agents" / agent / "profile.yaml"
     if not profile_path.is_file():
         print(
             f"Error: agent {agent!r} not found "
@@ -104,7 +116,7 @@ def _layer_dir(args: argparse.Namespace) -> Path:
             file=sys.stderr,
         )
         sys.exit(1)
-    return memory_dir(agent)
+    return memory_dir(agent, root=root)
 
 
 def _layer_label(args: argparse.Namespace) -> str:

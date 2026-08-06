@@ -362,3 +362,15 @@ ignore = [
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy 2.x's bundled __init__.pyi uses PEP 695 `type X = ...` (3.12+-only
+# syntax) internally; mypy applies the declared `python_version` restriction
+# to third-party stubs too, not just first-party code, so parsing it under
+# our `python_version = "3.11"` (matching `requires-python`, #3726) raises a
+# real SyntaxError in numpy's OWN stub — nothing to do with our code.
+# `follow_imports = "skip"` treats numpy as untyped (Any) instead of parsing
+# its stub, which is the standard workaround for this exact upstream tension.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
