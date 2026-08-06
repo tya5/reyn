@@ -216,6 +216,32 @@ def out_of_process_reyn() -> str:
     return str(root / "src")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _flowview_pin_verified() -> None:
+    """#3723: 4 of 4 sessions on 2026-08-06 measured a full suite against a
+    mis-pinned ``textual-flowview`` — three had a stale version, and read
+    real failures as "pre-existing on origin/main"; the fourth had the
+    pinned VERSION but was reading a local working copy, invisible to a
+    version-only check. Unlike `reyn_console_scripts`/`out_of_process_reyn`
+    above (opt-in, per-test), this is autouse and session-scoped: it must run
+    once, before the first test body, for every invocation — a session that
+    never happens to request it is exactly how this went undetected. A red
+    test measured under a mis-pinned flowview is not "one more failure", it
+    makes the WHOLE suite's result incomparable to `origin/main`'s, so this
+    aborts the run outright (`pytest.exit`) instead of failing one test.
+    """
+    findings = _ENV_IDENTITY.verify(Path(_REPO_ROOT), only=("flowview-pin",))
+    if not findings:
+        return
+    rendered = "\n".join(f.render() for f in findings)
+    pytest.exit(
+        f"env-identity (#3723): this venv's textual-flowview does not match "
+        f"pyproject.toml's pin — the whole suite's result is not trustworthy "
+        f"until this is fixed.\n{rendered}",
+        returncode=1,
+    )
+
+
 # ── Workspace isolation (#3705) ─────────────────────────────────────────────────
 
 
