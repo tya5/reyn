@@ -239,15 +239,14 @@ async def _spawn_via_tool(
     )
     assert result.get("status") == "spawned", f"the spawn itself failed: {result!r}"
     # #3748: unbounded (owner policy, docs/deep-dives/contributing/
-    # testing.md § Time) -- the assert right below already names the real
-    # predicate; a slower environment only makes this wait longer, never
-    # fail it.
+    # testing.md § Time). Waiting for the spawned child to finish a turn --
+    # any absence observed on disk below would otherwise be meaningless.
+    # No terminating assert here: the loop condition IS that check, and an
+    # assert restating it can never fire (the loop only exits once it is
+    # already true) -- a hang here surfaces via the kill stack showing this
+    # exact `while`, which is the honest failure record.
     while scripted.child_turns < 2:
         await asyncio.sleep(0.05)
-    assert scripted.child_turns >= 2, (
-        "the spawned child never finished a turn, so any absence observed on disk "
-        f"below would be meaningless (turns={scripted.child_turns}, ack={result!r})"
-    )
     return result
 
 

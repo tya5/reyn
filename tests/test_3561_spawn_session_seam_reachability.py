@@ -399,11 +399,12 @@ async def _spawn_and_persist(
     snapshot = (
         tmp_path / ".reyn" / "agents" / "worker" / "state" / "sessions" / sid / "snapshot.json"
     )
-    # #3748: unbounded (owner policy) -- the assert below already names the
-    # real predicate.
+    # #3748: unbounded (owner policy) -- waiting for the spawned session's
+    # snapshot to reach disk. No terminating assert: the loop condition IS
+    # that check, so an assert restating it can never fire; a hang here
+    # surfaces via the kill stack showing this exact `while`.
     while not snapshot.is_file():
         await asyncio.sleep(0.05)
-    assert snapshot.is_file(), "the spawned session's snapshot never reached disk"
     return sid
 
 

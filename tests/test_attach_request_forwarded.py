@@ -100,13 +100,14 @@ async def test_attach_request_swaps_but_does_not_repost(tmp_path):
         OutboxMessage(kind="__attach_request__", text="beta"),
     )
 
-    # #3748: unbounded wait for the real predicate (owner policy) -- was a
-    # "yield 50 times, break early" pump.
+    # #3748: unbounded wait for the swap (owner policy) -- was a "yield 50
+    # times, break early" pump. No terminating assert: the loop condition
+    # IS the control-path-intact check, so an assert restating it can never
+    # fire; a hang here surfaces via the kill stack showing this exact
+    # `while`.
     while registry.attached_name != "beta":
         await asyncio.sleep(0.01)
 
-    # Control path intact: swap happened.
-    assert registry.attached_name == "beta"
     # Re-post removal proven: outbox got ONLY the switch-barrier announce,
     # never a copy of the raw "__attach_request__"/"beta" sentinel.
     # Unpacking into a single-element tuple IS the "exactly one, nothing
