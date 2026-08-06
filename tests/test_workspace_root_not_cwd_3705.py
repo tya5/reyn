@@ -178,6 +178,16 @@ def _cwd_relative_reyn_sites(py_file: Path) -> "list[int]":
 #   agent.py, recovery.py, session.py (`_reyn_state_root`),
 #   router_host_adapter.py, replay_preconditions.py (explicitly documented
 #   as intentionally mirroring router_host_adapter's own convention).
+#   #3716: `data/memory/memory_paths.py`'s `memory_dir(root=None)` fallback
+#   joins this group too — `reyn memory` now HAS project-root plumbing
+#   (`interfaces/cli/commands/memory.py`'s `_project_reyn_root`), so this
+#   ONE site (a single `base = root if root is not None else Path.cwd() /
+#   ".reyn"` shared by both the "shared" and "agent" branches) is the
+#   intentional `root=None` default, not an unaddressed gap
+#   (lead-coder review, #3722: the gate counts sites, it does not read
+#   REASONS — a stable count at an already-allowlisted path can silently go
+#   stale in what it's claiming, which is exactly what happened here when
+#   #3716 landed without also updating this comment).
 # - Genuine top-level CLI entry points, where "operate on whatever project
 #   the operator is standing in" IS the intended behavior (the same way
 #   `git status` reads the cwd) — not Session-owned, not reachable via
@@ -187,16 +197,21 @@ def _cwd_relative_reyn_sites(py_file: Path) -> "list[int]":
 #   interfaces/cli/commands/{agent,dogfood,events,mcp,web}.py,
 #   interfaces/web/server.py (the `reyn web` server's own persist paths),
 #   dev/dogfood/runner.py.
-# - Deferred (filed separately, NOT fixed here): `data/memory/memory_paths.py`
-#   and `interfaces/cli/commands/memory.py` — genuinely need NEW project-root
-#   plumbing (`reyn memory` has none today), not a value silently ignored;
-#   same "file it, don't force it" judgment as #3671 P4's A-3/C-2/D-2.
+# - Deferred (filed separately, NOT fixed here): `interfaces/slash/memory.py`
+#   (#3721) — the `/memory` chat command calls `list_entries()`/`find_one()`
+#   with no arguments, falling into the same `memory_dir()` cwd-relative
+#   default, but this file has ZERO `Path(".reyn")`/`Path.cwd() / ".reyn"`
+#   literals of its OWN (the defect lives entirely in the CALLEE it doesn't
+#   override), so it does not appear as its own allowlist entry — #3721 is
+#   tracked there, not here, because this gate only sees literal cwd-anchor
+#   EXPRESSIONS, not "a caller that omitted an available override".
 _ALLOWED_SITES: "dict[str, int]" = {
     "src/reyn/runtime/agent.py": 1,
     "src/reyn/runtime/services/recovery.py": 1,
     "src/reyn/runtime/session.py": 1,
     "src/reyn/runtime/services/router_host_adapter.py": 1,
     "src/reyn/dev/testing/replay_preconditions.py": 1,
+    "src/reyn/data/memory/memory_paths.py": 1,  # Session-owned fallback (root=None), see comment above
     "src/reyn/interfaces/cli/commands/agent.py": 3,
     "src/reyn/interfaces/cli/commands/dogfood.py": 1,
     "src/reyn/interfaces/cli/commands/events.py": 1,
@@ -204,8 +219,6 @@ _ALLOWED_SITES: "dict[str, int]" = {
     "src/reyn/interfaces/cli/commands/web.py": 1,
     "src/reyn/interfaces/web/server.py": 2,
     "src/reyn/dev/dogfood/runner.py": 1,
-    "src/reyn/data/memory/memory_paths.py": 2,  # deferred, see comment above
-    "src/reyn/interfaces/cli/commands/memory.py": 1,  # deferred, see comment above
 }
 
 
