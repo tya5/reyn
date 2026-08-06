@@ -296,7 +296,7 @@ def _resolve_cross_file_target(doc_path: Path, target_path: str) -> Path | None:
 # cross-link each other constantly, and building this arm's first version
 # found 9 such links, 8 already dangling (#3697) — flagged rather than
 # silently repaired, since fixing them read at the time as touching a
-# historical corpus's own content. Owner ruling (#3697): repairing a link
+# historical corpus's own content. lead-coder ruling (#3697): repairing a link
 # is NOT rewriting what a record claims — the claim, conclusion, and any
 # measured value are untouched; only the citation's spelling changes to
 # reach the same real section. All 8 repaired on that basis, and this arm
