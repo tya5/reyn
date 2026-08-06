@@ -290,18 +290,22 @@ def _resolve_cross_file_target(doc_path: Path, target_path: str) -> Path | None:
 # citations' `_github_slugify` predictions matched the live page's actual
 # `href="#..."` fragment exactly, including the em-dash double-hyphen case).
 #
-# Deliberately scoped to a PUBLISHED citing doc only, excluding excluded-
-# doc-to-excluded-doc links (the `docs/deep-dives/journal/**` historical
-# dogfood/insight write-ups cross-link each other constantly — 9 such
-# links found while building this arm, several already dangling). Those
-# are a separate, much larger, unowned corpus: append-only historical
-# journal entries were never held to "citation stays live" rigor, and
-# sweeping them into a newly-red gate on this PR would be a scope decision
-# for whoever owns that corpus, not a side effect of closing #3672.
+# Originally scoped to a PUBLISHED citing doc only (#3672's landing PR,
+# #3696), deliberately excluding excluded-doc-to-excluded-doc links: the
+# `docs/deep-dives/journal/**` historical dogfood/insight write-ups
+# cross-link each other constantly, and building this arm's first version
+# found 9 such links, 8 already dangling (#3697) — flagged rather than
+# silently repaired, since fixing them read at the time as touching a
+# historical corpus's own content. lead-coder ruling (#3697): repairing a link
+# is NOT rewriting what a record claims — the claim, conclusion, and any
+# measured value are untouched; only the citation's spelling changes to
+# reach the same real section. All 8 repaired on that basis, and this arm
+# widened to cover excluded-source links too, so the 8/9 density doesn't
+# silently return the day the next citation goes stale — a one-time
+# repair with no gate is the exact "covers what existed when it ran, not
+# what exists now" shape #3718 named the same day.
 _CROSS_FILE_EXCLUDED_LINKS: list[tuple[Path, int, Path, str]] = []
 for _doc, _lineno, _target_path, _anchor in _CROSS_FILE_LINKS_ALL:
-    if _is_excluded(_doc.relative_to(_DOCS).as_posix(), _EXCLUDE_PREFIXES):
-        continue
     _target_rel = _resolve_cross_file_target(_doc, _target_path)
     if _target_rel is not None and _is_excluded(
         _target_rel.as_posix(), _EXCLUDE_PREFIXES

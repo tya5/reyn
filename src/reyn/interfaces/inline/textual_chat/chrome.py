@@ -1015,11 +1015,22 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
     p, c, _t = snap.get("usage", (0, 0, 0))
     agent_tokens = snap.get("agent_tokens", _t)
     cached = snap.get("session_cached_tokens", 0)
-    return [
+    rows = [
         *_cost_breakdown_table(snap),
         f"tokens   prompt {p:,} · completion {c:,} · total {agent_tokens:,}",
         _cache_hit_line("cache", cached, p, note="cumulative"),
     ]
+    # #3695: the status row can only afford a mark; this pane has room to say
+    # what the mark means and how much of the total is unaccounted for. Absent
+    # entirely when every call was priced, so it is never a line the reader has
+    # to decide is irrelevant.
+    unpriced = snap.get("cost_agent_unpriced_calls", 0)
+    if unpriced:
+        rows.append(
+            f"unpriced {unpriced:,} call(s) had no published price — the total "
+            f"above is a lower bound, not the amount spent"
+        )
+    return rows
 
 
 def ctx_pane_lines(snap: "dict | None") -> list[str]:
@@ -1159,8 +1170,35 @@ def pane_payload(
     return help_pane_lines(app_bindings)
 
 
+#: Marks a cost that is a LOWER BOUND rather than the amount spent (#3695).
+#: Two ASCII cells, chosen to be cheap and reversible: the status row is the
+#: ONE always-visible chrome region and #3326 packs it onto the menu row only
+#: while it fits, so a longer marker would trade a permanent chrome row for a
+#: caveat. Changing it is a one-constant edit.
+UNPRICED_MARK = "+?"
+
+
+def cost_figure(snap: "dict | None") -> str:
+    """The cost segment: the figure, plus a mark when it cannot be complete.
+
+    An unpriced model contributes 0 to the total (``estimate_cost`` returns
+    ``None`` — "unknown", which ``record_llm`` must not book as "free"), so a
+    session using one shows a figure that never moves. The owner watched
+    exactly that for a day and read it as the amount spent. The mark is the
+    difference between "this is what it cost" and "this is at least what it
+    cost"; the count itself stays in the Cost pane rather than on the one row
+    that has no space for it.
+    """
+    snap = snap or {}
+    figure = f"${snap.get('cost_agent', 0.0):.4f}"
+    return f"{figure}{UNPRICED_MARK}" if snap.get("cost_agent_unpriced_calls") else figure
+
+
 def status_line_text(
-    snap: "dict | None", agent_name: str, *, attach_state: "str | None" = None
+    snap: "dict | None",
+    agent_name: str,
+    *,
+    attach_state: "str | None" = None,
 ) -> str:
     """The slim ``model │ agent │ cost │ ctx`` status-values line, from the live
     status snapshot (F5b: the running cost + context percent are visible here even
@@ -1208,7 +1246,10 @@ def status_line_text(
     model = snap.get("model_active_class") or snap.get("model") or "—"
     agent = snap.get("attached_name") or agent_name
     cost = snap.get("cost_agent", 0.0)
-    base = f"model {model} │ agent {agent} │ cost ${cost:.4f} │ ctx {_ctx_pct(snap)}"
+    base = (
+        f"model {model} │ agent {agent} │ cost {cost_figure(snap)} "
+        f"│ ctx {_ctx_pct(snap)}"
+    )
     halted_reason = snap.get("halted_reason")
     if halted_reason:
         return f"⚠ HALTED — {halted_reason} — agent stopped accepting ops │ {base}"

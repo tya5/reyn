@@ -261,8 +261,8 @@ attractor 系 LLM 挙動問題は **下 layer から疑う**。 SP は最終手�
 - [industry tool discovery patterns survey](2026-05-07-industry-tool-discovery-survey.md)
 
 ### 関連 giveup-tracker entries
-- [G12: attractor variant family (Pattern E section)](../dogfood/giveup-tracker.md#g12)
-- [G23: intent-axis section is load-bearing routing scaffold](../dogfood/giveup-tracker.md#g23)
+- [G12: attractor variant family (Pattern E section)](../dogfood/giveup-tracker.md#g12-attractor-variant-family--weak-llm-の-must-rule-確率的不honor)
+- [G23: intent-axis section is load-bearing routing scaffold](../dogfood/giveup-tracker.md#g23-intent-axis-section-is-load-bearing-routing-scaffold--category-only-retry-succeeded)
 
 ### Commits
 - `dc8296f` Wave A trial (= reverted)
