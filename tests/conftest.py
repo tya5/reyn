@@ -480,6 +480,31 @@ def _isolate_rich_style_ansi_memo():
     for style in DEFAULT_STYLES.values():
         style._ansi = None
 
+
+@pytest.fixture(autouse=True)
+def _clear_find_project_root_cache() -> None:
+    """Reset `_find_project_root`'s process-global cache after every test (#3681).
+
+    `_find_project_root` (`reyn.config.loader`) is now `lru_cache`d, keyed on
+    the resolved starting path, so a single `reyn` process walks the
+    filesystem once per distinct starting directory instead of once per
+    caller (#3671 P4 item A-3: `reyn chat` alone called it 3x for the same
+    cwd — interactive-logging setup, `load_config()`,
+    `build_environment_backend()`). Safe in production (a process's own
+    `reyn.yaml` ancestry does not change mid-run); NOT safe across a whole
+    pytest session sharing one interpreter, where a `tmp_path`-based test
+    could in principle collide with a stale cached miss from an earlier
+    test's walk over the same absolute path (unlikely in practice — pytest's
+    `tmp_path` is unique per test — but not something to leave to chance
+    given how cheaply it is closed). Same shape as
+    `_isolate_rich_style_ansi_memo` above, for the same reason: a process-
+    global cache leaking across tests is bugs waiting for the wrong pair of
+    tests to run adjacently, not a bug already reproduced.
+    """
+    yield
+    from reyn.config.loader import _find_project_root_uncached
+    _find_project_root_uncached.cache_clear()
+
 # ── Marker registration ────────────────────────────────────────────────────────
 
 
