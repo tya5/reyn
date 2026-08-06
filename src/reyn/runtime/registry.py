@@ -437,6 +437,14 @@ class AgentRegistry:
         tracker = self._shared_budget_tracker()
         return tracker.agent_cost_usd(name) if tracker is not None else 0.0
 
+    def agent_unpriced_calls(self, name: str) -> int:
+        """How many of agent ``name``'s recorded LLM calls had no known price
+        (#3695) — the companion to :meth:`agent_cost_usd`, read off the SAME
+        process-shared tracker so the figure and its caveat can never come
+        from different places. Non-zero means that cost is a LOWER BOUND."""
+        tracker = self._shared_budget_tracker()
+        return tracker.agent_unpriced_calls(name) if tracker is not None else 0
+
     def agent_tokens(self, name: str) -> int:
         """All-time cumulative TOTAL tokens for agent ``name`` from the durable tracker (restart-
         surviving companion to ``agent_cost_usd``). Total only — the prompt/completion breakdown is
