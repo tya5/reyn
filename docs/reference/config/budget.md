@@ -79,7 +79,11 @@ USD cost is estimated via [LiteLLM's pricing lookup](https://github.com/BerriAI/
 after each call. Both proxy-mode (LiteLLM) and direct-API paths are supported.
 If the lookup returns no price for the model in use, the USD counter stays at
 `$0.0000` and only tokens accumulate. Token counts are always reliable
-regardless of pricing availability.
+regardless of pricing availability. An unpriced call is not silent, though:
+`BudgetTracker.agent_unpriced_calls(agent)` counts how many such calls that
+agent made, and a non-zero count means the displayed `$0.0000` is a **lower
+bound**, not the actual spend — a warning naming the unpriced model is also
+logged once per process.
 
 ## Slash commands
 

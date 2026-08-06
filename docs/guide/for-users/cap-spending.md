@@ -65,6 +65,9 @@ While `reyn chat` is running:
 - USD figures are estimated from [LiteLLM's pricing data](https://github.com/BerriAI/litellm).
   If a model has no price entry the dollar counter stays at `$0.00` but token
   counts are always accurate — so token caps work even when pricing is unknown.
+  An unpriced call isn't silent: a per-agent counter tracks how many such calls
+  happened, so a `$0.00` reading with a non-zero count means "unknown", not
+  "free."
 - A rate limit (`rate_limit_per_minute`) refuses calls until the 60-second
   window clears; Reyn does not auto-sleep, so the caller retries.
 
