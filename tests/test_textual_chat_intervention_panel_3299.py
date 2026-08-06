@@ -277,9 +277,16 @@ async def _settle_until(pilot, until) -> None:
     ``_settle``, and on #3651's rule: wait for a signal, never for a
     wall-clock guess. A hang here surfaces via CI's own kill-switch,
     naming this exact loop -- callers' own assertions still fail for the
-    real reason if the wait ever resolves on a false signal."""
-    while not until():
+    real reason if the wait ever resolves on a false signal.
+
+    ``pilot.pause()`` runs BEFORE every check, unconditionally -- it is
+    not just a delay, it is the pump that flushes pending UI messages, so
+    an already-true predicate must still get one pass before returning
+    (lead-coder review: checking first would silently skip that flush)."""
+    while True:
         await pilot.pause()
+        if until():
+            return
         await asyncio.sleep(0.01)
 
 
