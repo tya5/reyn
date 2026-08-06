@@ -97,12 +97,22 @@ def _sequenced_llm_stub(results: list[LLMToolCallResult]):
     return _stub
 
 
-async def _poll(pred, *, delay: float = 0.02) -> None:
+async def _poll(pred, *, task: "asyncio.Task | None" = None, delay: float = 0.02) -> None:
     """Poll for ``pred`` (#3748: unbounded, owner policy). A hang surfaces
     via CI's own kill, naming this exact loop -- callers' own assertions
     still fail for the real reason if the wait ever resolves on a false
-    signal."""
+    signal.
+
+    ``task``, when given, is the producer this predicate is waiting on
+    (``session.run()``'s task): if it dies before the predicate goes true,
+    that exception IS the real failure -- re-raising it beats an unbounded
+    loop hanging on a producer that will never satisfy the predicate again,
+    which would hide the exception behind a kill stack pointing only at
+    this loop (owner policy bans betting on elapsed time, not on ignoring
+    a dead producer)."""
     while not pred():
+        if task is not None and task.done():
+            task.result()
         await asyncio.sleep(delay)
 
 
@@ -162,7 +172,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         await session.submit_user_text("write the file")
         # The router turn reaches the out-of-zone write gate and dispatches the
         # approval prompt — the turn is now suspended awaiting the answer.
-        await _poll(lambda: session.interventions.head() is not None)
+        await _poll(lambda: session.interventions.head() is not None, task=run_task)
         head = session.interventions.head()
         assert head.kind == "permission.file.write"
         assert {c.hotkey for c in head.choices} == {"y", "j", "r", "N"}
@@ -176,12 +186,12 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         # resumes) rather than the file failing to appear -- a hang here IS
         # the regression, surfacing via the kill stack the same way it did
         # before this test existed.
-        await _poll(lambda: out.exists())
+        await _poll(lambda: out.exists(), task=run_task)
         assert out.read_text() == "written ok"
         # The intervention future resolved: nothing pending, and the
         # permission_granted event the reporter found MISSING is now emitted.
         assert session.interventions.head() is None
-        await _poll(lambda: str(out) in _granted_paths(session))
+        await _poll(lambda: str(out) in _granted_paths(session), task=run_task)
     finally:
         await session.shutdown()
         try:
@@ -216,12 +226,12 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
     run_task = asyncio.create_task(session.run())
     try:
         await session.submit_user_text("read the outside file")
-        await _poll(lambda: session.interventions.head() is not None)
+        await _poll(lambda: session.interventions.head() is not None, task=run_task)
         assert session.interventions.head().kind == "permission.file.read"
 
         await route_input_line(_transport_for(session), "y", None)
 
-        await _poll(lambda: str(outside) in _granted_paths(session))
+        await _poll(lambda: str(outside) in _granted_paths(session), task=run_task)
         assert session.interventions.head() is None
     finally:
         await session.shutdown()
