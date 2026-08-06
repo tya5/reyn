@@ -93,13 +93,21 @@ def _sequenced_llm_stub(results: "list[LLMToolCallResult]"):
     return _stub
 
 
-async def _poll(pred, *, attempts: int = 150, delay: float = 0.02) -> bool:
-    """Bounded poll — a hang exhausts the budget and returns False (RED)."""
-    for _ in range(attempts):
-        if pred():
-            return True
+async def _poll(pred, *, task: "asyncio.Task | None" = None, delay: float = 0.02) -> None:
+    """Poll for ``pred`` (#3748: unbounded, owner policy). A hang surfaces
+    via CI's own kill, naming this exact loop -- callers' own assertions
+    still fail for the real reason if the wait ever resolves on a false
+    signal.
+
+    ``task``, when given, is the producer this predicate is waiting on
+    (``session.run()``'s task, mirrors ``test_cui_permission_answer_
+    resumes_2690.py``'s fix): if it dies before the predicate goes true,
+    that exception IS the real failure -- re-raising it beats hanging on a
+    producer that will never satisfy the predicate again."""
+    while not pred():
+        if task is not None and task.done():
+            task.result()
         await asyncio.sleep(delay)
-    return False
 
 
 def _make_session(project_root: Path, *, wal: Path, snap: Path) -> Session:
@@ -116,7 +124,7 @@ def _make_session(project_root: Path, *, wal: Path, snap: Path) -> Session:
 
 
 async def _start_blocked_write_turn(
-    session: Session, monkeypatch, *, out: Path,
+    session: Session, monkeypatch, *, out: Path, run_task: "asyncio.Task",
 ) -> None:
     """Drives the router to the out-of-zone write permission prompt and
     leaves the turn suspended awaiting the answer — the exact precondition
@@ -133,9 +141,7 @@ async def _start_blocked_write_turn(
         ]),
     )
     await session.submit_user_text("write the file")
-    assert await _poll(lambda: session.interventions.head() is not None), (
-        "the file-write approval prompt never appeared"
-    )
+    await _poll(lambda: session.interventions.head() is not None, task=run_task)
 
 
 @pytest.mark.asyncio
@@ -165,7 +171,7 @@ async def test_answer_command_dispatches_immediately_while_turn_blocked(
     )
     run_task = asyncio.create_task(session.run())
     try:
-        await _start_blocked_write_turn(session, monkeypatch, out=out)
+        await _start_blocked_write_turn(session, monkeypatch, out=out, run_task=run_task)
         head = session.interventions.head()
         assert head.kind == "permission.file.write"
         prefix = head.id[:8]
@@ -178,11 +184,7 @@ async def test_answer_command_dispatches_immediately_while_turn_blocked(
             "the client slash layer did not claim the /answer line"
         )
 
-        assert await _poll(lambda: out.exists()), (
-            "the write never completed after /answer — the direct-delivery "
-            "bypass did not actually resolve the blocked intervention "
-            "(#3327 deadlock)"
-        )
+        await _poll(lambda: out.exists(), task=run_task)
         assert session.interventions.head() is None
     finally:
         await session.shutdown()
@@ -198,9 +200,19 @@ async def test_strip_falsify_queued_answer_path_deadlocks(tmp_path, monkeypatch)
     """Tier 2: ★non-vacuity / strip-falsify for gate 1+2 — proves the deadlock
     this PR fixes is REAL: with ``/answer`` submitted the OLD way (straight
     to ``submit_user_text``, the sent-queue's normal path, never through
-    the command path), the intervention NEVER resolves within a
-    generous poll budget, because the turn that would dequeue it is the SAME
-    turn blocked awaiting it.
+    the command path), the message sits durably QUEUED (never dispatched)
+    forever, because the turn that would dequeue it is the SAME turn
+    blocked awaiting the intervention it targets.
+
+    #3748 decomposition (owner policy: no test may bet on elapsed time,
+    including betting that N ticks of *nothing happening* proves a
+    deadlock — a real deadlock never resolves, so no wait, bounded or
+    not, could honestly stand in for it): asserted directly and
+    synchronously via the mechanism itself, ``queued_user_messages()``
+    (the server-authoritative undispatched-sent-queue accessor,
+    #3300 P2a) — ``submit_user_text`` durably persists to it before
+    returning, so no race and no wait are needed to observe the message
+    is stuck there.
 
     This demonstrates the OLD seam (``submit_user_text`` alone) still
     deadlocks on the current tree exactly as before #3327 — the fix only
@@ -217,23 +229,30 @@ async def test_strip_falsify_queued_answer_path_deadlocks(tmp_path, monkeypatch)
     )
     run_task = asyncio.create_task(session.run())
     try:
-        await _start_blocked_write_turn(session, monkeypatch, out=out)
+        await _start_blocked_write_turn(session, monkeypatch, out=out, run_task=run_task)
         head = session.interventions.head()
         prefix = head.id[:8]
 
         # The OLD (pre-#3327) seam: straight to submit_user_text, exactly
         # what a queued Composer submission does — no direct-delivery bypass.
-        await session.submit_user_text(f"/answer {prefix} y")
+        msg_id = await session.submit_user_text(f"/answer {prefix} y")
 
-        resolved = await _poll(lambda: out.exists(), attempts=25, delay=0.02)
-        assert resolved is False, (
-            "the queued-only /answer path resolved the intervention — the "
-            "deadlock this test documents did not reproduce, so the "
-            "companion positive test is not proving what it claims to prove"
+        # The message must land in the undispatched sent-queue -- structural
+        # proof it can never be consumed (the sole inbox consumer is this
+        # same still-blocked turn), not a timing observation.
+        queued_ids = {m["msg_id"] for m in session.queued_user_messages()}
+        assert msg_id in queued_ids, (
+            "the queued-only /answer path was never durably queued — this "
+            "test can't demonstrate the deadlock if the message never "
+            "entered the sent-queue to begin with"
         )
         assert session.interventions.head() is not None, (
             "the intervention resolved some other way — the queued /answer "
             "must remain stuck for this to be a genuine deadlock witness"
+        )
+        assert not out.exists(), (
+            "the write completed despite the /answer never dispatching — "
+            "contradicts the deadlock this test documents"
         )
     finally:
         await session.shutdown()
@@ -262,7 +281,7 @@ async def test_ordinary_submission_still_queues_during_busy_turn(tmp_path, monke
     )
     run_task = asyncio.create_task(session.run())
     try:
-        await _start_blocked_write_turn(session, monkeypatch, out=out)
+        await _start_blocked_write_turn(session, monkeypatch, out=out, run_task=run_task)
         transport, display = _transport_for(session)
 
         delivered = await maybe_dispatch_slash(transport, "just a normal message")
@@ -328,7 +347,7 @@ async def test_unrelated_slash_command_during_pending_intervention_never_answers
     )
     run_task = asyncio.create_task(session.run())
     try:
-        await _start_blocked_write_turn(session, monkeypatch, out=out)
+        await _start_blocked_write_turn(session, monkeypatch, out=out, run_task=run_task)
         transport, display = _transport_for(session)
 
         consumed = await maybe_dispatch_slash(transport, "/model gpt-fake")
