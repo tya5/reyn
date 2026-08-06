@@ -98,6 +98,23 @@ async def _settle(pilot, times: int = 4) -> None:
         await pilot.pause()
 
 
+async def _until(pred, *, attempts: int = 300, delay: float = 0.02) -> bool:
+    """Bounded poll (#3746-shaped fix, applied here too, see
+    ``test_the_clock_advances_without_any_delta_arriving``) — a hang exhausts
+    the budget and returns False (RED), never hangs the suite. 300 * 0.02 = 6s
+    ceiling, comfortably above ``ActivityRow.TICK_SECONDS`` (1.0s) even under
+    real CI load, while still genuinely requiring the row's own
+    ``set_interval`` timer to have fired at least once — this polls for the
+    OBSERVABLE effect of that firing, it never calls ``tick()`` directly
+    (which would pass even if ``on_mount``'s ``set_interval`` call were
+    silently removed, the exact regression this test exists to catch)."""
+    for _ in range(attempts):
+        if pred():
+            return True
+        await asyncio.sleep(delay)
+    return False
+
+
 # ── the row's own text: what it may and may not claim ────────────────────────
 
 
@@ -339,9 +356,20 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
 
     Deliberately driven with NO frames at all. A gate that pushed deltas would
     go green on the side-effect path this exists to replace.
-    """
-    import asyncio as _asyncio
 
+    ★ #3746-shaped fix: a fixed ``asyncio.sleep(TICK_SECONDS * 1.4)`` waits on
+    the row's real ``set_interval`` timer (``activity_row.py``, real
+    wall-clock, NOT the injected ``clock`` above — same mechanism #3746 found
+    in ``app.py``'s streaming catch-up timer) with a FIXED margin, which a
+    loaded CI runner can exceed. Unlike #3746's coalesce test, this one CANNOT
+    simply disable the real timer — the timer firing on its own schedule IS
+    the property under test (the docstring's own point: a gate driven by
+    calling ``tick()`` directly would go green on the exact side-effect path
+    this test exists to replace). Fixed by polling for the OBSERVABLE effect
+    (the render text actually changing) with a generous bounded ceiling
+    instead of a single fixed sleep — still requires the real timer to have
+    fired, just tolerant of how long that takes under load.
+    """
     ticks: "list[float]" = [1000.0]
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: ticks[0])
@@ -354,11 +382,9 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
 
         # Time passes; nothing arrives.
         ticks[0] += 75.0
-        await _asyncio.sleep(ActivityRow.TICK_SECONDS * 1.4)
-        await _settle(pilot)
-
-        after = str(row.render())
-        assert after != before, (
+        assert await _until(lambda: str(row.render()) != before), (
             f"the elapsed time did not move while the turn ran: {before!r}"
         )
+
+        after = str(row.render())
         assert "01:15" in after, f"the clock is not tracking the real gap: {after!r}"
