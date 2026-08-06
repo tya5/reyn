@@ -100,7 +100,7 @@ CI-green`): ruff `I001` import-sort and a Tier-4 format pin (`len(...) == N`)
 both fail CI while `pytest` passes. Details + the Tier-4 → behavioral-assertion
 fix idioms: `docs/deep-dives/contributing/testing.md` § "Before you push".
 
-Three rules then keep multi-session work coherent:
+These rules then keep multi-session work coherent:
 
 1. **Finish your own Test plan before merge.** PR authors run every
    Manual / Visual item in the Test plan and tick the box, or replace
