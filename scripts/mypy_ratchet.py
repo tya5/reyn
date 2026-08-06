@@ -35,6 +35,22 @@ this way, a genuinely NEW finding in an already-baselined file for a
 DIFFERENT code is still visible — only the exact ``(file, code)`` pairs
 already declared are grandfathered.
 
+The chosen grain has a known, accepted cost (#3738 review): a genuinely NEW
+finding of the SAME code in a file that already carries that code is
+INVISIBLE — grandfathered under the existing pair, same as a real fix would
+be. Confirmed live: tightening a constructor's type in #3738 introduced a
+real new ``[arg-type]`` error in ``session.py``, which already carries an
+``[arg-type]`` baseline entry from an unrelated pre-existing finding — the
+ratchet stayed green. ``(file, line, code)`` would close this, but line
+numbers do not survive an unrelated edit shifting them on a moving ``main``
+— regenerating the baseline to follow line drift is indistinguishable from
+regenerating it to silence a real new failure, which is the one way this
+module's own docstring already names as defeating the ratchet. So the
+coarser grain is a deliberate trade, not an oversight: it buys stability
+across unrelated edits at the cost of blindness to same-code same-file
+recurrences, and the latter needs a human (or a future, sharper gate) to
+catch, same as any other grandfathered debt in this baseline.
+
 The 76 ``reyn.config`` re-export false positives (#1682's ``_reexport()``,
 invisible to mypy's static analysis, documented in #3726's own triage) stay
 IN the baseline rather than being carved out via a per-module mypy
