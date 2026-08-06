@@ -1271,7 +1271,12 @@ class TextualChatApp(App):
         # the same path to the composer they did before it existed.
         #: #3712: how many entries the flow held when the reader last left the
         #: newest output, or ``None`` while they are on it.
-        self._tail_left_at: "int | None" = None
+        #: Whether the conversation is following the newest output. Starts
+        #: true: an empty flow is, trivially, showing all of it.
+        self._following_tail = True
+        #: Entries that have landed since the reader left the tail, counted as
+        #: they arrive rather than derived from two reads of the model.
+        self._away_arrivals = 0
         self._activity = ActivityRow(id="activity-row", clock=self._clock)
         yield self._activity
         self._sent_queue = SentQueue(id="sent-queue")
@@ -2099,91 +2104,57 @@ class TextualChatApp(App):
         # must go with the keystroke and not a frame later. The deferred path
         # still runs and agrees — it simply must not be what the answer waits
         # on, since a quiet moment produces no further frame.
-        self._tail_left_at = None
+        self._away_arrivals = 0
+        self._following_tail = True
         self._activity.set_behind(None)
 
     def _refresh_tail_indicator(self, *, reset: bool = False) -> None:
-        """Recompute how far the reader is from the newest output.
+        """Update whether the reader is on the newest output, and how much they
+        have missed.
 
-        The count is ENTRIES landed since they left, not rows: an entry is the
-        unit the reader would have seen arrive, and a row count would change
-        under them as a streamed reply grew without anything new happening.
+        The count is not a difference between two observations. Comparing "how
+        many entries there were when they left" with "how many there are now"
+        makes the answer depend on WHEN each side was sampled — measured, the
+        deferred read landed before the arriving entry on one run and after it
+        on the next, giving +1 and 0 for the same events. That is a property of
+        the method, not a bug in it.
 
-        Reads the scroll position rather than tracking a "following" flag,
-        because the flag and the view can disagree — the position is the fact.
+        So the arrivals are counted where they happen instead: every entry that
+        lands while the reader is away increments a counter, and returning to
+        the tail zeroes it. Nothing remembers a baseline, so nothing can sample
+        one at the wrong moment.
         """
-        # Deferred to after the next refresh, because the answer needs a
-        # LAID-OUT view. Measured on the same beat an entry lands, the scroll
-        # offset has not caught up with the taller content and the gap reads
-        # as "they scrolled away": a reply arriving in 30 deltas latched a
-        # baseline of 13 entries and reported 27 arrivals to a reader who
-        # never left the tail. The latch then needed another frame to clear
-        # it — and the end of a burst is exactly when no further frame comes,
-        # so the wrong baseline survived the rest of the session.
         self.call_after_refresh(self._measure_tail_position, reset)
 
     def _measure_tail_position(self, reset: bool = False) -> None:
-        """The half of :meth:`_refresh_tail_indicator` that reads the view."""
+        """Read the view and settle whether the reader is following the tail.
+
+        Deferred to after a refresh because it needs a laid-out view: on the
+        beat an entry lands, the scroll offset still trails the taller content
+        and that gap reads as "they scrolled away".
+        """
         try:
             flow = self.query_one(FlowView)
         except Exception:
             return
-        # ``scroll_target_y``, not ``scroll_y``: while entries are appending,
-        # the view is ON its way to the bottom and the CURRENT offset lags the
-        # bottom for a frame or two. Reading the current offset counts that lag
-        # as the reader having scrolled away — measured, a reply arriving in 30
-        # deltas reported 27 arrivals to somebody who never left the tail. The
-        # target is where the view is going, which is what "following" means.
         at_tail = flow.scroll_target_y >= flow.max_scroll_y
         if at_tail or reset:
-            self._tail_left_at = None
-            self._activity.set_behind(None)
-            return
-        if self._tail_left_at is None:
-            self._tail_left_at = len(flow.entries)
-        behind = len(flow.entries) - self._tail_left_at
-        self._activity.set_behind(behind or None)
-    def _apply_compact_layout(self) -> None:
-        """Re-decide how much room the transient regions may take (#3680).
+            self._away_arrivals = 0
+            self._following_tail = True
+        else:
+            self._following_tail = False
+        self._activity.set_behind(self._away_arrivals or None)
 
-        Called whenever the answer can change: a resize, or a region opening or
-        closing. The decision itself is :func:`compact_caps` — a pure function
-        of the height and what is open — so the policy can be read and tested
-        without a terminal, and this stays the wiring only.
+    def _note_entry_landed(self) -> None:
+        """One entry arrived — count it if the reader is not there to see it.
 
-        Every region it shrinks still holds everything it had: the drawer, the
-        picker and the completion popup scroll (#3688/#3699), and the queue
-        keeps every item behind its count. Nothing here drops content to make
-        room, which is the line #3688 established.
+        Called from the frame pump as the entry lands, i.e. by the producer of
+        the event rather than by a later reader of the model. ``LIVE +N`` says
+        how many things happened; the things themselves are what know.
         """
-        try:
-            queue = self.query_one(SentQueue)
-            drawer = self.query_one("#drawer", ContentSwitcher)
-        except Exception:
-            return  # before compose, or after teardown: nothing to decide
-        caps = compact_caps(
-            self.size.height,
-            drawer_open=bool(drawer.display),
-            rewind_open=bool(self._rewind_picker.display),
-            completion_open=bool(self._completion.display),
-            queue_items=len(queue.rendered_texts()) if queue.has_items() else 0,
-            turn_active=self._activity.state is not None,
-            intervention_open=bool(self._iv_panel.display),
-        )
-        if drawer.display and not caps["drawer"]:
-            # Priority 7: there is no height at which this fits and leaves a
-            # readable conversation, so it closes rather than becoming a
-            # sliver that has taken the conversation with it.
-            self._open_drawer(None)
-            return
-        drawer.styles.max_height = caps["drawer"] or None
-        self._rewind_picker.styles.max_height = caps["rewind"] or None
-        self._completion.styles.max_height = caps["completion"] or None
-        queue.set_summarised(queue.has_items() and not caps["queue"])
-
-    def on_resize(self, event) -> None:
-        """A resize changes the whole answer, so re-decide (#3680)."""
-        self._apply_compact_layout()
+        if not self._following_tail:
+            self._away_arrivals += 1
+            self._activity.set_behind(self._away_arrivals)
 
     async def action_cancel_turn(self) -> None:
         """ctrl+c: cooperatively interrupt the in-flight turn (#3498).
@@ -2548,6 +2519,9 @@ class TextualChatApp(App):
                 )
                 return
         entry = self.conversation.append(msg)
+        # #3712: an entry just arrived. Counted HERE, by the thing that
+        # produced it — not reconstructed later from two reads of the model.
+        self._note_entry_landed()
         if kind == "intervention":
             self._present_intervention(msg, entry)
         else:
@@ -3362,6 +3336,10 @@ class TextualChatApp(App):
         if existing is None:
             from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
 
+            # #3712: the reply's own entry, created once when its first delta
+            # lands. The 29 deltas that follow fold into it and are not
+            # arrivals — one thing arrived, and this is where that is known.
+            self._note_entry_landed()
             entry = self.conversation.append(
                 OutboxMessage(kind="agent", text=text, meta={"chain_id": chain_id})
             )
@@ -3814,6 +3792,11 @@ class TextualChatApp(App):
                     # false positive above, and the reason this sits beside
                     # ``_refresh_live_chrome``, which learned the same lesson
                     # in #3338.
+                    # #3712: count what LANDED, then re-read where the reader
+                    # is. Order matters and is fixed here rather than left to
+                    # scheduling: an entry that arrives while they are away is
+                    # counted by the arrival itself, so no later read has to
+                    # reconstruct it from a remembered baseline.
                     try:
                         self._refresh_tail_indicator()
                     except Exception:
