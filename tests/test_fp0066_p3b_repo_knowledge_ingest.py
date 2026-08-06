@@ -147,21 +147,24 @@ async def _await_scheduled_source_build(
     and returns before the task has had a single event-loop tick to run —
     the manifest entry does not exist yet, so ``search_await`` (the public
     completion-await surface) would see "no entry" and take its no-op
-    branch, never actually awaiting anything. The bounded loop below gives
-    the scheduled task event-loop ticks (``asyncio.sleep(0)`` — a
-    cooperative yield, not a timed wait) until the manifest entry exists
+    branch, never actually awaiting anything. The loop below gives the
+    scheduled task event-loop ticks until the manifest entry exists
     (``_run_build``'s first line is ``await self._set_state(source_id,
     "building")``, so the entry appears as soon as the task gets to run at
     all); ``search_await`` then hands off to the coordinator's own
-    ``_bg_tasks`` await, which is the actual completion signal. The loop
-    bound (2000 ticks) is a safety net against a genuinely broken scheduler,
-    not a timing budget — if the entry never appears, ``search_await`` still
-    no-ops and the caller's own state assertion goes red for the real
-    reason (state never reached "clean"), rather than this helper hanging."""
-    for _ in range(2000):
-        if await manifest.get(source_id) is not None:
-            break
-        await asyncio.sleep(0)
+    ``_bg_tasks`` await, which is the actual completion signal.
+
+    #3748: unbounded (owner policy) -- was a 2000-tick safety net against a
+    genuinely broken scheduler. No terminating assert: the loop condition
+    IS that check, so a hang here (CI's own kill-switch) is now the honest
+    failure record, in place of the no-op-then-red-for-the-real-reason
+    fallback the bound used to route through. ``sleep(0.01)`` not
+    ``sleep(0)``: unbounded + a pure scheduler yield hot-spins one core for
+    the life of a genuine hang, starving ``-n auto`` siblings for the whole
+    CI kill window; a real delay costs nothing once the predicate is
+    already true (normally within one tick)."""
+    while await manifest.get(source_id) is None:
+        await asyncio.sleep(0.01)
     await coordinator.search_await(source_id)
 
 
