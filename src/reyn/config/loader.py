@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import socket
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -318,9 +319,19 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
     return result
 
 
-def _find_project_root(start: Path) -> Path | None:
-    """Walk up from start until finding reyn.yaml, or return None."""
-    current = start.resolve()
+# maxsize=None (unbounded): keys are distinct resolved cwd-like starting
+# paths a single process is asked about, naturally a handful at most
+# (production callers all resolve from `Path.cwd()`) — not a value with
+# unbounded cardinality over a process's lifetime.
+@lru_cache(maxsize=None)
+def _find_project_root_uncached(resolved_start: Path) -> Path | None:
+    """The actual filesystem walk — never call directly, see `_find_project_root`.
+
+    ``resolved_start`` must already be resolved (the caller does this once,
+    so this cached function's key is the real, canonical path — an
+    unresolved and a resolved path pointing at the same directory must hit
+    the same cache entry, not two)."""
+    current = resolved_start
     while True:
         if (current / "reyn.yaml").exists():
             return current
@@ -328,6 +339,31 @@ def _find_project_root(start: Path) -> Path | None:
         if parent == current:
             return None
         current = parent
+
+
+def _find_project_root(start: Path) -> Path | None:
+    """Walk up from start until finding reyn.yaml, or return None.
+
+    #3681 (#3671 P4 item A-3): single-owner cache keyed on the resolved
+    ``start`` path, so a process that calls this N times for the same
+    starting directory (`reyn chat` alone did it 3x: interactive-logging
+    setup, `load_config()`, `build_environment_backend()`) walks the
+    filesystem once, not N times, WITHOUT any caller needing to thread a
+    pre-computed value through — the fix an optional `project_root=` kwarg
+    (rejected, #3678 review) could not give: a caller that forgets to pass
+    it silently reverts to walking again, undetectably.
+
+    A real `reyn` process runs this walk against a project directory whose
+    ancestor `reyn.yaml` presence does not change mid-run, so this is safe
+    in production. It is NOT safe across a whole pytest session sharing one
+    interpreter, where many tests write a fresh `reyn.yaml` under a
+    `tmp_path` after this may have already cached a miss for that exact
+    path — `tests/conftest.py`'s `_clear_find_project_root_cache` autouse
+    fixture clears the cache before every test so each test's own writes
+    are observed. Call :func:`_find_project_root_uncached`'s own
+    ``cache_clear()`` directly if a test needs to invalidate mid-test
+    (querying the same path, writing `reyn.yaml`, then querying again)."""
+    return _find_project_root_uncached(start.resolve())
 
 
 def _warn_legacy_dot_reyn_config(path: Path) -> None:
