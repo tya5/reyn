@@ -2094,7 +2094,13 @@ class TextualChatApp(App):
         except Exception:
             return
         flow.scroll_end(animate=False)
-        self._refresh_tail_indicator(reset=True)
+        # Cleared HERE rather than through the deferred measurement: the
+        # operator just asked to be back at the newest output, so the indicator
+        # must go with the keystroke and not a frame later. The deferred path
+        # still runs and agrees — it simply must not be what the answer waits
+        # on, since a quiet moment produces no further frame.
+        self._tail_left_at = None
+        self._activity.set_behind(None)
 
     def _refresh_tail_indicator(self, *, reset: bool = False) -> None:
         """Recompute how far the reader is from the newest output.
@@ -3790,14 +3796,6 @@ class TextualChatApp(App):
                                 "textual chat: frame ingest failed for kind=%r",
                                 msg.kind,
                             )
-                        # #3712: an entry just landed, which is the only moment
-                        # the "how far behind" count can grow. Recomputed from
-                        # the scroll position rather than incremented, so it
-                        # cannot drift from what the view actually shows.
-                        try:
-                            self._refresh_tail_indicator()
-                        except Exception:
-                            logger.exception("textual chat: tail indicator failed")
                 # F5b + #3338: refresh the live chrome (the always-visible
                 # status-values line, plus whichever drawer pane is OPEN) on EVERY
                 # frame — DISPLAY **and** EVENT alike. This used to sit inside the
