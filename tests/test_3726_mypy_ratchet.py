@@ -101,7 +101,7 @@ def test_measured_set_equal_to_baseline_is_clean() -> None:
     assert module.new_findings(pairs, pairs) == set()
 
 
-# ── syntax_pairs_in (#3727 row #10) ─────────────────────────────────────────
+# ── syntax_pairs_in (#3727, verification-hazards.md §18 "B. Misidentification") ──
 
 
 def test_a_syntax_pair_is_extracted_from_measured() -> None:

@@ -555,6 +555,195 @@ N, name every location the defect COULD live (adjacent files in the same
 subsystem, a dependency's own source, a sibling directory) and confirm each
 was actually searched, not just the one that felt likely.
 
+## 18. A claim's subject can fail to hold up three different ways — existence, identity, and effect need different detection
+
+The following shape recurred across several independent sessions and layers
+on 2026-08-06. The exact count that surfaced it isn't the point — how many
+turned up depends entirely on who was looking and at what, which is itself
+§17's hazard turned on this section: **describe the recurring shape, not a
+census of it.**
+
+A first framing tried to unify all of it as "the check verified the CONTENT
+of a claim without verifying the claim's own PREMISE exists" — close, but
+too coarse to prescribe anything: it collapses onto three distinct failure
+sites, each needing a different detection technique, and folding them
+together makes the prescription disappear along with the distinction.
+
+| Shape | What's actually wrong | Detection technique |
+|---|---|---|
+| **A. Absence** | The named thing — a caller, a method, an attribute, a keyword — does not exist at all | Symbol resolution (AST, a type checker). Grep cannot do this: it reports what matched, and a thing that was never written produces no non-match to report either — silence looks identical whether the thing is absent or merely unsearched (§17) |
+| **B. Misidentification** | Something real was measured, but it isn't the thing the claim is about | Prove the identity of what's being measured — version, tree, file kind — *before* trusting what it reports, not after a result looks wrong |
+| **C. Inert** | The right, real object was found, but it has no observable effect | Strip it and watch for a change. A generic gate for "this declaration does nothing" can't exist (the property is semantic, not structural — see the closing note below); a gate for one *specific* inert-declaration shape can |
+
+### A. Absence
+
+- `ActivityRow.tick()` was defined but had zero callers anywhere in `src` or
+  `tests` — the elapsed clock only advanced as a side effect of
+  `specialise()` on each streamed delta, so it froze during tool execution
+  and after the stream ended (#3713, caught in review by `git grep -n
+  'tick(' -- src tests` turning up only the definition).
+- A `compact_caps` method call landed in `app.py` while the method itself
+  was never added — the author's own account: "I anchored the edit on a
+  name that exists only on another branch, so the call sites landed and the
+  method did not. `ruff` passes on a call to a method that does not exist;
+  only running it showed the `AttributeError`" (#3724).
+- `fv.cursor` was read as an existence check ("does the cursor API work") —
+  it returned `None`, misread as "the feature doesn't work," when the real
+  fact was simpler: 0.12.0 renamed the whole cursor model, and `.cursor`
+  was never an attribute on this version at all (`action_highlight_*` is
+  the real surface) — reading a nonexistent attribute returns `None` the
+  same way a real-but-empty one would, so the absence was invisible at the
+  read site (#3692, still open pending a real keypress measurement).
+- A PR's body was missing the `Closes #3716` keyword it needed —
+  `closingIssuesReferences` came back empty. The reviewer's own account of
+  the miss: "I checked whether the keyword was *valid*, not whether it was
+  *present*" (#3722/#3716) — a check aimed at the wrong absence.
+
+Two of these (`compact_caps`, `fv.cursor`) are exactly what a type checker
+exists to catch — a call/read against a symbol the checker can prove
+doesn't exist on the target type. `pyproject.toml` had `[tool.mypy]`
+configured since before any of this, with no CI job ever running it — a
+declared check with no execution is the same shape as everything else in
+this doc, one layer up, in the CI configuration itself (#3726). Landing it
+hit a real first obstacle: mypy aborted on `config/root.py` with `Invalid
+syntax`, on a file that parses fine under `ast.parse` — not a real syntax
+error, an unidentified mypy-specific one, left named rather than guessed at
+(#3728 unblocked it). The resulting ratchet (`scripts/mypy_ratchet.py`,
+`(file, error-code)` pairs against a baseline, new pairs fail CI) writes
+its stop condition into the FAILING MESSAGE ITSELF, not only its docstring
+— the place a reader actually receives it inside a red report, per
+architect's co-vet correction that this is the sharper form:
+
+> "\[syntax\] above is not "one more red": a fatal parse error stops mypy's
+> ENTIRE run, so no other file was actually checked this time — every OTHER
+> pair this run's output doesn't mention is UNMEASURED, not confirmed
+> clean. Fix the \[syntax\] finding first; nothing else this run says can
+> be trusted until it's gone."
+
+`--write-baseline` also refuses outright when a `[syntax]` pair is present,
+rather than silently baking a permanently-truncated run in as "clean"
+forever (verified live: injecting a `# type:`-prefixed prose line and
+running the ratchet FAILED with exactly this message, and a baselined
+`[syntax]` pair still fails on every subsequent run rather than reading as
+known debt).
+
+The `tick()`/`compact_caps`/`fv.cursor`/`Closes` shape itself — "prove the
+named symbol resolves" as a class, beyond what mypy already covers for
+method/attribute calls — is **not yet machinized**, not because it can't
+be: a caller-count-zero check is exactly what an AST closure test already
+does for a different defect (#3714, enumerating every `Path(".reyn")`-style
+site against an explicit allowlist so a new stray site or a reverted fix
+both fail loud) — the same technique, unbuilt for this particular symbol
+class. That same closure test's own blind spot is instructive: it verifies
+literal syntactic patterns, so a call that reaches the identical unresolved
+premise through a DIFFERENT shape — `list_entries()`/`find_one()` called
+with no arguments at all, defaulting internally to the same cwd-relative
+path the closure test's patterns were built to catch — passed through
+unseen, because it never wrote the literal expression being scanned for
+(#3721). Closure-by-AST closes the pattern it enumerates, not the defect
+class the pattern was standing in for. The `Closes #N` keyword case already
+HAS a gate (`scripts/check_pr_closing_intent.py`, comparing a PR body's
+declared intent against GitHub's own `closingIssuesReferences` parse) — its
+absence here was a human declining to run/trust the existing gate, not a
+missing one.
+
+### B. Misidentification
+
+- A completeness-claiming gate script did `"@quiet@" in path.read_text(...)`
+  — a raw substring match over the whole file — and false-fired on its own
+  fix's explanatory code comment (`# color: @quiet@, and measured...`),
+  counting prose as a live declaration. The file's own `_colour_values()`
+  helper already skipped comment/docstring lines; the new gate bypassed
+  that guard by reading raw text instead of going through it (#3718). The
+  same day, a different PR chose AST over grep for an analogous reason,
+  explicitly to avoid "false-triggering on comment/docstring mentions"
+  (#3714) — both the trap and its avoidance landed the same day, in the
+  same repo.
+- Four independent sessions measured against a **mis-pinned**
+  `textual-flowview`: two had it frozen at an old version (0.8.0/0.9.0
+  against a 0.12.0 pin), and a fourth had the right *version* but was
+  reading a local working copy — invisible to a version-only check, since
+  the version string can agree while the actual code doesn't (#3723).
+  Concrete cost: one session nearly reported a real regression as
+  "pre-existing on `main`"; another (this session) wrote an incorrect
+  "existing defect on main" characterization into a merged PR's own test
+  plan, later corrected. The fix (`scripts/verify_env_identity.py`, #3723
+  → #3725) reads `importlib.metadata`'s `direct_url.json` and the package's
+  actual import origin — never imports the package to ask it about itself
+  — and derives the expected commit from `pyproject.toml`'s own pin string
+  rather than hardcoding it (a hardcoded expectation would drift the next
+  time the pin moves, reproducing this exact hazard one layer up). A
+  session-scoped autouse fixture aborts the *whole run* via `pytest.exit()`
+  on mismatch, not one failing test, so a stale pin can't be a single red
+  a busy session scrolls past. `local-copy` (version matches, provenance
+  doesn't) is deliberately NOT a silent pass: it requires a non-empty
+  `REYN_FLOWVIEW_LOCAL_COPY="<reason>"` to downgrade from abort to a
+  `warnings.warn()` that lands in pytest's own summary next to the run it
+  qualifies — an unconditional abort here was tried first and rejected,
+  because "not itself forbidden" needs a way to say so, not just a bigger
+  hammer.
+
+**This is where B combines with §16**, not a coincidence: the sessions that
+trusted a stale environment did so *because* their result matched `main`'s
+— an equality read as confirmation, when both sides were victims of the
+identical stale pin. §16's missing premise is *independence* (are the two
+things being compared able to fail differently); B's missing premise is
+*identity* (is the thing being measured the thing the claim is about) — but
+a stale-pin B instance and a matches-main §16 read are the same event
+looked at from two premises, and either alone explains why nobody caught it
+sooner.
+
+Misidentification isn't confined to code. The same day, one reviewing
+session logged eleven separate instrument misses of the same shape, several
+during this section's own preparation — each returned `0`, and in every
+case the `0` meant "didn't look," not "isn't there": a `from ... import`
+binding that a `monkeypatch` couldn't reach because the patch target and
+the imported name were never the same object; `path.open()` calls that
+don't route through a `builtins.open` patch, because the method resolves on
+the `Path` type, not the builtin; a character class silently dropping `_`
+from what it was meant to match; a function-name filter that excluded any
+call site using the keyword form (`inbox_kind=...`) because the filter only
+matched positional call shapes. None of these are exotic — each is a
+plausible-looking probe that quietly measures less than it claims to, and
+the `0` it returns is indistinguishable, at the call site, from a genuine
+absence.
+
+### C. Inert
+
+`ActivityRow` declared `color: @quiet@` — a real, correctly-typed CSS
+declaration on the right widget. Measured under the `ansi-dark` theme, it
+resolved to the exact same `Color` value as ordinary body text: the
+declaration existed, named the right object, and did nothing (#3718 — the
+same #3523/#3686 lineage already covered in §9's neighbourhood of this
+doc). The fix removed the declaration outright rather than swapping to a
+different token, because the row exists specifically to stay visible while
+a turn is live — "recede less" was the wrong instinct for this widget, not
+just the wrong shade.
+
+**This one is architecturally different from A and B, and the section
+would be dishonest to present it as "just not machinized yet."** A general
+gate for "this style declaration has no effect" can't exist as one check:
+whether a declaration is inert depends on the full cascade, the active
+theme, and which OTHER declaration is already producing the visible effect
+— a semantic question, not a structural one, and a semantic class doesn't
+reduce to a low-false-positive gate — a review co-vet's own recurring
+ruling on this exact point. What #3370 built and this domain reuses is
+narrower and does work: a foreground/background
+contrast-floor check evaluated on the RESOLVED value, after theme
+resolution, not on the source token — a real, computable comparison for
+"can a human read this," which is a strictly smaller question than "does
+this declaration do anything at all."
+
+**Apply**: before trusting a claim, ask which of the three premises it
+depends on is actually established — that the named thing EXISTS (resolve
+the symbol, don't grep for it), that what was MEASURED is the thing the
+claim is about (prove identity — version, tree, kind — before trusting the
+result), or that a real, correctly-identified thing has an observable
+EFFECT (strip it and watch for a change, in the narrowest domain where that
+comparison is computable — not as a general claim). A `0` or a clean run
+answers only the one you actually checked; treat an unestablished premise
+as unmeasured, not as confirmed absent.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.

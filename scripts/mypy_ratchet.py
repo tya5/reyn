@@ -42,7 +42,8 @@ IN the baseline rather than being carved out via a per-module mypy
 maintain, and the point of this script is to draw one line (the baseline)
 before adding more.
 
-#3727 (row #10): a ``[syntax]`` finding is not "one more red" the way
+#3727 (verification-hazards.md §18 "B. Misidentification"): a ``[syntax]``
+finding is not "one more red" the way
 ``[attr-defined]``/``[arg-type]`` are. mypy hits a fatal parse error and
 stops the WHOLE invocation ("errors prevented further checking") — every
 OTHER file's findings this run are simply unmeasured, not confirmed clean.
@@ -130,7 +131,10 @@ def new_findings(
 def syntax_pairs_in(pairs: "set[tuple[str, str]]") -> "set[tuple[str, str]]":
     """The `[syntax]` subset of ``pairs`` — mypy's signal that it hit a fatal
     parse error and stopped ("errors prevented further checking"), the SAME
-    shape #3726/#3728 found at `config/root.py:147` (#3727 row #10).
+    shape #3726/#3728 found at `config/root.py:147`: trusting a truncated
+    run as if it were a complete one is a misidentification of what was
+    actually measured (docs/deep-dives/contributing/verification-hazards.md
+    §18 "B. Misidentification").
 
     Takes ``measured``, not ``new`` — a `[syntax]` pair that happens to
     already be baselined is NOT "known debt" the way every other code is: a
@@ -151,7 +155,8 @@ _SYNTAX_ABORT_WARNING = (
     "mypy's ENTIRE run, so no other file was actually checked this time — "
     "every OTHER pair this run's output doesn't mention is UNMEASURED, "
     "not confirmed clean. Fix the [syntax] finding first; nothing else "
-    "this run says can be trusted until it's gone (#3727 row #10)."
+    "this run says can be trusted until it's gone (verification-hazards.md "
+    "§18 \"B. Misidentification\")."
 )
 
 
