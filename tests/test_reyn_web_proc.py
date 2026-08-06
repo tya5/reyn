@@ -36,12 +36,11 @@ def test_context_manager_kills_process_on_exit(tmp_path):
     with m.managed_reyn_web([sys.executable, "-c", "import time; time.sleep(120)"]) as proc:
         assert proc.poll() is None, "process should be alive inside the context"
         pid = proc.pid
-    # give teardown a moment
-    for _ in range(50):
-        if not _alive(pid):
-            break
+    # #3748: unbounded (owner policy) -- wait for teardown to kill the
+    # process. No terminating assert: the loop condition IS that check, so
+    # a hang here surfaces via the kill stack showing this exact loop.
+    while _alive(pid):
         time.sleep(0.1)
-    assert not _alive(pid), "process must be dead after context exit"
 
 
 def test_group_kill_reaps_child_processes(tmp_path):
@@ -64,18 +63,19 @@ def test_group_kill_reaps_child_processes(tmp_path):
     )
     with m.managed_reyn_web([sys.executable, "-c", code]) as proc:
         parent_pid = proc.pid
-        # wait for the grandchild pid to be recorded
-        for _ in range(50):
-            if pidfile.exists() and pidfile.read_text().strip():
-                break
+        # #3748: unbounded (owner policy) -- wait for the grandchild pid to
+        # be recorded, needed before the context exits so teardown can
+        # reap it too.
+        while not (pidfile.exists() and pidfile.read_text().strip()):
             time.sleep(0.1)
     child_pid = int(pidfile.read_text().strip())
-    for _ in range(50):
-        if not _alive(parent_pid) and not _alive(child_pid):
-            break
+    # #3748: unbounded (owner policy) -- wait for teardown's group-kill to
+    # reap both the managed server AND the child it forked (own-session
+    # group, per the module docstring above). No terminating asserts: the
+    # loop condition already proves both, so a hang here surfaces via the
+    # kill stack showing this exact loop.
+    while _alive(parent_pid) or _alive(child_pid):
         time.sleep(0.1)
-    assert not _alive(parent_pid), "managed server must be dead"
-    assert not _alive(child_pid), "forked child must also be reaped (group kill)"
 
 
 def test_selftest_entrypoint_passes():
