@@ -271,17 +271,15 @@ def _pane_ids_in_order(panel: InterventionPanel) -> "list[str]":
 
 
 async def _settle_until(pilot, until) -> None:
-    """Pump until ``until()`` is true, or until the budget runs out.
+    """Pump until ``until()`` is true (#3748: unbounded, owner policy).
 
-    The budget is generous and is only SPENT when the condition is genuinely
-    slow, so a healthy run costs one pass. Modelled on
-    ``tests/test_textual_chat_copy_rewind_3362.py``'s ``_settle``, and on
-    #3651's rule: wait for a signal, never for a wall-clock guess.
-    """
-    for _ in range(150):
+    Modelled on ``tests/test_textual_chat_copy_rewind_3362.py``'s
+    ``_settle``, and on #3651's rule: wait for a signal, never for a
+    wall-clock guess. A hang here surfaces via CI's own kill-switch,
+    naming this exact loop -- callers' own assertions still fail for the
+    real reason if the wait ever resolves on a false signal."""
+    while not until():
         await pilot.pause()
-        if until():
-            return
         await asyncio.sleep(0.01)
 
 
