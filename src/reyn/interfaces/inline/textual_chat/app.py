@@ -2156,6 +2156,48 @@ class TextualChatApp(App):
             self._away_arrivals += 1
             self._activity.set_behind(self._away_arrivals)
 
+    def _apply_compact_layout(self) -> None:
+        """Re-decide how much room the transient regions may take (#3680).
+
+        Called whenever the answer can change: a resize, or a region opening or
+        closing. The decision itself is :func:`compact_caps` — a pure function
+        of the height and what is open — so the policy can be read and tested
+        without a terminal, and this stays the wiring only.
+
+        Every region it shrinks still holds everything it had: the drawer, the
+        picker and the completion popup scroll (#3688/#3699), and the queue
+        keeps every item behind its count. Nothing here drops content to make
+        room, which is the line #3688 established.
+        """
+        try:
+            queue = self.query_one(SentQueue)
+            drawer = self.query_one("#drawer", ContentSwitcher)
+        except Exception:
+            return  # before compose, or after teardown: nothing to decide
+        caps = compact_caps(
+            self.size.height,
+            drawer_open=bool(drawer.display),
+            rewind_open=bool(self._rewind_picker.display),
+            completion_open=bool(self._completion.display),
+            queue_items=len(queue.rendered_texts()) if queue.has_items() else 0,
+            turn_active=self._activity.state is not None,
+            intervention_open=bool(self._iv_panel.display),
+        )
+        if drawer.display and not caps["drawer"]:
+            # Priority 7: there is no height at which this fits and leaves a
+            # readable conversation, so it closes rather than becoming a
+            # sliver that has taken the conversation with it.
+            self._open_drawer(None)
+            return
+        drawer.styles.max_height = caps["drawer"] or None
+        self._rewind_picker.styles.max_height = caps["rewind"] or None
+        self._completion.styles.max_height = caps["completion"] or None
+        queue.set_summarised(queue.has_items() and not caps["queue"])
+
+    def on_resize(self, event) -> None:
+        """A resize changes the whole answer, so re-decide (#3680)."""
+        self._apply_compact_layout()
+
     async def action_cancel_turn(self) -> None:
         """ctrl+c: cooperatively interrupt the in-flight turn (#3498).
 
