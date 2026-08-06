@@ -70,6 +70,60 @@ def test_default_snapshot_path_falls_back_to_cwd_when_root_is_none(tmp_path, mon
 
 
 # ---------------------------------------------------------------------------
+# BOTH make_session test helpers — lead-coder review (#3714): there are TWO
+# ("tests/_support/session.py" and "tests/_support/agent_session.py", the
+# latter used across 223 files) and the RED gate only exercises the first.
+# `agent_session.make_session` forwards `workspace_state_dir` only when the
+# CALLER passes it (unlike the other helper, which now sets one by
+# default) — and was still calling `default_snapshot_path(agent.agent_name)`
+# with no `root=`, silently dropping it even when a caller did pass one.
+# Falsified below through BOTH helpers so neither can regress unnoticed.
+# ---------------------------------------------------------------------------
+
+
+def test_agent_session_make_session_threads_root_into_default_snapshot_path(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: `tests/_support/agent_session.make_session` — the OTHER
+    `make_session` helper (223 test files use it, not the one the original
+    RED gate happens to import) — must pass its caller's `workspace_state_dir`
+    through to `default_snapshot_path`'s `root=` param (added by #3705).
+
+    Note this is NOT the same bug the history.jsonl RED gate catches:
+    `Session.__init__`'s OWN `default_snapshot_path` call (already fixed,
+    reading `self._reyn_state_root`) independently produces a correct
+    `session._snapshot_path` regardless of this helper's local variable — so
+    an end-to-end "did history.jsonl land in the right place" check for
+    THIS helper stays green even with the bug (verified: it does). The
+    actual observable defect is narrower: this helper's own local
+    `snapshot_path` (computed BEFORE `Session` exists, to build
+    `generation_store`/`journal` via `build_recovery` — see
+    `services/recovery.py`) was silently anchored on cwd regardless of
+    `workspace_state_dir`, which would put the PITR generation store under
+    the wrong directory. Witnessed directly via a call-through spy on
+    `default_snapshot_path`, asserting the actual `root=` it was called
+    with — the precise seam the bug lived in."""
+    import tests._support.agent_session as agent_session_mod
+
+    calls: "list[Path | None]" = []
+    orig = agent_session_mod.default_snapshot_path
+
+    def _spy(agent_name, root=None):
+        calls.append(root)
+        return orig(agent_name, root=root)
+
+    monkeypatch.setattr(agent_session_mod, "default_snapshot_path", _spy)
+
+    root = tmp_path / ".reyn"
+    agent_session_mod.make_session(agent_name="alpha", workspace_state_dir=root)
+
+    assert calls == [root], (
+        f"default_snapshot_path must be called with root={root!r} when the "
+        f"caller supplied workspace_state_dir; got {calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Closure — AST sweep of every cwd-relative `.reyn` literal left in src/
 # ---------------------------------------------------------------------------
 
@@ -170,19 +224,25 @@ def test_every_remaining_cwd_relative_reyn_site_is_accounted_for():
         if sites:
             found[str(py_file.relative_to(_REPO_ROOT))] = len(sites)
 
-    unexpected = {
-        path: count for path, count in found.items() if path not in _ALLOWED_SITES
+    # #3714 review (lead-coder): the original two-sided check compared
+    # `unexpected` (new PATHS) and `missing` (count DECREASES) separately —
+    # an allowlisted path's count going UP (a 4th site appearing in an
+    # already-allowlisted file) satisfied neither check and stayed green.
+    # A single set-of-mismatches comparison, over the UNION of both key
+    # sets, catches every direction: a brand-new path (found, not
+    # allowlisted), a vanished path (allowlisted, not found), AND a changed
+    # count at an already-allowlisted path — each is exactly "found's count
+    # != allowed's count" (treating an absent key as count 0).
+    all_paths = set(found) | set(_ALLOWED_SITES)
+    mismatches = {
+        path: {"found": found.get(path, 0), "allowed": _ALLOWED_SITES.get(path, 0)}
+        for path in all_paths
+        if found.get(path, 0) != _ALLOWED_SITES.get(path, 0)
     }
-    assert not unexpected, (
-        f"new (or un-reviewed) cwd-relative `.reyn` site(s) found: {unexpected} — "
-        "either allowlist them here with a reason, or fix them"
-    )
-
-    missing = {
-        path: count for path, count in _ALLOWED_SITES.items()
-        if found.get(path, 0) < count
-    }
-    assert not missing, (
-        f"allowlisted site(s) no longer found (fixed since this test was "
-        f"written — shrink the allowlist): {missing}"
+    assert not mismatches, (
+        f"cwd-relative `.reyn` site count(s) don't match the allowlist exactly: "
+        f"{mismatches} — a brand-new site needs a reason added to the allowlist, "
+        f"a fixed site needs its allowlist entry removed/reduced, and a count "
+        f"increase at an already-allowlisted path needs its own review (it is "
+        f"NOT automatically covered by that path already being allowlisted)"
     )
