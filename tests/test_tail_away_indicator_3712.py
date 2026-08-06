@@ -97,6 +97,23 @@ async def _settle(pilot, times: int = 5) -> None:
         await pilot.pause()
 
 
+async def _settle_until(pilot, until) -> None:
+    """Pump until ``until()`` holds, or the budget runs out.
+
+    The measurement this file observes is DEFERRED to after a refresh (it needs
+    a laid-out view, see ``_refresh_tail_indicator``), so a fixed number of
+    pauses asserts that the deferred callback lands within N frames — a
+    property of the machine, not of the code. It held locally and did not on
+    CI. The budget is only spent when the condition is genuinely slow, and it
+    never weakens anything: the caller still asserts the real thing afterwards.
+    """
+    for _ in range(150):
+        await pilot.pause()
+        if until():
+            return
+        await asyncio.sleep(0.01)
+
+
 async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     """Put enough behind the reader that scrolling up genuinely leaves the tail."""
     await transport.push_event(
@@ -183,9 +200,10 @@ async def test_output_arriving_while_away_is_counted() -> None:
             await transport.push_display(
                 OutboxMessage(kind="agent", text=f"new {i}", meta={})
             )
-        await _settle(pilot, 8)
+        row = app.query_one(ActivityRow)
+        await _settle_until(pilot, lambda: "LIVE" in str(row.render()))
 
-        rendered = str(app.query_one(ActivityRow).render())
+        rendered = str(row.render())
         assert "LIVE +3" in rendered, f"the arrivals were not reported: {rendered!r}"
 
 
@@ -204,8 +222,9 @@ async def test_the_named_key_actually_returns_to_the_newest_output() -> None:
         await pilot.pause()
         flow = await _fill_and_leave_the_tail(transport, pilot, app)
         await transport.push_display(OutboxMessage(kind="agent", text="new", meta={}))
-        await _settle(pilot, 8)
-        assert "LIVE" in str(app.query_one(ActivityRow).render())
+        row = app.query_one(ActivityRow)
+        await _settle_until(pilot, lambda: "LIVE" in str(row.render()))
+        assert "LIVE" in str(row.render())
 
         await pilot.press("ctrl+end")
         await _settle(pilot, 6)
