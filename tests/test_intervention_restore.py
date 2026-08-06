@@ -261,11 +261,13 @@ async def test_restore_state_with_no_interventions_is_noop(tmp_path, monkeypatch
     snap = AgentSnapshot.empty("alpha")
     snap.applied_seq = 0
     session.restore_state(snap)
-    # #3748: no wait -- restore_state only schedules async re-enqueue tasks
-    # when outstanding_interventions is non-empty (see its own source);
-    # with an empty snapshot nothing is scheduled, so the queue is already
-    # empty synchronously the moment restore_state returns. A negative
-    # wait here (poll N ticks, then assert absence) would have been the
-    # #3327-style hazard: patience standing in for "nothing happened",
-    # never provably correct. Asserting immediately is the actual proof.
+    # #3748: no wait -- Session.restore_state gates the async re-enqueue
+    # scheduling on `if snapshot.outstanding_interventions:`; with an empty
+    # snapshot that's False, so nothing is scheduled and the queue is
+    # already empty synchronously the moment restore_state returns. A
+    # negative wait here (poll N ticks, then assert absence) would have
+    # been the #3327-style hazard: patience standing in for "nothing
+    # happened", never provably correct. Asserting immediately is the
+    # actual proof -- if this gate condition ever changes, this comment
+    # goes stale visibly (the quoted code no longer matches), not silently.
     assert session.interventions.list_active() == []
