@@ -183,8 +183,8 @@ class _ErrorWatchingTransport(ClientTransport):
     def pending_intervention_head(self) -> "object | None":
         return self._inner.pending_intervention_head()
 
-    def project_root(self) -> "Path | None":
-        return self._inner.project_root()
+    def reyn_state_root(self) -> "Path | None":
+        return self._inner.reyn_state_root()
 
     async def submit_user_text(self, text: str) -> str:
         return await self._inner.submit_user_text(text)

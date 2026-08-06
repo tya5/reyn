@@ -3,7 +3,7 @@
 The 'list' and 'view' subcommand paths call into ``reyn.data.memory``, which
 needs a real filesystem — covered below via a real ``session.workspace_dir``
 and real memory files under ``tmp_path``, exactly the shape #3721's fix
-resolves through (``ctx.transport.project_root()``, never ambient cwd). The
+resolves through (``ctx.transport.reyn_state_root()``, never ambient cwd). The
 no-args / unknown-sub paths short-circuit before touching the store at all.
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ async def test_memory_unknown_sub_replies_error() -> None:
 
 class _FakeSessionWithWorkspace(_FakeSession):
     """A session carrying a real ``workspace_dir`` — what
-    ``RecordingTransport.project_root()`` (#3721) derives the memory root
+    ``RecordingTransport.reyn_state_root()`` (#3721) derives the memory root
     from, mirroring production's ``InProcessTransport``/``SessionBoundTransport``."""
 
     def __init__(self, workspace_dir: Path) -> None:
@@ -81,8 +81,8 @@ def _write_entry(mem_dir: Path, filename: str, *, name: str, type_: str, descrip
 
 
 @pytest.mark.asyncio
-async def test_memory_list_reads_through_the_resolved_project_root(tmp_path: Path) -> None:
-    """Tier 2: /memory list reads real entries via ctx.transport.project_root()
+async def test_memory_list_reads_through_the_resolved_reyn_state_root(tmp_path: Path) -> None:
+    """Tier 2: /memory list reads real entries via ctx.transport.reyn_state_root()
     — never ambient cwd (#3721's own fix)."""
     workspace_dir = tmp_path / ".reyn" / "agents" / "test"
     _write_entry(tmp_path / ".reyn" / "memory", "user_role.md", name="user-role", type_="user")
@@ -113,7 +113,7 @@ async def test_memory_list_with_no_entries_says_none_not_unresolved(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_memory_list_with_no_session_reports_root_unresolved_distinctly() -> None:
-    """Tier 2: FALSIFY — no session (project_root() → None, the genuinely-remote
+    """Tier 2: FALSIFY — no session (reyn_state_root() → None, the genuinely-remote
     shape) reports the distinct "can't determine" message, never silently reads
     as "0 memory entries"."""
     ctx = slash_ctx(None)
@@ -127,7 +127,7 @@ async def test_memory_list_with_no_session_reports_root_unresolved_distinctly() 
 
 
 @pytest.mark.asyncio
-async def test_memory_view_reads_through_the_resolved_project_root(tmp_path: Path) -> None:
+async def test_memory_view_reads_through_the_resolved_reyn_state_root(tmp_path: Path) -> None:
     """Tier 2: /memory view <name> resolves and prints a real entry via the
     same transport-derived root."""
     workspace_dir = tmp_path / ".reyn" / "agents" / "test"

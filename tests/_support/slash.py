@@ -85,7 +85,7 @@ class RecordingTransport(ClientTransport):
     def pending_intervention_head(self) -> "object | None":
         return self._session.interventions.head()
 
-    def project_root(self) -> "object | None":
+    def reyn_state_root(self) -> "object | None":
         # Mirrors InProcessTransport/SessionBoundTransport (#3721): None
         # when there's no session, exactly the "unresolvable" shape a
         # genuinely remote transport reports.

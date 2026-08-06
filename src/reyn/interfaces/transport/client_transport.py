@@ -199,7 +199,7 @@ class ClientTransport(ABC):
         """
         return False
 
-    def project_root(self) -> "Path | None":
+    def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).
 
         A slash handler that needs to resolve a project-scoped path (the

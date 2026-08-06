@@ -172,7 +172,7 @@ class InProcessTransport(ClientTransport):
         s = self._attached()
         return s.interventions.head() if s is not None else None
 
-    def project_root(self) -> "Path | None":
+    def reyn_state_root(self) -> "Path | None":
         # #3721: `Session.workspace_dir` is the same PUBLIC per-agent path
         # `Agent.workspace_dir` resolves (#3705) — `.reyn/agents/<name>` — so
         # `.parent.parent` is the project's `.reyn` root, the same derivation

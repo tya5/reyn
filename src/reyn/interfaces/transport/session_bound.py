@@ -92,7 +92,7 @@ class SessionBoundTransport(ClientTransport):
     def pending_intervention_head(self) -> "object | None":
         return self._session.interventions.head()
 
-    def project_root(self) -> "Path | None":
+    def reyn_state_root(self) -> "Path | None":
         # #3721: same derivation as InProcessTransport (mirrors that class by
         # this file's own design convention — both delegate to the session's
         # existing public API rather than re-deriving anything).

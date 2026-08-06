@@ -16,7 +16,7 @@ directory argument, which falls back to ``memory_dir()``'s ambient
 ``Path.cwd()``-relative default — the SAME incident class as #3705/#3716,
 just on the read side (a wrong-project read, not a write into the wrong
 project). The fix resolves the project root through
-``ctx.transport.project_root()`` (#3721's new seam on ``ClientTransport``)
+``ctx.transport.reyn_state_root()`` (#3721's new seam on ``ClientTransport``)
 rather than ``ctx.session`` directly, per #3595 S4's ratchet: a NEW private
 read off the session residue field would grow exactly what that gate is
 closing. ``None`` means "not resolvable through this connection" (a
@@ -106,7 +106,7 @@ async def _list_memory(ctx: "SlashContext") -> None:
     """
     from reyn.data.memory import list_entries, memory_dir
 
-    root = ctx.transport.project_root()
+    root = ctx.transport.reyn_state_root()
     if root is None:
         await reply_error(ctx, _ROOT_UNRESOLVED)
         return
@@ -141,7 +141,7 @@ async def _view_memory(ctx: "SlashContext", name: str) -> None:
         return
     from reyn.data.memory import AmbiguousMemoryError, find_one, list_entries, memory_dir
 
-    root = ctx.transport.project_root()
+    root = ctx.transport.reyn_state_root()
     if root is None:
         await reply_error(ctx, _ROOT_UNRESOLVED)
         return
