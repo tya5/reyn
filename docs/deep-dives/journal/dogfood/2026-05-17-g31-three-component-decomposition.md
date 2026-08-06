@@ -4,7 +4,7 @@
 |---|---|
 | Date | 2026-05-17 |
 | Session | e2e-coder |
-| Triggering | giveup-tracker [G31](./giveup-tracker.md#g31) follow-up — "is there a non-overfit structural fix?" |
+| Triggering | giveup-tracker [G31](./giveup-tracker.md#g31-capability-question-content-leakage--weak-gemini-25-flash-lite-で-何ができる-系質問への-reply-が-router-meta-tool--qualified-name-を本文-echo) follow-up — "is there a non-overfit structural fix?" |
 | Models | gemini-2.5-flash-lite (weak default), gemini-2.5-flash (strong, cost-gated permission granted for this session) |
 | Method | trace-driven `--patch` replay, [`scripts/llm_replay.py`](../../../scripts/llm_replay.py), N=10 per cell, classification by regex heuristics |
 | Total cost | ~430 weak calls + ~40 strong calls |
@@ -225,8 +225,8 @@ The full batch scripts used here (`/tmp/sp_*.py`) are throwaway — recreate fro
 
 ## Related
 
-- giveup-tracker [G31](./giveup-tracker.md#g31) — original entry, framing pre-decomposition
-- giveup-tracker [G12](./giveup-tracker.md#g12) — adjacent affordance-bias family
+- giveup-tracker [G31](./giveup-tracker.md#g31-capability-question-content-leakage--weak-gemini-25-flash-lite-で-何ができる-系質問への-reply-が-router-meta-tool--qualified-name-を本文-echo) — original entry, framing pre-decomposition
+- giveup-tracker [G12](./giveup-tracker.md#g12-attractor-variant-family--weak-llm-の-must-rule-確率的不honor) — adjacent affordance-bias family
 - FP-0034 issue #36 — universal catalog architecture (= the layer where descriptions live)
 - PR #110 — README weak-model warning + giveup-tracker G31 entry
 - PR #117 / #119 / `a1a5093a` — D2-min / D2-full / cherry-pick (= hot-list alias schema cleanse; surface-related but independent fix)
