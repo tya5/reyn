@@ -62,9 +62,20 @@ def test_install_parser_exposes_project_flag():
 # ── Layer B: handler resolves the real Workspace base_dir ───────────────────
 
 
-def test_resolve_write_root_uses_real_workspace_base_dir(tmp_path):
+def test_resolve_write_root_uses_real_workspace_base_dir(tmp_path, monkeypatch):
     """Tier 2: #1442 B — a REAL Workspace (base_dir != cwd) resolves to its
-    base_dir, not cwd. This is the bug the `.root`-only check caused."""
+    base_dir, not cwd. This is the bug the `.root`-only check caused.
+
+    #3705: the suite's autouse `_isolated_cwd` fixture already chdir's every
+    test into its OWN `tmp_path` — so `base_dir=tmp_path` alone would make
+    the `!= Path.cwd()` assertion trivially true for the wrong reason (base_dir
+    and cwd coincide by construction, not because the resolver actually
+    prefers base_dir). chdir into a SIBLING dir here so the two are
+    genuinely different, restoring the assertion's original meaning."""
+    elsewhere = tmp_path / "not-the-workspace"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
     ws = Workspace(events=EventLog(), base_dir=tmp_path)
     assert _resolve_write_root(ws) == tmp_path.resolve()
     assert _resolve_write_root(ws) != Path.cwd()
@@ -141,7 +152,16 @@ def test_chat_path_uses_factory_workspace_not_cwd(tmp_path, monkeypatch):
     """Tier 2: #1442 follow-up — when ctx.workspace is None but the router binds
     op_context_factory (the chat reality), the verb resolves the factory's REAL
     Workspace (agent base_dir), NOT cwd. Falsifiable: the pre-fix hand-build from
-    ctx.workspace=None resolved cwd."""
+    ctx.workspace=None resolved cwd.
+
+    #3705: chdir into a sibling dir (not `tmp_path` itself — the suite's
+    autouse `_isolated_cwd` fixture already chdir's there) so the factory
+    Workspace's `base_dir=tmp_path` and `Path.cwd()` are genuinely
+    different, restoring the `!= Path.cwd()` assertion's original meaning."""
+    elsewhere = tmp_path / "not-the-workspace"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
     from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 

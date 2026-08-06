@@ -280,6 +280,11 @@ def test_the_code_ships_the_documented_defaults() -> None:
     assert actual == _SHIPPED_DEFAULTS
 
 
+@pytest.mark.repo_root_cwd(
+    reason="reads docs/reference/config/reyn-yaml.md by a repo-relative "
+    "path — a committed doc, not a per-test fixture; needs cwd == the real "
+    "repo root, not the #3705 autouse isolated tmp_path.",
+)
 def test_the_reference_documents_the_shipped_defaults() -> None:
     """Tier 1: surface 2 of 3 — `reyn.yaml`'s field table.
 
@@ -298,6 +303,11 @@ def test_the_reference_documents_the_shipped_defaults() -> None:
         )
 
 
+@pytest.mark.repo_root_cwd(
+    reason="reads reyn.local.yaml.example by a repo-relative path — a "
+    "committed file, not a per-test fixture; needs cwd == the real repo "
+    "root, not the #3705 autouse isolated tmp_path.",
+)
 def test_the_example_config_shows_the_shipped_defaults() -> None:
     """Tier 1: surface 3 of 3 — `reyn.local.yaml.example`.
 
