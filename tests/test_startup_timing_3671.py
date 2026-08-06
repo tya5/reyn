@@ -201,6 +201,91 @@ def test_the_report_survives_an_interrupt(monkeypatch, capsys) -> None:
     assert "startup timing" in capsys.readouterr().out
 
 
+def test_client_prep_is_four_named_sub_stages_not_one_lump(monkeypatch) -> None:
+    """Tier 2: #3671 (architect's design) — the single `client-prep` lump is
+    replaced by 4 named sub-stages at the seams already in the code (transport
+    construction, read-model construction, the lazy textual/flowview import,
+    and app construction), so a slow startup can say WHICH of the four, not
+    just that the client was slow to get ready."""
+    assert "client-prep" not in STAGES
+    for name in (
+        "client-prep:transport",
+        "client-prep:read-model",
+        "client-prep:tui-import",
+        "client-prep:app-construct",
+    ):
+        assert name in STAGES
+
+
+def test_tui_import_done_then_app_constructed_records_app_construct_stage(
+    monkeypatch,
+) -> None:
+    """Tier 2: P4 — the span between the lazy textual_chat import finishing
+    and the TUI object existing is recorded as `client-prep:app-construct`,
+    the same paired-mark shape `mark_app_constructed`/`mark_first_frame`
+    already use for a region a `with` block cannot hold (it crosses an
+    `await` into a different module)."""
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    before = startup_timing.TIMING.total_seconds
+
+    startup_timing.mark_tui_import_done()
+    time.sleep(0.02)
+    startup_timing.mark_app_constructed()
+
+    after = startup_timing.TIMING.total_seconds
+    assert after - before >= 0.02
+
+
+def test_app_constructed_without_a_prior_tui_import_mark_records_nothing(
+    monkeypatch,
+) -> None:
+    """Tier 2: FALSIFY — if `mark_tui_import_done` was never called (e.g. a
+    future non-textual renderer reaches `mark_app_constructed` some other
+    way), no `client-prep:app-construct` time is recorded rather than
+    computing a bogus span against a stale/absent mark. Mirrors the existing
+    `if _ASYNC_ENTERED_AT is not None` guard shape."""
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    before = startup_timing.TIMING.total_seconds
+
+    startup_timing.mark_app_constructed()
+
+    assert startup_timing.TIMING.total_seconds == before
+
+
+def test_a_second_tui_import_mark_does_not_move_the_span(monkeypatch) -> None:
+    """Tier 2: idempotent, mirroring `mark_first_frame`'s own "only the first
+    call counts" contract — a re-import (should never happen, but the mark
+    is defensive the same way the others are) must not shrink P4 by resetting
+    the start point. Witnessed through the PUBLIC recorded duration (not the
+    private timestamp): if the second mark moved the start forward, the
+    recorded span would only cover the second sleep, not both.
+    """
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    before = startup_timing.TIMING.total_seconds
+
+    startup_timing.mark_tui_import_done()
+    time.sleep(0.02)
+    startup_timing.mark_tui_import_done()  # no-op: only the first call counts
+    time.sleep(0.02)
+    startup_timing.mark_app_constructed()
+
+    after = startup_timing.TIMING.total_seconds
+    assert after - before >= 0.04
+
+
 def test_the_report_survives_an_exception(monkeypatch, capsys) -> None:
     """Tier 2: a startup that dies still reports.
 

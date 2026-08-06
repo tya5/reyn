@@ -144,7 +144,21 @@ async def run_chat_client(
             _configured_render_mode(config), is_tty=is_tty,
         )
         if resolved != "plain":
-            from reyn.interfaces.inline.textual_chat import run_textual_chat  # noqa: PLC0415
+            from reyn.runtime.startup_timing import (  # noqa: PLC0415
+                mark_tui_import_done,
+                stage,
+            )
+
+            # #3671 client-prep breakdown (architect's design, P3): this is
+            # the FIRST touch of textual/textual_flowview on this path — the
+            # import is lazy so that cost is paid here, not in the `import`
+            # stage (which closes at `mark_cli_reached`, before this module
+            # is even imported). Prime suspect for the 19.46s `client-prep`
+            # owner measured: owner's own `import 4.60s` is reyn's import
+            # tree only, and does not include this.
+            with stage("client-prep:tui-import"):
+                from reyn.interfaces.inline.textual_chat import run_textual_chat  # noqa: PLC0415
+            mark_tui_import_done()
             await run_textual_chat(
                 transport=transport,
                 read_model=read_model,
