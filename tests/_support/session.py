@@ -80,7 +80,17 @@ def make_session(
         # Agent is the sole identity SSoT (#3133 Priority-0 step-2 removed
         # the flat identity kwargs Session used to also accept alongside
         # ``agent=``).
-        agent = Agent(agent_name="default", role="")
+        # #3705: workspace_state_dir=tmp_path/".reyn" anchors EVERY write
+        # `Agent.workspace_dir` derives (history.jsonl, events, action_usage,
+        # ...) under the caller's tmp_path — mirrors the production
+        # convention (env_backend.py / registry_bootstrap.py both set
+        # workspace_state_dir=project_root/".reyn"). Without this, those
+        # writes fell back to the process cwd regardless of tmp_path — the
+        # exact defect that let test fixtures land in the owner's real
+        # ``.reyn/agents/``.
+        agent = Agent(
+            agent_name="default", role="", workspace_state_dir=tmp_path / ".reyn",
+        )
     if state_log is None:
         state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())

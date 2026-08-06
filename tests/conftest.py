@@ -216,6 +216,73 @@ def out_of_process_reyn() -> str:
     return str(root / "src")
 
 
+# ── Workspace isolation (#3705) ─────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
+) -> None:
+    """Every test starts chdir'd into its own throwaway ``tmp_path``.
+
+    #3705: the owner opened `reyn` and found 656/1158 (56%) of their real
+    conversation history was synthetic test fixtures — 67 `.reyn/agents/`
+    directories that should never have existed outside a test's own
+    isolated tmp dir. Root cause: `Agent.workspace_dir` (and several
+    Session-owned paths derived from it) fall back to a cwd-relative
+    `.reyn/...` when a caller does not supply an explicit
+    `workspace_state_dir` — and two DIFFERENT test helpers
+    (`tests/_support/session.py`, `tests/_support/agent_session.py`, the
+    latter used by 223 test files) were each independently found to
+    sometimes take that fallback path (measured: ~16/223 of
+    `agent_session.make_session`'s own call sites pass
+    `workspace_state_dir` explicitly — the other ~207 rely on it).
+
+    Fixing every individual call site is an N+1 problem: the NEXT test
+    helper, or the next call site added to an existing one, inherits the
+    exact same "forgot to pass workspace_state_dir" failure mode — which is
+    precisely how this incident happened twice in one review round (a
+    helper lead-coder found, then a second ~16/223 gap this session found
+    independently). This fixture closes the CLASS instead: it does not make
+    every call site pass an explicit root — it makes the FALLBACK ITSELF
+    safe, unconditionally, for every test, regardless of which helper or
+    call site takes it. A cwd-relative `.reyn/...` write can now land only
+    under this test's own disposable `tmp_path`, never the directory the
+    test process happened to be started from.
+
+    A test that goes RED under this fixture has been cwd-dependent all
+    along (owner + lead-coder's framing, #3705 review) — that is the
+    fixture doing its job, not a reason to opt out of it. A test with a
+    genuine, deliberate reason to control its OWN cwd (e.g. one exercising
+    `_find_project_root`'s upward walk, or the RED-gate pair in
+    `test_session_writes_stay_in_its_workspace_3705.py`, which chdir's
+    again mid-test to a DIFFERENT directory than this fixture's own
+    `tmp_path`) still can — `monkeypatch.chdir(...)` calls happening later
+    in the SAME test simply override this fixture's earlier one, same as
+    any other autouse fixture a test's own setup legitimately shadows.
+
+    A DIFFERENT, rarer case is a test that needs cwd to stay the REAL repo
+    root for its own duration — e.g. reading a COMMITTED doc/config file by
+    a repo-relative path (`Path("docs/...").read_text()`), which has
+    nothing to do with `.reyn`-write isolation. Marking it
+    `@pytest.mark.repo_root_cwd(reason="...")` opts out explicitly, with a
+    REQUIRED reason (enforced below) — never a silent bypass; the whole
+    point of a marker over an ad-hoc `monkeypatch.chdir(repo_root)` in each
+    such test is that every opt-out is greppable in one place, with its
+    justification attached, rather than rediscovered file-by-file.
+    """
+    marker = request.node.get_closest_marker("repo_root_cwd")
+    if marker is not None:
+        if not marker.args and "reason" not in marker.kwargs:
+            pytest.fail(
+                f"{request.node.nodeid}: @pytest.mark.repo_root_cwd(...) "
+                "requires a reason=\"...\" — opting out of cwd isolation "
+                "must be justified, not silent (#3705)."
+            )
+        return
+    monkeypatch.chdir(tmp_path)
+
+
 # ── Secret store isolation ─────────────────────────────────────────────────────
 
 
@@ -384,6 +451,17 @@ def pytest_configure(config: pytest.Config) -> None:
         "docker: live-Docker integration test (#1332). Skipped when no daemon is "
         "reachable; runs against a real container. Select with `-m docker` / "
         "deselect with `-m 'not docker'`.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "repo_root_cwd(reason): opt OUT of the autouse `_isolated_cwd` fixture "
+        "(#3705) — this test genuinely needs cwd to be the real repo root "
+        "(e.g. reading a COMMITTED doc/config file by repo-relative path), not "
+        "a disposable tmp_path. `reason` is required (enforced by "
+        "`_isolated_cwd` itself) so an opt-out is never silent — a red test "
+        "under the autouse chdir means it WAS cwd-dependent; this marker is for "
+        "the (rare) cases where that dependency is deliberate and correct, not "
+        "a way to make an inconvenient red go away.",
     )
 
     # #3451 network gate — imported lazily, HERE, inside the hook body (not at
