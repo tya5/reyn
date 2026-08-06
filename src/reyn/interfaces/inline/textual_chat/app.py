@@ -374,6 +374,26 @@ class _CursorFlowView(FlowView["OutboxMessage"]):
         if entry is not None:
             self.post_message(KeyCommitted(self, entry))
 
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Tell the app the view moved (#3712).
+
+        Whether the reader is on the newest output was previously re-read only
+        when a frame arrived — and a scroll is not a frame. Scroll away in a
+        quiet moment and nothing noticed, so the next arrival was counted as
+        seen. Measured: this was the last gate's failure.
+
+        Hooked on the reactive rather than on a key or a mouse event, because
+        it is the one place every way of moving converges — arrows, PgUp, the
+        wheel, and ``scroll_end`` from ``ctrl+end`` alike. Binding the keys
+        instead would leave whichever route nobody thought of unwired, which is
+        the shape this feature keeps producing.
+        """
+        super().watch_scroll_y(old_value, new_value)
+        app = self.app
+        notify = getattr(app, "_refresh_tail_indicator", None)
+        if notify is not None:
+            notify()
+
 
 class ScrollableDrawer(ContentSwitcher):
     """The bottom drawer, with keys that can reach a readout taller than it.
