@@ -366,7 +366,12 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
             )
 
             # ...and nothing was dropped: one more delta per chain, past the
-            # budget window, flushes each reply's whole accumulation.
+            # budget window, flushes each reply's whole accumulation. The
+            # repaint budget may skip a render, never an append — a hang
+            # below means the opposite happened (a coalesced reply lost
+            # text); the per-entry counts that used to print on failure no
+            # longer do (#3748: a hang surfaces via CI's kill, not a
+            # message).
             clock.advance(_STREAM_REPAINT_MIN_INTERVAL * 2)
             for chain in chains:
                 session.router_host.events.emit(
@@ -424,6 +429,9 @@ async def test_a_pending_repaint_never_survives_the_session_switch_barrier(
             session.router_host.events.emit(
                 "agent_delta", text=kept, chain_id="kept-chain"
             )
+            # control leg: a deferred repaint must reach the screen on its
+            # own (no barrier follows it here) — leg 2 below is the barrier
+            # case this is the baseline for.
             await _until(
                 lambda: (
                     _entry_for(app, "kept-chain") is not None
