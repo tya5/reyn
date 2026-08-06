@@ -69,12 +69,16 @@ def test_group_kill_reaps_child_processes(tmp_path):
         while not (pidfile.exists() and pidfile.read_text().strip()):
             time.sleep(0.1)
     child_pid = int(pidfile.read_text().strip())
-    # #3748: unbounded (owner policy) -- wait for teardown's group-kill to
-    # reap both the managed server AND the child it forked (own-session
-    # group, per the module docstring above). No terminating asserts: the
-    # loop condition already proves both, so a hang here surfaces via the
-    # kill stack showing this exact loop.
-    while _alive(parent_pid) or _alive(child_pid):
+    # #3748: unbounded (owner policy) -- two SEPARATE waits, not one
+    # compound OR: a compound loop's kill stack can't tell "the server
+    # didn't die" from "group kill didn't reap the forked child" -- and
+    # the latter, not the former, is this test's actual reason to exist
+    # (own-session group + killpg reaping the WHOLE group, not just the
+    # direct child). Splitting costs nothing: if both are already dead,
+    # neither loop spins.
+    while _alive(parent_pid):
+        time.sleep(0.1)
+    while _alive(child_pid):
         time.sleep(0.1)
 
 
