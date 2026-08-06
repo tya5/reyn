@@ -122,9 +122,10 @@ through four stages, the last of which **always renders**:
 The fallback fires on an all-miss view or an unknown view name — never a hard
 error. The op's **ack** reports the *requested* view's stats plus a `note` naming the
 stage that actually rendered, so a blind agent self-corrects for a few tokens: many
-`path_not_found` drops read as "my view doesn't match this data shape", `type_mismatch`
-as "right path, wrong component", `guard_stripped` as "content neutralized by the guard,
-not a view bug".
+`path_not_found` drops read as "my view doesn't match this data shape", `guard_stripped`
+as "content neutralized by the guard, not a view bug" — and a `coerced` entry (#3664:
+a type-mismatch reshape, kept out of `bindings_dropped` because the value WAS
+displayed) as "right path, wrong component".
 
 Named views are registered by an **operator** in a config file; the LLM only ever
 authors inline blueprints. This mirrors reyn's write-gate culture — the durable, reusable

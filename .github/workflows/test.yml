@@ -188,16 +188,19 @@ jobs:
       # / json / pathlib). No pip install needed — keeps the job fast
       # and decoupled from src/ install state.
       #
-      # `timeout 10m` (#3670): converts a would-be `cancelled` job-timeout
-      # into a legible `failure` — see the "Run tests" job's comment for
-      # the full rationale. This specific job is what #3670 actually
-      # measured cancelling (4 of 5 consecutive main pushes, always at the
-      # 15-minute signature); #3670's own fix (a real algorithmic hotspot
-      # in test_tier_audit.py, see that PR) already took a full-tree run
-      # from ~122s to ~5s locally, so this budget should never realistically
-      # bind again — the wrapper stays as defense in depth against a FUTURE
-      # slowdown being invisible the same way, not because this one is
-      # still expected to be tight.
+      # `timeout 3m` (#3670, retightened): converts a would-be `cancelled`
+      # job-timeout into a legible `failure` — see the "Run tests" job's
+      # comment for the full rationale. This specific job is what #3670
+      # actually measured cancelling (4 of 5 consecutive main pushes,
+      # always at the 15-minute signature); #3670's own fix (a real
+      # algorithmic hotspot in test_tier_audit.py) took the full-tree run
+      # from 915s to a MEASURED 21s in real CI (this step's own share: ~7s
+      # of that, per a real run's per-step timestamps). Landed initially at
+      # a generous `10m` before that fix was confirmed in CI; a budget that
+      # loose says nothing when this step gets slow again — the exact
+      # defect #3670 exists to close — so it's retightened now that real
+      # numbers exist. `3m` is a ~25x margin over the measured ~7s, not a
+      # guess.
       - name: Run test-tier audit
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -216,11 +219,11 @@ jobs:
             echo "Auditing changed test files:"
             echo "$CHANGED"
             # shellcheck disable=SC2086
-            timeout 10m python scripts/test_tier_audit.py --strict $CHANGED
+            timeout 3m python scripts/test_tier_audit.py --strict $CHANGED
           else
             # push to main (or any non-PR trigger): full audit over the
             # entire test suite — invariant safety net, unchanged.
-            timeout 10m python scripts/test_tier_audit.py --strict tests/
+            timeout 3m python scripts/test_tier_audit.py --strict tests/
           fi
 
       # scripts/verify_module_docstrings.py is stdlib-only. PR events: scoped
@@ -228,7 +231,9 @@ jobs:
       # regress-proof invariant net, now that the tree is clean (#1802). Blocks
       # moved-module refactor-narrative docstrings (the C-series discipline).
       #
-      # `timeout 3m` (#3670): same reasoning as the step above.
+      # `timeout 1m` (#3670, retightened): same reasoning as the step
+      # above — measured real share of this specific step: ~2.3s, so `1m`
+      # is a ~25x margin, matching the audit step's own retightened ratio.
       - name: Run module-docstring narrative check
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -242,8 +247,8 @@ jobs:
             echo "Checking changed src files:"
             echo "$CHANGED"
             # shellcheck disable=SC2086
-            timeout 3m python scripts/verify_module_docstrings.py $CHANGED
+            timeout 1m python scripts/verify_module_docstrings.py $CHANGED
           else
             # push to main (or any non-PR trigger): full-tree gate.
-            timeout 3m python scripts/verify_module_docstrings.py src/reyn
+            timeout 1m python scripts/verify_module_docstrings.py src/reyn
           fi

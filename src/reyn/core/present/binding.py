@@ -16,8 +16,12 @@ Semantics (§4):
 - **Path miss** → soft-skip that binding and record ``{path, reason:
   path_not_found}``; never a hard failure.
 - **Type mismatch** → coerce (a scalar bound into a ``table`` ``rows`` slot → a
-  1-row table; a container bound into a text slot → its JSON form) and record
-  ``{path, reason: type_mismatch}``.
+  1-row table; a container bound into a text slot → its JSON form) — the value
+  DID reach the user, reshaped, so it is recorded separately in ``coerced`` as
+  ``{path, rendered_as}`` (#3664), never in ``bindings_dropped``: dropping and
+  coercing are opposite outcomes, and sharing one word for both was the defect
+  (the LLM read "dropped" and had no reason to think the user was looking at
+  a JSON blob it actually displayed).
 - **Guard-stripped** → any render-leaf (bound value, literal, or label)
   neutralized or size-capped by the presentation-guard is recorded
   ``{path, reason: guard_stripped}``.
@@ -38,9 +42,10 @@ from typing import Any
 from reyn.core.present.catalog import binding_pointer, is_binding
 from reyn.core.present.guard import LeafNeutralizer, cap_leaf, cap_rows, get_neutralizer
 
-# Drop reason categories (§1 refined ack shape).
+# Drop reason categories (§1 refined ack shape). Type-mismatch coercion is NOT
+# here — #3664 (a) moved it to its own `coerced` list (see ResolvedPresentation)
+# because a coercion is not a drop: the value reached the user, reshaped.
 PATH_NOT_FOUND = "path_not_found"
-TYPE_MISMATCH = "type_mismatch"
 GUARD_STRIPPED = "guard_stripped"
 
 _MISSING = object()
@@ -58,6 +63,24 @@ class ResolvedPresentation:
     nodes: list[dict] = field(default_factory=list)
     bindings_resolved: int = 0
     bindings_dropped: list[dict] = field(default_factory=list)
+    # #3664 (a): a type-mismatch coercion is the OPPOSITE outcome of a drop — the
+    # value reached the user, just not in its bound shape (a container flattened
+    # to its JSON text; a scalar wrapped into a 1-row table). Sharing
+    # `bindings_dropped`'s word with values that genuinely never reached the user
+    # (`path_not_found` / `guard_stripped`) is the defect #3664 measured: the
+    # model reads "dropped" and has no reason to think the user is looking at a
+    # JSON blob it DID display. Kept as its own list (not folded into
+    # `bindings_dropped` with a different `reason`) so a consumer counting
+    # `len(bindings_dropped)` as "how much data never reached the user" is not
+    # silently wrong for a coercion.
+    coerced: list[dict] = field(default_factory=list)
+    # #3664 (b): PURPOSE — `rows` is the LLM's only measure of how much data
+    # reached the user's screen (present is a zero-token offload: the underlying
+    # data itself never enters the LLM's context, so this count and the replay
+    # header's `rows=N` are the sole signal). It therefore counts every rendered
+    # row across every rows-shaped slot (`$bind` tables, keyvalue cards, literal
+    # arrays), post-cap (a row `cap_rows` truncates before the user sees it must
+    # not inflate this number) — not just one slot kind.
     rows: int = 0
     _missed: int = 0
 
@@ -74,6 +97,15 @@ class ResolvedPresentation:
         self.bindings_dropped.append({"path": path, "reason": reason})
         if reason == PATH_NOT_FOUND:
             self._missed += 1
+
+    def _coerce(self, path: str, rendered_as: str) -> None:
+        """#3664 (a): record a type-mismatch coercion — the value WAS displayed,
+        just reshaped (``rendered_as`` names how: ``"json_text"`` for a
+        container flattened into a text slot, ``"single_row"`` for a scalar/
+        object wrapped into a rows slot). Never counts toward `_missed` —
+        unlike `path_not_found`, a coercion is not a miss the LLM should read
+        as "nothing was shown"."""
+        self.coerced.append({"path": path, "rendered_as": rendered_as})
 
 
 def _truncation_tail(omitted: int, ref: "str | None") -> str:
@@ -184,7 +216,7 @@ def _render_text_slot(
         text, mismatch = _coerce_text(value)
         out._resolve()
         if mismatch:
-            out._drop(ptr, TYPE_MISMATCH)
+            out._coerce(ptr, rendered_as="json_text")
         return _guard(text, neut, out, path=ptr)
     # A literal slot value — not a binding, but still a render-leaf → neutralize.
     return _guard_maybe(slot, neut, out, path=loc)
@@ -195,20 +227,29 @@ def _bind_rows_slot(slot: Any, doc: Any, out: ResolvedPresentation) -> tuple[lis
     — an empty list + ``found=False`` on a miss; ``omitted`` is the row count
     ``cap_rows`` dropped (0 when not capped), threaded to the render model so the
     caller can attach a visible truncation tail (§5, issue #2669). (The array
-    itself is not a leaf; its cells are neutralized where they are rendered.)"""
+    itself is not a leaf; its cells are neutralized where they are rendered.)
+
+    #3664 (b): ``out.rows`` counts ``capped_rows`` — the rows actually returned
+    (and therefore rendered) — not the pre-cap resolved count. ``rows`` is the
+    LLM's only measure of how much reached the user's screen (present is a
+    zero-token offload; the data itself never enters the LLM's context), so a
+    row `cap_rows` dropped before the user ever saw it must not inflate that
+    number."""
     if not is_binding(slot):
-        return (slot if isinstance(slot, list) else []), True, 0
+        rows = slot if isinstance(slot, list) else []
+        out.rows += len(rows)
+        return rows, True, 0
     ptr = binding_pointer(slot)
     value, found = resolve_pointer(doc, ptr)
     if not found:
         out._drop(ptr, PATH_NOT_FOUND)
         return [], False, 0
     rows, mismatch = _coerce_rows(value)
-    out.rows += len(rows)
     out._resolve()
     if mismatch:
-        out._drop(ptr, TYPE_MISMATCH)
+        out._coerce(ptr, rendered_as="single_row")
     capped_rows, was_capped = cap_rows(rows)
+    out.rows += len(capped_rows)
     omitted = (len(rows) - len(capped_rows)) if was_capped else 0
     if was_capped:
         out._drop(ptr, GUARD_STRIPPED)
@@ -276,8 +317,8 @@ def resolve_bindings(
     nothing when no row slot was capped.
 
     Returns a :class:`ResolvedPresentation` — the render model plus the compact
-    binding stats (``bindings_resolved`` / ``bindings_dropped`` / ``rows`` /
-    ``all_bindings_missed``) the op ack + ``presented`` event carry.
+    binding stats (``bindings_resolved`` / ``bindings_dropped`` / ``coerced`` /
+    ``rows`` / ``all_bindings_missed``) the op ack + ``presented`` event carry.
     """
     neut = get_neutralizer(surface)
     out = ResolvedPresentation()
@@ -302,6 +343,13 @@ def resolve_bindings(
                     label = _guard_maybe(row["label"], neut, out, path=f"{loc}.rows[{j}].label")
                     rows_out.append({"label": label, "value": val})
             rendered["rows"] = rows_out
+            # #3664 (b)/(c): a keyvalue row IS a rendered row — `rows` previously
+            # only counted table/list rows (`_bind_rows_slot`), so a 4-row
+            # keyvalue card reported `rows: 0`. `rows` is the LLM's only measure
+            # of how much reached the user's screen (present is a zero-token
+            # offload), so every component's rendered rows must count the same
+            # way.
+            out.rows += len(rows_out)
         elif component == "table":
             rows, _found, omitted = _bind_rows_slot(node.get("rows"), doc, out)
             columns_out = []
