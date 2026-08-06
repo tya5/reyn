@@ -2107,7 +2107,13 @@ class TextualChatApp(App):
             flow = self.query_one(FlowView)
         except Exception:
             return
-        at_tail = flow.scroll_y >= flow.max_scroll_y
+        # ``scroll_target_y``, not ``scroll_y``: while entries are appending,
+        # the view is ON its way to the bottom and the CURRENT offset lags the
+        # bottom for a frame or two. Reading the current offset counts that lag
+        # as the reader having scrolled away — measured, a reply arriving in 30
+        # deltas reported 27 arrivals to somebody who never left the tail. The
+        # target is where the view is going, which is what "following" means.
+        at_tail = flow.scroll_target_y >= flow.max_scroll_y
         if at_tail or reset:
             self._tail_left_at = None
             self._activity.set_behind(None)

@@ -21,6 +21,7 @@ Two things this must not do, both of which the gates below pin:
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import AsyncIterator
 
 import pytest
@@ -83,6 +84,12 @@ class QueueTransport(ClientTransport):
 
     async def shutdown(self) -> None:
         pass
+
+
+def _live_count(row) -> "int | None":
+    """The number the row is reporting, or ``None`` if it reports nothing."""
+    match = re.search(r"LIVE \+(\d+)", str(row.render()))
+    return int(match.group(1)) if match else None
 
 
 async def _settle(pilot, times: int = 5) -> None:
@@ -206,4 +213,52 @@ async def test_the_named_key_actually_returns_to_the_newest_output() -> None:
         assert flow.scroll_y >= flow.max_scroll_y, "the key did not return to the tail"
         assert "LIVE" not in str(app.query_one(ActivityRow).render()), (
             "the indicator survived the return it was pointing at"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_growing_reply_is_not_counted_as_arrivals() -> None:
+    """Tier 2b: the unit is entries, and a streamed reply proves it.
+
+    A reply arriving in pieces makes ONE entry taller. The reader missed one
+    thing, not thirty — and they can see it is the same thing, because it is
+    the reply they scrolled away from. Counting rows would report movement
+    that never happened, climbing while nothing new arrived, which is the
+    kind of number that is worse than none.
+
+    This is the gate that a row-based implementation cannot pass: the middle
+    assertion goes red the moment the count follows height instead of
+    arrivals. Saying "entries, not rows" in a docstring is not the same as
+    having something fail when it stops being true.
+    """
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        flow = await _fill_and_leave_the_tail(transport, pilot, app)
+        await _settle(pilot, 8)
+        row = app.query_one(ActivityRow)
+        # Whatever the count is at this instant is the baseline. Asserting it
+        # is zero would only be testing how the fixture happened to drain.
+        baseline = str(row.render())
+
+        # The reply the reader is looking at grows, in place, by a lot.
+        before_entries = len(flow.entries)
+        for i in range(30):
+            await transport.push_event(
+                Event(type="agent_delta", data={"chain_id": "c1", "text": f"chunk {i} "})
+            )
+        await _settle(pilot, 8)
+
+        landed = len(flow.entries) - before_entries
+        assert landed == 1, (
+            f"thirty deltas produced {landed} entries — they are supposed to "
+            "fold into one reply, so this is not exercising the case"
+        )
+
+        reported = _live_count(row)
+        assert reported == landed, (
+            f"the row reported {reported} arrivals for {landed} entry — "
+            "a reply growing in place is one thing arriving, not thirty. A "
+            "count that follows rows fails here with a number near 30"
         )
