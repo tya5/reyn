@@ -41,6 +41,17 @@ IN the baseline rather than being carved out via a per-module mypy
 ``ignore_errors`` override — an exclude-config is itself a new declaration to
 maintain, and the point of this script is to draw one line (the baseline)
 before adding more.
+
+#3727 (row #10): a ``[syntax]`` finding is not "one more red" the way
+``[attr-defined]``/``[arg-type]`` are. mypy hits a fatal parse error and
+stops the WHOLE invocation ("errors prevented further checking") — every
+OTHER file's findings this run are simply unmeasured, not confirmed clean.
+Verified directly: injecting a fresh `` # type: `` -prefixed prose comment
+(the #3726/#3728 collision shape) into an otherwise-clean file makes THAT
+file the only one mypy reports on, full stop. ``main()`` prints a distinct
+warning when a new ``[syntax]`` pair appears, because the red's own SHAPE
+carries information a bare pair list does not: fix that one before trusting
+anything else this run says.
 """
 from __future__ import annotations
 
@@ -116,6 +127,19 @@ def new_findings(
     return measured - baseline
 
 
+def has_new_syntax_abort(new: "set[tuple[str, str]]") -> bool:
+    """Whether ``new`` contains a `[syntax]` pair — mypy's signal that it hit
+    a fatal parse error and stopped ("errors prevented further checking"),
+    the SAME shape #3726/#3728 found at `config/root.py:147` (#3727 row #10).
+
+    A `[syntax]` red is not "one more finding" the way an `[attr-defined]` or
+    `[arg-type]` red is: mypy aborts the WHOLE invocation on it, so every
+    OTHER file's findings this run are simply unmeasured, not confirmed
+    clean. `main()` uses this to print a distinct warning — the shape of the
+    red (which code fired) carries information a bare pair list does not."""
+    return any(code == "syntax" for _file, code in new)
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -151,6 +175,15 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     for file, code in sorted(new):
         print(f"  {file}  [{code}]", file=sys.stderr)
+    if has_new_syntax_abort(new):
+        print(
+            "\n[syntax] above is not \"one more red\": a fatal parse error stops "
+            "mypy's ENTIRE run, so no other file was actually checked this time — "
+            "every OTHER pair this run's output doesn't mention is UNMEASURED, "
+            "not confirmed clean. Fix the [syntax] finding first; nothing else "
+            "this run says can be trusted until it's gone (#3727 row #10).",
+            file=sys.stderr,
+        )
     print(
         "\nEither fix the new finding(s), or if this is a deliberate, understood "
         "addition, add the (file, code) pair to the baseline explicitly — do "

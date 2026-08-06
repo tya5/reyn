@@ -192,6 +192,22 @@ Three rules then keep multi-session work coherent:
    surface the merge gate actually reads (an open issue, an unchecked Test
    plan item) — not on a surface nobody re-checks (a broker message, a memory
    pin, a comment's prose that never becomes a ticket).
+7. **A reviewer's blocking point goes in the PR body as an unchecked Test
+   plan item, not only in a review comment.** `gh pr review --request-changes`
+   does not work in this repo's setup: every session authenticates as the
+   same `gh` user, and GitHub refuses to let an account request changes on
+   its own pull request — there is no machine-readable `CHANGES_REQUESTED`
+   state available here. A review comment alone is easy to miss because
+   nothing about the PR's own checks-passing state reflects it: "all checks
+   green" can be — and four times in one day was (#3720 ×2, #3722, #3730) —
+   reported while a still-open review comment sat unaddressed, because the
+   comment lived on a surface the merge decision doesn't read. This is
+   **the reviewer's obligation**, not the implementer's: rule 1 above
+   already covers the implementer side (finish your OWN Test plan before
+   merge). A reviewing session that has a blocking point edits the PR body
+   to add it as `- [ ] 🔴 <point>` (append, don't remove the author's own
+   items) and does not merge while it's unchecked; the author checks it off
+   once addressed, in the same PR body, with the fixing commit noted.
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 

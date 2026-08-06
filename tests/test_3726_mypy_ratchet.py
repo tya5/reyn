@@ -101,6 +101,32 @@ def test_measured_set_equal_to_baseline_is_clean() -> None:
     assert module.new_findings(pairs, pairs) == set()
 
 
+# ── has_new_syntax_abort (#3727 row #10) ────────────────────────────────────
+
+
+def test_a_new_syntax_pair_is_detected_as_an_abort() -> None:
+    """Tier 1: FALSIFY — a `[syntax]` pair in `new` is flagged, since mypy
+    aborts its whole run on one and every other file's findings go
+    unmeasured that run."""
+    module = _load()
+    new = {("src/reyn/foo.py", "syntax")}
+    assert module.has_new_syntax_abort(new) is True
+
+
+def test_ordinary_new_findings_are_not_flagged_as_a_syntax_abort() -> None:
+    """Tier 1: an ordinary [attr-defined]/[arg-type] red is a normal new
+    finding, not the "nothing else this run says can be trusted" shape."""
+    module = _load()
+    new = {("src/reyn/foo.py", "attr-defined"), ("src/reyn/bar.py", "arg-type")}
+    assert module.has_new_syntax_abort(new) is False
+
+
+def test_empty_new_set_is_not_a_syntax_abort() -> None:
+    """Tier 1: nothing new means nothing to warn about."""
+    module = _load()
+    assert module.has_new_syntax_abort(set()) is False
+
+
 # ── load_baseline / write_baseline round-trip ───────────────────────────────
 
 
