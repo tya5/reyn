@@ -44,6 +44,8 @@ from reyn.interfaces.transport.frames import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from reyn.core.events.events import Event
     from reyn.runtime.outbox import OutboxMessage
 
@@ -169,6 +171,14 @@ class InProcessTransport(ClientTransport):
     def pending_intervention_head(self) -> "object | None":
         s = self._attached()
         return s.interventions.head() if s is not None else None
+
+    def project_root(self) -> "Path | None":
+        # #3721: `Session.workspace_dir` is the same PUBLIC per-agent path
+        # `Agent.workspace_dir` resolves (#3705) — `.reyn/agents/<name>` — so
+        # `.parent.parent` is the project's `.reyn` root, the same derivation
+        # `router_host_adapter.py`'s `get_memory_index` already uses.
+        s = self._attached()
+        return s.workspace_dir.parent.parent if s is not None else None
 
     async def submit_user_text(self, text: str) -> str:
         s = self._attached()

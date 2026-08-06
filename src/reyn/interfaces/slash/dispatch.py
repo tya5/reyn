@@ -52,6 +52,8 @@ from reyn.interfaces.slash import REGISTRY, SlashContext, suggest_for_unknown
 from reyn.interfaces.transport.client_transport import ClientTransport
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from reyn.interfaces.transport.frames import Frame
     from reyn.runtime.outbox import OutboxMessage
 
@@ -180,6 +182,9 @@ class _ErrorWatchingTransport(ClientTransport):
 
     def pending_intervention_head(self) -> "object | None":
         return self._inner.pending_intervention_head()
+
+    def project_root(self) -> "Path | None":
+        return self._inner.project_root()
 
     async def submit_user_text(self, text: str) -> str:
         return await self._inner.submit_user_text(text)

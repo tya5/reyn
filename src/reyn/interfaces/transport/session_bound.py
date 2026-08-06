@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, AsyncIterator, Callable
 from reyn.interfaces.transport.client_transport import ClientTransport
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from reyn.interfaces.transport.frames import Frame
     from reyn.runtime.outbox import OutboxMessage
 
@@ -89,6 +91,12 @@ class SessionBoundTransport(ClientTransport):
 
     def pending_intervention_head(self) -> "object | None":
         return self._session.interventions.head()
+
+    def project_root(self) -> "Path | None":
+        # #3721: same derivation as InProcessTransport (mirrors that class by
+        # this file's own design convention — both delegate to the session's
+        # existing public API rather than re-deriving anything).
+        return self._session.workspace_dir.parent.parent
 
     async def submit_user_text(self, text: str) -> str:
         return await self._session.submit_user_text(text)

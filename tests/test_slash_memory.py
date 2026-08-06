@@ -36,13 +36,12 @@ async def test_memory_slash_is_registered():
 async def test_memory_completer_returns_names_after_view(tmp_path):
     """Tier 2: ``view <partial>`` completer returns memory entry names.
 
-    Drives the completer through a real ``list_entries`` call against
-    a tmp memory dir resolved via ``memory_dir() = Path('.reyn')/'memory'``
-    relative to cwd — no monkeypatching of internal collaborators (per
-    testing.ja.md "Use real instances or the LLMReplay Fake").
+    Drives the completer through a real ``list_entries`` call against a tmp
+    memory dir resolved via ``session.workspace_dir`` (#3721 — the completer
+    resolves the project root from the real session it's handed, not ambient
+    cwd) — no monkeypatching of internal collaborators (per testing.ja.md
+    "Use real instances or the LLMReplay Fake").
     """
-    import os
-
     mem_dir = tmp_path / ".reyn" / "memory"
     mem_dir.mkdir(parents=True)
     (mem_dir / "user_role.md").write_text(
@@ -58,14 +57,10 @@ async def test_memory_completer_returns_names_after_view(tmp_path):
 
     class _Session:
         agent_name = "test"
+        workspace_dir = tmp_path / ".reyn" / "agents" / "test"
 
-    cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        result = _memory_completer(_Session(), "view ")
-        assert set(result) == {"user-role", "tui-workflow"}
-    finally:
-        os.chdir(cwd)
+    result = _memory_completer(_Session(), "view ")
+    assert set(result) == {"user-role", "tui-workflow"}
 
 
 @pytest.mark.asyncio

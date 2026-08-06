@@ -10,6 +10,19 @@ a tested delete helper, so wiring one through a slash would mean either
 a one-off ``Path.unlink()`` (risk of leaving the index inconsistent)
 or a cross-layer change. Leaving the surface explicit so the right
 addition is owner-directed (file an issue first).
+
+#3721: ``list_entries()`` / ``find_one()`` used to be called with no
+directory argument, which falls back to ``memory_dir()``'s ambient
+``Path.cwd()``-relative default — the SAME incident class as #3705/#3716,
+just on the read side (a wrong-project read, not a write into the wrong
+project). The fix resolves the project root through
+``ctx.transport.project_root()`` (#3721's new seam on ``ClientTransport``)
+rather than ``ctx.session`` directly, per #3595 S4's ratchet: a NEW private
+read off the session residue field would grow exactly what that gate is
+closing. ``None`` means "not resolvable through this connection" (a
+genuinely remote transport) — surfaced as its own message, never silently
+folded into "0 memories found" (an owner-stated fix condition: those are
+different answers to different questions).
 """
 from __future__ import annotations
 
@@ -19,6 +32,12 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.runtime.session import Session
+
+_ROOT_UNRESOLVED = (
+    "can't determine this project's memory location over this connection "
+    "(no local project root to resolve against) — memory lookup isn't "
+    "available here yet."
+)
 
 
 _USAGE = (
@@ -35,14 +54,21 @@ def _memory_completer(
 
     Reads ``memory.list_entries()`` and returns the entry slugs. Empty
     list for ``/memory list`` or empty args (= hint mode covers those).
+
+    Takes a real ``Session`` directly (the pre-existing, ungated
+    ``CompleterFn`` signature — a synchronous TUI-local seam that #3595 S4
+    never touched; unlike ``memory_cmd`` below, this is not routed through
+    ``SlashContext``/``ClientTransport`` at all, so reading
+    ``session.workspace_dir`` here is not new residue).
     """
     parts = arg_partial.split()
     sub = parts[0] if parts else ""
     if sub != "view":
         return []
     try:
-        from reyn.data.memory import list_entries
-        entries = list_entries()
+        from reyn.data.memory import list_entries, memory_dir
+        root = session.workspace_dir.parent.parent
+        entries = list_entries(memory_dir(root=root))
         return [e.name for e in entries]
     except Exception:
         return []
@@ -78,9 +104,13 @@ async def _list_memory(ctx: "SlashContext") -> None:
     one-line description gives the reader a scannable index without
     having to open the side panel.
     """
-    from reyn.data.memory import list_entries
+    from reyn.data.memory import list_entries, memory_dir
 
-    entries = list_entries()
+    root = ctx.transport.project_root()
+    if root is None:
+        await reply_error(ctx, _ROOT_UNRESOLVED)
+        return
+    entries = list_entries(memory_dir(root=root))
     if not entries:
         await reply(
             ctx,
@@ -109,16 +139,21 @@ async def _view_memory(ctx: "SlashContext", name: str) -> None:
     if not name:
         await reply_error(ctx, "Usage: /memory view <name>")
         return
-    from reyn.data.memory import find_one, list_entries
+    from reyn.data.memory import AmbiguousMemoryError, find_one, list_entries, memory_dir
 
+    root = ctx.transport.project_root()
+    if root is None:
+        await reply_error(ctx, _ROOT_UNRESOLVED)
+        return
+    entries = list_entries(memory_dir(root=root))
     try:
-        entry = find_one(name)
-    except Exception:
-        # Fall back to exact-name match against the list so the user
-        # gets a clean "not found" instead of a stacktrace-flavoured
-        # error from the resolver.
-        all_entries = list_entries()
-        entry = next((e for e in all_entries if e.name == name), None)
+        entry = find_one(name, entries)
+    except AmbiguousMemoryError as exc:
+        matches = ", ".join(e.slug for e in exc.matches)
+        await reply_error(
+            ctx, f"{name!r} matches multiple entries ({matches}) — pass the exact slug.",
+        )
+        return
     if entry is None:
         await reply_error(ctx, f"memory entry not found: {name!r}")
         return

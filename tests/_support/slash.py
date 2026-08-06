@@ -85,6 +85,14 @@ class RecordingTransport(ClientTransport):
     def pending_intervention_head(self) -> "object | None":
         return self._session.interventions.head()
 
+    def project_root(self) -> "object | None":
+        # Mirrors InProcessTransport/SessionBoundTransport (#3721): None
+        # when there's no session, exactly the "unresolvable" shape a
+        # genuinely remote transport reports.
+        if self._session is None:
+            return None
+        return self._session.workspace_dir.parent.parent
+
     async def submit_user_text(self, text: str) -> str:
         return await self._session.submit_user_text(text)
 
