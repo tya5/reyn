@@ -67,7 +67,7 @@ shadow しても見えないものを見るための iterative loop。
   `permissions: file.read / python.pure / python.trusted: allow` を追加することで
   project-wide pre-approval を付与しつつ、 committed `reyn.yaml` と interactive
   TTY ユーザへの影響を ゼロに保つのが標準 pattern。 詳細は
-  [permission-model.md](../../en/concepts/runtime/permission-model.md#reynlocalyaml-for-operator-local-pre-approval) 参照
+  [permission-model.md](../../../concepts/runtime/permission-model.md#reynlocalyaml-for-operator-local-pre-approval) 参照
 - **resolved-indirectly classification (batch 10 で形式化)**: fix の cascade
   effect で別 bug が同時消失する pattern。 「reproduce or refute first」 で
   確認後に「不要 fix 投資を回避」 として明示記録、 prediction 設計に「次 layer
