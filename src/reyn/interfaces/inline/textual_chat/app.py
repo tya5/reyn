@@ -71,6 +71,7 @@ from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
+from .activity_row import ActivityRow
 from .chrome import (
     _MENU_TABS,
     Composer,
@@ -90,6 +91,7 @@ from .gutter import (
     ReynRightGutter,
 )
 from .intervention_panel import InterventionPanel
+from .loop_probe import LoopTripwire
 from .presenter import (
     _RESULT_KIND_KEY,
     _RESULT_META_KEY,
@@ -955,6 +957,9 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
+        #: Watches how late the event loop runs (#3539). Always on; see
+        #: ``loop_probe`` for why it is not opt-in.
+        self._loop_tripwire = LoopTripwire()
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1253,6 +1258,12 @@ class TextualChatApp(App):
         # rewind picker above the queue, inside the same zone).
         # Collapsed by default (``display=False`` — see ``SentQueue.on_mount``);
         # shown while at least one message is queued, undispatched.
+        # #3693: the live-turn line sits between the rewind picker and the
+        # queue, so the zone reads past (conversation) -> now (this) -> next
+        # (queue) -> the line being typed. Non-focusable, so Tab/Esc still walk
+        # the same path to the composer they did before it existed.
+        self._activity = ActivityRow(id="activity-row", clock=self._clock)
+        yield self._activity
         self._sent_queue = SentQueue(id="sent-queue")
         yield self._sent_queue
         # #3354: the / and : completion popup sits DIRECTLY above the input row
@@ -1458,8 +1469,56 @@ class TextualChatApp(App):
         Pass ``snap`` to reuse an already-read snapshot (one read per frame)."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         return status_line_text(
-            snapshot, self._agent_name, attach_state=self._attach_state()
+            snapshot,
+            self._agent_name,
+            attach_state=self._attach_state(),
         )  # type: ignore[arg-type]
+
+    async def _watch_loop_responsiveness(self) -> None:
+        """Report ONCE if the event loop stops running on time (#3539).
+
+        Always on. The symptom this watches for arrives unannounced, so an
+        opt-in probe would only ever be enabled after the occurrence someone
+        wanted to measure — #3638 closed that way. The cost is one float
+        comparison per tick against a measured baseline where a 10 ms task
+        never exceeded 12 ms over 463 chunks, so a healthy stream never trips
+        it.
+
+        The notice is decision-enabling rather than a bare complaint: it says
+        how long, and how to record the detail next time.
+
+        It reports on the CHROME, never into the conversation. The first
+        version appended a ``kind="system"`` row to the flow, which is a
+        category error of the shape the owner already ruled on in #3300: the
+        conversation is the record of an exchange, and a watchdog's reading of
+        the UI is not part of that exchange. It also had a cost — a row
+        inserted at an arbitrary moment shifts every index into the flow, so
+        an unlucky 250 ms stall under load broke tests that address entries
+        positionally (measured: a 400 ms stall put ``the interface was
+        unresponsive for 0.4s`` at ``entries[0]``, exactly the CI failures
+        #3668 was carrying). Two surfaces replace it, because they answer
+        different questions: the status line for "notice this now", and the
+        log for "what happened, read later" — the status line is transient,
+        so it alone could not justify a watchdog that is always on.
+        """
+        import asyncio  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        from .loop_probe import _TICK_SECONDS, stall_banner, stall_log_line  # noqa: PLC0415
+
+        last = time.perf_counter()
+        while True:
+            await asyncio.sleep(_TICK_SECONDS)
+            now = time.perf_counter()
+            lateness_ms = (now - last - _TICK_SECONDS) * 1000
+            last = now
+            fired = self._loop_tripwire.observe(lateness_ms)
+            if fired is not None:
+                logger.warning("textual chat: %s", stall_log_line(fired))
+                try:
+                    self.notify(stall_banner(fired), severity="warning")
+                except Exception:
+                    logger.exception("textual chat: loop tripwire notice failed")
 
     def on_mount(self) -> None:
         # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
@@ -1528,6 +1587,14 @@ class TextualChatApp(App):
 
         mark_first_frame()
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
+        # #3539: started alongside the frame pump rather than earlier in this
+        # method — the worker manager is what makes a coroutine here actually
+        # run, and a call placed before the pump's own is silently never
+        # awaited (measured: the tripwire stayed at 0.0 ms through a 400 ms
+        # synchronous stall).
+        self.run_worker(
+            self._watch_loop_responsiveness(), name="loop-tripwire", exclusive=False
+        )
         # Drawer starts collapsed — the default chrome is just the focusable
         # menu row (#3326: which also carries the status-values segment when
         # there's room — see MenuBar._repack). It only becomes visible when a
@@ -2401,6 +2468,11 @@ class TextualChatApp(App):
             entry.set_state(EntryState.RUNNING)
             self._running_tools[op_id] = entry
             self._begin_running_indicator(entry)
+            # #3693: name the tool on the live-turn row, but only from a label
+            # the frame actually carries — an unlabelled call stays the generic
+            # state rather than inventing a name for it.
+            label = (msg.meta or {}).get("label") or (msg.text or "").strip()
+            self._activity.specialise(f"TOOL {label}" if label else "WORKING")
         elif kind in ("tool_call_failed", "error"):
             entry.set_state(EntryState.ERROR)
 
@@ -2693,6 +2765,12 @@ class TextualChatApp(App):
             turn_active=snap.get("turn_active", False),
             queue_seq=snap.get("queue_seq", 0),
         )
+        # #3693: a client that attached mid-turn knows ``turn_active`` and
+        # nothing else — no start instant, no tool, no stream. It says so and
+        # shows no clock (``started=False``), rather than timing from the
+        # moment it happened to connect.
+        if snap.get("turn_active"):
+            self._activity.begin("WORKING", started=False)
         for item in self._queue_view.queue():
             msg_id = item.get("msg_id")
             if msg_id:
@@ -2928,6 +3006,12 @@ class TextualChatApp(App):
             item for item in self._queue_view.queue()
             if item.get("chain_id") == chain_id
         ]
+        # #3693: a dispatched turn is the one fact this row is allowed to
+        # assert on its own. Set BEFORE the seq gate's early return: a
+        # ``turn_started`` this client already reflected is still a turn that
+        # is running, and returning early would leave the row hidden through
+        # the whole turn.
+        self._activity.begin("WORKING")
         applied = self._queue_view.apply_turn_started(chain_id=chain_id, seq=seq)
         if not applied:
             return
@@ -3144,6 +3228,10 @@ class TextualChatApp(App):
         text = str(data.get("text", ""))
         if not chain_id or not text:
             return
+        # #3693: content is arriving, so the live-turn row can say so. A
+        # refinement of a row that already exists, never a row of its own — a
+        # delta outside a turn must not conjure one (``specialise`` no-ops).
+        self._activity.specialise("RESPONDING")
         # Correlate on (chain_id, round_index), not chain_id alone. A turn that
         # calls a tool produces MORE THAN ONE assistant message — measured on a
         # real turn: 140 deltas, three tool calls, then 300 deltas, and the two
@@ -3547,6 +3635,15 @@ class TextualChatApp(App):
                                 "textual chat: agent_delta coalesce failed"
                             )
                     elif etype in _TURN_END_EVENT_TYPES:
+                        # #3693: the turn is over — the row goes, whichever of
+                        # the three terminal events arrived. Guarded like its
+                        # siblings below: one frame's failure must not stop the
+                        # pump, and a chrome row is the last thing that should
+                        # be able to.
+                        try:
+                            self._activity.end()
+                        except Exception:
+                            logger.exception("textual chat: activity row clear failed")
                         try:
                             self._sweep_orphaned_running_tools()
                         except Exception:
