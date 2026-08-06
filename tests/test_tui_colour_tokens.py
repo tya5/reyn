@@ -37,6 +37,18 @@ _DECLARATION = re.compile(
 _COLOURLESS = frozenset({"none", "transparent", "auto", "initial", "hidden"})
 
 
+def _declarations_only(sheet: str) -> str:
+    """``sheet`` with its CSS comments removed.
+
+    Block-aware rather than line-aware: a continuation line inside a ``/* */``
+    comment carries no marker of its own, so a per-line test reads it as a
+    declaration. Every site this module guards explains itself in a comment
+    that names the very token it stopped using, so telling prose from rules
+    has to be exact or the reasoning gets driven out of the files.
+    """
+    return re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)
+
+
 def _stylesheet_lines() -> "list[tuple[Path, int, str]]":
     """Every line of reyn-owned source under ``interfaces/``, with its origin.
 
@@ -131,3 +143,73 @@ def test_resolution_leaves_no_marker_behind() -> None:
 
     assert "@" not in resolved
     assert palette.TOKENS["@surface@"] in resolved
+
+
+#: Where ``@quiet@`` is the only thing declared, and why that is tolerated.
+#:
+#: Under the ansi themes ``$text-muted`` — which ``@quiet@`` resolves to —
+#: lands on the same ``ansi_default`` marker as body text, so these sites do
+#: not visibly recede there. #3523 measured all of them and the conclusion was
+#: to leave them: each is already told apart by something that is not colour,
+#: and #3686 fixed the two where nothing else was doing the work. What the
+#: colour still buys is the non-ansi themes, where it resolves to a real value.
+#:
+#: The entry is the FILE plus what actually carries the distinction, so adding
+#: a name here means stating that answer out loud.
+_QUIET_ONLY_ALLOWED = {
+    "app.py": "position: the ❯ gutter, the status row and the menu row are "
+              "separated from the conversation by where they are and by the "
+              "rule above them; the active tab additionally carries bold",
+    "intervention_panel.py": "the pane it labels is bordered and headed in "
+                             "@attention@, so the detail line reads as detail",
+    "rewind_picker.py": "the heading carries text-style: @recede@ (#3686)",
+    "sent_queue.py": "the ⧗ glyph, the region's own position above the "
+                     "composer, and the NEXT label on its head (#3693)",
+}
+
+
+def test_a_new_site_cannot_quietly_rely_on_quiet_alone() -> None:
+    """Tier 2: a file that newly reaches for ``@quiet@`` has to say why.
+
+    ``@quiet@`` reads like "make this quieter" and, under reyn's default
+    theme, does not. #3523 measured seven chrome sites where the intent was
+    therefore lost with nothing failing, and judged — per site, not as a rule —
+    that each was already distinguished by something else. That judgement is
+    only safe for the sites it was made about.
+
+    An eighth arrived the day after (``ActivityRow``, #3693): the declaration
+    looked right, read right in review, and did nothing. Nothing caught it
+    because a one-off audit can only cover what existed when it ran. This is
+    that audit as a standing gate — not a ban, since the colour still resolves
+    to a real value under the non-ansi themes, but a requirement that a new
+    site names what carries the distinction when it does not.
+    """
+    # DECLARATIONS only, via the same prose skip ``_colour_values`` uses. A
+    # plain substring search over the file reads the comments too — and the
+    # comments this very change leaves behind explain, by name, the token the
+    # site stopped declaring. First run, the gate accused its own outcome:
+    # ``activity_row.py`` was reported for the sentence recording that its
+    # ``color: @quiet@`` had been REMOVED. A gate that cannot tell a rule from
+    # prose about a rule forces the reasoning out of the files.
+    seen = set()
+    for path, _number, line in _stylesheet_lines():
+        stripped = line.strip()
+        if stripped.startswith(("#", "*", "/*")) or "``" in line:
+            continue
+        if "@quiet@" in line:
+            seen.add(path.name)
+
+    undeclared = sorted(seen - set(_QUIET_ONLY_ALLOWED))
+    assert not undeclared, (
+        "these files use @quiet@, which resolves to the same value as body "
+        "text under reyn's default theme — so whatever is meant to recede "
+        "there does not. Either give it text-style: @recede@ (an SGR "
+        "attribute, which survives), or add it to _QUIET_ONLY_ALLOWED naming "
+        f"what else tells it apart: {undeclared}"
+    )
+
+    stale = sorted(set(_QUIET_ONLY_ALLOWED) - seen)
+    assert not stale, (
+        "these files no longer use @quiet@ — drop the allowance rather than "
+        f"leaving a reason for something that is not there: {stale}"
+    )
