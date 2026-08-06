@@ -399,9 +399,9 @@ async def _spawn_and_persist(
     snapshot = (
         tmp_path / ".reyn" / "agents" / "worker" / "state" / "sessions" / sid / "snapshot.json"
     )
-    for _ in range(200):
-        if snapshot.is_file():
-            break
+    # #3748: unbounded (owner policy) -- the assert below already names the
+    # real predicate.
+    while not snapshot.is_file():
         await asyncio.sleep(0.05)
     assert snapshot.is_file(), "the spawned session's snapshot never reached disk"
     return sid

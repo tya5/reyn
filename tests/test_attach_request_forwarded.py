@@ -100,11 +100,10 @@ async def test_attach_request_swaps_but_does_not_repost(tmp_path):
         OutboxMessage(kind="__attach_request__", text="beta"),
     )
 
-    # Yield to the forwarder task; break as soon as the swap is detected.
-    for _ in range(50):
+    # #3748: unbounded wait for the real predicate (owner policy) -- was a
+    # "yield 50 times, break early" pump.
+    while registry.attached_name != "beta":
         await asyncio.sleep(0.01)
-        if registry.attached_name == "beta":
-            break
 
     # Control path intact: swap happened.
     assert registry.attached_name == "beta"
