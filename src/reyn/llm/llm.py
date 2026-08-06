@@ -595,20 +595,7 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
     # #3434: snapshot BEFORE the coroutine runs, so the finally below closes
     # only litellm async clients this call creates — not every client any
     # other test/call in this worker process has cached and is still using.
-    #
-    # #3671 client-prep:other sub-instrumentation: this is `litellm`'s FIRST
-    # touch on the `reyn chat` startup path — `_snapshot_litellm_client_cache_
-    # keys` imports it lazily, and `run_async` is called (from `chat.py`)
-    # right after `mark_async_entered()`, before `run_repl`'s own
-    # `client-prep:*` brackets even start. That import previously fell into
-    # the unnamed `client-prep:other` bucket (measured ~59-60% of startup on
-    # one machine) — bracketed here so an operator's own run can show whether
-    # this specific import, not the lazily-imported textual/flowview tree
-    # (`client-prep:tui-import`), is what's actually slow.
-    from reyn.runtime.startup_timing import stage as _startup_stage_for_llm  # noqa: PLC0415
-
-    with _startup_stage_for_llm("client-prep:litellm-import"):
-        pre_existing_keys = _snapshot_litellm_client_cache_keys()
+    pre_existing_keys = _snapshot_litellm_client_cache_keys()
 
     async def _wrapped() -> T:
         from reyn.core.events.asyncio_diagnostics import (

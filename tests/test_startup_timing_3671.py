@@ -51,7 +51,7 @@ def test_a_stage_that_never_ran_is_still_reported() -> None:
     timing = StartupTiming()
     timing.record("config", 0.5)
 
-    lines = timing.report_lines(wall_seconds=1.0)
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)
     body = "\n".join(lines)
 
     for name in STAGES:
@@ -80,7 +80,7 @@ def test_time_the_stages_cannot_explain_is_stated() -> None:
     timing = StartupTiming()
     timing.record("config", 0.40)
 
-    lines = timing.report_lines(wall_seconds=40.0)
+    lines = timing.report_lines(wall_seconds=40.0, first_frame_reached=True)
     unaccounted = next(line for line in lines if "unaccounted" in line)
 
     assert timing.unaccounted_seconds(40.0) == 39.6
@@ -97,7 +97,7 @@ def test_shares_are_of_wall_time_not_of_the_measured_sum() -> None:
     timing = StartupTiming()
     timing.record("config", 0.40)
 
-    config_line = next(line for line in timing.report_lines(40.0) if "config" in line)
+    config_line = next(line for line in timing.report_lines(40.0, first_frame_reached=True) if "config" in line)
 
     assert "1.0%" in config_line
 
@@ -384,7 +384,7 @@ def test_unaccounted_warning_line_appears_when_coverage_is_bad() -> None:
     timing = StartupTiming()
     timing.record("config", 0.1)
 
-    lines = timing.report_lines(wall_seconds=1.0)  # 90% unaccounted
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)  # 90% unaccounted
 
     assert any("coverage gap" in line for line in lines)
 
@@ -395,7 +395,7 @@ def test_no_warning_line_when_coverage_is_good() -> None:
     timing = StartupTiming()
     timing.record("config", 0.95)
 
-    lines = timing.report_lines(wall_seconds=1.0)  # 5% unaccounted
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)  # 5% unaccounted
 
     assert not any("coverage gap" in line for line in lines)
 
@@ -408,23 +408,27 @@ def test_client_prep_other_is_declared() -> None:
     assert "client-prep:other" in STAGES
 
 
-def test_litellm_import_stage_is_bracketed_in_run_async() -> None:
-    """Tier 2: #3671 follow-up — `run_async`'s snapshot of litellm's client
-    cache (which lazily imports litellm) is wrapped in `stage("client-prep:
-    litellm-import")`, so a real run can show whether THIS import, not the
+def test_litellm_import_stage_is_bracketed_in_the_chat_startup_path() -> None:
+    """Tier 2: #3671 follow-up — the chat startup path (`chat.py`'s
+    `_prepay_litellm_import`) is wrapped in `stage("client-prep:litellm-
+    import")`, so a real run can show whether THIS import, not the
     lazily-imported textual/flowview tree (`client-prep:tui-import`), is what
     dominates `client-prep:other`'s previously-unexplained ~59-60% share.
+
+    Deliberately NOT in `llm.py`'s `run_async` (lead-coder review): that is a
+    general-purpose choke point also used by `mcp.py` and other non-chat-
+    startup callers — a shared helper must not carry a stronger opinion
+    (a CLI startup-phase stage name) than its least-opinionated caller.
+    `run_async` itself is untouched by this PR.
+
     Witnessed by running the real function and checking the PUBLIC recorded
-    duration increased — not by reading `llm.py`'s source for the `with`."""
-    from reyn.llm.llm import run_async
+    duration increased — not by reading `chat.py`'s source for the `with`."""
+    from reyn.interfaces.cli.commands.chat import _prepay_litellm_import
     from reyn.runtime import startup_timing
 
     before = startup_timing.TIMING.elapsed("client-prep:litellm-import")
 
-    async def _noop() -> None:
-        return None
-
-    run_async(_noop())
+    _prepay_litellm_import()
 
     after = startup_timing.TIMING.elapsed("client-prep:litellm-import")
     assert after >= before
@@ -471,7 +475,7 @@ def test_report_still_says_total_when_the_interface_did_appear() -> None:
     timing = StartupTiming()
     timing.record("import", 0.4)
 
-    lines = timing.report_lines(wall_seconds=1.0)
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)
     body = "\n".join(lines)
 
     assert "TOTAL" in body

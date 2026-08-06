@@ -346,7 +346,7 @@ class StartupTiming:
         return max(0.0, wall_seconds - self.total_seconds)
 
     def report_lines(
-        self, wall_seconds: float, *, first_frame_reached: bool = True,
+        self, wall_seconds: float, *, first_frame_reached: bool,
     ) -> "list[str]":
         """The report, as short lines meant to be read off a screen.
 
@@ -355,14 +355,17 @@ class StartupTiming:
         stage reading 5% of a startup dominated by something unmeasured cannot
         be misread as 5% of the problem.
 
-        ``first_frame_reached=False`` (#3671 follow-up): a startup that was
-        interrupted or crashed before the interface appeared gets a report
-        that SAYS SO, prominently, instead of a ``TOTAL`` line indistinguishable
-        from a completed one. Measured doing the wrong thing 3 times in a row
-        before this flag existed: `process_elapsed_seconds()`'s "now" fallback
-        produces a real, plausible-looking number, and the old unconditional
+        ``first_frame_reached`` (#3671 follow-up) is a REQUIRED keyword, no
+        default: a startup that was interrupted or crashed before the
+        interface appeared gets a report that SAYS SO, prominently, instead
+        of a ``TOTAL`` line indistinguishable from a completed one. Measured
+        doing the wrong thing 3 times in a row before this flag existed:
+        `process_elapsed_seconds()`'s "now" fallback produces a real,
+        plausible-looking number, and the old unconditional
         ``TOTAL ... (start \u2192 interface on screen)`` label asserted the
-        interface appeared regardless of whether it actually did.
+        interface appeared regardless of whether it actually did. A default
+        of ``True`` would hand that same false claim to any caller who
+        forgot to pass it \u2014 the exact bug this parameter exists to close.
         """
         lines = ["startup timing (REYN_STARTUP_TIMING=1)"]
         if not first_frame_reached:
