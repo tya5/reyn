@@ -76,6 +76,12 @@ Key constraints (full rationale in the doc):
 - NEVER pin algorithm-level behavior (sort order, dict iteration order,
   internal cache structure, exact whitespace / formatting).
 - NEVER add snapshot / golden-file tests outside `tests/scaffold/`.
+- Tests carry no time limit of their own — no `@pytest.mark.timeout(N)`,
+  no wait-budget constant in the body (`attempts=200`, `range(N)`). Wait on
+  the condition unboundedly; a test needing more than CI's `--timeout=120`
+  kill switch should be decomposed, not marked. Straight-line `sleep(N)` as
+  the thing that makes an assertion pass stays banned. See `testing.md` §
+  Time.
 - Tests for an extracted refactor belong in `tests/scaffold/` with
   `triggered_by` / `removed_by` metadata, and are **deleted in the PR
   that lands the refactor**.
