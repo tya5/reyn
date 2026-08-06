@@ -319,6 +319,10 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
     return result
 
 
+# maxsize=None (unbounded): keys are distinct resolved cwd-like starting
+# paths a single process is asked about, naturally a handful at most
+# (production callers all resolve from `Path.cwd()`) — not a value with
+# unbounded cardinality over a process's lifetime.
 @lru_cache(maxsize=None)
 def _find_project_root_uncached(resolved_start: Path) -> Path | None:
     """The actual filesystem walk — never call directly, see `_find_project_root`.

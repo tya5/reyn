@@ -51,6 +51,7 @@ import os
 import sys
 import warnings
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -482,27 +483,47 @@ def _isolate_rich_style_ansi_memo():
 
 
 @pytest.fixture(autouse=True)
-def _clear_find_project_root_cache() -> None:
-    """Reset `_find_project_root`'s process-global cache after every test (#3681).
+def _clear_find_project_root_cache() -> Iterator[None]:
+    """Reset `_find_project_root`'s process-global cache before AND after
+    every test (#3681).
 
     `_find_project_root` (`reyn.config.loader`) is now `lru_cache`d, keyed on
     the resolved starting path, so a single `reyn` process walks the
     filesystem once per distinct starting directory instead of once per
     caller (#3671 P4 item A-3: `reyn chat` alone called it 3x for the same
     cwd — interactive-logging setup, `load_config()`,
-    `build_environment_backend()`). Safe in production (a process's own
-    `reyn.yaml` ancestry does not change mid-run); NOT safe across a whole
-    pytest session sharing one interpreter, where a `tmp_path`-based test
-    could in principle collide with a stale cached miss from an earlier
-    test's walk over the same absolute path (unlikely in practice — pytest's
-    `tmp_path` is unique per test — but not something to leave to chance
-    given how cheaply it is closed). Same shape as
+    `build_environment_backend()`).
+
+    Cleared on BOTH sides, not just after: a fixture that only clears in its
+    teardown leaves every worker's FIRST test running against whatever the
+    cache picked up during collection-time / session-scoped fixture setup —
+    the one point an after-only clear cannot reach, since nothing ran this
+    fixture's teardown yet.
+
+    Safe in production TODAY: a `reyn` process's own `reyn.yaml` ancestry
+    does not change mid-run — verified by checking every command that WRITES
+    `reyn.yaml` — only `reyn init` (`interfaces/cli/commands/init.py`) —
+    prints and exits immediately after, never querying `_find_project_root`
+    again in the same process (verified by grep: no other command writes
+    `reyn.yaml`, and `init.py` itself never calls `_find_project_root` or
+    `load_config`).
+    This is an observation about the CURRENT command set, not an invariant:
+    a future command that writes `reyn.yaml` and then CONTINUES running
+    (unlike `init`'s write-then-exit) would need its own explicit
+    `_find_project_root_uncached.cache_clear()` call at that write site.
+
+    NOT safe across a whole pytest session sharing one interpreter, where a
+    `tmp_path`-based test could in principle collide with a stale cached
+    miss from an earlier test's walk over the same absolute path (unlikely
+    in practice — pytest's `tmp_path` is unique per test — but not something
+    to leave to chance given how cheaply it is closed). Same shape as
     `_isolate_rich_style_ansi_memo` above, for the same reason: a process-
     global cache leaking across tests is bugs waiting for the wrong pair of
     tests to run adjacently, not a bug already reproduced.
     """
-    yield
     from reyn.config.loader import _find_project_root_uncached
+    _find_project_root_uncached.cache_clear()
+    yield
     _find_project_root_uncached.cache_clear()
 
 # ── Marker registration ────────────────────────────────────────────────────────
