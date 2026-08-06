@@ -24,10 +24,7 @@ denies), never "the two arms agree": both arms sharing one defect would agree.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
-
-import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
@@ -141,49 +138,17 @@ def test_reapply_with_a_base_still_composes_envelope_and_override(tmp_path, monk
         f"the session's persisted /visibility override must deny {TOGGLED_TOOL!r}"
     )
 
-
-def test_the_preserve_branch_is_reached_on_the_restart_path(
-    tmp_path, monkeypatch, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Tier 2: the preserve branch is REACHED through the production restart path, and
-    says so. A branch nothing reaches is dead, and a preserved envelope is
-    indistinguishable from a correctly re-resolved one by looking at the envelope alone
-    — the WARNING is the only thing that distinguishes them, which is why preserving is
-    not allowed to be silent. RED if the branch stops being reached, or if it is reached
-    silently."""
-    monkeypatch.chdir(tmp_path)
-    sid = _persist_narrowing_and_toggle(tmp_path)
-
-    with caplog.at_level(logging.WARNING, logger="reyn.runtime.capability_visibility"):
-        _restart(tmp_path, sid, with_back_reference=False)
-
-    unreadable = [
-        r for r in caplog.records
-        if r.levelno >= logging.WARNING and "#3593" in r.getMessage()
-    ]
-    assert unreadable, (
-        "reaching the preserve branch must surface: no WARNING naming #3593 was emitted "
-        "while re-applying the visibility override on a session with no envelope source"
-    )
-    message = unreadable[0].getMessage()
-    assert "alice" in message, "the warning must name the agent whose envelope was not re-resolved"
-    assert sid in message, "the warning must name the session it happened on"
-
-
-def test_a_wired_session_does_not_reach_the_preserve_branch(
-    tmp_path, monkeypatch, caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Tier 2: the branch is reached ONLY when the base is genuinely unavailable — the
-    same restart with an envelope source emits no such warning. Without this, a warning
-    fired unconditionally would satisfy the reachability witness above while telling an
-    operator nothing."""
-    monkeypatch.chdir(tmp_path)
-    sid = _persist_narrowing_and_toggle(tmp_path)
-
-    with caplog.at_level(logging.WARNING, logger="reyn.runtime.capability_visibility"):
-        _restart(tmp_path, sid, with_back_reference=True)
-
-    assert not [
-        r for r in caplog.records
-        if r.levelno >= logging.WARNING and "#3593" in r.getMessage()
-    ], "a session that CAN read its base must not report an unreadable envelope source"
+# #3593 ②: test_the_preserve_branch_is_reached_on_the_restart_path and
+# test_a_wired_session_does_not_reach_the_preserve_branch (asserting the
+# preserve branch is reached, and only reached, via the PRODUCTION restart
+# path) are deleted here, not just made to pass differently. Every real
+# caller of build_scoped_chat_session now supplies a real registry (the
+# dogfood bootstrap-ordering fix), so `_restart(..., with_back_reference=
+# False)` no longer describes anything the production restart path can
+# still do — reachability-via-production is no longer a claim these tests
+# could still fail to support. `test_envelope_narrowing_survives_a_reapply_
+# with_no_base` above stays: it is not a reachability witness, it is a
+# regression test of CapabilityVisibility's own behavioral contract when
+# handed no registry at all (still constructible directly, still a real
+# runtime guard — see capability_visibility.py's own note next to it on
+# why the type annotation alone is not sufficient).

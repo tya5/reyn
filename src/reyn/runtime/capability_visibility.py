@@ -200,7 +200,7 @@ class CapabilityVisibility:
     def __init__(
         self,
         *,
-        registry: "_EnvelopeSource | None",
+        registry: "_EnvelopeSource",
         router_host: "_RouterHost",
         session_id_provider: "Callable[[], str | None]",
         agent_name: "str",
@@ -332,6 +332,16 @@ class CapabilityVisibility:
         # resolved_profile_for is documented to return (ContextualPermission | None, ...);
         # its declared type is the wider `object | None`, so cast to the concrete type the
         # downstream compose_resolved requires (registry.py:3509 guarantees it).
+        #
+        # #3593 ② review: `registry`'s type is `_EnvelopeSource` (non-Optional) now that
+        # every production caller of build_scoped_chat_session passes a real one — but a
+        # type annotation is a static-checking signal, not a runtime guarantee (Python does
+        # not enforce it), and this `is None` check stays regardless. If it were removed,
+        # the failure direction on a genuinely unreadable base is not a crash — it composes
+        # the override against an allow-everything default and SETs it, so a persisted
+        # `tool_deny` narrowing is silently replaced and the tool becomes ALLOWED. That is a
+        # permission WIDENING, the opposite of fail-closed, which is why the type alone
+        # (a compile-time-only signal) is not sufficient here.
         if self._registry is None or not hasattr(self._registry, "resolved_profile_for"):
             # #3593 ①: preserve — see the docstring. No base was obtained, so nothing below
             # may run: everything below composes a NEW envelope and SETs it over the live one.
