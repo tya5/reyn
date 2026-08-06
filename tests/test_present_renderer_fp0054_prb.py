@@ -172,6 +172,11 @@ def test_table_cap_rows_shows_visible_truncation_tail_with_ref() -> None:
     })
     resolved = resolve_bindings(nodes, data, surface="inline-cui", ref="/tmp/dataset.json")
 
+    # #3664 (b): `rows` counts what the user actually saw — the POST-cap count,
+    # not the pre-cap `total` rows that were resolved before `cap_rows` truncated
+    # them. A pre-cap count here would silently over-report by `extra`.
+    assert resolved.rows == MAX_ROWS
+
     # The render model carries the tail (not just the ack's drop stats) so the
     # renderer actually shows it — the #2669 gap was exactly that the drop was
     # recorded for the LLM but never threaded to the render model.

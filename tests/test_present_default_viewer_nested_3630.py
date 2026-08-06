@@ -54,19 +54,23 @@ def test_a_nested_row_list_reaches_the_user_as_a_table() -> None:
     tables = [n for n in rendered.nodes if n.get("component") == "table"]
     assert tables, f"no table in the rendering: {_components(rendered)}"
     assert [c["header"] for c in tables[0]["columns"]] == ["id", "name"]
-    assert rendered.rows == 2
+    # #3664: `rendered.rows` counts every rendered row across every rows-shaped
+    # slot, not just the table's — the top-level keyvalue card (code/message/
+    # status) contributes its own 3 rows alongside the table's 2.
+    assert rendered.rows == 5
 
 
 def test_nothing_is_flattened_to_json_on_the_way() -> None:
     """Tier 2: no value is coerced into a text slot.
 
-    The dump was recorded as a `type_mismatch` drop, so an empty drop list is
-    the direct statement that no container landed in a text slot — stronger
-    than checking the table exists, which a rendering could satisfy while ALSO
-    dumping something else.
+    A container-into-text-slot coercion is recorded in `coerced` (#3664), so an
+    empty `coerced` list is the direct statement that no container landed in a
+    text slot — stronger than checking the table exists, which a rendering
+    could satisfy while ALSO dumping something else.
     """
     rendered = _render(_NESTED)
 
+    assert rendered.coerced == []
     assert rendered.bindings_dropped == []
 
 
@@ -102,11 +106,13 @@ def test_descent_stops_and_says_so() -> None:
 
     Pinned because the bound is what keeps the synthesized view's size a
     property of the data's shape rather than its depth — an unbounded descent
-    would emit a node per level. The drop is the honest signal that the floor
-    was reached, so it is asserted rather than avoided.
+    would emit a node per level. The coercion (#3664: displayed-but-reshaped,
+    not a drop) is the honest signal that the floor was reached, so it is
+    asserted rather than avoided.
     """
     deep: dict = {"a": {"b": {"c": {"d": {"e": {"f": 1}}}}}}
 
     rendered = _render(deep)
 
-    assert [d["reason"] for d in rendered.bindings_dropped] == ["type_mismatch"]
+    assert [c["rendered_as"] for c in rendered.coerced] == ["json_text"]
+    assert rendered.bindings_dropped == []

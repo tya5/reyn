@@ -123,7 +123,7 @@ Phase を一時停止してユーザーに質問します。OS は質問を表�
 
 **宣言的モデル(v1 カタログ — display-only、構造的に非実行)。** blueprint は単一のコンポーネントノードか、そのリスト(上から下へレンダリング)です。カタログコンポーネント(すべて read-only): `text` / `markdown` / `code` / `diff` / `keyvalue` / `table` / `list` / `image`。v1 には**インタラクティブなコンポーネントはありません**(ボタン / フォーム無し)。バインディングは構造的に `{"$bind": "<json-pointer>"}` として表現されます — RFC 6901 JSON Pointer **文字列**(`""` = ドキュメント全体)。それ以外はすべてリテラルです。`table` / `list` の column path は**行相対**(反復される各行に対して相対的)に解決されます。op validation 時の構造ゲートは非カタログコンポーネントや非パスバインディングを拒否します(ソフトドロップではなくハードエラー) — これは純粋に構造的なものであり、leaf-string の無害化は(下記の)レンダー層の単一シームであって parse 時のものではありません。
 
-**バインディングセマンティクス。** パスヒット → バインド。パスミス → そのバインディングを**ソフトスキップ**して `bindings_dropped` に記録(ハード失敗にはならない)。型不一致 → 強制変換(`table` の `rows` スロットにスカラーが入る → 1行のテーブル)+ 記録。Guard による除去 → presentation-guard によって無害化またはサイズキャップされたバインド済み leaf が記録されます。**すべての**バインディングがミスした場合、op は `all_bindings_missed` を報告します(汎用ビューアへのフォールバックシグナル)。
+**バインディングセマンティクス。** パスヒット → バインド。パスミス → そのバインディングを**ソフトスキップ**して `bindings_dropped` に記録(ハード失敗にはならない)。型不一致 → 強制変換(`table` の `rows` スロットにスカラーが入る → 1行のテーブル; コンテナが `text` スロットに入る → その JSON 形式)+ `{path, rendered_as}` を **`coerced`** に記録(`bindings_dropped` ではない)——型変換は drop の*逆*の結果であり、値は形を変えてユーザーに届いた(届かなかったのではない、#3664)。Guard による除去 → presentation-guard によって無害化またはサイズキャップされたバインド済み leaf は `bindings_dropped` に記録されます。**すべての**バインディングがミスした場合、op は `all_bindings_missed` を報告します(汎用ビューアへのフォールバックシグナル)。
 
 **Presentation-guard(出力シーム)。** 一度も ingest されていないデータを含め、**無条件に**実行されます。レンダーされる leaf 文字列 — ラベル、リテラルスロット値、およびバインドされたデータ値 — はすべて、対象**サーフェス**によって選択される単一のニュートラライザーを通過します(サーフェスごとの戦略なので、将来の web サーフェスも binding 層に触れずに差し込めます)。v1 の**terminal** 戦略は ESC / 制御シーケンス(OSC / CSI)のみをストリップし、Rich コンソールマークアップのエスケープや HTML エスケープは**行いません**。Rich マークアップの安全性は意図的にこのシームの責務ではありません(PR-B での見直し): Rich console-markup インジェクションは `console.print(str, markup=True)` を通じてのみ到達可能 — これは terminal sink の性質ではなく *renderer* が Rich オブジェクトごとに行う選択です。inline-CUI レンダラーはすべての leaf を markup-inert な Rich オブジェクト(`Text` / `Syntax` / `Markdown`)に流し込み、提示されたコンテンツに対して markup 解釈付きで `console.print` を呼び出すことは決してないため、guard の挙動にかかわらず Rich インジェクションは構造的に不可能です — guard 自身の ESC-strip と同じ「ポリシーではなく形状による安全性」という規律です。HTML の無害化は将来の web レンダラー自身の関心事のままです(terminal では `<div>` は無害なリテラルであり、entity-escaping は `code` / `diff` コンテンツを壊してしまいます)。**バインディング単位のサイズキャップ**は、`/`(root)ポインタが `text` コンポーネントにバインドされてファイル全体をダンプするのを防ぎます。無害化は変換です(値はレンダリングされ続けますが無害) — ref はフル忠実度のソースであり続けます。
 
@@ -133,15 +133,21 @@ Phase を一時停止してユーザーに質問します。OS は質問を表�
 ok: true
 mode: view        # view | blueprint | default (FP-0055 PR-1) — 呼び出し側がどの入力を与えたか
 bindings_resolved: 3
-rows: 500
 bindings_dropped:
   - {path: "/results/0/author", reason: path_not_found}
-  # reason ∈ {path_not_found, type_mismatch, guard_stripped}
+  # reason ∈ {path_not_found, guard_stripped} — 型変換の coercion は drop ではない
+  # (#3664); 下記の `coerced` を参照
+coerced:
+  - {path: "/big", rendered_as: json_text}
+  # rendered_as ∈ {json_text, single_row} — 値はユーザーに届いた(形を変えて)
+rows: 500          # #3664: すべての行状スロット(table/list と keyvalue)を横断した、
+                    # 実際に描画された行数(キャップ後)——LLM がどれだけ届いたかを
+                    # 知る唯一の指標
 ```
 
-`path_not_found` が多くの行にわたる場合は「view がこのデータ形状に一致していない」と読め、`type_mismatch` は「パスは合っているがコンポーネントが違う」、`guard_stripped` は「view のバグではなく guard によってコンテンツが無害化された」と読めます。LLM はデータを ingest せずに、数十トークンでブラインドな presentation を自己修正できます。`mode: "default"`(`view` も `blueprint` も未指定)の場合、上記の統計は合成されたデフォルトビューア自身のものです——これは意図されたレンダリングなので、そのデフォルトビューア自身がさらに stage-4 ジェネリックフォールバックへ劣化しない限り fallback `note` は付きません。
+`path_not_found` が多くの行にわたる場合は「view がこのデータ形状に一致していない」と読め、`guard_stripped` は「view のバグではなく guard によってコンテンツが無害化された」、`coerced` エントリは「パスは合っているがコンポーネントが違う——drop ではなく形を変えてユーザーに届いた」と読めます。LLM はデータを ingest せずに、数十トークンでブラインドな presentation を自己修正できます。`mode: "default"`(`view` も `blueprint` も未指定)の場合、上記の統計は合成されたデフォルトビューア自身のものです——これは意図されたレンダリングなので、そのデフォルトビューア自身がさらに stage-4 ジェネリックフォールバックへ劣化するか、(#3664)コンテナを JSON テキストへ変換しない限り fallback `note` は付きません(後者は `view`/`blueprint` パスの `all_bindings_missed` と同じ自己修正シグナルを、本来それを持たないこのパスに与えます)。
 
-発行されるイベント: `presented`(P6 audit) — `{data_ref, view, mode, surface, ingested, bindings_resolved, bindings_dropped, rows, fallback_stage}`。`view` は登録名、インライン blueprint では `blueprint:<hash>`、両方未指定の場合は `null` です。`fallback_stage`(`null` | `content_type_default` | `generic`)は実際にユーザーへ届いたビューアを記録します — 要求された描画が直接描画されたときは `null`、そうでなければ合成フォールバックの段階です — これにより、要求どおり描画されたリテラルのみビューを、未知 / 全ミスで引き継がれたフォールバックと区別できます(両者とも `bindings_resolved=0` を共有するため)。`ingested`(`none` | `partial` | `full`)は**OS が計算**します(データがインラインだったか、セッション内でそれより前に ref への `read_file` が現れているか) — LLM の自己申告では決してありません。イベントには**ref と統計のみが含まれ、コンテンツバイトは含まれません**(データはすでに ref 内で永続化されています)。
+発行されるイベント: `presented`(P6 audit) — `{data_ref, view, mode, surface, ingested, bindings_resolved, bindings_dropped, coerced, rows, fallback_stage}`。`view` は登録名、インライン blueprint では `blueprint:<hash>`、両方未指定の場合は `null` です。`fallback_stage`(`null` | `content_type_default` | `generic`)は実際にユーザーへ届いたビューアを記録します — 要求された描画が直接描画されたときは `null`、そうでなければ合成フォールバックの段階です — これにより、要求どおり描画されたリテラルのみビューを、未知 / 全ミスで引き継がれたフォールバックと区別できます(両者とも `bindings_resolved=0` を共有するため)。`ingested`(`none` | `partial` | `full`)は**OS が計算**します(データがインラインだったか、セッション内でそれより前に ref への `read_file` が現れているか) — LLM の自己申告では決してありません。イベントには**ref と統計のみが含まれ、コンテンツバイトは含まれません**(データはすでに ref 内で永続化されています)。
 
 > PR-B: inline-CUI レンダラーが配線されています(chat セッションの `OpContext.presentation_renderer` が設定されていれば `surface: ["inline-cui"]`、そうでなければ `["null"]` — 例えば presentation_renderer 無しで組み立てられた素の `OpContext` は PR-A の元の挙動のまま)。会話のスクロールバック内でワンショットのインラインブロックとして `ResolvedPresentation.nodes` をレンダリングします(`interfaces/repl/present_renderer.py`、既存の Rich `Console` → `StringIO` → `run_in_terminal()` パターンに乗る形)。明示的な per-render terminal width を使用します(Rich は `StringIO` へ書き込む際に幅を自動検出できないため)。`presentations.yaml` レジストリ + 4段階フォールバックチェーンと replay/rewind 再レンダリングは着地済みです。replay(`reyn events <log>`)時、`presented` イベントはまだ有効な ref からベストエフォートで再レンダリングされるか、ref が失われている場合は audit イベントを指す expiry プレースホルダを表示します — display-only な投影であり(状態の再構築ではない)。全体像は [Concepts: Present layer](../../concepts/runtime/present.ja.md) と [Present op & surface reference](present.ja.md) を参照してください。
 

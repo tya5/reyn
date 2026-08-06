@@ -112,7 +112,8 @@ def test_binding_miss_soft_skips_and_records_path_not_found():
 
 def test_scalar_into_table_coerces_to_one_row_type_mismatch():
     """Tier 1: a scalar bound into a table rows slot coerces to a 1-row table +
-    records type_mismatch (the §4 coercion rule)."""
+    records the coercion (#3664: displayed-but-reshaped, not a drop — the §4
+    coercion rule)."""
     nodes = validate_blueprint({
         "component": "table",
         "rows": {"$bind": "/x"},
@@ -120,7 +121,8 @@ def test_scalar_into_table_coerces_to_one_row_type_mismatch():
     })
     out = resolve_bindings(nodes, {"x": "just-a-scalar"})
     assert out.rows == 1
-    assert {"path": "/x", "reason": "type_mismatch"} in out.bindings_dropped
+    assert {"path": "/x", "rendered_as": "single_row"} in out.coerced
+    assert out.bindings_dropped == []
 
 
 def test_row_relative_column_paths_resolve_per_row():
@@ -192,8 +194,10 @@ def test_resolve_pointer_rfc6901_whole_doc_and_escapes():
 
 
 def test_ack_shape_reports_drops_with_reason_categories(tmp_path):
-    """Tier 1: the op ack carries {ok, bindings_resolved, bindings_dropped, rows}
-    with each drop as {path, reason} in the three reason categories."""
+    """Tier 1: the op ack carries {ok, bindings_resolved, bindings_dropped, coerced,
+    rows} with each drop as {path, reason} in the two genuine-miss reason
+    categories, and each coercion (#3664: displayed-but-reshaped, NOT a drop) as
+    {path, rendered_as}."""
     ctx, _events = _ctx(tmp_path, _resolver(tmp_path))
     op = PresentIROp(
         kind="present",
@@ -201,18 +205,65 @@ def test_ack_shape_reports_drops_with_reason_categories(tmp_path):
         blueprint=[
             {"component": "table", "rows": {"$bind": "/results"},
              "columns": [{"header": "Missing", "path": "/author"}]},
-            {"component": "text", "text": {"$bind": "/big"}},  # dict into text → type_mismatch
+            {"component": "text", "text": {"$bind": "/big"}},  # dict into text → coerced
         ],
     )
     ack = _run(handle(op, ctx))
     assert ack["ok"] is True
-    assert set(ack.keys()) >= {"ok", "bindings_resolved", "bindings_dropped", "rows"}
+    assert set(ack.keys()) >= {"ok", "bindings_resolved", "bindings_dropped", "coerced", "rows"}
     reasons = {d["reason"] for d in ack["bindings_dropped"]}
     assert "path_not_found" in reasons
-    assert "type_mismatch" in reasons
     for drop in ack["bindings_dropped"]:
         assert set(drop.keys()) == {"path", "reason"}
-        assert drop["reason"] in {"path_not_found", "type_mismatch", "guard_stripped"}
+        assert drop["reason"] in {"path_not_found", "guard_stripped"}
+    rendered_as = {c["rendered_as"] for c in ack["coerced"]}
+    assert "json_text" in rendered_as
+    for coercion in ack["coerced"]:
+        assert set(coercion.keys()) == {"path", "rendered_as"}
+
+
+def test_keyvalue_rows_count_toward_the_ack_rows_total():
+    """Tier 1: #3664 (b) — a `keyvalue` card's rows are rendered rows too; the
+    ack's `rows` must count them, not just `table`/`list` rows (the issue's
+    measured defect: a 4-row keyvalue card reported `rows: 0`)."""
+    nodes = validate_blueprint({
+        "component": "keyvalue",
+        "rows": [
+            {"label": "code", "value": {"$bind": "/code"}},
+            {"label": "message", "value": {"$bind": "/message"}},
+            {"label": "status", "value": {"$bind": "/status"}},
+        ],
+    })
+    out = resolve_bindings(nodes, {"code": 200, "message": "m", "status": "success"})
+    assert out.rows == 3
+
+
+def test_literal_array_rows_slot_counts_toward_rows():
+    """Tier 1: a `table`/`list` rows slot given as a literal array (not
+    `$bind`) is still a rendered rows slot — must count toward `rows` the same
+    as a bound one."""
+    nodes = validate_blueprint({
+        "component": "table",
+        "rows": [{"n": "a"}, {"n": "b"}, {"n": "c"}],
+        "columns": [{"header": "name", "path": "/n"}],
+    })
+    out = resolve_bindings(nodes, {})
+    assert out.rows == 3
+
+
+def test_default_viewer_coercion_gets_a_self_correction_note(tmp_path):
+    """Tier 1: #3664 (c) — when the default viewer (mode: "default") coerces a
+    container to JSON text (too deep for its table columns), the ack carries a
+    note naming the fix (an explicit `blueprint` with a `table`), mirroring the
+    `view` path's `all_bindings_missed` self-correction signal."""
+    ctx, _events = _ctx(tmp_path, _resolver(tmp_path))
+    deep = {"a": {"b": {"c": {"d": {"e": {"f": 1}}}}}}
+    op = PresentIROp(kind="present", data_inline=deep)
+    ack = _run(handle(op, ctx))
+    assert ack["ok"] is True
+    assert ack["coerced"], "expected the default viewer to coerce past the depth bound"
+    assert "note" in ack
+    assert "blueprint" in ack["note"] and "table" in ack["note"]
 
 
 # ── Tier 1: blueprint structural gate ────────────────────────────────────────
