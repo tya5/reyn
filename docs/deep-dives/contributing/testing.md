@@ -719,10 +719,10 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 ---
 
-## Before you push — the four CI gates
+## Before you push — the five CI gates
 
 A green `pytest` run is **not** a green CI run. `.github/workflows/test.yml` runs
-four *separate* gates; run all four locally on your diff before calling a PR
+five *separate* gates; run all five locally on your diff before calling a PR
 ready:
 
 1. **pytest** — from the repo root (not a subset path) so collection matches CI:
@@ -751,10 +751,18 @@ ready:
    ```bash
    python scripts/verify_module_docstrings.py <changed_src_files>
    ```
+5. **mypy ratchet** — `scripts/mypy_ratchet.py` (#3726). A *ratchet*, not full
+   mypy adoption: it only fails on a `(file, error-code)` pair not already
+   declared in `scripts/mypy_ratchet_baseline.json` — a genuinely new mypy
+   finding in a file you touched fails this even though `mypy` itself isn't
+   in this repo's mental model of "the linter":
+   ```bash
+   python scripts/mypy_ratchet.py
+   ```
 
 A green `pytest` alone has shipped PRs that CI then bounced on ruff (`I001`) or
 the tier audit (a `len(...) == 1` format pin). Report scope honestly: say
-"pytest passed" if that is all you ran — "suite passed" implies all four gates.
+"pytest passed" if that is all you ran — "suite passed" implies all five gates.
 
 ---
 
