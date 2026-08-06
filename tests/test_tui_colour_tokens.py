@@ -184,11 +184,20 @@ def test_a_new_site_cannot_quietly_rely_on_quiet_alone() -> None:
     to a real value under the non-ansi themes, but a requirement that a new
     site names what carries the distinction when it does not.
     """
-    seen = {
-        path.name
-        for path in sorted(_INTERFACES.rglob("*.py")) + sorted(_INTERFACES.rglob("*.tcss"))
-        if path.name != "palette.py" and "@quiet@" in path.read_text(encoding="utf-8")
-    }
+    # DECLARATIONS only, via the same prose skip ``_colour_values`` uses. A
+    # plain substring search over the file reads the comments too — and the
+    # comments this very change leaves behind explain, by name, the token the
+    # site stopped declaring. First run, the gate accused its own outcome:
+    # ``activity_row.py`` was reported for the sentence recording that its
+    # ``color: @quiet@`` had been REMOVED. A gate that cannot tell a rule from
+    # prose about a rule forces the reasoning out of the files.
+    seen = set()
+    for path, _number, line in _stylesheet_lines():
+        stripped = line.strip()
+        if stripped.startswith(("#", "*", "/*")) or "``" in line:
+            continue
+        if "@quiet@" in line:
+            seen.add(path.name)
 
     undeclared = sorted(seen - set(_QUIET_ONLY_ALLOWED))
     assert not undeclared, (
