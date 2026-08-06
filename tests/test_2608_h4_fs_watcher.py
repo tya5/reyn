@@ -63,11 +63,13 @@ class _Recorder:
 
 
 async def _wait_for(predicate, *, delay: float = 0.02) -> None:
-    """Poll ``predicate()`` -- UNBOUNDED (owner policy 2026-08-06,
-    feedback_tests_carry_no_time_limits_decompose_instead): no per-test time
-    budget, marker or in-body. A slower environment only makes this slower,
+    """fs events arrive asynchronously off a separate OS thread, not synchronously
+    with the triggering file write. Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
     never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
-    contract this waits against."""
+    contract.
+    """
     while not predicate():
         await asyncio.sleep(delay)
 
@@ -202,7 +204,7 @@ async def test_symlinked_watch_path_reports_events_under_the_configured_prefix(t
         # A generous budget, then an EXPLICIT non-empty assertion so a genuine
         # "never fired" fails loudly (with the diagnostic below) instead of an
         # opaque IndexError on ``calls[0]``.
-        await _wait_for(lambda: len(trigger.calls) >= 1, attempts=500, delay=0.02)
+        await _wait_for(lambda: len(trigger.calls) >= 1, delay=0.02)
         assert trigger.calls, (
             f"no file_changed hook fired within the wait budget for a write under "
             f"a symlinked watch path (configured={configured_path!r}, "

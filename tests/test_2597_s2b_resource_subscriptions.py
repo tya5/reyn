@@ -61,11 +61,13 @@ def _run(coro):
 
 
 async def _wait_for(predicate, *, delay: float = 0.02) -> None:
-    """Poll ``predicate()`` -- UNBOUNDED (owner policy 2026-08-06,
-    feedback_tests_carry_no_time_limits_decompose_instead): no per-test time
-    budget, marker or in-body. A slower environment only makes this slower,
-    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
-    contract this waits against."""
+    """The notification arrives asynchronously on FastMCP/the SDK's receive loop,
+    not synchronously with the triggering call. Unbounded per the owner's
+    testing policy (docs/deep-dives/contributing/testing.md, ## Time): no test
+    carries a time budget, marker or in-body -- a slower environment only makes
+    this slower, never fail it; CI's --timeout=120 is the blast-radius
+    kill-switch, not a contract.
+    """
     while not predicate():
         await asyncio.sleep(delay)
 
