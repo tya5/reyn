@@ -683,6 +683,12 @@ class TextualChatApp(App):
         # ctrl+q quit). The cost is TextArea's ctrl+c copy, which reyn replaces
         # with ``/copy`` and the keyboard cursor's Enter/Space copy (#3476 ⑥).
         Binding("ctrl+c", "cancel_turn", "Interrupt the running turn", priority=True),
+        # #3712: return to the newest output from wherever focus is. The
+        # conversation pane has its own ``end``/``G``, but those fire only
+        # while IT holds focus — i.e. never from the composer, which is where
+        # a reader scrolling back actually is. ``priority`` so the focused
+        # Input does not swallow it.
+        Binding("ctrl+end", "jump_to_latest", "Back to the newest output", priority=True),
         # #3507: enter flowview's COPY MODE — a vim-style per-character text
         # cursor over the rendered content, which is what finally answers "can
         # the cursor move INSIDE an entry" (0.6.x had entry granularity only).
@@ -1262,6 +1268,9 @@ class TextualChatApp(App):
         # queue, so the zone reads past (conversation) -> now (this) -> next
         # (queue) -> the line being typed. Non-focusable, so Tab/Esc still walk
         # the same path to the composer they did before it existed.
+        #: #3712: how many entries the flow held when the reader last left the
+        #: newest output, or ``None`` while they are on it.
+        self._tail_left_at: "int | None" = None
         self._activity = ActivityRow(id="activity-row", clock=self._clock)
         yield self._activity
         self._sent_queue = SentQueue(id="sent-queue")
@@ -2074,6 +2083,39 @@ class TextualChatApp(App):
         if 0 <= event.option_index < len(cmds) and cmds[event.option_index]:
             await self._submit(cmds[event.option_index])
         self._open_drawer(None)
+
+    def action_jump_to_latest(self) -> None:
+        """Return to the newest output and resume following it (#3712)."""
+        try:
+            flow = self.query_one(FlowView)
+        except Exception:
+            return
+        flow.scroll_end(animate=False)
+        self._refresh_tail_indicator(reset=True)
+
+    def _refresh_tail_indicator(self, *, reset: bool = False) -> None:
+        """Recompute how far the reader is from the newest output.
+
+        The count is ENTRIES landed since they left, not rows: an entry is the
+        unit the reader would have seen arrive, and a row count would change
+        under them as a streamed reply grew without anything new happening.
+
+        Reads the scroll position rather than tracking a "following" flag,
+        because the flag and the view can disagree — the position is the fact.
+        """
+        try:
+            flow = self.query_one(FlowView)
+        except Exception:
+            return
+        at_tail = flow.scroll_y >= flow.max_scroll_y
+        if at_tail or reset:
+            self._tail_left_at = None
+            self._activity.set_behind(None)
+            return
+        if self._tail_left_at is None:
+            self._tail_left_at = len(flow.entries)
+        behind = len(flow.entries) - self._tail_left_at
+        self._activity.set_behind(behind or None)
 
     async def action_cancel_turn(self) -> None:
         """ctrl+c: cooperatively interrupt the in-flight turn (#3498).
@@ -3685,6 +3727,14 @@ class TextualChatApp(App):
                                 "textual chat: frame ingest failed for kind=%r",
                                 msg.kind,
                             )
+                        # #3712: an entry just landed, which is the only moment
+                        # the "how far behind" count can grow. Recomputed from
+                        # the scroll position rather than incremented, so it
+                        # cannot drift from what the view actually shows.
+                        try:
+                            self._refresh_tail_indicator()
+                        except Exception:
+                            logger.exception("textual chat: tail indicator failed")
                 # F5b + #3338: refresh the live chrome (the always-visible
                 # status-values line, plus whichever drawer pane is OPEN) on EVERY
                 # frame — DISPLAY **and** EVENT alike. This used to sit inside the
