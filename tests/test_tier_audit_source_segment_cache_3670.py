@@ -128,15 +128,52 @@ def test_missing_location_info_returns_empty_string(audit_mod) -> None:
 def test_split_source_lines_preserves_line_endings(audit_mod) -> None:
     """Tier 1: split lines keep their trailing newline (keepends semantics)
     — required for the multi-line join in _cached_source_segment to
-    reproduce the original source exactly. Matches ast._splitlines_no_ff's
-    OWN behavior exactly, trailing empty-string entry included (verified
-    directly against the real stdlib function, not assumed)."""
+    reproduce the original source exactly.
+
+    Does NOT pin the exact list against ``ast._splitlines_no_ff`` — #3670
+    review (lead-coder, real cross-version CI run) found that function's
+    own trailing-empty-string behavior differs between Python 3.11 and
+    3.12 for the identical regex pattern, so a test asserting equality
+    with it is itself version-dependent (Tier-4-shaped: pinning an
+    implementation quirk, not a behavioral contract). This function
+    normalizes that difference away instead (see its own docstring) —
+    what's actually load-bearing, and what this test pins, is that the
+    normalized result carries the real line content and NO trailing
+    empty entry, on any Python version."""
     source = "a = 1\nb = 2\nc = 3"
     lines = audit_mod._split_source_lines(source)
-    stdlib_lines = ast._splitlines_no_ff(source)
 
-    assert lines == stdlib_lines
-    assert lines == ["a = 1\n", "b = 2\n", "c = 3", ""]
+    assert lines == ["a = 1\n", "b = 2\n", "c = 3"]
+    assert lines[-1] != "", "a trailing empty entry must be normalized away"
+
+
+def test_split_source_lines_drops_a_trailing_empty_match_if_present(audit_mod) -> None:
+    """Tier 1: FALSIFY the normalization directly — even when the source
+    ends WITH a newline (a shape more likely to produce a version-
+    dependent trailing '' match), the result still carries no trailing
+    empty entry."""
+    source = "a = 1\nb = 2\nc = 3\n"
+    lines = audit_mod._split_source_lines(source)
+
+    assert lines == ["a = 1\n", "b = 2\n", "c = 3\n"]
+    assert lines[-1] != ""
+
+
+def test_multiline_segment_extraction_is_unaffected_by_trailing_normalization(
+    audit_mod,
+) -> None:
+    """Tier 1: the property that actually matters — a node spanning up to
+    the LAST real line still extracts its exact segment correctly (the
+    trailing-empty-entry normalization must not shift any real line's
+    content or availability)."""
+    source = "def f(\n    a,\n    b,\n):\n    return a + b\n"
+    tree = ast.parse(source)
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    lines = audit_mod._split_source_lines(source)
+
+    cached = audit_mod._cached_source_segment(lines, func)
+    stdlib = ast.get_source_segment(source, func)
+    assert cached == stdlib
 
 
 def test_a_full_test_tier_audit_run_is_unchanged_by_the_cache(audit_mod, tmp_path: Path) -> None:

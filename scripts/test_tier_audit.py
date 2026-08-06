@@ -53,8 +53,23 @@ def _split_source_lines(source: str) -> list[str]:
     every call. Profiled root cause of #3670 (CI's 15-minute test-tier
     audit job timing out on `main`): 564k `get_source_segment` calls across
     a full-tree run, each re-splitting its file's source from scratch,
-    consumed 121 of 147 total seconds."""
-    return [m[0] for m in _AST_LINE_PATTERN.finditer(source)]
+    consumed 121 of 147 total seconds.
+
+    #3670 review (lead-coder, cross-version CI run): whether ``finditer``'s
+    zero-width ``$`` alternative produces one more trailing ``''`` match at
+    end-of-string differs between Python 3.11 and 3.12 for
+    ``ast._splitlines_no_ff``'s own identical pattern — this function's
+    unnormalized output inherited that version difference. A trailing
+    ``''`` entry is never addressed by any real node (no
+    ``node.lineno``/``end_lineno`` can point past the last real source
+    line, so nothing ever indexes into it), so dropping it here makes this
+    function's OWN output version-independent regardless of which way the
+    underlying ``re`` engine happens to behave — the normalization, not
+    matching either version's incidental quirk, is the actual contract."""
+    lines = [m[0] for m in _AST_LINE_PATTERN.finditer(source)]
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def _cached_source_segment(lines: list[str], node: ast.AST) -> str:
