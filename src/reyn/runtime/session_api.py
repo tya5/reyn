@@ -106,6 +106,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from reyn.runtime.errors import AgentStepError
+from reyn.runtime.session_pure import new_chain_id
 from reyn.runtime.transport import SystemRef
 from reyn.runtime.turn_origin import TurnOrigin
 
@@ -386,7 +387,7 @@ async def run_agent_step(
     replies = await bus.request(
         session,
         kind=TurnOrigin.AGENT_STEP,
-        payload={"text": prompt, "chain_id": chain_id or uuid.uuid4().hex},
+        payload={"text": prompt, "chain_id": chain_id or new_chain_id()},
         reply_to=SystemRef(),
         timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
     )
@@ -785,7 +786,7 @@ async def run_pipeline_attached(
         await bus.request(
             session,
             kind=TurnOrigin.PIPELINE_NUDGE,
-            payload={"text": "", "chain_id": uuid.uuid4().hex},  # the D案 run nudge
+            payload={"text": "", "chain_id": new_chain_id()},  # the D案 run nudge
             reply_to=SystemRef(),
             timeout=timeout if timeout is not None else _DEFAULT_AGENT_STEP_TIMEOUT_S,
         )

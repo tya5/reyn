@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.runtime.outbox import OutboxMessage
+from reyn.runtime.session_pure import new_chain_id
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
@@ -74,11 +75,6 @@ def _parse_no_reply_marker(text: str) -> tuple[str, str] | None:
 def _no_reply_marker(agent_name: str, reason: str) -> str:
     """Structured upstream message when this agent's router couldn't produce a reply."""
     return f"[{agent_name}: could not produce a reply — {reason}]"
-
-
-def _new_chain_id() -> str:
-    import uuid
-    return str(uuid.uuid4())
 
 
 _SPAWN_TASK_SUMMARY_MAX = 120
@@ -386,7 +382,7 @@ class InterAgentMessaging:
         # boundary; delegate-reply-via-EP5 closes here per the S2 review).
         request = self._fence_inbound(payload.get("request", ""))
         depth = int(payload.get("depth", 1))
-        chain_id = payload.get("chain_id") or _new_chain_id()
+        chain_id = payload.get("chain_id") or new_chain_id()
 
         # Receiver-side audit
         self._append_history(
@@ -518,7 +514,7 @@ class InterAgentMessaging:
         from_agent = payload.get("from_agent", "")
         response = payload.get("response", "")
         depth = int(payload.get("depth", 1))
-        chain_id = payload.get("chain_id") or _new_chain_id()
+        chain_id = payload.get("chain_id") or new_chain_id()
 
         # B55 R-7 (2026-05-25): structural symmetry with agent / plan
         # completion injections. Wrap the peer's reply in a

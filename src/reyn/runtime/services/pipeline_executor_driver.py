@@ -100,9 +100,10 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from reyn.runtime.session_pure import new_chain_id
 
 if TYPE_CHECKING:
     from reyn.core.events.state_log import StateLog
@@ -426,7 +427,7 @@ class PipelineExecutorDriver:
         text = self._format_result_text(status=status, output=output, error=error)
         await target.submit_pipeline_result(
             run_id=wo.run_id, pipeline_name=wo.pipeline_name, status=status,
-            text=text, chain_id=uuid.uuid4().hex,
+            text=text, chain_id=new_chain_id(),
         )
         return True
 
