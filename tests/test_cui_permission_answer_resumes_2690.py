@@ -31,9 +31,10 @@ is the LLM call (``reyn.runtime.router_loop.call_llm_tools``), replaced with a
 real async stub — the established idiom for driving ``session.run()`` end-to-end
 without a live model. No MagicMock / AsyncMock / patch.
 
-Both scenarios are bounded: a hang trips the poll budget and the assertion
-fails (RED); the fix resolves the future so the op completes well within the
-budget (GREEN).
+Both scenarios poll unboundedly for the resolving condition (#3748: owner
+policy) — the fix's real future-resolve makes each poll return promptly
+(GREEN); a real regression here hangs, surfacing via CI's own kill-switch
+naming the exact stuck poll rather than an approximated timeout (RED).
 """
 from __future__ import annotations
 
@@ -96,13 +97,13 @@ def _sequenced_llm_stub(results: list[LLMToolCallResult]):
     return _stub
 
 
-async def _poll(pred, *, attempts: int = 150, delay: float = 0.02) -> bool:
-    """Bounded poll — a hang exhausts the budget and returns False (RED)."""
-    for _ in range(attempts):
-        if pred():
-            return True
+async def _poll(pred, *, delay: float = 0.02) -> None:
+    """Poll for ``pred`` (#3748: unbounded, owner policy). A hang surfaces
+    via CI's own kill, naming this exact loop -- callers' own assertions
+    still fail for the real reason if the wait ever resolves on a false
+    signal."""
+    while not pred():
         await asyncio.sleep(delay)
-    return False
 
 
 def _make_session(project_root: Path, *, wal: Path, snap: Path) -> Session:
@@ -137,7 +138,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
     pending file-write permission so the blocked router turn resumes — the write
     completes and ``permission_granted`` (kind=file.write) is emitted. RED before
     the fix (the inbox-routed answer never reaches the suspended future → the
-    write never lands → the bounded poll times out)."""
+    write never lands → the poll hangs)."""
     proj = tmp_path / "proj"
     proj.mkdir()
     out = proj / "out.txt"  # under project root but OUTSIDE the .reyn/ write zone
@@ -161,9 +162,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         await session.submit_user_text("write the file")
         # The router turn reaches the out-of-zone write gate and dispatches the
         # approval prompt — the turn is now suspended awaiting the answer.
-        assert await _poll(lambda: session.interventions.head() is not None), (
-            "the file-write approval prompt never appeared"
-        )
+        await _poll(lambda: session.interventions.head() is not None)
         head = session.interventions.head()
         assert head.kind == "permission.file.write"
         assert {c.hotkey for c in head.choices} == {"y", "j", "r", "N"}
@@ -173,17 +172,16 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         # submit_user_text → inbox → never dequeued (deadlock).
         await route_input_line(_transport_for(session), "y", None)
 
-        assert await _poll(lambda: out.exists()), (
-            "write never completed after answering y — the blocked turn did "
-            "not resume (#2690 hang)"
-        )
+        # #2690: on the buggy tree this hangs (the blocked turn never
+        # resumes) rather than the file failing to appear -- a hang here IS
+        # the regression, surfacing via the kill stack the same way it did
+        # before this test existed.
+        await _poll(lambda: out.exists())
         assert out.read_text() == "written ok"
         # The intervention future resolved: nothing pending, and the
         # permission_granted event the reporter found MISSING is now emitted.
         assert session.interventions.head() is None
-        assert await _poll(lambda: str(out) in _granted_paths(session)), (
-            "no permission_granted event was emitted for the write path"
-        )
+        await _poll(lambda: str(out) in _granted_paths(session))
     finally:
         await session.shutdown()
         try:
@@ -218,17 +216,12 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
     run_task = asyncio.create_task(session.run())
     try:
         await session.submit_user_text("read the outside file")
-        assert await _poll(lambda: session.interventions.head() is not None), (
-            "the file-read approval prompt never appeared"
-        )
+        await _poll(lambda: session.interventions.head() is not None)
         assert session.interventions.head().kind == "permission.file.read"
 
         await route_input_line(_transport_for(session), "y", None)
 
-        assert await _poll(lambda: str(outside) in _granted_paths(session)), (
-            "read never completed after answering y — the blocked turn did "
-            "not resume"
-        )
+        await _poll(lambda: str(outside) in _granted_paths(session))
         assert session.interventions.head() is None
     finally:
         await session.shutdown()
