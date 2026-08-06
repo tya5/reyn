@@ -100,15 +100,14 @@ async def _settle(pilot, times: int = 4) -> None:
 
 async def _until(pred) -> None:
     """Wait for ``pred()`` to become true — UNBOUNDED, no per-test time
-    budget (owner policy 2026-08-06,
-    ``feedback_tests_carry_no_time_limits_decompose_instead``: a test carries
-    no time limit of its own, marker or in-body; a slower environment must
-    only make this slower, never fail it — an ``attempts=N`` cap is a
-    disguised linear sleep, since past N it bets pass/fail on elapsed time
-    the same way a bare ``sleep(N)`` would). If this hangs, CI's
-    ``--timeout=120`` is the blast-radius kill-switch, not a contract this
-    test is written against — a hang there means "decompose this test or fix
-    the hang," never "the ceiling should have been bigger."
+    budget (owner's testing policy, docs/deep-dives/contributing/testing.md
+    § Time: a test carries no time limit of its own, marker or in-body; a
+    slower environment must only make this slower, never fail it — an
+    ``attempts=N`` cap is a disguised linear sleep, since past N it bets
+    pass/fail on elapsed time the same way a bare ``sleep(N)`` would). If
+    this hangs, CI's ``--timeout=120`` is the blast-radius kill-switch, not
+    a contract this test is written against — a hang there means "decompose
+    this test or fix the hang," never "the ceiling should have been bigger."
 
     Used here (see ``test_the_clock_advances_without_any_delta_arriving``)
     to poll for the OBSERVABLE effect of the row's own real ``set_interval``
