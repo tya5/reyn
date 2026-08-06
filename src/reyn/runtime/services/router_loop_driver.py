@@ -294,6 +294,30 @@ class RouterLoopDriver:
         summary-only tier, ``covers == prev_cover`` (nothing new got fed, see
         above), so the interval is empty BY CONSTRUCTION, not by a special
         case.
+
+        #3658 DECIDED (owner gate skipped — the cost/loss tradeoff it would
+        have raised was measured at 0/0, see below): this is a DELIBERATE
+        exclusion, not an oversight. Why not just feed ``head`` in too?
+        ``head`` can be the WHOLE conversation on a short session (its bound
+        is a token budget, not a turn count) — adding it to every candidate
+        here would make the wrap-up call itself the thing that overflows,
+        working against the fallback ladder's own purpose (finding an input
+        that FITS). Cost of excluding it, stated rather than buried: once
+        force-close fires, ``build_history``'s durable consolidation branch
+        (``router_history_buffer.py``, ``_is_force_close_consolidation``)
+        never re-selects the raw head/tail again on any later turn — so
+        whatever ``head`` held at THIS moment becomes PERMANENTLY
+        unreachable to the router from here on, not merely deferred. This is
+        a real, standing loss, not a hypothetical one avoided by construction
+        — it is simply unrealized so far: measured against the owner's own
+        `.reyn/events`, ``router_force_close_handoff`` has fired 0 times
+        (after removing 61 events that turned out to be test-fixture
+        contamination of that log, not genuine occurrences). Reconsider
+        condition: if ``router_force_close_handoff`` starts firing at a
+        non-trivial rate in real usage, revisit feeding ``head`` in (at the
+        cost measured above) with real frequency numbers instead of a
+        hypothetical — the event already exists and the log is clean, so
+        this is genuinely monitorable, not a "someday" deferral.
         """
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
