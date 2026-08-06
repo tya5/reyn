@@ -65,7 +65,8 @@ def _findings_for(audit_mod, source: str) -> list:
     )
     assert func is not None, "test source must define exactly one test function"
     result = auditor._audit_test(
-        Path("inline.py"), source, source.splitlines(), func, in_scaffold=False,
+        Path("inline.py"), source, source.splitlines(),
+        audit_mod._split_source_lines(source), func, in_scaffold=False,
     )
     return [f for f in result.findings if f.rule == "private-state"]
 
