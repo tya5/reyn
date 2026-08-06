@@ -71,14 +71,18 @@ async def run_repl(
     # session across `/attach` (re-wired by the registry), so neither the
     # working indicator nor the intervention channel strands on the old session.
     from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
-    transport = InProcessTransport(
-        registry, intervention_channel=DEFAULT_CHAT_CHANNEL_ID
-    )
-    transport.start()
+    from reyn.runtime.startup_timing import stage  # noqa: PLC0415
+
+    with stage("client-prep:transport"):
+        transport = InProcessTransport(
+            registry, intervention_channel=DEFAULT_CHAT_CHANNEL_ID
+        )
+        transport.start()
 
     # The LOCAL read-model reads status/region/tasks off the attached session —
     # byte-identical to the pre-P3 inline reads.
-    read_model = RegistryReadModel(registry)
+    with stage("client-prep:read-model"):
+        read_model = RegistryReadModel(registry)
 
     try:
         await run_chat_client(

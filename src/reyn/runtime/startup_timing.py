@@ -105,6 +105,33 @@ def mark_async_entered() -> None:
         _ASYNC_ENTERED_AT = time.perf_counter()
 
 
+#: When the lazily-imported ``run_textual_chat`` module finished importing
+#: (``textual``/``textual_flowview`` and everything they pull in — NOT
+#: covered by the ``import`` stage above, which closes at ``mark_cli_reached``
+#: and therefore only ever measures reyn's OWN import tree; this import is
+#: lazy specifically so the flowview/textual cost is paid only on the path
+#: that needs it, which means that cost falls INSIDE this span instead).
+#: #3671 client-prep breakdown (architect's design): the boundary between
+#: "reyn resolved which renderer to use" and "the TUI framework's own object
+#: graph is being built" — P3/P4 below.
+_TUI_IMPORT_DONE_AT: "float | None" = None
+
+
+def mark_tui_import_done() -> None:
+    """Record that the lazy ``textual_chat``/``textual``/``textual_flowview``
+    import (``client_driver.py``'s ``from reyn.interfaces.inline.textual_chat
+    import run_textual_chat``) has finished.
+
+    Paired with :func:`mark_app_constructed` to bracket ``client-prep:app-
+    construct`` (P4) — the same "call is being made and returns are one
+    ``await`` deeper than a ``with`` block can hold" shape as
+    ``mark_app_constructed``/``mark_first_frame``.
+    """
+    global _TUI_IMPORT_DONE_AT
+    if _TUI_IMPORT_DONE_AT is None:
+        _TUI_IMPORT_DONE_AT = time.perf_counter()
+
+
 def mark_app_constructed() -> None:
     """Record that the TUI object exists and the framework is about to boot.
 
@@ -112,12 +139,28 @@ def mark_app_constructed() -> None:
     — terminal setup, first layout, first paint — as ``tui-boot``. Two marks
     rather than a ``with`` block because the region spans a return out of one
     function and into a framework callback, which no context manager can hold.
+
+    Also closes ``client-prep:app-construct`` (P4, paired with
+    :func:`mark_tui_import_done`) — #3671's original single ``client-prep``
+    lump (``mark_app_constructed`` minus ``mark_async_entered``) is replaced
+    by 4 named sub-stages at the seams architect's design identified
+    (``client-prep:transport`` / ``:read-model`` in ``repl.py``,
+    ``:tui-import`` around the lazy import, ``:app-construct`` here) rather
+    than kept alongside them — recording both would double-count the same
+    wall time under two names and corrupt ``unaccounted_seconds``'s
+    wall-vs-sum arithmetic. Any residual gap between the 4 sub-stages
+    (control-flow between them that no ``stage()``/mark pair covers) now
+    shows as ``unaccounted`` instead of being folded into the old lump —
+    the module's own stated philosophy: a report that silently absorbs the
+    unmeasured into the measured cannot tell the reader which is which.
     """
     global _APP_CONSTRUCTED_AT
     if _APP_CONSTRUCTED_AT is None:
         _APP_CONSTRUCTED_AT = time.perf_counter()
-        if _ASYNC_ENTERED_AT is not None:
-            TIMING.record("client-prep", _APP_CONSTRUCTED_AT - _ASYNC_ENTERED_AT)
+        if _TUI_IMPORT_DONE_AT is not None:
+            TIMING.record(
+                "client-prep:app-construct", _APP_CONSTRUCTED_AT - _TUI_IMPORT_DONE_AT
+            )
 
 
 def mark_first_frame() -> None:
@@ -163,7 +206,10 @@ STAGES: "tuple[str, ...]" = (
     "plugins",
     "mcp",
     "session",
-    "client-prep",
+    "client-prep:transport",
+    "client-prep:read-model",
+    "client-prep:tui-import",
+    "client-prep:app-construct",
     "tui-boot",
 )
 
