@@ -11,7 +11,7 @@
 | Found | 2026-05-04 |
 
 > Context: F5 は scenario 2 で発生した「16 秒の悲劇」 cascade の口火を
-> 切った bug。 全体の流れは [findings.md の F5-F8 連鎖事故 section](../findings.md#f5-f8-multi-agent-delegate-完全失敗の四重奏-16-秒の悲劇)
+> 切った bug。 全体の流れは [findings.md の F5-F8 連鎖事故 section](../findings.md#round-2--f5-f8-16-秒の悲劇-multi-agent-delegate-連鎖事故)
 > を参照。
 
 ---

@@ -149,9 +149,19 @@ async def test_rewind_reset_does_not_touch_other_sessions_transcript(tmp_path, m
 def test_main_session_keeps_legacy_name_only_paths(tmp_path, monkeypatch):
     """Tier 2: #2348 regression — the "main" session (via get_or_load, never spawn_session) keeps
     the legacy name-only history_path + events_dir unchanged. Single-session agents unchanged,
-    no migration."""
+    no migration.
+
+    #3705: the paths themselves are unchanged (still ``.reyn/agents/<name>/
+    ...``, relative to the SAME cwd this test chdirs into) — only the Path
+    OBJECT's form changed, from a bare relative literal to an explicit
+    ``Path.cwd() / ".reyn"``-anchored absolute path (Agent.workspace_dir's
+    fallback for callers, like this test's registry, that never set
+    ``workspace_state_dir``). Same file on disk; a relative and an absolute
+    ``Path`` pointing at it are never `==`, so the assertions now compare
+    against the resolved absolute form instead of re-deriving the old
+    relative literal."""
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     main = reg.get_or_load("alice")
-    assert main.history_path == Path(".reyn") / "agents" / "alice" / "history.jsonl"
-    assert main.events_dir == Path(".reyn") / "events" / "agents" / "alice" / "chat"
+    assert main.history_path == tmp_path / ".reyn" / "agents" / "alice" / "history.jsonl"
+    assert main.events_dir == tmp_path / ".reyn" / "events" / "agents" / "alice" / "chat"

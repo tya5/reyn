@@ -90,7 +90,17 @@ def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
     # popped: Session's own signature still accepts them (it keeps needing
     # ``self._snapshot_path`` / ``self._state_log`` for its own logic), so
     # they must still flow through ``**kwargs`` below unchanged.
-    snapshot_path = kwargs.get("snapshot_path") or default_snapshot_path(agent.agent_name)
+    # #3705: pass workspace_state_dir through when the caller supplied one
+    # (via agent_field_kwargs above) — default_snapshot_path's own root=
+    # param (added by #3705) is silently unreachable through this helper
+    # otherwise: the ~16/223 call sites that DO pass workspace_state_dir
+    # would still land at Path.cwd()/".reyn" for their snapshot despite
+    # having given an explicit root. root=None (the ~207 call sites that
+    # never set workspace_state_dir) keeps the exact prior cwd-relative
+    # fallback — unchanged for them.
+    snapshot_path = kwargs.get("snapshot_path") or default_snapshot_path(
+        agent.agent_name, root=agent.workspace_state_dir,
+    )
     generation_store, journal = build_recovery(
         agent.agent_name,
         snapshot_path,

@@ -345,6 +345,14 @@ def _snapshot(registry, config=None):
         registry.agent_cost_usd(registry.attached_name)
         if registry.attached_name else s.total_cost_usd
     )
+    # #3695: how many of those calls had no price. Projected NEXT TO the figure
+    # it qualifies, from the same accessor family, so a surface cannot show the
+    # cost while being unaware that it is incomplete — which is what left the
+    # owner reading a frozen number all day as though it were the amount spent.
+    unpriced_calls = (
+        registry.agent_unpriced_calls(registry.attached_name)
+        if registry.attached_name else 0
+    )
     agent_tokens = (
         registry.agent_tokens(registry.attached_name)
         if registry.attached_name else u.total_tokens
@@ -400,6 +408,7 @@ def _snapshot(registry, config=None):
         "cost_usd": s.total_cost_usd,
         "cost_total": cost_total,
         "cost_agent": cost_agent,
+        "cost_agent_unpriced_calls": unpriced_calls,
         "agent_tokens": agent_tokens,
         # Cost-panel breakdown (#cost-panel-breakdown): per-scope CostBreakdown
         # (Input/Output/Saved/Saved% rows) mirroring the 3 $ totals above.

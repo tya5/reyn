@@ -128,7 +128,12 @@ def build_scoped_chat_session(
     # ``snapshot_path`` / ``state_log`` / ``session_id`` straight through to
     # Session below (peeked, not popped), so those Session params are
     # unchanged; only the recovery-pair CONSTRUCTION moved here.
-    _snapshot_path = base.get("snapshot_path") or default_snapshot_path(agent.agent_name)
+    # #3705: pass workspace_state_dir through so it isn't silently ignored
+    # (None → default_snapshot_path's own cwd fallback, unchanged for
+    # callers that never set it).
+    _snapshot_path = base.get("snapshot_path") or default_snapshot_path(
+        agent.agent_name, root=agent.workspace_state_dir,
+    )
     _generation_store, _journal = build_recovery(
         agent.agent_name,
         _snapshot_path,

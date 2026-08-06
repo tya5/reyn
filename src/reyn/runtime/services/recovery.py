@@ -18,13 +18,20 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
 
-def default_snapshot_path(agent_name: str) -> Path:
+def default_snapshot_path(agent_name: str, root: "Path | None" = None) -> Path:
     """The per-agent snapshot-file convention (PR21 / PR-refactor-session-1):
-    ``.reyn/agents/<agent_name>/state/snapshot.json`` relative to the current
-    working directory. Single source — ``Session.__init__`` and every
-    recovery-object construction site call this instead of re-deriving the
-    path literal."""
-    return Path(".reyn") / "agents" / agent_name / "state" / "snapshot.json"
+    ``<root>/agents/<agent_name>/state/snapshot.json``. Single source —
+    ``Session.__init__`` and every recovery-object construction site call
+    this instead of re-deriving the path literal.
+
+    ``root`` (#3705): the caller's already-resolved state root (e.g.
+    ``workspace_state_dir``, which already ends in ``.reyn`` —
+    ``env_backend.py`` / ``registry_bootstrap.py`` both set it to
+    ``project_root / ".reyn"``). ``None`` (every caller that has no root to
+    supply) falls back to ``Path.cwd() / ".reyn"`` — the exact previous
+    behavior, preserved for callers that never had a root available."""
+    base = root if root is not None else Path.cwd() / ".reyn"
+    return base / "agents" / agent_name / "state" / "snapshot.json"
 
 
 def build_recovery(
