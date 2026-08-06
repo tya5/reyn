@@ -76,10 +76,13 @@ v1 に**対話コンポーネント**（ボタン / フォーム）は存在し�
 - `table` の `columns[].path` と `list` の `item_path` は**行相対**（各反復行に対する相対）。
 
 バインディング結果（§4）: パスヒット → バインド; パスミス → **ソフトスキップ** +
-`path_not_found` 記録; 型不一致 → 強制変換（スカラ → `table` `rows` スロットは1行テーブル）+
-`type_mismatch` 記録; guard による無害化/サイズ上限 → `guard_stripped` 記録。**全**バインディングが
-ミスすると op は `all_bindings_missed` を報告しフォールバックチェーンへルーティングする——
-決してハード失敗しない。
+`bindings_dropped` へ `path_not_found` 記録; 型不一致 → 強制変換（スカラ →
+`table` `rows` スロットは1行テーブル; コンテナ → `text` スロットはその JSON 形式）+
+**`coerced`** へ `{path, rendered_as}` 記録——型変換は drop の*逆*の結果であり、
+値は形を変えてユーザーに届いた（届かなかったのではない）ので drop としては数えない
+（#3664）; guard による無害化/サイズ上限 → `bindings_dropped` へ `guard_stripped` 記録。
+**全**バインディングがミスすると op は `all_bindings_missed` を報告しフォールバック
+チェーンへルーティングする——決してハード失敗しない。
 
 op 検証の構造ゲートは、インライン blueprint の**非カタログコンポーネント**や**非パス
 バインディング**をハードエラー（`status="error"`）として拒否する——これは blueprint のバグで
@@ -145,17 +148,26 @@ LLM の唯一のフィードバック——コンパクトかつ高シグナル:
 ok: true
 mode: view        # view | blueprint | default — 呼び出し側がどの入力を与えたか
 bindings_resolved: 3
-rows: 500
 bindings_dropped:
   - {path: "/results/0/author", reason: path_not_found}
-  # reason ∈ {path_not_found, type_mismatch, guard_stripped}
+  # reason ∈ {path_not_found, guard_stripped} — 型変換の coercion は drop ではない（#3664）;
+  # 下記の `coerced` を参照
+coerced:
+  - {path: "/big", rendered_as: json_text}
+  # rendered_as ∈ {json_text, single_row} — 値はユーザーに届いた（形を変えて）
+rows: 500          # #3664: すべての行状スロット（table/list と keyvalue カード両方）を
+                    # 横断した、実際に描画された行数（キャップ後）——present はゼロトークン
+                    # オフロードでデータ自体は LLM のコンテキストに入らないため、
+                    # LLM がどれだけ届いたかを知る唯一の指標
 all_bindings_missed: false
-note: "…"        # フォールバック段が描画した場合のみ存在
+note: "…"        # フォールバック段が描画した場合、または(#3664 (c))デフォルト
+                  # ビューアがコンテナを JSON テキストへ変換した場合のみ存在
 ```
 
-多数行での `path_not_found` → 「view がデータ形に合わない」; `type_mismatch` →
-「パスは正しいがコンポーネントが違う」; `guard_stripped` → 「view のバグでなく guard に
-よる無害化」。エージェントはデータを取り込まずに自己修正する。
+多数行での `path_not_found` → 「view がデータ形に合わない」; `guard_stripped` →
+「view のバグでなく guard による無害化」; `coerced` エントリ → 「パスは正しいが
+コンポーネントが違う——JSON テキストや1行テーブルとしてユーザーに届いた、drop ではない」。
+エージェントはデータを取り込まずに自己修正する。
 
 ## `presented` イベント（P6 監査）
 
@@ -170,8 +182,9 @@ note: "…"        # フォールバック段が描画した場合のみ存在
 | `surface` | リスト、例 `["inline-cui"]`（レンダラ未接続時は `["null"]`） |
 | `ingested` | `none` \| `partial` \| `full` — **OS 計算**（データはインラインか、ref の事前 `read_file` がセッション前方に現れるか）、LLM 自己申告ではない |
 | `bindings_resolved` | 解決されたバインディング数 |
-| `bindings_dropped` | `[{path, reason}]` |
-| `rows` | バインドされた行数 |
+| `bindings_dropped` | `[{path, reason}]`、`reason ∈ {path_not_found, guard_stripped}` — 決してユーザーに届かなかった値 |
+| `coerced` | `[{path, rendered_as}]`、`rendered_as ∈ {json_text, single_row}` — 型変換された値; ユーザーには届いた（#3664、`bindings_dropped` とは別に保持） |
+| `rows` | すべての行状スロット（table/list と keyvalue）を横断した、実際に描画された行数（キャップ後、#3664） |
 | `fallback_stage` | `null` \| `content_type_default` \| `generic` — 実際にユーザーへ届いたビューア。`null` = 要求された描画（または `mode: "default"` の stage-3 ビューア）が直接描画された。非 null = 要求ビューが未知 / 全ミスで合成ビューアが引き継いだ。これにより、要求どおり描画されたリテラルのみビュー（`null`）を、未知 / 全ミスのフォールバックと区別できる — 両者とも `bindings_resolved=0, bindings_dropped=[]` を運ぶため。 |
 
 ## Replay / rewind — キャッシュとしての提示
