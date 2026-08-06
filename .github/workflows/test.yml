@@ -77,6 +77,34 @@ jobs:
       - name: Run ruff
         run: ruff check .
 
+  mypy-ratchet:
+    name: mypy (ratchet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -e ".[dev]"
+
+      # #3726: mypy is configured (pyproject.toml [tool.mypy]) but was never
+      # run in CI — a declared check with no execution. scripts/mypy_ratchet.py
+      # only fails on a (file, error-code) pair NOT already in the committed
+      # baseline (scripts/mypy_ratchet_baseline.json); see that script's module
+      # docstring for why this is a ratchet (same skeleton as
+      # tests/test_3595_s4_slash_handler_seam.py's residue gate) rather than a
+      # blocking full-adoption gate or a report-only job nobody's decision
+      # depends on.
+      - name: Run mypy ratchet
+        run: python scripts/mypy_ratchet.py
+
   docs:
     name: docs build (strict)
     runs-on: ubuntu-latest

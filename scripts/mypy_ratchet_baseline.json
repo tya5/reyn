@@ -1,0 +1,850 @@
+[
+  {
+    "file": "src/reyn/_ssrf_guard.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/_ssrf_pin.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/_ssrf_pin.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/config/chat.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/config/config_schema.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/config/config_schema.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/config/infra.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/config/root.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/core/events/agent_snapshot.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/events/agent_snapshot.py",
+    "code": "call-overload"
+  },
+  {
+    "file": "src/reyn/core/events/event_store.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/core/events/state_log.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/core/kernel/codeact_runner.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/offload/canonical.py",
+    "code": "literal-required"
+  },
+  {
+    "file": "src/reyn/core/offload/canonical.py",
+    "code": "operator"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/context.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/embed.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/emit_hook_event.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/file.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/file.py",
+    "code": "no-redef"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/index_update.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/mcp_install.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/mcp_install.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/pipeline_install.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/pipeline_install.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/pipeline_install.py",
+    "code": "operator"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/plugin_install.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/plugin_install.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/plugin_install.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/plugin_install.py",
+    "code": "list-item"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/plugin_install.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/sandboxed_exec.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/semantic_search.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/skill_install.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/core/pipeline/analyzer.py",
+    "code": "dict-item"
+  },
+  {
+    "file": "src/reyn/core/pipeline/executor.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/core/pipeline/expr.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/pipeline/parser.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/core/pipeline/parser.py",
+    "code": "operator"
+  },
+  {
+    "file": "src/reyn/core/pipeline/parser.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/core/pipeline/parser.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/core/pipeline/serde.py",
+    "code": "dict-item"
+  },
+  {
+    "file": "src/reyn/core/registry/client.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/core/registry/source_resolver.py",
+    "code": "var-annotated"
+  },
+  {
+    "file": "src/reyn/data/embedding/litellm_provider.py",
+    "code": "no-redef"
+  },
+  {
+    "file": "src/reyn/data/index/knowledge_ingest.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/data/index/source_manifest.py",
+    "code": "call-overload"
+  },
+  {
+    "file": "src/reyn/data/pipelines/registry.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/data/pipelines/registry.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/data/pipelines/registry.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/data/pipelines/registry.py",
+    "code": "type-var"
+  },
+  {
+    "file": "src/reyn/dev/dogfood/interpretation.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/dev/dogfood/publish.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/dev/dogfood/replay.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/dev/dogfood/runner.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/dev/dogfood/verifiers/reply.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/dev/testing/replay_stacking.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/hooks/composer.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/hooks/dispatcher.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/hooks/render.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/hooks/shell_runner.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/hooks/shell_runner.py",
+    "code": "index"
+  },
+  {
+    "file": "src/reyn/hooks/shell_runner.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/audit.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/audit.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/auth.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/chat.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/config.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/cron.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/dogfood.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/dogfood.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/embeddings.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/mcp.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/mcp.py",
+    "code": "call-arg"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/mcp.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/memory.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/permissions.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/pipe.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/pipe.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/plugin.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/plugin.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/support_bundle.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/web.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/env_backend.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/invocation_context.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/intervention_panel.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/search_bar.py",
+    "code": "override"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/renderer.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/renderer.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/repl.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/stream_client.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/stream_client.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/interfaces/skill_invoke.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/interfaces/slash/agents.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/slash/dispatch.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/slash/image.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/interfaces/slash/memory.py",
+    "code": "call-arg"
+  },
+  {
+    "file": "src/reyn/interfaces/slash/plugin.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/client.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/client.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/emitter.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/emitter.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/endpoint.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/endpoint.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/protocol.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/protocol.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/protocol.py",
+    "code": "dict-item"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/protocol.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/client_transport.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/in_process.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/in_process.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/session_bound.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/session_bound.py",
+    "code": "valid-type"
+  },
+  {
+    "file": "src/reyn/interfaces/web/auth/core.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/interfaces/web/deps.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/interfaces/web/deps.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/web/deps.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/web/routers/a2a.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/interfaces/web/routers/a2a.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/interfaces/web/routers/a2a.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/interfaces/web/run_registry.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/interfaces/web/server.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/llm/llm.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/llm/llm.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/llm/pricing.py",
+    "code": "call-overload"
+  },
+  {
+    "file": "src/reyn/llm/wire_format.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/mcp/client.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/mcp/message_handler.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/mcp/registry.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/mcp/server.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/mcp/server.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/mcp/server.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/prompt/router_frame.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/prompt/router_frame.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/prompt/router_frame.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/runtime/budget/budget.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/budget/budget.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/runtime/budget/budget.py",
+    "code": "call-overload"
+  },
+  {
+    "file": "src/reyn/runtime/budget/budget.py",
+    "code": "index"
+  },
+  {
+    "file": "src/reyn/runtime/budget/budget.py",
+    "code": "operator"
+  },
+  {
+    "file": "src/reyn/runtime/capability_visibility.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/capability_visibility.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/runtime/capability_visibility.py",
+    "code": "var-annotated"
+  },
+  {
+    "file": "src/reyn/runtime/chat_message.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/runtime/cron/runners.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/external_routing.py",
+    "code": "call-arg"
+  },
+  {
+    "file": "src/reyn/runtime/hot_reload.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/lifecycle_forwarder.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/limits/limit_handler.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/model_cost_warn.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/model_cost_warn.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/runtime/registry.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/registry.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/runtime/registry.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/registry.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/runtime/registry_bootstrap.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/router_loop.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/router_loop.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/router_loop.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/runtime/router_op_context.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/services/compaction_controller.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/services/compaction_controller.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/runtime/services/inter_agent_messaging.py",
+    "code": "call-arg"
+  },
+  {
+    "file": "src/reyn/runtime/services/intervention_handler.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/runtime/services/pipeline_executor_driver.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/services/router_host_adapter.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "code": "name-defined"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "code": "var-annotated"
+  },
+  {
+    "file": "src/reyn/runtime/session_api.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/runtime/session_api.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/security/permissions/capability_profile.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/security/permissions/capability_profile.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/security/permissions/effective.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/security/permissions/file_scope.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/security/permissions/permissions.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/security/permissions/permissions.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/security/sandbox/__init__.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/security/sandbox/_subprocess_io.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/security/sandbox/_subprocess_io.py",
+    "code": "index"
+  },
+  {
+    "file": "src/reyn/security/sandbox/_subprocess_io.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/security/sandbox/backends/landlock.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/security/sandbox/backends/seatbelt.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/security/sandbox/noop_backend.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/services/compaction/engine.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/tools/agent_spawn.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/tools/ask_user.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/cron.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/tools/exec.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/tools/hooks.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/tools/llm_reachability.py",
+    "code": "attr-defined"
+  },
+  {
+    "file": "src/reyn/tools/mcp.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/mcp_install.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/memory.py",
+    "code": "return-value"
+  },
+  {
+    "file": "src/reyn/tools/pipeline_verbs.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/tools/plugin_management_verbs.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/scheme.py",
+    "code": "union-attr"
+  },
+  {
+    "file": "src/reyn/tools/schemes/category_content_fence.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/schemes/codeact.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/schemes/retrieval_content_fence.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/skill_verbs.py",
+    "code": "arg-type"
+  },
+  {
+    "file": "src/reyn/tools/topology_create.py",
+    "code": "misc"
+  },
+  {
+    "file": "src/reyn/tools/types.py",
+    "code": "assignment"
+  },
+  {
+    "file": "src/reyn/user_intervention.py",
+    "code": "arg-type"
+  }
+]
