@@ -139,21 +139,18 @@ async def _build(tmp_path: Path, app_cls=TextualChatApp):
     return registry, transport, app_cls(transport=transport)
 
 
-async def _until(pred, *, attempts: int = 3000, delay: float = 0.01) -> bool:
-    """Bounded poll — a hang exhausts the budget and returns False (RED). This is
-    the test's own patience, not the property under test (which is counted in
-    frames).
+async def _until(pred, *, delay: float = 0.01) -> None:
+    """Poll for ``pred`` (owner policy, #3748 -- unbounded).
 
-    Generous on purpose: under ``-n auto`` the machine may be running ten other
-    workers, and how long a 300-frame backlog takes to drain there is not what
-    this file is measuring. The PROPERTY is counted in frames; this is only the
-    patience that keeps a genuine hang from hanging the suite.
+    Not a proxy for how long a 300-frame backlog takes to drain under
+    ``-n auto`` (irrelevant to the PROPERTY, which is counted in frames,
+    not wall time). A genuine hang is CI's own ``--timeout=120`` kill,
+    which surfaces via the kill stack showing this exact loop -- a
+    second, test-local budget would just be a second kill-switch racing
+    the real one.
     """
-    for _ in range(attempts):
-        if pred():
-            return True
+    while not pred():
         await asyncio.sleep(delay)
-    return False
 
 
 @pytest.mark.asyncio
@@ -189,9 +186,7 @@ async def test_input_arriving_during_a_stream_is_handled_within_a_few_frames(
                     registry.repl_outbox.put_nowait(_tool_started(f"op-{i}"))
                     registry.repl_outbox.put_nowait(_tool_completed(f"op-{i}"))
 
-            assert await _until(
-                lambda: app.deltas_ingested >= arrivals
-            ), "the mixed backlog never drained"
+            await _until(lambda: app.deltas_ingested >= arrivals)
             assert app.probe_handled_at is not None, (
                 "the injected input was never handled at all"
             )
