@@ -218,11 +218,32 @@ async def test_repaints_stop_tracking_arrivals_without_dropping_text(
     flush unconditionally puts the revision back in step with the delta count
     and this gate goes RED, while the text half stays green — the two halves
     fail independently.
+
+    ★ #3748 experiment fix: same real-timer dependency #3746 found in this
+    file's mixed-backlog sibling. With ``clock`` frozen, the budget-check
+    path never fires, so every repaint the old ``< chunks // 10`` threshold
+    measured came from the catch-up timer's real ``set_timer`` (real
+    wall-clock, not the injected clock) — caught live by the #3748
+    ``attempts=1`` experiment (21 repaints on one run, one over the old
+    threshold of 20). Neutralized here too, for the same reason: the
+    catch-up timer's own real-time behavior is already dedicated-tested by
+    ``test_a_deferred_repaint_is_painted_within_the_budget_window``. Unlike
+    the mixed-backlog sibling, the expected count with it disabled is
+    exactly 1, not 0 — the terminal completion frame's own
+    ``entry.set_item`` (below, in ``_ingest_frame``) is a real, unconditional
+    repaint independent of the catch-up timer, and this test's OWN scenario
+    runs to completion (unlike the mixed-backlog test, which asserts
+    mid-stream, before any completion frame arrives).
     """
     chunks = 200
     clock = _Clock()  # frozen: no delta can ever be "due" on the budget clock
     _install_bursting_llm(monkeypatch, chunks=chunks)
     registry, transport, app = await _build(tmp_path, clock=clock)
+    # #3748: see the docstring above — neutralize the real-wall-clock catch-up
+    # timer so the measured revision count is fully deterministic. Safe per
+    # the method's own contract (an optimisation only) and covered in
+    # isolation by the sibling test named above.
+    monkeypatch.setattr(app, "_schedule_streaming_catchup", lambda: None)
     try:
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause()
@@ -233,11 +254,12 @@ async def test_repaints_stop_tracking_arrivals_without_dropping_text(
                 lambda: _CHUNK * chunks in str(entry.item.text)
             ), "the full streamed text never reached the entry"
 
-            # Far fewer repaints than deltas. The budget's own catch-up timer
-            # (and the terminal completion) account for the handful that do
-            # happen; what must not happen is one per arrival.
-            assert entry.revision < chunks // 10, (
-                f"{entry.revision} repaints for {chunks} deltas — the repaint "
+            # With the catch-up timer disabled and the budget clock frozen, the
+            # ONLY possible repaint is the terminal completion frame's own
+            # unconditional `entry.set_item` — exactly 1, deterministically.
+            assert entry.revision == 1, (
+                f"{entry.revision} repaints for {chunks} deltas — expected "
+                "exactly 1 (the terminal completion write); the repaint "
                 "budget is not coalescing"
             )
     finally:
