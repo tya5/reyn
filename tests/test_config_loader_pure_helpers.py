@@ -130,3 +130,59 @@ def test_find_project_root_no_reyn_yaml_returns_none(tmp_path: Path) -> None:
     sub = tmp_path / "nested"
     sub.mkdir()
     assert _find_project_root(sub) is None
+
+
+def test_find_project_root_second_call_does_not_walk_again(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: #3681 — a second call for the SAME resolved start path does not
+    re-walk the filesystem (single-owner cache, #3671 P4 item A-3: `reyn
+    chat` alone called this 3x per invocation for the same cwd before this).
+    Witnessed through the PUBLIC filesystem side effect (`Path.exists` call
+    count), not by reading the private `lru_cache` state directly."""
+    (tmp_path / "reyn.yaml").write_text("", encoding="utf-8")
+    sub = tmp_path / "a" / "b"
+    sub.mkdir(parents=True)
+
+    calls = {"n": 0}
+    real_exists = Path.exists
+
+    def _counting_exists(self: Path) -> bool:
+        calls["n"] += 1
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", _counting_exists)
+
+    first = _find_project_root(sub)
+    after_first = calls["n"]
+    assert after_first > 0, "the first call must have touched the filesystem"
+
+    second = _find_project_root(sub)
+
+    assert second == first == tmp_path
+    assert calls["n"] == after_first, (
+        "the second call for the same start path re-walked the filesystem "
+        f"({calls['n'] - after_first} more Path.exists() calls) instead of "
+        "using the cached result"
+    )
+
+
+def test_find_project_root_cache_clear_makes_a_later_reyn_yaml_visible(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #3681 FALSIFY — the cache is not permanently stuck on a stale
+    miss. A test (or any caller) that creates `reyn.yaml` AFTER an earlier
+    query for the same path can still observe it, by explicitly clearing
+    `_find_project_root_uncached`'s cache — the same seam the `tests/
+    conftest.py` autouse fixture calls after every test."""
+    from reyn.config.loader import _find_project_root_uncached
+
+    sub = tmp_path / "nested"
+    sub.mkdir()
+
+    assert _find_project_root(sub) is None
+
+    (tmp_path / "reyn.yaml").write_text("", encoding="utf-8")
+    _find_project_root_uncached.cache_clear()
+
+    assert _find_project_root(sub) == tmp_path
