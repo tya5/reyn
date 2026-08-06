@@ -154,15 +154,22 @@ async def _await_scheduled_source_build(
     all); ``search_await`` then hands off to the coordinator's own
     ``_bg_tasks`` await, which is the actual completion signal.
 
-    #3748: unbounded (owner policy) -- was a 2000-tick safety net against a
-    genuinely broken scheduler. No terminating assert: the loop condition
-    IS that check, so a hang here (CI's own kill-switch) is now the honest
-    failure record, in place of the no-op-then-red-for-the-real-reason
-    fallback the bound used to route through. ``sleep(0.01)`` not
-    ``sleep(0)``: unbounded + a pure scheduler yield hot-spins one core for
-    the life of a genuine hang, starving ``-n auto`` siblings for the whole
-    CI kill window; a real delay costs nothing once the predicate is
-    already true (normally within one tick)."""
+    #3748: unbounded (owner policy) -- in scope despite being labeled "a
+    safety net, not a timing budget", because a broken scheduler's failure
+    DOES land on pass/fail: the old bound fell through to search_await's
+    no-op branch, which let a caller's own ``assert state == "clean"`` go
+    red -- but that red MISIDENTIFIES the cause (the scheduler never ran,
+    not "the build never reached clean"). A hang's kill stack instead
+    shows this exact ``while await manifest.get(...) is None``, naming the
+    real cause directly -- strictly more precise than the red it replaces,
+    not merely equally safe. (Contrast #3756 site 3, correctly left out of
+    scope: there, timing out vs. not changes nothing -- pass/fail reaches
+    the same way either branch goes.)
+
+    ``sleep(0.01)`` not ``sleep(0)``: unbounded + a pure scheduler yield
+    hot-spins one core for the life of a genuine hang, starving ``-n auto``
+    siblings for the whole CI kill window; a real delay costs nothing once
+    the predicate is already true (normally within one tick)."""
     while await manifest.get(source_id) is None:
         await asyncio.sleep(0.01)
     await coordinator.search_await(source_id)
