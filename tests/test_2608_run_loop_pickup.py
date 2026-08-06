@@ -65,12 +65,15 @@ def _make_llm_stub_fn(result: LLMToolCallResult):  # type: ignore[no-untyped-def
     return _stub
 
 
-async def _wait_for(predicate, *, attempts: int = 200, delay: float = 0.02) -> None:
-    """Poll ``predicate()`` until True or give up — the hook fire and the
-    run-loop's pickup of it both happen asynchronously off separate tasks."""
-    for _ in range(attempts):
-        if predicate():
-            return
+async def _wait_for(predicate, *, delay: float = 0.02) -> None:
+    """The hook fire and the run-loop's pickup of it both happen asynchronously
+    off separate tasks. Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract.
+    """
+    while not predicate():
         await asyncio.sleep(delay)
 
 
