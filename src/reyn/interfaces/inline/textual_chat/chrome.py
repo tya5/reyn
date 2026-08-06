@@ -1160,7 +1160,10 @@ def pane_payload(
 
 
 def status_line_text(
-    snap: "dict | None", agent_name: str, *, attach_state: "str | None" = None
+    snap: "dict | None",
+    agent_name: str,
+    *,
+    attach_state: "str | None" = None,
 ) -> str:
     """The slim ``model │ agent │ cost │ ctx`` status-values line, from the live
     status snapshot (F5b: the running cost + context percent are visible here even
