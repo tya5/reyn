@@ -55,7 +55,21 @@ jobs:
         # any specific test executed. -rs makes "what didn't run, and why"
         # permanently legible in the CI log instead of requiring a rerun with
         # extra flags to find out after the fact.
-        run: python -m pytest -q -n auto --timeout=120 -rs
+        #
+        # `timeout 12m` (#3670): a GitHub Actions job/step hitting its own
+        # `timeout-minutes` reports conclusion `cancelled`, which every
+        # monitoring query built around `conclusion == "failure"` (the
+        # obvious, common form) silently treats as "not red" — #3670 found
+        # main's audit job cancelled on 4 of 5 consecutive pushes with NO
+        # monitoring trigger ever firing, because "cancelled" isn't
+        # "failure". Self-timing out via the coreutils `timeout` command
+        # BEFORE the platform's own job-level kill fires converts a would-be
+        # `cancelled` into an ordinary nonzero-exit step `failure` — legible
+        # to every `conclusion == "failure"` query without changing what
+        # they query for. `12m` (job budget 15m) leaves ~3m headroom for
+        # checkout/setup/pip-install (which run before this step and also
+        # count against the job's 15m) plus post-job cleanup.
+        run: timeout 12m python -m pytest -q -n auto --timeout=120 -rs
 
   lint:
     name: ruff
@@ -74,8 +88,41 @@ jobs:
       - name: Install dev dependencies
         run: pip install -e ".[dev]"
 
+      # `timeout 4m` (#3670): see the "Run tests" step above for why —
+      # converts a would-be `cancelled` job-timeout into a legible `failure`.
       - name: Run ruff
-        run: ruff check .
+        run: timeout 4m ruff check .
+
+  mypy-ratchet:
+    name: mypy (ratchet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -e ".[dev]"
+
+      # #3726: mypy is configured (pyproject.toml [tool.mypy]) but was never
+      # run in CI — a declared check with no execution. scripts/mypy_ratchet.py
+      # only fails on a (file, error-code) pair NOT already in the committed
+      # baseline (scripts/mypy_ratchet_baseline.json); see that script's module
+      # docstring for why this is a ratchet (same skeleton as
+      # tests/test_3595_s4_slash_handler_seam.py's residue gate) rather than a
+      # blocking full-adoption gate or a report-only job nobody's decision
+      # depends on.
+      #
+      # `timeout 8m` (#3670): see the "Run tests" job's comment for why —
+      # converts a would-be `cancelled` job-timeout into a legible `failure`.
+      - name: Run mypy ratchet
+        run: timeout 8m python scripts/mypy_ratchet.py
 
   docs:
     name: docs build (strict)
@@ -98,8 +145,11 @@ jobs:
       # and missing nav targets fail at PR time, not post-merge on the Pages
       # deploy — which was previously the only place --strict ran (a broken
       # link could pass PR review and then turn the main Pages job red).
+      #
+      # `timeout 6m` (#3670): see the "Run tests" job's comment for why —
+      # converts a would-be `cancelled` job-timeout into a legible `failure`.
       - name: Build docs (strict)
-        run: mkdocs build --strict -f .mkdocs/mkdocs.yml
+        run: timeout 6m mkdocs build --strict -f .mkdocs/mkdocs.yml
 
       # --strict catches a dangling *file* reference but never checks
       # whether `#anchor` actually exists on the target page — that's this
@@ -107,8 +157,12 @@ jobs:
       # second build, no new dependency). See scripts/check_doc_anchors.py
       # for the incident this closes (#3557/#3592: 42/42 line-number
       # citations in charter.md had drifted, silently).
+      #
+      # `timeout 2m` (#3670): same reasoning as the step above. The two
+      # step budgets (6m + 2m) plus checkout/setup/pip-install leave margin
+      # under the job's 10m total.
       - name: Check doc anchors
-        run: python scripts/check_doc_anchors.py
+        run: timeout 2m python scripts/check_doc_anchors.py
 
   audit:
     name: test-tier audit
@@ -133,6 +187,20 @@ jobs:
       # scripts/test_tier_audit.py is stdlib-only (argparse / ast / re
       # / json / pathlib). No pip install needed — keeps the job fast
       # and decoupled from src/ install state.
+      #
+      # `timeout 3m` (#3670, retightened): converts a would-be `cancelled`
+      # job-timeout into a legible `failure` — see the "Run tests" job's
+      # comment for the full rationale. This specific job is what #3670
+      # actually measured cancelling (4 of 5 consecutive main pushes,
+      # always at the 15-minute signature); #3670's own fix (a real
+      # algorithmic hotspot in test_tier_audit.py) took the full-tree run
+      # from 915s to a MEASURED 21s in real CI (this step's own share: ~7s
+      # of that, per a real run's per-step timestamps). Landed initially at
+      # a generous `10m` before that fix was confirmed in CI; a budget that
+      # loose says nothing when this step gets slow again — the exact
+      # defect #3670 exists to close — so it's retightened now that real
+      # numbers exist. `3m` is a ~25x margin over the measured ~7s, not a
+      # guess.
       - name: Run test-tier audit
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -151,17 +219,21 @@ jobs:
             echo "Auditing changed test files:"
             echo "$CHANGED"
             # shellcheck disable=SC2086
-            python scripts/test_tier_audit.py --strict $CHANGED
+            timeout 3m python scripts/test_tier_audit.py --strict $CHANGED
           else
             # push to main (or any non-PR trigger): full audit over the
             # entire test suite — invariant safety net, unchanged.
-            python scripts/test_tier_audit.py --strict tests/
+            timeout 3m python scripts/test_tier_audit.py --strict tests/
           fi
 
       # scripts/verify_module_docstrings.py is stdlib-only. PR events: scoped
       # to changed src files (fast). main push: full-tree run — the
       # regress-proof invariant net, now that the tree is clean (#1802). Blocks
       # moved-module refactor-narrative docstrings (the C-series discipline).
+      #
+      # `timeout 1m` (#3670, retightened): same reasoning as the step
+      # above — measured real share of this specific step: ~2.3s, so `1m`
+      # is a ~25x margin, matching the audit step's own retightened ratio.
       - name: Run module-docstring narrative check
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -175,8 +247,8 @@ jobs:
             echo "Checking changed src files:"
             echo "$CHANGED"
             # shellcheck disable=SC2086
-            python scripts/verify_module_docstrings.py $CHANGED
+            timeout 1m python scripts/verify_module_docstrings.py $CHANGED
           else
             # push to main (or any non-PR trigger): full-tree gate.
-            python scripts/verify_module_docstrings.py src/reyn
+            timeout 1m python scripts/verify_module_docstrings.py src/reyn
           fi

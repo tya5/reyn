@@ -150,6 +150,15 @@ class SentQueue(Vertical):
         self._rows: "dict[str, Static]" = {}
         self._labels: "dict[str, str]" = {}
         self._selected_index = 0
+        #: #3680: when the terminal is too short to give the queue a row per
+        #: item, it renders as one ``Queued: N`` line instead. Every item is
+        #: still HERE — the rows are what is given up, never an entry, because
+        #: this region's contents are durable state somebody is waiting on.
+        self._summarised = False
+        # The one-line stand-in, mounted once and hidden until it is needed.
+        self._summary = Static("", id="sent-queue-summary")
+        self.mount(self._summary)
+        self._summary.display = False
 
     def show_item(self, msg_id: str, text: str) -> None:
         """Materialize a queued item (``user_submitted``): neutralize the
@@ -207,7 +216,15 @@ class SentQueue(Vertical):
     def rendered_texts(self) -> "list[str]":
         """The currently-queued rows' rendered text, oldest first — the
         public read a caller (a test, or a future consumer) uses to inspect
-        displayed content without reaching into private widget state."""
+        displayed content without reaching into private widget state.
+
+        #3680: while the region is summarised it returns the summary — what is
+        ON SCREEN, not what would be there at full height. A reader of this
+        surface asking "what does the queue show" must not be told about rows
+        the operator cannot see; the item COUNT is still ``len(queue())`` on
+        the model, which is where "what is queued" belongs."""
+        if self._summarised:
+            return [str(self._summary.content)] if self._rows else []
         return [str(row.content) for row in self._rows.values()]
 
     def has_items(self) -> bool:
@@ -252,6 +269,23 @@ class SentQueue(Vertical):
         last = max(len(self._rows) - 1, 0)
         self._selected_index = max(0, min(self._selected_index, last))
 
+    def set_summarised(self, summarised: bool) -> None:
+        """Render as one ``Queued: N`` line (``True``) or a row per item.
+
+        The queue keeps every item either way, so this is reversible the
+        moment the room comes back."""
+        if self._summarised == summarised:
+            return
+        self._summarised = summarised
+        for row in self._rows.values():
+            row.display = not summarised
+        self._apply_highlight()
+
+    @property
+    def summarised(self) -> bool:
+        """Whether the queue is currently showing a count instead of rows."""
+        return self._summarised
+
     def _apply_highlight(self) -> None:
         """Mark the selected row, in its TEXT as well as its style.
 
@@ -260,6 +294,14 @@ class SentQueue(Vertical):
         the queue text aligned so the marker reads as a pointer rather than as
         the rows shifting."""
         order = list(self._rows.keys())
+        if self._summarised:
+            # One line, and it names the count rather than implying the rows
+            # were dropped. Selection is untouched underneath: restoring the
+            # rows restores exactly what was selected.
+            self._summary.update(Content(f"  Queued: {len(order)}"))
+            self._summary.display = bool(order)
+            return
+        self._summary.display = False
         for i, msg_id in enumerate(order):
             selected = i == self._selected_index
             row = self._rows[msg_id]

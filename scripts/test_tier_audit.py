@@ -33,6 +33,70 @@ from typing import Literal
 
 TIER_DOCSTRING_RE = re.compile(r"^Tier [123][abc]?:", re.IGNORECASE)
 
+# #3670: the SAME line-terminator pattern ast._splitlines_no_ff uses
+# internally, inlined here (not imported — that name is private CPython
+# internals we don't want a hard dependency on) so `_cached_source_segment`
+# below can pre-split a file's source ONCE and reuse it across every
+# get_source_segment-equivalent call for that file. `str.splitlines()` is
+# NOT a substitute: it also breaks on form-feed and other unicode line
+# separators the compiler's own tokenizer (and therefore `node.lineno`/
+# `end_lineno`) does not treat as line breaks — using it would silently
+# misalign every AST-based source-segment extraction on a file containing
+# one of those characters.
+_AST_LINE_PATTERN = re.compile(r"(.*?(?:\r\n|\n|\r|$))")
+
+
+def _split_source_lines(source: str) -> list[str]:
+    """Pre-split ``source`` the way the AST compiler counts lines — compute
+    ONCE per file (see module docstring above) instead of letting
+    ``ast.get_source_segment`` re-scan the whole file from the start on
+    every call. Profiled root cause of #3670 (CI's 15-minute test-tier
+    audit job timing out on `main`): 564k `get_source_segment` calls across
+    a full-tree run, each re-splitting its file's source from scratch,
+    consumed 121 of 147 total seconds.
+
+    #3670 review (lead-coder, cross-version CI run): whether ``finditer``'s
+    zero-width ``$`` alternative produces one more trailing ``''`` match at
+    end-of-string differs between Python 3.11 and 3.12 for
+    ``ast._splitlines_no_ff``'s own identical pattern — this function's
+    unnormalized output inherited that version difference. A trailing
+    ``''`` entry is never addressed by any real node (no
+    ``node.lineno``/``end_lineno`` can point past the last real source
+    line, so nothing ever indexes into it), so dropping it here makes this
+    function's OWN output version-independent regardless of which way the
+    underlying ``re`` engine happens to behave — the normalization, not
+    matching either version's incidental quirk, is the actual contract."""
+    lines = [m[0] for m in _AST_LINE_PATTERN.finditer(source)]
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _cached_source_segment(lines: list[str], node: ast.AST) -> str:
+    """Drop-in equivalent of ``ast.get_source_segment(source, node)`` given
+    pre-split ``lines`` (:func:`_split_source_lines`) instead of the raw
+    source string — same byte-offset slicing logic, just reusing an
+    already-computed line list rather than recomputing it. Returns ``""``
+    (matching this script's own ``or ""`` call convention) rather than
+    ``None`` when location info is missing."""
+    try:
+        if node.end_lineno is None or node.end_col_offset is None:  # type: ignore[attr-defined]
+            return ""
+        lineno = node.lineno - 1  # type: ignore[attr-defined]
+        end_lineno = node.end_lineno - 1  # type: ignore[attr-defined]
+        col_offset = node.col_offset  # type: ignore[attr-defined]
+        end_col_offset = node.end_col_offset  # type: ignore[attr-defined]
+    except AttributeError:
+        return ""
+
+    if end_lineno == lineno:
+        return lines[lineno].encode()[col_offset:end_col_offset].decode()
+
+    first = lines[lineno].encode()[col_offset:].decode()
+    last = lines[end_lineno].encode()[:end_col_offset].decode()
+    middle = lines[lineno + 1 : end_lineno]
+    return "".join([first, *middle, last])
+
 # len(...) < N  /  len(...) > N  /  len(...) == N  /  len(...) >= N  etc.
 # Exemption: len(x) > 0  (simple existence check)
 #
@@ -203,13 +267,14 @@ class TestAuditor:
             return report
 
         source_lines = source.splitlines()
+        ast_lines = _split_source_lines(source)
         in_scaffold = "tests/scaffold" in str(path).replace("\\", "/")
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if node.name.startswith("test_"):
                     result = self._audit_test(
-                        path, source, source_lines, node, in_scaffold
+                        path, source, source_lines, ast_lines, node, in_scaffold
                     )
                     report.results.append(result)
 
@@ -220,6 +285,7 @@ class TestAuditor:
         path: Path,
         source: str,
         source_lines: list[str],
+        ast_lines: list[str],
         node: ast.FunctionDef | ast.AsyncFunctionDef,
         in_scaffold: bool,
     ) -> TestResult:
@@ -299,7 +365,7 @@ class TestAuditor:
                 # One finding per assert (= use the first private access for
                 # the message; line is the assert's line so reviewers find it).
                 first = private_attrs[0]
-                stmt_src = ast.get_source_segment(source, stmt) or ""
+                stmt_src = _cached_source_segment(ast_lines, stmt)
                 if stmt.lineno in seen_lines:
                     continue
                 seen_lines.add(stmt.lineno)
@@ -321,7 +387,7 @@ class TestAuditor:
         if self._rule_active("mock"):
             # Check imports at module level (only once per file — but we check
             # inside the function body here; module-level checked separately)
-            _check_mock_in_func(node, source, result)
+            _check_mock_in_func(node, ast_lines, result)
 
         # --- Rule 5: Bounded-life test outside scaffold ---
         if self._rule_active("bounded-life") and not in_scaffold:
@@ -384,7 +450,7 @@ def _is_existence_check_only(line: str, m: re.Match) -> bool:
 
 def _check_mock_in_func(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
-    source: str,
+    ast_lines: list[str],
     result: TestResult,
 ) -> None:
     """Detect @patch decorators and with-patch / MagicMock inside the function.
@@ -396,7 +462,7 @@ def _check_mock_in_func(
     """
     # Check decorators for @patch
     for dec in node.decorator_list:
-        dec_src = ast.get_source_segment(source, dec) or ""
+        dec_src = _cached_source_segment(ast_lines, dec)
         if "patch" in dec_src and "unittest" in dec_src or dec_src.strip().startswith("patch"):
             if not _is_llm_boundary_patch(dec_src):
                 continue
@@ -411,9 +477,15 @@ def _check_mock_in_func(
                 )
             )
 
-    # Walk the function body for MagicMock / AsyncMock / with patch
+    # Walk the function body for MagicMock / AsyncMock / with patch. #3670:
+    # get_source_segment() is only called for the ONE branch that actually
+    # uses its result (Import/ImportFrom) — it used to run unconditionally
+    # for every walked node (assigns, calls, expressions, everything), each
+    # call re-scanning the whole file's source from scratch internally
+    # (ast.get_source_segment -> _splitlines_no_ff), which measured as 90%
+    # of this script's full-tree CI runtime (profiled: 564k calls, 121s of
+    # 147s total) for a value thrown away on every node but Import.
     for stmt in ast.walk(node):
-        stmt_src = ast.get_source_segment(source, stmt) or ""
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
             mod = ""
             if isinstance(stmt, ast.ImportFrom) and stmt.module:
@@ -425,6 +497,7 @@ def _check_mock_in_func(
                     n.name in ("MagicMock", "AsyncMock", "patch") for n in stmt.names
                 )
             ):
+                stmt_src = _cached_source_segment(ast_lines, stmt)
                 result.findings.append(
                     Finding(
                         rule="mock",
@@ -438,7 +511,7 @@ def _check_mock_in_func(
         elif isinstance(stmt, ast.With):
             # with patch(...) context manager
             for item in stmt.items:
-                item_src = ast.get_source_segment(source, item.context_expr) or ""
+                item_src = _cached_source_segment(ast_lines, item.context_expr)
                 if re.search(r"\bpatch\s*\(", item_src):
                     if not _is_llm_boundary_patch(item_src):
                         continue
@@ -454,7 +527,7 @@ def _check_mock_in_func(
                     )
         elif isinstance(stmt, ast.Call):
             # MagicMock() / AsyncMock() calls
-            func_src = ast.get_source_segment(source, stmt.func) or ""
+            func_src = _cached_source_segment(ast_lines, stmt.func)
             if re.search(r"\b(MagicMock|AsyncMock)\b", func_src):
                 result.findings.append(
                     Finding(
@@ -473,6 +546,7 @@ def _check_module_level_mock_imports(
 ) -> list[Finding]:
     """Check module-level unittest.mock imports (outside test functions)."""
     findings: list[Finding] = []
+    ast_lines = _split_source_lines(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # Skip; handled per-function
@@ -484,7 +558,7 @@ def _check_module_level_mock_imports(
             elif isinstance(node, ast.Import):
                 mod = " ".join(a.name for a in node.names)
             if "unittest.mock" in mod:
-                src = ast.get_source_segment(source, node) or ""
+                src = _cached_source_segment(ast_lines, node)
                 findings.append(
                     Finding(
                         rule="mock",

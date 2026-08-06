@@ -358,7 +358,26 @@ ignore = [
     "F841",
 ]
 
+# #3726: wired into CI as a ratchet (.github/workflows/test.yml's "mypy
+# (ratchet)" job), not a blocking full-adoption gate — the tree currently
+# carries 603 findings (212 unique (file, error-code) pairs), too many to
+# close before adopting. scripts/mypy_ratchet.py fails CI only on a pair NOT
+# already in the committed scripts/mypy_ratchet_baseline.json; see that
+# script's module docstring for the full rationale (same skeleton as
+# tests/test_3595_s4_slash_handler_seam.py's residue ratchet).
 [tool.mypy]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy 2.x's bundled __init__.pyi uses PEP 695 `type X = ...` (3.12+-only
+# syntax) internally; mypy applies the declared `python_version` restriction
+# to third-party stubs too, not just first-party code, so parsing it under
+# our `python_version = "3.11"` (matching `requires-python`, #3726) raises a
+# real SyntaxError in numpy's OWN stub — nothing to do with our code.
+# `follow_imports = "skip"` treats numpy as untyped (Any) instead of parsing
+# its stub, which is the standard workaround for this exact upstream tension.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

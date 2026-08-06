@@ -32,6 +32,14 @@ from typing import Iterator
 
 _ENV = "REYN_STARTUP_TIMING"
 
+#: #3735: the share of TOTAL, at or above which `unaccounted` gets its own
+#: warning line in the report rather than sitting quietly among the other
+#: rows. 20% is well above ordinary measurement slop (scheduler jitter, GC
+#: pauses) but well below the 62% the #3735 regression actually produced —
+#: chosen to catch "a bracket stopped covering its span" without flagging
+#: routine noise.
+_UNACCOUNTED_GAP_WARNING_PCT = 20.0
+
 def _origin() -> float:
     """The startup clock's zero.
 
@@ -105,6 +113,46 @@ def mark_async_entered() -> None:
         _ASYNC_ENTERED_AT = time.perf_counter()
 
 
+#: The 4 narrow ``client-prep:*`` brackets `mark_app_constructed` sums to
+#: compute ``client-prep:other`` (#3735 regression fix) — every named
+#: sub-stage of the wide ``mark_async_entered`` → ``mark_app_constructed``
+#: span EXCEPT ``client-prep:other`` itself (summing that too would be
+#: circular: it is defined as what these do not already cover).
+_CLIENT_PREP_NAMED_STAGES: "tuple[str, ...]" = (
+    "client-prep:transport",
+    "client-prep:read-model",
+    "client-prep:tui-import",
+    "client-prep:app-construct",
+)
+
+
+#: When the lazily-imported ``run_textual_chat`` module finished importing
+#: (``textual``/``textual_flowview`` and everything they pull in — NOT
+#: covered by the ``import`` stage above, which closes at ``mark_cli_reached``
+#: and therefore only ever measures reyn's OWN import tree; this import is
+#: lazy specifically so the flowview/textual cost is paid only on the path
+#: that needs it, which means that cost falls INSIDE this span instead).
+#: #3671 client-prep breakdown (architect's design): the boundary between
+#: "reyn resolved which renderer to use" and "the TUI framework's own object
+#: graph is being built" — P3/P4 below.
+_TUI_IMPORT_DONE_AT: "float | None" = None
+
+
+def mark_tui_import_done() -> None:
+    """Record that the lazy ``textual_chat``/``textual``/``textual_flowview``
+    import (``client_driver.py``'s ``from reyn.interfaces.inline.textual_chat
+    import run_textual_chat``) has finished.
+
+    Paired with :func:`mark_app_constructed` to bracket ``client-prep:app-
+    construct`` (P4) — the same "call is being made and returns are one
+    ``await`` deeper than a ``with`` block can hold" shape as
+    ``mark_app_constructed``/``mark_first_frame``.
+    """
+    global _TUI_IMPORT_DONE_AT
+    if _TUI_IMPORT_DONE_AT is None:
+        _TUI_IMPORT_DONE_AT = time.perf_counter()
+
+
 def mark_app_constructed() -> None:
     """Record that the TUI object exists and the framework is about to boot.
 
@@ -112,12 +160,56 @@ def mark_app_constructed() -> None:
     — terminal setup, first layout, first paint — as ``tui-boot``. Two marks
     rather than a ``with`` block because the region spans a return out of one
     function and into a framework callback, which no context manager can hold.
+
+    Also closes ``client-prep:app-construct`` (P4, paired with
+    :func:`mark_tui_import_done`) — #3671's original single ``client-prep``
+    lump (``mark_app_constructed`` minus ``mark_async_entered``) is BROKEN
+    DOWN into 4 named sub-stages at the seams architect's design identified
+    (``client-prep:transport`` / ``:read-model`` in ``repl.py``,
+    ``:tui-import`` around the lazy import, ``:app-construct`` here).
+
+    #3735 regression, caught by the owner's own real-machine re-measurement
+    (``unaccounted`` 6.9% → 62%) before it could ship a second time: the 4
+    named sub-stages are NARROW brackets — each covers one specific call, not
+    the control-flow BETWEEN them (registry/session setup between
+    ``mark_async_entered`` and ``client-prep:transport``, ``resolve_render_mode``
+    between ``:read-model`` and ``:tui-import``, …). The wide bracket the 4
+    sub-stages replaced covered that space; narrowing to 4 named points
+    without also capturing what falls between them silently moved that time
+    from "measured, at a coarser granularity" to gone. Fixed by keeping the
+    wide bracket (``_ASYNC_ENTERED_AT`` → this mark) as the ground truth and
+    recording whatever the 4 named sub-stages do NOT explain of it as
+    ``client-prep:other`` — a full breakdown of the SAME span the old single
+    lump covered, not a replacement of it. The named sub-stages' sum plus
+    ``client-prep:other`` therefore always equals this wide span exactly, by
+    construction — never spills into the process-wide ``unaccounted``, which
+    stays reserved for the genuinely-unbracketed stages (``config`` /
+    ``registry`` / ``session`` / …) outside this function's own concern.
     """
     global _APP_CONSTRUCTED_AT
     if _APP_CONSTRUCTED_AT is None:
         _APP_CONSTRUCTED_AT = time.perf_counter()
-        if _ASYNC_ENTERED_AT is not None:
-            TIMING.record("client-prep", _APP_CONSTRUCTED_AT - _ASYNC_ENTERED_AT)
+        if _TUI_IMPORT_DONE_AT is not None:
+            TIMING.record(
+                "client-prep:app-construct", _APP_CONSTRUCTED_AT - _TUI_IMPORT_DONE_AT
+            )
+            # Nested under the SAME `_TUI_IMPORT_DONE_AT is not None` guard as
+            # `client-prep:app-construct` above (not a sibling `if
+            # _ASYNC_ENTERED_AT is not None`, which a full-suite run caught
+            # failing: `_ASYNC_ENTERED_AT` is a module-wide singleton, so an
+            # EARLIER unrelated test/run leaves it set long after this one's
+            # own `_TUI_IMPORT_DONE_AT` was reset to `None` — computing
+            # `client-prep:other` from a stale `_ASYNC_ENTERED_AT` in that
+            # case is exactly the "bogus span against a stale/absent mark"
+            # `test_app_constructed_without_a_prior_tui_import_mark_records_
+            # nothing` already guards against for `:app-construct`). If the
+            # TUI-import sub-stage never ran, the whole client-prep sub-stage
+            # sequence is undefined, and no residual should be computed
+            # either.
+            if _ASYNC_ENTERED_AT is not None:
+                wide = _APP_CONSTRUCTED_AT - _ASYNC_ENTERED_AT
+                named = sum(TIMING.elapsed(s) for s in _CLIENT_PREP_NAMED_STAGES)
+                TIMING.record("client-prep:other", max(0.0, wide - named))
 
 
 def mark_first_frame() -> None:
@@ -163,7 +255,11 @@ STAGES: "tuple[str, ...]" = (
     "plugins",
     "mcp",
     "session",
-    "client-prep",
+    "client-prep:transport",
+    "client-prep:read-model",
+    "client-prep:tui-import",
+    "client-prep:app-construct",
+    "client-prep:other",
     "tui-boot",
 )
 
@@ -199,6 +295,15 @@ class StartupTiming:
         exactly that.
         """
         self._elapsed[stage] = self._elapsed.get(stage, 0.0) + max(0.0, seconds)
+
+    def elapsed(self, stage: str) -> float:
+        """Seconds recorded for *stage*, or ``0.0`` if it never ran.
+
+        The public read side of :meth:`record` — lets a stage that is itself
+        DERIVED from others (``client-prep:other``, #3735) sum its siblings
+        without reaching into ``_elapsed`` directly.
+        """
+        return self._elapsed.get(stage, 0.0)
 
     @property
     def total_seconds(self) -> float:
@@ -236,6 +341,17 @@ class StartupTiming:
         lines.append(
             f"  {'TOTAL':<12} {wall_seconds:6.2f}s  (start \u2192 interface on screen)"
         )
+        # #3735: a stage breakdown that mostly reads `unaccounted` is the same
+        # failure this module exists to prevent, just one level up \u2014 the
+        # instrument itself must say so rather than let a large gap masquerade
+        # as a tidy-looking report. Self-flagged here (not asserted/raised):
+        # this is a diagnostic, and a diagnostic that crashes the startup it
+        # is trying to explain is worse than the problem it reports.
+        if share >= _UNACCOUNTED_GAP_WARNING_PCT:
+            lines.append(
+                f"  \u26a0 unaccounted is {share:.0f}% of TOTAL \u2014 the stage "
+                "brackets likely have a coverage gap, not just untimed work"
+            )
         return lines
 
 

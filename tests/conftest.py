@@ -49,6 +49,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,127 @@ def out_of_process_reyn() -> str:
             f"would measure different checkouts.\n{rendered}"
         )
     return str(root / "src")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _flowview_pin_verified() -> None:
+    """#3723: 4 of 4 sessions on 2026-08-06 measured a full suite against a
+    mis-pinned ``textual-flowview`` — three had a stale version, and read
+    real failures as "pre-existing on origin/main"; the fourth had the
+    pinned VERSION but was reading a local working copy, invisible to a
+    version-only check. Unlike `reyn_console_scripts`/`out_of_process_reyn`
+    above (opt-in, per-test), this is autouse and session-scoped: it must run
+    once, before the first test body, for every invocation — a session that
+    never happens to request it is exactly how this went undetected. A red
+    test measured under a mis-pinned flowview is not "one more failure", it
+    makes the WHOLE suite's result incomparable to `origin/main`'s, so a
+    version mismatch (`flowview-pin/stale`/`flowview-pin/absent`) aborts the
+    run outright (`pytest.exit`) instead of failing one test.
+
+    `flowview-pin/local-copy` is different: a local `textual-flowview` clone
+    is legitimate development (#3725 review, lead-coder — tui-coder was doing
+    exactly this when the blanket abort version of this fixture would have
+    stopped them from running a single test). `REYN_FLOWVIEW_LOCAL_COPY="<reason>"`
+    (a non-empty reason, required — see `partition_flowview_findings`'s
+    docstring) downgrades that ONE finding kind from an abort to a
+    `warnings.warn`, which pytest surfaces in its own warnings summary at the
+    end of the run — not just printed at setup time and easy to miss, but
+    landing in the same report the run's own result reaches (#3723's
+    incident was exactly a case where the reason was knowable but never
+    reached anyone reading the result).
+    """
+    findings = _ENV_IDENTITY.verify(Path(_REPO_ROOT), only=("flowview-pin",))
+    if not findings:
+        return
+
+    reason = os.environ.get("REYN_FLOWVIEW_LOCAL_COPY", "")
+    blocking, acknowledged = _ENV_IDENTITY.partition_flowview_findings(findings, reason)
+
+    if acknowledged:
+        rendered = "\n".join(f.render() for f in acknowledged)
+        warnings.warn(
+            f"env-identity (#3723): textual-flowview is a local working copy, not "
+            f"the pinned commit — acknowledged via REYN_FLOWVIEW_LOCAL_COPY={reason!r}. "
+            f"This run's result is not comparable to one measured against the pin.\n"
+            f"{rendered}",
+            stacklevel=1,
+        )
+
+    if blocking:
+        rendered = "\n".join(f.render() for f in blocking)
+        pytest.exit(
+            f"env-identity (#3723): this venv's textual-flowview does not match "
+            f"pyproject.toml's pin — the whole suite's result is not trustworthy "
+            f"until this is fixed.\n{rendered}",
+            returncode=1,
+        )
+
+
+# ── Workspace isolation (#3705) ─────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
+) -> None:
+    """Every test starts chdir'd into its own throwaway ``tmp_path``.
+
+    #3705: the owner opened `reyn` and found 656/1158 (56%) of their real
+    conversation history was synthetic test fixtures — 67 `.reyn/agents/`
+    directories that should never have existed outside a test's own
+    isolated tmp dir. Root cause: `Agent.workspace_dir` (and several
+    Session-owned paths derived from it) fall back to a cwd-relative
+    `.reyn/...` when a caller does not supply an explicit
+    `workspace_state_dir` — and two DIFFERENT test helpers
+    (`tests/_support/session.py`, `tests/_support/agent_session.py`, the
+    latter used by 223 test files) were each independently found to
+    sometimes take that fallback path (measured: ~16/223 of
+    `agent_session.make_session`'s own call sites pass
+    `workspace_state_dir` explicitly — the other ~207 rely on it).
+
+    Fixing every individual call site is an N+1 problem: the NEXT test
+    helper, or the next call site added to an existing one, inherits the
+    exact same "forgot to pass workspace_state_dir" failure mode — which is
+    precisely how this incident happened twice in one review round (a
+    helper lead-coder found, then a second ~16/223 gap this session found
+    independently). This fixture closes the CLASS instead: it does not make
+    every call site pass an explicit root — it makes the FALLBACK ITSELF
+    safe, unconditionally, for every test, regardless of which helper or
+    call site takes it. A cwd-relative `.reyn/...` write can now land only
+    under this test's own disposable `tmp_path`, never the directory the
+    test process happened to be started from.
+
+    A test that goes RED under this fixture has been cwd-dependent all
+    along (owner + lead-coder's framing, #3705 review) — that is the
+    fixture doing its job, not a reason to opt out of it. A test with a
+    genuine, deliberate reason to control its OWN cwd (e.g. one exercising
+    `_find_project_root`'s upward walk, or the RED-gate pair in
+    `test_session_writes_stay_in_its_workspace_3705.py`, which chdir's
+    again mid-test to a DIFFERENT directory than this fixture's own
+    `tmp_path`) still can — `monkeypatch.chdir(...)` calls happening later
+    in the SAME test simply override this fixture's earlier one, same as
+    any other autouse fixture a test's own setup legitimately shadows.
+
+    A DIFFERENT, rarer case is a test that needs cwd to stay the REAL repo
+    root for its own duration — e.g. reading a COMMITTED doc/config file by
+    a repo-relative path (`Path("docs/...").read_text()`), which has
+    nothing to do with `.reyn`-write isolation. Marking it
+    `@pytest.mark.repo_root_cwd(reason="...")` opts out explicitly, with a
+    REQUIRED reason (enforced below) — never a silent bypass; the whole
+    point of a marker over an ad-hoc `monkeypatch.chdir(repo_root)` in each
+    such test is that every opt-out is greppable in one place, with its
+    justification attached, rather than rediscovered file-by-file.
+    """
+    marker = request.node.get_closest_marker("repo_root_cwd")
+    if marker is not None:
+        if not marker.args and "reason" not in marker.kwargs:
+            pytest.fail(
+                f"{request.node.nodeid}: @pytest.mark.repo_root_cwd(...) "
+                "requires a reason=\"...\" — opting out of cwd isolation "
+                "must be justified, not silent (#3705)."
+            )
+        return
+    monkeypatch.chdir(tmp_path)
 
 
 # ── Secret store isolation ─────────────────────────────────────────────────────
@@ -384,6 +506,17 @@ def pytest_configure(config: pytest.Config) -> None:
         "docker: live-Docker integration test (#1332). Skipped when no daemon is "
         "reachable; runs against a real container. Select with `-m docker` / "
         "deselect with `-m 'not docker'`.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "repo_root_cwd(reason): opt OUT of the autouse `_isolated_cwd` fixture "
+        "(#3705) — this test genuinely needs cwd to be the real repo root "
+        "(e.g. reading a COMMITTED doc/config file by repo-relative path), not "
+        "a disposable tmp_path. `reason` is required (enforced by "
+        "`_isolated_cwd` itself) so an opt-out is never silent — a red test "
+        "under the autouse chdir means it WAS cwd-dependent; this marker is for "
+        "the (rare) cases where that dependency is deliberate and correct, not "
+        "a way to make an inconvenient red go away.",
     )
 
     # #3451 network gate — imported lazily, HERE, inside the hook body (not at

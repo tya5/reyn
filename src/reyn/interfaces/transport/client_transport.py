@@ -38,6 +38,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from reyn.interfaces.transport.frames import Frame
     from reyn.runtime.outbox import OutboxMessage
 
@@ -196,6 +198,31 @@ class ClientTransport(ABC):
         real op.
         """
         return False
+
+    def reyn_state_root(self) -> "Path | None":
+        """The attached session's project `.reyn` root, or None (#3721).
+
+        A slash handler that needs to resolve a project-scoped path (the
+        memory store, e.g.) is exactly the shape #3595 S4 exists to route
+        through the transport rather than `SlashContext.session` directly —
+        the field is declared migration residue, and reading a NEW attribute
+        off it (even a public one) would grow what the ratchet in
+        `tests/test_3595_s4_slash_handler_seam.py` is closing rather than
+        adding a designed operation. This is that operation.
+
+        None means "cannot be resolved through THIS transport" — not "no
+        project" and not "empty". A caller must surface that distinction
+        rather than treat None the same as an empty result (#3721's own
+        fix condition): for `AgUiTransport`, the project lives on the far
+        end of the wire and there is no local answer to give, ever, not a
+        transient failure.
+
+        NOT abstract (mirrors :meth:`run_slash_command` / :meth:`cancel_queued`
+        above): several narrow-purpose `ClientTransport` stubs across the test
+        suite pre-date this method. The default `None` is correct, not a
+        placeholder, for any transport with no local session to ask.
+        """
+        return None
 
     @abstractmethod
     async def shutdown(self) -> None:

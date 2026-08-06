@@ -201,6 +201,205 @@ def test_the_report_survives_an_interrupt(monkeypatch, capsys) -> None:
     assert "startup timing" in capsys.readouterr().out
 
 
+def test_client_prep_is_four_named_sub_stages_not_one_lump(monkeypatch) -> None:
+    """Tier 2: #3671 (architect's design) — the single `client-prep` lump is
+    replaced by 4 named sub-stages at the seams already in the code (transport
+    construction, read-model construction, the lazy textual/flowview import,
+    and app construction), so a slow startup can say WHICH of the four, not
+    just that the client was slow to get ready."""
+    assert "client-prep" not in STAGES
+    for name in (
+        "client-prep:transport",
+        "client-prep:read-model",
+        "client-prep:tui-import",
+        "client-prep:app-construct",
+    ):
+        assert name in STAGES
+
+
+def test_tui_import_done_then_app_constructed_records_app_construct_stage(
+    monkeypatch,
+) -> None:
+    """Tier 2: P4 — the span between the lazy textual_chat import finishing
+    and the TUI object existing is recorded as `client-prep:app-construct`,
+    the same paired-mark shape `mark_app_constructed`/`mark_first_frame`
+    already use for a region a `with` block cannot hold (it crosses an
+    `await` into a different module)."""
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    before = startup_timing.TIMING.total_seconds
+
+    startup_timing.mark_tui_import_done()
+    time.sleep(0.02)
+    startup_timing.mark_app_constructed()
+
+    after = startup_timing.TIMING.total_seconds
+    assert after - before >= 0.02
+
+
+def test_app_constructed_without_a_prior_tui_import_mark_records_nothing(
+    monkeypatch,
+) -> None:
+    """Tier 2: FALSIFY — if `mark_tui_import_done` was never called (e.g. a
+    future non-textual renderer reaches `mark_app_constructed` some other
+    way), no `client-prep:app-construct` time is recorded rather than
+    computing a bogus span against a stale/absent mark. Mirrors the existing
+    `if _ASYNC_ENTERED_AT is not None` guard shape."""
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    before = startup_timing.TIMING.total_seconds
+
+    startup_timing.mark_app_constructed()
+
+    assert startup_timing.TIMING.total_seconds == before
+
+
+def test_a_second_tui_import_mark_does_not_move_the_span(monkeypatch) -> None:
+    """Tier 2: idempotent, mirroring `mark_first_frame`'s own "only the first
+    call counts" contract — a re-import (should never happen, but the mark
+    is defensive the same way the others are) must not shrink P4 by resetting
+    the start point. Witnessed through the PUBLIC recorded duration (not the
+    private timestamp): if the second mark moved the start forward, the
+    recorded span would only cover the second sleep, not both.
+    """
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    before = startup_timing.TIMING.total_seconds
+
+    startup_timing.mark_tui_import_done()
+    time.sleep(0.02)
+    startup_timing.mark_tui_import_done()  # no-op: only the first call counts
+    time.sleep(0.02)
+    startup_timing.mark_app_constructed()
+
+    after = startup_timing.TIMING.total_seconds
+    assert after - before >= 0.04
+
+
+def test_gap_between_named_substages_is_captured_not_lost_falsify(monkeypatch) -> None:
+    """Tier 2: FALSIFY — #3735 regression. The control-flow BETWEEN the 4
+    named `client-prep:*` sub-stages (registry/session setup before
+    `:transport` starts, `resolve_render_mode` + branch dispatch between
+    `:read-model` and `:tui-import`, …) is not covered by any `stage()`/mark
+    pair. Before the fix this fell silently out of `client-prep` entirely and
+    into the process-wide `unaccounted` bucket — the coverage hole the
+    owner's real-machine re-measurement caught (unaccounted 6.9% -> 62%,
+    traced to the 4 sub-stages replacing the old wide bracket instead of
+    breaking it down). Witnessed by injecting real sleeps in that gap and
+    confirming they land in `client-prep:other`, not vanishing — "fired" is
+    not "covers"."""
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_ASYNC_ENTERED_AT", None)
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    # A fresh instance, not the shared process-wide TIMING: the `named` sum
+    # `mark_app_constructed` computes is a one-shot lifetime total (correct
+    # for real usage, where each mark/stage fires once per process) — reusing
+    # the module singleton across test functions would pollute it with every
+    # prior test's own recordings of the same stage names.
+    monkeypatch.setattr(startup_timing, "TIMING", StartupTiming())
+
+    startup_timing.mark_async_entered()
+    time.sleep(0.02)  # gap 1 — untracked control flow before `:transport`
+    with stage("client-prep:transport"):
+        time.sleep(0.01)
+    with stage("client-prep:read-model"):
+        time.sleep(0.01)
+    time.sleep(0.02)  # gap 2 — untracked control flow before `:tui-import`
+    with stage("client-prep:tui-import"):
+        time.sleep(0.01)
+    startup_timing.mark_tui_import_done()
+    startup_timing.mark_app_constructed()
+
+    other = startup_timing.TIMING.elapsed("client-prep:other")
+    assert other >= 0.03, f"the two injected gaps (0.04s) were not captured: {other}s"
+
+
+def test_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
+    """Tier 2: coverage invariant — #3671's original single `client-prep` lump
+    (`mark_app_constructed` minus `mark_async_entered`) must still be fully
+    explained after being broken into 4 named sub-stages + `client-prep:other`
+    (#3735 fix): their sum must equal the wide span, not merely be LESS than
+    or equal to it. Measured against the test's OWN wall clock (not the
+    module's private timestamps) so this is a public-surface witness, not an
+    assertion on internal state."""
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_ASYNC_ENTERED_AT", None)
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    monkeypatch.setattr(startup_timing, "TIMING", StartupTiming())
+    stages = (
+        "client-prep:transport", "client-prep:read-model",
+        "client-prep:tui-import", "client-prep:app-construct", "client-prep:other",
+    )
+
+    wall_start = time.perf_counter()
+    startup_timing.mark_async_entered()
+    time.sleep(0.01)
+    with stage("client-prep:transport"):
+        time.sleep(0.01)
+    time.sleep(0.01)
+    with stage("client-prep:read-model"):
+        time.sleep(0.01)
+    with stage("client-prep:tui-import"):
+        time.sleep(0.01)
+    startup_timing.mark_tui_import_done()
+    time.sleep(0.01)
+    startup_timing.mark_app_constructed()
+    wall_end = time.perf_counter()
+
+    named_sum = sum(startup_timing.TIMING.elapsed(name) for name in stages)
+    assert abs(named_sum - (wall_end - wall_start)) < 0.02
+
+
+def test_unaccounted_warning_line_appears_when_coverage_is_bad() -> None:
+    """Tier 2: #3735 — the report self-flags a large `unaccounted` share
+    instead of leaving it to blend in with the other rows. This is the "gate"
+    that would have caught #3735 the moment anyone ran the report: a
+    coverage hole reads as a visible warning, not a quiet number."""
+    timing = StartupTiming()
+    timing.record("config", 0.1)
+
+    lines = timing.report_lines(wall_seconds=1.0)  # 90% unaccounted
+
+    assert any("coverage gap" in line for line in lines)
+
+
+def test_no_warning_line_when_coverage_is_good() -> None:
+    """Tier 2: the warning is conditional, not always-on — a startup whose
+    stages explain most of the wall time must not carry a false-alarm line."""
+    timing = StartupTiming()
+    timing.record("config", 0.95)
+
+    lines = timing.report_lines(wall_seconds=1.0)  # 5% unaccounted
+
+    assert not any("coverage gap" in line for line in lines)
+
+
+def test_client_prep_other_is_declared() -> None:
+    """Tier 2: `client-prep:other` (#3735) is a declared stage like its 4
+    named siblings — so a startup where it never fires (e.g. the non-TUI
+    `--cui` path, where `mark_app_constructed` is never called) still shows
+    `0.00` rather than disappearing."""
+    assert "client-prep:other" in STAGES
+
+
 def test_the_report_survives_an_exception(monkeypatch, capsys) -> None:
     """Tier 2: a startup that dies still reports.
 
