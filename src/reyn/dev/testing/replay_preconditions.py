@@ -181,10 +181,14 @@ class MCPCatalogPrecondition(EnvironmentPrecondition):
     def _resolve_state_dir(self) -> Path:
         if self._state_dir is not None:
             return self._state_dir
-        # Mirrors ``router_host_adapter._DEFAULT_STATE_DIR`` — deliberately
-        # resolved at call time, not at construction, because a replay test
-        # chdirs into its project between the two.
-        return Path(".reyn") / "state"
+        # #3705: mirrors RouterHostAdapter's OWN cwd-relative fallback for
+        # callers that don't pass state_dir (`Path.cwd() / ".reyn" /
+        # "state"`, no longer a module-level constant there either —
+        # deliberately resolved at call time, not at construction, because a
+        # replay test chdirs into its project between the two). This class's
+        # own `state_dir=` constructor override is the escape hatch for a
+        # caller that needs an explicit root instead.
+        return Path.cwd() / ".reyn" / "state"
 
     def scrub(self, request: ReplayRequest) -> ReplayRequest:
         if not request.tools:

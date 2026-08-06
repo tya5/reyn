@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_STATE_DIR = Path(".reyn") / "state"
-
 # #3475: THE default for the MCP tools-list per-server probe timeout lives on
 # ``TimeoutConfig.mcp_probe_seconds`` (the config definition side, per #3461's
 # ``FileScopes`` precedent) — this module reads it rather than repeating the
@@ -458,7 +456,16 @@ class RouterHostAdapter:
         # to detect when the CLI has written a fresher version.
         self._mcp_tools_cache_mtime: float | None = None
         # FP-0037 S1: state dir for the persistent cache file.
-        self._state_dir: Path = Path(state_dir) if state_dir is not None else _DEFAULT_STATE_DIR
+        # #3705: was a MODULE-LEVEL constant frozen at import time (whatever
+        # cwd happened to be at first `import router_host_adapter`, not even
+        # fresh per construction) — now resolved per-instance at Path.cwd()
+        # call time, matching the documented "resolves relative to cwd"
+        # intent, at least for callers that don't pass state_dir at all
+        # (Session now does — see `_reyn_state_root` — so production no
+        # longer hits this fallback).
+        self._state_dir: Path = (
+            Path(state_dir) if state_dir is not None else Path.cwd() / ".reyn" / "state"
+        )
         # FP-0037 S2: project root for yaml scope path resolution.
         # None = no project yaml tiers (user-global only).
         self._project_root: Path | None = (
@@ -726,8 +733,12 @@ class RouterHostAdapter:
 
     def get_memory_index(self) -> dict:
         """Return merged shared + agent memory index."""
+        # #3705: shared_path derived from `self._workspace_dir` (already
+        # anchored on the caller's real state root) instead of a bare
+        # relative `Path(".reyn")`, which silently ignored it — same
+        # derivation as `MemoryService.memory_dir`'s "shared" branch.
         return merge_memory_indexes(
-            shared_path=Path(".reyn") / "memory" / "MEMORY.md",
+            shared_path=self._workspace_dir.parent.parent / "memory" / "MEMORY.md",
             agent_path=self._workspace_dir / "memory" / "MEMORY.md",
             agent_name=self._agent_name,
         )

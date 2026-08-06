@@ -219,15 +219,26 @@ async def test_forget_removes_file_and_updates_index(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_path_and_dir_contracts(tmp_path: Path) -> None:
-    """Tier 2: memory_path / memory_dir return correctly shaped paths for each layer."""
+    """Tier 2: memory_path / memory_dir return correctly shaped paths for each
+    layer.
+
+    #3705: "shared" used to be a bare relative ``Path(".reyn") / "memory"``,
+    silently ignoring the workspace root ``_make_service`` explicitly passed
+    via ``agent_workspace_dir`` — this test was pinning that bug (it passed
+    only because ``memory_dir("shared")`` never actually depended on
+    ``tmp_path`` at all). Now "shared" is derived from the SAME root as
+    "agent" — ``agent_workspace_dir.parent.parent`` (the state root both
+    layers live under) — so a caller-supplied workspace root is finally
+    respected for both layers, not just "agent"."""
     svc, _ = _make_service(tmp_path)
 
-    # shared layer
+    # shared layer — rooted under the SAME state root as agent_workspace_dir
+    # (tmp_path/"agents"/"test_agent" → parent.parent → tmp_path).
     shared_dir = svc.memory_dir("shared")
-    assert shared_dir == str(Path(".reyn") / "memory")
+    assert shared_dir == str(tmp_path / "memory")
 
     shared_path = svc.memory_path("shared", "myslug")
-    assert shared_path == str(Path(".reyn") / "memory" / "myslug.md")
+    assert shared_path == str(tmp_path / "memory" / "myslug.md")
 
     # agent layer — must be rooted under agent_workspace_dir
     agent_dir = svc.memory_dir("agent")
