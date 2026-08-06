@@ -147,13 +147,18 @@ async def _restore_ivids(tmp_path: Path, wal: Path) -> list[str]:
     reg, state_log = _make_registry(tmp_path, wal)
     snapshots = await reg.restore_all()
     main = reg.get_session("alpha")
-    if main is not None:
+    snap = snapshots.get("alpha")
+    if main is not None and snap is not None:
         # #3748: unbounded (owner policy) -- restore_state schedules the
         # re-enqueue as background tasks; wait for them to register every id
         # the just-reconstructed durable snapshot expects (the SAME source
-        # restore_state itself reads), not a fixed tick count.
-        expected = set(snapshots["alpha"].outstanding_interventions)
-        while set(_active_iv_ids(main)) != expected:
+        # restore_state itself reads), not a fixed tick count. Weak wait
+        # (count only) -- a strong `!=` comparison here would make a
+        # restoration bug that produces the WRONG ids hang forever instead
+        # of surfacing as a caller-side set-mismatch assertion, defeating
+        # this helper's whole purpose (lead-coder review, #3762's pattern).
+        expected_count = len(snap.outstanding_interventions)
+        while len(_active_iv_ids(main)) < expected_count:
             await asyncio.sleep(0.01)
     ids = [] if main is None else _active_iv_ids(main)
     if main is not None:
