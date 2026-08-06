@@ -420,9 +420,14 @@ def test_memory_dir_shared_path():
     Protects: callers that build paths to the shared layer must get a stable,
     predictable path. If this path drifts, skills and the CLI disagree on
     where shared memory lives.
+
+    #3716: `memory_dir()`'s no-``root`` fallback is now an explicit
+    ``Path.cwd() / ".reyn"`` (was a bare relative literal) — same location
+    on disk, but a relative and an absolute ``Path`` are never ``==``, so
+    this compares against the resolved absolute form.
     """
     result = memory_dir(agent=None)
-    assert result == Path(".reyn") / "memory"
+    assert result == Path.cwd() / ".reyn" / "memory"
 
 
 def test_memory_dir_agent_path():
@@ -430,9 +435,12 @@ def test_memory_dir_agent_path():
 
     Protects: the agent-scoped path contract. Skills that write to their own
     scope and callers that read from it must agree on the path structure.
+
+    #3716: see `test_memory_dir_shared_path` — same relative-vs-absolute
+    ``Path`` note.
     """
     result = memory_dir(agent="my_agent")
-    assert result == Path(".reyn") / "agents" / "my_agent" / "memory"
+    assert result == Path.cwd() / ".reyn" / "agents" / "my_agent" / "memory"
 
 
 # ── render_body ────────────────────────────────────────────────────────────────
