@@ -127,17 +127,32 @@ def new_findings(
     return measured - baseline
 
 
-def has_new_syntax_abort(new: "set[tuple[str, str]]") -> bool:
-    """Whether ``new`` contains a `[syntax]` pair — mypy's signal that it hit
-    a fatal parse error and stopped ("errors prevented further checking"),
-    the SAME shape #3726/#3728 found at `config/root.py:147` (#3727 row #10).
+def syntax_pairs_in(pairs: "set[tuple[str, str]]") -> "set[tuple[str, str]]":
+    """The `[syntax]` subset of ``pairs`` — mypy's signal that it hit a fatal
+    parse error and stopped ("errors prevented further checking"), the SAME
+    shape #3726/#3728 found at `config/root.py:147` (#3727 row #10).
 
-    A `[syntax]` red is not "one more finding" the way an `[attr-defined]` or
-    `[arg-type]` red is: mypy aborts the WHOLE invocation on it, so every
-    OTHER file's findings this run are simply unmeasured, not confirmed
-    clean. `main()` uses this to print a distinct warning — the shape of the
-    red (which code fired) carries information a bare pair list does not."""
-    return any(code == "syntax" for _file, code in new)
+    Takes ``measured``, not ``new`` — a `[syntax]` pair that happens to
+    already be baselined is NOT "known debt" the way every other code is: a
+    baselined `[attr-defined]` means "we've seen this file's finding before
+    and haven't fixed it," but a baselined `[syntax]` would mean "the last
+    time this ran, mypy checked exactly one file and called it OK," and every
+    run after would silently repeat that with no new pair to flag (#3727
+    review). `main()` treats ANY `[syntax]` pair in `measured` as fatal,
+    baselined or not, and refuses to bake one into the baseline at all via
+    `--write-baseline` — the one operation the module docstring already names
+    as "the one way to defeat the ratchet" would otherwise defeat THIS
+    specific check permanently, silently, in one command."""
+    return {p for p in pairs if p[1] == "syntax"}
+
+
+_SYNTAX_ABORT_WARNING = (
+    "[syntax] above is not \"one more red\": a fatal parse error stops "
+    "mypy's ENTIRE run, so no other file was actually checked this time — "
+    "every OTHER pair this run's output doesn't mention is UNMEASURED, "
+    "not confirmed clean. Fix the [syntax] finding first; nothing else "
+    "this run says can be trusted until it's gone (#3727 row #10)."
+)
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -156,34 +171,50 @@ def main(argv: "list[str] | None" = None) -> int:
 
     output = run_mypy()
     measured = parse_mypy_output(output)
+    syntax_pairs = syntax_pairs_in(measured)
 
     if args.write_baseline:
+        if syntax_pairs:
+            print(
+                "REFUSING to write baseline: this measurement contains a "
+                "[syntax] finding, which means mypy aborted before checking "
+                "most of the tree. Baselining it would bake in a "
+                "permanently-degraded run that reports \"OK\" forever while "
+                "only ever checking one file. Fix the [syntax] finding(s) "
+                "first, then regenerate.\n",
+                file=sys.stderr,
+            )
+            for file, code in sorted(syntax_pairs):
+                print(f"  {file}  [{code}]", file=sys.stderr)
+            return 1
         write_baseline(measured)
         print(f"Wrote {len(measured)} (file, code) pairs to {_BASELINE_PATH}")
         return 0
 
     baseline = load_baseline()
     new = new_findings(measured, baseline)
-    if not new:
+
+    if not new and not syntax_pairs:
         print(f"mypy ratchet OK: {len(measured)} findings, all baselined ({len(baseline)} declared).")
         return 0
 
-    print(
-        f"mypy ratchet FAILED: {len(new)} new (file, error-code) pair(s) not in "
-        f"the baseline ({_BASELINE_PATH.relative_to(_ROOT)}):\n",
-        file=sys.stderr,
-    )
-    for file, code in sorted(new):
-        print(f"  {file}  [{code}]", file=sys.stderr)
-    if has_new_syntax_abort(new):
+    print("mypy ratchet FAILED:\n", file=sys.stderr)
+    if new:
         print(
-            "\n[syntax] above is not \"one more red\": a fatal parse error stops "
-            "mypy's ENTIRE run, so no other file was actually checked this time — "
-            "every OTHER pair this run's output doesn't mention is UNMEASURED, "
-            "not confirmed clean. Fix the [syntax] finding first; nothing else "
-            "this run says can be trusted until it's gone (#3727 row #10).",
+            f"{len(new)} new (file, error-code) pair(s) not in the baseline "
+            f"({_BASELINE_PATH.relative_to(_ROOT)}):",
             file=sys.stderr,
         )
+        for file, code in sorted(new):
+            print(f"  {file}  [{code}]", file=sys.stderr)
+    if syntax_pairs:
+        # Fires even when every syntax_pairs entry is already baselined (so
+        # absent from `new`) — a baselined [syntax] is never "known debt",
+        # see syntax_pairs_in()'s own docstring.
+        print(f"\n{_SYNTAX_ABORT_WARNING}", file=sys.stderr)
+        for file, code in sorted(syntax_pairs):
+            note = "" if (file, code) in new else "  (already \"baselined\" — still fatal, see above)"
+            print(f"  {file}  [{code}]{note}", file=sys.stderr)
     print(
         "\nEither fix the new finding(s), or if this is a deliberate, understood "
         "addition, add the (file, code) pair to the baseline explicitly — do "

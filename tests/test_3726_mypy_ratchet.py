@@ -101,30 +101,44 @@ def test_measured_set_equal_to_baseline_is_clean() -> None:
     assert module.new_findings(pairs, pairs) == set()
 
 
-# ── has_new_syntax_abort (#3727 row #10) ────────────────────────────────────
+# ── syntax_pairs_in (#3727 row #10) ─────────────────────────────────────────
 
 
-def test_a_new_syntax_pair_is_detected_as_an_abort() -> None:
-    """Tier 1: FALSIFY — a `[syntax]` pair in `new` is flagged, since mypy
-    aborts its whole run on one and every other file's findings go
+def test_a_syntax_pair_is_extracted_from_measured() -> None:
+    """Tier 1: FALSIFY — a `[syntax]` pair in `measured` is flagged, since
+    mypy aborts its whole run on one and every other file's findings go
     unmeasured that run."""
     module = _load()
-    new = {("src/reyn/foo.py", "syntax")}
-    assert module.has_new_syntax_abort(new) is True
+    measured = {("src/reyn/foo.py", "syntax"), ("src/reyn/bar.py", "arg-type")}
+    assert module.syntax_pairs_in(measured) == {("src/reyn/foo.py", "syntax")}
 
 
-def test_ordinary_new_findings_are_not_flagged_as_a_syntax_abort() -> None:
-    """Tier 1: an ordinary [attr-defined]/[arg-type] red is a normal new
+def test_ordinary_findings_yield_no_syntax_pairs() -> None:
+    """Tier 1: an ordinary [attr-defined]/[arg-type] red is a normal
     finding, not the "nothing else this run says can be trusted" shape."""
     module = _load()
-    new = {("src/reyn/foo.py", "attr-defined"), ("src/reyn/bar.py", "arg-type")}
-    assert module.has_new_syntax_abort(new) is False
+    measured = {("src/reyn/foo.py", "attr-defined"), ("src/reyn/bar.py", "arg-type")}
+    assert module.syntax_pairs_in(measured) == set()
 
 
-def test_empty_new_set_is_not_a_syntax_abort() -> None:
-    """Tier 1: nothing new means nothing to warn about."""
+def test_empty_measured_yields_no_syntax_pairs() -> None:
+    """Tier 1: nothing measured means nothing to warn about."""
     module = _load()
-    assert module.has_new_syntax_abort(set()) is False
+    assert module.syntax_pairs_in(set()) == set()
+
+
+def test_a_baselined_syntax_pair_still_counts_because_it_is_taken_from_measured() -> None:
+    """Tier 1: FALSIFY the exact gap lead-coder's review found — a
+    `[syntax]` pair that is ALREADY in the baseline is not "known debt" the
+    way every other code is (a baselined [syntax] means a past run checked
+    exactly one file and called it OK forever after). `syntax_pairs_in`
+    takes `measured` directly, never `new`, so this is caught regardless of
+    baseline membership."""
+    module = _load()
+    measured = {("src/reyn/foo.py", "syntax")}
+    baseline = {("src/reyn/foo.py", "syntax")}  # already declared
+    assert module.new_findings(measured, baseline) == set()  # invisible to `new`
+    assert module.syntax_pairs_in(measured) == {("src/reyn/foo.py", "syntax")}  # NOT invisible here
 
 
 # ── load_baseline / write_baseline round-trip ───────────────────────────────
@@ -168,3 +182,69 @@ def test_the_committed_baseline_is_reachable_through_the_registered_target() -> 
     module = _load()
     baseline = module.load_baseline()
     assert len(baseline) > 0
+
+
+# ── main() wiring (#3727 review: the bug lived in main(), not in a pure fn) ──
+
+
+def test_main_fails_even_when_the_only_measured_pair_is_a_baselined_syntax_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 1: FALSIFY the exact gap lead-coder's review found — the ORIGINAL
+    wiring checked `new_findings()` only, so a `[syntax]` pair already in the
+    baseline made `main()` print "mypy ratchet OK" every run while mypy had
+    actually checked exactly one file. `load_baseline`/`run_mypy` are
+    monkeypatched directly (not the `_BASELINE_PATH` constant, whose value is
+    already bound into their default-argument at module-def time) so the
+    test drives `main()`'s real control flow without touching disk."""
+    module = _load()
+    monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "syntax")})
+    monkeypatch.setattr(
+        module, "run_mypy",
+        lambda: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
+                "Found 1 error in 1 file (errors prevented further checking)\n",
+    )
+
+    rc = module.main([])
+
+    assert rc == 1
+    assert "not confirmed clean" in capsys.readouterr().err
+
+
+def test_main_ok_when_measured_matches_baseline_with_no_syntax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: the ordinary green path is unaffected by the syntax check —
+    only actually-present [syntax] pairs change the verdict."""
+    module = _load()
+    monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "attr-defined")})
+    monkeypatch.setattr(
+        module, "run_mypy",
+        lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n",
+    )
+
+    assert module.main([]) == 0
+
+
+def test_main_write_baseline_refuses_when_a_syntax_pair_is_measured(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 1: FALSIFY — `--write-baseline` is the module docstring's own
+    named "one way to defeat the ratchet"; baking in a `[syntax]` pair would
+    make that operation permanently silence the abort-detection this PR
+    adds. `main()` must refuse to write at all — `write_baseline` must never
+    even be called."""
+    module = _load()
+    calls: list[object] = []
+    monkeypatch.setattr(module, "write_baseline", lambda pairs, path=None: calls.append(pairs))
+    monkeypatch.setattr(
+        module, "run_mypy",
+        lambda: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
+                "Found 1 error in 1 file (errors prevented further checking)\n",
+    )
+
+    rc = module.main(["--write-baseline"])
+
+    assert rc == 1
+    assert "REFUSING" in capsys.readouterr().err
+    assert calls == []
