@@ -153,6 +153,10 @@ def _flatten_nodes(nodes: list[dict]) -> list[str]:
 
 
 def _header(event_data: dict, view: str, data_ref: str) -> str:
+    # #3664: `rows` is read straight off the `presented` event, the same field
+    # the op ack derives its own `rows` from (op_runtime/present.py's
+    # `_emit_presented` / `ack["rows"]`) — a single source of truth, so this
+    # header and the ack cannot diverge in what `rows` means.
     rows = event_data.get("rows", 0)
     resolved = event_data.get("bindings_resolved", 0)
     dropped = event_data.get("bindings_dropped") or []
@@ -186,7 +190,8 @@ def replay_presentation(
     """Re-render one ``presented`` event best-effort for replay/rewind display.
 
     ``event_data`` is the ``presented`` event's ``data`` dict (``data_ref``,
-    ``view``, ``surface``, ``rows``, ``bindings_resolved``, ``bindings_dropped``).
+    ``view``, ``surface``, ``rows``, ``bindings_resolved``, ``bindings_dropped``,
+    ``coerced``).
     ``load_ref`` re-hydrates the ref (default: from disk); returning ``None`` — or an
     ``<inline-data>`` ref, whose bytes the event never carried — yields an expiry
     placeholder pointing at the audit event. Never raises: a gone ref is a placeholder,

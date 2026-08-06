@@ -2,7 +2,7 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [present op, present reference, presentation, data_ref, data_inline, blueprint, view, catalog component, table, keyvalue, list, code, diff, markdown, image, $bind, JSON pointer, presentations.yaml, presentations.entries, present ack, bindings_dropped, presented event, replay, recovery gate, expiry placeholder]
+search_hints: [present op, present reference, presentation, data_ref, data_inline, blueprint, view, catalog component, table, keyvalue, list, code, diff, markdown, image, $bind, JSON pointer, presentations.yaml, presentations.entries, present ack, bindings_dropped, coerced, presented event, replay, recovery gate, expiry placeholder]
 ---
 
 # Present op & surface reference
@@ -87,10 +87,14 @@ Data is joined to a view by **JSON Pointer (RFC 6901)** paths, expressed structu
   each iterated row).
 
 Binding outcomes (§4): path hit → bind; path miss → **soft-skip** + record
-`path_not_found`; type mismatch → coerce (a scalar into a `table` `rows` slot → a 1-row
-table) + record `type_mismatch`; a leaf neutralized/size-capped by the guard → record
-`guard_stripped`. When **all** bindings miss, the op reports `all_bindings_missed` and
-routes to the fallback chain — never a hard failure.
+`path_not_found` in `bindings_dropped`; type mismatch → coerce (a scalar into a
+`table` `rows` slot → a 1-row table; a container into a `text` slot → its JSON
+form) and record `{path, rendered_as}` in **`coerced`** — a coercion is the
+*opposite* outcome of a drop, the value reached the user reshaped rather than
+never reaching it, so it is never counted as a drop (#3664); a leaf
+neutralized/size-capped by the guard → record `guard_stripped` in
+`bindings_dropped`. When **all** bindings miss, the op reports
+`all_bindings_missed` and routes to the fallback chain — never a hard failure.
 
 The structural gate at op validation rejects a **non-catalog component** or a **non-path
 binding** as a hard error (`status="error"`) for an inline blueprint — that is a
@@ -169,17 +173,25 @@ The LLM's only feedback — compact + high-signal:
 ok: true
 mode: view        # view | blueprint | default — which input the caller gave
 bindings_resolved: 3
-rows: 500
 bindings_dropped:
   - {path: "/results/0/author", reason: path_not_found}
-  # reason ∈ {path_not_found, type_mismatch, guard_stripped}
+  # reason ∈ {path_not_found, guard_stripped} — a type-mismatch coercion is NOT
+  # a drop (#3664); see `coerced` below
+coerced:
+  - {path: "/big", rendered_as: json_text}
+  # rendered_as ∈ {json_text, single_row} — the value WAS displayed, reshaped
+rows: 500          # #3664: every rendered row across every rows-shaped slot
+                    # (table/list AND keyvalue cards), post-cap — the LLM's
+                    # only measure of how much reached the user's screen
 all_bindings_missed: false
-note: "…"        # present only when a fallback stage rendered
+note: "…"        # present only when a fallback stage rendered, or (#3664 (c))
+                  # when the default viewer coerced a container to JSON text
 ```
 
 `path_not_found` across many rows → "view doesn't match this data shape";
-`type_mismatch` → "right path, wrong component"; `guard_stripped` → "content neutralized by
-the guard, not a view bug". The agent self-corrects without ingesting the data.
+`guard_stripped` → "content neutralized by the guard, not a view bug"; a `coerced`
+entry → "right path, wrong component — this reached the user as JSON text or a
+1-row table, not dropped". The agent self-corrects without ingesting the data.
 
 ## `presented` event (P6 audit)
 
@@ -194,8 +206,9 @@ bytes**:
 | `surface` | list, e.g. `["inline-cui"]` (`["null"]` when no renderer is wired) |
 | `ingested` | `none` \| `partial` \| `full` — **OS-computed** (was the data inline, or does a prior `read_file` on the ref appear earlier in the session?), never LLM-self-reported |
 | `bindings_resolved` | count of resolved bindings |
-| `bindings_dropped` | `[{path, reason}]` |
-| `rows` | row count bound |
+| `bindings_dropped` | `[{path, reason}]`, `reason ∈ {path_not_found, guard_stripped}` — values that genuinely never reached the user |
+| `coerced` | `[{path, rendered_as}]`, `rendered_as ∈ {json_text, single_row}` — type-mismatch reshapes; the value WAS displayed (#3664, kept separate from `bindings_dropped`) |
+| `rows` | every rendered row across every rows-shaped slot (table/list AND keyvalue), post-cap (#3664) |
 | `fallback_stage` | `null` \| `content_type_default` \| `generic` — which viewer actually reached the user. `null` = the requested rendering (or the `mode: "default"` stage-3 viewer) rendered directly; a non-null value = the requested view was unknown / all-missed and a synthesized viewer took over. This is what distinguishes a literal-only view rendered as requested (`null`) from an unknown / all-missed fallback — both otherwise carry `bindings_resolved=0, bindings_dropped=[]`. |
 
 ## Replay / rewind — presentation as cache

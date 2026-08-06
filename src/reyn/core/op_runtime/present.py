@@ -10,9 +10,11 @@ only gate is that ``data_ref`` read authority resolves identically to
 The surface is whichever ``OpContext.presentation_renderer`` the caller wired (PR-B: the
 inline-CUI's ``OutboxPresentationRenderer``, ``runtime/session_buses.py``) — ``None`` keeps
 PR-A's null-surface behavior (no UI reached, ``surface="null"``). The op returns the
-compact, high-signal ack (``{ok, bindings_resolved, bindings_dropped, rows}``, drops as
-``{path, reason}``) and emits the ``presented`` P6 event (refs + stats, never content
-bytes) regardless of whether a renderer is wired.
+compact, high-signal ack (``{ok, bindings_resolved, bindings_dropped, coerced, rows}``,
+drops as ``{path, reason}``, coercions as ``{path, rendered_as}`` — #3664: a type-
+mismatch coercion is NOT a drop, the value reached the user reshaped rather than
+never reaching it, so it gets its own field) and emits the ``presented`` P6 event
+(refs + stats, never content bytes) regardless of whether a renderer is wired.
 
 **PR-C — named views + the §3 4-stage fallback chain.** ``op.view`` is a
 registered name resolved against ``OpContext.presentation_registry`` (the operator's
@@ -123,6 +125,7 @@ def _emit_presented(
     ingested: str,
     bindings_resolved: int,
     bindings_dropped: list[dict],
+    coerced: list[dict],
     rows: int,
     fallback_stage: "str | None",
 ) -> None:
@@ -152,6 +155,7 @@ def _emit_presented(
         ingested=ingested,
         bindings_resolved=bindings_resolved,
         bindings_dropped=bindings_dropped,
+        coerced=coerced,
         rows=rows,
         fallback_stage=fallback_stage,
     )
@@ -209,6 +213,7 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
         ingested=ingested,
         bindings_resolved=stats["bindings_resolved"],
         bindings_dropped=stats["bindings_dropped"],
+        coerced=stats["coerced"],
         rows=stats["rows"],
         fallback_stage=fallback_stage,
     )
@@ -227,7 +232,14 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     #    when a fallback fired. ``mode`` discriminates which of the three inputs
     #    the caller gave (FP-0055 PR-1); for ``mode: "default"`` the stats above
     #    are already the default viewer's own — no fallback happened, so no note
-    #    unless stage 3 itself degraded further to stage 4.
+    #    unless stage 3 itself degraded further to stage 4. ``rows`` (#3664):
+    #    the number of rows rendered to the user across every rows-shaped slot —
+    #    the LLM's only measure of how much reached the screen, since present is
+    #    a zero-token offload and the underlying data itself never enters its
+    #    context. ``coerced`` (#3664): type-mismatch reshapes — the value WAS
+    #    displayed, just not in its bound shape — kept separate from
+    #    ``bindings_dropped`` so counting drops as "never reached the user" stays
+    #    correct.
     ack = {
         "kind": "present",
         "status": "ok",
@@ -235,10 +247,13 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
         "mode": mode,
         "bindings_resolved": stats["bindings_resolved"],
         "bindings_dropped": stats["bindings_dropped"],
+        "coerced": stats["coerced"],
         "rows": stats["rows"],
         "all_bindings_missed": stats["all_bindings_missed"],
     }
     note = _fallback_note(op, mode, requested, fallback_stage)
+    if note is None:
+        note = _coercion_note(mode, fallback_stage, rendered)
     if note is not None:
         ack["note"] = note
     return ack
@@ -338,6 +353,7 @@ def _rendered_stats(rendered: "ResolvedPresentation") -> dict:
     return {
         "bindings_resolved": rendered.bindings_resolved,
         "bindings_dropped": rendered.bindings_dropped,
+        "coerced": rendered.coerced,
         "rows": rendered.rows,
         "all_bindings_missed": rendered.all_bindings_missed,
     }
@@ -349,7 +365,7 @@ def _requested_stats(requested: "ResolvedPresentation | None") -> dict:
     view that resolved nothing; the ``note`` explains the fallback."""
     if requested is None:
         return {
-            "bindings_resolved": 0, "bindings_dropped": [], "rows": 0,
+            "bindings_resolved": 0, "bindings_dropped": [], "coerced": [], "rows": 0,
             "all_bindings_missed": False,
         }
     return _rendered_stats(requested)
@@ -388,6 +404,27 @@ def _fallback_note(
     return (
         f"all bindings missed — presented via the {viewer} so the data still "
         "reached the user (re-check the view against the data shape)."
+    )
+
+
+def _coercion_note(
+    mode: str, fallback_stage: "str | None", rendered: "ResolvedPresentation",
+) -> "str | None":
+    """#3664 (c): the default viewer's own self-correction signal — mirrors
+    ``all_bindings_missed`` on the ``view``/``blueprint`` path, which has no
+    equivalent here. Scoped to ``mode: "default"`` rendering directly at stage 3
+    (no fallback note already covers it): when the content-type default viewer
+    coerced a container into a text slot (too deep for its table columns), the
+    LLM has no other way to learn its rendering was flattened to JSON text —
+    name the fix once, here."""
+    if mode != _MODE_DEFAULT or fallback_stage is not None:
+        return None
+    if not any(c.get("rendered_as") == "json_text" for c in rendered.coerced):
+        return None
+    return (
+        "part of this data was too deep for the default viewer's table columns "
+        "and was shown as raw JSON text instead — pass an explicit `blueprint` "
+        "with a `table` component to render it structured."
     )
 
 

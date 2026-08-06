@@ -195,10 +195,14 @@ seam in the render layer (below), not at parse.
 
 **Binding semantics.** Path hit → bind. Path miss → **soft-skip** that binding +
 record it in `bindings_dropped` (never a hard failure). Type mismatch → coerce (a
-scalar into a `table` `rows` slot → a 1-row table) + record. Guard-stripped → a
-bound leaf neutralized or size-capped by the presentation-guard is recorded. When
-**all** bindings miss, the op reports `all_bindings_missed` (the generic-viewer
-fallback signal; the fallback wiring itself is described in the PR-B/C/D note below).
+scalar into a `table` `rows` slot → a 1-row table; a container into a `text` slot
+→ its JSON form) + record `{path, rendered_as}` in **`coerced`**, NOT
+`bindings_dropped` — a coercion is the *opposite* outcome of a drop, the value
+reached the user reshaped rather than never reaching it (#3664). Guard-stripped →
+a bound leaf neutralized or size-capped by the presentation-guard is recorded in
+`bindings_dropped`. When **all** bindings miss, the op reports `all_bindings_missed`
+(the generic-viewer fallback signal; the fallback wiring itself is described in
+the PR-B/C/D note below).
 
 **Presentation-guard (output seam).** Runs **unconditionally**, including for
 never-ingested data. Every render-leaf string — labels, literal slot values, AND
@@ -226,24 +230,33 @@ value still renders, inert) — the ref remains the full-fidelity source.
 ok: true
 mode: view        # view | blueprint | default (FP-0055 PR-1) — which input the caller gave
 bindings_resolved: 3
-rows: 500
 bindings_dropped:
   - {path: "/results/0/author", reason: path_not_found}
-  # reason ∈ {path_not_found, type_mismatch, guard_stripped}
+  # reason ∈ {path_not_found, guard_stripped} — a type-mismatch coercion is NOT
+  # a drop (#3664); see `coerced` below
+coerced:
+  - {path: "/big", rendered_as: json_text}
+  # rendered_as ∈ {json_text, single_row} — the value WAS displayed, reshaped
+rows: 500          # #3664: every rendered row across every rows-shaped slot
+                    # (table/list AND keyvalue), post-cap — the LLM's only
+                    # measure of how much reached the user's screen
 all_bindings_missed: false
 ```
 
 `path_not_found` across many rows reads as "view doesn't match this data
-shape"; `type_mismatch` as "right path, wrong component"; `guard_stripped` as
-"content neutralized by the guard, not a view bug". The LLM self-corrects a
-blind presentation for tens of tokens without ingesting the data. With `mode:
-"default"` (neither `view` nor `blueprint` given) the stats above are the
-synthesized default viewer's own — this is the intended rendering, so there is
-no fallback `note` unless that default viewer itself degrades further to the
-stage-4 generic fallback.
+shape"; `guard_stripped` as "content neutralized by the guard, not a view bug";
+a `coerced` entry as "right path, wrong component — this reached the user
+reshaped, not dropped". The LLM self-corrects a blind presentation for tens of
+tokens without ingesting the data. With `mode: "default"` (neither `view` nor
+`blueprint` given) the stats above are the synthesized default viewer's own —
+this is the intended rendering, so there is no fallback `note` unless that
+default viewer itself degrades further to the stage-4 generic fallback, or
+(#3664) coerces a container to JSON text — the same self-correction signal
+`all_bindings_missed` gives the `view`/`blueprint` path, which this path
+otherwise has none of.
 
 Event emitted: `presented` (P6 audit) — `{data_ref, view, mode, surface, ingested,
-bindings_resolved, bindings_dropped, rows, fallback_stage}`. `view` is the registered name,
+bindings_resolved, bindings_dropped, coerced, rows, fallback_stage}`. `view` is the registered name,
 `blueprint:<hash>` for an inline blueprint, or `null` when neither was given.
 `fallback_stage` (`null` | `content_type_default` | `generic`) records which viewer actually
 reached the user — `null` when the requested rendering rendered directly, else the synthesized
