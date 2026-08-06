@@ -49,6 +49,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -227,19 +228,47 @@ def _flowview_pin_verified() -> None:
     once, before the first test body, for every invocation — a session that
     never happens to request it is exactly how this went undetected. A red
     test measured under a mis-pinned flowview is not "one more failure", it
-    makes the WHOLE suite's result incomparable to `origin/main`'s, so this
-    aborts the run outright (`pytest.exit`) instead of failing one test.
+    makes the WHOLE suite's result incomparable to `origin/main`'s, so a
+    version mismatch (`flowview-pin/stale`/`flowview-pin/absent`) aborts the
+    run outright (`pytest.exit`) instead of failing one test.
+
+    `flowview-pin/local-copy` is different: a local `textual-flowview` clone
+    is legitimate development (#3725 review, lead-coder — tui-coder was doing
+    exactly this when the blanket abort version of this fixture would have
+    stopped them from running a single test). `REYN_FLOWVIEW_LOCAL_COPY="<reason>"`
+    (a non-empty reason, required — see `partition_flowview_findings`'s
+    docstring) downgrades that ONE finding kind from an abort to a
+    `warnings.warn`, which pytest surfaces in its own warnings summary at the
+    end of the run — not just printed at setup time and easy to miss, but
+    landing in the same report the run's own result reaches (#3723's
+    incident was exactly a case where the reason was knowable but never
+    reached anyone reading the result).
     """
     findings = _ENV_IDENTITY.verify(Path(_REPO_ROOT), only=("flowview-pin",))
     if not findings:
         return
-    rendered = "\n".join(f.render() for f in findings)
-    pytest.exit(
-        f"env-identity (#3723): this venv's textual-flowview does not match "
-        f"pyproject.toml's pin — the whole suite's result is not trustworthy "
-        f"until this is fixed.\n{rendered}",
-        returncode=1,
-    )
+
+    reason = os.environ.get("REYN_FLOWVIEW_LOCAL_COPY", "")
+    blocking, acknowledged = _ENV_IDENTITY.partition_flowview_findings(findings, reason)
+
+    if acknowledged:
+        rendered = "\n".join(f.render() for f in acknowledged)
+        warnings.warn(
+            f"env-identity (#3723): textual-flowview is a local working copy, not "
+            f"the pinned commit — acknowledged via REYN_FLOWVIEW_LOCAL_COPY={reason!r}. "
+            f"This run's result is not comparable to one measured against the pin.\n"
+            f"{rendered}",
+            stacklevel=1,
+        )
+
+    if blocking:
+        rendered = "\n".join(f.render() for f in blocking)
+        pytest.exit(
+            f"env-identity (#3723): this venv's textual-flowview does not match "
+            f"pyproject.toml's pin — the whole suite's result is not trustworthy "
+            f"until this is fixed.\n{rendered}",
+            returncode=1,
+        )
 
 
 # ── Workspace isolation (#3705) ─────────────────────────────────────────────────

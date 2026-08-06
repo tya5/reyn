@@ -507,8 +507,12 @@ def check_flowview_pin(root: Path) -> list[Finding]:
                 ),
                 remedy=(
                     f"pip install 'textual-flowview @ git+{expected_url}@{expected_sha}' "
-                    f"to run against the pinned commit, or acknowledge the local copy "
-                    f"is deliberate for this session."
+                    f'to run against the pinned commit, or set '
+                    f'REYN_FLOWVIEW_LOCAL_COPY="<reason>" (non-empty) to acknowledge the '
+                    f"local copy is deliberate for this session — tests/conftest.py's "
+                    f"autouse fixture downgrades this finding from an abort to a visible "
+                    f"warning ONLY when that reason is given, mirroring "
+                    f"`@pytest.mark.repo_root_cwd(reason=...)`'s required-reason opt-out."
                 ),
             )
         ]
@@ -531,6 +535,33 @@ def check_flowview_pin(root: Path) -> list[Finding]:
             )
         ]
     return []
+
+
+def partition_flowview_findings(
+    findings: list[Finding], local_copy_reason: str
+) -> tuple[list[Finding], list[Finding]]:
+    """Split `flowview-pin` findings into ``(blocking, acknowledged)``.
+
+    `flowview-pin/stale` and `flowview-pin/absent` always block — there is
+    no opt-out for measuring against the wrong commit outright (lead-coder
+    review of #3725: a version-mismatched install is never legitimate the
+    way a local clone can be). `flowview-pin/local-copy` blocks UNLESS
+    ``local_copy_reason`` is non-empty after stripping whitespace — the
+    caller reads this from ``REYN_FLOWVIEW_LOCAL_COPY`` — mirroring
+    `tests/conftest.py`'s `repo_root_cwd(reason=...)` marker: an opt-out
+    that accepts an empty reason is not a documented exception, it is
+    silence with an extra step, and #3723's own incident was exactly a
+    legitimate case (tui-coder's local flowview clone) with no way for the
+    caller to say so.
+    """
+    blocking: list[Finding] = []
+    acknowledged: list[Finding] = []
+    for f in findings:
+        if f.check == "flowview-pin/local-copy" and local_copy_reason.strip():
+            acknowledged.append(f)
+        else:
+            blocking.append(f)
+    return blocking, acknowledged
 
 
 # The enumeration. A check is registered here or it does not run — `main` and the

@@ -184,3 +184,57 @@ def test_flowview_pin_is_reachable_through_verify(tmp_path: Path) -> None:
     # No monkeypatching: exercises the real installed environment this suite
     # itself runs under — the same environment #3723 needs verified.
     assert isinstance(module.verify(root, only=("flowview-pin",)), list)
+
+
+# ── partition_flowview_findings (#3725 review: local-copy needs a real opt-out) ─
+
+
+def _local_copy_finding(module) -> object:
+    return module.Finding(check="flowview-pin/local-copy", detail="d", remedy="r")
+
+
+def _stale_finding(module) -> object:
+    return module.Finding(check="flowview-pin/stale", detail="d", remedy="r")
+
+
+def test_local_copy_blocks_without_a_reason(tmp_path: Path) -> None:
+    """Tier 1: an unset/empty REYN_FLOWVIEW_LOCAL_COPY still blocks — silence
+    is not an opt-out (lead-coder review: the opt-out must require a reason,
+    mirroring `repo_root_cwd(reason=...)`)."""
+    module = _load()
+    finding = _local_copy_finding(module)
+
+    for reason in ("", "   "):
+        blocking, acknowledged = module.partition_flowview_findings([finding], reason)
+        assert blocking == [finding]
+        assert acknowledged == []
+
+
+def test_local_copy_is_acknowledged_with_a_real_reason(tmp_path: Path) -> None:
+    """Tier 1: a non-empty reason downgrades local-copy from blocking to
+    acknowledged — the #3725 fix for the tui-coder case (legitimate local
+    clone, no way to say so before this)."""
+    module = _load()
+    finding = _local_copy_finding(module)
+
+    blocking, acknowledged = module.partition_flowview_findings(
+        [finding], "developing textual-flowview itself, PR #123"
+    )
+
+    assert blocking == []
+    assert acknowledged == [finding]
+
+
+def test_stale_never_gets_acknowledged_even_with_a_reason(tmp_path: Path) -> None:
+    """Tier 1: `flowview-pin/stale` has no opt-out at all — a version
+    mismatch is never a legitimate local-development shape the way a clone
+    is (lead-coder review of #3725: "stale側は abort のままで正しい")."""
+    module = _load()
+    finding = _stale_finding(module)
+
+    blocking, acknowledged = module.partition_flowview_findings(
+        [finding], "some reason"
+    )
+
+    assert blocking == [finding]
+    assert acknowledged == []
