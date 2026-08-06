@@ -112,13 +112,12 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
 
     iv = UserIntervention(kind="ask_user", prompt="What is your name?", run_id=run_id)
     dispatch_task = asyncio.ensure_future(session.handle_intervention(iv))
-    # Let dispatch proceed to the point of recording + awaiting the future.
-    for _ in range(3):
+    # #3748: unbounded (owner policy) -- wait for dispatch to reach the point
+    # of recording + awaiting the future (sanity: it must be genuinely
+    # dispatched before we can prove it survives truncation). No terminating
+    # assert: the loop condition IS that check.
+    while session.interventions.get(iv.id) is None:
         await asyncio.sleep(0)
-    assert session.interventions.get(iv.id) is not None, (
-        "sanity: the intervention must be genuinely dispatched (in the active "
-        "queue) before we can prove it survives truncation"
-    )
 
     # The A2A bus mirrors input-required onto the RunEntry (real object, same
     # method production wiring calls — issue #1981/#292 side-effect contract).
@@ -160,18 +159,18 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
     session2, state_log2 = _make_session(wal, snapshot_path)
     reconstructed = _reconstruct_snapshot(AGENT, snapshot_path, state_log2)
     session2.restore_state(reconstructed)
-    for _ in range(3):
-        await asyncio.sleep(0)  # let the restored intervention task settle
+    # #3748: unbounded (owner policy) -- wait for the restored intervention
+    # task to register the intervention: it must survive WAL truncation
+    # below its own source event (snapshot-backed via AgentSnapshot, not
+    # WAL-derived). No terminating assert: the loop condition IS that check.
+    while session2.interventions.get(iv.id) is None:
+        await asyncio.sleep(0)
 
     # RunRegistry is a standalone atomic-JSON snapshot (#2839 Phase 1 firm) —
     # a fresh instance reloads it independent of the WAL entirely.
     run_registry2 = RunRegistry(persist_path=run_registry_path)
 
     # ── Phase 3: resume — both halves survived, and compose correctly ──────
-    assert session2.interventions.get(iv.id) is not None, (
-        "the outstanding intervention must survive WAL truncation below its "
-        "own source event (snapshot-backed via AgentSnapshot, not WAL-derived)"
-    )
     restored_entry = run_registry2.get(run_id)
     assert restored_entry is not None
     assert restored_entry.status == RunStatus.INPUT_REQUIRED, (
@@ -200,7 +199,13 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
         "→ router-coherent round trip survives restart + WAL truncation"
     )
 
-    # Cleanup: let the restored dispatch task resolve.
+    # #3748: NOT converted -- confirmed by falsify-in-reverse (a genuine
+    # hang, not a slow pass) that dispatch_task does not resolve on its own
+    # here even after the intervention above was answered: cancellation is
+    # this cleanup's actual terminal action, not a fallback for a slow
+    # condition. No predicate can be honestly written for "settle, then
+    # cancel regardless" -- left as a bounded grace pump pending the
+    # decomposition pass (own PR, per lead-coder's split).
     for _ in range(5):
         await asyncio.sleep(0)
     if not dispatch_task.done():
