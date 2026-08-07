@@ -182,3 +182,100 @@ async def test_no_injection_when_queue_is_empty() -> None:
     )
     assert seen_messages[0] == [{"role": "user", "content": "hi"}]
     assert host.committed_msg_ids == []
+
+
+# ---------------------------------------------------------------------------
+# Production-name witness — closes the gap the tests above CANNOT close.
+#
+# lead-coder's blocking review comment on PR1 (#3802) / restated for PR2:
+# ``_InjectingHost`` above is a fake this SAME file defines; renaming
+# ``RouterHostAdapter.peek_mid_turn_injection`` to anything else leaves every
+# test above green (the seam's ``getattr(host, "peek_mid_turn_injection",
+# None)`` would silently resolve to ``None`` against a real production host
+# and go permanently inert, but the fake's own identically-named method still
+# answers). A test that only exercises a fake with a name it chose to match
+# is "a mirror", not a witness that PRODUCTION's name matches.
+#
+# This test reads router_loop.py's ACTUAL source (not a hardcoded copy of the
+# string literal) to extract the two getattr(...) attribute names, and checks
+# them against a REAL ``RouterHostAdapter`` (``tests/_support/router_host_adapter
+# .make_adapter``, the same real-collaborator builder ``test_router_host_adapter
+# _invariants.py`` uses) — so a rename on EITHER side (the adapter's method, or
+# router_loop.py's getattr string) breaks this test.
+# ---------------------------------------------------------------------------
+
+import re
+from pathlib import Path
+
+from tests._support.router_host_adapter import make_adapter
+
+_ROUTER_LOOP_SRC = (
+    Path(__file__).resolve().parents[1] / "src" / "reyn" / "runtime" / "router_loop.py"
+).read_text()
+
+
+def _extract_mid_turn_injection_attr_names() -> "dict[str, str]":
+    """Regex-extract the attribute-name string literals router_loop.py's
+    ``getattr(host, "...", None)`` calls actually use for the #3792 seam —
+    reading the real source, not a copy of the literal, so a rename in
+    router_loop.py alone (without touching this test) is caught too."""
+    names = re.findall(
+        r'getattr\(\s*(?:self\.)?host,\s*"(\w*mid_turn_injection\w*)"',
+        _ROUTER_LOOP_SRC, re.DOTALL,
+    )
+    by_role = {n: n for n in names}
+    assert "peek_mid_turn_injection" in by_role.values(), (
+        "sanity: router_loop.py's own source must still name a "
+        "peek_mid_turn_injection getattr — if this fails, the extraction "
+        "regex itself broke, not the production code"
+    )
+    assert "commit_mid_turn_injection" in by_role.values()
+    return by_role
+
+
+@pytest.mark.asyncio
+async def test_router_loop_peek_and_commit_names_resolve_on_the_real_adapter() -> None:
+    """Tier 2: #3792 — the EXACT attribute-name strings ``RouterLoop.run_loop``
+    reads via ``getattr`` really exist on a REAL ``RouterHostAdapter``
+    (``make_adapter``, real collaborators — no ``FakeRouterHost``), and
+    really forward to the callbacks the adapter was constructed with.
+
+    Falsification (performed during review): renaming
+    ``RouterHostAdapter.peek_mid_turn_injection`` (the PRODUCTION method, in
+    ``router_host_adapter.py`` — not the test's own fake) to any other name
+    makes this test go RED with ``AttributeError`` — while every OTHER test
+    in this file (built on ``_InjectingHost``, this file's own fake) stays
+    green, exactly the gap this test exists to close.
+    """
+    attr_names = _extract_mid_turn_injection_attr_names()
+    peek_calls: list[None] = []
+    commit_calls: list[str] = []
+
+    async def _real_peek() -> "dict | None":
+        peek_calls.append(None)
+        return {"payload": {"text": "hi from real adapter"}, "msg_id": "real-1"}
+
+    async def _real_commit(msg_id: str) -> None:
+        commit_calls.append(msg_id)
+
+    adapter = make_adapter(
+        peek_mid_turn_injection=_real_peek,
+        commit_mid_turn_injection=_real_commit,
+    )
+
+    peek_fn = getattr(adapter, attr_names["peek_mid_turn_injection"], None)
+    assert peek_fn is not None, (
+        f"RouterHostAdapter has no attribute {attr_names['peek_mid_turn_injection']!r} "
+        "— the exact name router_loop.py's getattr call reads"
+    )
+    result = await peek_fn()
+    assert result == {"payload": {"text": "hi from real adapter"}, "msg_id": "real-1"}
+    assert peek_calls == [None]
+
+    commit_fn = getattr(adapter, attr_names["commit_mid_turn_injection"], None)
+    assert commit_fn is not None, (
+        f"RouterHostAdapter has no attribute {attr_names['commit_mid_turn_injection']!r} "
+        "— the exact name router_loop.py's getattr call reads"
+    )
+    await commit_fn("real-1")
+    assert commit_calls == ["real-1"]
