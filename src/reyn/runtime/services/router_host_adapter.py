@@ -220,6 +220,14 @@ class RouterHostAdapter:
         bundle: exact consumer-set match on the ``live_session_id`` property).
     append_history:
         Sync callback ``(ChatMessage) -> None``.
+    peek_mid_turn_injection:
+        #3792. Async callback ``() -> dict | None`` —
+        ``Session.peek_mid_turn_injection``. ``None`` default: adapters built
+        without it behave like a host that never implemented the hook.
+    commit_mid_turn_injection:
+        #3792. Async callback ``(msg_id: str) -> None`` —
+        ``Session.commit_mid_turn_injection``. Same ``None``-default contract
+        as ``peek_mid_turn_injection``.
     """
 
     # RouterLoopHost Protocol attributes (non-property)
@@ -290,6 +298,15 @@ class RouterHostAdapter:
         send_to_agent_inputs: SendToAgentInputs,
         put_outbox_inputs: PutOutboxInputs,
         append_history: Callable,
+        # #3792: mid-turn CLIENT_INPUT injection — a peek/commit pair, both
+        # bare (no shared-consumer partner: nothing else is carried to
+        # exactly Session.peek_mid_turn_injection /
+        # Session.commit_mid_turn_injection). None-default so pre-existing
+        # hand-built adapters (tests, other call sites) stay valid; RouterLoop
+        # getattr-guards both, so an adapter that leaves them None behaves
+        # exactly like a phase host (no-op seam).
+        peek_mid_turn_injection: "Callable[[], Awaitable[dict | None]] | None" = None,
+        commit_mid_turn_injection: "Callable[[str], Awaitable[None]] | None" = None,
         # #1953 dynamic-wire + #2103 S1bc-exec: the chat session identity
         # (``emit_hook_event`` builds the LLM's own ``llm:<session_id>:*``
         # namespace from it — never an op field the LLM could forge) and the
@@ -524,6 +541,9 @@ class RouterHostAdapter:
         # bundles (``self._send_to_agent_in`` / ``self._put_outbox_in``); the
         # ``send_to_agent`` / ``put_outbox`` methods read them there.
         self._append_history_cb = append_history
+        # #3792
+        self._peek_mid_turn_injection_cb = peek_mid_turn_injection
+        self._commit_mid_turn_injection_cb = commit_mid_turn_injection
         # FP-0034 PR-3b-iii
         self._universal_wrappers_enabled = universal_wrappers_enabled
         # B25-S5-1
@@ -1520,6 +1540,25 @@ class RouterHostAdapter:
             tool_call_id=tool_call_id,
             name=name,
         ))
+
+    async def peek_mid_turn_injection(self) -> "dict | None":
+        """#3792: forwards to ``Session.peek_mid_turn_injection`` when wired.
+
+        None-safe when this adapter was constructed without the
+        ``peek_mid_turn_injection`` callback (pre-#3792 call sites, most
+        test construction) — behaves exactly like a host that never
+        implemented the hook at all (RouterLoop's own getattr-guard treats
+        the two identically: no injection this round)."""
+        if self._peek_mid_turn_injection_cb is None:
+            return None
+        return await self._peek_mid_turn_injection_cb()
+
+    async def commit_mid_turn_injection(self, msg_id: str) -> None:
+        """#3792: forwards to ``Session.commit_mid_turn_injection`` when
+        wired. None-safe, same reasoning as :meth:`peek_mid_turn_injection`."""
+        if self._commit_mid_turn_injection_cb is None:
+            return
+        await self._commit_mid_turn_injection_cb(msg_id)
 
     async def put_outbox(
         self, *, kind: str, text: str, meta: dict, persist: bool = True,

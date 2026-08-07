@@ -1221,6 +1221,18 @@ class Session:
 
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
+        # #3792: a 1-slot, volatile (not WAL/snapshot-backed) peek buffer.
+        # ``asyncio.Queue`` has no peek/un-get API (see ``_consume_inbox``'s
+        # own docstring on this), so ``peek_mid_turn_injection`` dequeues via
+        # ``get_nowait()`` into THIS slot without telling the journal — the
+        # snapshot-backed SSoT (``self._journal``) stays untouched until
+        # ``commit_mid_turn_injection`` actually commits. ``_consume_inbox``
+        # (the ordinary turn-boundary dequeue) checks this slot FIRST so an
+        # item peeked-but-never-committed (abnormal exit mid-turn, or an
+        # ineligible-origin head the peek deliberately did not act on) is
+        # never stranded or reordered — it surfaces exactly where it would
+        # have if the peek had never happened.
+        self._pending_inbox_item: "tuple[str, dict] | None" = None
         self.outbox: asyncio.Queue = asyncio.Queue()
         # event_store -> chat_events -> outbox_hub (+ opt-in OTEL), byte-identical extraction (#3082 Family 1, see session-construction.md#family-1-audit-event-spine-p6)
         _audit_bundle = self._build_audit_event_bundle(observability_config)
@@ -3939,6 +3951,9 @@ class Session:
             send_to_agent_inputs=_send_to_agent_inputs,  # #3482
             put_outbox_inputs=_put_outbox_inputs,  # #3482
             append_history=self._append_history,
+            # #3792: mid-turn CLIENT_INPUT injection.
+            peek_mid_turn_injection=self._peek_mid_turn_injection,
+            commit_mid_turn_injection=self._commit_mid_turn_injection,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
@@ -5026,8 +5041,24 @@ class Session:
         gone from the snapshot) and returns ``None`` — the caller
         (``_drain_to_wake``) must treat this as "nothing dequeued yet" and
         loop again, never dispatching a turn for a cancelled item.
+
+        #3792: reads ``self._pending_inbox_item`` FIRST, ahead of a fresh
+        ``self.inbox.get()``. An item can land there via
+        ``peek_mid_turn_injection`` — either because the running turn ended
+        (cancel / cap / overflow / LLM exception) before
+        ``commit_mid_turn_injection`` ever fired (carry-forward: the item is
+        simply processed as an ordinary new turn here, exactly as if the
+        peek had never happened), or because the peeked head was an
+        INELIGIBLE origin (peek deliberately leaves it there rather than
+        skipping past it — see that method). Checking here first is what
+        makes both cases land correctly instead of being stranded behind a
+        ``self.inbox.get()`` that would never see them again.
         """
-        kind, payload = await self.inbox.get()
+        if self._pending_inbox_item is not None:
+            kind, payload = self._pending_inbox_item
+            self._pending_inbox_item = None
+        else:
+            kind, payload = await self.inbox.get()
         msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
         if kind != "shutdown" and msg_id in self._cancelled_msg_ids:
             self._cancelled_msg_ids.discard(msg_id)
@@ -5035,6 +5066,98 @@ class Session:
         if kind != "shutdown":
             await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
+
+    async def _peek_mid_turn_injection(self) -> "dict | None":
+        """#3792: non-blocking, non-committing peek at the inbox head for a
+        mid-turn ``CLIENT_INPUT`` injection candidate.
+
+        Returns ``{"payload": dict, "msg_id": str}`` when the head is an
+        eligible, uncancelled ``CLIENT_INPUT`` message; ``None`` otherwise
+        (empty queue, or an ineligible-origin head).
+
+        Does NOT commit — ``self._journal``/``snapshot.inbox`` (the SSoT)
+        is untouched either way. The dequeued item (if any) is held in
+        ``self._pending_inbox_item`` so it is never lost: an eligible
+        candidate stays there until ``commit_mid_turn_injection`` actually
+        commits it (the caller must have spliced it into the wire first —
+        see ``RouterLoop.run_loop``'s seam); an ineligible-origin head also
+        stays there, UNCONSUMED, so the ordinary turn-boundary
+        ``_consume_inbox`` picks it up next, in arrival order — a queue
+        whose head is ineligible STOPS here rather than skipping ahead
+        (#3792 design: skipping would silently reorder arrival, and that
+        reordering would leave no trace anywhere).
+
+        A CANCELLED head (``Session.cancel_queued`` already pruned it from
+        the snapshot) is the one case this DOES discard outright — mirrors
+        ``_consume_inbox``'s own skip-at-consume handling, since a cancelled
+        item was never going to be eligible for anything.
+        """
+        while True:
+            if self._pending_inbox_item is None:
+                try:
+                    self._pending_inbox_item = self.inbox.get_nowait()
+                except asyncio.QueueEmpty:
+                    return None
+            kind, payload = self._pending_inbox_item
+            msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
+            if kind != "shutdown" and msg_id in self._cancelled_msg_ids:
+                self._cancelled_msg_ids.discard(msg_id)
+                self._pending_inbox_item = None
+                continue
+            if kind != TurnOrigin.CLIENT_INPUT:
+                return None
+            return {"payload": payload, "msg_id": msg_id}
+
+    async def _commit_mid_turn_injection(self, msg_id: str) -> None:
+        """#3792: commit (pop) the item the most recent successful
+        ``peek_mid_turn_injection()`` call returned.
+
+        The atomic unit architect's design calls unbreakable — history
+        append, journal consume (SSoT prune + WAL tombstone), and the
+        sent-queue "1 delta" promote — all three, or none. All three are
+        synchronous in practice (``_append_history`` is a plain file write;
+        ``SnapshotJournal.consume_inbox`` is ``async def`` for call-site
+        symmetry but never actually suspends — see its own docstring;
+        ``EventLog.emit`` is a plain call), so — mirroring
+        ``cancel_queued``'s own "no-await critical section" pin (★F there)
+        — there is no real ``await`` suspension between them for another
+        task to interleave into.
+
+        Reuses the SAME ``turn_started`` chat-event shape the ordinary
+        turn-boundary promote uses (``run_one_iteration``) rather than a new
+        kind — the sent-queue's ``_handle_turn_started_event`` already
+        matches by ``chain_id`` and does not care whether this is the FIRST
+        ``turn_started`` for that chain_id or an extra one fired mid-turn
+        (architect: "new state does not grow, only the trigger count does").
+        Deliberately does NOT touch ``_hook_driven_turns`` or dispatch
+        ``turn_start`` hooks — a mid-turn injection rides inside the
+        ALREADY-running turn's budget/lifecycle, it does not start a new one
+        (architect's point 4: the loop valve must not reset).
+
+        No-op (raises nothing, commits nothing) if ``msg_id`` does not match
+        the currently held ``self._pending_inbox_item`` — defensive: this
+        would only happen if the caller calls commit without a matching
+        prior peek, which is a caller bug, not a runtime condition to paper
+        over silently as a success.
+        """
+        if self._pending_inbox_item is None:
+            return
+        kind, payload = self._pending_inbox_item
+        held_msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
+        if held_msg_id != msg_id:
+            return
+        self._pending_inbox_item = None
+        self._append_history(ChatMessage(
+            role="user", content=payload.get("text") or "", ts=_now_iso(),
+            meta=payload.get("meta") or {},
+        ))
+        await self._journal.consume_inbox(msg_id=msg_id)
+        self._chat_events.emit(
+            "turn_started",
+            kind=kind,
+            chain_id=payload.get("chain_id"),
+            seq=self._bump_queue_seq(),
+        )
 
     async def _stage_next_turn_context(self, kind: str, payload: dict) -> None:
         """Stage a wake=false ride-along (C) into next-turn context, durably
