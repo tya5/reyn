@@ -74,6 +74,19 @@ _ready_registry: "dict[str, Future]" = {}
 # `run_async` is the only intended re-entry point, but nothing stops a
 # concurrent asyncio task within one call from racing another into
 # `ensure_litellm_ready` first.
+#
+# A SINGLE module-global generation counter (not one scoped per-call some
+# other way) is safe only because `run_async` (`llm.py`) is `asyncio.run`
+# underneath: `asyncio.run` raises if called while a loop is already
+# running on the same thread, so two `run_async` calls cannot be nested or
+# concurrent on one thread — not by convention, by asyncio's own
+# construction. `run_async`'s only callers are the CLI's own outermost
+# entry points (`chat.py`, `mcp.py`), one `asyncio.run(_wrapped())` per
+# process lifetime of a call. If `run_async` is ever invoked from more
+# than one OS thread concurrently, this assumption is the first thing that
+# breaks — a second thread's `reset_client_cache_baseline` would advance
+# the SAME generation counter the first thread's in-flight call is still
+# reading, invalidating its baseline mid-call.
 _baseline_generation = 0
 _baseline_registry: "dict[int, Future]" = {}
 
