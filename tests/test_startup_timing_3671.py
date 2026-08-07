@@ -201,22 +201,23 @@ def test_the_report_survives_an_interrupt(monkeypatch, capsys) -> None:
     assert "startup timing" in capsys.readouterr().out
 
 
-def test_client_prep_is_five_named_sub_stages_not_one_lump(monkeypatch) -> None:
+def test_client_prep_is_four_named_sub_stages_not_one_lump(monkeypatch) -> None:
     """Tier 2: #3671 (architect's design) — the single `client-prep` lump is
-    replaced by named sub-stages at the seams already in the code (litellm's
-    lazy import inside `run_async`, transport construction, read-model
-    construction, the lazy textual/flowview import, and app construction), so
-    a slow startup can say WHICH of these, not just that the client was slow
-    to get ready.
+    replaced by named sub-stages at the seams already in the code (transport
+    construction, read-model construction, the lazy textual/flowview import,
+    and app construction), so a slow startup can say WHICH of these, not
+    just that the client was slow to get ready.
 
-    `litellm-import` added as a #3671 follow-up: a real-run measurement found
-    the original 4 sub-stages left ~59-60% of the wide span in
-    `client-prep:other` — `llm.py`'s `run_async` lazily imports litellm
-    BEFORE any of the other 4 brackets even start, and that cost had no
-    named home."""
+    `litellm-import` briefly existed as a 5th sub-stage (#3671 follow-up)
+    bracketing a startup-time `import litellm` that `run_async` used to
+    force unconditionally — REMOVED, not merely un-asserted here, once that
+    forced import itself was removed (`reyn.llm.litellm_bootstrap` module
+    docstring): a session that never calls the LLM no longer pays a
+    litellm-import cost during startup at all, so there is nothing left for
+    a 5th bracket to name."""
     assert "client-prep" not in STAGES
+    assert "client-prep:litellm-import" not in STAGES
     for name in (
-        "client-prep:litellm-import",
         "client-prep:transport",
         "client-prep:read-model",
         "client-prep:tui-import",
@@ -408,30 +409,14 @@ def test_client_prep_other_is_declared() -> None:
     assert "client-prep:other" in STAGES
 
 
-def test_litellm_import_stage_is_bracketed_in_the_chat_startup_path() -> None:
-    """Tier 2: #3671 follow-up — the chat startup path (`chat.py`'s
-    `_prepay_litellm_import`) is wrapped in `stage("client-prep:litellm-
-    import")`, so a real run can show whether THIS import, not the
-    lazily-imported textual/flowview tree (`client-prep:tui-import`), is what
-    dominates `client-prep:other`'s previously-unexplained ~59-60% share.
-
-    Deliberately NOT in `llm.py`'s `run_async` (lead-coder review): that is a
-    general-purpose choke point also used by `mcp.py` and other non-chat-
-    startup callers — a shared helper must not carry a stronger opinion
-    (a CLI startup-phase stage name) than its least-opinionated caller.
-    `run_async` itself is untouched by this PR.
-
-    Witnessed by running the real function and checking the PUBLIC recorded
-    duration increased — not by reading `chat.py`'s source for the `with`."""
-    from reyn.interfaces.cli.commands.chat import _prepay_litellm_import
-    from reyn.runtime import startup_timing
-
-    before = startup_timing.TIMING.elapsed("client-prep:litellm-import")
-
-    _prepay_litellm_import()
-
-    after = startup_timing.TIMING.elapsed("client-prep:litellm-import")
-    assert after >= before
+# #3671 P5: test_litellm_import_stage_is_bracketed_in_the_chat_startup_path
+# retired (clean break, CLAUDE.md testing.md § extracted-refactor test
+# lifecycle). It pinned `chat.py`'s `_prepay_litellm_import` bracketing a
+# startup-time `import litellm` that has since been removed entirely, not
+# relabelled — `run_async`/`litellm_bootstrap` no longer force that import
+# for an LLM-free session, so there is no bracket left to witness. See
+# `test_run_async_never_imports_litellm_without_an_llm_call`
+# (test_llm_run_async_client_cache_scope_3434.py) for what replaced it.
 
 
 def test_first_frame_reached_is_false_until_the_mark_fires(monkeypatch) -> None:

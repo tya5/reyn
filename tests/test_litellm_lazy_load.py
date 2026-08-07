@@ -330,3 +330,132 @@ def test_measured_startup_latency_delta_from_deferring_litellm(out_of_process_re
         f"a bare litellm import ({litellm_s:.3f}s) — litellm may be back on "
         f"the startup path"
     )
+
+
+# ── #3671: structural guard for the ensure_litellm_ready-first assumption ────
+#
+# run_async's #3434 close-scoping now depends on ensure_litellm_ready()
+# having run before ANY litellm async client is created THIS call (see
+# reyn.llm.llm.run_async's own docstring). That was verified against today's
+# call sites by NAME (grepping for get_async_httpx_client/acompletion/
+# aembedding) — a name-shaped search, the exact blind-spot class this
+# session hit three times already: a 5th call site creating a client under a
+# DIFFERENT name would be invisible to a name grep and would silently make
+# the assumption false, breaking in the direction that does not turn CI red
+# (close silently skips). These three gates turn "verified once by grep"
+# into "enforced by construction" the same way #1190's AST guard already
+# does for litellm.acompletion specifically — walking every file's AST
+# rather than matching an expected name shape.
+#
+# RESIDUAL RISK, deliberately accepted rather than closed (lead-coder
+# review): these gates still enumerate litellm's client-creating APIs BY
+# NAME (acompletion / aembedding / get_async_httpx_client) — routing every
+# lazy litellm call site through ensure_litellm_ready() unconditionally
+# (closing this for good) would also force it onto sites that only ever
+# touch STATIC data (model_budget.py / model_cost_rate.py / pricing.py /
+# core/registry/client.py / core/op_runtime/web.py — cost maps, token
+# counting, ssl verify — none create an async client), which risks pulling
+# the import back toward startup for paths that never needed it, the exact
+# #3671 regression this arc closes. If litellm ever grows a NEW
+# client-creating API under a different name, THESE GATES WILL NOT CATCH
+# IT — add it here alongside the three above.
+
+import ast
+
+
+def _repo_src_root() -> "Path":
+    here = Path(__file__).resolve()
+    for ancestor in here.parents:
+        if (ancestor / "pyproject.toml").is_file():
+            return ancestor / "src" / "reyn"
+    raise RuntimeError("repo root not found from " + str(here))
+
+
+def _call_span(py: "Path", func_name: str) -> "tuple[int, int] | None":
+    """The (start, end) line span of the first ``def``/``async def`` named
+    ``func_name`` in ``py``, or ``None`` if not found."""
+    tree = ast.parse(py.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+            return node.lineno, (node.end_lineno or node.lineno)
+    return None
+
+
+def test_litellm_aembedding_only_inside_the_bounded_helper() -> None:
+    """Tier 2: OS invariant — ``litellm.aembedding`` may be called ONLY
+    inside ``LiteLLMEmbeddingProvider._aembedding_bounded``
+    (``reyn.data.embedding.litellm_provider``), the one place that already
+    calls ``ensure_litellm_ready()`` (via its caller, ``embed_batch``)
+    before reaching it. A new embedding call site elsewhere would create a
+    litellm async client without that guarantee, silently breaking
+    run_async's #3434 close-scoping baseline in the direction that never
+    turns CI red on its own (the close step just skips)."""
+    src = _repo_src_root()
+    provider_py = (src / "data" / "embedding" / "litellm_provider.py").resolve()
+    span = _call_span(provider_py, "_aembedding_bounded")
+    assert span is not None, "_aembedding_bounded not found — chokepoint moved?"
+    start, end = span
+
+    offenders: "list[str]" = []
+    for py in src.rglob("*.py"):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "aembedding"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "litellm"
+            ):
+                continue
+            inside = py.resolve() == provider_py and start <= node.lineno <= end
+            if not inside:
+                offenders.append(f"{py.relative_to(src.parent.parent)}:{node.lineno}")
+
+    assert not offenders, (
+        "litellm.aembedding called outside _aembedding_bounded (bypasses "
+        "the ensure_litellm_ready-first guarantee run_async's #3434 "
+        f"close-scoping depends on). Offending sites: {offenders}"
+    )
+
+
+def test_no_production_call_site_creates_a_litellm_client_below_acompletion_aembedding() -> None:
+    """Tier 2: OS invariant — nothing in ``src/reyn/`` calls litellm's
+    lower-level async-client constructors directly (``get_async_httpx_client``
+    and siblings), which would create a real cached client WITHOUT going
+    through ``litellm.acompletion``/``aembedding`` — and therefore without
+    the ``ensure_litellm_ready()`` guarantee those two chokepoints carry
+    (the #1190 AST guard for ``acompletion``; the sibling gate above for
+    ``aembedding``). Today this is true because nothing needs to reach that
+    low-level; this test is what makes a FUTURE such site fail here instead
+    of silently widening the #3434 close-scoping gap.
+
+    Scoped to ``get_async_httpx_client`` by name deliberately paired with a
+    Tier-1 comment, not a Tier-2 enforcement claim: litellm exposes more
+    than one low-level constructor family, and this guard does not claim to
+    enumerate all of them — it closes the ONE bypass this arc's own
+    investigation found and used in test setup (see
+    ``test_llm_run_async_shutdown_litellm_clients_2787.py``), so a
+    regression on THAT specific bypass is caught."""
+    src = _repo_src_root()
+
+    offenders: "list[str]" = []
+    for py in src.rglob("*.py"):
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and "get_async_httpx_client" in [
+                a.name for a in node.names
+            ]:
+                offenders.append(f"{py.relative_to(src.parent.parent)}:{node.lineno}")
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "get_async_httpx_client"
+            ):
+                offenders.append(f"{py.relative_to(src.parent.parent)}:{node.lineno}")
+
+    assert not offenders, (
+        "get_async_httpx_client used outside a test — this creates a "
+        "litellm async client WITHOUT the ensure_litellm_ready-first "
+        f"guarantee. Offending sites: {offenders}"
+    )

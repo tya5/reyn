@@ -3,6 +3,10 @@ during its own call — not litellm's entire process-wide async-client cache
 (#3434).
 """
 import asyncio
+import os
+import subprocess
+import sys
+import textwrap
 
 from reyn.llm.llm import run_async
 
@@ -56,3 +60,50 @@ def test_run_async_does_not_close_a_client_created_outside_its_own_call() -> Non
         "run_async closed a litellm async client it did not create — "
         "this is the #3434 shared-cache poisoning bug"
     )
+
+
+def test_run_async_never_imports_litellm_without_an_llm_call(out_of_process_reyn) -> None:
+    """Tier 2b: #3671 — the required gate. `run_async` given an LLM-free
+    coroutine must leave `"litellm" not in sys.modules` after it returns.
+
+    This is the ONE witness that actually pins the startup-latency win: the
+    other tests in this file (and #3434's own regression guard above) stay
+    green whether litellm is imported eagerly or lazily — they test SCOPING
+    of the close step, not WHETHER an import happened at all. Someone could
+    silently reinstate an eager `import litellm` at `run_async`'s own top
+    (the exact #3671 defect this arc fixed) and every other test would stay
+    green; only this one would turn red that day.
+
+    Subprocess, not in-process (same reasoning as `test_litellm_lazy_load
+    .py`'s own tests): almost every OTHER test in this suite imports litellm
+    somewhere, so `sys.modules` is contaminated by test order in-process —
+    only a fresh interpreter answers "did THIS call import it" honestly.
+    """
+    script = """
+        import sys
+        from reyn.llm.llm import run_async
+
+        assert "litellm" not in sys.modules, (
+            "litellm was already imported before run_async even ran — "
+            "broken test setup, not what this test means to check"
+        )
+
+        async def _llm_free() -> str:
+            return "done"
+
+        assert run_async(_llm_free()) == "done"
+        assert "litellm" not in sys.modules, sorted(
+            m for m in sys.modules if "litellm" in m
+        )
+        print("OK")
+        """
+    env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout

@@ -114,16 +114,22 @@ def mark_async_entered() -> None:
 
 
 #: The narrow ``client-prep:*`` brackets `mark_app_constructed` sums to
-#: compute ``client-prep:other`` (#3735 regression fix; ``litellm-import``
-#: added #3671 follow-up after a real-run measurement showed the original 4
-#: brackets left ~59-60% of the wide span in ``client-prep:other``, and
-#: ``llm.py``'s ``run_async`` lazily imports litellm BEFORE any of the other
-#: 4 brackets even start) — every named sub-stage of the wide
-#: ``mark_async_entered`` → ``mark_app_constructed`` span EXCEPT
-#: ``client-prep:other`` itself (summing that too would be circular: it is
-#: defined as what these do not already cover).
+#: compute ``client-prep:other`` (#3735 regression fix) — every named
+#: sub-stage of the wide ``mark_async_entered`` → ``mark_app_constructed``
+#: span EXCEPT ``client-prep:other`` itself (summing that too would be
+#: circular: it is defined as what these do not already cover).
+#:
+#: ``litellm-import`` briefly lived here (#3671 follow-up, after a real-run
+#: measurement showed the original 4 brackets left ~59-60% of the wide span
+#: in ``client-prep:other``, traced to ``llm.py``'s ``run_async`` forcing
+#: ``import litellm`` before any of the other 4 brackets even started) — and
+#: was REMOVED, not renamed, once that forced import itself was removed
+#: (``reyn.llm.litellm_bootstrap`` module docstring): a session that never
+#: calls the LLM no longer imports litellm at all during startup, so there
+#: is no longer a client-prep cost of that name to bracket. The time it used
+#: to measure moved out of ``client-prep:other`` entirely rather than into
+#: this tuple.
 _CLIENT_PREP_NAMED_STAGES: "tuple[str, ...]" = (
-    "client-prep:litellm-import",
     "client-prep:transport",
     "client-prep:read-model",
     "client-prep:tui-import",
@@ -274,6 +280,14 @@ def process_elapsed_seconds() -> float:
 #: hold a value is worse than no row: this module's whole premise is that
 #: ``0.00`` means measured-and-fast, and one entry quietly breaking that
 #: promise poisons every other reading. The span it stood for is ``TOTAL``.
+#: #3671: ``client-prep:litellm-import`` — REMOVED, not left to report
+#: ``0.00`` (this module's own stated line above: "``0.00`` means
+#: measured-and-fast", not "this stage no longer exists"; a permanently-dead
+#: row would break that promise the same way a never-fired ``first-frame``
+#: did). Removed once the forced startup-time ``import litellm`` it measured
+#: was itself removed (``reyn.llm.litellm_bootstrap`` module docstring) — a
+#: session that never calls the LLM no longer has a litellm-import cost
+#: anywhere in this bracket to name.
 STAGES: "tuple[str, ...]" = (
     "import",
     "config",
@@ -281,7 +295,6 @@ STAGES: "tuple[str, ...]" = (
     "plugins",
     "mcp",
     "session",
-    "client-prep:litellm-import",
     "client-prep:transport",
     "client-prep:read-model",
     "client-prep:tui-import",
