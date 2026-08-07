@@ -38,13 +38,15 @@ def _stdio_cfg(script: Path) -> dict:
     return {"type": "stdio", "command": sys.executable, "args": [str(script)]}
 
 
-async def _wait_for(predicate, *, attempts: int = 100, delay: float = 0.02) -> None:
-    """Poll ``predicate()`` until True or give up — mirrors
-    test_2597_s2b_resource_subscriptions.py's pattern (async delivery, not
-    synchronous with the triggering call)."""
-    for _ in range(attempts):
-        if predicate():
-            return
+async def _wait_for(predicate, *, delay: float = 0.02) -> None:
+    """Delivery is asynchronous, not synchronous with the triggering call.
+    Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract.
+    """
+    while not predicate():
         await asyncio.sleep(delay)
 
 
