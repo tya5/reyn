@@ -91,22 +91,27 @@ async def _seeded(pilot, app, texts=("older reply", "newest reply")):
 
 
 @pytest.mark.asyncio
-async def test_c_enters_copy_mode_on_the_highlighted_entry() -> None:
-    """Tier 2b: ``c`` from the conversation pane enters copy mode, and it starts
-    on the entry the highlight is already on — so the text cursor appears where
-    the user was looking rather than at the top of the log."""
+async def test_c_shows_the_cursor_on_the_entry_the_user_is_on() -> None:
+    """Tier 2b: ``c`` reveals the text cursor where the user is already looking.
+
+    #3692: flowview 0.13 removed copy mode as a concept — the motions are
+    always live and ``c`` only shows or hides the cursor block. reyn no longer
+    binds ``c`` at all, so this now checks that the key reaches the pane and
+    that revealing the cursor does not move the highlight off the entry the
+    reader had addressed.
+    """
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(80, 20)) as pilot:
         flow = await _seeded(pilot, app)
-        assert not flow.copy_mode, "test setup: already in copy mode"
+        assert not flow.cursor_visible, "test setup: the cursor is already shown"
         started_on = flow.current
         assert started_on is not None and started_on.item.text == "newest reply"
 
         await pilot.press("c")
         await pilot.pause()
-        assert flow.copy_mode, "'c' did not enter copy mode"
+        assert flow.cursor_visible, "'c' did not reveal the cursor"
         assert flow.current is started_on, (
-            "entering copy mode moved the highlight off the entry the user was on"
+            "showing the cursor moved the highlight off the entry the user was on"
         )
 
 
@@ -304,48 +309,3 @@ async def test_copy_mode_yank_writes_through_reyns_local_clipboard(
         pyperclip.copy, pyperclip.paste = original_copy, original_paste
 
 
-@pytest.mark.asyncio
-async def test_the_chrome_sees_both_copy_mode_edges() -> None:
-    """Tier 2b: reyn is told when copy mode is entered AND when it is left
-    (flowview 0.8.0's ``CopyModeChanged``, #8).
-
-    The exit edge is the one that matters: entry is reyn's own action, but
-    leaving happens on ``Esc`` INSIDE the widget. Without the message there was
-    no way to observe it short of polling, so a "copy mode" hint would have
-    stayed up after the user left — which is precisely the state a modal keymap
-    must not be in. Asserted through the conversation's own status rows, not a
-    private flag."""
-    app = TextualChatApp(transport=_Transport())
-    async with app.run_test(size=(80, 20)) as pilot:
-        flow = await _seeded(pilot, app)
-
-        await pilot.press("c")
-        await pilot.pause()
-        assert flow.copy_mode, "setup: 'c' did not enter copy mode"
-        texts = [e.item.text for e in app.conversation]
-        assert any("copy mode" in t and "Esc leave" in t for t in texts), (
-            f"entering copy mode told the user nothing; pane holds: {texts!r}"
-        )
-
-        # Exit with the REAL key, not the public method: ``Esc`` means something
-        # in reyn too (leave the pane, close the drawer), so which side wins is
-        # itself worth pinning — a method call would pass even if the key never
-        # reached flowview.
-        await pilot.press("escape")
-        await pilot.pause()
-        assert not flow.copy_mode, "a real Esc did not leave copy mode"
-        texts = [e.item.text for e in app.conversation]
-        assert any("copy mode off" in t for t in texts), (
-            f"the exit edge was not observed; pane holds: {texts!r}"
-        )
-        assert app.focused is flow, (
-            "the first Esc left the PANE as well as copy mode — leaving a mode "
-            "and leaving the pane are two steps, not one"
-        )
-
-        # ...and the SECOND Esc is reyn's own: back to the composer.
-        await pilot.press("escape")
-        await pilot.pause()
-        assert isinstance(app.focused, Composer), (
-            f"the second Esc did not return to the composer: {app.focused!r}"
-        )

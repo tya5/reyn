@@ -684,16 +684,11 @@ class TextualChatApp(App):
         # ctrl+q quit). The cost is TextArea's ctrl+c copy, which reyn replaces
         # with ``/copy`` and the keyboard cursor's Enter/Space copy (#3476 ⑥).
         Binding("ctrl+c", "cancel_turn", "Interrupt the running turn", priority=True),
-        # #3507: enter flowview's COPY MODE — a vim-style per-character text
-        # cursor over the rendered content, which is what finally answers "can
-        # the cursor move INSIDE an entry" (0.6.x had entry granularity only).
-        # ``c`` is upstream's own key for this in ``examples/copy_mode.py`` —
-        # reused rather than invented, and the MOTIONS are left entirely to
-        # flowview's defaults (hjkl w b e 0 $ ^ gg G v V y zz zt zb Ctrl-E
-        # Ctrl-Y Esc, plus * / n / N, live only while in copy mode) per the
-        # owner's "keep flowview's default keymap". reyn declares no motion
-        # binding of its own, so there is nothing here to drift from upstream.
-        ("c", "copy_mode", "Copy mode (vim-style text cursor)"),
+        # #3692: ``c`` is flowview's own key and reyn no longer declares it.
+        # 0.13 removed copy mode as a concept — the motions are always live and
+        # ``c`` shows or hides the cursor block — so a binding here would be a
+        # second meaning for a key the pane already owns, which is the "same
+        # key, two meanings" this arc exists to remove.
     ]
 
     CSS = palette.css("""
@@ -1100,8 +1095,6 @@ class TextualChatApp(App):
         # one moved AWAY from is tracked here — it needs its gutter re-derived
         # too, otherwise the rail is left behind on it.
         self._marked_cursor: "Entry[OutboxMessage] | None" = None
-        # #3507: mirrors flowview's copy-mode state off ``CopyModeChanged``.
-        self._copy_mode = False
 
     @property
     def cursor_position(self) -> "Offset":
@@ -2160,41 +2153,6 @@ class TextualChatApp(App):
             logger.exception("textual chat: copy-mode clipboard write failed")
             return False
         return ok
-
-    def action_copy_mode(self) -> None:
-        """``c``: hand the conversation pane over to flowview's copy mode.
-
-        Entering is the app's call — upstream binds the motions but not the
-        entry, since only the app knows what else that key might mean. Copy mode
-        STARTS on the highlighted entry and holds that highlight fixed while the
-        text cursor moves, so the addressed-row rail stays put and no
-        ``Highlighted`` is posted during a motion."""
-        self._flow.focus()
-        self._flow.enter_copy_mode()
-
-    def on_flow_view_copy_mode_changed(
-        self, event: "FlowView.CopyModeChanged"
-    ) -> None:
-        """Keep the chrome in step with copy mode (flowview 0.8.0, #8).
-
-        The ENTRY edge is reyn's own :meth:`action_copy_mode`, but the EXIT edge
-        happens inside the widget on ``Esc`` — before this message existed there
-        was no way to observe it without polling, so a "copy mode" hint would
-        have stayed up after the user left, which is the one state a modal
-        keymap must never be in. Both edges land here."""
-        from reyn.runtime.outbox import OutboxMessage
-
-        self._copy_mode = event.copy_mode
-        self._ingest_frame(
-            OutboxMessage(
-                kind="status",
-                text=(
-                    "copy mode — hjkl move · v/V select · y yank · Esc leave"
-                    if event.copy_mode
-                    else "copy mode off"
-                ),
-            )
-        )
 
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
