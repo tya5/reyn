@@ -314,7 +314,7 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
                 body.append("\n")
                 body.append(
                     f"     … {len(lines) - _EXPANDED_MAX_LINES} more lines"
-                    " (Enter copies the whole result)",
+                    " · enter to copy the whole result",
                     style=_CC_DIM,
                 )
             return body, None

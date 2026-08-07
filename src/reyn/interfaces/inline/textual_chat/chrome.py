@@ -413,6 +413,24 @@ _LIST_PANES = frozenset({
     "model", "agent", "history", "menu", "tool", "mcp", "skill", "hook",
 })
 
+# ── the Help pane's key tables ───────────────────────────────────────────────
+#
+# These are DELIBERATELY not written as ``<key> to <verb>``, the shape #3801
+# gave every inline key hint in this interface (``enter to send · shift+enter
+# to break the line…``, ``enter to check out · esc to cancel``). Owner ruling:
+# a table already puts the key and its meaning in separate columns, so
+# inserting "to" adds a word to every row that the layout is already saying,
+# and the column of verbs stops lining up as a column.
+#
+# Recorded here rather than only in the ticket because the difference is
+# visible from the tables and the reason is not: someone sweeping this
+# interface for the #3801 shape will find these, see hints elsewhere written
+# the other way, and file them as the leftovers. They are not.
+#
+# What the ruling does NOT license is spelling one key two ways. If that is
+# fixed, fix it as a table-consistency change; it is a different claim from
+# the shape.
+
 #: The composer's navigation keys, co-located with the widget that OWNS them (they
 #: are imperative ``Composer._on_key`` overrides, not declarative ``BINDINGS``, so
 #: the Help pane sources them from here rather than re-hardcoding a second copy).

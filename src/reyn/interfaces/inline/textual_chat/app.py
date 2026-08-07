@@ -1332,7 +1332,14 @@ class TextualChatApp(App):
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
-                placeholder="Type a message — Enter to send, Shift+Enter for a newline…"
+                # ``<key> to <verb> · <key> to <verb>`` (#3801), the shape
+                # ``rewind_picker`` already used. The previous form separated
+                # the two clauses with a comma and gave the second one a
+                # different grammar ("for a newline"), so the two halves of one
+                # hint read as two kinds of statement.
+                placeholder=(
+                    "Type a message — enter to send · shift+enter to break the line…"
+                )
             )
         # Bottom chrome: a focusable menu row that also carries the slim
         # status-values segment (#3326: MenuBar owns placing StatusLine on
