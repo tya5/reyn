@@ -97,58 +97,57 @@ async def _settle(pilot, times: int = 5) -> None:
         await pilot.pause()
 
 
-async def _settle_until_arrived_and_stable(pilot, *, arrived, read) -> "int":
-    """Pump until ``arrived()`` holds AND ``read()`` has returned the SAME
-    value on two consecutive checks taken AFTER it does — or the budget
-    runs out. Returns the stabilised value.
+async def _settle_until_stable(pilot, read, *, arrived=lambda: True) -> "int":
+    """Pump until ``read()`` has returned the SAME value on two consecutive
+    checks taken while ``arrived()`` holds. Returns the stabilised value.
 
-    #3770: two DIFFERENT gaps, closed by two DIFFERENT conditions, joined
-    by AND:
+    Two consecutive equal reads is CONVERGENCE, not COMPLETION on its own —
+    if the thing being measured updates in more than one pass, two samples
+    could land on the same plateau mid-update while more input is still
+    arriving. ``arrived()`` (default: always true, i.e. plain stabilisation)
+    lets a caller name the OTHER condition that must hold before a plateau
+    counts, and resets the stability count whenever it stops holding — see
+    :func:`_fill_and_leave_the_tail`'s own use for why both are needed
+    together in that case (#3770).
 
-    - ``read()`` (``max_scroll_y``) stopping between two samples is
-      CONVERGENCE, not COMPLETION — if flowview's layout runs in more than
-      one pass, two samples could land on the same plateau mid-layout (a
-      settle tick landing between passes), which would satisfy
-      "stopped moving" while more entries are still on their way. Watching
-      ``arrived()`` too closes that hole.
-    - ``arrived()`` (``len(flow.entries) >= lines``) alone closes a
-      DIFFERENT hole: entries landing in the list and flowview's layout
-      pass actually growing ``max_scroll_y`` for them are two separate
-      events — the #3770 bug this fixture exists to guard against. Watching
-      ``read()`` too closes that one.
-
-    Requiring the two stable samples to both occur AFTER ``arrived()``
-    holds — not merely requiring both conditions true at the same instant —
-    is what stops a stale ``max_scroll_y`` plateau from a still-earlier
-    tick counting toward stability once the last entry finally lands."""
-    stable_since_arrival: "int | None" = None
-    for _ in range(150):
+    Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a
+    time budget, marker, or in-body pause-count cap — a slower environment
+    only makes this slower, never wrongly satisfied. A bounded loop that
+    silently returns the LAST (possibly still-unstable) value on exhaustion
+    is exactly the #3770 defect shape recurring one level up: "N pumps is
+    enough" was the bet that failed; a bigger N is a bigger bet, not a
+    fix. CI's own timeout is the blast-radius kill-switch, not a per-test
+    contract."""
+    stable_since: "object | None" = None
+    while True:
         await pilot.pause()
         await asyncio.sleep(0.01)
         if not arrived():
-            stable_since_arrival = None
+            stable_since = None
             continue
         current = read()
-        if stable_since_arrival is not None and current == stable_since_arrival:
+        if stable_since is not None and current == stable_since:
             return current
-        stable_since_arrival = current
-    return read()
+        stable_since = current
 
 
 async def _settle_until(pilot, until) -> None:
-    """Pump until ``until()`` holds, or the budget runs out.
+    """Pump until ``until()`` holds.
 
-    The measurement this file observes is DEFERRED to after a refresh (it needs
-    a laid-out view, see ``_refresh_tail_indicator``), so a fixed number of
-    pauses asserts that the deferred callback lands within N frames — a
-    property of the machine, not of the code. It held locally and did not on
-    CI. The budget is only spent when the condition is genuinely slow, and it
-    never weakens anything: the caller still asserts the real thing afterwards.
-    """
-    for _ in range(150):
+    The measurement this file observes is DEFERRED to after a refresh (it
+    needs a laid-out view, see ``_refresh_tail_indicator``). Unbounded per
+    the owner's testing policy (docs/deep-dives/contributing/testing.md,
+    ## Time) — no fixed pause-count budget: a slower environment only
+    makes this slower, never wrongly satisfied. A prior version of this
+    helper bounded the loop at a fixed pump count and silently returned on
+    exhaustion instead of continuing to wait, which is the #3770 defect
+    shape ("N is enough") recurring in this same file's own polling
+    helper — flagged in review rather than caught by CI going red, since a
+    generous-enough N mostly just makes the false success rarer, not
+    absent."""
+    while not until():
         await pilot.pause()
-        if until():
-            return
         await asyncio.sleep(0.01)
 
 
@@ -168,7 +167,7 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     enough for all ``lines`` entries to land and lay out — true on this
     machine, not guaranteed elsewhere, which is what #3770 traced.
 
-    The wait joins TWO conditions (:func:`_settle_until_arrived_and_stable`):
+    The wait joins TWO conditions (:func:`_settle_until_stable`):
     ``len(flow.entries) >= lines`` (all pushed messages actually landed —
     without this, ``max_scroll_y`` could stabilise on a stale value mid-way
     through delivery, since flowview's layout can run in more than one
@@ -188,15 +187,27 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     for i in range(lines):
         await transport.push_display(OutboxMessage(kind="agent", text=f"line {i}", meta={}))
     flow = app.query_one(FlowView)
-    stable_max = await _settle_until_arrived_and_stable(
-        pilot, arrived=lambda: len(flow.entries) >= lines, read=lambda: flow.max_scroll_y
+    stable_max = await _settle_until_stable(
+        pilot, lambda: flow.max_scroll_y, arrived=lambda: len(flow.entries) >= lines
     )
     assert stable_max > 0, (
         "test setup: max_scroll_y stabilised at 0 — nothing overflowed the "
         "viewport, so there is no tail to leave"
     )
     flow.scroll_to(y=0, animate=False)
-    await _settle(pilot)
+    # #3770: waits for the scroll's OWN deferred _refresh_tail_indicator to
+    # actually run (app._following_tail flips False) before this fixture
+    # returns — callers push further arrivals right after and need
+    # _note_entry_landed to already be counting them, which only happens
+    # once the deferred measurement has settled the departure. The wait
+    # predicate reads private state (``_following_tail``) because no public
+    # surface distinguishes "measurement not yet run" from "run, and the
+    # reader happens to be 0 entries behind" — the row's own text renders
+    # the same either way (see #3770's own tracking comment for that gap).
+    # CLAUDE.md's private-state ban is about ASSERTING on it as a verdict;
+    # this only decides WHEN to look, and the assert two lines down stays on
+    # the public ``scroll_y``/``max_scroll_y`` surface.
+    await _settle_until(pilot, lambda: not app._following_tail)
     # #3720 diagnostic: CI and this machine disagree on the same SHA, and the
     # rendered row is wider there — both point at FlowView's real size, which
     # #3724's compact_caps can change. Printed so the two can be compared
@@ -310,7 +321,14 @@ async def test_the_named_key_actually_returns_to_the_newest_output() -> None:
         assert "LIVE" in str(row.render())
 
         await pilot.press("ctrl+end")
-        await _settle(pilot, 6)
+        # #3770: no deferred wait needed here — action_jump_to_latest sets
+        # scroll_y, _away_arrivals, _following_tail, and the row's own
+        # ``set_behind(None)`` all SYNCHRONOUSLY inside the key handler (its
+        # own docstring: "cleared HERE rather than through the deferred
+        # measurement"), so once the keypress message has been dispatched
+        # both assertions below are already final. A single pause is for
+        # dispatch, not for a race.
+        await pilot.pause()
 
         assert flow.scroll_y >= flow.max_scroll_y, "the key did not return to the tail"
         assert "LIVE" not in str(app.query_one(ActivityRow).render()), (
@@ -338,7 +356,9 @@ async def test_a_growing_reply_is_not_counted_as_arrivals() -> None:
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         flow = await _fill_and_leave_the_tail(transport, pilot, app)
-        await _settle(pilot, 8)
+        # #3770: no extra settle needed here — _fill_and_leave_the_tail's own
+        # wait (above) already blocks until its deferred measurement has run,
+        # so the state it returns is already what this baseline wants.
         row = app.query_one(ActivityRow)
         # Whatever the count is at this instant is the baseline. Asserting it
         # is zero would only be testing how the fixture happened to drain.
@@ -350,7 +370,12 @@ async def test_a_growing_reply_is_not_counted_as_arrivals() -> None:
             await transport.push_event(
                 Event(type="agent_delta", data={"chain_id": "c1", "text": f"chunk {i} "})
             )
-        await _settle(pilot, 8)
+        # #3770: waits for the entry COUNT to stop changing — a weak
+        # condition ("delta processing has quieted down"), not "count ==
+        # before_entries + 1", which would make the very next assert
+        # redundant with the wait itself. The count folding to exactly one
+        # new entry is what the assert below actually checks.
+        await _settle_until_stable(pilot, lambda: len(flow.entries))
 
         landed = len(flow.entries) - before_entries
         assert landed == 1, (
