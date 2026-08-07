@@ -281,13 +281,12 @@ def test_non_eager_schedules_background(tmp_path: Path, monkeypatch: pytest.Monk
         assert idx.is_ready() is False
         coordinator = loop._get_index_coordinator()
         # Poll the PUBLIC readiness gate for the scheduled background task
-        # to complete (bounded — no private-state introspection, mirrors
-        # test_index_coordinator_3247_p2a.py's equivalent poll).
-        for _ in range(200):
-            if idx.is_ready():
-                break
+        # to complete (no private-state introspection, mirrors
+        # test_index_coordinator_3247_p2a.py's equivalent poll). #3748:
+        # unbounded (owner policy) -- no terminating assert for idx itself:
+        # the loop condition IS that check.
+        while not idx.is_ready():
             await asyncio.sleep(0.01)
-        assert idx.is_ready() is True
         assert await coordinator.is_ready("actions") is True
 
     _run(_scenario())
