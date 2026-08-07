@@ -44,7 +44,7 @@ def test_the_composer_placeholder_uses_the_convention() -> None:
     """
     from reyn.interfaces.inline.textual_chat.app import TextualChatApp  # noqa: F401
 
-    hint = "Type a message — enter to send · shift+enter to break the line…"
+    hint = "Type a message — enter to send · shift+enter to add a line…"
     keyed = _clauses(hint.split("—", 1)[1])
     assert all(_HINT.match(clause.rstrip("…")) for clause in keyed), (
         f"a clause does not read as <key> to <verb>: {keyed!r}"
