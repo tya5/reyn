@@ -42,14 +42,15 @@ timer costs nothing in correctness) and is paused/resumed by
 — an animation ticking over an idle ssh session for a row nobody sees is
 exactly the cost that split exists to avoid.
 
-A later owner call (#3777, same day) put a small piece of that vacated
-column budget back: the state word now opens with :data:`_STATE_GLYPH`
-(``"▶ "``), the filled counterpart of the sent-queue's unfilled
-:data:`~reyn.interfaces.inline.textual_chat.sent_queue._QUEUED_GLYPH`
-(``"▷"``) — a queued item's glyph and this row's glyph are the SAME shape,
-one hollow and one filled, so promotion reads as the shape filling in
-rather than as one icon replacing an unrelated one. See
-:func:`activity_text`'s docstring for the shine-clearance argument.
+This row carries NO glyph of its own (#3777, owner call). It briefly had
+one — a filled ``▶`` pairing with the queue's hollow ``▷`` — and the shape
+pair survived the removal by moving: ``▶`` is now what a SELECTED queue row
+shows, so "filled" still means "the one being acted on" and the row above no
+longer has to say so twice. What this row keeps is the alignment: its text
+starts in the column a queue row's LABEL starts in
+(:data:`~reyn.interfaces.inline.textual_chat.sent_queue.ROW_TEXT_COLUMN`),
+so the two regions read as one column of text with the queue's glyphs hanging
+off its left edge.
 """
 from __future__ import annotations
 
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
     from textual.timer import Timer
 
 from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN
 
 #: The cancel affordance shown while a turn runs. Plain ASCII: the key it names
 #: is the app's own ``ctrl+c`` binding, and this row shares a narrow terminal
@@ -100,17 +102,6 @@ _SHINE_WIDTH = 5
 _SHINE_FALLBACK_STYLE = "reverse"
 _SHINE_FALLBACK_WIDTH = 2
 
-#: The NOW-row glyph (#3777, owner call: a play-family mark — filled, to
-#: read as "running", pairing with
-#: :data:`~reyn.interfaces.inline.textual_chat.sent_queue._QUEUED_GLYPH`'s
-#: unfilled counterpart on the queue row so a promoted item shows the SAME
-#: shape it had a moment ago, only filled in — the "connection" the owner
-#: asked for. Reoccupies part of the column budget #3779 vacated when it
-#: dropped the 6-column ``NOW   `` label; the glyph earns that back by
-#: carrying real information (running, not a static word) rather than
-#: repeating "NOW" as a caption. ``wcwidth`` confirmed single-column and a
-#: full-repo grep found no prior use before this landed (see #3777).
-_STATE_GLYPH = "▶"
 
 
 @lru_cache(maxsize=1)
@@ -170,34 +161,44 @@ def activity_text(
 
     ``shine_index`` (owner-picked design "A", replacing the removed ``NOW``
     label): the frame number of a ``_SHINE_WIDTH``-character band travelling
-    through ``state`` ITSELF — ``None`` paints no band (a static row, e.g.
-    while no turn is showing). It is a frame counter, not a character offset:
-    the band's centre is ``shine_index - _SHINE_WIDTH // 2``, so it starts
-    off the left edge and runs off the right.
+    across the WHOLE rendered row — ``None`` paints no band (a static row,
+    e.g. while no turn is showing). It is a frame counter, not a character
+    offset: the band's centre is ``shine_index - _SHINE_WIDTH // 2``, so it
+    starts off the left edge and runs off the right.
+
+    #3779 confined the band to ``state``'s own span, so it could not wander
+    onto the elapsed clock or the hint. #3777 lifted that: with the glyph gone
+    and the row reading as ONE object rather than as three things sharing a
+    line, the owner asked for the light to cross all of it. The old argument
+    was not wrong — it was the right answer for the row it was written about.
 
     ``colour`` is whether the terminal can show one. ``True`` paints the band
     as a cosine ramp between :data:`palette.SHINE_DIM` and
     :data:`palette.SHINE_PEAK`; ``False`` degrades it to the two-character
     ``reverse`` #3779 shipped. The gradient is the point — a two-valued band
     has no edge to fall off, so it reads as a block blinking rather than a
-    light travelling, which is what the operator reported. The band is
-    confined
-    to ``state``'s own span, never the elapsed clock, the leading
-    :data:`_STATE_GLYPH`, or the right-aligned hint — those are different
-    information (or, for the glyph, a different piece of state entirely) and
-    stay plain. #3779 vacated the old 6-column ``NOW   `` slot; #3777 gives
-    ``state`` a 2-column ``"▶ "`` prefix instead — smaller than the old
-    label, and unlike it, informative on its own (see :data:`_STATE_GLYPH`'s
-    module comment for why that column cost is worth paying again).
+    light travelling, which is what the operator reported.
     """
-    prefix = f"{_STATE_GLYPH} " if state else ""
+    # Spaces, not a glyph (#3777, owner call): the NOW row carries no mark of
+    # its own, and its text starts in the column a queue row's LABEL starts in
+    # — the two regions then read as one column of text with the queue's
+    # glyphs hanging off its left edge, rather than as two lists that happen to
+    # sit above each other. The width comes from the queue rather than being
+    # written here twice; see ``sent_queue.ROW_TEXT_COLUMN``.
+    prefix = " " * ROW_TEXT_COLUMN if state else ""
     body = f"{prefix}{state}"
     if elapsed_s is not None:
         body = f"{body} {int(elapsed_s) // 60:02d}:{int(elapsed_s) % 60:02d}"
     suffix = f"LIVE +{behind} · {LATEST_HINT} latest" if behind else _CANCEL_HINT
     content = _with_suffix(body, suffix, width)
     if shine_index is not None and state:
-        content = _apply_shine(content, len(prefix), len(state), shine_index, colour)
+        # The whole row, not just the state word (#3777, owner call). #3779
+        # confined the band to ``state`` so it could not wander onto the clock
+        # or the hint; with the glyph gone and the row reading as one object,
+        # the owner asked for the light to cross all of it. The clearance
+        # argument that produced the old confinement is not wrong — it was an
+        # answer to a row that was three separate things in a line.
+        content = _apply_shine(content, 0, len(content.plain), shine_index, colour)
     return content
 
 
