@@ -24,13 +24,29 @@ the start is missing.
 Deliberately not focusable and deliberately one line: the queue below owns
 selection and cancellation, and a second focusable region between the queue
 and the composer would put a stop on the way back to typing.
+
+The row used to open with a literal ``NOW`` label. Owner call (2026-08-07,
+"now とか next という文字列がださいな"): dropped it, and the state word
+itself now carries a travelling ``reverse`` highlight ("shine", design "A" of
+three text-mockup options put to the owner) while a turn runs — see
+:data:`_SHINE_WIDTH`/:data:`_SHINE_STYLE` and :meth:`ActivityRow.tick`. One
+timer drives both the shine and the elapsed clock (the clock is recomputed
+fresh from the real clock on every tick regardless of rate, so sharing the
+timer costs nothing in correctness) and is paused/resumed by
+:meth:`ActivityRow.end`/:meth:`begin` rather than left running while hidden
+— an animation ticking over an idle ssh session for a row nobody sees is
+exactly the cost that split exists to avoid.
 """
 from __future__ import annotations
 
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
+from textual.content import Content
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from textual.timer import Timer
 
 from reyn.interfaces.inline.textual_chat import palette
 
@@ -45,6 +61,23 @@ _CANCEL_HINT = "Ctrl+C cancel"
 #: fire while it holds focus — i.e. never from where the reader actually is.
 LATEST_HINT = "Ctrl+End"
 
+#: How wide the travelling highlight band is, in characters. 2: narrow enough
+#: to read as a POINT of light moving rather than a block of emphasis, wide
+#: enough to be visible at 6fps without needing sub-cell rendering.
+_SHINE_WIDTH = 2
+
+#: The shine's SGR attribute. Not a ``palette.py`` marker: that module's
+#: at-sign-wrapped markers resolve inside a CSS ``DEFAULT_CSS`` string via
+#: :func:`palette.css`; this is applied at RUNTIME to a narrow content span
+#: via ``Content.stylize``, the same non-CSS style-constant shape
+#: ``gutter.py``'s own glyph colours already use. ``reverse`` rather than a
+#: background: applied to only ``_SHINE_WIDTH`` characters at a time, the
+#: same content-scale emphasis #3490 already established for a moving mark
+#: (a FULL-row inversion was rejected there, not a narrow travelling one)
+#: — and an SGR attribute, not a colour, survives every ansi theme the way
+#: a background value would not.
+_SHINE_STYLE = "reverse"
+
 
 def activity_text(
     state: str,
@@ -52,7 +85,8 @@ def activity_text(
     elapsed_s: "float | None" = None,
     width: int = 80,
     behind: "int | None" = None,
-) -> str:
+    shine_index: "int | None" = None,
+) -> Content:
     """The rendered row for ``state``.
 
     ``elapsed_s`` is omitted entirely when ``None`` — an unknown duration
@@ -64,16 +98,29 @@ def activity_text(
     right-hand slot ahead of the cancel hint: someone reading back through an
     older reply cannot see the new output arriving, and that is the more
     urgent of the two. Both are dropped before the state itself.
+
+    ``shine_index`` (owner-picked design "A", replacing the removed ``NOW``
+    label): a ``_SHINE_WIDTH``-character ``reverse`` band travelling through
+    ``state`` ITSELF, at the given character offset — ``None`` paints no
+    band (a static row, e.g. while no turn is showing). The band is confined
+    to ``state``'s own span, never the elapsed clock or the right-aligned
+    hint — those are different information and stay plain. Vacates the old
+    6-column ``NOW   `` slot entirely rather than leaving a blank gutter:
+    ``state`` now starts at column 0.
     """
-    body = f"NOW   {state}"
+    body = state
     if elapsed_s is not None:
         body = f"{body} {int(elapsed_s) // 60:02d}:{int(elapsed_s) % 60:02d}"
-    if behind:
-        return _with_suffix(body, f"LIVE +{behind} · {LATEST_HINT} latest", width)
-    return _with_suffix(body, _CANCEL_HINT, width)
+    suffix = f"LIVE +{behind} · {LATEST_HINT} latest" if behind else _CANCEL_HINT
+    content = _with_suffix(body, suffix, width)
+    if shine_index is not None and state:
+        start = max(0, min(shine_index, len(state) - 1))
+        end = min(start + _SHINE_WIDTH, len(state))
+        content = content.stylize(_SHINE_STYLE, start, end)
+    return content
 
 
-def _with_suffix(body: str, suffix: str, width: int) -> str:
+def _with_suffix(body: str, suffix: str, width: int) -> Content:
     """``body`` with ``suffix`` right-aligned, or ``body`` alone if it will not
     fit WHOLE.
 
@@ -84,7 +131,8 @@ def _with_suffix(body: str, suffix: str, width: int) -> str:
     or not they are printed.
     """
     pad = width - len(body) - len(suffix)
-    return f"{body}{' ' * pad}{suffix}" if pad >= 1 else body
+    text = f"{body}{' ' * pad}{suffix}" if pad >= 1 else body
+    return Content(text)
 
 
 class ActivityRow(Static):
@@ -113,21 +161,27 @@ class ActivityRow(Static):
         self._state: "str | None" = None
         self._started_at: "float | None" = None
         self._behind: "int | None" = None
+        self._shine_index = 0
+        self._timer: "Timer | None" = None
 
-    #: How often the elapsed clock is redrawn. One second: the clock has
-    #: one-second resolution, so a faster tick would repaint without changing
-    #: anything and a slower one would let the number lag what it claims.
-    TICK_SECONDS = 1.0
+    #: The shine's frame rate (owner-picked design "A"). Also what drives the
+    #: elapsed clock now — ONE timer, not two: :meth:`tick` recomputes the
+    #: elapsed seconds from the real clock on every call regardless of how
+    #: often it runs, so a faster shared tick costs nothing in correctness,
+    #: only ``_SHINE_WIDTH``-worth of extra string work per frame (one Static
+    #: line, cheap) — and it means there is exactly one place that starts and
+    #: stops the redraw, not two timers each needing their own shutdown.
+    SHINE_FPS = 6
 
     def on_mount(self) -> None:
         self.display = False
-        # The clock has to advance on its OWN schedule. Without this it moved
-        # only as a side effect of ``specialise`` — i.e. only while deltas were
-        # arriving — so through a tool call, or after the stream ended, the row
-        # kept printing a number that had stopped being true while still
-        # looking live. Printing a stale duration is the same failure as
-        # printing an invented one, which this row exists not to do.
-        self.set_interval(self.TICK_SECONDS, self.tick)
+        # Created PAUSED: the animation must not run — must not even be
+        # firing no-op ticks — while no turn is showing. A timer that keeps
+        # waking the event loop over an idle ssh session for nothing this
+        # row will ever draw is exactly the cost :meth:`begin`/:meth:`end`
+        # exist to bound. ``resume``/``pause`` there are this timer's ONLY
+        # two callers.
+        self._timer = self.set_interval(1 / self.SHINE_FPS, self.tick, pause=True)
 
     @property
     def state(self) -> "str | None":
@@ -143,6 +197,9 @@ class ActivityRow(Static):
         """
         if self._state is None:
             self._started_at = self._clock() if started else None
+            self._shine_index = 0
+            if self._timer is not None:
+                self._timer.resume()
         self._state = state
         self.display = True
         self._render_row()
@@ -161,6 +218,11 @@ class ActivityRow(Static):
         self._state = None
         self._started_at = None
         self.display = False
+        # The animation stops WITH the turn — a shine that kept running over
+        # a hidden row would still be waking the event loop for nothing
+        # visible, the same cost as never pausing it at all.
+        if self._timer is not None:
+            self._timer.pause()
 
     def set_behind(self, behind: "int | None") -> None:
         """How far the reader is from the newest output, or ``None`` when they
@@ -173,8 +235,12 @@ class ActivityRow(Static):
             self._render_row()
 
     def tick(self) -> None:
-        """Redraw so the elapsed clock advances. No-op while hidden."""
+        """Advance the shine one frame and redraw (the elapsed clock rides
+        along, recomputed fresh every call). No-op while hidden — reachable
+        only in the gap between :meth:`end` pausing the timer and the pause
+        actually taking effect, not a steady-state path."""
         if self._state is not None:
+            self._shine_index = (self._shine_index + 1) % max(1, len(self._state))
             self._render_row()
 
     def _render_row(self) -> None:
@@ -188,5 +254,6 @@ class ActivityRow(Static):
                 elapsed_s=elapsed,
                 width=self.content_size.width or 78,
                 behind=self._behind,
+                shine_index=self._shine_index if self._state is not None else None,
             )
         )

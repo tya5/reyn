@@ -227,8 +227,8 @@ def test_the_indicator_takes_the_slot_ahead_of_the_cancel_hint() -> None:
     Someone reading back cannot see the new output arriving; the cancel key
     works whether or not it is printed. So the more urgent one is shown.
     """
-    with_behind = activity_text("RESPONDING", elapsed_s=5.0, width=78, behind=12)
-    without = activity_text("RESPONDING", elapsed_s=5.0, width=78)
+    with_behind = str(activity_text("RESPONDING", elapsed_s=5.0, width=78, behind=12))
+    without = str(activity_text("RESPONDING", elapsed_s=5.0, width=78))
 
     assert "LIVE +12" in with_behind
     assert "Ctrl+C cancel" not in with_behind
@@ -242,7 +242,7 @@ def test_a_narrow_row_drops_the_hint_rather_than_cutting_it() -> None:
     different one. The state survives; the suffix is printed whole or not at
     all.
     """
-    narrow = activity_text("RESPONDING", elapsed_s=5.0, width=30, behind=12)
+    narrow = str(activity_text("RESPONDING", elapsed_s=5.0, width=30, behind=12))
 
     assert "RESPONDING" in narrow
     assert LATEST_HINT not in narrow
