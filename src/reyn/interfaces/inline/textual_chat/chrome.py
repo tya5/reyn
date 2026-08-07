@@ -509,8 +509,9 @@ SENTQUEUE_KEYS: "list[tuple[str, str]]" = [
 #: ``search_bar.SearchBar`` — imperative ``on_key`` + the Input's own Enter,
 #: sourced from HERE for the Help pane per the same single-source-of-truth
 #: convention as the sibling ledgers above). The bar itself opens from the
-#: app's declarative ``ctrl+f`` binding, which the Help pane already lists
-#: via ``app_bindings``.
+#: app's declarative ``ctrl+n`` binding (#3692 PR-B ③, moved off ``ctrl+f``
+#: once flowview 0.13 gave that key its own meaning), which the Help pane
+#: already lists via ``app_bindings``.
 SEARCHBAR_KEYS: "list[tuple[str, str]]" = [
     ("enter / ↑", "search: older match"),
     ("shift+enter / ↓", "search: newer match"),

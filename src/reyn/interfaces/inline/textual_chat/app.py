@@ -664,12 +664,43 @@ class TextualChatApp(App):
         # reservation that IS still live.
         ("ctrl+g", "toggle_left_gutter", "Show/hide left gutter (state)"),
         ("ctrl+t", "toggle_right_gutter", "Show/hide right gutter (elapsed/tokens)"),
-        # #3476 ⑤: in-conversation search (owner-decided entry point). ctrl+f
-        # re-verified free against the same enumeration the ctrl+g/ctrl+t
-        # comment above records: TextArea binds no ctrl+f (its ``chrome.py
-        # _EDIT_KEYS`` listing only flags a completion recompute, it consumes
-        # nothing), and ``chrome.RESERVED_KEYS`` reserves ctrl+r/f2 only.
-        ("ctrl+f", "open_search", "Search conversation"),
+        # #3476 ⑤ / #3692 PR-B ③: in-conversation search (owner-decided entry
+        # point, moved off its original `ctrl+f`). flowview 0.13 (#3692
+        # PR-A) gave `ctrl+f` its OWN meaning (`cursor_scroll_page_down`,
+        # one of a `ctrl+b/d/e/f/u/y` vim-scroll SET) — reyn's search is a
+        # measurably DIFFERENT feature (entry-granular substring search
+        # over the FULL conversation model, forcing lazily-paged-in older
+        # history to materialise first, vs. flowview's row/character-level
+        # cursor jump limited to whatever is already materialised, seeded
+        # from the current selection/word rather than a typed query), so
+        # per the issue body's own decision rule ("different feature ->
+        # different key") it moves rather than displacing one vim-scroll
+        # key out of its set. `ctrl+/` was the issue's own suggested
+        # example but is REJECTED here: it has no single reliable
+        # control-byte mapping across terminals (some send 0x1F, some
+        # nothing at all), unlike a plain `ctrl+<letter>` — a real risk on
+        # the owner's Windows/git-bash environment (#3671), and untestable
+        # from here. `ctrl+p` was the first candidate and is a REAL trap:
+        # it is free by every enumeration in this file's tradition (no
+        # TextArea/flowview/reyn/RESERVED_KEYS claim) yet still fails,
+        # because Textual's own `App.COMMAND_PALETTE_BINDING` claims it
+        # OUTSIDE the declarative `BINDINGS` list this file's enumerations
+        # have always walked (measured: pressing it opened the command
+        # palette, not the search bar, in a real ``run_test`` pilot press —
+        # not just a BINDINGS-string check, which would have missed this).
+        # `ctrl+n` re-verified free against the FULL enumeration —
+        # TextArea's own ctrl-bindings (ctrl+a/c/d/e/k/u/v/w/x/y/z,
+        # measured off the class directly), flowview's owned set
+        # (ctrl+b/d/e/f/u/y), reyn's own existing (ctrl+c/g/o/q/t),
+        # ``chrome.RESERVED_KEYS`` (ctrl+r/f2, #2193),
+        # ``docs/deep-dives/contributing/cli-redesign.md``'s own proposed
+        # binding table (ctrl+c/d/l/r — a DIFFERENT, not-yet-built CLI, but
+        # a real reservation worth not colliding with — it ruled out
+        # `ctrl+l` too), AND Textual's `App`/`Screen` class attributes
+        # beyond `BINDINGS` (`COMMAND_PALETTE_BINDING` — the gap `ctrl+p`
+        # fell into) — and PRESSED, not just declared, in
+        # ``test_search_bar_3476.py``.
+        ("ctrl+n", "open_search", "Search conversation"),
         # #3498: ctrl+c INTERRUPTS the in-flight turn — the terminal-REPL
         # meaning of the key, and what ``ClientTransport.cancel_inflight``'s
         # own docstring already called "the ctrl-c seam" for a seam that had
@@ -715,6 +746,15 @@ class TextualChatApp(App):
         # 0.13 made the text cursor always-on (visual mode is the one real
         # mode now); `c` is flowview's OWN key (toggle_cursor), reached by
         # ordinary bubbling since reyn declares no binding of its own for it.
+        # #3692 PR-B ①: flowview cannot bind a key for "I don't have focus
+        # yet" — only the app can move focus INTO it, so this one addition is
+        # reyn's alone to make. `Ctrl+O` was a DEAD reservation from the
+        # retired Textual TUI (`chrome.RESERVED_KEYS`'s own comment lists it
+        # among the keys #2193's re-scope freed), re-verified free against
+        # the same enumeration the ctrl+g/ctrl+t/ctrl+f comments above
+        # record. `Shift+Tab` (Textual's own default cycle-focus) still
+        # reaches the pane too — this is a direct jump, not a replacement.
+        ("ctrl+o", "focus_conversation", "Focus conversation pane"),
     ]
 
     CSS = palette.css("""
@@ -1302,10 +1342,11 @@ class TextualChatApp(App):
         # (``display=False`` — see ``CompletionPopup.on_mount``).
         self._completion = CompletionPopup(id="completion")
         yield self._completion
-        # #3476 ⑤: the ctrl+f search bar — the last chrome region before the
-        # composer (collapsed by default; the completion popup above it can
-        # never be open at the same time, since completion follows COMPOSER
-        # typing and the search bar owns focus while visible).
+        # #3476 ⑤ (ctrl+n since #3692 PR-B ③): the search bar — the last
+        # chrome region before the composer (collapsed by default; the
+        # completion popup above it can never be open at the same time,
+        # since completion follows COMPOSER typing and the search bar owns
+        # focus while visible).
         self._search_bar = SearchBar(id="search-bar")
         yield self._search_bar
         with Horizontal(id="inputrow"):
@@ -1767,8 +1808,9 @@ class TextualChatApp(App):
             _apply_restored_state(msg, entry)
 
     def action_open_search(self) -> None:
-        """ctrl+f: open (or refocus) the search bar. Reopening keeps the
-        previous query (the browser convention), so re-sync its match state."""
+        """ctrl+n (#3692 PR-B ③, moved off ctrl+f): open (or refocus) the
+        search bar. Reopening keeps the previous query (the browser
+        convention), so re-sync its match state."""
         self._materialise_all_older()
         self._search_bar.open()
         if self._search_bar.query:
@@ -2255,6 +2297,14 @@ class TextualChatApp(App):
 
     def action_close_drawer(self) -> None:
         self._open_drawer(None)
+
+    def action_focus_conversation(self) -> None:
+        """``Ctrl+O``: hand focus to the conversation pane (#3692 PR-B ①).
+
+        Just a focus move — flowview owns everything after that. The current
+        entry is whatever flowview already has (freshly opened, or wherever a
+        prior visit left it); this does not touch it."""
+        self._flow.focus()
 
     def action_toggle_left_gutter(self) -> None:
         """``ctrl+g`` — flip the LEFT (state-marker) gutter's visibility.

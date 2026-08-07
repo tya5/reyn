@@ -1,10 +1,11 @@
-"""``SearchBar`` — the ctrl+f in-conversation search bar (#3476 ⑤).
+"""``SearchBar`` — the ctrl+n in-conversation search bar (#3476 ⑤, moved off
+ctrl+f by #3692 PR-B ③).
 
 A one-line bar docked directly above the input row (region order:
 conversation / intervention panel / rewind picker / sent-queue / completion
 popup / **search bar** / input — the last chrome region before the composer).
 Collapsed by default (``display=False`` in :meth:`on_mount`), shown by the
-app's ``ctrl+f`` binding.
+app's ``ctrl+n`` binding.
 
 This widget is PURE CHROME, the same split every sibling region uses (see
 :class:`~reyn.interfaces.inline.textual_chat.sent_queue.SentQueue`): it owns
@@ -43,7 +44,7 @@ from reyn.interfaces.inline.textual_chat import palette
 
 
 class SearchBar(Horizontal):
-    """The ctrl+f search bar: query input + ``n/M`` match count."""
+    """The ctrl+n search bar: query input + ``n/M`` match count."""
 
     DEFAULT_CSS = palette.css("""
     SearchBar {

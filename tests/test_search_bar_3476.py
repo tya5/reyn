@@ -1,10 +1,10 @@
-"""#3476 ⑤ — the ctrl+f in-conversation search bar.
+"""#3476 ⑤ — the ctrl+n in-conversation search bar.
 
 What these pin (all through the public surface — pressed keys, the painted
 count label via ``Static.render()``, ``FlowView.current``/``display`` —
 never widget internals):
 
-- ``ctrl+f`` from the composer opens the bar and focuses its query input;
+- ``ctrl+n`` from the composer opens the bar and focuses its query input;
 - typing searches incrementally: the cursor moves to the NEWEST match (a
   bottom-anchored conversation searches backward from now) and the ``n/M``
   count reflects the match set;
@@ -126,17 +126,17 @@ async def _type(pilot, text: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ctrl_f_opens_the_bar_and_focuses_the_query_input() -> None:
-    """Tier 2b: ctrl+f pressed while the composer holds focus (the app's
+async def test_ctrl_n_opens_the_bar_and_focuses_the_query_input() -> None:
+    """Tier 2b: ctrl+n pressed while the composer holds focus (the app's
     resting state) opens the search bar and moves focus into its input."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         bar = app.query_one(SearchBar)
         assert not bar.display, "test setup: the bar is already open"
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         await pilot.pause()
-        assert bar.display, "ctrl+f did not open the search bar"
+        assert bar.display, "ctrl+n did not open the search bar"
         assert isinstance(app.focused, Input), (
             f"focus is on {app.focused!r}, not the search input"
         )
@@ -152,7 +152,7 @@ async def test_incremental_search_selects_the_newest_match_with_count() -> None:
         for text in ("alpha one", "nothing here", "alpha two", "tail"):
             app.conversation.append(OutboxMessage(kind="agent", text=text))
         await pilot.pause()
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         await _type(pilot, "alpha")
         assert _addressed_text(app) == "alpha two", (
             "incremental search did not select the newest match"
@@ -170,7 +170,7 @@ async def test_enter_walks_older_arrows_map_spatially_and_wrap() -> None:
         for text in ("match old", "filler", "match mid", "filler", "match new"):
             app.conversation.append(OutboxMessage(kind="agent", text=text))
         await pilot.pause()
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         await _type(pilot, "match")
         assert _addressed_text(app) == "match new"
         assert _count_text(app) == "3/3"
@@ -217,7 +217,7 @@ async def test_search_finds_a_match_only_present_in_the_unpaged_prefix() -> None
             "needle-in-the-prefix" in (e.item.text or "") for e in app.conversation
         ), "test setup: the needle is already materialised"
 
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         await _type(pilot, "needle")
         assert len(list(app.conversation)) == len(project_restored_frames(log)), (
             "search-open did not materialise the full restored history"
@@ -243,7 +243,7 @@ async def test_escape_closes_the_bar_keeps_the_position_and_refocuses_composer()
         await pilot.pause()
         app.conversation.append(OutboxMessage(kind="agent", text="alpha"))
         await pilot.pause()
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         await _type(pilot, "alpha")
         assert _addressed_text(app) == "alpha", "test setup: no active search hit"
 
