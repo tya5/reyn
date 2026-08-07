@@ -39,30 +39,52 @@ from reyn.interfaces.inline.textual_chat import palette
 #: with the queue below it.
 _CANCEL_HINT = "Ctrl+C cancel"
 
+#: The key that returns to the newest output (#3712). Named here so the row and
+#: the binding that implements it cannot drift: a printed key that does not
+#: work is worse than none, and the conversation pane's own ``end``/``G`` only
+#: fire while it holds focus — i.e. never from where the reader actually is.
+LATEST_HINT = "Ctrl+End"
+
 
 def activity_text(
     state: str,
     *,
     elapsed_s: "float | None" = None,
     width: int = 80,
+    behind: "int | None" = None,
 ) -> str:
     """The rendered row for ``state``.
 
     ``elapsed_s`` is omitted entirely when ``None`` — an unknown duration
     prints no clock rather than a zero, because "00:00" reads as a fact and
     "no clock" reads as what it is.
+
+    ``behind`` (#3712) is how many entries have landed since the reader left
+    the newest output, or ``None`` while they are still on it. It takes the
+    right-hand slot ahead of the cancel hint: someone reading back through an
+    older reply cannot see the new output arriving, and that is the more
+    urgent of the two. Both are dropped before the state itself.
     """
     body = f"NOW   {state}"
     if elapsed_s is not None:
         body = f"{body} {int(elapsed_s) // 60:02d}:{int(elapsed_s) % 60:02d}"
-    # The hint is printed WHOLE or not at all. A clipped ``Ctrl+C cancel`` ends
-    # as ``Ctrl+C``, which still reads as a complete instruction and is a
-    # different one — the row would be naming a key combination nobody chose.
-    # Dropping it costs nothing: the binding works whether or not it is shown.
-    pad = width - len(body) - len(_CANCEL_HINT)
-    if pad >= 1:
-        return f"{body}{' ' * pad}{_CANCEL_HINT}"
-    return body
+    if behind:
+        return _with_suffix(body, f"LIVE +{behind} · {LATEST_HINT} latest", width)
+    return _with_suffix(body, _CANCEL_HINT, width)
+
+
+def _with_suffix(body: str, suffix: str, width: int) -> str:
+    """``body`` with ``suffix`` right-aligned, or ``body`` alone if it will not
+    fit WHOLE.
+
+    Never clipped. A cut ``Ctrl+C cancel`` ends as ``Ctrl+C``, which still
+    reads as a complete instruction and is a different one — the row would be
+    naming a key combination nobody chose. The same applies to a cut
+    ``Ctrl+End latest``. Dropping it costs nothing: both bindings work whether
+    or not they are printed.
+    """
+    pad = width - len(body) - len(suffix)
+    return f"{body}{' ' * pad}{suffix}" if pad >= 1 else body
 
 
 class ActivityRow(Static):
@@ -90,6 +112,7 @@ class ActivityRow(Static):
         self._clock = clock
         self._state: "str | None" = None
         self._started_at: "float | None" = None
+        self._behind: "int | None" = None
 
     #: How often the elapsed clock is redrawn. One second: the clock has
     #: one-second resolution, so a faster tick would repaint without changing
@@ -139,6 +162,16 @@ class ActivityRow(Static):
         self._started_at = None
         self.display = False
 
+    def set_behind(self, behind: "int | None") -> None:
+        """How far the reader is from the newest output, or ``None`` when they
+        are on it (#3712). Redraws only while a turn is showing — this rides in
+        the live-turn row's spare space and does not summon one."""
+        if self._behind == behind:
+            return
+        self._behind = behind
+        if self._state is not None:
+            self._render_row()
+
     def tick(self) -> None:
         """Redraw so the elapsed clock advances. No-op while hidden."""
         if self._state is not None:
@@ -151,6 +184,9 @@ class ActivityRow(Static):
         # and comes back clipped.
         self.update(
             activity_text(
-                self._state or "", elapsed_s=elapsed, width=self.content_size.width or 78
+                self._state or "",
+                elapsed_s=elapsed,
+                width=self.content_size.width or 78,
+                behind=self._behind,
             )
         )
