@@ -1673,17 +1673,39 @@ class Session:
                 return cls
         return None
 
-    def _rebuild_turn_budget_engine_for_model(self) -> None:
-        """#1752: rebuild the chat turn_budget engine for the active model.
+    def _rebuild_derived_model_engines_for_model(self) -> None:
+        """#1752 / #3785: rebuild the per-model-derived chat engines after a
+        ``/model`` switch — turn_budget AND compaction, ONE private-Session
+        entry point, not two.
 
-        The engine bakes derived headroom (max_input + wrap-up-SP token cost)
-        for one resolved (model, config) at construction (a deliberate
-        compute-once invariant, mirroring CompactionEngine). A ``/model``
-        override changes the context window, so on switch we rebuild the engine
-        for the new resolved model and rewire it into the RouterHostAdapter —
-        rather than recomputing per turn for a rare event. ``try_build_*``
-        returns ``None`` for a small-context model (force-close stays inert),
-        matching the original construction at ``__init__``.
+        #3785 review (lead-coder): a second private-Session accessor
+        (``_rebuild_compaction_engine_for_model``) was rejected — the
+        ``_SESSION_RESIDUE`` ratchet in
+        ``test_3595_s4_slash_handler_seam.py`` tracks *reachable* private
+        access, and adding a second entry with "mirrors the existing one"
+        as its own justification would have meant the precedent excused
+        the debt rather than bounding it. Both rebuilds are equally "part
+        of what /model MEANS" (the existing entry's own reasoning), so
+        they fold into the SAME private call instead of two.
+
+        turn_budget rebuilds EAGERLY: the engine bakes derived headroom
+        (max_input + wrap-up-SP token cost) for one resolved (model,
+        config) at construction (a deliberate compute-once invariant,
+        mirroring CompactionEngine); ``try_build_*`` returns ``None`` for
+        a small-context model (force-close stays inert, matching the
+        original construction at ``__init__``) — matters immediately for
+        a per-turn cap check, so it is worth having correct right away.
+
+        compaction rebuilds LAZILY: the factory ``_build_history_compaction
+        _bundle`` gave ``CompactionController`` already reads ``self.model``
+        fresh each call, so a switch only needs the CACHE invalidated —
+        the SAME lazy-build-on-first-real-use discipline #3671 established
+        for construction applies to rebuilds too: a switch that never
+        triggers compaction again should not pay to rebuild it. This is
+        why compaction's own rebuild is NOT eager here, unlike turn_budget's
+        — a deliberate difference, not an inconsistency (see
+        ``docs/reference/runtime/session-construction.md``'s compaction
+        section for the fuller argument).
         """
         from reyn.services.turn_budget import try_build_default_turn_budget_engine
         engine = try_build_default_turn_budget_engine(
@@ -1693,6 +1715,7 @@ class Session:
             max_inline_bytes=self._offload_config.max_inline_bytes,
         )
         self._router_host.set_turn_budget_engine(engine)
+        self._compaction_controller.rebuild_engine()
 
     @property
     def workspace_dir(self) -> "Path":
@@ -4059,10 +4082,20 @@ class Session:
         # once, on first reference.
         def _build_chat_compaction_engine() -> CompactionEngine:
             return CompactionEngine(
-                # #1172: pass a resolved model CLASS, not the raw string —
-                # unresolved, litellm raises BadRequestError and every
-                # compaction trigger fails (session-construction.md#compactionengine-model-resolved-class-not-the-cosmetic-label-1172).
-                model=self._resolver.purpose_class_or("compaction", self.model),
+                # #1172: pass a model CLASS, not a pre-resolved literal —
+                # CompactionEngine.__init__ resolves it itself via `resolver`
+                # below (unresolved-vs-resolved was the #1172 hazard, not
+                # class-vs-literal; passing an unresolved class here is
+                # correct — see CompactionEngine's own docstring).
+                # #3785: compaction always follows the conversation's active
+                # model now — no per-purpose override
+                # (model_class_by_purpose.compaction was removed; a config
+                # that still sets it fails to load, config/root.py). Reading
+                # `self.model` FRESH here (not baked in) is what makes
+                # `CompactionController.rebuild_engine` (called on every
+                # `/model` switch) actually pick up the new model — this
+                # closure is called again lazily, at most once per rebuild.
+                model=self.model,
                 events=self._chat_events,
                 system_prompt_provider=history_buffer.build_system_prompt,
                 resolver=self._resolver,

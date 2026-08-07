@@ -99,11 +99,13 @@ async def model_cmd(ctx: "SlashContext", args: str) -> None:
         return
 
     ctx.session._model_override = requested
-    # #1752: the per-turn budget consumers (history buffer / context budget
-    # advisor) read the live resolved model via their model_fn, but the
-    # turn_budget engine bakes derived headroom at construction, so rebuild it
-    # for the new model's context window.
-    ctx.session._rebuild_turn_budget_engine_for_model()
+    # #1752 / #3785: the per-turn budget consumers (history buffer / context
+    # budget advisor) read the live resolved model via their model_fn, but
+    # turn_budget AND compaction both bake their model in at construction, so
+    # rebuild both for the new model — ONE private-Session entry point (not
+    # one per engine; see the method's own docstring for why they are folded
+    # together rather than exposed as two separate accessors).
+    ctx.session._rebuild_derived_model_engines_for_model()
 
     # #1830 / FP-0052: emit model_cost_warn event if the chosen model exceeds
     # the configured cost threshold (pre-selection awareness). De-duped per

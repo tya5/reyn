@@ -183,12 +183,17 @@ _SESSION_RESIDUE: "dict[str, _Residue]" = {
             "the completer uses it — so the missing half is is_known_class."
         ),
     ),
-    "_rebuild_turn_budget_engine_for_model": _Residue(
+    "_rebuild_derived_model_engines_for_model": _Residue(
         needed_for=("/model",),
         resolution=(
             "Model bundle: the post-switch rebuild. Not a separate operation — "
             "it is part of what 'set the model' MEANS, so a published "
-            "set-model operation absorbs it rather than exposing it."
+            "set-model operation absorbs it rather than exposing it. #3785: "
+            "folds BOTH the turn_budget engine's rebuild and compaction's "
+            "(previously missing entirely — compaction never tracked a "
+            "/model switch, the bug #3785 fixed) into this ONE accessor "
+            "rather than adding a second private-Session entry point for "
+            "what is the same kind of residue twice."
         ),
     ),
     "_interventions": _Residue(

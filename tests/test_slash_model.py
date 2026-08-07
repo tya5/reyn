@@ -92,9 +92,11 @@ class _FakeSession:
         self._resolver = resolver
         self._model_override: str | None = None
 
-    def _rebuild_turn_budget_engine_for_model(self) -> None:
-        # #1752: no-op on the stub — it has no turn_budget engine / router host.
-        # The real rebuild is exercised in Group D against a real Session.
+    def _rebuild_derived_model_engines_for_model(self) -> None:
+        # #1752 / #3785: no-op on the stub — it has no turn_budget engine,
+        # router host, or compaction controller. The real rebuilds (both
+        # folded into this one accessor) are exercised in Group D against a
+        # real Session.
         pass
 
 
@@ -304,18 +306,56 @@ async def test_turn_budget_engine_rebuilt_on_model_switch(tmp_path):
     """Tier 2: /model switch rebuilds the chat turn_budget engine for the new
     model (rebuild-on-switch; the engine bakes derived headroom at construction).
 
+    #3671 follow-up: ``session._router_host._turn_budget_engine`` is a LAZY
+    cache (``_TURN_BUDGET_ENGINE_UNSET`` sentinel until first reference —
+    reading it directly here, before anything triggers a real build, returns
+    the sentinel, not "the construction-time engine object"). The rebuild
+    call (``set_turn_budget_engine``) sets it EAGERLY, so ``before`` (still
+    the sentinel) and ``after`` (a real value, possibly ``None`` for a
+    non-viable resolved model) are still reliably distinct either way.
+
     Falsification: if model_cmd did not call
-    ``session._rebuild_turn_budget_engine_for_model()``, the RouterHostAdapter
-    would keep the construction-time engine object and the identity assertion
-    below would fail (after is before).
+    ``session._rebuild_derived_model_engines_for_model()``, ``after`` would
+    still be the same untouched sentinel as ``before`` and the identity
+    assertion below would fail (after is before).
     """
     session = _make_session(tmp_path, model="standard")
     session._resolver = _make_resolver()
     before = session._router_host._turn_budget_engine
-    assert before is not None  # baseline engine built (gpt-4o has a usable window)
 
     ctx = _ctx(session)
     await model_cmd(ctx, "strong")
 
     after = session._router_host._turn_budget_engine
-    assert after is not before  # engine rebuilt for the new model
+    assert after is not before  # rebuilt (or explicitly re-evaluated) for the new model
+
+
+@pytest.mark.asyncio
+async def test_compaction_engine_rebuilt_on_model_switch(tmp_path):
+    """Tier 2: #3785 — /model switch rebuilds the compaction engine for the
+    new model. Before this fix, compaction never tracked a ``/model`` switch
+    at all — it kept compacting on whatever model the session started with.
+
+    ``CompactionController._engine`` is a lazy property (#3671): reading it
+    for ``before`` triggers the FIRST real build (against "standard"),
+    exactly like a real first compaction trigger would. The rebuild call
+    only invalidates the cache (stays lazy — #3671's own discipline), so
+    ``after`` is a SECOND build, against whatever ``session.model`` is at
+    that later reference — "strong", following the switch.
+
+    Falsification: if model_cmd did not call
+    ``session._rebuild_derived_model_engines_for_model()``, ``after`` would
+    be the exact same cached object as ``before`` (still resolving against
+    "standard") and both assertions below would fail.
+    """
+    session = _make_session(tmp_path, model="standard")
+    session._resolver = _make_resolver()
+    before = session._compaction_controller._engine
+    before_model = before.model
+
+    ctx = _ctx(session)
+    await model_cmd(ctx, "strong")
+
+    after = session._compaction_controller._engine
+    assert after is not before  # rebuilt, not the same cached engine
+    assert after.model != before_model  # ...and resolves against the NEW model

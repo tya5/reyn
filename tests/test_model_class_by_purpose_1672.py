@@ -127,3 +127,25 @@ model_class_by_purpose:
     assert "rooter" in cfg.model_class_by_purpose  # preserved (not dropped)
     assert any("rooter" in r.getMessage() and "purpose" in r.getMessage()
                for r in caplog.records), "expected a typo warning naming the bad key"
+
+
+def test_yaml_compaction_purpose_key_refuses_to_load(tmp_path, monkeypatch) -> None:
+    """Tier 2: #3785 — ``model_class_by_purpose.compaction`` is NOT a warn-and-
+    continue unknown key like a typo (the test above); it fails to load
+    outright. The key's presence is evidence of a wrong belief (compaction
+    runs on a separately-configured model) rather than a typo — compaction
+    never tracked a ``/model`` switch under the old wiring, so a config with
+    this key was silently getting a stale model, not the one it named.
+
+    Falsification: if ``_build_model_class_by_purpose`` treated ``compaction``
+    like any other unknown key, this would warn-and-load (like the test
+    above) instead of raising, and ``pytest.raises`` would not see the error.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path / "reyn.yaml", """
+model: standard
+model_class_by_purpose:
+  compaction: strong
+""".lstrip())
+    with pytest.raises(ValueError, match="model_class_by_purpose.compaction"):
+        load_config(cwd=tmp_path)
