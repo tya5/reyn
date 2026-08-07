@@ -126,8 +126,9 @@ async def _until(pred) -> None:
 def test_an_unknown_duration_prints_no_clock() -> None:
     """Tier 1: no elapsed time is invented when none was observed.
 
-    A client that joined mid-turn has no start instant. "00:00" would read as a
-    measurement; printing nothing reads as what it is.
+    A client that joined mid-turn has no start instant. "0s" would read as a
+    measurement — a turn that just began — and printing nothing reads as what
+    it is.
     """
     with_clock = str(activity_text("WORKING", elapsed_s=78.0, width=80))
     without = str(activity_text("WORKING", elapsed_s=None, width=80))
@@ -160,6 +161,28 @@ def test_the_cancel_affordance_yields_before_the_state_does() -> None:
         f"the abort hint was dropped before the count: {narrow!r}"
     )
     assert "3 entries" not in narrow
+
+
+def test_a_row_too_narrow_for_the_state_keeps_the_state_and_overflows() -> None:
+    """Tier 1: the head is never dropped, even when it alone will not fit.
+
+    Everything optional goes first, and then the row overflows rather than
+    truncating what is happening. A clipped state word is a different word —
+    ``TOOL search_actions`` cut to ``TOOL sea`` names a tool that does not
+    exist — and a row that has given up saying what is happening has nothing
+    left to be. Pinned because the alternative (stop dropping once it fits, and
+    clip the rest) is what a later reader would reach for on seeing the loop
+    run to empty.
+    """
+    narrow = str(activity_text("RESPONDING", elapsed_s=5.0, width=4, entries=3))
+
+    assert "RESPONDING" in narrow, f"the state was clipped away: {narrow!r}"
+    assert "entries" not in narrow and _CANCEL_HINT not in narrow, (
+        f"an optional segment survived a width nothing fits in: {narrow!r}"
+    )
+    # "RESPONDING" in narrow already says the row is wider than the four
+    # columns it was given: overflowing is the intended outcome, and asserting
+    # it a second time by size would pin the shape rather than the behaviour.
 
 
 # ── the lifecycle, on a real app ─────────────────────────────────────────────

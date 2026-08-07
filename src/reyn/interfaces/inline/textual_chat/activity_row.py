@@ -155,8 +155,16 @@ def activity_text(
     """The rendered row for ``state``.
 
     ``elapsed_s`` is omitted entirely when ``None`` — an unknown duration
-    prints no clock rather than a zero, because "00:00" reads as a fact and
-    "no clock" reads as what it is.
+    prints no clock rather than a zero, because "0s" reads as a fact — a turn
+    that just started — and "no clock" reads as what it is: a turn whose start
+    this client never saw.
+
+    The format is bare seconds (#3777, from the owner's mock: ``RESPONDING
+    12s``), replacing the ``MM:SS`` this row used until now. **Past a minute
+    that is worse, not better** — ``1247s`` is a number nobody reads at a
+    glance and ``20:47`` is — and switching format at sixty seconds would be
+    this module choosing for the operator. It is left as specified and raised
+    on the PR instead.
 
     ``entries`` is how many entries this TURN has produced, counted from the
     moment it started and shown from zero upward. ``away`` is whether the
