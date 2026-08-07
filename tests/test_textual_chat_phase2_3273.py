@@ -191,7 +191,13 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     # pin here is what detects a locally-forked/vendored flowview masquerading
     # as the release (a mismatch means the installed copy is not the pinned
     # one).
-    assert textual_flowview.__version__ == "0.14.0"
+    # The version literal moves with every pin bump. It is kept because this
+    # test predates ``scripts/verify_env_identity.py`` (#3723), which now checks
+    # the same thing better — against the SHA in pyproject rather than a string
+    # someone has to remember to edit. Raised on the bump PR rather than
+    # removed here: deleting another gate mid-bump is how a bump hides a
+    # regression.
+    assert textual_flowview.__version__ == "0.15.1"
     # The native animation primitive reyn now drives the blink through: FlowView
     # accepts an ``animation_fps`` and owns its own animation tick.
     import inspect

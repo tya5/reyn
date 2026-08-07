@@ -120,7 +120,7 @@ class RewindPicker(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            "rewind to a checkpoint (Enter to check out · Esc to cancel)",
+            "rewind to a checkpoint (enter to check out · esc to cancel)",
             id="rewind-picker-title",
         )
         yield OptionList(id="rewind-picker-options")

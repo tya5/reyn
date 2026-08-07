@@ -106,10 +106,27 @@ dependencies = [
     # fixes the addressed-row-rail regression 0.13.0 introduced (`c` moved the
     # addressed row; 0.13.1 moves the cursor onto `current` via `set_current`
     # instead) — pinned straight to 0.13.1, 0.13.0 was never released to reyn.
+    # 0.14.0 (#3784) exposes `following`/`FollowChanged` and fixes the
+    # early-scroll-release bug; reyn's tail-away indicator drives off that
+    # event rather than the per-frame geometry poll it replaced. (This entry
+    # is retrospective — #3784 moved the pin without extending this narrative,
+    # so the comment described 0.13.1 while the pin was 0.14.0.)
+    # 0.15.1 adds a viewport overlay API (`play_overlay`/`set_overlay`/
+    # `OverlayFinished`) and nothing else. Verified as no-change-for-reyn from
+    # the DIFF, not from the release notes: `__all__` is untouched (only
+    # `__version__` moved), the sole deleted line in `_view.py` is an import
+    # widening (`Callable` -> `Callable, Iterator`), and the two insertions
+    # that land inside EXISTING methods — `on_unmount` and `render_line` — are
+    # both guarded on overlay state that initialises to None and is written
+    # only by the overlay API. reyn references none of those three names, so
+    # both guards are permanently false and the render path is unchanged.
+    # "The changelog says additive" would not have established that: an
+    # insertion into `render_line` is a change to the hot path whatever the
+    # release notes call it.
     # The SHA is the *commit*, not the tag object: v0.13.1/v0.12.0 are
     # LIGHTWEIGHT tags (no `^{}` peel in `git ls-remote`), same as v0.9.0,
     # unlike the annotated v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@224889a494a719ec7b26b5c48a342aa654f3fefc",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@503a536e5dd717731125679a32ee89a1b90ae54d",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)

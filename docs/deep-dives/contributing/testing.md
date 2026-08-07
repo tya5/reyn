@@ -179,7 +179,8 @@ actually testing became true. A straight-line `sleep(N)` — using elapsed
 time itself as the thing that makes an assertion pass — is banned outright,
 the same way it always was; this section states the discipline explicitly
 because this repo's own violations show the ban was never actually
-enforced, not because the rule itself is new.
+enforced, not because the rule itself is new. Summarized as a Key
+constraints bullet in `CLAUDE.md` too — update both if this changes.
 
 **CI's `--timeout=120` is a kill switch, not a per-test contract.** It
 exists to bound the damage a single hung test does to the rest of the run —
