@@ -192,11 +192,11 @@ Two ways to interact directly with the conversation history, not just the input 
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+F` | Open the in-conversation search bar. Incremental, case-insensitive substring match; `Enter`/`↑` = older match, `Shift+Enter`/`↓` = newer, both wrapping; `Esc` closes the bar and returns focus to the input. Searching moves the same cursor `Shift+Tab` uses, and closing the bar leaves it on the match you found — so `Shift+Tab` picks up from there |
-| `Shift+Tab` | Move focus into the conversation pane itself, arming a per-entry highlight on the newest entry; `Esc` returns focus to the input |
+| `Ctrl+N` | Open the in-conversation search bar. Incremental, case-insensitive substring match; `Enter`/`↑` = older match, `Shift+Enter`/`↓` = newer, both wrapping; `Esc` closes the bar and returns focus to the input. Searching moves the same cursor `Shift+Tab`/`Ctrl+O` uses, and closing the bar leaves it on the match you found — so either pane-focus key picks up from there |
+| `Ctrl+O` / `Shift+Tab` | Move focus into the conversation pane itself (`Ctrl+O` is a direct jump; `Shift+Tab` also cycles through the rest of the chrome), landing on the entry you left it on — or, on first entry, the newest one. `Esc` returns focus to the input |
 | `c` | (with the conversation pane focused) Show/hide a vim-style text cursor over the content, for selecting and copying part of a reply — always live, no mode to enter or leave. `hjkl` move, `v`/`V` select, `y` yanks, `Esc` cancels the selection; `*`/`n`/`N` search the selection. These are the library's own keys |
 
-Once the pane holds focus (via `Shift+Tab`), the cursor moves with `↑`/`↓`/`PageUp`/`PageDown`/`Home`/`End`:
+Once the pane holds focus (via `Ctrl+O` or `Shift+Tab`), the cursor moves with `↑`/`↓`/`PageUp`/`PageDown`/`Home`/`End`:
 
 | Key | Action |
 |-----|--------|

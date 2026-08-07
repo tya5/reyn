@@ -267,7 +267,7 @@ async def test_closing_search_removes_the_hits_rail() -> None:
         await pilot.pause()
         app.conversation.append(OutboxMessage(kind="agent", text="alpha match"))
         await pilot.pause()
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         for ch in "alpha":
             await pilot.press(ch)
         await pilot.pause()
@@ -292,7 +292,7 @@ async def test_the_search_hit_is_railed() -> None:
             app.conversation.append(OutboxMessage(kind="agent", text=text))
         await pilot.pause()
 
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         for ch in "alpha":
             await pilot.press(ch)
         await pilot.pause()
@@ -326,7 +326,7 @@ async def test_only_one_entry_is_ever_railed_even_with_search_open() -> None:
             app.conversation.append(OutboxMessage(kind="agent", text=text))
         await pilot.pause()
 
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         for ch in "alpha":
             await pilot.press(ch)
         await pilot.pause()

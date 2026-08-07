@@ -26,10 +26,23 @@ asserted to return to the Composer on ``Esc``:
      this region ALREADY existed outside the original hand-enumeration —
      exactly the "6th focusable region" case the note below predicted —
      so it is now armed here per that note's own instruction.
-  7. SearchBar's query ``Input`` (#3476 ⑤ — reached via ``ctrl+f``, not
+  7. SearchBar's query ``Input`` (#3476 ⑤ — reached via ``ctrl+n``, not
      Shift+Tab cycling). Added on the SAME "maintainer's job" instruction
      the note below states — #3488 introduced this region without arming
      it here; closed by this PR.
+
+Plus one case that is deliberately the OPPOSITE assertion — Esc does NOT
+reach the Composer:
+
+  8. FlowView with an active visual selection (#3692 PR-B ②) — flowview
+     0.13's own Esc binding (``cursor_cancel``) is live only while a
+     selection exists, so the key is consumed one layer in and never
+     bubbles to reyn's app-level "close drawer / back to Composer"
+     binding. This is the innermost of #3692's three Esc layers; the other
+     two (drawer open -> close it; nothing selected -> Composer) are
+     exactly states 2 and 6 above, re-verified to still hold once the
+     flowview 0.13 pin (#3692 PR-A) gave FlowView its own competing Esc
+     binding for the first time.
 
 This list is NOT derived from an exhaustive enumeration of every focusable
 widget the app can mount (co-vet note, #3365 review) — it is the set of
@@ -287,11 +300,76 @@ async def test_esc_from_conversation_pane_returns_to_composer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_esc_with_an_active_selection_cancels_it_and_stays_on_the_pane() -> None:
+    """Tier 2b: #3692 PR-B ② — the INNERMOST Esc layer. With an active visual
+    selection, Esc cancels the selection but does NOT bubble past flowview:
+    focus stays on the conversation pane rather than returning to the
+    Composer (the opposite of the sibling case directly above, which has no
+    selection to intercept the key).
+
+    flowview 0.13's own ``check_action`` gates its ``cursor_cancel`` binding
+    live only while a selection is active (``self._tc_anchor is not None``)
+    — this is what makes the layering work by ordinary Textual bubbling, not
+    anything reyn adds: reyn declares no ``priority=True`` on its own
+    app-level Esc binding (#3692 issue body's stated implementation
+    requirement), so flowview's binding gets first refusal whenever it is
+    live.
+
+    The witness is public: ``Screen.get_selected_text()`` grows as the
+    selection is extended, then — on ``Esc`` — shrinks back down to the
+    SAME length as the bare cursor's own pre-extension baseline (not
+    necessarily the same character: cancelling a visual selection leaves
+    the cursor where the selection ended, vim-style, not where it started —
+    only the WIDTH collapses). Measured against the actual baseline rather
+    than a hardcoded size, so this does not pin the cursor's rendered width
+    — not a private ``_tc_anchor`` read either."""
+    from textual_flowview import FlowView
+
+    app = TextualChatApp(transport=_Transport([]))
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.conversation.append(OutboxMessage(kind="agent", text="newest reply"))
+        await pilot.pause()
+        app.query_one(Composer).focus()
+        await pilot.pause()
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        flow = app.focused
+        assert isinstance(flow, FlowView), (
+            f"setup: Shift+Tab did not reach the conversation pane: {flow!r}"
+        )
+        await pilot.press("c")  # show the text cursor
+        await pilot.pause()
+        baseline = flow.screen.get_selected_text() or ""
+
+        await pilot.press("v")  # start a visual selection
+        await pilot.press("l", "l", "l")  # extend it
+        await pilot.pause()
+        extended = flow.screen.get_selected_text() or ""
+        assert len(extended) > len(baseline), (
+            f"test setup: extending the visual selection did not grow it past "
+            f"the bare-cursor baseline {baseline!r}: {extended!r}"
+        )
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.focused is flow, (
+            f"Esc with an active selection bubbled past the pane instead of "
+            f"being consumed by it: {app.focused!r}"
+        )
+        after = flow.screen.get_selected_text() or ""
+        assert len(after) == len(baseline), (
+            f"Esc did not cancel the visual selection back to the bare-cursor "
+            f"baseline width ({baseline!r}): {after!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_esc_from_search_bar_returns_to_composer() -> None:
     """Tier 2b: Esc from the search bar's query Input -> Composer.
 
     The 7th hand-enumerated state (see the module docstring): SearchBar is
-    reached via ``ctrl+f`` (#3476 ⑤), not Shift+Tab cycling — a different
+    reached via ``ctrl+n`` (#3476 ⑤), not Shift+Tab cycling — a different
     reachability path than every other state in this file, so it is armed
     here as its own case rather than assumed to be covered by the FlowView
     case above."""
@@ -303,10 +381,10 @@ async def test_esc_from_search_bar_returns_to_composer() -> None:
         app.query_one(Composer).focus()
         await pilot.pause()
 
-        await pilot.press("ctrl+f")
+        await pilot.press("ctrl+n")
         await pilot.pause()
         assert isinstance(app.focused, Input), (
-            f"setup: ctrl+f did not focus the search input: {app.focused!r}"
+            f"setup: ctrl+n did not focus the search input: {app.focused!r}"
         )
 
         await pilot.press("escape")

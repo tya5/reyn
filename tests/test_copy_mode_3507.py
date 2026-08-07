@@ -239,15 +239,16 @@ def test_no_reyn_surface_declares_a_flowview_owned_key() -> None:
     # flowview's own keymap (`_view.py`'s always-live BINDINGS, #3692's issue
     # body §"flowview 0.13 が既に提供するキー") — every key reyn must never
     # shadow, `c` (the former copy-mode entry key) included now that it is
-    # flowview's own `toggle_cursor`, not reyn's. `ctrl+f` and `escape` are
-    # DELIBERATELY EXCLUDED: the issue body names both as genuine, still-open
-    # conflicts (reyn's own `open_search` / drawer-close vs. flowview's
-    # `cursor_scroll_page_down` / selection-cancel) left to PR-B's ruling —
-    # including them here would fail this gate on reyn's CURRENT, sanctioned
-    # bindings rather than on a future regression.
+    # flowview's own `toggle_cursor`, not reyn's. #3692 PR-B ③ resolved the
+    # `ctrl+f` conflict by moving reyn's search off it (to `ctrl+n`), so
+    # `ctrl+f` joins the vim-scroll set here too. `escape` stays EXCLUDED —
+    # not a still-open conflict but the opposite: reyn's own app-level
+    # `escape` binding is REQUIRED for the layered Esc design (#3692 PR-B
+    # ②, `test_esc_with_an_active_selection_cancels_it_and_stays_on_the_pane`
+    # in the esc-sufficiency file), so it would be a false positive here.
     flowview_owned = {
         "h", "j", "k", "l", "w", "b", "e", "0", "$", "^", "g", "G", "[",
-        "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+b",
+        "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+b", "ctrl+f",
         "v", "V", "y", "*", "n", "N", "c",
     }
     offenders = {

@@ -681,7 +681,7 @@ second hand-rolled column:
   The **ADDRESSED-ROW RAIL** (#3490) is drawn in the RIGHT gutter, described
   below — this column carried it until #3526 moved it on the owner's
   instruction. **There is exactly ONE addressed position** — the keyboard
-  cursor (#3476 ⑥), which is also what `ctrl+f` search moves (#3493) rather
+  cursor (#3476 ⑥), which is also what `ctrl+n` search moves (#3493) rather
   than keeping a second selection of its own, so two different rows can never
   both be marked *by construction* instead of by a gating rule that has to
   stay correct. **flowview 0.11.0 (#3624) merged keyboard highlight and mouse
@@ -925,16 +925,31 @@ reply, and a `reversed()` + `append` seeding expressed that correctly only
 while the reply count stayed under the cap — past it, `append` evicts from
 the NEWEST side and silently inverts the "1 = newest" contract (#3486).
 
-### Textual TUI in-conversation search (#3476)
+### Textual TUI in-conversation search (#3476, #3692 PR-B ③)
 
-`ctrl+f` opens a one-line search bar docked directly above the composer (the
-last chrome region before the input row; collapsed by default). The key was
-verified free against the same enumeration the gutter bindings use — no
-`TextArea` binding claims it, and `RESERVED_KEYS` reserves only `ctrl+r`/`F2`.
+`ctrl+n` opens a one-line search bar docked directly above the composer (the
+last chrome region before the input row; collapsed by default). Originally
+`ctrl+f` — moved by #3692 PR-B once flowview 0.13 gave that key its own
+meaning (`cursor_scroll_page_down`, one member of a `ctrl+b/d/e/f/u/y`
+vim-scroll set): reyn's search is entry-granular over the FULL conversation
+model (forcing lazily-paged-in older history to materialise first) while
+flowview's own `*`/`n`/`N` is a row/character-granular cursor jump limited to
+whatever is already materialised — measurably different features, so per the
+issue's own decision rule the search moved rather than displacing one
+vim-scroll key out of its set. `ctrl+p` was the first candidate and a real
+trap: free by every enumeration below, yet still claimed — by Textual's own
+`App.COMMAND_PALETTE_BINDING`, a class attribute outside the declarative
+`BINDINGS` list this enumeration otherwise walks (measured: pressing it in a
+real pilot opened the command palette, not the search bar). `ctrl+n` was
+re-verified free against the full enumeration: `TextArea`'s own
+ctrl-bindings, flowview's owned set, `RESERVED_KEYS` (`ctrl+r`/`F2`), the
+(separate, unbuilt) plain-CLI redesign proposal's own key table, and
+Textual's `App`/`Screen` class attributes beyond `BINDINGS` — and pressed,
+not just declared, in `test_search_bar_3476.py`.
 
 | Key | Effect |
 |-----|--------|
-| `ctrl+f` | Open (or refocus) the bar |
+| `ctrl+n` | Open (or refocus) the bar |
 | `Enter` / `↑` | Step to an OLDER match |
 | `Shift+Enter` / `↓` | Step to a NEWER match |
 | `Esc` | Close, clear the mark, return focus to the composer |
@@ -963,7 +978,7 @@ Two decisions worth stating because the obvious alternative is wrong:
 Search moves the **keyboard cursor** (#3493) rather than holding a selection
 of its own, so the hit is marked by the one addressed-row rail described under
 *Textual TUI gutters* above — and closing the bar keeps the cursor on the hit,
-so `Shift+Tab` back into the pane resumes navigating from what you found. Its
+so `Shift+Tab`/`Ctrl+O` back into the pane resumes navigating from what you found. Its
 keys are registered in `SEARCHBAR_KEYS`
 (`textual_chat/chrome.py`) so the Help pane sources them from where they are
 defined.
@@ -977,20 +992,24 @@ independent flags, keyboard-only `highlight=` and mouse-only `selectable=`
 by *both* inputs; 0.12.0 (#3624) then removed the `highlight=` alias entirely,
 so `selectable=True` is now the only spelling and it enables the mouse
 alongside the keyboard whether reyn wants the mouse leg or not (see the hazard
-below). The pane is reached the way that focus state was already reachable —
-Textual's own `Shift+Tab` focus cycling, with `Esc` returning to the composer
-(machine-verified by the Esc-sufficiency gate) — never a new focus path. While
-FlowView does not hold focus these keys are unaffected; the composer's own
-`PageUp`/`PageDown` scroll delegation calls actions on the view directly and
-does not depend on the cursor at all.
+below). The pane is reached via Textual's own `Shift+Tab` focus cycling, and
+(#3692 PR-B ①) `Ctrl+O` — a direct jump reyn adds because flowview cannot bind
+a key for "I don't have focus yet"; only the app that currently holds focus
+can move it in. `Esc` returns to the composer (machine-verified by the
+Esc-sufficiency gate, including the #3692 case where an active text-cursor
+selection intercepts `Esc` one layer in instead — see "Textual TUI text
+cursor" below). While FlowView does not hold focus these keys are unaffected;
+the composer's own `PageUp`/`PageDown` scroll delegation calls actions on the
+view directly and does not depend on the cursor at all.
 
 | Key / input | Effect |
 |-----|--------|
+| `Ctrl+O` / `Shift+Tab` | Focus the pane, landing on the remembered `current` entry (or the newest, on first entry) |
 | `↑` `↓` `PgUp` `PgDn` `Home` `End` | Move the cursor (flowview's own bindings) |
 | `Enter` / `Space` | Copy the cursor entry's text to the clipboard |
 | a click | Move the cursor to the clicked entry (flowview 0.11.0+; does **not** copy — see below) |
 | `r` | Open `/rewind` |
-| `Esc` | Back to the composer |
+| `Esc` | Back to the composer (or, with an active text-cursor selection, cancels the selection first) |
 
 Arriving at the pane arms the cursor on the **newest** entry rather than
 leaving it invisible until the first arrow press: flowview's `move_current`
