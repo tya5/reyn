@@ -126,7 +126,8 @@ def _cursor_col(flow: FlowView, row: int) -> "int | None":
     row ``row`` (``None`` if the cursor is not on this row) — read from
     :meth:`FlowView.render_line`'s PUBLIC per-segment ``style``, not any
     private cursor-position field. The cursor renders as a ``… on color(4)``
-    segment (measured against 0.13.1) regardless of the surrounding theme."""
+    segment (measured against 0.13.1, re-verified against 0.14.0) regardless
+    of the surrounding theme."""
     x = 0
     for seg in flow.render_line(row):
         if "on color(4)" in str(seg.style):
