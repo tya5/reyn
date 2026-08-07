@@ -1,4 +1,4 @@
-"""#3693 — the live-turn line above the composer, and NEXT on the queue.
+"""#3693 — the live-turn line above the composer.
 
 The RUNNING gutter is the right expression of a live turn inside the
 conversation, and it scrolls away. This region answers "is the turn still
@@ -11,13 +11,14 @@ observed: a turn is running (``turn_active``), content is arriving
 attached mid-turn knows the first and none of the rest, and must not print an
 elapsed time measured from when it happened to connect.
 
-``NEXT`` is asserted as UNCONDITIONAL on a non-empty queue. An earlier version
-of the proposal put it on the queue only while a turn was running; the owner
-ruled that wrong — the queue holds undispatched inbox items, whether a turn is
-in flight is a separate fact, and there is no dependency between them. Two
-windows make that concrete and both are covered below: a message typed before
-the session attached, and one sitting between a turn settling and the next
-dispatch.
+#3777 (clean break): the ``NEXT`` label that used to single out the head of
+the sent-queue is gone (owner call: no special-case for the head row at all,
+"option ①") — the three tests that asserted its presence/positioning/hand-off
+were retired in the same PR that removed the feature (the surviving
+queue-order/promotion-once properties they incidentally exercised are already
+covered by ``test_3300_p2b_sentqueue_render.py``'s own tests, which do not
+depend on NEXT). See the "the shine" section below for the glyph #3777 put on
+THIS row instead.
 """
 from __future__ import annotations
 
@@ -29,7 +30,6 @@ from textual.content import Span
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow, activity_text
-from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -81,13 +81,6 @@ class QueueTransport(ClientTransport):
 
     async def shutdown(self) -> None:
         pass
-
-
-def _queued(text: str, *, msg_id: str, chain_id: str, seq: int) -> Event:
-    return Event(
-        type="user_submitted",
-        data={"text": text, "chain_id": chain_id, "msg_id": msg_id, "seq": seq, "meta": {}},
-    )
 
 
 def _started(chain_id: str, seq: int) -> Event:
@@ -267,86 +260,13 @@ async def test_the_row_is_not_focusable() -> None:
         assert app.query_one(ActivityRow).focusable is False
 
 
-# ── NEXT: a property of the queue, not of the turn ───────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_the_head_of_the_queue_is_labelled_next_with_no_turn_running() -> None:
-    """Tier 2b: NEXT appears on a queued item while nothing is running.
-
-    The window between one turn settling and the next dispatch. The item is
-    still the next thing to be sent, so the label describes it correctly — and
-    the version of this feature that hid the label here was the one the owner
-    rejected.
-    """
-    transport = QueueTransport()
-    app = TextualChatApp(transport=transport)
-    async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        await transport.push_event(_queued("review this", msg_id="m1", chain_id="c1", seq=1))
-        await _settle(pilot)
-
-        assert app.query_one(ActivityRow).display is False, "no turn is running here"
-        rows = app.query_one(SentQueue).rendered_texts()
-        assert rows and "NEXT" in rows[0], f"the head of the queue is unlabelled: {rows}"
-
-
-@pytest.mark.asyncio
-async def test_only_the_head_is_labelled_and_the_order_is_unchanged() -> None:
-    """Tier 2b: NEXT marks one row, and the queue is otherwise as it was.
-
-    #3300's contract — the ⧗ rows, their order, their individual selection and
-    cancel — is not what this feature is changing.
-    """
-    transport = QueueTransport()
-    app = TextualChatApp(transport=transport)
-    async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        for i in (1, 2, 3):
-            await transport.push_event(
-                _queued(f"message {i}", msg_id=f"m{i}", chain_id=f"c{i}", seq=i)
-            )
-        await _settle(pilot)
-
-        rows = app.query_one(SentQueue).rendered_texts()
-        labelled = [r for r in rows if "NEXT" in r]
-        assert labelled == rows[:1], (
-            f"NEXT marks something other than exactly the head: {rows}"
-        )
-        assert [r.split("⧗ ")[-1] for r in rows] == ["message 1", "message 2", "message 3"]
-
-
-@pytest.mark.asyncio
-async def test_promotion_still_happens_once_and_the_label_follows_the_new_head() -> None:
-    """Tier 2b: dispatch promotes the head into the flow exactly once, and NEXT
-    moves to whatever is now first.
-
-    The label must not become a second way for an item to appear, and must not
-    stick to an item that has left the queue.
-    """
-    transport = QueueTransport()
-    app = TextualChatApp(transport=transport)
-    async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        await transport.push_event(_queued("first", msg_id="m1", chain_id="c1", seq=1))
-        await transport.push_event(_queued("second", msg_id="m2", chain_id="c2", seq=2))
-        await _settle(pilot)
-
-        await transport.push_event(_started("c1", 3))
-        await _settle(pilot)
-
-        rows = app.query_one(SentQueue).rendered_texts()
-        assert [r.split("⧗ ")[-1] for r in rows] == ["second"], (
-            f"the dispatched item did not leave the queue: {rows}"
-        )
-        assert "NEXT" in rows[0], "the label did not follow the new head"
-
-        from textual_flowview import FlowView
-
-        promoted = [e for e in app.query_one(FlowView).entries if e.item.kind == "user"]
-        assert [str(e.item.text) for e in promoted] == ["first"], (
-            "the dispatched item was promoted more or less than once"
-        )
+# #3777 (clean break, CLAUDE.md testing.md § extracted-refactor test
+# lifecycle): the NEXT-label section that used to sit here — three tests
+# asserting the head-of-queue label's presence, exclusivity, and hand-off —
+# was retired with the label itself (owner call, option ①: no special-case
+# for the head row). The queue-order and promotion-once properties those
+# tests incidentally exercised are covered independently of NEXT by
+# ``test_3300_p2b_sentqueue_render.py::test_turn_started_promotes_matching_item_to_flow_entry``.
 
 
 @pytest.mark.asyncio
@@ -399,11 +319,14 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
 # ── the shine (owner design "A", replacing the removed NOW label) ────────────
 
 
-def test_now_is_gone_and_the_state_starts_at_column_zero() -> None:
+def test_now_is_gone_and_a_play_glyph_opens_the_state() -> None:
     """Tier 1: the vacated 6-column ``NOW   `` slot is not left as a blank
-    gutter — ``state`` now IS the row's first content."""
+    gutter — #3777 put a 2-column ``"▶ "`` prefix ahead of ``state`` instead
+    (smaller than the old label, and unlike it, itself state — see
+    :data:`~reyn.interfaces.inline.textual_chat.activity_row._STATE_GLYPH`'s
+    module comment)."""
     rendered = str(activity_text("WORKING", elapsed_s=None, width=80))
-    assert rendered.startswith("WORKING"), f"NOW's slot was not reclaimed: {rendered!r}"
+    assert rendered.startswith("▶ WORKING"), f"the glyph prefix is missing: {rendered!r}"
     assert "NOW" not in rendered
 
 
@@ -414,15 +337,19 @@ def test_the_shine_is_a_two_character_band_inside_the_state_word() -> None:
     something to "look like it is animating").
 
     Six frames (one full pass across ``WORKING``, 7 characters) are checked
-    by POSITION, not by re-deriving the sweep from the function under test."""
+    by POSITION, not by re-deriving the sweep from the function under test.
+    #3777: the band's positions are shifted right by ``len("▶ ")`` — the
+    glyph prefix ``activity_text`` now puts ahead of ``state`` — since the
+    band is still confined to ``state``'s own span, never the glyph."""
     state = "WORKING"
+    prefix_len = len("▶ ")
     expected_spans = [(0, 2), (1, 3), (2, 4), (3, 5), (4, 6), (5, 7)]
     for index, (start, end) in enumerate(expected_spans):
         content = activity_text(state, elapsed_s=None, width=80, shine_index=index)
-        assert content.spans == [Span(start, end, style="reverse")], (
-            f"frame {index}: expected the band at [{start}:{end}], got {content.spans!r}"
-        )
-        assert str(content).startswith(state), (
+        assert content.spans == [
+            Span(start + prefix_len, end + prefix_len, style="reverse")
+        ], f"frame {index}: expected the band at [{start}:{end}]+prefix, got {content.spans!r}"
+        assert str(content).startswith(f"▶ {state}"), (
             f"frame {index}: the shine changed the STATE TEXT, not just its style: "
             f"{str(content)!r}"
         )
@@ -440,31 +367,41 @@ def test_a_shine_index_past_the_word_clamps_inside_it() -> None:
     """Tier 1: ``activity_text`` is defensive against an out-of-range index
     (the looping arithmetic lives in the WIDGET, per
     :meth:`ActivityRow.tick`'s ``% len(state)`` — this pins the pure
-    function's own behaviour if that ever drifts or is bypassed)."""
+    function's own behaviour if that ever drifts or is bypassed). #3777: the
+    valid range is now offset by the ``"▶ "`` glyph prefix — the band must
+    stay inside ``state``'s span, never reaching back over the glyph."""
+    prefix_len = len("▶ ")
     content = activity_text("WORKING", elapsed_s=None, width=80, shine_index=999)
     assert content.spans, "an out-of-range index painted no band at all"
     start, end, _style = content.spans[0]
-    assert 0 <= start < len("WORKING")
-    assert end <= len("WORKING")
+    assert prefix_len <= start < prefix_len + len("WORKING")
+    assert end <= prefix_len + len("WORKING")
 
 
-def test_the_shine_never_touches_the_elapsed_clock_or_the_live_count() -> None:
-    """Tier 1: the band is confined to ``state``'s own span — the elapsed
-    clock and the right-aligned ``LIVE +N`` hint are DIFFERENT information
-    and must never be drawn inside the travelling highlight, at any frame
-    position across a full sweep."""
+def test_the_shine_never_touches_the_glyph_elapsed_clock_or_the_live_count() -> None:
+    """Tier 1: the band is confined to ``state``'s own span — the leading
+    ``"▶ "`` glyph (#3777), the elapsed clock, and the right-aligned
+    ``LIVE +N`` hint are DIFFERENT information and must never be drawn
+    inside the travelling highlight, at any frame position across a full
+    sweep."""
     state = "RESPONDING"
+    prefix_len = len("▶ ")
     for index in range(len(state)):
         content = activity_text(
             state, elapsed_s=5.0, width=78, behind=12, shine_index=index
         )
         start, end, _style = content.spans[0]
-        assert end <= len(state), (
+        assert start >= prefix_len, (
+            f"frame {index}: the band reached back over the glyph prefix: "
+            f"{content.spans!r}"
+        )
+        assert end <= prefix_len + len(state), (
             f"frame {index}: the band reached past the state word into the "
             f"clock/hint: {content.spans!r}"
         )
         rendered = str(content)
         assert "LIVE +12" in rendered, f"frame {index}: LIVE +N is missing: {rendered!r}"
+        assert rendered.startswith("▶ "), f"frame {index}: the glyph is missing: {rendered!r}"
 
 
 @pytest.mark.asyncio

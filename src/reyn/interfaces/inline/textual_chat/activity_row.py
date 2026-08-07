@@ -36,6 +36,15 @@ timer costs nothing in correctness) and is paused/resumed by
 :meth:`ActivityRow.end`/:meth:`begin` rather than left running while hidden
 — an animation ticking over an idle ssh session for a row nobody sees is
 exactly the cost that split exists to avoid.
+
+A later owner call (#3777, same day) put a small piece of that vacated
+column budget back: the state word now opens with :data:`_STATE_GLYPH`
+(``"▶ "``), the filled counterpart of the sent-queue's unfilled
+:data:`~reyn.interfaces.inline.textual_chat.sent_queue._QUEUED_GLYPH`
+(``"▷"``) — a queued item's glyph and this row's glyph are the SAME shape,
+one hollow and one filled, so promotion reads as the shape filling in
+rather than as one icon replacing an unrelated one. See
+:func:`activity_text`'s docstring for the shine-clearance argument.
 """
 from __future__ import annotations
 
@@ -78,6 +87,18 @@ _SHINE_WIDTH = 2
 #: a background value would not.
 _SHINE_STYLE = "reverse"
 
+#: The NOW-row glyph (#3777, owner call: a play-family mark — filled, to
+#: read as "running", pairing with
+#: :data:`~reyn.interfaces.inline.textual_chat.sent_queue._QUEUED_GLYPH`'s
+#: unfilled counterpart on the queue row so a promoted item shows the SAME
+#: shape it had a moment ago, only filled in — the "connection" the owner
+#: asked for. Reoccupies part of the column budget #3779 vacated when it
+#: dropped the 6-column ``NOW   `` label; the glyph earns that back by
+#: carrying real information (running, not a static word) rather than
+#: repeating "NOW" as a caption. ``wcwidth`` confirmed single-column and a
+#: full-repo grep found no prior use before this landed (see #3777).
+_STATE_GLYPH = "▶"
+
 
 def activity_text(
     state: str,
@@ -103,19 +124,26 @@ def activity_text(
     label): a ``_SHINE_WIDTH``-character ``reverse`` band travelling through
     ``state`` ITSELF, at the given character offset — ``None`` paints no
     band (a static row, e.g. while no turn is showing). The band is confined
-    to ``state``'s own span, never the elapsed clock or the right-aligned
-    hint — those are different information and stay plain. Vacates the old
-    6-column ``NOW   `` slot entirely rather than leaving a blank gutter:
-    ``state`` now starts at column 0.
+    to ``state``'s own span, never the elapsed clock, the leading
+    :data:`_STATE_GLYPH`, or the right-aligned hint — those are different
+    information (or, for the glyph, a different piece of state entirely) and
+    stay plain. #3779 vacated the old 6-column ``NOW   `` slot; #3777 gives
+    ``state`` a 2-column ``"▶ "`` prefix instead — smaller than the old
+    label, and unlike it, informative on its own (see :data:`_STATE_GLYPH`'s
+    module comment for why that column cost is worth paying again).
     """
-    body = state
+    prefix = f"{_STATE_GLYPH} " if state else ""
+    body = f"{prefix}{state}"
     if elapsed_s is not None:
         body = f"{body} {int(elapsed_s) // 60:02d}:{int(elapsed_s) % 60:02d}"
     suffix = f"LIVE +{behind} · {LATEST_HINT} latest" if behind else _CANCEL_HINT
     content = _with_suffix(body, suffix, width)
     if shine_index is not None and state:
-        start = max(0, min(shine_index, len(state) - 1))
-        end = min(start + _SHINE_WIDTH, len(state))
+        # Offsets are into ``state`` alone; ``prefix`` shifts them right by
+        # its own length so the band never reaches back over the glyph or
+        # the space after it — the clearance #3777 required.
+        start = len(prefix) + max(0, min(shine_index, len(state) - 1))
+        end = min(start + _SHINE_WIDTH, len(prefix) + len(state))
         content = content.stylize(_SHINE_STYLE, start, end)
     return content
 
