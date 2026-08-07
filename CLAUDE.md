@@ -40,6 +40,20 @@ Three lenses name a *discipline* whose *universal mechanism* is a band member: *
 
 - **TUI colour policy: the terminal emulator's theme decides, reyn only names WHICH semantic colour, never WHICH RGB.** Owner ruling (#3525, 2026-07-31): "the terminal emulator's theme should take priority over Textual's own theme." Normative form: use ANSI 16 (`ansi_red` etc. — the terminal resolves it), `ansi_default`, `transparent` (paint nothing), or a `text-style` attribute (`dim`/`bold`/`reverse`) — never a hex literal, and never alpha-composite over `ansi_default` (the blend loses the terminal's own value and becomes hex-equivalent, #3505's `#0c0c0c` residue). Every colour reyn's inline CUI uses lives in one file, `src/reyn/interfaces/inline/textual_chat/palette.py`; every widget stylesheet writes a `@name@` marker instead of a literal value, and `tests/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette — added after two prior greps for an *expected shape* (`$text-muted`, `$var NN%`) each missed a real violation written in a shape nobody searched for (a hex value sitting behind a `border:` keyword). Textual's own `DEFAULT_CSS` is out of scope for this gate — reyn doesn't own it (#3525 tracks where it collides with the ansi themes).
 
+  **Carve-out (owner, 2026-08-07, extends #3525 rather than replacing it):** a
+  *reyn-specific* meaning — one with no established convention (red = error,
+  etc.) — may use a token value outside ANSI-16. A meaning WITH an
+  established convention still must resolve through ANSI-16 /
+  `ansi_default` / an SGR attribute, same as before; "is this meaning
+  conventional or reyn-specific" is a judgment call no gate can make, which
+  is exactly why the token-indirection requirement is not optional here —
+  **every value, conventional or reyn-specific, still goes through a
+  `palette.py` token, never a literal in a stylesheet.** Only the token
+  layer is where the carve-out applies; without that constraint, a
+  stylesheet could claim "reyn-specific" for anything and the value gate
+  would have nothing left to check. The semi-transparent-over-`ansi_default`
+  ban above is unchanged by this carve-out.
+
 ## Testing policy (READ BEFORE WRITING TESTS)
 
 The testing policy is at **`docs/deep-dives/contributing/testing.ja.md`** (English:
