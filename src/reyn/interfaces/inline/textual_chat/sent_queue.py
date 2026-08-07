@@ -97,6 +97,45 @@ from .presenter import _neutralized_label
 #: confirmed single-column / collision-free before this landed (see #3777).
 _QUEUED_GLYPH = "▷"
 
+#: The SELECTED queued row's glyph (#3777, owner call). The same shape as
+#: :data:`_QUEUED_GLYPH`, filled — so selection reads as the row the operator
+#: is pointing at, in the shape it already had, rather than as a second mark
+#: arriving in a column beside it. It replaces ``palette.SELECTED_MARKER``
+#: (``▸``), which the owner reported as "two glyphs on one row": the marker
+#: column and the queue glyph were both present and neither explained the
+#: other.
+#:
+#: Carrying selection on the glyph rather than beside it keeps the property
+#: the ``▸`` was there for — that selection survives on a terminal where no
+#: style renders — because a differently SHAPED row is legible with every
+#: attribute stripped. It also frees the two columns the marker held, which
+#: is what lets a queue row's text and the NOW row's text start in the same
+#: column.
+#:
+#: The pairing is now three-way and the direction is the point: ``▷``
+#: (queued) -> ``▶`` (selected, i.e. the one Enter would cancel) is the same
+#: hollow-to-filled step as ``▷`` -> the NOW row's running state, so "filled"
+#: consistently means "this is the one being acted on".
+_SELECTED_GLYPH = "▶"
+
+#: What separates a row's glyph from its label. Two spaces, not one: the NOW
+#: row above the queue carries no glyph at all (#3777), so its text has to
+#: start where a queue row's LABEL starts for the two regions to read as one
+#: column of text. One glyph plus this gap is that offset, and naming it here
+#: keeps the two files from drifting by a space.
+_GLYPH_GAP = "  "
+
+#: Which column a row's TEXT starts in, glyph included. Exported because the
+#: NOW row above the queue has to start its text in the same column and has no
+#: glyph of its own to derive it from — importing it is what keeps the two
+#: regions aligned, where a comment saying "keep these equal" would only
+#: record the intent and let a one-space edit break it silently.
+#:
+#: Owned here rather than in ``activity_row`` because the offset is a
+#: consequence of THIS region's glyph: the queue is the region that has one,
+#: and the NOW row aligns to the queue, not the other way round.
+ROW_TEXT_COLUMN = 1 + len(_GLYPH_GAP)
+
 
 class SentQueue(Vertical):
     """The sent-queue region: one dim row per undispatched queued message,
@@ -121,16 +160,30 @@ class SentQueue(Vertical):
            which a "show only the newest 6" rule would have cut off from the
            older items it is most likely to be aimed at. */
         overflow-y: auto;
-        color: @quiet@;
         padding: 0 1;
     }
-    SentQueue Static { height: auto; }
-    /* Selection is an ATTRIBUTE plus a marker in the row's own text, never a
-       filled background. ``background: $accent 30%`` was the previous rule and
-       under the ansi themes the alpha is DROPPED, so it painted a solid ANSI
-       green bar with default-coloured text on top — reported as unreadable.
-       #3490 settled the same question on the conversation: surviving the style
-       merge is necessary and not sufficient, the mark has to be CONTENT. */
+    /* An unselected row recedes by ATTRIBUTE, not by colour. ``color: @quiet@``
+       was the previous rule and it receded by nothing: under the ansi themes
+       ``$text-muted`` resolves to the same ``ansi_default`` marker as ordinary
+       text, so the queue was drawn in exactly the body's colour while claiming
+       to be quiet (the #3523 family, measured). ``dim`` is an SGR attribute —
+       it leaves the hue to the terminal, which is the operator's to choose,
+       and it actually changes what is drawn. */
+    SentQueue Static { height: auto; text-style: @recede@; }
+    /* Selection is an ATTRIBUTE plus the row's own GLYPH, never a filled
+       background. ``background: $accent 30%`` was the previous rule and under
+       the ansi themes the alpha is DROPPED, so it painted a solid ANSI green
+       bar with default-coloured text on top — reported as unreadable. #3490
+       settled the same question on the conversation: surviving the style merge
+       is necessary and not sufficient, the mark has to be CONTENT.
+
+       #3777 moved which content carries it. The mark used to be a separate
+       ``▸`` in a column of its own; it is now the row's OWN glyph filling in
+       (``▷`` -> ``▶``), so selection costs no column and reads as the same
+       object changing state rather than as a pointer arriving beside it. The
+       "survives with no styling at all" property the ``▸`` existed for is
+       kept, and by the same means: a reader who sees neither ``dim`` nor
+       ``bold`` still sees one row shaped differently from the rest. */
     SentQueue Static.-selected { text-style: @selected-style@; }
     """)
 
@@ -180,7 +233,7 @@ class SentQueue(Vertical):
             self.remove_item(msg_id)
         label = _neutralized_label(text)
         self._labels[msg_id] = label
-        row = Static(Content(f"  {_QUEUED_GLYPH} {label}"))
+        row = Static(Content(f"{_QUEUED_GLYPH}{_GLYPH_GAP}{label}"))
         self._rows[msg_id] = row
         self.mount(row)
         self.display = True
@@ -307,7 +360,13 @@ class SentQueue(Vertical):
             # One line, and it names the count rather than implying the rows
             # were dropped. Selection is untouched underneath: restoring the
             # rows restores exactly what was selected.
-            self._summary.update(Content(f"  Queued: {len(order)}"))
+            # Indented to where a row's LABEL sits, not to column 0: collapsing
+            # the queue should look like the rows closing up, and a summary
+            # that started a column further left would read as a different
+            # kind of line arriving rather than as the same region compacting.
+            self._summary.update(
+                Content(f"{' ' * ROW_TEXT_COLUMN}Queued: {len(order)}")
+            )
             self._summary.display = bool(order)
             return
         self._summary.display = False
@@ -315,14 +374,14 @@ class SentQueue(Vertical):
             selected = i == self._selected_index
             row = self._rows[msg_id]
             row.set_class(selected, "-selected")
-            lead = f"{palette.SELECTED_MARKER} " if selected else "  "
+            glyph = _SELECTED_GLYPH if selected else _QUEUED_GLYPH
             # #3777 (owner call, "先頭行だけを区別する話は終わり" — option ①):
             # the NEXT label singling out the head row is gone, with no
             # replacement mark at that position. Every queued row now renders
             # identically regardless of position — the head is still first in
             # ``order`` (:meth:`selected_msg_id`/the cancel bindings are
             # unaffected), it just is not called out visually anymore.
-            row.update(Content(f"{lead}{_QUEUED_GLYPH} {self._labels[msg_id]}"))
+            row.update(Content(f"{glyph}{_GLYPH_GAP}{self._labels[msg_id]}"))
             # #3688: with the region scrollable (see the CSS cap above), the
             # selected row can sit outside the visible six — arrowing onto a row
             # that stays off screen is the same silent-clip defect wearing a

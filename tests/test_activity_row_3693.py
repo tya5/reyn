@@ -34,6 +34,7 @@ from reyn.interfaces.inline.textual_chat.activity_row import (
     ActivityRow,
     activity_text,
 )
+from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -323,15 +324,24 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
 # ── the shine (owner design "A", replacing the removed NOW label) ────────────
 
 
-def test_now_is_gone_and_a_play_glyph_opens_the_state() -> None:
-    """Tier 1: the vacated 6-column ``NOW   `` slot is not left as a blank
-    gutter — #3777 put a 2-column ``"▶ "`` prefix ahead of ``state`` instead
-    (smaller than the old label, and unlike it, itself state — see
-    :data:`~reyn.interfaces.inline.textual_chat.activity_row._STATE_GLYPH`'s
-    module comment)."""
+def test_the_row_carries_no_mark_and_starts_where_a_queue_label_starts() -> None:
+    """Tier 1: no ``NOW`` label and no glyph — the row opens with the indent
+    that puts its text in the same column a queue row's LABEL occupies.
+
+    The alignment is the claim, so it is checked against the queue's own
+    constant rather than against a hard-coded three: a queue that changed its
+    glyph gap and left this row behind is exactly the drift the shared
+    constant exists to prevent, and a literal here would keep passing through
+    it.
+    """
     rendered = str(activity_text("WORKING", elapsed_s=None, width=80))
-    assert rendered.startswith("▶ WORKING"), f"the glyph prefix is missing: {rendered!r}"
     assert "NOW" not in rendered
+    assert rendered.startswith(" " * ROW_TEXT_COLUMN + "WORKING"), (
+        f"the row's text does not start at the queue's label column: {rendered!r}"
+    )
+    assert not rendered[:ROW_TEXT_COLUMN].strip(), (
+        f"the row grew a mark of its own back: {rendered!r}"
+    )
 
 
 def _band(state: str, frame: int) -> "dict[int, str]":
@@ -382,32 +392,6 @@ def test_the_shine_advances_one_cell_per_frame_carrying_its_shape() -> None:
         )
 
 
-def test_the_shine_never_reaches_outside_the_state_word() -> None:
-    """Tier 1: every painted cell lies inside ``state``'s own span — never the
-    leading glyph, the space after it, the elapsed clock, or the hint.
-
-    Those are different information (or, for the glyph, a different piece of
-    state entirely), and a highlight that wandered onto them would be saying
-    something the row does not mean. Swept across a whole cycle, so a band
-    that only escapes while entering or leaving is caught too.
-    """
-    state = "WORKING"
-    prefix_len = len("▶ ")
-    for frame in range(prefix_len + len(state) + 8):
-        band = _band(state, frame)
-        assert band, f"frame {frame} painted no band at all"
-        for column in band:
-            assert prefix_len <= column < prefix_len + len(state), (
-                f"frame {frame} painted column {column}, outside "
-                f"[{prefix_len}, {prefix_len + len(state)})"
-            )
-        content = activity_text(state, elapsed_s=None, width=80, shine_index=frame)
-        assert str(content).startswith(f"▶ {state}"), (
-            f"frame {frame}: the shine changed the STATE TEXT, not just its style: "
-            f"{str(content)!r}"
-        )
-
-
 def test_the_shine_degrades_to_an_attribute_without_colour() -> None:
     """Tier 1: with no colour available the band is still drawn, as an SGR
     attribute rather than as nothing.
@@ -450,35 +434,43 @@ def test_any_frame_number_is_a_valid_frame() -> None:
     here is pinning that it cannot.
     """
     state = "WORKING"
-    cycle = len(state) + 2 * (_SHINE_WIDTH // 2)  # one full pass
-    assert _band(state, 999) == _band(state, 999 % cycle)
+    # The band crosses the whole rendered row (#3777), so the pass is as long
+    # as the row is — read from the rendering rather than recomputed, since
+    # the row's width is padding-dependent and a formula here would be a
+    # second implementation of the thing under test.
+    row = str(activity_text(state, elapsed_s=None, width=80, shine_index=0))
+    cycle = len(row) + 2 * (_SHINE_WIDTH // 2)
     assert _band(state, 999), "a large frame number painted no band at all"
+    assert _band(state, 999) == _band(state, 999 % cycle)
 
 
-def test_the_shine_never_touches_the_glyph_elapsed_clock_or_the_live_count() -> None:
-    """Tier 1: the band is confined to ``state``'s own span — the leading
-    ``"▶ "`` glyph (#3777), the elapsed clock, and the right-aligned
-    ``LIVE +N`` hint are DIFFERENT information and must never be drawn
-    inside the travelling highlight, at any frame position across a full
-    sweep."""
+def test_the_shine_crosses_the_whole_row_including_the_clock_and_hint() -> None:
+    """Tier 1: the band is no longer confined to ``state``'s own span.
+
+    #3779 kept it inside the state word so it could not wander onto the clock
+    or the hint, which was right for a row that was three things sharing a
+    line. #3777 removed the glyph and made the row read as one object, and the
+    owner asked for the light to cross all of it. Pinned by sweeping a whole
+    cycle and requiring that SOME frame paints past the state word — a band
+    that silently kept the old confinement would still look plausible frame by
+    frame, and only a sweep catches it.
+    """
     state = "RESPONDING"
-    prefix_len = len("▶ ")
-    for index in range(len(state)):
+    body_end = ROW_TEXT_COLUMN + len(state)
+    reached_beyond = False
+    for frame in range(80):
         content = activity_text(
-            state, elapsed_s=5.0, width=78, behind=12, shine_index=index
+            state, elapsed_s=5.0, width=78, behind=12, shine_index=frame
         )
-        start, end, _style = content.spans[0]
-        assert start >= prefix_len, (
-            f"frame {index}: the band reached back over the glyph prefix: "
-            f"{content.spans!r}"
-        )
-        assert end <= prefix_len + len(state), (
-            f"frame {index}: the band reached past the state word into the "
-            f"clock/hint: {content.spans!r}"
-        )
+        assert content.spans, f"frame {frame} painted no band at all"
+        if any(span.start >= body_end for span in content.spans):
+            reached_beyond = True
         rendered = str(content)
-        assert "LIVE +12" in rendered, f"frame {index}: LIVE +N is missing: {rendered!r}"
-        assert rendered.startswith("▶ "), f"frame {index}: the glyph is missing: {rendered!r}"
+        assert "LIVE +12" in rendered, f"frame {frame}: LIVE +N is missing: {rendered!r}"
+    assert reached_beyond, (
+        "the band never left the state word across a full sweep — it is still "
+        "confined the way #3779 had it"
+    )
 
 
 @pytest.mark.asyncio

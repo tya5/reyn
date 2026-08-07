@@ -55,7 +55,7 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
+from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN, SentQueue
 from reyn.interfaces.repl.read_model import ChatReadModel
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -318,12 +318,14 @@ async def test_sent_queue_updates_live_as_deltas_arrive() -> None:
         await pilot.pause()
 
         sent_queue = app.query_one(SentQueue)
-        # Split on the queued glyph, not the first space: a row now carries a
-        # selection marker ahead of it (selection is CONTENT, not a background
-        # — see SentQueue.DEFAULT_CSS), so the leading token count varies with
-        # which row is highlighted. #3777: ⧗ -> ▷ (queued-row glyph).
+        # Take the label by COLUMN, not by splitting on a glyph: #3777 made the
+        # glyph itself carry selection (▷ queued / ▶ selected), so splitting on
+        # one of them silently leaves the other row's glyph in the label and the
+        # set comparison fails for a reason that has nothing to do with what
+        # this test is about. Every row's label starts at the same column by
+        # construction — that is what ROW_TEXT_COLUMN is for.
         assert {"alpha", "beta"} <= {
-            t.split("▷ ", 1)[-1] for t in sent_queue.rendered_texts()
+            t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()
         }
 
         await transport.push_event(_turn_started(chain_id="c1", seq=3))
