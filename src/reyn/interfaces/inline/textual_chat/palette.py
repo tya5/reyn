@@ -66,7 +66,13 @@ TOKENS: "dict[str, str]" = {
     #: ``$accent 30%`` produced once alpha was dropped — a solid ANSI-green bar
     #: under default-coloured text — and a full-row inversion was rejected on
     #: the conversation for the same reason (#3490: the mark has to be
-    #: CONTENT). Widgets pair this with a marker in the row text.
+    #: CONTENT). Widgets pair this with the row's OWN glyph filling in
+    #: (``sent_queue``: ``▷`` unselected, ``▶`` selected), so the content half
+    #: of that pairing costs no column and selection stays legible with every
+    #: attribute stripped. Until #3777 the content half was a separate ``▸``
+    #: in a column of its own; the requirement is unchanged, only what carries
+    #: it. Pairing an attribute with SOMETHING in the text is the invariant —
+    #: this token alone is not a selection mark.
     "@selected-style@": "bold",
     #: The drag-selection band. ``ansi_blue`` rather than Textual's default
     #: ``ansi_bright_blue``: the operator found the bright frame too loud
@@ -79,10 +85,6 @@ TOKENS: "dict[str, str]" = {
     #: its foreground beside it is how contrast regressions happen.
     "@selection-fg@": "ansi_black",
 }
-
-#: The marker a selected row carries in its own text, so selection survives
-#: without a colour at all. Not a CSS value — it is content.
-SELECTED_MARKER = "\u25b8"
 
 #: The two endpoints of the NOW row's travelling shine (#3777). Blended per
 #: character at runtime by ``activity_row``, so these are plain values rather
@@ -134,4 +136,4 @@ def css(sheet: str) -> str:
     return sheet
 
 
-__all__ = ["SELECTED_MARKER", "SHINE_DIM", "SHINE_PEAK", "TOKENS", "css"]
+__all__ = ["SHINE_DIM", "SHINE_PEAK", "TOKENS", "css"]

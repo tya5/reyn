@@ -163,8 +163,6 @@ _QUIET_ONLY_ALLOWED = {
     "intervention_panel.py": "the pane it labels is bordered and headed in "
                              "@attention@, so the detail line reads as detail",
     "rewind_picker.py": "the heading carries text-style: @recede@ (#3686)",
-    "sent_queue.py": "the ▷ glyph and the region's own position above the "
-                     "composer (#3693, glyph updated #3777)",
 }
 
 
