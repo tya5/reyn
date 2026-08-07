@@ -1332,7 +1332,20 @@ class TextualChatApp(App):
         with Horizontal(id="inputrow"):
             yield Static("❯", id="inputgutter")
             yield Composer(
-                placeholder="Type a message — Enter to send, Shift+Enter for a newline…"
+                # ``<key> to <verb> · <key> to <verb>`` (#3801), the shape
+                # ``rewind_picker`` already used. The previous form separated
+                # the two clauses with a comma and gave the second one a
+                # different grammar ("for a newline"), so the two halves of one
+                # hint read as two kinds of statement.
+                # "add a line", not "break the line": measured on a real
+                # terminal, the longer wording truncated at 65 columns where
+                # the pre-#3801 text fit at 60. This one costs one column over
+                # the old text rather than five. ("to newline" is shorter still
+                # and was rejected — it reads as a typo, and a hint nobody
+                # trusts is worse than a hint that wraps.)
+                placeholder=(
+                    "Type a message — enter to send · shift+enter to add a line…"
+                )
             )
         # Bottom chrome: a focusable menu row that also carries the slim
         # status-values segment (#3326: MenuBar owns placing StatusLine on
