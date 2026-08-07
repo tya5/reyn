@@ -88,6 +88,15 @@ from reyn.interfaces.inline.textual_chat import palette
 
 from .presenter import _neutralized_label
 
+#: The queued-row glyph (#3777, owner call: "再生グリフ" — a play-family
+#: mark, unfilled to read as "not yet running", pairing with
+#: :data:`~reyn.interfaces.inline.textual_chat.activity_row._STATE_GLYPH`'s
+#: filled counterpart on the NOW row once a queued item is promoted —
+#: replaces the unrelated hourglass ``⧗``, which shared no shape with
+#: anything the promoted row shows. ``wcwidth`` and a full-repo grep both
+#: confirmed single-column / collision-free before this landed (see #3777).
+_QUEUED_GLYPH = "▷"
+
 
 class SentQueue(Vertical):
     """The sent-queue region: one dim row per undispatched queued message,
@@ -171,7 +180,7 @@ class SentQueue(Vertical):
             self.remove_item(msg_id)
         label = _neutralized_label(text)
         self._labels[msg_id] = label
-        row = Static(Content(f"  ⧗ {label}"))
+        row = Static(Content(f"  {_QUEUED_GLYPH} {label}"))
         self._rows[msg_id] = row
         self.mount(row)
         self.display = True
@@ -307,18 +316,13 @@ class SentQueue(Vertical):
             row = self._rows[msg_id]
             row.set_class(selected, "-selected")
             lead = f"{palette.SELECTED_MARKER} " if selected else "  "
-            # #3693: the head of the queue is labelled NEXT — the thing that
-            # goes when the current turn (if any) finishes. Unconditional on
-            # whether a turn is running: the queue holds undispatched inbox
-            # items and "is a turn in flight" is a different fact, with no
-            # dependency between them. A message typed before the session
-            # attached, or between one turn settling and the next dispatch,
-            # is still the next thing to be sent — hiding the label in those
-            # windows would make it flicker on a state it does not describe.
-            # The rows themselves are unchanged: same ⧗, same order, same
-            # per-row selection and cancel (#3300's contract).
-            marker = "NEXT  " if i == 0 else "      "
-            row.update(Content(f"{marker}{lead}⧗ {self._labels[msg_id]}"))
+            # #3777 (owner call, "先頭行だけを区別する話は終わり" — option ①):
+            # the NEXT label singling out the head row is gone, with no
+            # replacement mark at that position. Every queued row now renders
+            # identically regardless of position — the head is still first in
+            # ``order`` (:meth:`selected_msg_id`/the cancel bindings are
+            # unaffected), it just is not called out visually anymore.
+            row.update(Content(f"{lead}{_QUEUED_GLYPH} {self._labels[msg_id]}"))
             # #3688: with the region scrollable (see the CSS cap above), the
             # selected row can sit outside the visible six — arrowing onto a row
             # that stays off screen is the same silent-clip defect wearing a
