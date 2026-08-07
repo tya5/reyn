@@ -789,6 +789,7 @@ class TextualChatApp(App):
     FlowView {
         height: 1fr;
         scrollbar-size-vertical: 0;
+        margin-bottom: 1;
     }
     /* #3496 / flowview#5: ``flowview--highlight`` (``--selected`` was its
        0.11.x synonym for the SAME class; 0.12.0 / #3624 removed the alias, so
@@ -819,7 +820,6 @@ class TextualChatApp(App):
     #inputrow {
         height: auto;
         max-height: 8;
-        margin-top: 1;
         border-top: solid @rule@;
         border-bottom: solid @rule@;
     }
