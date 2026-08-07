@@ -97,6 +97,44 @@ async def _settle(pilot, times: int = 5) -> None:
         await pilot.pause()
 
 
+async def _settle_until_arrived_and_stable(pilot, *, arrived, read) -> "int":
+    """Pump until ``arrived()`` holds AND ``read()`` has returned the SAME
+    value on two consecutive checks taken AFTER it does — or the budget
+    runs out. Returns the stabilised value.
+
+    #3770: two DIFFERENT gaps, closed by two DIFFERENT conditions, joined
+    by AND:
+
+    - ``read()`` (``max_scroll_y``) stopping between two samples is
+      CONVERGENCE, not COMPLETION — if flowview's layout runs in more than
+      one pass, two samples could land on the same plateau mid-layout (a
+      settle tick landing between passes), which would satisfy
+      "stopped moving" while more entries are still on their way. Watching
+      ``arrived()`` too closes that hole.
+    - ``arrived()`` (``len(flow.entries) >= lines``) alone closes a
+      DIFFERENT hole: entries landing in the list and flowview's layout
+      pass actually growing ``max_scroll_y`` for them are two separate
+      events — the #3770 bug this fixture exists to guard against. Watching
+      ``read()`` too closes that one.
+
+    Requiring the two stable samples to both occur AFTER ``arrived()``
+    holds — not merely requiring both conditions true at the same instant —
+    is what stops a stale ``max_scroll_y`` plateau from a still-earlier
+    tick counting toward stability once the last entry finally lands."""
+    stable_since_arrival: "int | None" = None
+    for _ in range(150):
+        await pilot.pause()
+        await asyncio.sleep(0.01)
+        if not arrived():
+            stable_since_arrival = None
+            continue
+        current = read()
+        if stable_since_arrival is not None and current == stable_since_arrival:
+            return current
+        stable_since_arrival = current
+    return read()
+
+
 async def _settle_until(pilot, until) -> None:
     """Pump until ``until()`` holds, or the budget runs out.
 
@@ -117,7 +155,7 @@ async def _settle_until(pilot, until) -> None:
 async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     """Put enough behind the reader that scrolling up genuinely leaves the tail.
 
-    #3770: waits for ``max_scroll_y`` to reach its final value BEFORE
+    #3770: waits for ``max_scroll_y`` itself to STOP CHANGING before
     scrolling, deliberately, not as a stabilisation nicety. Measured
     (textual-flowview#12): a scroll-away delivered while ``max_scroll_y`` is
     still small/zero (content still arriving) is swallowed upstream —
@@ -128,9 +166,21 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     exists to set up silently does not happen. A fixed pause COUNT before
     the earlier version's ``_settle(pilot, 8)`` was a bet that 8 pumps is
     enough for all ``lines`` entries to land and lay out — true on this
-    machine, not guaranteed elsewhere, which is what #3770 traced. Waiting
-    for the actual condition removes the bet; it does not paper over
-    flowview's swallowed-intent question, which stays open upstream.
+    machine, not guaranteed elsewhere, which is what #3770 traced.
+
+    The wait joins TWO conditions (:func:`_settle_until_arrived_and_stable`):
+    ``len(flow.entries) >= lines`` (all pushed messages actually landed —
+    without this, ``max_scroll_y`` could stabilise on a stale value mid-way
+    through delivery, since flowview's layout can run in more than one
+    pass) AND ``max_scroll_y`` reading the SAME value on two consecutive
+    checks taken after entries arrive (layout has actually caught up — an
+    earlier version of this fix used entries alone, which is a real but
+    DIFFERENT event from flowview's layout pass finishing and growing
+    ``max_scroll_y``; they only happened to land on the same tick in this
+    fixture's own push-then-settle pattern, which is not a guarantee). One
+    condition alone leaves the other's hole open; together they remove the
+    bet rather than replacing it with a smaller one. This does not paper
+    over flowview's swallowed-intent question, which stays open upstream.
     """
     await transport.push_event(
         Event(type="turn_started", data={"kind": "user", "chain_id": "c1", "seq": 1})
@@ -138,7 +188,13 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     for i in range(lines):
         await transport.push_display(OutboxMessage(kind="agent", text=f"line {i}", meta={}))
     flow = app.query_one(FlowView)
-    await _settle_until(pilot, lambda: len(flow.entries) >= lines)
+    stable_max = await _settle_until_arrived_and_stable(
+        pilot, arrived=lambda: len(flow.entries) >= lines, read=lambda: flow.max_scroll_y
+    )
+    assert stable_max > 0, (
+        "test setup: max_scroll_y stabilised at 0 — nothing overflowed the "
+        "viewport, so there is no tail to leave"
+    )
     flow.scroll_to(y=0, animate=False)
     await _settle(pilot)
     # #3720 diagnostic: CI and this machine disagree on the same SHA, and the
