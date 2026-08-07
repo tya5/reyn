@@ -84,6 +84,33 @@ TOKENS: "dict[str, str]" = {
 #: without a colour at all. Not a CSS value — it is content.
 SELECTED_MARKER = "\u25b8"
 
+#: The two endpoints of the NOW row's travelling shine (#3777). Blended per
+#: character at runtime by ``activity_row``, so these are plain values rather
+#: than ``@name@`` markers: :func:`css` resolves markers inside a stylesheet
+#: string, and the band is not a stylesheet \u2014 it is applied to a content span
+#: via ``Content.stylize`` on every frame.
+#:
+#: RGB rather than ANSI-16. "a turn is running, and here is the light moving
+#: through it" has no established colour convention the way red-means-error
+#: does, which is precisely the case the CLAUDE.md carve-out (owner,
+#: 2026-08-07) opens: a reyn-specific meaning may take a value outside
+#: ANSI-16. That carve-out's condition is that the value still be NAMED here
+#: rather than written inline in the widget \u2014 which is what these two are.
+#: Naming them here also keeps them inside the thing this module promises:
+#: reading this file tells you what the interface paints. A hex computed in
+#: ``activity_row`` would paint a colour ``test_tui_colour_tokens.py`` cannot
+#: see, because that gate reads CSS declarations and a runtime span is not
+#: one \u2014 the same "written in a shape nobody searched for" that put the gate
+#: here in the first place.
+#:
+#: Only the band's INTERIOR is painted. Where the cosine falls to nothing the
+#: character is left unstyled rather than blended toward an assumed
+#: background, so the shine fades into whatever ground the terminal actually
+#: has instead of into a grey reyn guessed. That is the same reason
+#: ``@app-background@`` is ``ansi_default``: the ground is the operator's.
+SHINE_DIM = "#5c6478"
+SHINE_PEAK = "#e6ecf8"
+
 
 def css(sheet: str) -> str:
     """Resolve ``@token@`` markers in a widget stylesheet.
@@ -107,4 +134,4 @@ def css(sheet: str) -> str:
     return sheet
 
 
-__all__ = ["SELECTED_MARKER", "TOKENS", "css"]
+__all__ = ["SELECTED_MARKER", "SHINE_DIM", "SHINE_PEAK", "TOKENS", "css"]

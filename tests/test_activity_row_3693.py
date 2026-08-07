@@ -29,7 +29,11 @@ import pytest
 from textual.content import Span
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow, activity_text
+from reyn.interfaces.inline.textual_chat.activity_row import (
+    _SHINE_WIDTH,
+    ActivityRow,
+    activity_text,
+)
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -330,29 +334,100 @@ def test_now_is_gone_and_a_play_glyph_opens_the_state() -> None:
     assert "NOW" not in rendered
 
 
-def test_the_shine_is_a_two_character_band_inside_the_state_word() -> None:
-    """Tier 1: the frame function directly, at explicit indices — not a
-    real-time animation check (#3770-adjacent discipline: a frame function
-    called n times with an expected shape, never a wall-clock wait for
-    something to "look like it is animating").
+def _band(state: str, frame: int) -> "dict[int, str]":
+    """The band at ``frame`` as ``{column: style}``, one entry per painted cell.
 
-    Six frames (one full pass across ``WORKING``, 7 characters) are checked
-    by POSITION, not by re-deriving the sweep from the function under test.
-    #3777: the band's positions are shifted right by ``len("▶ ")`` — the
-    glyph prefix ``activity_text`` now puts ahead of ``state`` — since the
-    band is still confined to ``state``'s own span, never the glyph."""
+    Reading the rendering rather than re-deriving it: the test asks what the
+    row looks like, and never recomputes the sweep with the arithmetic it is
+    supposed to be checking.
+    """
+    content = activity_text(state, elapsed_s=None, width=80, shine_index=frame)
+    return {span.start: str(span.style) for span in content.spans}
+
+
+def test_the_shine_is_graded_not_two_valued() -> None:
+    """Tier 1: the band has an interior — several distinct styles across its
+    width — rather than the two states (on / off) it had before #3777.
+
+    This is the defect the operator reported, stated as a property: a band
+    whose cells are all-or-nothing has no edge to fall off, so it reads as a
+    block blinking on and off rather than as a light travelling through the
+    word. Asserting "more than two distinct styles" pins that there IS a ramp
+    without pinning which colours the ramp passes through — the curve and its
+    endpoints are free to change, the gradation is not.
+    """
+    band = _band("RESPONDING", frame=5)
+    assert len(set(band.values())) > 2, (
+        f"the band is still effectively two-valued: {sorted(set(band.values()))}"
+    )
+
+
+def test_the_shine_advances_one_cell_per_frame_carrying_its_shape() -> None:
+    """Tier 1: consecutive frames are the same band one column further right.
+
+    Checked as a SHIFT of the previous frame rather than against a table of
+    expected positions, so the test states the property that matters (the
+    light moves, and moves rigidly) without re-implementing the position
+    arithmetic it is checking. Frames are chosen so the whole band is inside
+    the word — at the two ends it is partly off the edge, which is the
+    entering and leaving that :func:`_apply_shine` exists to produce and is
+    covered by the clearance test below.
+    """
+    state = "WORKING"
+    for frame in (4, 5):
+        before, after = _band(state, frame), _band(state, frame + 1)
+        assert after == {column + 1: style for column, style in before.items()}, (
+            f"frame {frame} -> {frame + 1} was not a one-column shift: "
+            f"{before!r} then {after!r}"
+        )
+
+
+def test_the_shine_never_reaches_outside_the_state_word() -> None:
+    """Tier 1: every painted cell lies inside ``state``'s own span — never the
+    leading glyph, the space after it, the elapsed clock, or the hint.
+
+    Those are different information (or, for the glyph, a different piece of
+    state entirely), and a highlight that wandered onto them would be saying
+    something the row does not mean. Swept across a whole cycle, so a band
+    that only escapes while entering or leaving is caught too.
+    """
     state = "WORKING"
     prefix_len = len("▶ ")
-    expected_spans = [(0, 2), (1, 3), (2, 4), (3, 5), (4, 6), (5, 7)]
-    for index, (start, end) in enumerate(expected_spans):
-        content = activity_text(state, elapsed_s=None, width=80, shine_index=index)
-        assert content.spans == [
-            Span(start + prefix_len, end + prefix_len, style="reverse")
-        ], f"frame {index}: expected the band at [{start}:{end}]+prefix, got {content.spans!r}"
+    for frame in range(prefix_len + len(state) + 8):
+        band = _band(state, frame)
+        assert band, f"frame {frame} painted no band at all"
+        for column in band:
+            assert prefix_len <= column < prefix_len + len(state), (
+                f"frame {frame} painted column {column}, outside "
+                f"[{prefix_len}, {prefix_len + len(state)})"
+            )
+        content = activity_text(state, elapsed_s=None, width=80, shine_index=frame)
         assert str(content).startswith(f"▶ {state}"), (
-            f"frame {index}: the shine changed the STATE TEXT, not just its style: "
+            f"frame {frame}: the shine changed the STATE TEXT, not just its style: "
             f"{str(content)!r}"
         )
+
+
+def test_the_shine_degrades_to_an_attribute_without_colour() -> None:
+    """Tier 1: with no colour available the band is still drawn, as an SGR
+    attribute rather than as nothing.
+
+    A gradient needs colour; where the terminal has none, the row must still
+    show that a turn is running. Degrading to an attribute keeps that signal
+    on a terminal a colour would have left blank — and it degrades to the
+    form #3779 already shipped, so the fallback is a shape this row has been
+    seen in rather than a third design nobody has looked at.
+    """
+    band = _band_without_colour = {
+        span.start: str(span.style)
+        for span in activity_text(
+            "WORKING", elapsed_s=None, width=80, shine_index=3, colour=False
+        ).spans
+    }
+    assert band, "no colour meant no band at all"
+    assert set(band.values()) == {"reverse"}, (
+        f"expected the attribute fallback, got {sorted(set(band.values()))}"
+    )
 
 
 def test_no_shine_band_while_shine_index_is_none() -> None:
@@ -363,19 +438,21 @@ def test_no_shine_band_while_shine_index_is_none() -> None:
     assert content.spans == []
 
 
-def test_a_shine_index_past_the_word_clamps_inside_it() -> None:
-    """Tier 1: ``activity_text`` is defensive against an out-of-range index
-    (the looping arithmetic lives in the WIDGET, per
-    :meth:`ActivityRow.tick`'s ``% len(state)`` — this pins the pure
-    function's own behaviour if that ever drifts or is bypassed). #3777: the
-    valid range is now offset by the ``"▶ "`` glyph prefix — the band must
-    stay inside ``state``'s span, never reaching back over the glyph."""
-    prefix_len = len("▶ ")
-    content = activity_text("WORKING", elapsed_s=None, width=80, shine_index=999)
-    assert content.spans, "an out-of-range index painted no band at all"
-    start, end, _style = content.spans[0]
-    assert prefix_len <= start < prefix_len + len("WORKING")
-    assert end <= prefix_len + len("WORKING")
+def test_any_frame_number_is_a_valid_frame() -> None:
+    """Tier 1: the cycle is wrapped inside ``activity_text``, so an arbitrarily
+    large frame paints the same band as its position within the cycle.
+
+    The widget's counter only ever increments — it does not wrap, because the
+    cycle's length depends on ``len(state)`` and that changes on every
+    ``specialise``. A counter carried across a state change therefore lands
+    outside the previous cycle routinely, and if that painted nothing the row
+    would go dark while a turn was visibly still running. Pinning the wrap
+    here is pinning that it cannot.
+    """
+    state = "WORKING"
+    cycle = len(state) + 2 * (_SHINE_WIDTH // 2)  # one full pass
+    assert _band(state, 999) == _band(state, 999 % cycle)
+    assert _band(state, 999), "a large frame number painted no band at all"
 
 
 def test_the_shine_never_touches_the_glyph_elapsed_clock_or_the_live_count() -> None:

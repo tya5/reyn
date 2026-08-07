@@ -27,9 +27,14 @@ and the composer would put a stop on the way back to typing.
 
 The row used to open with a literal ``NOW`` label. Owner call (2026-08-07,
 "now とか next という文字列がださいな"): dropped it, and the state word
-itself now carries a travelling ``reverse`` highlight ("shine", design "A" of
-three text-mockup options put to the owner) while a turn runs — see
-:data:`_SHINE_WIDTH`/:data:`_SHINE_STYLE` and :meth:`ActivityRow.tick`. One
+itself now carries a travelling highlight ("shine", design "A" of three
+text-mockup options put to the owner) while a turn runs — see
+:data:`_SHINE_WIDTH`, :func:`_shine_ramp` and :meth:`ActivityRow.tick`. The
+band was a two-character ``reverse`` when #3779 first shipped it; the operator
+read that as a block blinking rather than a light moving, which is what a
+two-valued band is — it has no edge to fall off. #3777 replaced it with a
+cosine ramp between :data:`palette.SHINE_DIM` and :data:`palette.SHINE_PEAK`,
+keeping the old attribute band as the no-colour fallback. One
 timer drives both the shine and the elapsed clock (the clock is recomputed
 fresh from the real clock on every tick regardless of rate, so sharing the
 timer costs nothing in correctness) and is paused/resumed by
@@ -48,9 +53,12 @@ rather than as one icon replacing an unrelated one. See
 """
 from __future__ import annotations
 
+import math
 import time
+from functools import lru_cache
 from typing import TYPE_CHECKING, Callable
 
+from rich.color import Color, blend_rgb
 from textual.content import Content
 from textual.widgets import Static
 
@@ -70,22 +78,27 @@ _CANCEL_HINT = "Ctrl+C cancel"
 #: fire while it holds focus — i.e. never from where the reader actually is.
 LATEST_HINT = "Ctrl+End"
 
-#: How wide the travelling highlight band is, in characters. 2: narrow enough
-#: to read as a POINT of light moving rather than a block of emphasis, wide
-#: enough to be visible at 6fps without needing sub-cell rendering.
-_SHINE_WIDTH = 2
+#: How wide the travelling highlight band is, in characters. Odd, so the band
+#: has ONE centre cell for the cosine to peak on rather than two cells tied
+#: for brightest — a two-cell peak is what makes a band read as a block that
+#: blinks instead of a light that moves. Five rather than rich's twenty
+#: (``PULSE_SIZE``): rich sizes its band against a full-width progress bar,
+#: and ours travels through ``state`` alone, which is ten characters at
+#: ``"RESPONDING"``. A band wider than half its own runway never resolves as
+#: a band at all.
+_SHINE_WIDTH = 5
 
-#: The shine's SGR attribute. Not a ``palette.py`` marker: that module's
-#: at-sign-wrapped markers resolve inside a CSS ``DEFAULT_CSS`` string via
-#: :func:`palette.css`; this is applied at RUNTIME to a narrow content span
-#: via ``Content.stylize``, the same non-CSS style-constant shape
-#: ``gutter.py``'s own glyph colours already use. ``reverse`` rather than a
-#: background: applied to only ``_SHINE_WIDTH`` characters at a time, the
-#: same content-scale emphasis #3490 already established for a moving mark
-#: (a FULL-row inversion was rejected there, not a narrow travelling one)
-#: — and an SGR attribute, not a colour, survives every ansi theme the way
-#: a background value would not.
-_SHINE_STYLE = "reverse"
+#: The shine where the terminal reports no usable colour. The band degrades to
+#: what #3779 shipped — a two-character ``reverse`` — rather than to nothing:
+#: an SGR attribute survives every ansi theme, so the row still shows that a
+#: turn is running where a colour would have shown nothing. This is the same
+#: capability split rich makes in ``_get_pulse_segments`` (it drops to a flat
+#: two-tone bar outside ``standard``/``eight_bit``/``truecolor``), reached
+#: here from the same reasoning rather than by copying its branch: a gradient
+#: needs colour, and where there is none the honest fallback is the emphasis
+#: that does not.
+_SHINE_FALLBACK_STYLE = "reverse"
+_SHINE_FALLBACK_WIDTH = 2
 
 #: The NOW-row glyph (#3777, owner call: a play-family mark — filled, to
 #: read as "running", pairing with
@@ -100,6 +113,40 @@ _SHINE_STYLE = "reverse"
 _STATE_GLYPH = "▶"
 
 
+@lru_cache(maxsize=1)
+def _shine_ramp() -> "tuple[str, ...]":
+    """One colour per cell of the band, brightest first.
+
+    Index is the cell's DISTANCE from the band's centre, so ``[0]`` is the
+    peak and the last entry is the faintest cell still painted; anything
+    further out is left unstyled and keeps the terminal's own foreground.
+    Storing it by distance rather than by absolute position is what lets the
+    band slide without recomputing: the ramp is a property of the band, and
+    only where its centre sits changes per frame.
+
+    The shape is a raised cosine — ``0.5 + cos(pi * d / half) / 2`` — which is
+    the same curve rich's ``_get_pulse_segments`` uses, reached by calling its
+    ``blend_rgb`` rather than by copying it. rich's ``ProgressBar`` itself is
+    no use to us: it is a component that draws its OWN bar, not one that
+    lights up someone else's text, so the only reusable part was the blend,
+    and that is already public API.
+
+    Cached because the ramp is fixed for the life of the process and this runs
+    at ``SHINE_FPS`` — recomputing five blends per frame, forever, to arrive
+    at the same five strings is the kind of cost that never shows up in a
+    profile and never stops being paid.
+    """
+    dim = Color.parse(palette.SHINE_DIM).get_truecolor()
+    peak = Color.parse(palette.SHINE_PEAK).get_truecolor()
+    half = _SHINE_WIDTH // 2
+    ramp: "list[str]" = []
+    for distance in range(half + 1):
+        fade = 1.0 if half == 0 else 0.5 + math.cos(math.pi * distance / half) / 2.0
+        blended = blend_rgb(dim, peak, cross_fade=fade)
+        ramp.append(f"#{blended.red:02x}{blended.green:02x}{blended.blue:02x}")
+    return tuple(ramp)
+
+
 def activity_text(
     state: str,
     *,
@@ -107,6 +154,7 @@ def activity_text(
     width: int = 80,
     behind: "int | None" = None,
     shine_index: "int | None" = None,
+    colour: bool = True,
 ) -> Content:
     """The rendered row for ``state``.
 
@@ -121,9 +169,19 @@ def activity_text(
     urgent of the two. Both are dropped before the state itself.
 
     ``shine_index`` (owner-picked design "A", replacing the removed ``NOW``
-    label): a ``_SHINE_WIDTH``-character ``reverse`` band travelling through
-    ``state`` ITSELF, at the given character offset — ``None`` paints no
-    band (a static row, e.g. while no turn is showing). The band is confined
+    label): the frame number of a ``_SHINE_WIDTH``-character band travelling
+    through ``state`` ITSELF — ``None`` paints no band (a static row, e.g.
+    while no turn is showing). It is a frame counter, not a character offset:
+    the band's centre is ``shine_index - _SHINE_WIDTH // 2``, so it starts
+    off the left edge and runs off the right.
+
+    ``colour`` is whether the terminal can show one. ``True`` paints the band
+    as a cosine ramp between :data:`palette.SHINE_DIM` and
+    :data:`palette.SHINE_PEAK`; ``False`` degrades it to the two-character
+    ``reverse`` #3779 shipped. The gradient is the point — a two-valued band
+    has no edge to fall off, so it reads as a block blinking rather than a
+    light travelling, which is what the operator reported. The band is
+    confined
     to ``state``'s own span, never the elapsed clock, the leading
     :data:`_STATE_GLYPH`, or the right-aligned hint — those are different
     information (or, for the glyph, a different piece of state entirely) and
@@ -139,12 +197,57 @@ def activity_text(
     suffix = f"LIVE +{behind} · {LATEST_HINT} latest" if behind else _CANCEL_HINT
     content = _with_suffix(body, suffix, width)
     if shine_index is not None and state:
-        # Offsets are into ``state`` alone; ``prefix`` shifts them right by
-        # its own length so the band never reaches back over the glyph or
-        # the space after it — the clearance #3777 required.
-        start = len(prefix) + max(0, min(shine_index, len(state) - 1))
-        end = min(start + _SHINE_WIDTH, len(prefix) + len(state))
-        content = content.stylize(_SHINE_STYLE, start, end)
+        content = _apply_shine(content, len(prefix), len(state), shine_index, colour)
+    return content
+
+
+def _apply_shine(
+    content: Content, base: int, span: int, frame: int, colour: bool
+) -> Content:
+    """The travelling band, painted over ``span`` characters starting at ``base``.
+
+    ``base`` is where ``state`` begins in the rendered line; every offset below
+    is relative to ``state`` and shifted by it, so the band never reaches back
+    over the leading glyph, the space after it, the elapsed clock, or the
+    right-hand hint. Those are different information and stay plain — the
+    clearance #3777 required.
+
+    ``frame`` is wrapped here rather than by the caller, because the cycle's
+    length depends on ``span`` — i.e. on ``len(state)``, which changes every
+    time the state does. A widget that owned the wrap would have to re-derive
+    it on each ``specialise``, and a frame counter left over from the previous
+    state would silently sit outside the new cycle and paint nothing while a
+    turn was visibly running. Wrapping where the length is known makes any
+    integer a valid frame.
+
+    The band's centre is ``frame - half``, so the cycle starts with the centre
+    OFF the left edge and ends with it past the right. That is what makes the
+    light enter and leave, rather than materialise at the first character and
+    vanish at the last — clamp the centre inside the span instead and the two
+    end frames hold a stationary half-band, which reads as a stutter at both
+    ends of every pass.
+    """
+    half = _SHINE_WIDTH // 2
+    # ``span + 2 * half``, not ``span + _SHINE_WIDTH``: the centre must reach
+    # from ``-half`` (leftmost cell just lit) to ``span - 1 + half`` (rightmost
+    # cell still lit) and no further. One frame more and the band sits entirely
+    # off the right edge — a single dark frame per pass, which at SHINE_FPS is
+    # a blink in an animation whose whole job is to look continuous.
+    frame %= max(1, span + 2 * half)
+    if not colour:
+        # Same two characters #3779 shipped, so the degraded form is a form
+        # this row has already been seen in rather than a third design.
+        start = base + max(0, min(frame - half, span - 1))
+        return content.stylize(
+            _SHINE_FALLBACK_STYLE, start, min(start + _SHINE_FALLBACK_WIDTH, base + span)
+        )
+    centre = frame - half
+    for distance, style in enumerate(_shine_ramp()):
+        # Both sides of the centre at this distance — and only once when
+        # distance is 0, or the centre cell would be styled twice.
+        for position in {centre - distance, centre + distance}:
+            if 0 <= position < span:
+                content = content.stylize(style, base + position, base + position + 1)
     return content
 
 
@@ -268,7 +371,11 @@ class ActivityRow(Static):
         only in the gap between :meth:`end` pausing the timer and the pause
         actually taking effect, not a steady-state path."""
         if self._state is not None:
-            self._shine_index = (self._shine_index + 1) % max(1, len(self._state))
+            # No modulo here: the cycle's length depends on ``len(state)``,
+            # and ``_apply_shine`` is where that is known. Wrapping in both
+            # places would mean two copies of the same arithmetic drifting
+            # apart the first time one of them learned about a new state.
+            self._shine_index += 1
             self._render_row()
 
     def _render_row(self) -> None:
@@ -283,5 +390,23 @@ class ActivityRow(Static):
                 width=self.content_size.width or 78,
                 behind=self._behind,
                 shine_index=self._shine_index if self._state is not None else None,
+                colour=self._terminal_has_colour(),
             )
         )
+
+    def _terminal_has_colour(self) -> bool:
+        """Whether the shine may use its gradient rather than its fallback.
+
+        Asked of the console every frame rather than cached at mount: the
+        answer is the console's to give, and a value latched at mount would
+        outlive a console that changed underneath it. The call is a plain
+        attribute read.
+
+        Defaults to ``True`` when there is no console to ask — a row mounted
+        alone in a test has no app, and the interesting rendering is the one
+        the operator actually gets.
+        """
+        try:
+            return self.app.console.color_system is not None
+        except Exception:
+            return True
