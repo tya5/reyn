@@ -211,17 +211,6 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     # release added the real thing; #3770's own tracking comment named
     # this exact gap as future-consumer bait, and this is that consumer).
     await _settle_until(pilot, lambda: not flow.following)
-    # #3720 diagnostic: CI and this machine disagree on the same SHA, and the
-    # rendered row is wider there — both point at FlowView's real size, which
-    # #3724's compact_caps can change. Printed so the two can be compared
-    # side by side rather than guessed at.
-    print(
-        f"[3720] screen={app.size} flow={flow.size} virtual={flow.virtual_size} "
-        f"scroll_y={flow.scroll_y} target={flow.scroll_target_y} "
-        f"max={flow.max_scroll_y} entries={len(flow.entries)} "
-        f"activity={app.query_one(ActivityRow).size}",
-        flush=True,
-    )
     assert flow.scroll_y < flow.max_scroll_y, (
         "the conversation did not actually leave the tail, so nothing below "
         "this is being exercised"
