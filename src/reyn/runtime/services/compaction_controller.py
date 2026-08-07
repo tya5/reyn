@@ -20,7 +20,7 @@ delegates via :meth:`force_compact_now` (P3).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, cast
+from typing import TYPE_CHECKING, Callable
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
@@ -105,11 +105,6 @@ def _turn_to_compactor_input(
     return out
 
 
-#: Sentinel for "the compaction engine has not been built yet" (#3671
-#: follow-up) — see :attr:`CompactionController._engine`.
-_ENGINE_UNSET = object()
-
-
 class CompactionController:
     """Background head/body/tail compaction service.
 
@@ -185,7 +180,7 @@ class CompactionController:
         self._history_access = history_access
         self._latest_summary = latest_summary
         self._compaction_engine_factory = compaction_engine_factory
-        self.__engine_cache: "CompactionEngine | object" = _ENGINE_UNSET
+        self.__engine_cache: "CompactionEngine | None" = None
         self._append_history = history_appender
         self._make_summary_message = make_summary_message
         self._render_summary = render_summary
@@ -201,15 +196,18 @@ class CompactionController:
         methods below, and the couple of call sites elsewhere in this
         package that read ``controller._engine`` directly (a private
         attribute, tolerated pre-existing style) — keeps working with no
-        change, since attribute access transparently triggers this."""
-        if self.__engine_cache is _ENGINE_UNSET:
+        change, since attribute access transparently triggers this.
+
+        ``None`` (not a separate sentinel, unlike ``RouterHostAdapter``'s
+        ``_TURN_BUDGET_ENGINE_UNSET``) means "not built yet" here — safe
+        because, unlike ``TurnBudgetEngine`` (whose factory can legitimately
+        return ``None`` for a tiny-context model that cannot support
+        force-close), ``CompactionEngine``'s factory has no "built but
+        absent" case: every constructed engine is real, so ``None`` has
+        exactly one meaning and mypy narrows it without a cast."""
+        if self.__engine_cache is None:
             self.__engine_cache = self._compaction_engine_factory()
-        # The sentinel check above is the narrowing; mypy can't follow an
-        # identity comparison against a plain `object()` singleton, so this
-        # cast states what the check already guarantees (unlike
-        # TurnBudgetEngine's factory, CompactionEngine's has no legitimate
-        # "built but absent" case — every non-UNSET value is a real engine).
-        return cast(CompactionEngine, self.__engine_cache)
+        return self.__engine_cache
 
     # ── internal compaction logic ─────────────────────────────────────────────
 
