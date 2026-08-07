@@ -209,6 +209,21 @@ class CompactionController:
             self.__engine_cache = self._compaction_engine_factory()
         return self.__engine_cache
 
+    def rebuild_engine(self) -> None:
+        """Discard the cached engine so the factory runs again on next
+        reference (#3785: a ``/model`` switch changes the model the factory
+        resolves against — compaction now always follows the conversation
+        model, so the cached engine goes stale the moment ``/model`` runs).
+
+        Mirrors ``RouterHostAdapter.set_turn_budget_engine`` for the sibling
+        engine, but stays LAZY rather than rebuilding eagerly here: the
+        SAME factory this controller was constructed with reads
+        ``Session.model`` fresh each call, so invalidating the cache is
+        enough — consistent with #3671's "don't touch litellm until
+        actually needed" (a ``/model`` switch that never triggers
+        compaction again should not pay to rebuild it)."""
+        self.__engine_cache = None
+
     # ── internal compaction logic ─────────────────────────────────────────────
 
     def _select_candidates(

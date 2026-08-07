@@ -423,9 +423,17 @@ bottom of the table above.
 
 ### Chat turn_budget engine — None on small context, never raise (#1092 PR-F1)
 
-`_build_router_waist` builds the chat axis's `turn_budget` engine off the
-RESOLVED model — `self._resolver.resolve(self.model).model` — mirroring how
-`CompactionEngine` resolves a model class before use (the
+`_build_router_waist` defines `_build_chat_turn_budget_engine`, a closure
+passed to `RouterHostAdapter` as `turn_budget_engine_factory=` — NOT called
+at construction (#3671 follow-up: `TurnBudgetEngine.__init__` touches
+litellm's model catalog, which used to put that cost on every session's TUI
+startup for a value nothing reads until the first force-close check,
+mid-turn). `RouterHostAdapter._ensure_turn_budget_engine` calls the factory
+at most once, on first reference to `wrap_up_output_reserve` — a lazy,
+single-owner cache (`_TURN_BUDGET_ENGINE_UNSET` sentinel, since `None` is
+already a legitimate cached RESULT here — see below). When the factory does
+run, it resolves the model — `self._resolver.resolve(self.model).model` —
+mirroring how `CompactionEngine` resolves a model class before use (the
 [#1172](#compactionengine-model-resolved-class-not-the-cosmetic-label-1172)
 pattern: never hand the cosmetic class straight through).
 
@@ -434,13 +442,27 @@ when the model's context window is too small to satisfy the by-construction
 force-close floor (`output_reserve + offload_cap < threshold`). A
 small-context model is a legitimate chat session that simply cannot support
 force-close; it degrades to the pre-force-close path (no cap, no handoff)
-rather than failing `__init__` outright.
+rather than failing `__init__` outright. This is exactly why the lazy cache
+needs a sentinel distinct from `None`: `None` is this function's own valid
+"non-viable" answer, not "not computed yet".
 
 The engine is ADDITIVE: its sole consumer is
 `RouterHostAdapter.wrap_up_output_reserve`, inert until the F2 handoff calls
 `_force_close_call` — chat stays REACTIVE-only by deliberate per-axis
 choice. Changing the builder to raise instead of degrade would make every
 small-context-model session fail construction, not just skip one feature.
+
+A `/model` switch rebuilds this EAGERLY, as part of `Session
+._rebuild_derived_model_engines_for_model` (the ONE private-Session entry
+point the `/model` slash handler calls for BOTH this engine and
+`CompactionEngine`'s own rebuild below — folded into a single accessor
+rather than exposed as two, per the `_SESSION_RESIDUE` ratchet in
+`test_3595_s4_slash_handler_seam.py`; see that method's own docstring).
+turn_budget's half stays eager while compaction's half (below) stays lazy
+— a deliberate difference, not an inconsistency: by the time `/model`
+runs, `maybe_block_high_cost_model` has already touched litellm on this
+same call, so `TurnBudgetEngine`'s own touch is a cheap re-touch either way,
+and its result feeds a per-turn cap check worth having correct immediately.
 
 ## Family 6b — History / compaction
 
@@ -457,23 +479,57 @@ adaptive per-user token-estimation learner.
 
 ### CompactionEngine model — resolved class, not the cosmetic label (#1172)
 
-`CompactionEngine`'s `model=` argument is
-`self._resolver.purpose_class_or("compaction", self.model)` — a resolved
-litellm model string, not the model CLASS label (e.g. `"standard"`) some
-config surfaces expose.
+`CompactionEngine`'s `model=` argument is `self.model` — the model CLASS
+label (e.g. `"standard"`), NOT a pre-resolved litellm string.
+`CompactionEngine.__init__` resolves it itself via its own `resolver`
+param — the #1172 guarantee lives INSIDE the engine, not at each call site,
+so no construction site (chat / planner / phase) can leak an unresolved
+class to litellm by forgetting to resolve first.
 
-`CompactionEngine` resolves to a litellm string BY CONSTRUCTION — passing
-the unresolved class straight through means litellm receives `"standard"`
-literally, which is not a real model identifier. `litellm.acompletion` then
-raises `BadRequestError` on the FIRST compaction trigger for that session,
-and every subsequent compaction trigger fails the same way — a
-dead-end-critical failure mode, since compaction is what keeps long-running
-sessions inside their context window.
+Before #1172, the unresolved class was handed straight through: litellm
+received `"standard"` literally, which is not a real model identifier, and
+`litellm.acompletion` raised `BadRequestError` on the FIRST compaction
+trigger for that session — a dead-end-critical failure mode, since
+compaction is what keeps long-running sessions inside their context
+window.
 
-`#1679` layered a `model_class_by_purpose.compaction` override on top: when
-an operator has documented one, honor it; otherwise keep `self.model`
-(byte-identical to the former hardcode, including a per-run model
-override).
+`#3785` removed the `model_class_by_purpose.compaction` override `#1679`
+had layered on top (`self._resolver.purpose_class_or("compaction",
+self.model)`): compaction never tracked a `/model` switch mid-session
+(nothing ever rebuilt it), so an operator who set a per-purpose compaction
+model was silently getting a STALE conversation model instead of either
+the compaction override or the current one — the config key described a
+guarantee the code never provided. Compaction now always follows
+`self.model` directly, and a config that still declares
+`model_class_by_purpose.compaction` fails to load
+(`config/root.py::_build_model_class_by_purpose`) rather than silently
+doing nothing.
+
+#### Construction is lazy, and so is the rebuild (#3671, #3785)
+
+`_build_history_compaction_bundle` defines `_build_chat_compaction_engine`,
+a closure passed to `CompactionController` as `compaction_engine_factory=`
+— NOT called at construction (#3671 follow-up: `CompactionEngine.__init__`
+measures `T_comp_SP` and derives budgets, both of which touch litellm's
+model catalog, for a value nothing reads until compaction actually
+triggers, mid-turn). `CompactionController._engine` (a property) calls the
+factory at most once, on first reference, caching the result — `None` means
+"not built yet" here (unlike `TurnBudgetEngine`'s sentinel: `CompactionEngine`
+has no legitimate "built but absent" case, so `None` has exactly one
+meaning and needs no sentinel).
+
+A `/model` switch reaches this half through the SAME `Session
+._rebuild_derived_model_engines_for_model` call as turn_budget's rebuild
+above (not a separate accessor — see that method's docstring), which calls
+`CompactionController.rebuild_engine()` — this ONLY discards
+the cache (`__engine_cache = None`); it does not rebuild eagerly. The SAME
+factory closure reads `self.model` fresh on each call, so invalidating the
+cache is sufficient: the next real compaction trigger builds against
+whatever model is current at THAT moment, not the one active at `/model`
+switch time. This stays lazy (unlike `TurnBudgetEngine`'s eager rebuild,
+above) because a `/model` switch that never triggers compaction again
+should not pay to rebuild it — consistent with #3671's construction-time
+discipline.
 
 ## Family 7 — Intervention
 
