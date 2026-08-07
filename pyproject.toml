@@ -109,7 +109,7 @@ dependencies = [
     # The SHA is the *commit*, not the tag object: v0.13.1/v0.12.0 are
     # LIGHTWEIGHT tags (no `^{}` peel in `git ls-remote`), same as v0.9.0,
     # unlike the annotated v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@2408cabfdc896fa5e49c1f64b8ae9f01e33d9346",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@224889a494a719ec7b26b5c48a342aa654f3fefc",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
