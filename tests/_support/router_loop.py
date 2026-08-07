@@ -74,6 +74,9 @@ class FakeRouterHost:
         self.file_deletes: list[str] = []
         self.file_reads: list[str] = []
         self.index_regenerations: list[dict] = []
+        # #3792 PR1: mid-turn injection seam witnesses.
+        self.mid_turn_injection_peeks: list[int] = []
+        self.call_order: list[str] = []
 
         # In-memory "file system"
         self._files: dict[str, str] = {}
@@ -245,6 +248,19 @@ class FakeRouterHost:
 
     def resolve_model(self, name: str) -> str:
         return f"fake-model-{name}"
+
+    # --- #3792 PR1: mid-turn injection seam ---
+
+    async def peek_mid_turn_injection(self) -> dict | None:
+        """PR1 test double: records every call (for seam-position witness
+        tests) and always returns None (PR1's own production behaviour —
+        PR2 wires the real peek). ``mid_turn_injection_peeks`` accumulates
+        one entry per call so a test can assert both COUNT (how many times
+        the seam fired) and ORDER (relative to other recorded events, via
+        the shared ``self.call_order`` log some tests also append to)."""
+        self.mid_turn_injection_peeks.append(len(self.mid_turn_injection_peeks))
+        self.call_order.append("peek_mid_turn_injection")
+        return None
 
 
 # ---------------------------------------------------------------------------
