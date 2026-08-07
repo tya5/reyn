@@ -116,7 +116,13 @@ async def test_pending_intervention_a2a_run_survives_restart_and_wal_truncation(
     # of recording + awaiting the future (sanity: it must be genuinely
     # dispatched before we can prove it survives truncation). No terminating
     # assert: the loop condition IS that check.
+    # #3765: check dispatch_task's health, not just elapsed time -- if it
+    # dies (an exception) before recording, that exception IS the real
+    # failure; re-raising it beats hanging on a producer that will never
+    # satisfy the predicate again (mirrors #3764's fix).
     while session.interventions.get(iv.id) is None:
+        if dispatch_task.done():
+            dispatch_task.result()
         await asyncio.sleep(0.01)
 
     # The A2A bus mirrors input-required onto the RunEntry (real object, same
