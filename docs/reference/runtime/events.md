@@ -61,6 +61,7 @@ compact_op_unavailable
 compaction_check
 compaction_completed
 compaction_failed
+compaction_shrink_recovered
 compaction_started
 composer_dropped
 composer_fired
@@ -436,6 +437,7 @@ mostly informational.
 |------|------|-------------|
 | `compaction_check` | The compaction gate ran for a turn. `outcome` records the decision — e.g. `too_few_turns`, `below_min_batch`, `pre_frame_overflow`, `already_running`, `forced_sync`, `forced_sync_no_turns`. Some outcomes also carry `turns`, `head`, `tail`. | `outcome`, plus outcome-specific fields |
 | `compaction_failed` | A compaction attempt raised. | `error` |
+| `compaction_shrink_recovered` | (#3783 stage 2) `retry_loop`'s bounded shrink ladder caught a context-overflow (compaction-call or main-call) and is about to shrink and retry. Fires once per recovered iteration, not once per turn — a turn that shrinks 3 times emits 3 of these. | `cause` (the caught exception's class name), `iteration` (0-based ladder position), `consecutive` (how many times in a row `cause` has recovered without a different cause or a success in between) |
 | `compact_op_unavailable` | The `compact` Control IR op was dispatched in a context where no compaction engine is wired. | `run_id`, `phase` |
 | `summary_resummarize_failed` | Re-summarising an existing summary (nested compaction) raised. | `error` |
 | `budget_reset` | The chat budget gateway reset its per-window accounting. | `before` (prior accumulated value) |
