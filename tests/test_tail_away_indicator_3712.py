@@ -190,19 +190,15 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
         "viewport, so there is no tail to leave"
     )
     flow.scroll_to(y=0, animate=False)
-    # #3770: waits for the scroll's OWN deferred _refresh_tail_indicator to
-    # actually run (app._following_tail flips False) before this fixture
-    # returns — callers push further arrivals right after and need
-    # _note_entry_landed to already be counting them, which only happens
-    # once the deferred measurement has settled the departure. The wait
-    # predicate reads private state (``_following_tail``) because no public
-    # surface distinguishes "measurement not yet run" from "run, and the
-    # reader happens to be 0 entries behind" — the row's own text renders
-    # the same either way (see #3770's own tracking comment for that gap).
-    # CLAUDE.md's private-state ban is about ASSERTING on it as a verdict;
-    # this only decides WHEN to look, and the assert two lines down stays on
-    # the public ``scroll_y``/``max_scroll_y`` surface.
-    await _settle_until(pilot, lambda: not app._following_tail)
+    # #3770 follow-up: waits for flowview's own ``following`` to actually
+    # flip False before this fixture returns — callers push further
+    # arrivals right after and need ``_note_entry_landed`` to already be
+    # counting them, which only happens once the departure has settled.
+    # PUBLIC surface now (flowview 0.14.0's own ``FlowView.following`` —
+    # was reyn's private ``app._following_tail`` before this library
+    # release added the real thing; #3770's own tracking comment named
+    # this exact gap as future-consumer bait, and this is that consumer).
+    await _settle_until(pilot, lambda: not flow.following)
     # #3720 diagnostic: CI and this machine disagree on the same SHA, and the
     # rendered row is wider there — both point at FlowView's real size, which
     # #3724's compact_caps can change. Printed so the two can be compared
@@ -323,13 +319,13 @@ async def test_the_named_key_actually_returns_to_the_newest_output() -> None:
         assert "LIVE" in str(row.render())
 
         await pilot.press("ctrl+end")
-        # #3770: no deferred wait needed here — action_jump_to_latest sets
-        # scroll_y, _away_arrivals, _following_tail, and the row's own
-        # ``set_behind(None)`` all SYNCHRONOUSLY inside the key handler (its
-        # own docstring: "cleared HERE rather than through the deferred
-        # measurement"), so once the keypress message has been dispatched
-        # both assertions below are already final. A single pause is for
-        # dispatch, not for a race.
+        # #3770 follow-up: no deferred wait needed here — action_jump_to_latest
+        # sets scroll_y, _away_arrivals, and the row's own ``set_behind(None)``
+        # all SYNCHRONOUSLY inside the key handler (its own docstring:
+        # "cleared HERE rather than waiting on the FollowChanged handler"),
+        # so once the keypress message has been dispatched both assertions
+        # below are already final. A single pause is for dispatch, not for
+        # a race.
         await pilot.pause()
 
         assert flow.scroll_y >= flow.max_scroll_y, "the key did not return to the tail"
