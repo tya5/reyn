@@ -170,12 +170,11 @@ def test_ensure_built_background_schedules_a_task_and_completes(monkeypatch: pyt
         assert outcome.background is True
         assert outcome.triggered is True
         # Poll the PUBLIC readiness gate for the scheduled background task
-        # to complete (bounded — no private-state introspection).
-        for _ in range(200):
-            if await coord.is_ready("repo_doc"):
-                break
+        # to complete (no private-state introspection). #3748: unbounded
+        # (owner policy) -- no terminating assert: the loop condition IS
+        # that check.
+        while not await coord.is_ready("repo_doc"):
             await asyncio.sleep(0.01)
-        assert await coord.is_ready("repo_doc") is True
 
     _run(_scenario())
 
