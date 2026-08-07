@@ -20,6 +20,21 @@ def test_run_async_closes_cached_litellm_async_client() -> None:
     surfacing as "Unhandled exception in event loop: Exception None").
     """
     async def _create_litellm_async_client():
+        # #3671: `ensure_litellm_ready()` first — the real call shape every
+        # actual litellm egress site uses (`recorded_acompletion`/the
+        # embedding provider, per that function's own docstring), and the
+        # hook `run_async`'s #3434 close-scoping baseline is captured
+        # through. A bare `import litellm` here (this test's shape before
+        # #3671) bypasses that hook — a client materialises, but the
+        # close step never learns litellm was touched THIS call and skips
+        # closing anything, which is correct #3671 behaviour for a call
+        # that genuinely never went through litellm's real entry points,
+        # but wrong for what this test means to exercise (a real client
+        # this call created SHOULD get closed).
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+
+        ensure_litellm_ready()
+
         # Exercises litellm's real cache + real aiohttp-backed transport —
         # the same call shape `litellm.acompletion(...)` makes internally
         # for the aiohttp-transport providers (issue #2787's leak class).

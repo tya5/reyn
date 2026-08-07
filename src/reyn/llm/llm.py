@@ -473,6 +473,15 @@ async def shutdown_logging() -> None:
       If LiteLLM ever guarantees clean drain in `asyncio.run` shutdown
       without caller intervention, this function and `run_async` become
       thin wrappers and can be removed.
+
+    #3671: guarded by ``litellm_bootstrap.client_cache_baseline() is not
+    None`` at the call site in ``run_async`` — the queue this drains can
+    only have entries if ``acompletion()`` ran at least once this call
+    (this docstring's own "enqueues ... after every acompletion()"), so a
+    session that never touched the LLM has NOTHING to drain, and the
+    unconditional ``from litellm... import`` below would otherwise force
+    litellm's cold import (#3671's whole cost) just to confirm an empty
+    queue.
     """
     try:
         from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
@@ -482,28 +491,7 @@ async def shutdown_logging() -> None:
         pass
 
 
-def _snapshot_litellm_client_cache_keys() -> frozenset:
-    """Return the current key set of litellm's process-wide async-client
-    cache (#3434), for use as the "pre-existing" baseline `run_async` diffs
-    against before closing anything.
-
-    Best-effort: an empty frozenset (rather than raising) if litellm hasn't
-    lazily initialized the cache yet, matching `_close_litellm_async_clients`'s
-    own best-effort posture.
-    """
-    try:
-        import litellm
-
-        cache = getattr(litellm, "in_memory_llm_clients_cache", None)
-        cache_dict = getattr(cache, "cache_dict", None)
-        if cache_dict is None:
-            return frozenset()
-        return frozenset(cache_dict.keys())
-    except Exception:
-        return frozenset()
-
-
-async def _close_litellm_async_clients(pre_existing_keys: frozenset = frozenset()) -> None:
+async def _close_litellm_async_clients(pre_existing_keys: frozenset) -> None:
     """Close LiteLLM's cached aiohttp-backed async HTTP clients before the
     event loop closes (issue #2787), scoped to clients created during THIS
     `run_async` call (#3434).
@@ -537,15 +525,28 @@ async def _close_litellm_async_clients(pre_existing_keys: frozenset = frozenset(
       cached async client to complete -- closing the client first could
       break that drain.
 
-    Fix: diff the cache's key set against `pre_existing_keys` (captured by
-    `run_async` before awaiting the wrapped coroutine) and temporarily hide
-    the pre-existing entries from litellm's own cache dict while invoking
-    its official close routine — so only clients newly cached during this
-    call get closed, and clients other in-flight callers still own are left
-    alone. Restoring afterwards is unconditional (`finally`) so a raise from
-    litellm's close routine can never permanently evict them. Idempotent /
-    safe to call when no client was ever created during this call: the diff
-    is then empty (no-op).
+    Fix: diff the cache's key set against `pre_existing_keys` (#3671:
+    `litellm_bootstrap.client_cache_baseline()`, captured lazily by the
+    first real litellm use *within this call*, not necessarily by
+    `run_async` itself — see that function's own docstring for why) and
+    temporarily hide the pre-existing entries from litellm's own cache dict
+    while invoking its official close routine — so only clients newly
+    cached during this call get closed, and clients other in-flight
+    callers still own are left alone. Restoring afterwards is unconditional
+    (`finally`) so a raise from litellm's close routine can never
+    permanently evict them.
+
+    #3671: NOT called at all (not "called with an empty pre_existing_keys")
+    when the call never touched litellm — `run_async` checks
+    `client_cache_baseline() is not None` before calling this, so a
+    session that never used the LLM never pays this function's own `import
+    litellm` either. Calling it with `pre_existing_keys=frozenset()` for
+    that case (the previous behaviour) would look idempotent but is NOT:
+    `cache_dict` may be non-empty from OTHER calls in the same worker
+    process, and an empty baseline would make the diff below treat every
+    one of THEIR entries as "new to this call" and close them — the #3434
+    bug, reintroduced by the very frozenset() default that looked like a
+    safe idempotent no-op.
 
     Considered and accepted, not overlooked: the hidden window spans an
     `await` (litellm's close routine), so in principle another task on the
@@ -591,11 +592,27 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
     unhandled-exception capture here (rather than at each call site)
     covers all of them from one place. See
     ``reyn.core.events.asyncio_diagnostics`` for why.
+
+    #3671: does NOT import litellm itself, and never did directly — but
+    used to force it as a side effect via `litellm_bootstrap`'s
+    predecessor of `client_cache_baseline` being captured EAGERLY here,
+    before `coro` (the whole session) had run at all. A session that
+    never calls the LLM (the common case for "just show the TUI") was
+    paying litellm's own multi-second cold import before the UI could
+    mount, for a baseline `_close_litellm_async_clients` would only ever
+    need if the LLM WAS called. `reset_client_cache_baseline` below only
+    arms lazy capture — the ACTUAL import now happens on whichever call
+    reaches it first, inside the session's own real LLM use
+    (`recorded_acompletion`/the embedding provider), if it happens at
+    all. `"litellm" not in sys.modules` after a session that never used
+    it is the gate this exists to keep true —
+    `test_run_async_never_imports_litellm_without_an_llm_call` pins it.
     """
-    # #3434: snapshot BEFORE the coroutine runs, so the finally below closes
-    # only litellm async clients this call creates — not every client any
-    # other test/call in this worker process has cached and is still using.
-    pre_existing_keys = _snapshot_litellm_client_cache_keys()
+    from reyn.llm.litellm_bootstrap import client_cache_baseline, reset_client_cache_baseline
+
+    # #3434 (scope) / #3671 (cost): arm a FRESH per-call baseline without
+    # importing litellm — see `reset_client_cache_baseline`'s own docstring.
+    reset_client_cache_baseline()
 
     async def _wrapped() -> T:
         from reyn.core.events.asyncio_diagnostics import (
@@ -605,8 +622,34 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
         try:
             return await coro
         finally:
-            await shutdown_logging()
-            await _close_litellm_async_clients(pre_existing_keys)
+            # #3671: two INDEPENDENT gates, deliberately not one.
+            #
+            # `shutdown_logging` gates on `"litellm" in sys.modules` — the
+            # general "was litellm touched AT ALL this call" signal, true
+            # for `recorded_acompletion`/the embedding provider AND for any
+            # other lazy litellm call site in this codebase (there are
+            # several — cost/pricing/budget lookups, `router_loop.py`, the
+            # replay harness) that does not happen to route through
+            # `ensure_litellm_ready`. Draining litellm's logging-worker
+            # queue is safe and idempotent regardless of WHICH path
+            # imported litellm, so the broader signal is correct here.
+            #
+            # `_close_litellm_async_clients` gates on `client_cache_baseline()
+            # is not None` — a NARROWER, TRUSTED-baseline-only signal.
+            # Closing clients needs to know what pre-existed THIS call
+            # (#3434); a call that imported litellm through some OTHER path
+            # never captured that baseline, and guessing `frozenset()` would
+            # misread "unknown" as "nothing pre-existed" and close every
+            # OTHER call's still-open client — the #3434 bug, reintroduced.
+            # Skipping is the safe direction: at worst a client that path
+            # created is not closed until GC (#2787's pre-existing risk
+            # class, not a new one), never another call's client closed
+            # early.
+            if "litellm" in sys.modules:
+                await shutdown_logging()
+            pre_existing_keys = client_cache_baseline()
+            if pre_existing_keys is not None:
+                await _close_litellm_async_clients(pre_existing_keys)
 
     return asyncio.run(_wrapped())
 

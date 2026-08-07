@@ -448,22 +448,18 @@ def _startup_stage(name: str):
     return stage(name)
 
 
-def _prepay_litellm_import() -> None:
-    """Pre-pay litellm's lazy import (#3671 client-prep:litellm-import).
-
-    `llm.py`'s `run_async` (a general-purpose choke point also used by
-    `mcp.py` and other non-chat-startup callers) lazily imports litellm via
-    `_snapshot_litellm_client_cache_keys` — baking a CLI startup-phase stage
-    name into that shared helper would record non-startup calls under a
-    startup stage, a stronger opinion than that helper's least-opinionated
-    caller should have. Importing it HERE instead, in the startup path,
-    keeps `run_async` untouched: Python caches the module, so `run_async`'s
-    own `import litellm` becomes a near-zero-cost lookup once this has
-    already paid the real cost. Measured on a real run: this was the
-    largest previously-unnamed slice of `client-prep:other` (~59-60% of
-    TOTAL on one machine)."""
-    with _startup_stage("client-prep:litellm-import"):
-        import litellm  # noqa: F401,PLC0415
+#: #3671 P5: `_prepay_litellm_import` (removed) existed ONLY because
+#: `run_async` used to force `import litellm` unconditionally at its own
+#: top (via a since-removed eager cache-key snapshot) — prepaying here, in
+#: a NAMED startup stage, was how that already-unavoidable cost got
+#: measured separately from the unnamed `client-prep:other` bucket rather
+#: than actually removed. Once `run_async`/`litellm_bootstrap` stopped
+#: forcing that import for an LLM-free session (`reyn.llm.litellm_bootstrap`
+#: module docstring), prepaying it here would have UNDONE that fix by
+#: re-introducing the exact unconditional import this file's own function
+#: used to exist to merely relabel. `"litellm" not in sys.modules` after an
+#: LLM-free session is the property that removal (not relabelling) makes
+#: possible — see `test_run_async_never_imports_litellm_without_an_llm_call`.
 
 
 def _report_startup_timing() -> None:
@@ -901,5 +897,4 @@ def _run(args: argparse.Namespace) -> None:
     from reyn.runtime.startup_timing import mark_async_entered  # noqa: PLC0415
 
     mark_async_entered()
-    _prepay_litellm_import()
     run_async(_main_chat())
