@@ -1897,23 +1897,58 @@ class RouterLoop:
                 _force_close_fn is not None
                 and await _force_close_fn(messages, model=resolved_model)
             )
-            # #3792 PR1: mid-turn injection seam — the ONE design decision the
-            # whole feature hinges on (architect, #3792). Position: after the
-            # per-iteration guards above (the cancel checkpoint at the top of
-            # this loop — a cancelled turn ``break``s before ever reaching
-            # here), and immediately before whichever send this iteration
-            # makes (force-close or normal — ``_force_close_now`` is already
-            # decided above), so an injected message can only land between
-            # tool-call/tool-result rounds, never mid-send (wire_format.py's
-            # adjacency requirement forbids splitting an assistant(tool_calls)
-            # / role=tool group). getattr-guarded → hosts that don't
-            # implement it (phase hosts; PR1 leaves it unimplemented even on
-            # the chat host) are a no-op, byte-identical to before this PR.
-            # PR2 wires the real 2-phase peek/pop + injection; this PR only
-            # locks in the seam's position so PR2 does not re-litigate it.
+            # #3792: mid-turn injection seam — the ONE design decision the
+            # whole feature hinges on (architect, #3792; PR1 #3802 locked in
+            # this position). Position: after the per-iteration guards above
+            # (the cancel checkpoint at the top of this loop — a cancelled
+            # turn ``break``s before ever reaching here), and immediately
+            # before whichever send this iteration makes, so an injected
+            # message can only land between tool-call/tool-result rounds,
+            # never mid-send (wire_format.py's adjacency requirement forbids
+            # splitting an assistant(tool_calls) / role=tool group — the
+            # assert below is the load-bearing check for that). Skipped
+            # during a force-close send (``_force_close_now``): that call is
+            # a special wrap-up/summary turn, not an ordinary conversation
+            # round, and is out of this feature's scope (issue #3792 scope
+            # note: injection only, the force-close/cancel axes are
+            # untouched). getattr-guarded → hosts that don't implement the
+            # hook (phase hosts; production chat host implements it via
+            # ``RouterHostAdapter``, PR2 #3792) are a no-op.
             _peek_injection_fn = getattr(host, "peek_mid_turn_injection", None)
-            if _peek_injection_fn is not None:
-                await _peek_injection_fn()  # PR1: return value not yet consumed
+            if _peek_injection_fn is not None and not _force_close_now:
+                _injection = await _peek_injection_fn()
+                if _injection is not None:
+                    _injected_payload = _injection["payload"]
+                    _injected_msg = {
+                        "role": "user",
+                        "content": _injected_payload.get("text") or "",
+                    }
+                    messages = [*messages, _injected_msg]
+                    # #3792: wire-position assert (architect's flagged
+                    # pitfall) — a naive splice between an
+                    # assistant(tool_calls) message and its role=tool
+                    # results does NOT 400; wire_format.py's
+                    # ``repair_tool_call_pairing`` silently RE-ADJACENTS it
+                    # instead, and the resulting warning names the
+                    # tool_result as the anomaly, not the injection. By
+                    # construction this seam only ever fires between
+                    # completed rounds (never mid-pair), so the injected
+                    # message must survive repair at the TAIL, unmoved —
+                    # this assert is the fail-fast witness of that
+                    # invariant, checked BEFORE the send, not discovered
+                    # downstream as a misattributed warning.
+                    from reyn.llm.wire_format import repair_tool_call_pairing
+                    _repaired = repair_tool_call_pairing(messages)
+                    assert _repaired[-1] is _injected_msg, (
+                        "#3792: mid-turn injection did not land at the tail "
+                        "after wire repair — the seam's never-mid-pair "
+                        "position invariant was violated"
+                    )
+                    _commit_injection_fn = getattr(
+                        host, "commit_mid_turn_injection", None,
+                    )
+                    if _commit_injection_fn is not None:
+                        await _commit_injection_fn(_injection["msg_id"])
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
             # this exact (model, messages, tools, tool_choice) tuple
             # short-circuits the call. Used by phase-step resume so a

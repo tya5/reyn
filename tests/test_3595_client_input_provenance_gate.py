@@ -255,6 +255,23 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
         ),
         measured_by=(),
     ),
+    ("reyn/runtime/session.py", "Session._peek_mid_turn_injection"): _SiteDeclaration(
+        role="reads",
+        reason=(
+            "#3792: the mid-turn injection origin gate. Only a CLIENT_INPUT-origin "
+            "queued item is eligible to be spliced into an ALREADY-running turn "
+            "between completion rounds — every other origin (AGENT_REQUEST, "
+            "EXTERNAL_MESSAGE, HOOK, ...) is left untouched in the queue, exactly "
+            "as if this method did not exist. Reads the kind as an eligibility "
+            "check, the same fail-safe if/else shape as "
+            "Session._stamp_execution_context above: an unmapped or non-human "
+            "origin cannot reach the permissive (inject) side."
+        ),
+        measured_by=(
+            "tests/test_3792_pr2_session_injection.py::"
+            "test_only_client_input_origin_is_peek_eligible",
+        ),
+    ),
     ("reyn/runtime/session.py", "Session.queued_user_messages"): _SiteDeclaration(
         role="reads",
         reason=(
