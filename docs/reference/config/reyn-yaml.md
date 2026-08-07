@@ -25,7 +25,7 @@ models:
 |-----|------|-------------|
 | `model` | string | Default model class. Resolved via `models`. Override with `--model`. |
 | `models` | map | Class name → LiteLLM model string **or** dict (see below). |
-| `model_class_by_purpose` | map | Per-purpose model-class override (`router` / `control_ir` / `tool` / `compaction` / `judge`). Unset purpose → `model`. See below. |
+| `model_class_by_purpose` | map | Per-purpose model-class override (`router` / `control_ir` / `tool` / `judge`). Unset purpose → `model`. `compaction` is NOT a valid key (#3785) — compaction always follows the conversation model. See below. |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
 | `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
@@ -320,7 +320,6 @@ specific purpose; an unset purpose falls back to `model`.
 |---|---|
 | `router` | The per-turn chat router / intent classification. |
 | `tool` | The default class for tool-spawned skill runs. |
-| `compaction` | Context-compaction summarisation. |
 | `judge` | Output-judging / evaluation calls. |
 
 ```yaml
@@ -330,13 +329,17 @@ models:
   light:    openai/gpt-4o-mini
 model_class_by_purpose:
   router: light                  # opt INTO a cheaper per-turn router (an explicit choice)
-  # tool / compaction / judge unset → follow `model` (gpt-5.4)
+  # tool / judge unset → follow `model` (gpt-5.4)
 ```
 
 **Cost note**: the router runs on every turn, so the cheap-router optimisation is
 still available — it is now an explicit one-line opt-in (`router: light`) rather
 than a hidden default. Explicit per-call selections (a skill's `op.model`) still
-win over this fallback. Unknown purpose keys are warned (not fatal) at load time.
+win over this fallback. Unknown purpose keys are warned (not fatal) at load time —
+**except `compaction`** (#3785), which fails to load: compaction used to be
+configurable here but never tracked a `/model` switch mid-session, so it always
+follows the conversation's active model now, and a config that still sets this
+key is refused with a remedy rather than silently ignored.
 
 ## `llm` block
 

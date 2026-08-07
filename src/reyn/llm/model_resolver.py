@@ -441,7 +441,8 @@ class ModelResolver:
 
     def class_for_purpose(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose* (router / control_ir
-        / tool / compaction / judge).
+        / tool / judge — NOT compaction, #3785: compaction always follows
+        ``ReynConfig.model``/``Session.model`` directly, never this map).
 
         A per-purpose override (``model_class_by_purpose``) wins; otherwise the
         configured default class (``ReynConfig.model``). This is the OS-side mirror
@@ -459,15 +460,20 @@ class ModelResolver:
 
         Unlike ``class_for_purpose`` (whose fallback is the resolver's configured
         ``default_class`` = ``ReynConfig.model``), this lets a caller keep its OWN
-        existing model source when no override is set. The CompactionEngine sites
-        need exactly this: their model source today is the chat session's model
-        (``self.model``) / the plan router model, which can diverge from
-        ``default_class`` under a per-run model override — so feeding
-        ``default_class`` would silently move compaction OFF the agent's chosen
-        model. With ``default`` = the site's existing source, wiring is
-        byte-identical until ``model_class_by_purpose.compaction`` is set, at which
-        point the documented key takes effect (was a dead key — #1679). Returns a
-        CLASS name — feed it through ``resolve()`` to get the litellm string.
+        existing model source when no override is set — needed wherever that
+        source can diverge from ``default_class`` under a per-run model
+        override, so feeding ``default_class`` would silently move the call
+        OFF the agent's chosen model.
+
+        #3785: this is NO LONGER how compaction resolves its model (removed
+        the ``model_class_by_purpose.compaction`` override #1679 introduced
+        here as the motivating example — compaction never tracked a
+        ``/model`` switch under that wiring, so an operator-set override was
+        silently getting a STALE model, not the one it named; see
+        ``Session._rebuild_derived_model_engines_for_model``). Still used for
+        the OTHER purposes whose site-fallback can diverge from
+        ``default_class`` the same way. Returns a CLASS name — feed it
+        through ``resolve()`` to get the litellm string.
         """
         return self._purpose_classes.get(purpose, default)
 

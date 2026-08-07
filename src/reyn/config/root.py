@@ -107,8 +107,8 @@ class ReynConfig:
         metadata={"desc": "LLM-layer config (litellm.Router resilience: llm.router.*)."},
     )
     # #1672: per-purpose model-class override. The mapping from a logical call
-    # purpose (router / control_ir / tool / compaction / judge) to a model CLASS
-    # was hardcoded in code (router="light", control_ir/tool="standard"), so the
+    # purpose (router / control_ir / tool / judge) to a model CLASS was
+    # hardcoded in code (router="light", control_ir/tool="standard"), so the
     # user could set what a class resolves to but NOT which class each purpose
     # uses — the owner's "don't do things users can't customize" complaint. This
     # map exposes it: an UNSET purpose falls back to ``model`` (the configured
@@ -116,11 +116,22 @@ class ReynConfig:
     # cheaper tier. Setting e.g. ``router: light`` is the explicit opt-in to the
     # cheap per-turn router. Explicit per-call model selection (phase frontmatter
     # model_class) still wins over this fallback.
+    #
+    # #3785: ``compaction`` is NOT a valid key here anymore — compaction always
+    # follows the conversation's active model (no separate purpose override was
+    # ever kept in sync with a ``/model`` switch; see
+    # ``Session._rebuild_derived_model_engines_for_model``). A config that still
+    # sets ``model_class_by_purpose.compaction`` fails to load
+    # (``_build_model_class_by_purpose`` below) rather than silently ignoring
+    # or warning — the key's presence is itself evidence of a wrong belief
+    # ("compaction runs on a separate model") that a warning would leave intact.
     model_class_by_purpose: dict[str, str] = field(
         default_factory=dict,
         metadata={"desc": (
             "Per-purpose model class override (router / control_ir / tool / "
-            "compaction / judge). Unset purpose → the `model` default."
+            "judge). Unset purpose → the `model` default. `compaction` is not "
+            "a valid key (#3785) — compaction always follows the conversation "
+            "model."
         )},
     )
     # LiteLLM proxy: non-secret base URL only.
@@ -363,20 +374,38 @@ class ReynConfig:
 # ``model_class_by_purpose``. A typo'd key would silently never apply (the call
 # sites look up fixed keys), so the parser warns on an unknown key rather than
 # hard-failing (forward-compatible — a future purpose key is a warn, not a crash).
+# #3785: ``compaction`` deliberately excluded — see
+# ``_build_model_class_by_purpose``'s dedicated (hard-failing) handling below,
+# not the generic unknown-key warn path.
 MODEL_CLASS_PURPOSES: frozenset[str] = frozenset({
-    "router", "control_ir", "tool", "compaction", "judge",
+    "router", "control_ir", "tool", "judge",
 })
 
 
 def _build_model_class_by_purpose(raw: object) -> dict[str, str]:
     """#1672: parse ``model_class_by_purpose`` (purpose → model class). Unknown
     purpose keys WARN (not error) — a typo would silently never apply, so flag it
-    decision-enablingly while staying forward-compatible with future purposes."""
+    decision-enablingly while staying forward-compatible with future purposes.
+
+    #3785: ``compaction`` is the ONE exception — it used to be a valid key
+    (removed) and its presence is not a typo but a stale belief ("compaction
+    runs on its own model"), which a warning would leave uncorrected (the
+    config keeps silently doing nothing every session). Refuses to load
+    instead, with the remedy in the message.
+    """
     if not isinstance(raw, dict):
         return {}
     out: dict[str, str] = {}
     for k, v in raw.items():
         key = str(k)
+        if key == "compaction":
+            raise ValueError(
+                "model_class_by_purpose.compaction is no longer configurable "
+                "(#3785) — compaction always follows the conversation's "
+                "active model now (it did not track a `/model` switch before, "
+                "which this removal fixes). Remove this key from your "
+                "reyn.yaml/reyn.local.yaml."
+            )
         if key not in MODEL_CLASS_PURPOSES:
             import logging
             logging.getLogger(__name__).warning(

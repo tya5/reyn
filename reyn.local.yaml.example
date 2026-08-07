@@ -112,14 +112,16 @@
 # -----------------------------------------------------------------------------
 # model_class_by_purpose: per-purpose model-class override (#1672).
 # Reyn makes internal LLM calls beyond the main reply, each tied to a purpose
-# (router / control_ir / tool / compaction / judge). By DEFAULT every purpose
+# (router / control_ir / tool / judge). By DEFAULT every purpose
 # follows `model` (no hidden cheaper tier). Override a purpose here; an unset
 # purpose falls back to `model`. The per-turn router is a common cost knob —
 # opt into a cheaper class explicitly:
+# `compaction` is NOT a valid key (#3785) — compaction always follows the
+# conversation's active model; a config that still sets it fails to load.
 # -----------------------------------------------------------------------------
 # model_class_by_purpose:
 #   router: light            # cheaper per-turn router (explicit opt-in)
-#   # control_ir / tool / compaction / judge unset → follow `model`
+#   # control_ir / tool / judge unset → follow `model`
 
 
 # -----------------------------------------------------------------------------
