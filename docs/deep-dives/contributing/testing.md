@@ -722,14 +722,62 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 ## Before you push — the five CI gates
 
 A green `pytest` run is **not** a green CI run. `.github/workflows/test.yml` runs
-five *separate* gates; run all five locally on your diff before calling a PR
-ready:
+five *separate* gates. **Owner-approved (2026-08-07): run four of them locally,
+plus whatever tests your diff actually touches — do not run the full suite
+locally.** This is a reversal of #3750's same-day "four → five" fix, which made
+this section say "run all five" for a few hours; if that history makes you want
+to revert this back to five, read the next two paragraphs first.
 
-1. **pytest** — from the repo root (not a subset path) so collection matches CI:
+**Why the full local run was dropped, not just discouraged.** The mechanism
+first — `.github/workflows/test.yml`'s pytest job runs on a `matrix` of
+`python-version: ["3.11", "3.12"]`, each on its own dedicated `ubuntu-latest`
+runner: two clean machines, one per Python version, running concurrently, each
+with `-n auto` claiming that machine's own cores for itself alone. Locally,
+`-n auto` reads the SAME machine's core count, but that machine is very likely
+also running other work at once (another session, another tool) — the same
+flag means "use all the cores, they're yours" in CI and "take a share of
+cores other processes are also using" locally. It is not the same operation
+scaled down; it's the same command over a different, contended resource.
+
+Measured under that contention: 900s for a clean local pass, with more than
+one run killed partway through before finishing at all (load average 17 on
+an 8-core machine, lead-coder's own measurement — plausible given multiple
+concurrent `-n auto` sessions, not independently re-measured here). Separately
+from the slowness, a local run — but never CI — reliably reports 6 failures
+that are not about your change: `tests/test_compaction_resolver_aware_1172.py`
+and 5 others fail whenever `reyn.local.yaml` exists on the machine running
+them. That file is gitignored, so it's present on most developer checkouts
+and absent on CI and any fresh worktree (#3791) — the suite was reading
+ambient developer config, and the polarity was backwards (CI green, the
+configured developer red, always for a reason unrelated to their diff). CI
+runs the same suite in a clean checkout in ~5 minutes across 11 checks — a
+local full run is not merely slower than that, it is a WORSE measurement:
+narrower (one Python version, not two, since running both locally means
+paying the contention cost twice) and contaminated by config CI never sees.
+
+**What this actually gives up, stated plainly**: a change that breaks a test
+FAR from the files you touched is now something you learn from CI, not from
+your own local run before pushing. That is a real cost, not a null one — the
+judgment made here is that paying 900 contended, sometimes-wrong seconds on
+every push to catch it slightly earlier is not worth it when CI reports the
+same thing, correctly, in about 5 minutes. If that trade stops being worth it
+(CI queue times grow, or the failure class this catches turns out to matter
+more than expected), that's a reason to revisit this section, not a reason to
+silently start running the full suite locally again without updating it.
+
+1. **pytest, scoped to your diff** — run the tests your change actually
+   touches, by file path or `-k <keyword>`, not the whole suite:
    ```bash
-   python -m pytest -q -n auto --timeout=120
+   python -m pytest tests/test_your_area.py -q
+   # or, to catch anything matching a keyword across the tree:
+   python -m pytest -q -k "your_feature"
    ```
-   CI runs with `-n auto` (parallel workers) and `--timeout=120` (`pytest-timeout>=2.2`, a dev dep — `pip install -e ".[dev]"` installs it). Run locally with the same flags: a test that would hang in CI will fail-and-name the hanger within 120 s instead of blocking the run indefinitely.
+   The `-n auto --timeout=120` flags CI uses exist to give full-suite
+   collection parity and a hang-namer for a 10000+ test run — neither
+   matters for a scoped local run of a handful of files; a plain invocation
+   is fine. CI still runs the untruncated suite with those flags on every
+   PR, so a hang in your change is still caught there even though you don't
+   reproduce that flag combination locally.
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
    ruff check src tests        # add --fix for autofixable I001 / formatting
@@ -760,9 +808,12 @@ ready:
    python scripts/mypy_ratchet.py
    ```
 
-A green `pytest` alone has shipped PRs that CI then bounced on ruff (`I001`) or
-the tier audit (a `len(...) == 1` format pin). Report scope honestly: say
-"pytest passed" if that is all you ran — "suite passed" implies all five gates.
+A green scoped `pytest` run alone has shipped PRs that CI then bounced on ruff
+(`I001`) or the tier audit (a `len(...) == 1` format pin). Report scope
+honestly: say which of the five you actually ran locally (e.g. "ruff +
+tier-audit + mypy ratchet + the tests I touched") rather than "suite passed" —
+that phrase implies the full local run this section no longer asks for, and CI
+is the only place all five now run together.
 
 ---
 
