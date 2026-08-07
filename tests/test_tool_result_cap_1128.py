@@ -140,6 +140,10 @@ class _BMGatedEngine:
 
     def __init__(self, budgets):
         self.budgets = budgets
+        # #3783 stage 2: retry_loop emits compaction_shrink_recovered via
+        # engine._events — a real EventLog, not a mock (cheaply constructible).
+        from reyn.core.events.events import EventLog
+        self._events = EventLog()
 
     async def compact(self, input_chunk):
         from reyn.services.compaction.engine import (

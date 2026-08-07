@@ -685,6 +685,58 @@ class ContextOverflowError(Exception):
     """
 
 
+#: #3783 stage 1: the single shared "is this a context-overflow error"
+#: predicate. Previously duplicated (and already-diverged) in 5 places —
+#: router_loop.py's own ``_is_context_overflow_error``, 3 inline copies in
+#: router_loop_driver.py, and a 4-keyword subset here that was MISSING
+#: "too long"/"too large" (a real behaviour difference, not a cosmetic one:
+#: an overflow message using either phrase alone was silently NOT recognised
+#: at this one site — see the git history this constant replaces).
+#:
+#: Placed here (next to ``ContextOverflowError``, not in ``runtime``) per
+#: the arc's own TODO (this module was already the intended home —
+#: router_loop.py's old comment named it) and the architect's ruling: this
+#: predicate answers "is this an overflow", which is a property of the
+#: compaction/retry-loop domain the exception classes above already live
+#: in — NOT "can shrinking recover from this" (a separate, broader
+#: question #3783 stage 3 addresses; the two must not be merged into one
+#: predicate — see ``is_context_overflow_error``'s own docstring).
+_CONTEXT_OVERFLOW_KEYWORDS = (
+    "context", "token", "length", "limit", "too long", "too large",
+)
+
+
+def is_context_overflow_error(exc: BaseException) -> bool:
+    """True when *exc* looks like a provider context-length overflow.
+
+    #3783 stage 1: the single owner for this question, replacing 5
+    independent (and divergent) copies. Type-checked FIRST — litellm raises
+    ``ContextWindowExceededError`` (a ``BadRequestError`` subclass) for a
+    real provider-side overflow, a definitive positive — with a keyword
+    match on the stringified exception as a fallback for everything else.
+
+    The keyword fallback is NOT deleted (a litellm *proxy* can flatten a
+    provider's typed error down to a bare ``BadRequestError`` or another
+    generic exception, losing the specific type): `str(exc)` is a value the
+    thing being classified writes freely, so it is fine as a fallback signal
+    but must never be the ONLY signal when a stronger one (the type) is
+    available. This predicate answers ONLY "is this overflow" — it says
+    nothing about whether shrinking can fix it (that is
+    ``services.compaction.engine``'s own recover-classification, #3783
+    stage 3, a deliberately separate question living in this same module
+    but not this function).
+    """
+    try:
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        ensure_litellm_ready()
+        import litellm
+        if isinstance(exc, litellm.ContextWindowExceededError):
+            return True
+    except ImportError:
+        pass
+    return any(kw in str(exc).lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS)
+
+
 class CompactionOverflowError(Exception):
     """The compaction LLM call itself exceeded its B_M budget.
 
@@ -1217,6 +1269,17 @@ def _estimate_tokens_list(
     )
 
 
+# #3783 stage 2: same-cause consecutive-recover cap. Stage 3 will flip the
+# default classification so more exception types recover-by-default instead
+# of raising fatally; without this cap, a cause that shrinking can never fix
+# (a bug misclassified as recoverable, not an actual overflow) would grind
+# through all `max_iterations` LLM calls before giving up. This is a tighter,
+# earlier check than `max_iterations` — it fires on the SAME cause repeating,
+# not on iteration count alone, so a turn that alternates between two
+# different real overflow causes is not penalised.
+_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2
+
+
 async def retry_loop(
     *,
     SP: str,
@@ -1248,6 +1311,17 @@ async def retry_loop(
       budgets, ``UnrecoveredError`` is raised immediately.
     - ``max_iterations=8`` is a safety cap; finite-by-construction means the
       loop terminates in O(log N) shrink steps for typical sizes.
+    - #3783 stage 2: a SAME-cause recover cap (``_MAX_CONSECUTIVE_SAME_CAUSE_
+      RECOVERS``, currently 2) raises ``UnrecoveredError`` earlier than
+      ``max_iterations`` when the identical exception type keeps recovering
+      in a row — a real overflow shrinks its way to success within a few
+      iterations, so a cause that keeps recurring unchanged is evidence
+      shrinking cannot fix it (a misclassification, not an overflow), and
+      grinding through the remaining iterations would just spend LLM calls
+      to arrive at the same ``UnrecoveredError`` anyway. A per-iteration
+      ``compaction_shrink_recovered`` audit-event names the cause, so this
+      cap (and stage 3's later default-classification flip) is observable
+      in the event log, not just inferred from the final exception.
 
     Failure-mode separation
     -----------------------
@@ -1295,6 +1369,9 @@ async def retry_loop(
     tail_min_tokens = bg.tail_budget
     use_chars4 = cfg.use_chars4_estimate
 
+    _last_recover_cause: str | None = None
+    _consecutive_same_cause = 0
+
     for _iteration in range(max_iterations):
         try:
             if raw_middle:
@@ -1315,8 +1392,13 @@ async def retry_loop(
                     raw_middle = []
                 except Exception as exc:
                     # Detect compaction overflow from litellm exception.
-                    exc_str = str(exc).lower()
-                    if any(kw in exc_str for kw in ("context", "token", "length", "limit")):
+                    # #3783 stage 1: was a local 4-keyword subset MISSING
+                    # "too long"/"too large" — a real behaviour change, not
+                    # cosmetic: an overflow message using either phrase alone
+                    # was silently NOT recognised at this one site (unlike
+                    # the other 4, which already had all 6). Now the single
+                    # shared predicate (type-checked first).
+                    if is_context_overflow_error(exc):
                         raise CompactionOverflowError(str(exc)) from exc
                     raise
 
@@ -1358,12 +1440,29 @@ async def retry_loop(
 
             return response
 
-        except CompactionOverflowError:
-            # Compaction call itself overflowed — fall through to shrink.
-            pass
-        except ContextOverflowError:
-            # Main call overflowed — fall through to shrink.
-            pass
+        except (CompactionOverflowError, ContextOverflowError) as _overflow_exc:
+            # Compaction call or main call overflowed — fall through to
+            # shrink. #3783 stage 2: name the cause + cap same-cause repeats.
+            _cause = type(_overflow_exc).__name__
+            if _cause == _last_recover_cause:
+                _consecutive_same_cause += 1
+            else:
+                _last_recover_cause = _cause
+                _consecutive_same_cause = 1
+            engine._events.emit(
+                "compaction_shrink_recovered",
+                cause=_cause,
+                iteration=_iteration,
+                consecutive=_consecutive_same_cause,
+            )
+            if _consecutive_same_cause > _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS:
+                raise UnrecoveredError(
+                    f"retry_loop: cause {_cause!r} recovered "
+                    f"{_consecutive_same_cause} consecutive times (limit "
+                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — shrinking is "
+                    "not resolving this cause; stopping rather than "
+                    "exhausting max_iterations."
+                ) from _overflow_exc
 
         # Shrink escalation: reduce context size monotonically.
         if raw_middle:

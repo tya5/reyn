@@ -25,11 +25,14 @@ modifying tests: [`docs/deep-dives/contributing/testing.ja.md`](../docs/deep-div
 - Which Tier do the new/changed tests belong to? (1: Contract / 2: OS
   invariant / 3: LLM-replay behavior / scaffold)
 - New tests added: yes / no — if no, why?
-- All tests pass locally: yes / no
+- Local gates pass (ruff / tier-audit / module-docstring / mypy-ratchet +
+  the tests this diff touches): yes / no — **do not run the full suite
+  locally**, CI does that; see `testing.md` § "Before you push"
 
 ## Checklist
 
-- [ ] Tests pass locally (`pytest`).
+- [ ] Local gates pass (ruff / tier-audit / module-docstring / mypy-ratchet
+      + tests relevant to this diff) — not the full suite; CI runs that.
 - [ ] Lint / format clean.
 - [ ] No domain-specific strings (phase names, artifact types, fields)
       added to OS code (P7).
