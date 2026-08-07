@@ -105,6 +105,11 @@ def _turn_to_compactor_input(
     return out
 
 
+#: Sentinel for "the compaction engine has not been built yet" (#3671
+#: follow-up) — see :attr:`CompactionController._engine`.
+_ENGINE_UNSET = object()
+
+
 class CompactionController:
     """Background head/body/tail compaction service.
 
@@ -121,9 +126,20 @@ class CompactionController:
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
         :class:`~reyn.runtime.chat_message.ChatMessage`, or ``None``.
-    compaction_engine:
+    compaction_engine_factory:
+        Zero-argument callable returning the
         :class:`~reyn.services.compaction.engine.CompactionEngine`
         that owns the single LLM call (PR-N3: OS-internal Python helper).
+        #3671 follow-up: a FACTORY, not the built engine — ``CompactionEngine
+        .__init__`` touches litellm's model catalog (``estimate_tokens`` /
+        ``get_max_input_tokens``) to measure its budgets; calling it eagerly
+        at Session construction put that cost on the TUI startup path for a
+        value nothing reads until compaction actually triggers, mid-turn.
+        Called AT MOST ONCE, on first reference to :attr:`_engine` (a lazy
+        property, single-owner cache) — every existing reader (internal and
+        the couple of external private-attribute reads this class has always
+        tolerated) keeps working unchanged, since attribute access transparently
+        triggers the property.
     history_appender:
         Callable ``(ChatMessage) -> None`` that appends a message to the
         persisted history.  Wraps ``Session._append_history``.
@@ -153,7 +169,7 @@ class CompactionController:
         config: CompactionConfig,
         history_access: Callable[[], list[ChatMessage]],
         latest_summary: Callable[[], ChatMessage | None],
-        compaction_engine: CompactionEngine,
+        compaction_engine_factory: "Callable[[], CompactionEngine]",
         history_appender: Callable[[ChatMessage], None],
         make_summary_message: Callable[..., ChatMessage],
         render_summary: Callable[[dict], str],
@@ -168,12 +184,27 @@ class CompactionController:
         self._threat_scan = threat_scan
         self._history_access = history_access
         self._latest_summary = latest_summary
-        self._engine = compaction_engine
+        self._compaction_engine_factory = compaction_engine_factory
+        self.__engine_cache: "CompactionEngine | object" = _ENGINE_UNSET
         self._append_history = history_appender
         self._make_summary_message = make_summary_message
         self._render_summary = render_summary
         self._merge_action_usage = merge_action_usage
         self._compacting: bool = False
+
+    @property
+    def _engine(self) -> CompactionEngine:
+        """The compaction engine, built via the factory on first reference
+        and cached (single owner, computed at most once — #3671 follow-up).
+
+        A property, not a plain attribute: every existing reader — internal
+        methods below, and the couple of call sites elsewhere in this
+        package that read ``controller._engine`` directly (a private
+        attribute, tolerated pre-existing style) — keeps working with no
+        change, since attribute access transparently triggers this."""
+        if self.__engine_cache is _ENGINE_UNSET:
+            self.__engine_cache = self._compaction_engine_factory()
+        return self.__engine_cache
 
     # ── internal compaction logic ─────────────────────────────────────────────
 

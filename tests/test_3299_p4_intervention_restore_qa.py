@@ -160,7 +160,7 @@ def test_restored_free_text_answer_also_one_entry_with_both_qa() -> None:
 # ── Gate 3: LLM payload unchanged ────────────────────────────────────────────
 
 
-def test_llm_payload_unchanged_by_new_intervention_meta_keys(tmp_path: Path) -> None:
+def test_llm_payload_unchanged_by_new_intervention_meta_keys(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: ``RouterHistoryBuffer.build_history`` (the actual wire-dict
     builder RouterLoop sends to the provider) produces a BYTE-IDENTICAL
     result whether or not the history carries the new
@@ -184,12 +184,12 @@ def test_llm_payload_unchanged_by_new_intervention_meta_keys(tmp_path: Path) -> 
         INTERVENTION_ANSWER_META_KEY: "Yes",
     }
 
-    session_bare = _make_router_session(tmp_path / "bare")
+    session_bare = _make_router_session(tmp_path / "bare", monkeypatch=monkeypatch)
     session_bare.history.append(ChatMessage(role="user", content="", meta=bare_meta))
     session_bare.history.append(ChatMessage(role="assistant", content="Deploying now."))
     bare_payload = session_bare._history_buffer.build_history()
 
-    session_enriched = _make_router_session(tmp_path / "enriched")
+    session_enriched = _make_router_session(tmp_path / "enriched", monkeypatch=monkeypatch)
     session_enriched.history.append(ChatMessage(role="user", content="", meta=enriched_meta))
     session_enriched.history.append(ChatMessage(role="assistant", content="Deploying now."))
     enriched_payload = session_enriched._history_buffer.build_history()

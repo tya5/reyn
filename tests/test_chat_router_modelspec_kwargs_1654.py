@@ -74,7 +74,7 @@ def _mk_host_with_kwargs():
         live_session_id_inputs=LiveSessionIdInputs(
             session_id=None, live_session_id_fn=None,
         ),
-        turn_budget_engine=None, environment_backend=None,
+        environment_backend=None,
     )
 
 

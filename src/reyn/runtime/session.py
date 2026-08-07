@@ -3725,13 +3725,28 @@ class Session:
         # #1092 PR-F1: turn_budget engine off the RESOLVED model. Making
         # try_build_* raise instead of return None crashes __init__ for
         # small-context models instead of degrading (session-construction.md#chat-turn_budget-engine-none-on-small-context-never-raise-1092-pr-f1).
-        from reyn.services.turn_budget import try_build_default_turn_budget_engine
-        _chat_turn_budget_engine = try_build_default_turn_budget_engine(
-            self._resolver.resolve(self.model).model,
-            use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
-            # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
-            max_inline_bytes=self._offload_config.max_inline_bytes,
-        )
+        #
+        # #3671 follow-up: a DEFERRED closure (the same "*_fn kept verbatim,
+        # closing over self, resolved at call time" family this docstring
+        # already names above for RouterOpContextSource/live_session_id_fn),
+        # not an eager call. try_build_default_turn_budget_engine touches
+        # litellm's model catalog (get_max_input_tokens) — calling it here
+        # unconditionally put that cost on EVERY session construction, i.e.
+        # the TUI startup path, for a value nothing reads until the first
+        # force-close check mid-turn (owner real-machine measurement: #3671,
+        # `tui-boot` inflated 2.27s -> 6.49s once #3780 stopped prepaying the
+        # import earlier). `RouterHostAdapter._ensure_turn_budget_engine`
+        # calls this at most once, on first reference — try_build_*'s own
+        # contract (None for a small-context model, never a raise) is
+        # unchanged, just realized lazily instead of at construction.
+        def _build_chat_turn_budget_engine() -> Any:
+            from reyn.services.turn_budget import try_build_default_turn_budget_engine
+            return try_build_default_turn_budget_engine(
+                self._resolver.resolve(self.model).model,
+                use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+                # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
+                max_inline_bytes=self._offload_config.max_inline_bytes,
+            )
 
         # #3607: the ONE chat-router op-context supplier for this Session.
         # Both entry points that hand an OpContext to a chat-router op —
@@ -3844,7 +3859,9 @@ class Session:
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
             safety_extensions=self._safety_extensions,
             # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
-            turn_budget_engine=_chat_turn_budget_engine,
+            # #3671 follow-up: a factory, not the built engine — see the
+            # closure above.
+            turn_budget_engine_factory=_build_chat_turn_budget_engine,
             # FP-0050 / #1822 S2: content-threat scan + fence config.
             threat_scan=self._safety.threat_scan,
             op_context_source=self._router_op_context_source,  # #3607
@@ -4031,14 +4048,17 @@ class Session:
             project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
         )
 
-        compaction_controller = CompactionController(
-            event_log=self._chat_events,
-            config=self._compaction,
-            # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
-            threat_scan=self._safety.threat_scan,
-            history_access=lambda: self.history,
-            latest_summary=self._latest_summary,
-            compaction_engine=CompactionEngine(
+        # #3671 follow-up: a DEFERRED closure, not an eager construction —
+        # same reasoning and same family as _build_chat_turn_budget_engine
+        # above. CompactionEngine.__init__ touches litellm's model catalog
+        # (estimate_tokens/get_max_input_tokens) to measure its budgets;
+        # building it here unconditionally put that cost on EVERY session
+        # construction (the TUI startup path) for a value nothing reads
+        # until compaction actually triggers, mid-turn.
+        # CompactionController._engine (a lazy property) calls this at most
+        # once, on first reference.
+        def _build_chat_compaction_engine() -> CompactionEngine:
+            return CompactionEngine(
                 # #1172: pass a resolved model CLASS, not the raw string —
                 # unresolved, litellm raises BadRequestError and every
                 # compaction trigger fails (session-construction.md#compactionengine-model-resolved-class-not-the-cosmetic-label-1172).
@@ -4050,7 +4070,16 @@ class Session:
                 recorder=self._budget_tracker,
                 # #1190 stage (iii) Part 4: attribute chat compaction to this session's agent.
                 recorder_agent=self.agent_name,
-            ),
+            )
+
+        compaction_controller = CompactionController(
+            event_log=self._chat_events,
+            config=self._compaction,
+            # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
+            threat_scan=self._safety.threat_scan,
+            history_access=lambda: self.history,
+            latest_summary=self._latest_summary,
+            compaction_engine_factory=_build_chat_compaction_engine,
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(
                 role="summary",

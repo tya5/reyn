@@ -43,7 +43,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
+def _make_session(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch", *, t_max: int = 1_000_000
+) -> Session:
     """Create a Session with a synthetic T_max controlling effective_trigger.
 
     #1128 step 3: slicing is token-budget based (not turn-count).
@@ -60,6 +62,16 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
       head_budget≈74, tail_budget≈112, effective_trigger≈489.
     Turns of content ``'X'*320`` each cost 80 tokens via chars4.  With 8 such
     turns (total=640 > 489), elide fires.  head=[t0], tail=[t7], middle=[t1-t6].
+
+    #3671 follow-up: takes the caller's ``monkeypatch`` fixture rather than
+    manually saving/restoring ``get_max_input_tokens`` — CompactionEngine now
+    builds LAZILY (``CompactionController._engine``, a property, on first
+    reference) rather than eagerly inside ``Session.__init__``, so a patch
+    that un-does itself the moment this function returns would go stale
+    before the caller ever triggers the lazy build. ``monkeypatch`` restores
+    at the CALLING TEST's teardown instead — the patch stays live for
+    whatever that test does with the session, matching the window the real
+    (unpatched) value would actually be read across.
     """
     import reyn.llm.model_budget as _mb
 
@@ -70,21 +82,16 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> Session:
         use_chars4_estimate=True,  # deterministic offline token counts
         section_caps_spec_tokens=0,  # keeps B_M positive for small T_max
     )
-    original = _mb.get_max_input_tokens
-    _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]  # noqa: E501
-    try:
-        session = make_session(
-            agent_name="default",
-            agent_role="",
-            output_language="en",
-            budget_tracker=bt,
-            state_log=state_log,
-            compaction_config=cfg,
-            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
-        )
-    finally:
-        _mb.get_max_input_tokens = original
-    return session
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: t_max)
+    return make_session(
+        agent_name="default",
+        agent_role="",
+        output_language="en",
+        budget_tracker=bt,
+        state_log=state_log,
+        compaction_config=cfg,
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
 
 
 # Content that yields exactly 80 tokens per turn via use_chars4_estimate=True.
@@ -101,7 +108,7 @@ def _push(session: Session, role: str, text: str) -> None:
 # ── _decompose_history_for_retry correctness ─────────────────────────────────
 
 
-def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
+def test_decompose_slices_head_raw_middle_tail(tmp_path, monkeypatch) -> None:
     """Tier 2: when total tokens > effective_trigger, decomposition produces
     non-empty head, raw_middle, and tail, and head + raw_middle + tail is a
     lossless in-order partition of all turns (no dropped or duplicated turn).
@@ -111,7 +118,7 @@ def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
     default-independent: hot_list_n and other SP-affecting defaults don't change
     whether elide fires.
     """
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, monkeypatch, t_max=2800)
     msgs_pushed = 30
     for i in range(msgs_pushed):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
@@ -134,14 +141,14 @@ def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
     )
 
 
-def test_decompose_no_elide_when_history_fits_window(tmp_path) -> None:
+def test_decompose_no_elide_when_history_fits_window(tmp_path, monkeypatch) -> None:
     """Tier 2: when total tokens <= effective_trigger, everything is in head —
     raw_middle and tail are empty (nothing to elide).
 
     retry_loop's shrink can still trim head if needed.
     """
     # Large t_max → effective_trigger large → 3 short turns easily fit.
-    session = _make_session(tmp_path, t_max=1_000_000)
+    session = _make_session(tmp_path, monkeypatch, t_max=1_000_000)
     for i in range(3):
         _push(session, "user", f"q-{i}")
 
@@ -153,9 +160,9 @@ def test_decompose_no_elide_when_history_fits_window(tmp_path) -> None:
     assert summary is None
 
 
-def test_decompose_extracts_structured_summary(tmp_path) -> None:
+def test_decompose_extracts_structured_summary(tmp_path, monkeypatch) -> None:
     """Tier 2: a persisted summary turn surfaces its structured dict (immutable base)."""
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch)
     structured = {"topic_arc": "greeting", "decisions": []}
     session.history.append(ChatMessage(
         role="summary",
@@ -170,7 +177,7 @@ def test_decompose_extracts_structured_summary(tmp_path) -> None:
     assert summary == structured
 
 
-def test_decompose_wire_shape_matches_build_history(tmp_path) -> None:
+def test_decompose_wire_shape_matches_build_history(tmp_path, monkeypatch) -> None:
     """Tier 2: decomposed head+tail turns use the same wire serialisation as
     the normal router path (_build_history_for_router).
 
@@ -181,7 +188,7 @@ def test_decompose_wire_shape_matches_build_history(tmp_path) -> None:
     This test forces the elide branch on both paths via t_max=2800 so that
     _build_history_for_router also returns head+tail (no summary bridge).
     """
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, monkeypatch, t_max=2800)
     for i in range(8):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
@@ -200,7 +207,7 @@ def test_decompose_wire_shape_matches_build_history(tmp_path) -> None:
     )
 
 
-def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
+def test_recovery_summary_bridge_matches_normal_path(tmp_path, monkeypatch) -> None:
     """Tier 2: with a persisted summary, the recovery bridge text equals the
     normal router path's bridge.
 
@@ -211,7 +218,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
     """
     from reyn.runtime.session_pure import render_summary_for_storage
 
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, monkeypatch, t_max=2800)
     structured = {
         "topic_arc": "planning the trip",
         "decisions": ["book the tuesday flight"],
@@ -248,7 +255,7 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
 # ── wiring data contract: session decomposition feeds real retry_loop ────────
 
 
-def test_session_decomposition_feeds_retry_loop(tmp_path) -> None:
+def test_session_decomposition_feeds_retry_loop(tmp_path, monkeypatch) -> None:
     """Tier 2: the session's real decomposition + engine/learner drive retry_loop.
 
     Proves the wiring data contract end-to-end on the no-overflow path: the
@@ -258,7 +265,7 @@ def test_session_decomposition_feeds_retry_loop(tmp_path) -> None:
     engine.compact recovery is covered separately (PR-N6 Fake-engine tests).
     """
     # Large t_max → everything fits → empty raw_middle → no engine.compact LLM call.
-    session = _make_session(tmp_path, t_max=1_000_000)
+    session = _make_session(tmp_path, monkeypatch, t_max=1_000_000)
     for i in range(3):
         _push(session, "user", f"hi-{i}")
 

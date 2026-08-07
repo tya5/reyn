@@ -40,11 +40,11 @@ def _append_force_close_summary(session, consolidation: str) -> ChatMessage:
 # ── the durable reset: covered raw head/tail dropped ─────────────────────────
 
 
-def test_force_close_consolidation_drops_covered_head_tail(tmp_path) -> None:
+def test_force_close_consolidation_drops_covered_head_tail(tmp_path, monkeypatch) -> None:
     """Tier 2: with a force-close consolidation as the latest summary, the slice
     is [consolidation bridge] only — the covered raw head/tail is dropped (the
     true reset), and the consolidation text reaches the prompt."""
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)
     for t in ("U1-covered", "A1-covered", "U2-covered", "A2-covered"):
         _push(session, "user" if t.startswith("U") else "assistant", t)
     _append_force_close_summary(session, "CONSOLIDATED-ESSENCE")
@@ -56,11 +56,11 @@ def test_force_close_consolidation_drops_covered_head_tail(tmp_path) -> None:
         assert covered not in blob                  # covered raw head/tail dropped
 
 
-def test_post_consolidation_turns_retained_including_assistant(tmp_path) -> None:
+def test_post_consolidation_turns_retained_including_assistant(tmp_path, monkeypatch) -> None:
     """Tier 2: turns appended AFTER the consolidation are retained — including an
     assistant turn (seq=0). Pins the position-based (not seq>covers) filter: a
     seq filter would wrongly drop post-handoff assistant replies."""
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)
     _push(session, "user", "U1-covered")
     _push(session, "assistant", "A1-covered")
     _append_force_close_summary(session, "CONSOL")
@@ -79,12 +79,12 @@ def test_post_consolidation_turns_retained_including_assistant(tmp_path) -> None
 # ── the gate: normal compaction summaries unaffected (byte-identical) ──────────
 
 
-def test_normal_compaction_summary_does_not_trigger_reset(tmp_path) -> None:
+def test_normal_compaction_summary_does_not_trigger_reset(tmp_path, monkeypatch) -> None:
     """Tier 2: a NORMAL compaction summary (no `consolidation` field) does NOT
     trigger the force-close reset — the raw turns still appear (head/tail+bridge
     behaviour unchanged). With a large T_max (no elide) all raw turns are
     returned, proving the reset branch did not fire."""
-    session = _make_session(tmp_path)  # default T_max huge → no elide
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)  # default T_max huge → no elide
     _push(session, "user", "U1-raw")
     _push(session, "assistant", "A1-raw")
     session.history.append(ChatMessage(

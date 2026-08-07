@@ -30,6 +30,17 @@ def synthetic_t_max(t_max: int):
 
     Uses direct module-level replacement (the same pattern used in
     test_chat_compaction_engine_11axis.py) — no unittest.mock.
+
+    #3671 follow-up: CompactionEngine now builds LAZILY (on first reference
+    to ``CompactionController._engine``, a property) rather than eagerly at
+    Session construction. A caller whose with-block ends right after
+    construction (like this context manager's own docstring implies) no
+    longer covers the moment the patched value is actually read — prefer
+    ``make_session(..., monkeypatch=...)`` below, which keeps the patch live
+    for the whole calling test via pytest's own fixture, for any caller that
+    goes on to trigger compaction. This context manager is kept for
+    call sites (e.g. ``test_skill_invoke_3100.py``) that only need a
+    trivially-large t_max where the timing does not matter.
     """
     original = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]
@@ -42,6 +53,7 @@ def synthetic_t_max(t_max: int):
 def make_session(
     tmp_path: Path,
     *,
+    monkeypatch: "object",
     t_max: int = 1_000_000,
     agent: Agent | None = None,
     state_log: StateLog | None = None,
@@ -109,18 +121,27 @@ def make_session(
     generation_store, journal = build_recovery(
         agent.agent_name, snapshot_path, state_log, "main",
     )
-    # Monkeypatch covers the engine's compute_budgets() call at Session init.
-    with synthetic_t_max(t_max):
-        return Session(
-            agent=agent,
-            generation_store=generation_store,
-            journal=journal,
-            output_language="en",
-            budget_tracker=bt,
-            state_log=state_log,
-            compaction_config=cfg,
-            snapshot_path=snapshot_path,
-        )
+    # Monkeypatch covers the engine's compute_budgets() call. #3671 follow-up:
+    # CompactionEngine now builds LAZILY (CompactionController._engine, a
+    # property, on first reference) rather than eagerly inside Session
+    # .__init__ — so the patch must stay live past construction, until
+    # whatever the CALLING TEST does with the session actually reads it.
+    # ``monkeypatch`` (the caller's own pytest fixture, required — every
+    # call site threads it through) restores at the calling TEST's
+    # teardown, so the patch covers the session's whole lifetime in that
+    # test: the lazy build stays lazy, genuinely exercised, wherever it
+    # happens to fire.
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: t_max)
+    return Session(
+        agent=agent,
+        generation_store=generation_store,
+        journal=journal,
+        output_language="en",
+        budget_tracker=bt,
+        state_log=state_log,
+        compaction_config=cfg,
+        snapshot_path=snapshot_path,
+    )
 
 
 def push(session: Session, role: str, text: str) -> None:

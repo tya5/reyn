@@ -85,7 +85,7 @@ def _make_controller(
         config=CompactionConfig(use_chars4_estimate=True),
         history_access=lambda: list(history),
         latest_summary=_latest_summary,
-        compaction_engine=engine,
+        compaction_engine_factory=lambda: engine,
         history_appender=history.append,
         make_summary_message=lambda rendered, structured, covers: ChatMessage(
             role="summary", content=rendered, seq=0,
