@@ -76,10 +76,14 @@ def _install_hanging_first_turn(
     return started, release, seen
 
 
-async def _wait_for(predicate, *, attempts: int = 250, delay: float = 0.02) -> None:
-    for _ in range(attempts):
-        if predicate():
-            return
+async def _wait_for(predicate, *, delay: float = 0.02) -> None:
+    """Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract.
+    """
+    while not predicate():
         await asyncio.sleep(delay)
 
 
