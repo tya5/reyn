@@ -60,13 +60,15 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-async def _wait_for(predicate, *, attempts: int = 100, delay: float = 0.02) -> None:
-    """Poll ``predicate()`` until True or give up — the notification arrives
-    asynchronously on FastMCP/the SDK's receive loop, not synchronously with the
-    triggering call (mirrors test_2597_s2b_mcp_notifications_bridge.py's pattern)."""
-    for _ in range(attempts):
-        if predicate():
-            return
+async def _wait_for(predicate, *, delay: float = 0.02) -> None:
+    """The notification arrives asynchronously on FastMCP/the SDK's receive loop,
+    not synchronously with the triggering call. Unbounded per the owner's
+    testing policy (docs/deep-dives/contributing/testing.md, ## Time): no test
+    carries a time budget, marker or in-body -- a slower environment only makes
+    this slower, never fail it; CI's --timeout=120 is the blast-radius
+    kill-switch, not a contract.
+    """
+    while not predicate():
         await asyncio.sleep(delay)
 
 
