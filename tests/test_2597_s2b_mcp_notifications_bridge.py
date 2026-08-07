@@ -163,17 +163,16 @@ async def test_tool_list_changed_notification_emits_event_and_invalidates_cache(
         # give the event loop a beat to run the receive loop's callback.
         import asyncio
 
-        for _ in range(50):
-            if adapter.mcp_tools_cache_snapshot is None:
-                break
+        # #3748: unbounded (owner policy) -- wait for on_tool_list_changed to
+        # invalidate the lazy MCP tools cache. No terminating assert: the loop
+        # condition IS that check, so an assert restating it can never fire; a
+        # hang here surfaces via the kill stack showing this exact `while`.
+        while adapter.mcp_tools_cache_snapshot is not None:
             await asyncio.sleep(0.02)
 
         matching = [e for e in events.all() if e.type == "mcp_tool_list_changed"]
         (only_event,) = matching  # exactly one — the single real notification sent
         assert only_event.data.get("server") == "srv"
-        assert adapter.mcp_tools_cache_snapshot is None, (
-            "on_tool_list_changed must invalidate the lazy MCP tools cache"
-        )
     finally:
         await service.aclose()
 
