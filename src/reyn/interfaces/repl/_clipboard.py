@@ -1,4 +1,5 @@
-"""Cross-platform clipboard helper for the inline CUI (`/copy`) and copy mode.
+"""Cross-platform clipboard helper for the inline CUI (`/copy`) and the
+conversation pane's text-cursor yank.
 
 Thin wrapper over `pyperclip <https://pypi.org/project/pyperclip/>`_ (#3616 ①)
 rather than a hand-rolled per-OS dispatch table. The previous version

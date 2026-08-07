@@ -1034,40 +1034,39 @@ The cursor's position is marked by the addressed-row rail described under
 *Textual TUI gutters* above. Its keys live in `CONVERSATION_CURSOR_KEYS`
 (`textual_chat/chrome.py`) for the Help pane.
 
-### Textual TUI copy mode (#3507)
+### Textual TUI text cursor (#3507, #3692)
 
-`c` hands the conversation pane over to flowview 0.7.0's **copy mode** — a
-per-character text cursor over the rendered content, with vim motions. This is
-what the entry-level highlight cannot do: before 0.7.0 the finest keyboard
-position was a whole entry, so selecting *part* of a long reply had no keyboard
-route at all.
+flowview 0.13 replaced the earlier entry-gated cursor-entry step with an
+always-on per-character text cursor: `c` (flowview's own key, `toggle_cursor`)
+just shows or hides the cursor block, and visual mode (`v`/`V`…`y`) is the
+one real mode — there is no separate mode to enter or leave any more. This is
+what the entry-level highlight cannot do: the finest keyboard position used to
+be a whole entry, so selecting *part* of a long reply had no keyboard route at
+all.
 
-Everything inside copy mode is **flowview's own keymap** (`hjkl w b e 0 $ ^ gg
-G v V y zz zt zb Ctrl-E Ctrl-Y Ctrl-D Ctrl-U Ctrl-F Ctrl-B Esc`, live only
-while copy mode is active, and `*` / `n` / `N` to search the selection). reyn
-declares **no motion binding of its own** — deliberately, so the keymap cannot
-drift from upstream's; a test asserts that absence. One consequence: the
-half/full-page scroll bindings (`Ctrl-D`/`Ctrl-U`/`Ctrl-F`/`Ctrl-B`, flowview
-0.10.0) were adopted **automatically** by the same no-own-bindings rule — a
-version bump that extends upstream's keymap needs no reyn-side change (#3624:
-looked at, adopted implicitly rather than as a separate feature decision).
-`FlowView(copy_mode=True)` (0.10.0's always-on-at-mount variant) is a
-**declined** adoption: reyn's `c` toggle (below) is the deliberate entry
-point, and starting the pane in copy mode by default would bypass the
-ordinary conversation-cursor keys (`↑`/`↓`/Enter/copy, above) entirely rather
-than layering on top of them. `c` is the one key reyn adds, and it is the key
-upstream's own `examples/copy_mode.py` uses to enter.
+Every one of these keys is **flowview's own keymap** (`hjkl w b e 0 $ ^ gg
+G v V y zz zt zb Ctrl-E Ctrl-Y Ctrl-D Ctrl-U Ctrl-F Ctrl-B Esc`, always live,
+plus `*` / `n` / `N` to search the selection). reyn declares **no key binding
+of its own for any of them, including `c`** — deliberately, so the keymap
+cannot drift from upstream's; a test asserts that absence. One consequence:
+the half/full-page scroll bindings (`Ctrl-D`/`Ctrl-U`/`Ctrl-F`/`Ctrl-B`,
+flowview 0.10.0) were adopted **automatically** by the same no-own-bindings
+rule — a version bump that extends upstream's keymap needs no reyn-side
+change (#3624: looked at, adopted implicitly rather than as a separate
+feature decision). `c` reaching flowview reached the same way — the 0.13 pin
+bump removed reyn's own `c` binding along with the whole entry/exit wiring
+it drove, rather than rebinding `c` to something new.
 
-The interaction that matters for this surface: copy mode **starts on the
-highlighted entry** and holds that highlight **fixed** while the text cursor
-moves, posting no `Highlighted` during a motion. That is what keeps the
-addressed-row rail still — the rail is re-derived from `Highlighted` plus focus
-changes, so a highlight that chased the text cursor would drag the rail with
-it. `FlowView.row_count` / `row_text(y)` / `entry_at_row(y)` are the row-level
-primitives copy mode is built on, available to any consumer that needs to map
-content rows back to entries.
+The interaction that matters for this surface: `set_current` (flowview 0.13.1)
+moves the text cursor onto the **currently addressed entry** without moving
+the addressed-row rail itself, so `c` (show/hide the cursor) and cursor
+motion do not drag the rail along with them — 0.13.0 regressed this (`c`
+moved the addressed row), fixed in 0.13.1. `FlowView.row_count` /
+`row_text(y)` / `entry_at_row(y)` are the row-level primitives the text
+cursor is built on, available to any consumer that needs to map content rows
+back to entries.
 
-A selection — whether from copy mode's `y` or a mouse drag — covers the **body
+A selection — whether from `y` (yank) or a mouse drag — covers the **body
 columns only** (flowview 0.9.0): the gutters are decoration, like a scrollbar,
 so a yank carries the message text and never a state glyph, an elapsed label,
 or a token figure. `row_text(y)` is body-only for the same reason. Reading a

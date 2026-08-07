@@ -94,10 +94,22 @@ dependencies = [
     # `flowview--selected`) — pure rename onto the 0.11.0 names reyn had
     # already adopted, no further behaviour change. All additive; defaults
     # unchanged (cursor=False, empty=None, animate=False) — #3476 adoption arc.
-    # The SHA is the *commit*, not the tag object: v0.12.0 is a LIGHTWEIGHT tag
-    # (no `^{}` peel in `git ls-remote`), same as v0.9.0, unlike the annotated
-    # v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@5a72da086f1e8e3fc0c93b0806b53a5fd5fb1c7f",
+    # 0.13: "refactor!: replace copy mode with always-on text cursor + visual
+    # mode" — there is no copy_mode to enter/leave any more; the vim movement
+    # keys are always live, `c` (upstream) shows/hides the cursor block, and
+    # visual mode (`v`/`V`…`y`) is the one real mode. Removed:
+    # enter/exit/toggle_copy_mode, the `copy_mode` prop/flag, `CopyModeChanged`,
+    # the `copy_` method prefix. New: show_cursor/hide_cursor/toggle_cursor/
+    # cursor_visible + `cursor=`. reyn's own copy-mode BINDINGS/state/handler
+    # are removed with this pin bump (#3692 PR-A) — `c` is no longer reyn's to
+    # declare, and yank is `y` (flowview's own), not a reyn-side alias. 0.13.1
+    # fixes the addressed-row-rail regression 0.13.0 introduced (`c` moved the
+    # addressed row; 0.13.1 moves the cursor onto `current` via `set_current`
+    # instead) — pinned straight to 0.13.1, 0.13.0 was never released to reyn.
+    # The SHA is the *commit*, not the tag object: v0.13.1/v0.12.0 are
+    # LIGHTWEIGHT tags (no `^{}` peel in `git ls-remote`), same as v0.9.0,
+    # unlike the annotated v0.7.0/v0.8.0.
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@2408cabfdc896fa5e49c1f64b8ae9f01e33d9346",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
