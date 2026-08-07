@@ -159,12 +159,17 @@ def activity_text(
     that just started — and "no clock" reads as what it is: a turn whose start
     this client never saw.
 
-    The format is bare seconds (#3777, from the owner's mock: ``RESPONDING
-    12s``), replacing the ``MM:SS`` this row used until now. **Past a minute
-    that is worse, not better** — ``1247s`` is a number nobody reads at a
-    glance and ``20:47`` is — and switching format at sixty seconds would be
-    this module choosing for the operator. It is left as specified and raised
-    on the PR instead.
+    The format changes at a minute (#3777, owner ruling): bare seconds below
+    (``12s``, from the owner's mock), ``MM:SS`` at and above it (``20:47``).
+    Each is the readable one in its own range — ``00:12`` makes a short turn
+    look like a stopwatch, and ``1247s`` is a number nobody reads at a glance.
+
+    A format that changes under the operator is normally this module deciding
+    something that is theirs; the reason it is allowed here is that **what the
+    reader is looking at is the elapsed time, not the format**, so a change
+    toward the readable form is not something they have to notice or learn.
+    That argument is what the ruling turned on, and it is the thing to re-check
+    before extending this to any other switching format.
 
     ``entries`` is how many entries this TURN has produced, counted from the
     moment it started and shown from zero upward. ``away`` is whether the
@@ -191,7 +196,11 @@ def activity_text(
     prefix = " " * ROW_TEXT_COLUMN if state else ""
     head = f"{prefix}{state}"
     if elapsed_s is not None:
-        head = f"{head} {int(elapsed_s)}s"
+        seconds = int(elapsed_s)
+        head = (
+            f"{head} {seconds}s" if seconds < 60
+            else f"{head} {seconds // 60:02d}:{seconds % 60:02d}"
+        )
 
     # Segments in the order they are printed, each with what it costs to lose.
     # Dropping from the right would take the abort hint first, and a row that

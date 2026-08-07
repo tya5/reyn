@@ -133,7 +133,7 @@ def test_an_unknown_duration_prints_no_clock() -> None:
     with_clock = str(activity_text("WORKING", elapsed_s=78.0, width=80))
     without = str(activity_text("WORKING", elapsed_s=None, width=80))
 
-    assert "78s" in with_clock
+    assert "01:18" in with_clock
     # The head is the segment before the first separator — the count that
     # follows it legitimately carries a digit, so the claim has to be scoped to
     # where a duration would appear rather than to the whole line.
@@ -141,6 +141,25 @@ def test_an_unknown_duration_prints_no_clock() -> None:
     assert not any(ch.isdigit() for ch in head), (
         f"a duration appeared where none was known: {without!r}"
     )
+
+
+def test_the_clock_switches_format_at_a_minute() -> None:
+    """Tier 1: bare seconds below a minute, ``MM:SS`` at and above it.
+
+    Each is the readable one in its own range: ``00:12`` makes a twelve-second
+    turn look like a stopwatch reading, and ``1247s`` is a number nobody reads
+    at a glance. The boundary is pinned on both sides because "switches
+    somewhere" is not the claim — a threshold that drifted to five minutes
+    would leave four minutes of unreadable seconds and still pass a test that
+    only checked the two extremes.
+    """
+    def clock(elapsed: float) -> str:
+        return activity_text("RESPONDING", elapsed_s=elapsed, width=70).plain.split(" · ")[0]
+
+    assert clock(12).endswith("12s")
+    assert clock(59).endswith("59s")
+    assert clock(60).endswith("01:00")
+    assert clock(1247).endswith("20:47")
 
 
 def test_the_cancel_affordance_yields_before_the_state_does() -> None:
@@ -353,7 +372,7 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
         await _until(lambda: str(row.render()) != before)
 
         after = str(row.render())
-        assert "75s" in after, f"the clock is not tracking the real gap: {after!r}"
+        assert "01:15" in after, f"the clock is not tracking the real gap: {after!r}"
 
 
 # ── the shine (owner design "A", replacing the removed NOW label) ────────────
