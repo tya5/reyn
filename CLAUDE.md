@@ -109,18 +109,32 @@ Key constraints (full rationale in the doc):
 This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
 per-PR coders) authenticating as the same `gh` user.
 
-**Before you open a PR, run all five CI gates locally** — `ruff check src
-tests`, `python scripts/test_tier_audit.py --strict <changed test files>`,
-`pytest` (from the repo root), `python scripts/verify_module_docstrings.py
-<changed src files>`, and `python scripts/mypy_ratchet.py` (#3726 — a
-*ratchet*, not full mypy adoption: it only fails on a `(file, error-code)`
-pair not already in `scripts/mypy_ratchet_baseline.json`; a genuinely new
-mypy finding in a file you touched will fail this even though `mypy` itself
-isn't in this repo's mental model of "the linter") are *separate*
-CI jobs. A green `pytest` alone is **not** a green CI run (`pytest-green ≠
-CI-green`): ruff `I001` import-sort and a Tier-4 format pin (`len(...) == N`)
-both fail CI while `pytest` passes. Details + the Tier-4 → behavioral-assertion
-fix idioms: `docs/deep-dives/contributing/testing.md` § "Before you push".
+**Before you open a PR, run four gates locally, plus whatever tests your
+diff touches** — `ruff check src tests`, `python scripts/test_tier_audit.py
+--strict <changed test files>`, `python scripts/verify_module_docstrings.py
+<changed src files>`, `python scripts/mypy_ratchet.py` (#3726 — a *ratchet*,
+not full mypy adoption: it only fails on a `(file, error-code)` pair not
+already in `scripts/mypy_ratchet_baseline.json`; a genuinely new mypy
+finding in a file you touched will fail this even though `mypy` itself
+isn't in this repo's mental model of "the linter"), and `pytest` scoped to
+files/keywords your change actually affects. **Do NOT run the full `pytest`
+suite from the repo root locally — owner-approved (2026-08-07): CI already
+does this, in a clean checkout, in ~5 minutes across 11 checks.** A local
+full run measured 900s, was killed mid-run more than once, and reliably
+reports 6 failures that are not yours — `tests/test_compaction_resolver_
+aware_1172.py` and friends fail whenever `reyn.local.yaml` exists on the
+machine (gitignored, so present on most dev checkouts, absent on CI and any
+fresh worktree — #3791). Running it locally is strictly worse than trusting
+CI: slower, and wrong on every developer machine with local config. (This
+reverses #3750's "four → five" fix from earlier the same day — CI itself
+still runs five gates, unchanged; what changed is which of them a human
+runs *locally* before opening the PR. If you're about to "fix" this back to
+five, read `testing.md` § "Before you push" first — the reasoning is there.)
+CI still runs all five gates on every PR — a green `pytest` alone (if you
+ran it anyway) is **not** a green CI run (`pytest-green ≠ CI-green`): ruff
+`I001` import-sort and a Tier-4 format pin (`len(...) == N`) both fail CI
+while `pytest` passes. Details + the Tier-4 → behavioral-assertion fix
+idioms: `docs/deep-dives/contributing/testing.md` § "Before you push".
 
 These rules then keep multi-session work coherent:
 
