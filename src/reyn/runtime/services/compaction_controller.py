@@ -20,7 +20,7 @@ delegates via :meth:`force_compact_now` (P3).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
@@ -204,7 +204,12 @@ class CompactionController:
         change, since attribute access transparently triggers this."""
         if self.__engine_cache is _ENGINE_UNSET:
             self.__engine_cache = self._compaction_engine_factory()
-        return self.__engine_cache
+        # The sentinel check above is the narrowing; mypy can't follow an
+        # identity comparison against a plain `object()` singleton, so this
+        # cast states what the check already guarantees (unlike
+        # TurnBudgetEngine's factory, CompactionEngine's has no legitimate
+        # "built but absent" case — every non-UNSET value is a real engine).
+        return cast(CompactionEngine, self.__engine_cache)
 
     # ── internal compaction logic ─────────────────────────────────────────────
 
