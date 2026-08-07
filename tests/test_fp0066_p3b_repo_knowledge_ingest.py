@@ -147,21 +147,31 @@ async def _await_scheduled_source_build(
     and returns before the task has had a single event-loop tick to run —
     the manifest entry does not exist yet, so ``search_await`` (the public
     completion-await surface) would see "no entry" and take its no-op
-    branch, never actually awaiting anything. The bounded loop below gives
-    the scheduled task event-loop ticks (``asyncio.sleep(0)`` — a
-    cooperative yield, not a timed wait) until the manifest entry exists
+    branch, never actually awaiting anything. The loop below gives the
+    scheduled task event-loop ticks until the manifest entry exists
     (``_run_build``'s first line is ``await self._set_state(source_id,
     "building")``, so the entry appears as soon as the task gets to run at
     all); ``search_await`` then hands off to the coordinator's own
-    ``_bg_tasks`` await, which is the actual completion signal. The loop
-    bound (2000 ticks) is a safety net against a genuinely broken scheduler,
-    not a timing budget — if the entry never appears, ``search_await`` still
-    no-ops and the caller's own state assertion goes red for the real
-    reason (state never reached "clean"), rather than this helper hanging."""
-    for _ in range(2000):
-        if await manifest.get(source_id) is not None:
-            break
-        await asyncio.sleep(0)
+    ``_bg_tasks`` await, which is the actual completion signal.
+
+    #3748: unbounded (owner policy) -- in scope despite being labeled "a
+    safety net, not a timing budget", because a broken scheduler's failure
+    DOES land on pass/fail: the old bound fell through to search_await's
+    no-op branch, which let a caller's own ``assert state == "clean"`` go
+    red -- but that red MISIDENTIFIES the cause (the scheduler never ran,
+    not "the build never reached clean"). A hang's kill stack instead
+    shows this exact ``while await manifest.get(...) is None``, naming the
+    real cause directly -- strictly more precise than the red it replaces,
+    not merely equally safe. (Contrast #3756 site 3, correctly left out of
+    scope: there, timing out vs. not changes nothing -- pass/fail reaches
+    the same way either branch goes.)
+
+    ``sleep(0.01)`` not ``sleep(0)``: unbounded + a pure scheduler yield
+    hot-spins one core for the life of a genuine hang, starving ``-n auto``
+    siblings for the whole CI kill window; a real delay costs nothing once
+    the predicate is already true (normally within one tick)."""
+    while await manifest.get(source_id) is None:
+        await asyncio.sleep(0.01)
     await coordinator.search_await(source_id)
 
 

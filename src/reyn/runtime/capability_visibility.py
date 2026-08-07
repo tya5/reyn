@@ -332,6 +332,18 @@ class CapabilityVisibility:
         # resolved_profile_for is documented to return (ContextualPermission | None, ...);
         # its declared type is the wider `object | None`, so cast to the concrete type the
         # downstream compose_resolved requires (registry.py:3509 guarantees it).
+        #
+        # #3593 review: `registry` is genuinely `_EnvelopeSource | None` — Session's own
+        # `registry` field is `AgentRegistry | None` (a caller without a back-reference is
+        # a real, legitimate state, not a wiring bug to paper over with a non-Optional lie)
+        # — so `is None` is a fully-typed discriminator, not a runtime-only guess about a
+        # static signal. `not hasattr(..., "resolved_profile_for")` stays alongside it as a
+        # SEPARATE, purely defensive check: Python does not enforce the Protocol at
+        # runtime, so a non-conforming object could theoretically reach here despite the
+        # type. Either arm means the same thing (no base to read), which is why they share
+        # one branch: composing the override against an allow-everything default and
+        # SETting it would silently replace a persisted `tool_deny` narrowing with ALLOWED
+        # — a permission WIDENING, the opposite of fail-closed.
         if self._registry is None or not hasattr(self._registry, "resolved_profile_for"):
             # #3593 ①: preserve — see the docstring. No base was obtained, so nothing below
             # may run: everything below composes a NEW envelope and SETs it over the live one.
@@ -392,9 +404,13 @@ class CapabilityVisibility:
         - Sibling precedent in this same class: ``persist_visibility_override`` reports its
           best-effort failure the same way.
 
-        Stage ② (#3593) is meant to make this branch unreachable by construction — fix the
-        one bootstrap-ordering caller, then require the envelope source non-optionally. Until
-        then this warning is what would tell an operator the window widened.
+        Stage ② (#3593) fixed the one measured bootstrap-ordering caller that reached here
+        unnecessarily (dogfood's registry cell). This branch stays reachable by DESIGN,
+        though: ``registry`` is genuinely ``AgentRegistry | None`` — a session legitimately
+        exists without a back-reference in some construction paths — so "no envelope
+        source" is not itself a defect to engineer away, only a state that must never widen
+        permissions. This warning is what tells an operator it happened, on any path that
+        reaches it.
         """
         import logging
 

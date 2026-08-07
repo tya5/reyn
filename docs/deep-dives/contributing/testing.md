@@ -168,6 +168,98 @@ Counting failures across pipeline re-runs without establishing a zero-floor base
 
 ---
 
+## Time
+
+**Owner ruling (2026-08-06), no exceptions: a test carries no time limit of
+its own.** Not `@pytest.mark.timeout(N)`, not a wait budget written into the
+test body (`attempts=200`, `range(150)`, a fixed retry count). When a test
+needs to wait, it waits on the CONDITION, unboundedly — pass or fail never
+depends on how much time elapsed, only on whether the condition it's
+actually testing became true. A straight-line `sleep(N)` — using elapsed
+time itself as the thing that makes an assertion pass — is banned outright,
+the same way it always was; this section states the discipline explicitly
+because this repo's own violations show the ban was never actually
+enforced, not because the rule itself is new.
+
+**CI's `--timeout=120` is a kill switch, not a per-test contract.** It
+exists to bound the damage a single hung test does to the rest of the run —
+nothing more. Hitting it is never read as "ran on a slow environment"; it
+means one of two things, and the investigation starts by finding out
+which: the test should be decomposed (it's doing more than one thing should
+have to wait for), or something actually hung. **The kill does not promise
+cleanup** — a killed test's fixtures and teardown are not guaranteed to
+run, and under `-n auto` an entire worker process can go down with it — so
+nothing may treat the kill switch as a safety net to lean on.
+
+**The discriminator, when it's unclear whether a wait is timing or
+conditioning**: multiply whatever constant is in the test by 10. If the
+test's pass/fail outcome changes, the test was timing, not waiting on a
+condition — the constant was load-bearing for the *answer*, not just for
+how long the test takes to get there.
+
+### Why no exception survived design
+
+Three attempts at carving out a sanctioned exception were each proposed and
+each fell for the same underlying reason, which is why this section states
+a rule with no exception clause rather than a taxonomy:
+
+1. *"Don't write assertions that depend on real time."* Rejected — a
+   discriminator that depends on the author already believing they've done
+   the forbidden thing doesn't fire. The test that actually caused this
+   policy to be revisited (#3746) froze an injected clock and said so in
+   its own diff; the author genuinely believed the assertion was
+   time-independent. It wasn't — the widget under test armed its timer
+   through the framework's own real wall-clock `set_timer`, a SECOND time
+   source the frozen clock never touched. A rule aimed at self-recognized
+   violations cannot catch a violation the author didn't recognize as one.
+2. *"Bless bounded polling as the sanctioned idiom"* (an attempt loop with
+   a fixed retry count, e.g. `attempts=200, delay=0.01`). Rejected — the
+   passing side of a bounded-poll loop is genuinely time-independent (it
+   returns the moment the condition holds), but the FAILING side isn't: the
+   `200` is an arbitrary constant nobody has agreed to, measured on
+   whatever machine first got it to pass. Hang protection for that failing
+   side already exists — the CI kill switch — so a per-test attempt budget
+   is a degraded, silent duplicate of a mechanism that already exists and
+   already logs why it fired.
+3. *"Declare a legitimately-slow test's budget explicitly, via a marker, as
+   a contract."* Rejected on the same ground as (2) before it was even
+   tried: any such marker's value is still a constant measured in one
+   environment, with no witness that it holds in another — declaring it
+   doesn't make it true elsewhere. (It also turned out to be unimplementable
+   as proposed: `@pytest.mark.timeout(N, reason=...)` was suggested before
+   checking that `pytest-timeout` actually accepts a `reason` argument — it
+   doesn't, and passing one raises `TypeError`.)
+
+**Every attempt at a sanctioned exception needed an environment-dependent
+constant to express it.** That isn't three failed designs; it's the same
+failure recurring, and it's the actual argument for having no exception
+clause at all — a rule that can only be stated using a number measured
+somewhere is a rule that is false somewhere else.
+
+### The general form of #3746's real defect
+
+`sleep` was not the defect in #3746 — the bounded poll that used it was a
+legitimate, condition-respecting wait, and would time out cleanly through
+the CI kill switch if the condition it waited on genuinely never became
+true. The real defect was that the test's assertion depended on a clock it
+had NOT verified was the only relevant time source: production armed a
+timer against the real wall clock while the test had frozen a different,
+injected one. Generalized: **a test that injects or freezes a clock must
+establish that the assertion under test depends on that clock alone** —
+not merely that the clock was frozen, which is a claim about what the
+AUTHOR did, not about what the SYSTEM under test actually reads from.
+
+### Decomposing a slow test
+
+"No time limit" is not "wait however long it takes and call it fine" — a
+test whose upper layer is slow ONLY because a lower layer it depends on is
+genuinely slow should be decomposed: replace the slow lower layer with a
+Fake at the upper layer's boundary, so the upper layer's own logic can be
+asserted without waiting on the lower layer's real latency. See
+[When a Fake is justified](#when-a-fake-is-justified--and-what-it-requires)
+below — a Fake used for this purpose carries the same contract-test
+obligation as any other Fake in this doc, not a lighter one.
+
 ## Mock vs Fake
 
 LLM-dependent tests **must** use the Fake (`LLMReplay`). Mocks are forbidden.
@@ -271,6 +363,37 @@ and lets the real constructor wire the guarded kwargs unconditionally; the test
 asserts on the resolved instance (`loop.router_model`, …) rather than raw
 constructor kwargs. It is the seam analogue of the rule above: adapt to the
 contract, don't bypass it.
+
+### When a Fake is justified — and what it requires
+
+Everything above states when a Fake is FORBIDDEN (the real collaborator is
+cheaply constructible — build it). The positive case: when a real lower
+layer is genuinely expensive to run — slow, not merely inconvenient — and
+that cost would make an upper-layer test slow enough to need [decomposing](#decomposing-a-slow-test),
+replace the lower layer with a Fake at the upper layer's boundary, so the
+upper layer's own logic is asserted without paying the lower layer's real
+cost.
+
+**A Fake used this way carries an obligation the ban-side of this section
+doesn't need to state separately: a contract test, independent of the
+upper-layer test, asserting the Fake and the real object agree on
+whatever the upper layer actually depends on.** Without a contract test,
+a Fake substituted for cost reasons is just a cheaper way to buy green — it
+is a claim that the real object behaves a certain way, never a witness
+that it does. A Fake with no contract test is exactly the shape the
+Mock ban above exists to prevent, wearing a different justification.
+
+This is not a new mechanism to build — this repo already has one, in one
+place, and the obligation here is to open it to every other substitution,
+not invent a second form. `LLMReplay`'s [drift detection](#drift-detection--required-for-each-area)
+already does exactly this: fixtures are recorded from the real API, and a
+dedicated test intentionally constructs an input the fixture does not
+cover, asserting `MissingFixture` is raised — proving the Fake fails
+loudly the moment its behavior would diverge from what a real call
+requires, rather than silently returning whatever it was told to. Any
+other Fake introduced for cost/speed reasons needs the same shape: a real
+recorded/derived behavior, and a test that fails when the Fake and the
+real object would actually disagree.
 
 ### How
 
@@ -596,10 +719,10 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 ---
 
-## Before you push — the four CI gates
+## Before you push — the five CI gates
 
 A green `pytest` run is **not** a green CI run. `.github/workflows/test.yml` runs
-four *separate* gates; run all four locally on your diff before calling a PR
+five *separate* gates; run all five locally on your diff before calling a PR
 ready:
 
 1. **pytest** — from the repo root (not a subset path) so collection matches CI:
@@ -628,10 +751,18 @@ ready:
    ```bash
    python scripts/verify_module_docstrings.py <changed_src_files>
    ```
+5. **mypy ratchet** — `scripts/mypy_ratchet.py` (#3726). A *ratchet*, not full
+   mypy adoption: it only fails on a `(file, error-code)` pair not already
+   declared in `scripts/mypy_ratchet_baseline.json` — a genuinely new mypy
+   finding in a file you touched fails this even though `mypy` itself isn't
+   in this repo's mental model of "the linter":
+   ```bash
+   python scripts/mypy_ratchet.py
+   ```
 
 A green `pytest` alone has shipped PRs that CI then bounced on ruff (`I001`) or
 the tier audit (a `len(...) == 1` format pin). Report scope honestly: say
-"pytest passed" if that is all you ran — "suite passed" implies all four gates.
+"pytest passed" if that is all you ran — "suite passed" implies all five gates.
 
 ---
 

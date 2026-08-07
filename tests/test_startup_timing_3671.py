@@ -51,7 +51,7 @@ def test_a_stage_that_never_ran_is_still_reported() -> None:
     timing = StartupTiming()
     timing.record("config", 0.5)
 
-    lines = timing.report_lines(wall_seconds=1.0)
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)
     body = "\n".join(lines)
 
     for name in STAGES:
@@ -80,7 +80,7 @@ def test_time_the_stages_cannot_explain_is_stated() -> None:
     timing = StartupTiming()
     timing.record("config", 0.40)
 
-    lines = timing.report_lines(wall_seconds=40.0)
+    lines = timing.report_lines(wall_seconds=40.0, first_frame_reached=True)
     unaccounted = next(line for line in lines if "unaccounted" in line)
 
     assert timing.unaccounted_seconds(40.0) == 39.6
@@ -97,7 +97,7 @@ def test_shares_are_of_wall_time_not_of_the_measured_sum() -> None:
     timing = StartupTiming()
     timing.record("config", 0.40)
 
-    config_line = next(line for line in timing.report_lines(40.0) if "config" in line)
+    config_line = next(line for line in timing.report_lines(40.0, first_frame_reached=True) if "config" in line)
 
     assert "1.0%" in config_line
 
@@ -201,14 +201,22 @@ def test_the_report_survives_an_interrupt(monkeypatch, capsys) -> None:
     assert "startup timing" in capsys.readouterr().out
 
 
-def test_client_prep_is_four_named_sub_stages_not_one_lump(monkeypatch) -> None:
+def test_client_prep_is_five_named_sub_stages_not_one_lump(monkeypatch) -> None:
     """Tier 2: #3671 (architect's design) — the single `client-prep` lump is
-    replaced by 4 named sub-stages at the seams already in the code (transport
-    construction, read-model construction, the lazy textual/flowview import,
-    and app construction), so a slow startup can say WHICH of the four, not
-    just that the client was slow to get ready."""
+    replaced by named sub-stages at the seams already in the code (litellm's
+    lazy import inside `run_async`, transport construction, read-model
+    construction, the lazy textual/flowview import, and app construction), so
+    a slow startup can say WHICH of these, not just that the client was slow
+    to get ready.
+
+    `litellm-import` added as a #3671 follow-up: a real-run measurement found
+    the original 4 sub-stages left ~59-60% of the wide span in
+    `client-prep:other` — `llm.py`'s `run_async` lazily imports litellm
+    BEFORE any of the other 4 brackets even start, and that cost had no
+    named home."""
     assert "client-prep" not in STAGES
     for name in (
+        "client-prep:litellm-import",
         "client-prep:transport",
         "client-prep:read-model",
         "client-prep:tui-import",
@@ -376,7 +384,7 @@ def test_unaccounted_warning_line_appears_when_coverage_is_bad() -> None:
     timing = StartupTiming()
     timing.record("config", 0.1)
 
-    lines = timing.report_lines(wall_seconds=1.0)  # 90% unaccounted
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)  # 90% unaccounted
 
     assert any("coverage gap" in line for line in lines)
 
@@ -387,7 +395,7 @@ def test_no_warning_line_when_coverage_is_good() -> None:
     timing = StartupTiming()
     timing.record("config", 0.95)
 
-    lines = timing.report_lines(wall_seconds=1.0)  # 5% unaccounted
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)  # 5% unaccounted
 
     assert not any("coverage gap" in line for line in lines)
 
@@ -398,6 +406,113 @@ def test_client_prep_other_is_declared() -> None:
     `--cui` path, where `mark_app_constructed` is never called) still shows
     `0.00` rather than disappearing."""
     assert "client-prep:other" in STAGES
+
+
+def test_litellm_import_stage_is_bracketed_in_the_chat_startup_path() -> None:
+    """Tier 2: #3671 follow-up — the chat startup path (`chat.py`'s
+    `_prepay_litellm_import`) is wrapped in `stage("client-prep:litellm-
+    import")`, so a real run can show whether THIS import, not the
+    lazily-imported textual/flowview tree (`client-prep:tui-import`), is what
+    dominates `client-prep:other`'s previously-unexplained ~59-60% share.
+
+    Deliberately NOT in `llm.py`'s `run_async` (lead-coder review): that is a
+    general-purpose choke point also used by `mcp.py` and other non-chat-
+    startup callers — a shared helper must not carry a stronger opinion
+    (a CLI startup-phase stage name) than its least-opinionated caller.
+    `run_async` itself is untouched by this PR.
+
+    Witnessed by running the real function and checking the PUBLIC recorded
+    duration increased — not by reading `chat.py`'s source for the `with`."""
+    from reyn.interfaces.cli.commands.chat import _prepay_litellm_import
+    from reyn.runtime import startup_timing
+
+    before = startup_timing.TIMING.elapsed("client-prep:litellm-import")
+
+    _prepay_litellm_import()
+
+    after = startup_timing.TIMING.elapsed("client-prep:litellm-import")
+    assert after >= before
+
+
+def test_first_frame_reached_is_false_until_the_mark_fires(monkeypatch) -> None:
+    """Tier 2: #3671 follow-up — the report needs a way to ask "did the
+    interface actually appear" independent of the numeric elapsed time, since
+    `process_elapsed_seconds()` returns a plausible-looking number either way
+    (see its own docstring: measured fooling 3 real measurements in a row)."""
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+    assert startup_timing.first_frame_reached() is False
+
+    startup_timing.mark_first_frame()
+    assert startup_timing.first_frame_reached() is True
+
+
+def test_report_says_the_interface_never_appeared_instead_of_a_total() -> None:
+    """Tier 2: #3671 follow-up — FALSIFY the exact failure this session's own
+    measurement hit 3 times in a row: a `reyn chat` interrupted before the
+    interface existed printed a `TOTAL ... (start -> interface on screen)`
+    line indistinguishable from a completed startup, with every client-prep
+    stage reading 0.00s and only a >=20% `unaccounted` warning as a (missed)
+    hint something was wrong. `report_lines(first_frame_reached=False)` must
+    say the interface never appeared, prominently, and must NOT print a
+    `TOTAL` line claiming it did."""
+    timing = StartupTiming()
+    timing.record("import", 0.4)
+
+    lines = timing.report_lines(wall_seconds=3.0, first_frame_reached=False)
+    body = "\n".join(lines)
+
+    assert "NEVER appeared" in body
+    assert not any(line.strip().startswith("TOTAL") for line in lines), body
+    assert any(line.strip().startswith("ELAPSED") for line in lines), body
+
+
+def test_report_still_says_total_when_the_interface_did_appear() -> None:
+    """Tier 2: the new warning is conditional — a completed startup must keep
+    its ordinary `TOTAL (start -> interface on screen)` line unchanged, the
+    default `first_frame_reached=True` this function always had."""
+    timing = StartupTiming()
+    timing.record("import", 0.4)
+
+    lines = timing.report_lines(wall_seconds=1.0, first_frame_reached=True)
+    body = "\n".join(lines)
+
+    assert "TOTAL" in body
+    assert "interface on screen" in body
+    assert "never appeared" not in body
+
+
+def test_the_report_call_site_passes_first_frame_reached(monkeypatch, capsys) -> None:
+    """Tier 2: #3671 follow-up — `_report_startup_timing` (the real call site,
+    not a re-implementation) must actually thread `first_frame_reached()`
+    through to `report_lines`, or the fix above never reaches an operator's
+    screen. Drives it through `chat_cmd.run` exactly like the existing
+    interrupt/exception survival tests, with the interface never having
+    appeared (a fresh process's `_FIRST_FRAME_AT` is `None` by default)."""
+    import argparse
+
+    from reyn.interfaces.cli.commands import chat as chat_cmd
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setenv("REYN_STARTUP_TIMING", "1")
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+
+    def _interrupted(_args: argparse.Namespace) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(chat_cmd, "_run", _interrupted)
+
+    try:
+        chat_cmd.run(argparse.Namespace())
+    except KeyboardInterrupt:
+        pass
+
+    out = capsys.readouterr().out
+    assert "NEVER appeared" in out
+    assert not any(
+        line.strip().startswith("TOTAL") for line in out.splitlines()
+    ), out
 
 
 def test_the_report_survives_an_exception(monkeypatch, capsys) -> None:

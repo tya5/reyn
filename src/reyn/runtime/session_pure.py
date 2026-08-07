@@ -17,6 +17,13 @@ def new_chain_id() -> str:
     """Mint a fresh chain_id for a top-level user request. Each user submission
     starts a new chain; agent_request / agent_response payloads forward the
     chain_id they received without minting new ones."""
+    # #3700: every chain_id minted anywhere in the runtime goes through this
+    # function — if a call site mints its own (a bare uuid4, or a copy of this
+    # rule), the same conversation can end up identified under two different
+    # generation rules, and anything keyed on chain_id (chain lookup, audit
+    # correlation) breaks the moment the two rules stop agreeing (e.g. hex vs
+    # dashed uuid4 string form, as the now-deleted duplicate in
+    # inter_agent_messaging.py did).
     return uuid.uuid4().hex
 
 

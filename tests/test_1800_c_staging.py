@@ -399,9 +399,16 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
     # below. Poll the STRONGER condition the test actually asserts — the on-disk snapshot
     # holding the entry — which implies the WAL is already durable too (the wait-for-condition
     # discipline #1751 adopted when fsync moved off-loop).
-    for _ in range(400):
-        if AgentSnapshot.load(session.agent_name, session._snapshot_path).next_turn_context:
-            break
+    # #3748: unbounded (owner policy) -- the asserts below check exact COUNT
+    # and CONTENT, a stronger claim than this loop's mere truthiness check,
+    # so they are not restating the loop condition and stay.
+    # #3765: check the producer's health, not just elapsed time -- if
+    # drain_task dies (an exception) before staging, that exception IS the
+    # real failure; re-raising it beats hanging on a producer that will
+    # never satisfy the predicate again (mirrors #3764's fix).
+    while not AgentSnapshot.load(session.agent_name, session._snapshot_path).next_turn_context:
+        if drain_task.done():
+            drain_task.result()
         await asyncio.sleep(0.005)
 
     # While _drain_to_wake is still blocking (no trigger sent), verify
