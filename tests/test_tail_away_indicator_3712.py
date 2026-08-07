@@ -115,14 +115,30 @@ async def _settle_until(pilot, until) -> None:
 
 
 async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
-    """Put enough behind the reader that scrolling up genuinely leaves the tail."""
+    """Put enough behind the reader that scrolling up genuinely leaves the tail.
+
+    #3770: waits for ``max_scroll_y`` to reach its final value BEFORE
+    scrolling, deliberately, not as a stabilisation nicety. Measured
+    (textual-flowview#12): a scroll-away delivered while ``max_scroll_y`` is
+    still small/zero (content still arriving) is swallowed upstream —
+    flowview's own ``_follow_bottom`` latch re-reads ``new_value >=
+    max_scroll_y`` at the moment the scroll lands, and while the viewport
+    has little or nothing to scroll away FROM yet that condition holds
+    regardless of the reader's intent, so the "leave the tail" this fixture
+    exists to set up silently does not happen. A fixed pause COUNT before
+    the earlier version's ``_settle(pilot, 8)`` was a bet that 8 pumps is
+    enough for all ``lines`` entries to land and lay out — true on this
+    machine, not guaranteed elsewhere, which is what #3770 traced. Waiting
+    for the actual condition removes the bet; it does not paper over
+    flowview's swallowed-intent question, which stays open upstream.
+    """
     await transport.push_event(
         Event(type="turn_started", data={"kind": "user", "chain_id": "c1", "seq": 1})
     )
     for i in range(lines):
         await transport.push_display(OutboxMessage(kind="agent", text=f"line {i}", meta={}))
-    await _settle(pilot, 8)
     flow = app.query_one(FlowView)
+    await _settle_until(pilot, lambda: len(flow.entries) >= lines)
     flow.scroll_to(y=0, animate=False)
     await _settle(pilot)
     # #3720 diagnostic: CI and this machine disagree on the same SHA, and the
