@@ -29,12 +29,17 @@ The row used to open with a literal ``NOW`` label. Owner call (2026-08-07,
 "now とか next という文字列がださいな"): dropped it, and the state word
 itself now carries a travelling highlight ("shine", design "A" of three
 text-mockup options put to the owner) while a turn runs — see
-:data:`_SHINE_WIDTH`, :func:`_shine_ramp` and :meth:`ActivityRow.tick`. The
-band was a two-character ``reverse`` when #3779 first shipped it; the operator
-read that as a block blinking rather than a light moving, which is what a
-two-valued band is — it has no edge to fall off. #3777 replaced it with a
-cosine ramp between :data:`palette.SHINE_DIM` and :data:`palette.SHINE_PEAK`,
-keeping the old attribute band as the no-colour fallback. One
+:data:`_SHINE_FRACTION`, :func:`_shine_ramp` and :meth:`ActivityRow.tick`.
+The band was a two-character ``reverse`` when #3779 first shipped it; the
+operator read that as a block blinking rather than a light moving, which is
+what a two-valued band is — it has no edge to fall off. #3777 replaced it
+with a cosine ramp between a theme-aware ground and peak
+(:data:`palette.SHINE_GROUND_DARK`/:data:`palette.SHINE_GROUND_LIGHT` and
+:data:`palette.SHINE_PEAK_DARK`/:data:`palette.SHINE_PEAK_LIGHT` — #3799
+split what had been one fixed pair, since a near-white peak is invisible on
+a light terminal background), keeping the old attribute band as the
+no-colour fallback. The band's width is also no longer a fixed cell count:
+#3799 made it :data:`_SHINE_FRACTION` of the span it crosses. One
 timer drives both the shine and the elapsed clock (the clock is recomputed
 fresh from the real clock on every tick regardless of rate, so sharing the
 timer costs nothing in correctness) and is paused/resumed by

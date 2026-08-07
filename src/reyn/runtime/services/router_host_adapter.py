@@ -420,8 +420,12 @@ class RouterHostAdapter:
         # Session passes the project root so all 3 tiers are covered.
         project_root: Path | None = None,
         # #1092 PR-F1 (chat activation): builds the shared turn_budget engine
-        # the chat axis budgets against — off the CompactionEngine's RESOLVED
-        # model (#1172-safe). Sole consumer (for now) is wrap_up_output_reserve
+        # the chat axis budgets against. #3789 (#1172-safe): resolves its own
+        # model directly (`self._resolver.resolve(self.model).model` in
+        # Session), independent of CompactionEngine — the two used to share a
+        # resolution path, and no longer do; see `docs/reference/runtime/
+        # session-construction.md`'s compaction section for why. Sole
+        # consumer (for now) is wrap_up_output_reserve
         # — which hard-caps the force-close wrap-up call's output. `None` = no
         # engine (legacy / test paths) → no cap (== pre-PR-F behaviour).
         # ADDITIVE: chat never calls _force_close_call until the F2 handoff
