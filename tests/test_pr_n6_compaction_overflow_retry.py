@@ -390,6 +390,9 @@ class _OverflowingEngine:
                           "session_user_facts": 50, "artifacts_referenced": 175},
         )
         self._fail_compact = fail_compact
+        # #3783 stage 2: retry_loop emits compaction_shrink_recovered via
+        # engine._events — a real EventLog, not a mock (cheaply constructible).
+        self._events = EventLog()
 
     async def compact(self, input_chunk: HistoryChunkToCompact):
         if self._fail_compact:
@@ -450,6 +453,7 @@ def test_retry_loop_shrinks_tail_on_overflow() -> None:
                 section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
                               "session_user_facts": 50, "artifacts_referenced": 175},
             )
+            self._events = EventLog()
 
         async def compact(self, input_chunk):
             from reyn.services.compaction.engine import ChatSummary
@@ -608,6 +612,207 @@ def test_retry_loop_success_calls_learner_observe() -> None:
     # We only verify the invariant that observe fired and changed the EMA.
     # (Direction depends on the actual vs estimate ratio, which we don't pin.)
     assert after_ema != before_ema or True  # at minimum, no exception was raised
+
+
+# ---------------------------------------------------------------------------
+# #3783 stage 2: compaction_shrink_recovered audit-event + same-cause cap
+# ---------------------------------------------------------------------------
+
+
+def test_retry_loop_emits_compaction_shrink_recovered_with_cause() -> None:
+    """Tier 2: #3783 stage 2 — a recovered overflow emits compaction_shrink_recovered
+    naming the exception type, via the real EventLog subscriber mechanism (no mocks).
+
+    Falsification (performed during review): with the ``engine._events.emit(...)``
+    call removed from ``retry_loop``, this test goes RED (``events`` stays empty) —
+    confirming the emit is what this test actually exercises.
+    """
+    from reyn.services.compaction.engine import ComputedBudgets
+
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    # Tiny tail_budget so the post-failure shrink step trims tail instead of
+    # immediately raising "all shrink paths exhausted" (which would end the
+    # loop before the 2nd, successful attempt).
+    engine.budgets = ComputedBudgets(
+        main_pool=100_000, head_budget=10, body_budget=500,
+        tail_budget=10, new_msg_budget=10,
+        B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+        section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                      "session_user_facts": 50, "artifacts_referenced": 175},
+    )
+    events: list = []
+    engine._events.add_subscriber(lambda e: events.append(e))
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head: list[dict] = []
+    tail = _turns(["x" * 400] * 4)
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    attempt = [0]
+
+    async def _fail_once_then_succeed(**kwargs):
+        attempt[0] += 1
+        if attempt[0] == 1:
+            raise ContextOverflowError("first attempt overflows")
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
+
+    asyncio.run(retry_loop(
+        SP="sp", head=head, summary=None, raw_middle=[],
+        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_fail_once_then_succeed,
+        max_iterations=8,
+    ))
+
+    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
+    (only,) = recovered  # exactly one recover — raises ValueError otherwise
+    assert only.data["cause"] == "ContextOverflowError"
+    assert only.data["iteration"] == 0
+    assert only.data["consecutive"] == 1
+
+
+def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted() -> None:
+    """Tier 2: #3783 stage 2 — the SAME cause recovering more than
+    ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS`` (2) times in a row raises
+    UnrecoveredError even though shrinkable content remains (tail is not yet
+    at its minimum) — a real overflow shrinks its way to success or exhausts
+    the ladder; a cause recurring unchanged across shrinks is evidence
+    shrinking cannot fix it.
+
+    Falsification (performed during review): with the same-cause cap check
+    removed, this test goes RED — the loop instead keeps shrinking the
+    still-nonempty tail (does not raise "all shrink paths exhausted") and
+    eventually raises the DIFFERENT ``UnrecoveredError`` from
+    ``max_iterations`` exhaustion, whose message does not mention
+    "consecutive times" — confirming the cap, not incidental exhaustion, is
+    what this test observes.
+    """
+    from reyn.services.compaction.engine import ComputedBudgets
+
+    cfg = _make_cfg()
+    budgets = ComputedBudgets(
+        main_pool=100_000, head_budget=10, body_budget=500,
+        tail_budget=10, new_msg_budget=10,
+        B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+        section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                      "session_user_facts": 50, "artifacts_referenced": 175},
+    )
+    engine = _OverflowingEngine(fail_compact=False)
+    engine.budgets = budgets
+    events: list = []
+    engine._events.add_subscriber(lambda e: events.append(e))
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    # A big tail (tail_budget=10 is tiny, so it stays "shrinkable" across
+    # several halvings) and an empty head so head-exhaustion is never reached
+    # before the same-cause cap fires.
+    tail = _turns(["x" * 400] * 8)
+    head: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    async def _always_overflow(**kwargs):
+        raise ContextOverflowError("always overflows")
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=[],
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_overflow,
+            max_iterations=8,
+        ))
+
+    assert "consecutive times" in str(excinfo.value)
+    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
+    # Cap is > 2, so exactly 3 consecutive same-cause recovers happen before
+    # the 3rd one raises — the loop must not have run all 8 iterations.
+    # Unpacking to exactly 3 elements raises ValueError otherwise.
+    first, second, third = recovered
+    assert first.data["consecutive"] == 1
+    assert second.data["consecutive"] == 2
+    assert third.data["consecutive"] == 3
+    assert first.data["cause"] == second.data["cause"] == third.data["cause"] == (
+        "ContextOverflowError"
+    )
+
+
+class _CompactFailsOnceEngine(_OverflowingEngine):
+    """compact() overflows on its FIRST call only, then behaves like the
+    (fail_compact=False) base — used to force one CompactionOverflowError
+    recover followed by ContextOverflowError recovers, so the two causes
+    genuinely differ (not two instances of the same class)."""
+
+    def __init__(self) -> None:
+        super().__init__(fail_compact=False)
+        self._compact_calls = 0
+
+    async def compact(self, input_chunk):
+        self._compact_calls += 1
+        if self._compact_calls == 1:
+            raise CompactionOverflowError("first compact overflows")
+        return await super().compact(input_chunk)
+
+
+def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap() -> None:
+    """Tier 2: #3783 stage 2 — a DIFFERENT cause resets the consecutive
+    counter, so a turn that alternates between two real overflow causes is
+    not penalised by the same-cause cap (each stays at consecutive=1,
+    the cap only fires when the SAME cause repeats past it).
+
+    Falsification (performed during review): temporarily mutating the
+    production ``_cause == _last_recover_cause`` comparison to an
+    always-True check (treating every recover as "the same cause"
+    regardless of its actual type) makes this test go RED — the
+    ``all(... consecutive == 1 ...)`` assertion below fails because the
+    2nd, genuinely-different-cause recover is miscounted as a repeat of the
+    1st — confirming this test actually exercises cause-identity, not
+    iteration count alone.
+    """
+    cfg = _make_cfg()
+    engine = _CompactFailsOnceEngine()
+    events: list = []
+    engine._events.add_subscriber(lambda e: events.append(e))
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    # 4 raw_middle turns, empty head/tail: iteration 0's compact() overflows
+    # (CompactionOverflowError) before main_call is ever reached; the shrink
+    # escalation then halves raw_middle (still nonempty) for iteration 1,
+    # where compact() succeeds and main_call raises ContextOverflowError — a
+    # genuinely different cause than iteration 0's.
+    raw_middle = _turns(["m"] * 4)
+    head: list[dict] = []
+    tail: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    async def _always_overflow(**kwargs):
+        raise ContextOverflowError("main overflow")
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_overflow,
+            max_iterations=8,
+        ))
+
+    # Ends via ordinary shrink-path exhaustion (head/tail both empty and
+    # below their minimums once raw_middle drains), NOT the same-cause cap —
+    # the cap's message names "consecutive times"; this one does not.
+    assert "consecutive times" not in str(excinfo.value)
+    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
+    # At least 2 recovers happened — slicing off the first 2 raises
+    # IndexError below otherwise, without pinning the total count.
+    first, second = recovered[0], recovered[1]
+    assert first.data["cause"] == "CompactionOverflowError"
+    assert second.data["cause"] == "ContextOverflowError"
+    # Every recover stayed at consecutive=1 — no cause repeated back-to-back.
+    assert all(e.data["consecutive"] == 1 for e in recovered)
 
 
 # ---------------------------------------------------------------------------

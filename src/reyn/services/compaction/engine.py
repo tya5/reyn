@@ -1269,6 +1269,17 @@ def _estimate_tokens_list(
     )
 
 
+# #3783 stage 2: same-cause consecutive-recover cap. Stage 3 will flip the
+# default classification so more exception types recover-by-default instead
+# of raising fatally; without this cap, a cause that shrinking can never fix
+# (a bug misclassified as recoverable, not an actual overflow) would grind
+# through all `max_iterations` LLM calls before giving up. This is a tighter,
+# earlier check than `max_iterations` — it fires on the SAME cause repeating,
+# not on iteration count alone, so a turn that alternates between two
+# different real overflow causes is not penalised.
+_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2
+
+
 async def retry_loop(
     *,
     SP: str,
@@ -1300,6 +1311,17 @@ async def retry_loop(
       budgets, ``UnrecoveredError`` is raised immediately.
     - ``max_iterations=8`` is a safety cap; finite-by-construction means the
       loop terminates in O(log N) shrink steps for typical sizes.
+    - #3783 stage 2: a SAME-cause recover cap (``_MAX_CONSECUTIVE_SAME_CAUSE_
+      RECOVERS``, currently 2) raises ``UnrecoveredError`` earlier than
+      ``max_iterations`` when the identical exception type keeps recovering
+      in a row — a real overflow shrinks its way to success within a few
+      iterations, so a cause that keeps recurring unchanged is evidence
+      shrinking cannot fix it (a misclassification, not an overflow), and
+      grinding through the remaining iterations would just spend LLM calls
+      to arrive at the same ``UnrecoveredError`` anyway. A per-iteration
+      ``compaction_shrink_recovered`` audit-event names the cause, so this
+      cap (and stage 3's later default-classification flip) is observable
+      in the event log, not just inferred from the final exception.
 
     Failure-mode separation
     -----------------------
@@ -1346,6 +1368,9 @@ async def retry_loop(
     head_min_tokens = bg.head_budget
     tail_min_tokens = bg.tail_budget
     use_chars4 = cfg.use_chars4_estimate
+
+    _last_recover_cause: str | None = None
+    _consecutive_same_cause = 0
 
     for _iteration in range(max_iterations):
         try:
@@ -1415,12 +1440,29 @@ async def retry_loop(
 
             return response
 
-        except CompactionOverflowError:
-            # Compaction call itself overflowed — fall through to shrink.
-            pass
-        except ContextOverflowError:
-            # Main call overflowed — fall through to shrink.
-            pass
+        except (CompactionOverflowError, ContextOverflowError) as _overflow_exc:
+            # Compaction call or main call overflowed — fall through to
+            # shrink. #3783 stage 2: name the cause + cap same-cause repeats.
+            _cause = type(_overflow_exc).__name__
+            if _cause == _last_recover_cause:
+                _consecutive_same_cause += 1
+            else:
+                _last_recover_cause = _cause
+                _consecutive_same_cause = 1
+            engine._events.emit(
+                "compaction_shrink_recovered",
+                cause=_cause,
+                iteration=_iteration,
+                consecutive=_consecutive_same_cause,
+            )
+            if _consecutive_same_cause > _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS:
+                raise UnrecoveredError(
+                    f"retry_loop: cause {_cause!r} recovered "
+                    f"{_consecutive_same_cause} consecutive times (limit "
+                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — shrinking is "
+                    "not resolving this cause; stopping rather than "
+                    "exhausting max_iterations."
+                ) from _overflow_exc
 
         # Shrink escalation: reduce context size monotonically.
         if raw_middle:
