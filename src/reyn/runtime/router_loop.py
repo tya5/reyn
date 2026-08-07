@@ -27,7 +27,10 @@ from reyn.runtime.router_tools import (
     build_tools,
     get_dispatch_kind,
 )
-from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
+from reyn.services.compaction.engine import (
+    _IMAGE_FIXED_TOKEN_COST,
+    is_context_overflow_error,
+)
 from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
@@ -383,26 +386,12 @@ def _is_empty_router_response(response: Any) -> bool:
     return finish == "stop" and not content.strip() and not tool_calls
 
 
-# Provider context-length errors arrive as litellm exceptions with varied class
-# names/messages; the chat session classifies them by keyword on the message
-# (session.py:5381-5384). #1092 PR-B reuses the SAME keyword set for the phase
-# force-close shrink-retry. NOTE: this list is currently duplicated here +
-# twice in session.py — a future cleanup should lift one shared
-# ``is_context_overflow_error`` (e.g. next to ``ContextOverflowError`` in
-# services/compaction); kept local here to avoid a session.py refactor in PR-B.
-_CONTEXT_OVERFLOW_KEYWORDS = (
-    "context", "token", "length", "limit", "too long", "too large",
-)
-
-
-def _is_context_overflow_error(exc: BaseException) -> bool:
-    """True when *exc* looks like a provider context-length overflow.
-
-    Keyword match on the stringified exception — the same heuristic the chat
-    session uses to convert litellm errors into ``ContextOverflowError``.
-    """
-    msg = str(exc).lower()
-    return any(kw in msg for kw in _CONTEXT_OVERFLOW_KEYWORDS)
+# #3783 stage 1: the TODO this comment used to carry ("a future cleanup
+# should lift one shared is_context_overflow_error, e.g. next to
+# ContextOverflowError in services/compaction") is done — this local
+# duplicate + the 3 in router_loop_driver.py + the divergent 4-keyword copy
+# in compaction/engine.py all replaced by
+# ``reyn.services.compaction.engine.is_context_overflow_error``.
 
 
 def _is_unsupported_param_error(exc: BaseException) -> bool:
@@ -411,7 +400,8 @@ def _is_unsupported_param_error(exc: BaseException) -> bool:
     Detects the gemini-via-LiteLLM-proxy case where the proxy adds
     ``encoding_format`` and the provider rejects it (``UnsupportedParamsError``),
     which fails the action embedding index build. Keyword/typename match — the
-    same stringified-exception heuristic family as ``_is_context_overflow_error``.
+    same stringified-exception heuristic family as
+    ``reyn.services.compaction.engine.is_context_overflow_error``.
     """
     return (
         "UnsupportedParams" in type(exc).__name__
@@ -2776,7 +2766,7 @@ class RouterLoop:
                     cur, resolved_model=resolved_model, reason=reason,
                 )
             except Exception as exc:  # noqa: BLE001
-                if not _is_context_overflow_error(exc):
+                if not is_context_overflow_error(exc):
                     raise
                 if shrink is None:
                     # Chat host: no in-loop shrink — propagate to the outer

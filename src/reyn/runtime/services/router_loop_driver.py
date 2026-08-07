@@ -378,9 +378,11 @@ class RouterLoopDriver:
                     _dropped.append(_head_span)
                 return _result.content or "", _covers, _dropped
             except Exception as _exc:
-                if not any(kw in str(_exc).lower() for kw in (
-                    "context", "token", "length", "limit", "too long", "too large",
-                )):
+                # #3783 stage 1: single shared predicate (was an inline copy).
+                from reyn.services.compaction.engine import (
+                    is_context_overflow_error as _is_context_overflow_error,
+                )
+                if not _is_context_overflow_error(_exc):
                     raise
                 _last_exc = _exc
         raise _ContextOverflowError(
@@ -409,16 +411,16 @@ class RouterLoopDriver:
         from reyn.services.compaction.engine import (
             UnrecoveredError as _UnrecoveredError,
         )
+        from reyn.services.compaction.engine import (
+            is_context_overflow_error as _is_context_overflow_error,
+        )
 
         history = self._history_buffer.build_history()
         try:
             return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:
-            _exc_str = str(_exc).lower()
-            if not any(
-                kw in _exc_str
-                for kw in ("context", "token", "length", "limit", "too long", "too large")
-            ):
+            # #3783 stage 1: single shared predicate (was an inline copy).
+            if not _is_context_overflow_error(_exc):
                 raise
             self._events.emit(
                 "router_context_overflow_detected", error=repr(_exc)
@@ -444,9 +446,9 @@ class RouterLoopDriver:
                 try:
                     _usage = await loop.run(user_text=user_text, history=_msgs)
                 except Exception as _call_exc:
-                    if any(kw in str(_call_exc).lower() for kw in (
-                        "context", "token", "length", "limit", "too long", "too large",
-                    )):
+                    # #3783 stage 1: single shared predicate (was an inline
+                    # copy) — closes over the outer method's own import.
+                    if _is_context_overflow_error(_call_exc):
                         raise _ContextOverflowError(str(_call_exc)) from _call_exc
                     raise
                 return _RouterUsageShim(_usage)
