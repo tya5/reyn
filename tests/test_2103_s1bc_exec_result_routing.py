@@ -61,13 +61,15 @@ def _scripted_llm():
 
 
 async def _find_history(session, needle: str):
-    for _ in range(40):  # ~2s bounded
+    # #3748: unbounded (owner policy) -- callers no longer need a "did it
+    # arrive" None check, since this never gives up; a hang here surfaces
+    # via the kill stack showing this exact loop, waiting on `needle`.
+    while True:
         for m in session.history:
             txt = m.content if isinstance(m.content, str) else str(m.content)
             if needle in txt:
                 return m, txt
         await asyncio.sleep(0.05)
-    return None, ""
 
 
 @pytest.mark.asyncio
@@ -97,10 +99,7 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
         to="worker", response="TASK RESULT: did the thing", depth=0, chain_id=chain_id,
     )
 
-    entry, txt = await _find_history(main, "TASK RESULT: did the thing")
-    assert entry is not None, (
-        "the spawned session's result did NOT arrive at the main spawner's history"
-    )
+    _, txt = await _find_history(main, "TASK RESULT: did the thing")
     # CORRELATABLE: distinct kind + the spawned sid + the TRUSTED task (the spawner's own
     # request from its record, NOT echoed) + the fenced reply.
     assert "kind=spawned_session" in txt
@@ -126,8 +125,7 @@ async def test_unrecorded_sid_falls_back_to_kind_agent(tmp_path, monkeypatch):
     await spawned._send_agent_response(
         to="worker", response="INJECT me as spawned", depth=0, chain_id="c2",
     )
-    entry, txt = await _find_history(main, "INJECT me as spawned")
-    assert entry is not None
+    _, txt = await _find_history(main, "INJECT me as spawned")
     assert "kind=spawned_session" not in txt  # no forged trusted framing
     assert "kind=agent" in txt
 
@@ -150,8 +148,7 @@ async def test_response_routes_to_non_main_spawner_sid_not_main(tmp_path, monkey
         to="worker", response="RESULT FOR X", depth=0, chain_id="cx", to_sid=x_sid,
     )
 
-    entry_x, _ = await _find_history(spawner_x, "RESULT FOR X")
-    assert entry_x is not None, "the reply did NOT reach the non-main spawner session"
+    await _find_history(spawner_x, "RESULT FOR X")
     assert not any(
         "RESULT FOR X" in (m.content if isinstance(m.content, str) else str(m.content))
         for m in main.history
@@ -196,8 +193,7 @@ async def test_non_main_delegation_reply_routes_to_delegating_sid_not_main(tmp_p
     )
 
     # the peer's reply (an inbound agent_response, framed "from=peer") lands on X, not main.
-    entry_x, _ = await _find_history(x, "from=peer")
-    assert entry_x is not None, "the peer's reply did NOT reach the non-main delegating session"
+    await _find_history(x, "from=peer")
     assert not any(
         "from=peer" in (m.content if isinstance(m.content, str) else str(m.content))
         for m in main.history
@@ -227,8 +223,7 @@ async def test_default_path_loads_cold_main_and_starts_forwarder(tmp_path, monke
     # ran too — the forwarder-start is covered transitively (no private-state assert).
     target_main = reg.get_session("worker")
     assert target_main is not None, "the cold main was NOT loaded (it would be dropped)"
-    entry, _ = await _find_history(target_main, "COLD MAIN DELIVERY")
-    assert entry is not None
+    await _find_history(target_main, "COLD MAIN DELIVERY")
 
 
 @pytest.mark.asyncio
