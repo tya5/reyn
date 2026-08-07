@@ -1303,11 +1303,14 @@ class TextualChatApp(App):
         # queue, so the zone reads past (conversation) -> now (this) -> next
         # (queue) -> the line being typed. Non-focusable, so Tab/Esc still walk
         # the same path to the composer they did before it existed.
-        #: #3712: how many entries the flow held when the reader last left the
-        #: newest output, or ``None`` while they are on it.
-        #: Entries that have landed since the reader left the tail, counted as
-        #: they arrive rather than derived from two reads of the model.
-        self._away_arrivals = 0
+        #: #3777: how many entries THIS TURN has produced, counted as they
+        #: arrive rather than derived from two reads of the model. The baseline
+        #: is the turn's start, which the reader saw; the previous counter's
+        #: baseline was the moment the reader scrolled away, which they did
+        #: not, so its number could never be interpreted. Reset by
+        #: :meth:`_reset_turn_entries` at turn start and nowhere else — in
+        #: particular NOT on a scroll edge.
+        self._turn_entries = 0
         self._activity = ActivityRow(id="activity-row", clock=self._clock)
         yield self._activity
         self._sent_queue = SentQueue(id="sent-queue")
@@ -2140,8 +2143,7 @@ class TextualChatApp(App):
         # a frame later. ``on_flow_view_follow_changed`` still runs once that
         # refresh happens and agrees (idempotent), it simply must not be what
         # the answer waits on.
-        self._away_arrivals = 0
-        self._activity.set_behind(None)
+        self._activity.set_away(False)
 
     def on_flow_view_follow_changed(self, event: "FlowView.FollowChanged") -> None:
         """The reader left or returned to the newest output (#3712, #3770).
@@ -2163,20 +2165,27 @@ class TextualChatApp(App):
         already reads ``flow.following`` fresh on each arrival, so there is
         nothing to remember about having left.
         """
-        if event.following:
-            self._away_arrivals = 0
-            self._activity.set_behind(None)
+        self._activity.set_away(not event.following)
 
     def _note_entry_landed(self) -> None:
-        """One entry arrived — count it if the reader is not there to see it.
+        """One entry arrived — count it, unconditionally.
 
         Called from the frame pump as the entry lands, i.e. by the producer of
-        the event rather than by a later reader of the model. ``LIVE +N`` says
-        how many things happened; the things themselves are what know.
+        the event rather than by a later reader of the model: the count says
+        how many things happened, and the things themselves are what know.
+
+        No ``following`` check (#3777). The count is a property of the turn,
+        not of where the reader is standing, so it does not consult the reader
+        at all — which is also what lets its baseline be something the reader
+        can see.
         """
-        if not self._flow.following:
-            self._away_arrivals += 1
-            self._activity.set_behind(self._away_arrivals)
+        self._turn_entries += 1
+        self._activity.set_entries(self._turn_entries)
+
+    def _reset_turn_entries(self) -> None:
+        """Start a turn's count at zero. The one place the count is reset."""
+        self._turn_entries = 0
+        self._activity.set_entries(0)
 
     def _apply_compact_layout(self) -> None:
         """Re-decide how much room the transient regions may take (#3680).
@@ -2892,6 +2901,12 @@ class TextualChatApp(App):
         # moment it happened to connect.
         if snap.get("turn_active"):
             self._activity.begin("WORKING", started=False)
+            # A mid-turn attach did not see the entries that already landed,
+            # so it counts from zero and says so by counting from HERE. It
+            # cannot report a total it never observed, and a reconstructed
+            # number would be the same "baseline nobody saw" defect wearing a
+            # different hat.
+            self._reset_turn_entries()
         for item in self._queue_view.queue():
             msg_id = item.get("msg_id")
             if msg_id:
@@ -3134,6 +3149,7 @@ class TextualChatApp(App):
         # is running, and returning early would leave the row hidden through
         # the whole turn.
         self._activity.begin("WORKING")
+        self._reset_turn_entries()
         applied = self._queue_view.apply_turn_started(chain_id=chain_id, seq=seq)
         if not applied:
             return

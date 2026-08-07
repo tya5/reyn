@@ -28,10 +28,12 @@ from typing import AsyncIterator
 import pytest
 from textual.content import Span
 
-from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat import TextualChatApp, palette
 from reyn.interfaces.inline.textual_chat.activity_row import (
-    _SHINE_WIDTH,
+    _CANCEL_HINT,
+    LATEST_HINT,
     ActivityRow,
+    _shine_ramp,
     activity_text,
 )
 from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN
@@ -130,8 +132,12 @@ def test_an_unknown_duration_prints_no_clock() -> None:
     with_clock = str(activity_text("WORKING", elapsed_s=78.0, width=80))
     without = str(activity_text("WORKING", elapsed_s=None, width=80))
 
-    assert "01:18" in with_clock
-    assert not any(ch.isdigit() for ch in without.split("Ctrl+C")[0]), (
+    assert "78s" in with_clock
+    # The head is the segment before the first separator — the count that
+    # follows it legitimately carries a digit, so the claim has to be scoped to
+    # where a duration would appear rather than to the whole line.
+    head = without.split("·")[0]
+    assert not any(ch.isdigit() for ch in head), (
         f"a duration appeared where none was known: {without!r}"
     )
 
@@ -142,12 +148,18 @@ def test_the_cancel_affordance_yields_before_the_state_does() -> None:
     Both cannot fit at every width. The state is the thing the row exists to
     show; the hint names a key that works whether or not it is printed.
     """
-    wide = str(activity_text("RESPONDING", elapsed_s=5.0, width=80))
-    narrow = str(activity_text("RESPONDING", elapsed_s=5.0, width=20))
+    wide = str(activity_text("RESPONDING", elapsed_s=5.0, width=80, entries=3))
+    narrow = str(activity_text("RESPONDING", elapsed_s=5.0, width=40, entries=3))
 
-    assert "Ctrl+C" in wide
+    assert _CANCEL_HINT in wide
     assert "RESPONDING" in narrow
     assert len(narrow) <= len(wide)
+    # What goes first is the count, not the way out: a row that gave up "how to
+    # stop this" to keep a number would have its priorities backwards.
+    assert _CANCEL_HINT in narrow, (
+        f"the abort hint was dropped before the count: {narrow!r}"
+    )
+    assert "3 entries" not in narrow
 
 
 # ── the lifecycle, on a real app ─────────────────────────────────────────────
@@ -318,7 +330,7 @@ async def test_the_clock_advances_without_any_delta_arriving() -> None:
         await _until(lambda: str(row.render()) != before)
 
         after = str(row.render())
-        assert "01:15" in after, f"the clock is not tracking the real gap: {after!r}"
+        assert "75s" in after, f"the clock is not tracking the real gap: {after!r}"
 
 
 # ── the shine (owner design "A", replacing the removed NOW label) ────────────
@@ -344,68 +356,117 @@ def test_the_row_carries_no_mark_and_starts_where_a_queue_label_starts() -> None
     )
 
 
-def _band(state: str, frame: int) -> "dict[int, str]":
-    """The band at ``frame`` as ``{column: style}``, one entry per painted cell.
+def _cells(state: str, phase: float, *, dark: bool = True) -> "dict[int, str]":
+    """The rendered row as ``{column: style}``, one entry per painted cell.
 
     Reading the rendering rather than re-deriving it: the test asks what the
-    row looks like, and never recomputes the sweep with the arithmetic it is
+    row looks like and never recomputes the sweep with the arithmetic it is
     supposed to be checking.
     """
-    content = activity_text(state, elapsed_s=None, width=80, shine_index=frame)
+    content = activity_text(
+        state, elapsed_s=None, width=80, shine_phase=phase, dark=dark
+    )
     return {span.start: str(span.style) for span in content.spans}
+
+
+def test_every_character_is_painted_so_the_band_has_no_free_edge() -> None:
+    """Tier 1: no cell is left at the terminal's own foreground.
+
+    This is the defect the owner reported: with only the band painted, its
+    outermost cells were a dark colour sitting directly against an undimmed
+    ground, and the row read as THREE things moving instead of one. A uniform
+    ground under a single bright band is what reads as one light, and "uniform"
+    means every cell — so the property to hold is coverage, stated as coverage
+    rather than as a colour comparison that a future palette change would have
+    to be taught about.
+    """
+    row = activity_text("RESPONDING", elapsed_s=12, width=60, shine_phase=0.35)
+    painted = {span.start for span in row.spans}
+    assert painted == set(range(len(row.plain))), (
+        "cells left unpainted (they keep the terminal foreground and read as a "
+        f"step at the band's edge): {sorted(set(range(len(row.plain))) - painted)}"
+    )
+
+
+def test_the_ramp_ends_at_the_ground_so_the_band_has_no_step() -> None:
+    """Tier 1: the band's faintest cell IS the ground the rest of the row wears.
+
+    Coverage alone is not enough — every cell could be painted and the band's
+    outermost cell still be a colour nothing else on the row is wearing, which
+    is the same visible edge in a different disguise. Ending the ramp exactly
+    at the ground is what removes the edge, and it is the invariant the earlier
+    shape broke: it stopped the ramp at a dark value and left the ground
+    undrawn, so both ends of the band showed as their own moving features.
+    """
+    ramp = _shine_ramp(3, palette.SHINE_GROUND_DARK, palette.SHINE_PEAK_DARK)
+    assert ramp[-1] == palette.SHINE_GROUND_DARK, (
+        f"the band's outer cell is not the ground: {ramp[-1]} vs "
+        f"{palette.SHINE_GROUND_DARK}"
+    )
+    assert ramp[0] == palette.SHINE_PEAK_DARK
 
 
 def test_the_shine_is_graded_not_two_valued() -> None:
     """Tier 1: the band has an interior — several distinct styles across its
     width — rather than the two states (on / off) it had before #3777.
 
-    This is the defect the operator reported, stated as a property: a band
-    whose cells are all-or-nothing has no edge to fall off, so it reads as a
-    block blinking on and off rather than as a light travelling through the
-    word. Asserting "more than two distinct styles" pins that there IS a ramp
-    without pinning which colours the ramp passes through — the curve and its
-    endpoints are free to change, the gradation is not.
+    A band whose cells are all-or-nothing has no edge to fall off, so it reads
+    as a block blinking rather than as a light travelling. The property is that
+    an INTERMEDIATE exists — at least one cell that is neither fully lit nor
+    the ground — which says the ramp is there without saying how many steps it
+    takes or which colours it passes through.
     """
-    band = _band("RESPONDING", frame=5)
-    assert len(set(band.values())) > 2, (
-        f"the band is still effectively two-valued: {sorted(set(band.values()))}"
+    styles = set(_cells("RESPONDING", phase=0.5).values())
+    extremes = {palette.SHINE_PEAK_DARK, palette.SHINE_GROUND_DARK}
+    assert styles - extremes, (
+        f"every cell is either fully lit or ground — the band is two-valued "
+        f"and will read as a block blinking: {sorted(styles)}"
     )
 
 
-def test_the_shine_advances_one_cell_per_frame_carrying_its_shape() -> None:
-    """Tier 1: consecutive frames are the same band one column further right.
+def test_the_band_moves_with_the_phase() -> None:
+    """Tier 1: a later phase puts the bright end further right.
 
-    Checked as a SHIFT of the previous frame rather than against a table of
-    expected positions, so the test states the property that matters (the
-    light moves, and moves rigidly) without re-implementing the position
-    arithmetic it is checking. Frames are chosen so the whole band is inside
-    the word — at the two ends it is partly off the edge, which is the
-    entering and leaving that :func:`_apply_shine` exists to produce and is
-    covered by the clearance test below.
+    Pinned as "the peak moved right", not as a table of positions: the
+    positions depend on the row's width and the band's fraction, and a test
+    that restated them would be a second implementation of the thing it checks.
     """
-    state = "WORKING"
-    for frame in (4, 5):
-        before, after = _band(state, frame), _band(state, frame + 1)
-        assert after == {column + 1: style for column, style in before.items()}, (
-            f"frame {frame} -> {frame + 1} was not a one-column shift: "
-            f"{before!r} then {after!r}"
-        )
+    def peak_column(phase: float) -> int:
+        cells = _cells("RESPONDING", phase=phase)
+        counts: "dict[str, int]" = {}
+        for style in cells.values():
+            counts[style] = counts.get(style, 0) + 1
+        ground = max(counts, key=lambda style: counts[style])
+        lit = [column for column, style in cells.items() if style != ground]
+        return sum(lit) // len(lit)
+
+    assert peak_column(0.25) < peak_column(0.6), "the band did not advance with the phase"
+
+
+def test_a_light_terminal_gets_a_different_pair_than_a_dark_one() -> None:
+    """Tier 1: the ground/peak pair follows the terminal's background.
+
+    One pair cannot serve both. The dark pair's peak is nearly white, so on a
+    white terminal it is not a subtle band, it is an absent one — the row would
+    silently stop showing that a turn is running for anyone on a light theme.
+    """
+    assert set(_cells("RESPONDING", 0.5, dark=True).values()) != set(
+        _cells("RESPONDING", 0.5, dark=False).values()
+    ), "the same colours were used on both terminal grounds"
 
 
 def test_the_shine_degrades_to_an_attribute_without_colour() -> None:
     """Tier 1: with no colour available the band is still drawn, as an SGR
     attribute rather than as nothing.
 
-    A gradient needs colour; where the terminal has none, the row must still
-    show that a turn is running. Degrading to an attribute keeps that signal
-    on a terminal a colour would have left blank — and it degrades to the
-    form #3779 already shipped, so the fallback is a shape this row has been
-    seen in rather than a third design nobody has looked at.
+    A gradient needs colour; where the terminal has none the row must still
+    show that a turn is running. It degrades to the form #3779 shipped, so the
+    fallback is a shape this row has been seen in rather than a third design.
     """
-    band = _band_without_colour = {
+    band = {
         span.start: str(span.style)
         for span in activity_text(
-            "WORKING", elapsed_s=None, width=80, shine_index=3, colour=False
+            "WORKING", elapsed_s=None, width=80, shine_phase=0.3, colour=False
         ).spans
     }
     assert band, "no colour meant no band at all"
@@ -414,90 +475,118 @@ def test_the_shine_degrades_to_an_attribute_without_colour() -> None:
     )
 
 
-def test_no_shine_band_while_shine_index_is_none() -> None:
-    """Tier 1: a static row (no turn showing, or the caller opts out) paints
-    no band at all — the parameter's absence is absence of the effect, not a
-    band parked at index 0."""
-    content = activity_text("WORKING", elapsed_s=None, width=80, shine_index=None)
+def test_no_shine_while_the_phase_is_none() -> None:
+    """Tier 1: a static row (no turn showing) paints no band at all — the
+    parameter's absence is absence of the effect, not a band parked at zero."""
+    content = activity_text("WORKING", elapsed_s=None, width=80, shine_phase=None)
     assert content.spans == []
 
 
-def test_any_frame_number_is_a_valid_frame() -> None:
-    """Tier 1: the cycle is wrapped inside ``activity_text``, so an arbitrarily
-    large frame paints the same band as its position within the cycle.
-
-    The widget's counter only ever increments — it does not wrap, because the
-    cycle's length depends on ``len(state)`` and that changes on every
-    ``specialise``. A counter carried across a state change therefore lands
-    outside the previous cycle routinely, and if that painted nothing the row
-    would go dark while a turn was visibly still running. Pinning the wrap
-    here is pinning that it cannot.
-    """
-    state = "WORKING"
-    # The band crosses the whole rendered row (#3777), so the pass is as long
-    # as the row is — read from the rendering rather than recomputed, since
-    # the row's width is padding-dependent and a formula here would be a
-    # second implementation of the thing under test.
-    row = str(activity_text(state, elapsed_s=None, width=80, shine_index=0))
-    cycle = len(row) + 2 * (_SHINE_WIDTH // 2)
-    assert _band(state, 999), "a large frame number painted no band at all"
-    assert _band(state, 999) == _band(state, 999 % cycle)
-
-
 def test_the_shine_crosses_the_whole_row_including_the_clock_and_hint() -> None:
-    """Tier 1: the band is no longer confined to ``state``'s own span.
+    """Tier 1: the band is not confined to ``state``'s own span.
 
     #3779 kept it inside the state word so it could not wander onto the clock
     or the hint, which was right for a row that was three things sharing a
     line. #3777 removed the glyph and made the row read as one object, and the
-    owner asked for the light to cross all of it. Pinned by sweeping a whole
-    cycle and requiring that SOME frame paints past the state word — a band
-    that silently kept the old confinement would still look plausible frame by
-    frame, and only a sweep catches it.
+    owner asked for the light to cross all of it.
     """
     state = "RESPONDING"
     body_end = ROW_TEXT_COLUMN + len(state)
     reached_beyond = False
-    for frame in range(80):
-        content = activity_text(
-            state, elapsed_s=5.0, width=78, behind=12, shine_index=frame
-        )
-        assert content.spans, f"frame {frame} painted no band at all"
-        if any(span.start >= body_end for span in content.spans):
+    for step in range(20):
+        cells = _cells(state, phase=step / 20)
+        counts: "dict[str, int]" = {}
+        for style in cells.values():
+            counts[style] = counts.get(style, 0) + 1
+        ground = max(counts, key=lambda style: counts[style])
+        if any(column >= body_end for column, s in cells.items() if s != ground):
             reached_beyond = True
-        rendered = str(content)
-        assert "LIVE +12" in rendered, f"frame {frame}: LIVE +N is missing: {rendered!r}"
     assert reached_beyond, (
-        "the band never left the state word across a full sweep — it is still "
+        "the band never left the state word across a full pass — it is still "
         "confined the way #3779 had it"
     )
 
 
+def test_the_count_does_not_depend_on_where_the_reader_is() -> None:
+    """Tier 1: ``entries`` reads the same whether or not the reader is away.
+
+    The previous shape made these one parameter, so the number's baseline was
+    the instant the reader scrolled away — an event the reader cannot see, and
+    therefore a number whose meaning there was no occasion to learn. Splitting
+    them is the fix; this pins that they are actually independent, rather than
+    the same value read twice under two names.
+    """
+    following = activity_text("RESPONDING", elapsed_s=12, width=80, entries=3)
+    away = activity_text("RESPONDING", elapsed_s=12, width=80, entries=3, away=True)
+    assert "3 entries" in following.plain
+    assert "3 entries" in away.plain
+
+
+def test_the_return_hint_appears_only_while_the_reader_is_away() -> None:
+    """Tier 1: ``away`` decides one thing — whether the return hint prints.
+
+    A hint offering to take the reader back to output they are already looking
+    at is an instruction with nothing to do, and the row has no room to spend
+    on one.
+    """
+    following = activity_text("RESPONDING", elapsed_s=12, width=80, entries=3).plain
+    away = activity_text(
+        "RESPONDING", elapsed_s=12, width=80, entries=3, away=True
+    ).plain
+    assert LATEST_HINT not in following
+    assert LATEST_HINT in away
+    assert _CANCEL_HINT in following and _CANCEL_HINT in away
+
+
+def test_a_turn_that_has_produced_nothing_says_zero() -> None:
+    """Tier 1: the count starts at zero and is shown, not hidden.
+
+    A count that appears only once it is non-zero teaches its own scale late:
+    the reader meets it already at 4 and has to infer what it counts. Starting
+    visible at 0 means the first thing it ever shows is its baseline.
+    """
+    assert "0 entries" in activity_text("WORKING", elapsed_s=1, width=80).plain
+
+
 @pytest.mark.asyncio
-async def test_the_shine_advances_one_frame_per_tick_call() -> None:
-    """Tier 2b: :meth:`ActivityRow.tick` called directly — the frame
-    function for the STATEFUL widget, same discipline as the pure-function
-    gates above, never a wait for the real timer to fire N times."""
+async def test_the_shine_position_follows_the_clock_not_the_tick_count() -> None:
+    """Tier 2b: the band's position is a function of TIME, not of how many
+    times :meth:`ActivityRow.tick` happened to be called.
+
+    Driven by an injected clock, so no wall-clock waiting is involved: ticking
+    without advancing the clock must not move the band, and advancing it must.
+    A frame counter passes the second half and fails the first — and a counter
+    is what makes one pass take longer on a wider row, which is the property
+    #3777 replaced it to fix.
+    """
+    now = [1000.0]
     transport = QueueTransport()
-    app = TextualChatApp(transport=transport)
+    app = TextualChatApp(transport=transport, clock=lambda: now[0])
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await transport.push_event(_started("c1", 1))
         await _settle(pilot)
         row = app.query_one(ActivityRow)
 
-        positions: "list[int]" = []
-        for _ in range(4):
-            row.tick()
-            span = row.render().spans[0]
-            positions.append(span.start)
+        def lit() -> "list[int]":
+            content = row.render()
+            counts: "dict[str, int]" = {}
+            for span in content.spans:
+                counts[str(span.style)] = counts.get(str(span.style), 0) + 1
+            ground = max(counts, key=lambda style: counts[style])
+            return [span.start for span in content.spans if str(span.style) != ground]
 
-        assert positions == sorted(positions), (
-            f"the band did not advance monotonically over 4 direct ticks: {positions!r}"
+        before = lit()
+        for _ in range(3):
+            row.tick()
+        assert lit() == before, (
+            "ticking without time passing moved the band — the position is "
+            "still counting frames"
         )
-        assert len(set(positions)) > 1, (
-            f"4 ticks produced no movement at all: {positions!r}"
-        )
+
+        now[0] += 1.0
+        row.tick()
+        assert lit() != before, "advancing the clock did not move the band"
 
 
 @pytest.mark.asyncio
