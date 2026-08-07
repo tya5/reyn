@@ -98,13 +98,13 @@ def _push_8_turns(session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_top_tier_success_covers_matches_actually_fed_seqs(tmp_path) -> None:
+async def test_top_tier_success_covers_matches_actually_fed_seqs(tmp_path, monkeypatch) -> None:
     """Tier 2: when the FULL candidate (raw_middle + tail, no fallback) wins,
     covers_through_seq equals the max seq actually fed. #3658: ``head`` is
     still never fed, and here ``covers`` (== max of raw_middle+tail) advances
     past head's own seq, so head's span IS claimed-but-unfed and must be
     reported."""
-    session = _make_session(tmp_path, t_max=_T_MAX)
+    session = _make_session(tmp_path, t_max=_T_MAX, monkeypatch=monkeypatch)
     _push_8_turns(session)
     head, raw_middle, tail, _summary, seq_by_id = (
         session._history_buffer.decompose_history_for_retry()
@@ -137,7 +137,7 @@ async def test_top_tier_success_covers_matches_actually_fed_seqs(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
-    tmp_path,
+    tmp_path, monkeypatch,
 ) -> None:
     """Tier 2: when the fallback shrinks to [summary + tail] (raw_middle
     dropped from the summarisation input), covers_through_seq must still
@@ -147,7 +147,7 @@ async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
     raw_middle span must be reported so the loss is legible, not silently
     absorbed. #3658: covers also advances past head's own seq here, so
     head's span is claimed-but-unfed too, alongside raw_middle."""
-    session = _make_session(tmp_path, t_max=_T_MAX)
+    session = _make_session(tmp_path, t_max=_T_MAX, monkeypatch=monkeypatch)
     _push_8_turns(session)
     head, raw_middle, tail, _summary, seq_by_id = (
         session._history_buffer.decompose_history_for_retry()
@@ -183,7 +183,7 @@ async def test_tier2_fallback_does_not_overclaim_and_reports_the_drop(
 
 @pytest.mark.asyncio
 async def test_tier3_fallback_pins_covers_to_prior_watermark_not_next_seq(
-    tmp_path,
+    tmp_path, monkeypatch,
 ) -> None:
     """Tier 2: THE #3599 regression case — when even [summary + tail]
     overflows and the fallback lands on [summary] ALONE — nothing new fed to
@@ -200,7 +200,7 @@ async def test_tier3_fallback_pins_covers_to_prior_watermark_not_next_seq(
     prev_cover == 0, nothing new got fed). ``head`` itself is asserted
     non-empty below so the absence is provably the intersection collapsing,
     not head having nothing to offer in the first place."""
-    session = _make_session(tmp_path, t_max=_T_MAX)
+    session = _make_session(tmp_path, t_max=_T_MAX, monkeypatch=monkeypatch)
     _push_8_turns(session)
     head, raw_middle, tail, _summary, seq_by_id = (
         session._history_buffer.decompose_history_for_retry()

@@ -93,7 +93,7 @@ async def test_handoff_fires_installs_consolidation_and_converges(
     """Tier 3a: a forced overflow terminal drives the force-close handoff — it
     fires the `router_force_close_handoff` event, installs the consolidation, and
     the re-entry converges in ONE handoff (the by-construction backstop (a))."""
-    session = _make_session(tmp_path)  # viable T_max → force-close engine wired
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)  # viable T_max → force-close engine wired
     for t in ("U1-old", "A1-old", "U2-old"):
         _push(session, "user" if t.startswith("U") else "assistant", t)
     _install_fake_loop(monkeypatch)
@@ -113,7 +113,7 @@ async def test_handoff_cap_raises_no_infinite_loop(tmp_path, monkeypatch) -> Non
     """Tier 3a: (cap=1 backstop) an irreducible turn (overflows even after
     consolidation) does NOT infinite-loop — after one handoff the cap raises the
     genuine dead-end. force_close fired exactly once."""
-    session = _make_session(tmp_path)  # viable T_max → force-close engine wired
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)  # viable T_max → force-close engine wired
     _push(session, "user", "U1-old")
     _install_fake_loop(monkeypatch, always_overflow=True)
     events = _capture_events(session)
@@ -152,12 +152,12 @@ class _FailFirstLoop:
 
 
 @pytest.mark.asyncio
-async def test_wrap_up_bounded_fallback_fits(tmp_path) -> None:
+async def test_wrap_up_bounded_fallback_fits(tmp_path, monkeypatch) -> None:
     """Tier 2: when the richer wrap-up inputs overflow, the bounded fallback
     shrinks (through its decreasing candidates) until one fits and the
     consolidation is produced (wrap-up-fits — Fork 1's chat _force_close_call_
     with_retry analogue)."""
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, t_max=2800, monkeypatch=monkeypatch)
     for t in ("U1", "A1", "U2", "A2"):
         _push(session, "user" if t.startswith("U") else "assistant", t)
     loop = _FailFirstLoop(fail_first=2)
@@ -174,10 +174,10 @@ class _AlwaysOverflowWrapUp:
 
 
 @pytest.mark.asyncio
-async def test_wrap_up_sub_viable_raises(tmp_path) -> None:
+async def test_wrap_up_sub_viable_raises(tmp_path, monkeypatch) -> None:
     """Tier 2: if even summary-only overflows, the model is RUNTIME sub-viable →
     _force_close_wrap_up raises (the handoff loop surfaces it as a dead-end)."""
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, t_max=2800, monkeypatch=monkeypatch)
     _push(session, "user", "U1")
     with pytest.raises(ContextOverflowError):
         await session._loop_driver._force_close_wrap_up(_AlwaysOverflowWrapUp(), resolved_model="m")
@@ -187,12 +187,12 @@ async def test_wrap_up_sub_viable_raises(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_force_close_handoff_installs_covering_consolidation(tmp_path) -> None:
+async def test_force_close_handoff_installs_covering_consolidation(tmp_path, monkeypatch) -> None:
     """Tier 2: _force_close_handoff (running the REAL _force_close_wrap_up against
     a fake loop) installs a covers-all force-close summary (firing F2a's reset) —
     the consolidation reaches the slice and the covered raw turns are dropped; the
     P6 event fires."""
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, t_max=2800, monkeypatch=monkeypatch)
     session._append_history(_msg("user", "U1-covered"))
     session._append_history(_msg("assistant", "A1-covered"))
     events = _capture_events(session)

@@ -211,6 +211,13 @@ def make_adapter(
         put_outbox_inputs=put_outbox_inputs,
         append_history=null_append_history,
         live_session_id_inputs=live_session_id_inputs,
-        turn_budget_engine=turn_budget_engine,
+        # #3671 follow-up: RouterHostAdapter takes a FACTORY now (computed at
+        # most once, on first reference — see its own module for why). This
+        # helper's own callers still pass an already-built engine value (or
+        # None), so wrap it in a trivial factory here rather than pushing the
+        # factory shape onto every call site.
+        turn_budget_engine_factory=(
+            (lambda: turn_budget_engine) if turn_budget_engine is not None else None
+        ),
         environment_backend=environment_backend,
     )

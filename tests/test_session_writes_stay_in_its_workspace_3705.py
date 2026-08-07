@@ -51,7 +51,7 @@ def test_a_session_creates_nothing_in_the_directory_it_was_started_from(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    session = make_session(workspace)
+    session = make_session(workspace, monkeypatch=monkeypatch)
     session._append_history(
         ChatMessage(role="user", content="a message worth persisting", ts=now())
     )
@@ -79,7 +79,7 @@ def test_the_history_lands_in_the_workspace_it_was_given(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    session = make_session(workspace)
+    session = make_session(workspace, monkeypatch=monkeypatch)
     session._append_history(
         ChatMessage(role="user", content="a message worth persisting", ts=now())
     )

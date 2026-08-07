@@ -106,35 +106,39 @@ def test_clean_config_no_warning() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_session_with_t_max(tmp_path: Path, t_max: int):
+def _make_session_with_t_max(tmp_path: Path, monkeypatch, t_max: int):
     """Return a Session with a synthetic T_max.
 
     ``section_caps_spec_tokens=0`` keeps B_M positive for small T_max.
     ``use_chars4_estimate=True`` makes token counting deterministic.
+
+    #3671 follow-up: takes the caller's ``monkeypatch`` fixture rather than
+    manually saving/restoring ``get_max_input_tokens`` — CompactionEngine now
+    builds LAZILY (``CompactionController._engine``, a property, on first
+    reference) rather than eagerly at Session construction, so a patch that
+    un-does itself the moment this function returns would go stale before
+    the caller ever triggers the lazy build. ``monkeypatch`` restores at the
+    CALLING TEST's teardown instead, keeping the patch live for whatever
+    that test does with the session.
     """
     from reyn.config import CompactionConfig
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
     from reyn.runtime.session import Session
 
-    original = _mb.get_max_input_tokens
-    _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]
-    try:
-        session = make_session(
-            agent_name="default",
-            agent_role="",
-            output_language="en",
-            budget_tracker=BudgetTracker(CostConfig()),
-            state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
-            compaction_config=CompactionConfig(
-                use_chars4_estimate=True,
-                section_caps_spec_tokens=0,
-            ),
-            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
-        )
-    finally:
-        _mb.get_max_input_tokens = original
-    return session
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: t_max)
+    return make_session(
+        agent_name="default",
+        agent_role="",
+        output_language="en",
+        budget_tracker=BudgetTracker(CostConfig()),
+        state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
+        compaction_config=CompactionConfig(
+            use_chars4_estimate=True,
+            section_caps_spec_tokens=0,
+        ),
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
 
 
 def _push(session, role: str, content: str) -> None:
@@ -155,7 +159,7 @@ def _push(session, role: str, content: str) -> None:
 _CONTENT_80TOK = "X" * 320
 
 
-def test_build_history_small_chat_returns_all_turns_raw(tmp_path) -> None:
+def test_build_history_small_chat_returns_all_turns_raw(tmp_path, monkeypatch) -> None:
     """Tier 2: a small chat (total tokens < effective_trigger) returns ALL turns
     without elide, and no turn appears more than once.
 
@@ -164,7 +168,7 @@ def test_build_history_small_chat_returns_all_turns_raw(tmp_path) -> None:
     trigger threshold.  No duplication can occur from this branch.
     """
     # T_max=2800 → effective_trigger≈489.  3 turns × 80 tokens = 240 < 489.
-    session = _make_session_with_t_max(tmp_path, t_max=2800)
+    session = _make_session_with_t_max(tmp_path, monkeypatch, t_max=2800)
     for text in ["alpha", "beta", "gamma"]:
         _push(session, "user", text)
 
@@ -179,7 +183,7 @@ def test_build_history_small_chat_returns_all_turns_raw(tmp_path) -> None:
     )
 
 
-def test_build_history_large_chat_elides_middle(tmp_path) -> None:
+def test_build_history_large_chat_elides_middle(tmp_path, monkeypatch) -> None:
     """Tier 2: a large chat (total tokens > effective_trigger) elides the middle —
     head is present, tail is present, and at least one middle turn is absent.
 
@@ -189,7 +193,7 @@ def test_build_history_large_chat_elides_middle(tmp_path) -> None:
     default-independent: changing hot_list_n or other SP-affecting defaults
     does not change whether elide fires.
     """
-    session = _make_session_with_t_max(tmp_path, t_max=2800)
+    session = _make_session_with_t_max(tmp_path, monkeypatch, t_max=2800)
     texts = [f"turn-{i}:" + _CONTENT_80TOK for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)

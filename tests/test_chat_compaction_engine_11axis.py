@@ -831,7 +831,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
         config=CompactionConfig(use_chars4_estimate=True),
         history_access=_big_history,
         latest_summary=lambda: None,
-        compaction_engine=engine,
+        compaction_engine_factory=lambda: engine,
         history_appender=lambda m: None,
         make_summary_message=lambda rendered, structured, covers: ChatMessage(
             role="summary", content=rendered, seq=0,

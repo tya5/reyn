@@ -170,7 +170,6 @@ def _mk_host(reasoning_config, *, outbox: list, history: list) -> RouterHostAdap
         live_session_id_inputs=LiveSessionIdInputs(
             session_id=None, live_session_id_fn=None,
         ),
-        turn_budget_engine=None,
         environment_backend=None,
         reasoning_config=reasoning_config,
         reasoning_continuity_section_fn=lambda: "",

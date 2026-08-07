@@ -34,7 +34,7 @@ from tests._support.session import (
 # ── No-elide branch (total <= effective_trigger) ─────────────────────────────
 
 
-def test_history_fits_in_window_returns_all_turns(tmp_path):
+def test_history_fits_in_window_returns_all_turns(tmp_path, monkeypatch):
     """Tier 2: when total tokens <= effective_trigger, all turns are returned
     in order — no elide, no duplication.
 
@@ -44,7 +44,7 @@ def test_history_fits_in_window_returns_all_turns(tmp_path):
     branch can never produce duplicates.
     """
     # Large t_max → effective_trigger large → 7 short turns easily fit.
-    session = _make_session(tmp_path, t_max=1_000_000)
+    session = _make_session(tmp_path, t_max=1_000_000, monkeypatch=monkeypatch)
     pushed = ["hello", "Hi there!", "what can you do?", "I can help...",
               "tell me about yourself", "I am a Reyn agent.", "list available skills"]
     for text in pushed:
@@ -61,16 +61,16 @@ def test_history_fits_in_window_returns_all_turns(tmp_path):
     )
 
 
-def test_empty_history_returns_empty_messages(tmp_path):
+def test_empty_history_returns_empty_messages(tmp_path, monkeypatch):
     """Tier 2: empty history → empty result."""
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)
     msgs = session._history_buffer.build_history()
     assert msgs == [], f"expected empty result for empty history, got {msgs!r}"
 
 
-def test_single_turn_returns_single_message(tmp_path):
+def test_single_turn_returns_single_message(tmp_path, monkeypatch):
     """Tier 2: single turn → exactly one message, no duplication."""
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)
     _push(session, "user", "hello")
     msgs = session._history_buffer.build_history()
     assert msgs == [{"role": "user", "content": "hello"}]
@@ -86,7 +86,7 @@ def test_single_turn_returns_single_message(tmp_path):
 _LONG_TEXT = "X" * 320  # 80 tokens via chars4; use with t_max=2800
 
 
-def test_history_exceeds_trigger_elides_middle(tmp_path):
+def test_history_exceeds_trigger_elides_middle(tmp_path, monkeypatch):
     """Tier 2: when total tokens > effective_trigger, the middle turns are
     elided and head + tail are returned without duplication.
 
@@ -95,7 +95,7 @@ def test_history_exceeds_trigger_elides_middle(tmp_path):
     default-independent: hot_list_n and other SP-affecting defaults don't
     change whether elide fires.
     """
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, t_max=2800, monkeypatch=monkeypatch)
     texts = [f"turn-{i}:" + _LONG_TEXT for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
@@ -118,7 +118,7 @@ def test_history_exceeds_trigger_elides_middle(tmp_path):
     )
 
 
-def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
+def test_elide_inserts_summary_bridge_when_summary_present(tmp_path, monkeypatch):
     """Tier 2: when a summary exists and elide fires, a bridge message is
     inserted between head and tail.
 
@@ -126,7 +126,7 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
     test_history_exceeds_trigger_elides_middle for the default-independent
     size rationale).
     """
-    session = _make_session(tmp_path, t_max=2800)
+    session = _make_session(tmp_path, t_max=2800, monkeypatch=monkeypatch)
     # Inject a summary before the turns.
     session.history.append(ChatMessage(
         role="summary",

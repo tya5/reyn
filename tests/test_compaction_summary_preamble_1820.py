@@ -47,7 +47,7 @@ def _make_controller(history: list[ChatMessage]) -> tuple[CompactionController, 
         config=CompactionConfig(use_chars4_estimate=True),
         history_access=lambda: list(history),
         latest_summary=lambda: None,
-        compaction_engine=_SucceedingEngine(),
+        compaction_engine_factory=_SucceedingEngine,
         history_appender=history.append,
         make_summary_message=lambda rendered, structured, covers: ChatMessage(
             role="summary", content=rendered, seq=0,

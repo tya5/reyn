@@ -43,7 +43,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _make_session(tmp_path) -> Session:
+def _make_session(tmp_path, monkeypatch) -> Session:
     """Create a Session with a small synthetic T_max to force non-empty candidates.
 
     #1128 step 3: _select_candidates uses token-budget boundaries from the engine.
@@ -55,25 +55,29 @@ def _make_session(tmp_path) -> Session:
     Turns of 'x'*4000 (=1000 tokens) each individually exceed both budgets, so
     the Axis-7 single-oversized-turn rule includes exactly one turn in head and
     one in tail.  With 8 turns: middle=[t1..t6]=6 candidates ≥ min_compact_batch=1.
+
+    #3671 follow-up: takes the caller's ``monkeypatch`` fixture rather than
+    manually saving/restoring ``get_max_input_tokens`` — CompactionEngine now
+    builds LAZILY (``CompactionController._engine``, a property, on first
+    reference) rather than eagerly at Session construction, so a patch that
+    un-does itself the moment this function returns would go stale before
+    the caller ever triggers the lazy build. ``monkeypatch`` restores at the
+    CALLING TEST's teardown instead, keeping the patch live for whatever
+    that test does with the session.
     """
     import reyn.llm.model_budget as _mb
 
-    original = _mb.get_max_input_tokens
-    _mb.get_max_input_tokens = lambda model, **kw: 2800  # type: ignore[assignment]
-    try:
-        session = make_session(
-            agent_name="default",
-            budget_tracker=BudgetTracker(CostConfig()),
-            state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
-            compaction_config=CompactionConfig(
-                use_chars4_estimate=True,      # deterministic offline token counts
-                section_caps_spec_tokens=0,    # keeps B_M positive for small T_max
-            ),
-            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
-        )
-    finally:
-        _mb.get_max_input_tokens = original
-    return session
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: 2800)
+    return make_session(
+        agent_name="default",
+        budget_tracker=BudgetTracker(CostConfig()),
+        state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
+        compaction_config=CompactionConfig(
+            use_chars4_estimate=True,      # deterministic offline token counts
+            section_caps_spec_tokens=0,    # keeps B_M positive for small T_max
+        ),
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
 
 
 def _reply_text(ctx) -> str:
@@ -111,7 +115,7 @@ def test_compact_now_for_op_real_chat_measurement(tmp_path, monkeypatch) -> None
     so compaction bridges the already-elided middle rather than shrinking the
     view). Closes the #1177/#1182 test gap (those scripted a compact_now stub)."""
     monkeypatch.chdir(tmp_path)
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch)
     _populate(session)
     _script_compaction_llm(monkeypatch)
 
@@ -132,7 +136,7 @@ def test_compact_slash_reports_compression(tmp_path, monkeypatch) -> None:
     """Tier 2: /compact runs real compaction and reports the summarised-turns +
     raw→bridge compression (not a misleading router-view 'freed' number)."""
     monkeypatch.chdir(tmp_path)
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch)
     _populate(session)
     _script_compaction_llm(monkeypatch)
 
@@ -152,7 +156,7 @@ def test_compact_slash_nothing_to_compact(tmp_path, monkeypatch) -> None:
     """Tier 2: with no compactable turns, /compact reports nothing to compact
     (freed=0 path) — never a misleading 'freed' claim."""
     monkeypatch.chdir(tmp_path)
-    session = _make_session(tmp_path)
+    session = _make_session(tmp_path, monkeypatch)
     # 3 turns < head(2)+tail(2) → no candidates → force_compact_now no-ops.
     for _ in range(3):
         session._append_history(ChatMessage(role="user", content="hi", ts=_now()))

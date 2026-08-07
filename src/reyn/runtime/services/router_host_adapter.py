@@ -25,6 +25,15 @@ from reyn.runtime.services.mcp_cache_file import (
 from reyn.runtime.session_pure import merge_memory_indexes
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 
+#: Sentinel for "the turn_budget engine has not been computed yet" — distinct
+#: from a legitimate `None` result (a tiny-context model that genuinely
+#: cannot support force-close, `try_build_default_turn_budget_engine`'s own
+#: contract). #3671 follow-up: the engine used to be built EAGERLY at Session
+#: construction, which forces `TurnBudgetEngine.__init__`'s litellm catalog
+#: lookup (`get_max_input_tokens`) onto the TUI startup path — before any
+#: turn has run and the value is needed. See `_ensure_turn_budget_engine`.
+_TURN_BUDGET_ENGINE_UNSET = object()
+
 if TYPE_CHECKING:
     from reyn.runtime.router_op_context import RouterOpContextSource
 
@@ -410,15 +419,21 @@ class RouterHostAdapter:
         # When None, only the user-global ~/.reyn/config.yaml is watched.
         # Session passes the project root so all 3 tiers are covered.
         project_root: Path | None = None,
-        # #1092 PR-F1 (chat activation): the shared turn_budget engine the chat
-        # axis budgets against. Built by Session via
-        # build_default_turn_budget_engine off the CompactionEngine's RESOLVED
-        # model (#1172-safe). Sole consumer (for now) is wrap_up_output_reserve —
-        # which hard-caps the force-close wrap-up call's output. None = no engine
-        # (legacy / test paths) → no cap (== pre-PR-F behaviour). ADDITIVE: chat
-        # never calls _force_close_call until the F2 handoff lands, so wiring the
-        # reserve here is inert until then.
-        turn_budget_engine: Any = None,
+        # #1092 PR-F1 (chat activation): builds the shared turn_budget engine
+        # the chat axis budgets against — off the CompactionEngine's RESOLVED
+        # model (#1172-safe). Sole consumer (for now) is wrap_up_output_reserve
+        # — which hard-caps the force-close wrap-up call's output. `None` = no
+        # engine (legacy / test paths) → no cap (== pre-PR-F behaviour).
+        # ADDITIVE: chat never calls _force_close_call until the F2 handoff
+        # lands, so wiring the reserve here is inert until then.
+        #
+        # #3671 follow-up: a FACTORY, not the built engine — see
+        # `_ensure_turn_budget_engine`. `try_build_default_turn_budget_engine`
+        # (the production factory Session passes) touches litellm's model
+        # catalog; calling it here at construction put that touch on the TUI
+        # startup path even though the value is not needed until the first
+        # force-close check, which only happens mid-turn.
+        turn_budget_engine_factory: "Callable[[], Any] | None" = None,
         # #1468: cooperative turn-cancel signal. Session passes
         # self._is_turn_cancel_requested; test hosts pass None (= never cancel).
         # run_loop polls via getattr(host, "_is_turn_cancel_requested", None).
@@ -433,7 +448,8 @@ class RouterHostAdapter:
         self._put_outbox_in = put_outbox_inputs
         self._live_sid_in = live_session_id_inputs
         self._threat_scan = threat_scan
-        self._turn_budget_engine = turn_budget_engine
+        self._turn_budget_engine_factory = turn_budget_engine_factory
+        self._turn_budget_engine: Any = _TURN_BUDGET_ENGINE_UNSET
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -571,8 +587,23 @@ class RouterHostAdapter:
         and force-closes only at the last-resort floor-exhausted terminal (the F2
         handoff). This is a deliberate per-axis architectural choice
         (failure-mode separation), NOT a missing proactive trigger."""
-        engine = self._turn_budget_engine
+        engine = self._ensure_turn_budget_engine()
         return engine.budget.output_reserve if engine is not None else None
+
+    def _ensure_turn_budget_engine(self) -> Any:
+        """The turn_budget engine, computing it via the factory on first
+        reference and caching the result (single owner, computed at most
+        once — #3671 follow-up).
+
+        A cached ``None`` (a tiny-context model that genuinely cannot
+        support force-close, per ``try_build_default_turn_budget_engine``'s
+        own contract) is a valid, permanent answer — distinguished from
+        "not computed yet" by the ``_TURN_BUDGET_ENGINE_UNSET`` sentinel, not
+        by ``None`` itself."""
+        if self._turn_budget_engine is _TURN_BUDGET_ENGINE_UNSET:
+            factory = self._turn_budget_engine_factory
+            self._turn_budget_engine = factory() if factory is not None else None
+        return self._turn_budget_engine
 
     def set_turn_budget_engine(self, engine: Any) -> None:
         """#1752: swap the chat turn_budget engine (rebuild-on-/model-switch).
@@ -583,6 +614,11 @@ class RouterHostAdapter:
         and rewires it here; ``wrap_up_output_reserve`` reads it fresh each turn,
         so the swap takes effect on the next turn. ``None`` (small-context model
         that cannot satisfy the force-close floor) keeps force-close inert.
+
+        Sets the CACHED value directly (not the factory) — this always wins
+        over the lazy factory: once called, :meth:`_ensure_turn_budget_engine`
+        finds ``self._turn_budget_engine`` no longer ``_TURN_BUDGET_ENGINE_UNSET``
+        and never invokes the factory (stale or not) again.
         """
         self._turn_budget_engine = engine
 
