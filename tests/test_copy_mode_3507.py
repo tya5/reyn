@@ -1,17 +1,19 @@
-"""#3507 — flowview 0.7.0's copy mode, reachable from the conversation pane.
+"""#3507 — flowview's per-character text cursor, reachable from the
+conversation pane (0.7.0 introduced it behind an explicit entry step; 0.13
+reworked it into an always-on toggle — #3692 PR-A).
 
 0.6.x had an ENTRY-granular keyboard cursor and nothing finer; "can the cursor
-move inside an entry" was a real upstream gap. 0.7.0 fills it with **copy
-mode** — a per-character text cursor with vim motions — and renames the old
-entry cursor to *highlight* to free the word.
+move inside an entry" was a real upstream gap. 0.7.0 filled it with a
+per-character text cursor with vim motions, and renamed the old entry cursor
+to *highlight* to free the word.
 
 What these tests pin is reyn's WIRING, deliberately not flowview's motions:
-entering copy mode, that it starts on the highlighted entry, and that the
-addressed-row rail is not disturbed by it. The motions (hjkl w b e 0 $ ^ gg G
-v V y …) are flowview's own defaults and its own tests' business — re-asserting
-them here would pin someone else's contract and would have to be rewritten
-every time upstream tunes a key (owner direction: keep flowview's default
-keymap, so reyn declares no motion bindings at all).
+that ``c`` shows the cursor, that it starts on the highlighted entry, and that
+the addressed-row rail is not disturbed by it. The motions (hjkl w b e 0 $ ^ gg
+G v V y …) are flowview's own defaults and its own tests' business —
+re-asserting them here would pin someone else's contract and would have to be
+rewritten every time upstream tunes a key (owner direction: keep flowview's
+default keymap, so reyn declares no motion bindings at all).
 """
 from __future__ import annotations
 
@@ -91,36 +93,39 @@ async def _seeded(pilot, app, texts=("older reply", "newest reply")):
 
 
 @pytest.mark.asyncio
-async def test_c_enters_copy_mode_on_the_highlighted_entry() -> None:
-    """Tier 2b: ``c`` from the conversation pane enters copy mode, and it starts
-    on the entry the highlight is already on — so the text cursor appears where
-    the user was looking rather than at the top of the log."""
+async def test_c_shows_the_cursor_on_the_highlighted_entry() -> None:
+    """Tier 2b: ``c`` from the conversation pane shows flowview's text cursor
+    (0.13's ``toggle_cursor``, retargeted from the removed 0.7.0 "enter copy
+    mode" surface — #3692 PR-A), and it starts on the entry the highlight is
+    already on — so the cursor appears where the user was looking rather than
+    at the top of the log."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(80, 20)) as pilot:
         flow = await _seeded(pilot, app)
-        assert not flow.copy_mode, "test setup: already in copy mode"
+        assert not flow.cursor_visible, "test setup: cursor already visible"
         started_on = flow.current
         assert started_on is not None and started_on.item.text == "newest reply"
 
         await pilot.press("c")
         await pilot.pause()
-        assert flow.copy_mode, "'c' did not enter copy mode"
+        assert flow.cursor_visible, "'c' did not show the text cursor"
         assert flow.current is started_on, (
-            "entering copy mode moved the highlight off the entry the user was on"
+            "showing the text cursor moved the highlight off the entry the "
+            "user was on"
         )
 
 
 @pytest.mark.asyncio
-async def test_copy_mode_leaves_the_addressed_row_rail_alone() -> None:
-    """Tier 2b: the gutter rail (#3490) still marks the addressed row while copy
-    mode is active, and still marks the SAME row.
+async def test_the_text_cursor_leaves_the_addressed_row_rail_alone() -> None:
+    """Tier 2b: the gutter rail (#3490) still marks the addressed row while the
+    text cursor is visible, and still marks the SAME row.
 
     This is the interaction worth pinning rather than the motions: flowview
-    holds the highlight fixed during copy mode and posts no ``Highlighted``
-    while the text cursor moves, which is exactly what the rail depends on —
-    it is re-derived from ``Highlighted`` plus focus changes. If upstream ever
-    moved the highlight per motion, the rail would chase the text cursor and
-    this goes red."""
+    holds the highlight fixed while the cursor is shown and posts no
+    ``Highlighted`` while the text cursor moves, which is exactly what the
+    rail depends on — it is re-derived from ``Highlighted`` plus focus
+    changes. If upstream ever moved the highlight per motion, the rail would
+    chase the text cursor and this goes red."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(80, 20)) as pilot:
         flow = await _seeded(pilot, app)
@@ -133,10 +138,10 @@ async def test_copy_mode_leaves_the_addressed_row_rail_alone() -> None:
         await pilot.pause()
         after = _railed_rows(flow)
         assert any("newest reply" in row for row in after), (
-            f"the rail left the addressed row on entering copy mode: {after!r}"
+            f"the rail left the addressed row on showing the text cursor: {after!r}"
         )
         assert not any("older reply" in row for row in after), (
-            f"a second row became railed in copy mode: {after!r}"
+            f"a second row became railed with the text cursor shown: {after!r}"
         )
 
 
@@ -204,9 +209,10 @@ def _binding_surfaces() -> "dict[str, list[str]]":
     return surfaces
 
 
-def test_no_reyn_surface_declares_a_copy_mode_motion_key() -> None:
-    """Tier 2: NO reyn binding surface claims a copy-mode motion key — the
-    keymap inside copy mode is flowview's (owner direction).
+def test_no_reyn_surface_declares_a_flowview_owned_key() -> None:
+    """Tier 2: NO reyn binding surface claims a key flowview's text cursor /
+    visual mode owns — the keymap over the conversation content is entirely
+    flowview's (owner direction), and reyn adds none of it.
 
     The surfaces are DERIVED from the tree (see :func:`_binding_surfaces`), so
     this covers a binding surface added tomorrow. An earlier version read only
@@ -214,7 +220,13 @@ def test_no_reyn_surface_declares_a_copy_mode_motion_key() -> None:
     that must not be a hand-written list of the four that exist today, which
     would be the same defect one level up.
 
-    ``c`` (entry into copy mode) is reyn's one and only addition."""
+    #3692 PR-A: ``c`` used to be reyn's one declared exception (the entry key
+    into flowview's then-explicit text-cursor mode). flowview 0.13 made the
+    text cursor always-on and ``c`` its own key (``toggle_cursor``) — reyn now declares
+    NONE of this keymap, ``c`` included, closing the boundary this gate
+    exists to hold: it is not enough to have removed reyn's own binding once,
+    the guard must also stop the SAME key (or a sibling like ``j``) from
+    being re-added to an app-level surface later without anyone noticing."""
     surfaces = _binding_surfaces()
 
     # Non-vacuity: a derivation that found nothing would pass this gate while
@@ -224,29 +236,38 @@ def test_no_reyn_surface_declares_a_copy_mode_motion_key() -> None:
         f"the app's own bindings were not derived; found {sorted(surfaces)}"
     )
 
-    motions = {"h", "j", "k", "l", "w", "b", "e", "0", "$", "^", "g", "v", "V", "y",
-               "n", "N", "*", "[", "]", "z"}
+    # flowview's own keymap (`_view.py`'s always-live BINDINGS, #3692's issue
+    # body §"flowview 0.13 が既に提供するキー") — every key reyn must never
+    # shadow, `c` (the former copy-mode entry key) included now that it is
+    # flowview's own `toggle_cursor`, not reyn's. `ctrl+f` and `escape` are
+    # DELIBERATELY EXCLUDED: the issue body names both as genuine, still-open
+    # conflicts (reyn's own `open_search` / drawer-close vs. flowview's
+    # `cursor_scroll_page_down` / selection-cancel) left to PR-B's ruling —
+    # including them here would fail this gate on reyn's CURRENT, sanctioned
+    # bindings rather than on a future regression.
+    flowview_owned = {
+        "h", "j", "k", "l", "w", "b", "e", "0", "$", "^", "g", "G", "[",
+        "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+b",
+        "v", "V", "y", "*", "n", "N", "c",
+    }
     offenders = {
-        name: sorted(set(keys) & motions)
+        name: sorted(set(keys) & flowview_owned)
         for name, keys in surfaces.items()
-        if set(keys) & motions
+        if set(keys) & flowview_owned
     }
     assert not offenders, (
-        f"reyn surfaces declared copy-mode motion keys: {offenders} — the "
-        "motions belong to flowview's defaults and a reyn binding would shadow "
-        "them"
-    )
-    assert "c" in surfaces["TextualChatApp"], (
-        "the copy-mode entry key is missing from the app bindings"
+        f"reyn surfaces declared a key flowview owns: {offenders} — this "
+        "keymap belongs to flowview's text cursor / visual mode and a reyn "
+        "binding would shadow it"
     )
 
 
 @pytest.mark.asyncio
-async def test_copy_mode_yank_writes_through_reyns_local_clipboard(
+async def test_the_text_cursors_yank_writes_through_reyns_local_clipboard(
     tmp_path, monkeypatch
 ) -> None:
-    """Tier 2b: copy mode's clipboard sink is reyn's local tool, and its result
-    is observable.
+    """Tier 2b: the text cursor's yank clipboard sink is reyn's local tool, and
+    its result is observable.
 
     flowview's default sink is ``App.copy_to_clipboard`` — OSC 52, which
     Textual's own docstring says does not work on macOS Terminal, which tmux/ssh
@@ -288,7 +309,7 @@ async def test_copy_mode_yank_writes_through_reyns_local_clipboard(
         app = TextualChatApp(transport=_Transport())
         async with app.run_test(size=(80, 20)) as pilot:
             flow = await _seeded(pilot, app)
-            wrote = flow.write_clipboard("yanked from copy mode")
+            wrote = flow.write_clipboard("yanked via the text cursor")
             assert wrote is True, (
                 "the sink reported failure — reyn's clipboard tool did not accept the "
                 "text, or the default OSC 52 path is still in use"
@@ -297,55 +318,22 @@ async def test_copy_mode_yank_writes_through_reyns_local_clipboard(
                 await pilot.pause()
                 if sink.exists():
                     break
-            assert sink.exists() and sink.read_text() == "yanked from copy mode", (
-                "copy mode's yank did not reach reyn's local clipboard tool"
+            assert sink.exists() and sink.read_text() == "yanked via the text cursor", (
+                "the text cursor's yank did not reach reyn's local clipboard tool"
             )
     finally:
         pyperclip.copy, pyperclip.paste = original_copy, original_paste
 
 
-@pytest.mark.asyncio
-async def test_the_chrome_sees_both_copy_mode_edges() -> None:
-    """Tier 2b: reyn is told when copy mode is entered AND when it is left
-    (flowview 0.8.0's ``CopyModeChanged``, #8).
-
-    The exit edge is the one that matters: entry is reyn's own action, but
-    leaving happens on ``Esc`` INSIDE the widget. Without the message there was
-    no way to observe it short of polling, so a "copy mode" hint would have
-    stayed up after the user left — which is precisely the state a modal keymap
-    must not be in. Asserted through the conversation's own status rows, not a
-    private flag."""
-    app = TextualChatApp(transport=_Transport())
-    async with app.run_test(size=(80, 20)) as pilot:
-        flow = await _seeded(pilot, app)
-
-        await pilot.press("c")
-        await pilot.pause()
-        assert flow.copy_mode, "setup: 'c' did not enter copy mode"
-        texts = [e.item.text for e in app.conversation]
-        assert any("copy mode" in t and "Esc leave" in t for t in texts), (
-            f"entering copy mode told the user nothing; pane holds: {texts!r}"
-        )
-
-        # Exit with the REAL key, not the public method: ``Esc`` means something
-        # in reyn too (leave the pane, close the drawer), so which side wins is
-        # itself worth pinning — a method call would pass even if the key never
-        # reached flowview.
-        await pilot.press("escape")
-        await pilot.pause()
-        assert not flow.copy_mode, "a real Esc did not leave copy mode"
-        texts = [e.item.text for e in app.conversation]
-        assert any("copy mode off" in t for t in texts), (
-            f"the exit edge was not observed; pane holds: {texts!r}"
-        )
-        assert app.focused is flow, (
-            "the first Esc left the PANE as well as copy mode — leaving a mode "
-            "and leaving the pane are two steps, not one"
-        )
-
-        # ...and the SECOND Esc is reyn's own: back to the composer.
-        await pilot.press("escape")
-        await pilot.pause()
-        assert isinstance(app.focused, Composer), (
-            f"the second Esc did not return to the composer: {app.focused!r}"
-        )
+# #3692 PR-A: test_the_chrome_sees_both_text_cursor_edges retired (clean break,
+# CLAUDE.md testing.md § extracted-refactor test lifecycle). It pinned reyn's
+# OWN narration of the text cursor's entry/exit via flowview 0.8.0's
+# now-removed mode-changed message (``on_flow_view_copy_mode_changed``,
+# deleted in this same PR per #3692's removal table) — the status-row text it
+# asserted on (an entry-hint line naming the motion keys, and its
+# exit counterpart) no longer exists and has no successor in this PR's scope.
+# The Esc-layering behavior it incidentally also exercised (first Esc stays
+# on the pane, second Esc returns to the composer) is reyn's own, separate
+# from the removed narration, and is PR-B's to re-pin properly — #3692's
+# acceptance criteria calls for 3 SEPARATE Esc-layer tests there, not one
+# bundled with a removed feature's assertions.
