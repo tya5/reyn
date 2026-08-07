@@ -72,23 +72,30 @@ from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN
 #: The cancel affordance shown while a turn runs. Plain ASCII: the key it names
 #: is the app's own ``ctrl+c`` binding, and this row shares a narrow terminal
 #: with the queue below it.
-_CANCEL_HINT = "Ctrl+C cancel"
+_CANCEL_HINT = "ctrl+c to abort"
 
 #: The key that returns to the newest output (#3712). Named here so the row and
 #: the binding that implements it cannot drift: a printed key that does not
 #: work is worse than none, and the conversation pane's own ``end``/``G`` only
 #: fire while it holds focus — i.e. never from where the reader actually is.
-LATEST_HINT = "Ctrl+End"
+LATEST_HINT = "ctrl+end to latest"
 
-#: How wide the travelling highlight band is, in characters. Odd, so the band
-#: has ONE centre cell for the cosine to peak on rather than two cells tied
-#: for brightest — a two-cell peak is what makes a band read as a block that
-#: blinks instead of a light that moves. Five rather than rich's twenty
-#: (``PULSE_SIZE``): rich sizes its band against a full-width progress bar,
-#: and ours travels through ``state`` alone, which is ten characters at
-#: ``"RESPONDING"``. A band wider than half its own runway never resolves as
-#: a band at all.
-_SHINE_WIDTH = 5
+#: How wide the band is, as a FRACTION of what it travels across. Not a fixed
+#: character count: #3777 stage 2 widened the band's runway from the state word
+#: to the whole row, and a width in cells that read as a moving point across
+#: ten characters reads as a speck across eighty. A fraction keeps the band the
+#: same size relative to what it is crossing, which is what "looks the same"
+#: actually means here. 40% is the proportion the common CSS shimmer
+#: implementations use.
+_SHINE_FRACTION = 0.4
+
+#: How long ONE pass takes, in seconds — the pace is a duration, not a speed.
+#: A speed in cells per second was the earlier shape and it does not survive a
+#: change of runway: the same cells/second crosses a short row quickly and a
+#: long one slowly, so widening the band's span silently changed how urgent the
+#: row felt. Fixing the DURATION makes the row feel the same at any width,
+#: which is the property being aimed at.
+_SHINE_PASS_SECONDS = 3.0
 
 #: The shine where the terminal reports no usable colour. The band degrades to
 #: what #3779 shipped — a two-character ``reverse`` — rather than to nothing:
@@ -104,36 +111,32 @@ _SHINE_FALLBACK_WIDTH = 2
 
 
 
-@lru_cache(maxsize=1)
-def _shine_ramp() -> "tuple[str, ...]":
-    """One colour per cell of the band, brightest first.
+@lru_cache(maxsize=64)
+def _shine_ramp(half: int, ground: str, peak: str) -> "tuple[str, ...]":
+    """One colour per cell of the band, brightest first, ending at ``ground``.
 
-    Index is the cell's DISTANCE from the band's centre, so ``[0]`` is the
-    peak and the last entry is the faintest cell still painted; anything
-    further out is left unstyled and keeps the terminal's own foreground.
-    Storing it by distance rather than by absolute position is what lets the
-    band slide without recomputing: the ramp is a property of the band, and
-    only where its centre sits changes per frame.
+    Index is the cell's DISTANCE from the band's centre, so ``[0]`` is the peak
+    and the last entry IS the ground — the band's outermost cell is already the
+    colour every other character on the row is wearing, so there is no step
+    where the band ends. That is the whole correction: painting only the band
+    and leaving the rest at the terminal's own foreground put a dark cell hard
+    against an undimmed ground at each end, and the operator read the result as
+    three things moving rather than one.
 
-    The shape is a raised cosine — ``0.5 + cos(pi * d / half) / 2`` — which is
-    the same curve rich's ``_get_pulse_segments`` uses, reached by calling its
-    ``blend_rgb`` rather than by copying it. rich's ``ProgressBar`` itself is
-    no use to us: it is a component that draws its OWN bar, not one that
-    lights up someone else's text, so the only reusable part was the blend,
-    and that is already public API.
+    The shape is a raised cosine — ``0.5 + cos(pi * d / half) / 2`` — reached by
+    calling rich's public ``blend_rgb`` rather than copying its
+    ``_get_pulse_segments``. rich's ``ProgressBar`` is no use to us: it draws
+    its OWN bar, it does not light up someone else's text.
 
-    Cached because the ramp is fixed for the life of the process and this runs
-    at ``SHINE_FPS`` — recomputing five blends per frame, forever, to arrive
-    at the same five strings is the kind of cost that never shows up in a
-    profile and never stops being paid.
+    Cached across half-widths and ground pairs, since the row's width and the
+    terminal's theme both change rarely and this runs on every frame.
     """
-    dim = Color.parse(palette.SHINE_DIM).get_truecolor()
-    peak = Color.parse(palette.SHINE_PEAK).get_truecolor()
-    half = _SHINE_WIDTH // 2
+    dim = Color.parse(ground).get_truecolor()
+    bright = Color.parse(peak).get_truecolor()
     ramp: "list[str]" = []
     for distance in range(half + 1):
         fade = 1.0 if half == 0 else 0.5 + math.cos(math.pi * distance / half) / 2.0
-        blended = blend_rgb(dim, peak, cross_fade=fade)
+        blended = blend_rgb(dim, bright, cross_fade=fade)
         ramp.append(f"#{blended.red:02x}{blended.green:02x}{blended.blue:02x}")
     return tuple(ramp)
 
@@ -143,128 +146,128 @@ def activity_text(
     *,
     elapsed_s: "float | None" = None,
     width: int = 80,
-    behind: "int | None" = None,
-    shine_index: "int | None" = None,
+    entries: int = 0,
+    away: bool = False,
+    shine_phase: "float | None" = None,
     colour: bool = True,
+    dark: bool = True,
 ) -> Content:
     """The rendered row for ``state``.
 
     ``elapsed_s`` is omitted entirely when ``None`` — an unknown duration
-    prints no clock rather than a zero, because "00:00" reads as a fact and
-    "no clock" reads as what it is.
+    prints no clock rather than a zero, because "0s" reads as a fact — a turn
+    that just started — and "no clock" reads as what it is: a turn whose start
+    this client never saw.
 
-    ``behind`` (#3712) is how many entries have landed since the reader left
-    the newest output, or ``None`` while they are still on it. It takes the
-    right-hand slot ahead of the cancel hint: someone reading back through an
-    older reply cannot see the new output arriving, and that is the more
-    urgent of the two. Both are dropped before the state itself.
+    The format changes at a minute (#3777, owner ruling): bare seconds below
+    (``12s``, from the owner's mock), ``MM:SS`` at and above it (``20:47``).
+    Each is the readable one in its own range — ``00:12`` makes a short turn
+    look like a stopwatch, and ``1247s`` is a number nobody reads at a glance.
 
-    ``shine_index`` (owner-picked design "A", replacing the removed ``NOW``
-    label): the frame number of a ``_SHINE_WIDTH``-character band travelling
-    across the WHOLE rendered row — ``None`` paints no band (a static row,
-    e.g. while no turn is showing). It is a frame counter, not a character
-    offset: the band's centre is ``shine_index - _SHINE_WIDTH // 2``, so it
-    starts off the left edge and runs off the right.
+    A format that changes under the operator is normally this module deciding
+    something that is theirs; the reason it is allowed here is that **what the
+    reader is looking at is the elapsed time, not the format**, so a change
+    toward the readable form is not something they have to notice or learn.
+    That argument is what the ruling turned on, and it is the thing to re-check
+    before extending this to any other switching format.
 
-    #3779 confined the band to ``state``'s own span, so it could not wander
-    onto the elapsed clock or the hint. #3777 lifted that: with the glyph gone
-    and the row reading as ONE object rather than as three things sharing a
-    line, the owner asked for the light to cross all of it. The old argument
-    was not wrong — it was the right answer for the row it was written about.
+    ``entries`` is how many entries this TURN has produced, counted from the
+    moment it started and shown from zero upward. ``away`` is whether the
+    reader has scrolled off the newest output. They are two parameters because
+    they are two facts: the previous shape was one ``behind: int | None`` where
+    ``None`` meant "following" and an int meant "away, by this much", which
+    made the count's baseline *the instant the reader scrolled away* — an event
+    the reader never sees, so ``LIVE +N`` offered no occasion on which its
+    meaning could be learned. A turn's start is something the reader did see.
+    ``away`` now decides one thing only: whether the return-to-latest hint is
+    printed.
 
-    ``colour`` is whether the terminal can show one. ``True`` paints the band
-    as a cosine ramp between :data:`palette.SHINE_DIM` and
-    :data:`palette.SHINE_PEAK`; ``False`` degrades it to the two-character
-    ``reverse`` #3779 shipped. The gradient is the point — a two-valued band
-    has no edge to fall off, so it reads as a block blinking rather than a
-    light travelling, which is what the operator reported.
+    ``shine_phase`` is where in one pass the travelling highlight is, as a
+    fraction in ``[0, 1)`` — ``None`` paints no band (a static row, e.g. while
+    no turn is showing). ``colour`` is whether the terminal can show one, and
+    ``dark`` whether its background is dark; between them they choose the
+    ground/peak pair, or the attribute fallback when there is no colour at all.
+
+    Segments are separated by ``·`` and read left to right, hints included:
+    there is no right-aligned slot any more. A right edge only reads as a
+    place things belong when the row is wide enough for the gap to look
+    deliberate, and this row shares a terminal with everything else.
     """
-    # Spaces, not a glyph (#3777, owner call): the NOW row carries no mark of
-    # its own, and its text starts in the column a queue row's LABEL starts in
-    # — the two regions then read as one column of text with the queue's
-    # glyphs hanging off its left edge, rather than as two lists that happen to
-    # sit above each other. The width comes from the queue rather than being
-    # written here twice; see ``sent_queue.ROW_TEXT_COLUMN``.
     prefix = " " * ROW_TEXT_COLUMN if state else ""
-    body = f"{prefix}{state}"
+    head = f"{prefix}{state}"
     if elapsed_s is not None:
-        body = f"{body} {int(elapsed_s) // 60:02d}:{int(elapsed_s) % 60:02d}"
-    suffix = f"LIVE +{behind} · {LATEST_HINT} latest" if behind else _CANCEL_HINT
-    content = _with_suffix(body, suffix, width)
-    if shine_index is not None and state:
-        # The whole row, not just the state word (#3777, owner call). #3779
-        # confined the band to ``state`` so it could not wander onto the clock
-        # or the hint; with the glyph gone and the row reading as one object,
-        # the owner asked for the light to cross all of it. The clearance
-        # argument that produced the old confinement is not wrong — it was an
-        # answer to a row that was three separate things in a line.
-        content = _apply_shine(content, 0, len(content.plain), shine_index, colour)
+        seconds = int(elapsed_s)
+        head = (
+            f"{head} {seconds}s" if seconds < 60
+            else f"{head} {seconds // 60:02d}:{seconds % 60:02d}"
+        )
+
+    # Segments in the order they are printed, each with what it costs to lose.
+    # Dropping from the right would take the abort hint first, and a row that
+    # gave up "how to stop this" to keep a count would have its priorities
+    # backwards. The head is never dropped: a row that cannot say what is
+    # happening has nothing left to be.
+    optional = [
+        (f"{entries} entries", 0),
+        (LATEST_HINT, 2) if away else None,
+        (_CANCEL_HINT, 3),
+    ]
+    segments = [seg for seg in optional if seg is not None]
+    while segments and len(" · ".join([head, *(t for t, _ in segments)])) > width:
+        segments.remove(min(segments, key=lambda seg: seg[1]))
+    line = " · ".join([head, *(text for text, _ in segments)])
+
+    content = Content(line)
+    if shine_phase is not None and state:
+        # The whole row (#3777, owner call). #3779 confined the band to
+        # ``state`` so it could not wander onto the clock or the hint; with the
+        # glyph gone and the row reading as ONE object, the owner asked for the
+        # light to cross all of it.
+        content = _apply_shine(content, len(line), shine_phase, colour, dark)
     return content
 
 
 def _apply_shine(
-    content: Content, base: int, span: int, frame: int, colour: bool
+    content: Content, span: int, phase: float, colour: bool, dark: bool
 ) -> Content:
-    """The travelling band, painted over ``span`` characters starting at ``base``.
+    """The travelling band over ``span`` characters, at ``phase`` of one pass.
 
-    ``base`` is where ``state`` begins in the rendered line; every offset below
-    is relative to ``state`` and shifted by it, so the band never reaches back
-    over the leading glyph, the space after it, the elapsed clock, or the
-    right-hand hint. Those are different information and stay plain — the
-    clearance #3777 required.
+    ``phase`` is a fraction in ``[0, 1)`` rather than a frame number, so the
+    caller expresses WHEN in the pass the row is, and the pass takes the same
+    wall-clock time whatever the row's width. A frame counter cannot do that:
+    its cycle is measured in cells, so a wider row takes proportionally longer
+    and the row silently feels less urgent the more there is on it.
 
-    ``frame`` is wrapped here rather than by the caller, because the cycle's
-    length depends on ``span`` — i.e. on ``len(state)``, which changes every
-    time the state does. A widget that owned the wrap would have to re-derive
-    it on each ``specialise``, and a frame counter left over from the previous
-    state would silently sit outside the new cycle and paint nothing while a
-    turn was visibly running. Wrapping where the length is known makes any
-    integer a valid frame.
+    EVERY character is painted, not only the band. Outside the band each cell
+    takes the ground, and the band's own outermost cell IS the ground, so the
+    band has no edge to step off. Painting only the band and leaving the rest
+    at the terminal's foreground is what made the operator see three moving
+    things rather than one — a dark cell at each end of the band, hard against
+    an undimmed ground, is two more features than the design has.
 
-    The band's centre is ``frame - half``, so the cycle starts with the centre
-    OFF the left edge and ends with it past the right. That is what makes the
-    light enter and leave, rather than materialise at the first character and
-    vanish at the last — clamp the centre inside the span instead and the two
-    end frames hold a stationary half-band, which reads as a stutter at both
-    ends of every pass.
+    The centre runs from ``-half`` to ``span - 1 + half`` so the light enters
+    and leaves rather than materialising at the first character and vanishing
+    at the last.
     """
-    half = _SHINE_WIDTH // 2
-    # ``span + 2 * half``, not ``span + _SHINE_WIDTH``: the centre must reach
-    # from ``-half`` (leftmost cell just lit) to ``span - 1 + half`` (rightmost
-    # cell still lit) and no further. One frame more and the band sits entirely
-    # off the right edge — a single dark frame per pass, which at SHINE_FPS is
-    # a blink in an animation whose whole job is to look continuous.
-    frame %= max(1, span + 2 * half)
+    ground = palette.SHINE_GROUND_DARK if dark else palette.SHINE_GROUND_LIGHT
+    peak = palette.SHINE_PEAK_DARK if dark else palette.SHINE_PEAK_LIGHT
+    half = max(1, round(span * _SHINE_FRACTION / 2))
     if not colour:
-        # Same two characters #3779 shipped, so the degraded form is a form
-        # this row has already been seen in rather than a third design.
-        start = base + max(0, min(frame - half, span - 1))
+        # Same two characters #3779 shipped, so the degraded form is one this
+        # row has already been seen in rather than a third design. No ground:
+        # an attribute has no "slightly on", so there is nothing to paint the
+        # rest of the row WITH that would not simply emphasise all of it.
+        start = max(0, min(int(phase * span), span - 1))
         return content.stylize(
-            _SHINE_FALLBACK_STYLE, start, min(start + _SHINE_FALLBACK_WIDTH, base + span)
+            _SHINE_FALLBACK_STYLE, start, min(start + _SHINE_FALLBACK_WIDTH, span)
         )
-    centre = frame - half
-    for distance, style in enumerate(_shine_ramp()):
-        # Both sides of the centre at this distance — and only once when
-        # distance is 0, or the centre cell would be styled twice.
-        for position in {centre - distance, centre + distance}:
-            if 0 <= position < span:
-                content = content.stylize(style, base + position, base + position + 1)
+    ramp = _shine_ramp(half, ground, peak)
+    centre = phase * (span + 2 * half) - half
+    for position in range(span):
+        distance = round(abs(position - centre))
+        style = ramp[distance] if distance <= half else ground
+        content = content.stylize(style, position, position + 1)
     return content
-
-
-def _with_suffix(body: str, suffix: str, width: int) -> Content:
-    """``body`` with ``suffix`` right-aligned, or ``body`` alone if it will not
-    fit WHOLE.
-
-    Never clipped. A cut ``Ctrl+C cancel`` ends as ``Ctrl+C``, which still
-    reads as a complete instruction and is a different one — the row would be
-    naming a key combination nobody chose. The same applies to a cut
-    ``Ctrl+End latest``. Dropping it costs nothing: both bindings work whether
-    or not they are printed.
-    """
-    pad = width - len(body) - len(suffix)
-    text = f"{body}{' ' * pad}{suffix}" if pad >= 1 else body
-    return Content(text)
 
 
 class ActivityRow(Static):
@@ -292,15 +295,15 @@ class ActivityRow(Static):
         self._clock = clock
         self._state: "str | None" = None
         self._started_at: "float | None" = None
-        self._behind: "int | None" = None
-        self._shine_index = 0
+        self._entries = 0
+        self._away = False
         self._timer: "Timer | None" = None
 
     #: The shine's frame rate (owner-picked design "A"). Also what drives the
     #: elapsed clock now — ONE timer, not two: :meth:`tick` recomputes the
     #: elapsed seconds from the real clock on every call regardless of how
     #: often it runs, so a faster shared tick costs nothing in correctness,
-    #: only ``_SHINE_WIDTH``-worth of extra string work per frame (one Static
+    #: only one Static line of extra string work per frame
     #: line, cheap) — and it means there is exactly one place that starts and
     #: stops the redraw, not two timers each needing their own shutdown.
     SHINE_FPS = 6
@@ -329,7 +332,11 @@ class ActivityRow(Static):
         """
         if self._state is None:
             self._started_at = self._clock() if started else None
-            self._shine_index = 0
+            # The count's baseline is the turn, so it is zeroed HERE and
+            # nowhere else. Zeroing it on a scroll edge is what made the old
+            # ``LIVE +N`` unreadable: its baseline was an event the reader
+            # could not observe.
+            self._entries = 0
             if self._timer is not None:
                 self._timer.resume()
         self._state = state
@@ -356,27 +363,47 @@ class ActivityRow(Static):
         if self._timer is not None:
             self._timer.pause()
 
-    def set_behind(self, behind: "int | None") -> None:
-        """How far the reader is from the newest output, or ``None`` when they
-        are on it (#3712). Redraws only while a turn is showing — this rides in
-        the live-turn row's spare space and does not summon one."""
-        if self._behind == behind:
+    def set_entries(self, entries: int) -> None:
+        """How many entries this turn has produced so far (#3777).
+
+        Independent of where the reader is: the count answers "how much has
+        happened", and the answer does not change because somebody scrolled.
+        Redraws only while a turn is showing — this rides in the live-turn
+        row and does not summon one.
+        """
+        if self._entries == entries:
             return
-        self._behind = behind
+        self._entries = entries
+        if self._state is not None:
+            self._render_row()
+
+    def set_away(self, away: bool) -> None:
+        """Whether the reader has scrolled off the newest output (#3712).
+
+        Decides ONE thing: whether the return-to-latest hint is printed. It is
+        deliberately not an input to the count — conflating the two is what the
+        previous ``behind: int | None`` did, and re-reading that single value
+        under a new name would have carried the same defect forward.
+        """
+        if self._away == away:
+            return
+        self._away = away
         if self._state is not None:
             self._render_row()
 
     def tick(self) -> None:
-        """Advance the shine one frame and redraw (the elapsed clock rides
-        along, recomputed fresh every call). No-op while hidden — reachable
-        only in the gap between :meth:`end` pausing the timer and the pause
-        actually taking effect, not a steady-state path."""
+        """Redraw one frame: the shine advances and the elapsed clock rides
+        along, recomputed fresh from the real clock every call. No-op while
+        hidden — reachable only in the gap between :meth:`end` pausing the
+        timer and the pause actually taking effect, not a steady-state path.
+
+        The shine's position is derived from the CLOCK, not from a counter this
+        method increments. A counter measures the pass in frames, so a dropped
+        or delayed tick shortens the pass and a wider row lengthens it; reading
+        the clock makes one pass take :data:`_SHINE_PASS_SECONDS` whatever the
+        renderer and the terminal happen to be doing.
+        """
         if self._state is not None:
-            # No modulo here: the cycle's length depends on ``len(state)``,
-            # and ``_apply_shine`` is where that is known. Wrapping in both
-            # places would mean two copies of the same arithmetic drifting
-            # apart the first time one of them learned about a new state.
-            self._shine_index += 1
             self._render_row()
 
     def _render_row(self) -> None:
@@ -389,11 +416,35 @@ class ActivityRow(Static):
                 self._state or "",
                 elapsed_s=elapsed,
                 width=self.content_size.width or 78,
-                behind=self._behind,
-                shine_index=self._shine_index if self._state is not None else None,
+                entries=self._entries,
+                away=self._away,
+                shine_phase=(
+                    None if self._state is None
+                    else (self._clock() % _SHINE_PASS_SECONDS) / _SHINE_PASS_SECONDS
+                ),
                 colour=self._terminal_has_colour(),
+                dark=self._terminal_is_dark(),
             )
         )
+
+    def _terminal_is_dark(self) -> bool:
+        """Whether the terminal's background is dark, so the shine can pick the
+        ground/peak pair that is actually visible against it.
+
+        One pair cannot serve both: the dark pair's peak is nearly white, which
+        against a white terminal is the band disappearing rather than the band
+        being subtle. Asked of the theme every frame rather than cached, for
+        the same reason as :meth:`_terminal_has_colour` — the answer is the
+        app's to give, and a value latched at mount would outlive a theme
+        change.
+
+        Defaults to dark when there is no app to ask (a row mounted alone in a
+        test), which is the terminal reyn is most often run in.
+        """
+        try:
+            return bool(self.app.current_theme.dark)
+        except Exception:
+            return True
 
     def _terminal_has_colour(self) -> bool:
         """Whether the shine may use its gradient rather than its fallback.
