@@ -92,11 +92,6 @@ def _live_count(row) -> "int | None":
     return int(match.group(1)) if match else None
 
 
-async def _settle(pilot, times: int = 5) -> None:
-    for _ in range(times):
-        await pilot.pause()
-
-
 async def _settle_until_stable(pilot, read, *, arrived=lambda: True) -> "int":
     """Pump until ``read()`` has returned the SAME value on two consecutive
     checks taken while ``arrived()`` holds. Returns the stabilised value.
@@ -272,7 +267,14 @@ async def test_nothing_is_shown_while_the_reader_is_on_the_newest_output() -> No
             await transport.push_display(
                 OutboxMessage(kind="agent", text=f"line {i}", meta={})
             )
-        await _settle(pilot, 8)
+        # #3770: the negative assertion below can't be proven by waiting
+        # (#3327's line) — but a POSITIVE witness that the 10 pushed
+        # entries actually landed is still required first. Without it, a
+        # too-short settle would pass "LIVE not shown" vacuously (because
+        # nothing has rendered yet, not because arrivals-while-away is
+        # correctly not counted) — the same emptiness class fixed elsewhere
+        # in this file today, just on the negative side.
+        await _settle_until(pilot, lambda: len(app.query_one(FlowView).entries) >= 10)
 
         assert "LIVE" not in str(app.query_one(ActivityRow).render())
 
