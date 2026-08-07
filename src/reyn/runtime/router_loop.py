@@ -1897,6 +1897,23 @@ class RouterLoop:
                 _force_close_fn is not None
                 and await _force_close_fn(messages, model=resolved_model)
             )
+            # #3792 PR1: mid-turn injection seam — the ONE design decision the
+            # whole feature hinges on (architect, #3792). Position: after the
+            # per-iteration guards above (the cancel checkpoint at the top of
+            # this loop — a cancelled turn ``break``s before ever reaching
+            # here), and immediately before whichever send this iteration
+            # makes (force-close or normal — ``_force_close_now`` is already
+            # decided above), so an injected message can only land between
+            # tool-call/tool-result rounds, never mid-send (wire_format.py's
+            # adjacency requirement forbids splitting an assistant(tool_calls)
+            # / role=tool group). getattr-guarded → hosts that don't
+            # implement it (phase hosts; PR1 leaves it unimplemented even on
+            # the chat host) are a no-op, byte-identical to before this PR.
+            # PR2 wires the real 2-phase peek/pop + injection; this PR only
+            # locks in the seam's position so PR2 does not re-litigate it.
+            _peek_injection_fn = getattr(host, "peek_mid_turn_injection", None)
+            if _peek_injection_fn is not None:
+                await _peek_injection_fn()  # PR1: return value not yet consumed
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
             # this exact (model, messages, tools, tool_choice) tuple
             # short-circuits the call. Used by phase-step resume so a
