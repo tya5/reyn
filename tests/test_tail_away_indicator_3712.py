@@ -29,6 +29,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.activity_row import (
+    _CANCEL_HINT,
     LATEST_HINT,
     ActivityRow,
     activity_text,
@@ -87,9 +88,20 @@ class QueueTransport(ClientTransport):
 
 
 def _live_count(row) -> "int | None":
-    """The number the row is reporting, or ``None`` if it reports nothing."""
-    match = re.search(r"LIVE \+(\d+)", str(row.render()))
+    """How many entries the row says this turn has produced, or ``None``.
+
+    #3777 replaced ``LIVE +N`` — which counted from the moment the reader
+    scrolled away, a baseline the reader never saw — with a count from the
+    turn's start. The reader is no longer part of what is being counted.
+    """
+    match = re.search(r"(\d+) entries", str(row.render()))
     return int(match.group(1)) if match else None
+
+
+def _offers_return(row) -> bool:
+    """Whether the row is offering to take the reader back to the newest
+    output. This, and only this, is what being away now changes."""
+    return LATEST_HINT in str(row.render())
 
 
 async def _settle_until_stable(pilot, read, *, arrived=lambda: True) -> "int":
@@ -217,18 +229,21 @@ async def _fill_and_leave_the_tail(transport, pilot, app, *, lines: int = 40):
     return flow
 
 
-def test_the_indicator_takes_the_slot_ahead_of_the_cancel_hint() -> None:
-    """Tier 1: when both want the right-hand slot, the LIVE count wins.
+def test_being_away_adds_the_return_hint_and_changes_nothing_else() -> None:
+    """Tier 1: away is additive — the count and the abort hint are unaffected.
 
-    Someone reading back cannot see the new output arriving; the cancel key
-    works whether or not it is printed. So the more urgent one is shown.
+    The previous design gave the two a single right-hand slot, so one had to
+    displace the other and being away silently cost the reader the way out.
+    With the hints reading left to right there is no slot to win, and the only
+    difference being away makes is one more thing offered.
     """
-    with_behind = str(activity_text("RESPONDING", elapsed_s=5.0, width=78, behind=12))
-    without = str(activity_text("RESPONDING", elapsed_s=5.0, width=78))
+    away = str(activity_text("RESPONDING", elapsed_s=5.0, width=78, entries=12, away=True))
+    following = str(activity_text("RESPONDING", elapsed_s=5.0, width=78, entries=12))
 
-    assert "LIVE +12" in with_behind
-    assert "Ctrl+C cancel" not in with_behind
-    assert "Ctrl+C cancel" in without
+    assert "12 entries" in away and "12 entries" in following
+    assert _CANCEL_HINT in away and _CANCEL_HINT in following
+    assert LATEST_HINT in away
+    assert LATEST_HINT not in following
 
 
 def test_a_narrow_row_drops_the_hint_rather_than_cutting_it() -> None:
@@ -238,19 +253,23 @@ def test_a_narrow_row_drops_the_hint_rather_than_cutting_it() -> None:
     different one. The state survives; the suffix is printed whole or not at
     all.
     """
-    narrow = str(activity_text("RESPONDING", elapsed_s=5.0, width=30, behind=12))
+    narrow = str(activity_text(
+        "RESPONDING", elapsed_s=5.0, width=30, entries=12, away=True
+    ))
 
     assert "RESPONDING" in narrow
     assert LATEST_HINT not in narrow
-    assert "LIVE" not in narrow
+    assert "entries" not in narrow
 
 
 @pytest.mark.asyncio
-async def test_nothing_is_shown_while_the_reader_is_on_the_newest_output() -> None:
-    """Tier 2b: following the tail is the ordinary case and says nothing.
+async def test_no_return_hint_while_the_reader_is_on_the_newest_output() -> None:
+    """Tier 2b: following the tail is the ordinary case and offers no return.
 
-    An indicator that were always up would stop meaning "you are missing
-    something".
+    A hint offering to take the reader back to output they are already looking
+    at is an instruction with nothing to do. #3777: what is suppressed is the
+    HINT — the count keeps reporting, because how much the turn has produced
+    is true whether or not the reader has scrolled.
     """
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
@@ -272,31 +291,48 @@ async def test_nothing_is_shown_while_the_reader_is_on_the_newest_output() -> No
         # in this file today, just on the negative side.
         await _settle_until(pilot, lambda: len(app.query_one(FlowView).entries) >= 10)
 
-        assert "LIVE" not in str(app.query_one(ActivityRow).render())
+        row = app.query_one(ActivityRow)
+        assert not _offers_return(row)
+        # The positive half: the count IS reporting. Without this the negative
+        # above could pass because the row is blank, which would say nothing
+        # about whether the hint is correctly suppressed.
+        assert _live_count(row) is not None, (
+            f"the row reported no count at all: {str(row.render())!r}"
+        )
 
 
 @pytest.mark.asyncio
-async def test_output_arriving_while_away_is_counted() -> None:
-    """Tier 2b: entries landing after the reader left are reported.
+async def test_entries_are_counted_from_the_turn_not_from_the_departure() -> None:
+    """Tier 2b: the count's baseline is the turn's start, not the scroll away.
 
-    The count starts when they leave, not from the beginning of the
-    conversation — what matters is what they have not seen.
+    This is the #3777 correction, as a measurement: entries that landed BEFORE
+    the reader left are already in the number, so leaving does not reset it.
+    The old baseline was the instant of departure — an event the reader cannot
+    observe, which is why the old number offered no occasion on which its
+    meaning could be learned.
     """
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await _fill_and_leave_the_tail(transport, pilot, app)
+        row = app.query_one(ActivityRow)
+        before = _live_count(row)
+        assert before, (
+            "the fixture landed entries before the reader left, so the count "
+            f"must already be non-zero — a departure reset it: {before!r}"
+        )
 
         for i in range(3):
             await transport.push_display(
                 OutboxMessage(kind="agent", text=f"new {i}", meta={})
             )
-        row = app.query_one(ActivityRow)
-        await _settle_until(pilot, lambda: "LIVE" in str(row.render()))
+        await _settle_until(pilot, lambda: (_live_count(row) or 0) >= before + 3)
 
-        rendered = str(row.render())
-        assert "LIVE +3" in rendered, f"the arrivals were not reported: {rendered!r}"
+        assert _live_count(row) == before + 3, (
+            f"the arrivals were not added to the running count: "
+            f"{str(row.render())!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -315,13 +351,14 @@ async def test_the_named_key_actually_returns_to_the_newest_output() -> None:
         flow = await _fill_and_leave_the_tail(transport, pilot, app)
         await transport.push_display(OutboxMessage(kind="agent", text="new", meta={}))
         row = app.query_one(ActivityRow)
-        await _settle_until(pilot, lambda: "LIVE" in str(row.render()))
-        assert "LIVE" in str(row.render())
+        await _settle_until(pilot, lambda: _offers_return(row))
+        assert _offers_return(row)
+        away_count = _live_count(row)
 
         await pilot.press("ctrl+end")
         # #3770 follow-up: no deferred wait needed here — action_jump_to_latest
-        # sets scroll_y, _away_arrivals, and the row's own ``set_behind(None)``
-        # all SYNCHRONOUSLY inside the key handler (its own docstring:
+        # sets scroll_y and the row's own ``set_away(False)`` all
+        # SYNCHRONOUSLY inside the key handler (its own docstring:
         # "cleared HERE rather than waiting on the FollowChanged handler"),
         # so once the keypress message has been dispatched both assertions
         # below are already final. A single pause is for dispatch, not for
@@ -329,8 +366,18 @@ async def test_the_named_key_actually_returns_to_the_newest_output() -> None:
         await pilot.pause()
 
         assert flow.scroll_y >= flow.max_scroll_y, "the key did not return to the tail"
-        assert "LIVE" not in str(app.query_one(ActivityRow).render()), (
-            "the indicator survived the return it was pointing at"
+        returned = app.query_one(ActivityRow)
+        assert not _offers_return(returned), (
+            "the hint survived the return it was pointing at"
+        )
+        # The COUNT must not be cleared by returning (#3777): it counts the
+        # turn, and the turn did not restart because somebody scrolled. The
+        # old implementation zeroed it here, which is exactly the conflation
+        # this change removes — so the assertion has to be present, not just
+        # the hint's absence.
+        assert _live_count(returned) == away_count, (
+            f"returning to the tail reset the turn's count: "
+            f"{away_count} -> {_live_count(returned)}"
         )
 
 
@@ -359,8 +406,11 @@ async def test_a_growing_reply_is_not_counted_as_arrivals() -> None:
         # so the state it returns is already what this baseline wants.
         row = app.query_one(ActivityRow)
         # Whatever the count is at this instant is the baseline. Asserting it
-        # is zero would only be testing how the fixture happened to drain.
-        baseline = str(row.render())
+        # is zero would only be testing how the fixture happened to drain —
+        # and since #3777 the count runs from the turn's start, so the fixture's
+        # own entries are legitimately already in it. What this test is about
+        # is the DELTA the thirty chunks add.
+        baseline = _live_count(row) or 0
 
         # The reply the reader is looking at grows, in place, by a lot.
         before_entries = len(flow.entries)
@@ -381,9 +431,9 @@ async def test_a_growing_reply_is_not_counted_as_arrivals() -> None:
             "fold into one reply, so this is not exercising the case"
         )
 
-        reported = _live_count(row)
+        reported = (_live_count(row) or 0) - baseline
         assert reported == landed, (
-            f"the row reported {reported} arrivals for {landed} entry — "
+            f"the row counted {reported} arrivals for {landed} entry — "
             "a reply growing in place is one thing arriving, not thirty. A "
             "count that follows rows fails here with a number near 30"
         )
