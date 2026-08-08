@@ -149,11 +149,15 @@ async def test_real_snapshot_carries_every_key_the_chrome_reads(tmp_path) -> Non
 
 
 def _saved_pct_row(lines: "list[str]") -> str:
-    return next(line for line in lines if line.startswith("Saved%"))
+    """The SESSION scope's row — Saved% is its last column since #3691
+    transposed the table (scopes are rows now, metrics are columns)."""
+    return next(line for line in lines if line.startswith("Session"))
 
 
 #: The cost table's own lines (everything before the footnotes / token lines).
-_COST_TABLE_PREFIXES = ("COST", "Total", "Input", "Output", "Saved", "Saved%")
+#: Scope names since #3691 — the table was transposed so they could be spelled
+#: out instead of abbreviated to fit a value column.
+_COST_TABLE_PREFIXES = ("COST", "Session", "Agent", "Project")
 
 
 def _cost_table_rows(lines: "list[str]") -> "list[str]":
