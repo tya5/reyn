@@ -1,4 +1,4 @@
-"""Inline completion for the composer's ``/`` and ``:`` namespaces (#3354).
+r"""Inline completion for the composer's ``/`` and ``:`` namespaces (#3354).
 
 The retired prompt_toolkit inline app completed both namespaces in its input
 box (``_SlashCompleter`` / ``_SkillInvokeCompleter``, merged into one
@@ -96,23 +96,34 @@ and no ``CompleterFn``). Such a menu shows the header ALONE: appending
 :data:`NO_MATCH_ROW` there would claim the user's argument matched nothing when
 nothing was ever offered to match against.
 
-Row wrapping
-------------
-A skill description is long enough to wrap at any realistic terminal width, and
-Textual's own wrap returns every continuation line to column 0 — which made
-three skill rows read as six (#3545). :func:`hanging_indent_rows` therefore
-re-wraps each row here, with :data:`WRAP_INDENT` on the continuations, and the
-result stays ONE option carrying embedded newlines so every OPTION index
-(highlight, :attr:`CompletionState.row_offset`, :meth:`CompletionPopup.selected`)
-keeps meaning one candidate. The wrap needs a width, which a never-laid-out
-widget does not have, so :meth:`CompletionPopup.on_resize` re-runs it — see
-that method for why the first ``sync`` alone is not enough.
+Row height
+----------
+Every row is ONE line, clipped to the width with :data:`ROW_ELLIPSIS`
+(:func:`clipped_rows`). A skill description is long enough to wrap at any
+realistic terminal width, and the height that wrapping consumes comes out of how
+many CANDIDATES are visible: measured at 80 columns with three skills installed,
+the rows ran 5, 7 and 4 lines, so one of three fit the ten-line menu (#3551).
+The menu's job is choosing which skill; the description that matters is the one
+read after choosing — the owner's ruling, against showing more of one
+description.
 
-The same report also read as text being LOST mid-word. It was, but not here:
-``skills.entries.<name>.description`` is capped at load
-(``reyn.data.skills.registry._truncate_description``), and this module renders
-every character it is handed. That cap now cuts on a word boundary and says so
-with an ellipsis, so the two failures stay distinguishable on screen.
+Clipping is measured in CELLS (``rich.cells``), the measure Textual's compositor
+uses, so a description containing wide characters clips where the terminal
+actually runs out of columns. Getting that wrong does not merely misalign: an
+overflowing row is re-wrapped by Textual itself, at column 0, which is the #3545
+defect — a row reading as two candidates — arriving through the back door.
+
+The width is not known until layout, so :meth:`CompletionPopup.on_resize`
+re-clips — see that method for why the first ``sync`` alone is not enough.
+
+An earlier report also read as text being LOST mid-word, and there are now TWO
+cuts in front of a reader — they are not the same cut and only one of them is
+recoverable by widening the terminal. ``skills.entries.<name>.description`` is
+capped at LOAD (``reyn.data.skills.registry._truncate_description``, on a word
+boundary, ellipsised); this module then clips what survives to the CURRENT
+WIDTH. Both end in :data:`ROW_ELLIPSIS`, so the glyph means "there is more"
+either way — which is the honest reading, since a reader who wants the rest
+opens the skill rather than resizing to find it.
 
 **Security.** Candidate rows AND the usage header reach the terminal through
 :func:`~reyn.interfaces.inline.textual_chat.presenter._neutralized_label` and the
@@ -126,10 +137,10 @@ exactly the untrusted-text case that boundary exists for.
 from __future__ import annotations
 
 import re
-import textwrap
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from rich.cells import cell_len, set_cell_size
 from textual.widgets import OptionList
 
 from reyn.interfaces.inline.textual_chat import palette
@@ -181,20 +192,21 @@ _SKILL_TOKEN_MIDLINE_RE = re.compile(
 #: completion feature that is not working.
 NO_MATCH_ROW = "no matches"
 
-#: Columns a WRAPPED continuation line is indented by (#3545).
+#: What a clipped row ends with (#3551). U+2026, matching the cap
+#: ``reyn.data.skills.registry`` applies at load — one glyph means "there is
+#: more", wherever the reader meets it.
 #:
-#: Every row opens its own token hard against column 0 — ``:name``, ``/name``,
-#: :data:`USAGE_ROW_PREFIX`'s ``↳`` — so ANY indent at all is enough to make a
-#: continuation unmistakably subordinate; the reported symptom was three skill
-#: rows reading as six because the continuations also began at column 0. Two
-#: columns rather than the label's own width: the label width varies per row
-#: (``:reactive-orchestration-plugins`` is 31 columns), so aligning to it would
-#: both shift per row and eat the width the wrapped text needs.
-#:
-#: SPACING, never colour. #3536/#3537 removed fixed dark hex constants because
-#: they are invisible on a transparent terminal background, and a dim style
-#: would be exactly that class of fix re-introduced here.
-WRAP_INDENT = "  "
+#: East Asian **Ambiguous** width: ``rich.cells.cell_len`` resolves it to 1 and
+#: so does every terminal reyn has been checked on, but a terminal configured to
+#: treat ambiguous characters as wide would draw it in two columns and overflow
+#: the row by one. ``gutter.py`` carries the same caveat for the same reason, so
+#: the constant is measured rather than assumed to be one column.
+ROW_ELLIPSIS = "…"
+_ELLIPSIS_CELLS = cell_len(ROW_ELLIPSIS)
+
+#: A newline with any whitespace around it — folded to a single space before a
+#: row is measured (see :func:`clipped_rows`).
+_NEWLINE_RUN_RE = re.compile(r"[ \t]*\n[ \t]*")
 
 #: Prefix of the argument-stage usage header row (#3364). The ``↳`` chrome and
 #: the ``usage:`` word are the POPUP's, not the command's — ``SlashCommand.usage``
@@ -505,38 +517,48 @@ def compute_completion(
     )
 
 
-def hanging_indent_rows(rows: "Sequence[str]", width: int) -> "list[str]":
-    """``rows`` re-wrapped to ``width`` with :data:`WRAP_INDENT` on every
-    continuation line (#3545).
+def clipped_rows(rows: "Sequence[str]", width: int) -> "list[str]":
+    """``rows`` clipped to ONE line of ``width`` columns each, with
+    :data:`ROW_ELLIPSIS` where text was dropped (#3551, owner ruling A).
 
-    Wrapping is done HERE rather than left to the ``OptionList``'s own because
-    Textual's wrap has no hanging-indent notion — it returns every continuation
-    to column 0, which is the whole of the reported defect. Each row stays ONE
-    option carrying embedded newlines, never one option per visual line: the
-    highlight, :attr:`CompletionState.row_offset` and
-    :meth:`CompletionPopup.selected` all index OPTIONS, so splitting a wrapped
-    candidate into several would make ``↓`` walk half a description.
+    The menu's job is choosing WHICH skill; the description that matters is the
+    one read after choosing. Wrapping spent the height on one candidate's prose:
+    measured at 80 columns with three skills installed, the rows ran 5, 7 and 4
+    lines, so one of three fit the ten-line menu and the third was entirely off
+    screen. At one line each, ten fit.
+
+    Measured in CELLS, not characters. ``rich.cells.set_cell_size`` is the same
+    measure Textual's compositor uses, so a description containing wide
+    characters clips where the terminal actually runs out of columns — ``len``
+    would leave a CJK row overflowing by its own width again and Textual would
+    re-wrap the overflow at column 0, which is #3545 back. A wide character
+    straddling the boundary is replaced by a space by that helper rather than
+    half-drawn.
+
+    Each row stays ONE option, as before: the highlight,
+    :attr:`CompletionState.row_offset` and :meth:`CompletionPopup.selected` all
+    index OPTIONS, so a candidate must never become two.
 
     Returns ``rows`` untouched when ``width`` is not yet known (a widget that
-    has never been laid out reports ``0``) or is too narrow to hold the indent
+    has never been laid out reports ``0``) or is too narrow to hold the ellipsis
     plus a character — the caller re-runs this on ``Resize``, and until then
     Textual's own wrap is a strictly better fallback than a crash or a
     one-character column.
     """
-    if width <= len(WRAP_INDENT) + 1:
+    if width <= _ELLIPSIS_CELLS + 1:
         return list(rows)
     out: "list[str]" = []
     for row in rows:
-        lines = textwrap.wrap(
-            row,
-            width=width,
-            subsequent_indent=WRAP_INDENT,
-            # ``--`` is an em-dash stand-in throughout the builtin skill
-            # descriptions, not a hyphenated word, so a break inside one reads
-            # as a stray ``-`` at the edge.
-            break_on_hyphens=False,
-        )
-        out.append("\n".join(lines) if lines else row)
+        # Rows arrive single-line; a newline would still be a second visual line
+        # after clipping, so fold NEWLINES before measuring rather than after.
+        # Only newlines: the two spaces between a row's label and its detail are
+        # the column separator ``_labels``-style readers split on, so collapsing
+        # runs of spaces would quietly destroy the row's structure.
+        flat = _NEWLINE_RUN_RE.sub(" ", row)
+        if cell_len(flat) <= width:
+            out.append(flat)
+            continue
+        out.append(set_cell_size(flat, width - _ELLIPSIS_CELLS) + ROW_ELLIPSIS)
     return out
 
 
@@ -629,7 +651,7 @@ class CompletionPopup(OptionList, can_focus=False):
         """
         width = self._wrap_width()
         self.clear_options()
-        self.add_options(option_content_rows(hanging_indent_rows(rows, width)))
+        self.add_options(option_content_rows(clipped_rows(rows, width)))
         self._wrapped_at = width
 
     def on_resize(self) -> None:
@@ -727,10 +749,10 @@ class CompletionPopup(OptionList, can_focus=False):
         off the MOUNTED options rather than recomputed, so it cannot claim
         content the widget never actually mounted.
 
-        One entry per OPTION, not per visual line: a row wrapped by
-        :func:`hanging_indent_rows` comes back with its embedded newlines and
-        :data:`WRAP_INDENT` still in it, which is what lets a test see both that
-        the text survived and that the continuation is indented."""
+        One entry per OPTION, and — since #3551 — one visual line per entry:
+        :func:`clipped_rows` returns each row already cut to the width, so a
+        test reads the row exactly as the terminal draws it, including the
+        trailing :data:`ROW_ELLIPSIS` when text was dropped."""
         return [
             str(self.get_option_at_index(i).prompt)
             for i in range(self.option_count)
@@ -746,10 +768,10 @@ __all__ = [
     "NO_MATCH_ROW",
     "SKILL_MIN_CHARS",
     "USAGE_ROW_PREFIX",
-    "WRAP_INDENT",
+    "ROW_ELLIPSIS",
     "CompletionCandidate",
     "CompletionPopup",
     "CompletionState",
     "compute_completion",
-    "hanging_indent_rows",
+    "clipped_rows",
 ]

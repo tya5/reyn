@@ -280,36 +280,36 @@ def test_console_renderer_bottom_toolbar_none_at_init() -> None:
 
 
 def test_console_renderer_bottom_toolbar_non_none_after_turn_started() -> None:
-    """Tier 2: on_chat_event(turn_started) → bottom_toolbar() returns a non-None
+    """Tier 2: on_audit_event(turn_started) → bottom_toolbar() returns a non-None
     working indicator string (the in-flight cue #2268 removed)."""
     r = ConsoleChatRenderer()
-    r.on_chat_event(_Ev("turn_started"))
+    r.on_audit_event(_Ev("turn_started"))
     result = r.bottom_toolbar()
     assert result is not None
     assert "working" in result
 
 
 def test_console_renderer_bottom_toolbar_clears_on_turn_settled() -> None:
-    """Tier 2: on_chat_event(turn_settled) after turn_started → bottom_toolbar() is None."""
+    """Tier 2: on_audit_event(turn_settled) after turn_started → bottom_toolbar() is None."""
     r = ConsoleChatRenderer()
-    r.on_chat_event(_Ev("turn_started"))
-    r.on_chat_event(_Ev("turn_settled"))
+    r.on_audit_event(_Ev("turn_started"))
+    r.on_audit_event(_Ev("turn_settled"))
     assert r.bottom_toolbar() is None
 
 
 def test_console_renderer_bottom_toolbar_clears_on_turn_completed() -> None:
-    """Tier 2: on_chat_event(turn_completed) after turn_started → bottom_toolbar() is None."""
+    """Tier 2: on_audit_event(turn_completed) after turn_started → bottom_toolbar() is None."""
     r = ConsoleChatRenderer()
-    r.on_chat_event(_Ev("turn_started"))
-    r.on_chat_event(_Ev("turn_completed"))
+    r.on_audit_event(_Ev("turn_started"))
+    r.on_audit_event(_Ev("turn_completed"))
     assert r.bottom_toolbar() is None
 
 
 def test_console_renderer_bottom_toolbar_clears_on_turn_cancelled() -> None:
-    """Tier 2: on_chat_event(turn_cancelled) after turn_started → bottom_toolbar() is None."""
+    """Tier 2: on_audit_event(turn_cancelled) after turn_started → bottom_toolbar() is None."""
     r = ConsoleChatRenderer()
-    r.on_chat_event(_Ev("turn_started"))
-    r.on_chat_event(_Ev("turn_cancelled"))
+    r.on_audit_event(_Ev("turn_started"))
+    r.on_audit_event(_Ev("turn_cancelled"))
     assert r.bottom_toolbar() is None
 
 

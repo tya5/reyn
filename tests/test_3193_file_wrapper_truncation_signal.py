@@ -116,7 +116,7 @@ async def test_read_memory_body_handler_surfaces_truncation_signal_to_the_llm(
     body_path.write_text(_LINE * _LINE_COUNT, encoding="utf-8")
 
     ctx = ToolContext(
-        events=session._chat_events,
+        events=session._audit_events,
         permission_resolver=session._perm,
         workspace=None,
         caller_kind="router",
@@ -150,7 +150,7 @@ async def test_read_memory_body_handler_has_no_spurious_truncation_signal(
     body_path.write_text("hello world\n", encoding="utf-8")
 
     ctx = ToolContext(
-        events=session._chat_events,
+        events=session._audit_events,
         permission_resolver=session._perm,
         workspace=None,
         caller_kind="router",

@@ -35,14 +35,14 @@ This proposal is built on a **wiring-coherence review** (§2) of how the surface
 - The `AgentRegistry` process singleton (`get_registry()`), read by every surface.
 - `registry.resolve_session` — the session-resolution primitive all non-AG-UI surfaces wrap.
 - `Session.answer_pending_intervention` / `answer_intervention_by_id` — the authoritative HITL resolution core. The peer path **hardcodes `external_source=True`** (session.py:5128) → peer answers are always fenced.
-- `session._chat_events` (EventLog) — subscribed by the A2A/MCP progress bridges and AG-UI's `_SessionFrameSource` alike.
+- `session._audit_events` (EventLog) — subscribed by the A2A/MCP progress bridges and AG-UI's `_SessionFrameSource` alike.
 
 **REINVENTED — refactor candidates:**
 1. **[SECURITY-CRITICAL] Auth is surface-local, not orthogonal.** Only AG-UI enforces the P0 auth context — `authenticate_request` (endpoint.py:105) is called in every AG-UI handler (events :256-257, seize :366-367, submit :395-396, `authorize_write` :319/:427). **A2A, MCP, REST `/api/*`, and resources have ZERO auth-gate calls** (verified per-handler, not grep); the only middleware is CORS (server.py:286). All non-AG-UI surfaces are unauthenticated on **all** binds. The loopback default protects the common case, but a **non-loopback bind (which ADR-0039's posture supports with TLS+token for AG-UI) exposes every non-AG-UI surface unauthenticated** — a TLS-passing client acts without the token AG-UI requires. Two distinct severities, do not conflate:
    - **A2A/MCP** — unauthenticated turn-driving + intervention-answer injection, but the answer is **always `external_source=True` fenced** (session.py:5128), so blast-radius is *bounded* ("unauthenticated access to a fenced-peer surface").
    - **REST `/api/*` control-plane — unauthenticated AND UNFENCED raw mutations, the sharper severity** (the fence only covers conversation-injection, not REST ops, verified primary): `DELETE /permissions` (revoke approval entries, permissions.py:78/:94) + `GET /permissions` (disclose the approval store), `PATCH /budget/caps` (budget.py:99 — **raising caps defeats the cost/budget bounding band → unbounded spend**), `POST`/`DELETE /agents` (agents.py:66/:103) and `/topologies` (create/delete). These are direct control-plane privilege/state mutations with no fence.
    **This is owner requirement #4's gap made concrete — and it is broader/sharper than "A2A refactor room": the REST control-plane is the priority.**
-2. **[modest dup] Progress-bridge scaffold.** `_A2AProgressBridge` and `_MCPProgressBridge` are two separately-written classes both doing "subscribe `session._chat_events` → forward to a protocol sink" (they mirror each other by comment, not shared code).
+2. **[modest dup] Progress-bridge scaffold.** `_A2AProgressBridge` and `_MCPProgressBridge` are two separately-written classes both doing "subscribe `session._audit_events` → forward to a protocol sink" (they mirror each other by comment, not shared code).
 3. **[minor dup] `resolve_session` wrapped 3×** (`resolve_a2a_session` / `resolve_mcp_session` / `resolve_webhook_session`) — thin per-transport wrappers.
 4. **[modularity gap] Mount-conditionality reinvented.** Webhook *plugins* already opt-in via FP-0041 (`register_router(config) -> APIRouter | None`, None = graceful skip, + `webhooks.yaml` activation, + entry-point discovery). Core surfaces bypass this with unconditional `app.include_router`. This inconsistency *is* the thing to generalize.
 
@@ -99,7 +99,7 @@ SurfaceSpec(name, mount(app, config) -> APIRouter | None, default_enabled, ident
 Retire the parallel chainlit PoC browser UI (superseded by openui + AG-UI). Verified **clean-break safe**: zero external production importers; it is a standalone `chainlit run` subprocess (**not mounted in `server.py`** → the surface registry is untouched by it). Footprint to delete in one PR: the `chainlit_app/` package (13 modules + assets), `cli/commands/chainlit.py` + its 2-line registry entry (`commands/__init__.py:12,32`), the `[chainlit]` extra (`pyproject.toml:102`) + package-data glob (`:188`), **17 test files** (correcting the "~4" estimate), and doc references (user-facing: `feature-map.md:603` row + the `reyn-yaml.md/.ja` "TUI + chainlit" mentions — purge; the historical ADR/proposal refs stay). Also remove the now-dead `NullPresentationConsumer("chainlit")` ratchet assertion (`test_present_sink_na_ratchet_2708.py:35`) since "chainlit" leaves `_NA_PRESENTATION_SURFACES`.
 
 ### D6 — Refactor candidates (build-time fold, from §2) [optional]
-- **#2** shared `ProgressBridge` base (subscribe `_chat_events` → pluggable protocol sink) — fold if a phase touches the A2A/MCP bridges; sinks stay surface-local.
+- **#2** shared `ProgressBridge` base (subscribe `_audit_events` → pluggable protocol sink) — fold if a phase touches the A2A/MCP bridges; sinks stay surface-local.
 - **#3** one parametrized `resolve_session` helper — low value, optional.
 - **DO NOT touch** the legitimately-separate seams (wire encoding, attach/SurfaceManager, reply-delivery) — call this out explicitly so a future "consolidation" doesn't over-reach.
 

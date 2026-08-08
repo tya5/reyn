@@ -83,28 +83,28 @@ def test_indicator_idle_shows_no_toolbar() -> None:
 def test_indicator_on_during_turn_off_after() -> None:
     """Tier 2: turn_started shows the indicator; turn_completed hides it."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
+    r.on_audit_event(_evt("turn_started"))
     tb = r.bottom_toolbar()
     assert tb is not None
     assert "Working" in tb.value  # HTML markup carries the label
-    r.on_chat_event(_evt("turn_completed"))
+    r.on_audit_event(_evt("turn_completed"))
     assert r.bottom_toolbar() is None
 
 
 def test_indicator_cleared_on_cancel() -> None:
     """Tier 2: a cancelled turn also clears the indicator."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
+    r.on_audit_event(_evt("turn_started"))
     assert r.bottom_toolbar() is not None
-    r.on_chat_event(_evt("turn_cancelled"))
+    r.on_audit_event(_evt("turn_cancelled"))
     assert r.bottom_toolbar() is None
 
 
 def test_unrelated_event_does_not_toggle_indicator() -> None:
     """Tier 2: a non-lifecycle event leaves indicator state unchanged."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("llm_request"))
+    r.on_audit_event(_evt("llm_request"))
     assert r.bottom_toolbar() is None
-    r.on_chat_event(_evt("turn_started"))
-    r.on_chat_event(_evt("llm_response_received"))
+    r.on_audit_event(_evt("turn_started"))
+    r.on_audit_event(_evt("llm_response_received"))
     assert r.bottom_toolbar() is not None  # still thinking

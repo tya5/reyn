@@ -30,7 +30,7 @@ SURFACE-SIDE consumers the producer-side tests cannot reach:
    The fold leg (and the live-vs-restore entry-sequence gate) lives in
    ``tests/test_3540_intervention_answer_fold.py``.
 2. ``ConsoleChatRenderer`` / ``InlineChatRenderer`` (the plain/--cui and
-   plain-render-mode-fallback surfaces, ``on_chat_event`` ->
+   plain-render-mode-fallback surfaces, ``on_audit_event`` ->
    ``intervention_answer_display_message``) — same neutralize-at-boundary
    witness, unit-level (no Textual app needed for these two).
 
@@ -238,14 +238,14 @@ def test_intervention_answer_display_message_neutralizes_raw_text() -> None:
 
 
 def test_console_chat_renderer_renders_intervention_answer_event() -> None:
-    """Tier 2: ``ConsoleChatRenderer.on_chat_event`` renders an
+    """Tier 2: ``ConsoleChatRenderer.on_audit_event`` renders an
     "intervention_answer_submitted" event via ``message()`` — the plain
     ``--cui`` / non-TTY surface's consumer of the migrated echo."""
     rendered: list[OutboxMessage] = []
     renderer = ConsoleChatRenderer()
     renderer.message = rendered.append  # type: ignore[method-assign]
 
-    renderer.on_chat_event(_answer_event(text="Kyoto"))
+    renderer.on_audit_event(_answer_event(text="Kyoto"))
 
     (msg,) = rendered
     assert msg.kind == "user"
@@ -253,7 +253,7 @@ def test_console_chat_renderer_renders_intervention_answer_event() -> None:
 
 
 def test_inline_chat_renderer_renders_intervention_answer_event() -> None:
-    """Tier 2: ``InlineChatRenderer.on_chat_event`` renders an
+    """Tier 2: ``InlineChatRenderer.on_audit_event`` renders an
     "intervention_answer_submitted" event via ``message()`` — reachable on
     the plain-render-mode-on-a-TTY fallback (the default TTY path has its own
     TextualChatApp handler, covered above)."""
@@ -261,7 +261,7 @@ def test_inline_chat_renderer_renders_intervention_answer_event() -> None:
     renderer = InlineChatRenderer()
     renderer.message = rendered.append  # type: ignore[method-assign]
 
-    renderer.on_chat_event(_answer_event(text="Nagoya"))
+    renderer.on_audit_event(_answer_event(text="Nagoya"))
 
     (msg,) = rendered
     assert msg.kind == "user"

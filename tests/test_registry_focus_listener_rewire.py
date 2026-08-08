@@ -50,7 +50,7 @@ async def test_focus_listeners_follow_agent_switch(tmp_path) -> None:
         # Mirror chat.py → run_repl: attach the initial agent, then bind.
         alpha = await reg.attach("alpha")
         reg.bind_focus_listeners(
-            on_chat_event=lambda *a, **k: None,
+            on_audit_event=lambda *a, **k: None,
             intervention_channel=DEFAULT_CHAT_CHANNEL_ID,
         )
         # Bind wired the currently-focused session.

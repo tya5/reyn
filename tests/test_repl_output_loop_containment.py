@@ -44,7 +44,7 @@ class _Recorder:
             raise RuntimeError("simulated render failure")
         self.seen.append(msg.text)
 
-    def on_chat_event(self, event) -> None:  # pragma: no cover - unused here
+    def on_audit_event(self, event) -> None:  # pragma: no cover - unused here
         pass
 
     def uses_app_input(self) -> bool:

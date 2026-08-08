@@ -362,7 +362,7 @@ class InterventionHandler:
         # outbox frame this replaces). Mirrors ``user_submitted``
         # (#3301/P1 C): the single truth traveling the wire is raw text; each
         # consuming surface neutralizes at its OWN render boundary —
-        # ``ConsoleChatRenderer``/``InlineChatRenderer.on_chat_event`` (via
+        # ``ConsoleChatRenderer``/``InlineChatRenderer.on_audit_event`` (via
         # ``intervention_answer_display_message``, the SAME
         # ``core/present/guard.get_neutralizer("terminal")`` seam #2770 uses)
         # and ``TextualChatApp._handle_intervention_answer_event`` (via

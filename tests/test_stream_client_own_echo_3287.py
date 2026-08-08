@@ -5,7 +5,7 @@ round-trip prints the user's own line TWICE — ``prompt_session.prompt_async``
 (``run_input_loop``, ``stream_client.py``) already leaves ``you > <text>`` on
 the terminal the instant Enter is pressed, and then the broadcast
 ``user_submitted`` audit-event this same submission produces re-renders it a
-second time via ``renderer.on_chat_event`` (``run_output_loop``). A local
+second time via ``renderer.on_audit_event`` (``run_output_loop``). A local
 ``/quit`` never reaches ``submit_user_text`` (short-circuited earlier in
 ``run_input_loop``), so it never emits a ``user_submitted`` event and never
 doubled — exactly the asymmetry the bug report observed.
@@ -75,7 +75,7 @@ from reyn.schemas.models import Event
 
 
 class _Recorder:
-    """A real renderer double: records every on_chat_event call it receives."""
+    """A real renderer double: records every on_audit_event call it receives."""
 
     def __init__(self) -> None:
         self.events: list = []
@@ -83,7 +83,7 @@ class _Recorder:
     def message(self, msg: OutboxMessage) -> None:  # pragma: no cover - unused
         pass
 
-    def on_chat_event(self, event) -> None:
+    def on_audit_event(self, event) -> None:
         self.events.append(event)
 
     def uses_app_input(self) -> bool:
@@ -175,7 +175,7 @@ def _user_submitted_event(
 @pytest.mark.asyncio
 async def test_matching_own_submission_is_not_rerendered_and_is_consumed() -> None:
     """Tier 2: a queued own-submission msg_id matching the broadcast
-    user_submitted event's msg_id is NOT forwarded to renderer.on_chat_event
+    user_submitted event's msg_id is NOT forwarded to renderer.on_audit_event
     (the terminal already showed it) and is discarded from the set."""
     transport = _QueueTransport()
     renderer = _Recorder()

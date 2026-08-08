@@ -37,7 +37,7 @@ def _has_consolidation(history: list[dict]) -> bool:
 
 def _capture_events(session) -> list[str]:
     seen: list[str] = []
-    session._chat_events.add_subscriber(lambda e: seen.append(e.type))
+    session._audit_events.add_subscriber(lambda e: seen.append(e.type))
     return seen
 
 

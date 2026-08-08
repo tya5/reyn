@@ -111,8 +111,11 @@ dependencies = [
     # event rather than the per-frame geometry poll it replaced. (This entry
     # is retrospective — #3784 moved the pin without extending this narrative,
     # so the comment described 0.13.1 while the pin was 0.14.0.)
-    # 0.15.1 adds a viewport overlay API (`play_overlay`/`set_overlay`/
-    # `OverlayFinished`) and nothing else. Verified as no-change-for-reyn from
+    # 0.15.1 adds a viewport overlay API (`play_overlay` / `stop_overlay` /
+    # the `overlay` property / `OverlayFinished`) and nothing else. There is no
+    # `set_overlay` — this comment named one until #3841 checked it against
+    # `_view.py`; the setter is the `overlay` property's, not a method.
+    # Verified as no-change-for-reyn from
     # the DIFF, not from the release notes: `__all__` is untouched (only
     # `__version__` moved), the sole deleted line in `_view.py` is an import
     # widening (`Callable` -> `Callable, Iterator`), and the two insertions
@@ -123,10 +126,22 @@ dependencies = [
     # "The changelog says additive" would not have established that: an
     # insertion into `render_line` is a change to the hot path whatever the
     # release notes call it.
+    # 0.15.2 / 0.15.3 are DOCS-ONLY for the library: the whole diff
+    # 503a536->21c6a1c is CHANGELOG/README, two new `examples/`, and the version
+    # string in `pyproject.toml` + `__init__.py`. Nothing under
+    # `src/textual_flowview/` changes behaviour, so the bump cannot regress reyn.
+    # It is taken for what the examples ESTABLISH rather than for library code:
+    # `examples/image.py` shows a Rich renderable (textual-image, built from a
+    # PIL image IN THE CLIENT PROCESS) dropped into a `Presentation`, and
+    # `examples/gif.py` shows `animate_entry` driving frames with off-screen
+    # auto-pause. Both are the upstream demonstrating a usage reyn's own image
+    # work (#3811 and the present-op `image` component) needs to know is
+    # supported — "the library did not change" is a reason not to fear the bump,
+    # not a reason to skip it.
     # The SHA is the *commit*, not the tag object: v0.13.1/v0.12.0 are
     # LIGHTWEIGHT tags (no `^{}` peel in `git ls-remote`), same as v0.9.0,
     # unlike the annotated v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@503a536e5dd717731125679a32ee89a1b90ae54d",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@21c6a1caf6b216dfbba89ac12aa9310b0c759909",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)

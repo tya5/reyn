@@ -421,7 +421,7 @@ streaming-notification 軸**である——下記の行、および `frames.py` 
 name ではなく)標準の `TEXT_MESSAGE_CONTENT` surface にマップする(#3288 ③d — 上記
 *Text lifecycle* 参照)——実際に client が受け取るワイヤー上ではこの `CUSTOM` name は
 現れない。この行が記述しているのは plain codec 関数が単体で行うこと
-(`tests/test_agent_delta_chat_event_3288.py` が直接検証する)であり、接続済みの
+(`tests/test_agent_delta_audit_event_3288.py` が直接検証する)であり、接続済みの
 ワイヤー上で起きることではない。
 
 | Custom `name`                        | Meaning                                          |
@@ -479,8 +479,8 @@ category error だったため)。どちらも同一の統一 frame stream に
 `EventFrame` として乗る(`_TURN_AND_ANSWER_EVENTS`、`transport/frames.py`)——
 encode/decode は汎用的(`transport/agui/protocol.py`)なので、どちらの event type
 についても wire 側の変更は不要だった。アタッチしているすべての surface の
-event→display handler(`ConsoleChatRenderer.on_chat_event` /
-`InlineChatRenderer.on_chat_event` / `TextualChatApp._pump_frames`)がその行を描画し、
+event→display handler(`ConsoleChatRenderer.on_audit_event` /
+`InlineChatRenderer.on_audit_event` / `TextualChatApp._pump_frames`)がその行を描画し、
 その render 境界で neutralize する(`renderer.user_submitted_display_message` /
 `renderer.intervention_answer_display_message` — Textual surface については
 `TextualChatApp._handle_intervention_answer_event`)——**ただし自分の端末がすでに

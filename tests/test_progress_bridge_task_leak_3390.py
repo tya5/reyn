@@ -61,7 +61,7 @@ def test_a2a_bridge_tracked_task_count_does_not_grow_with_event_count() -> None:
     events = EventLog()
 
     class _SessionWithChatEvents:
-        _chat_events = events
+        _audit_events = events
 
     run_registry = RunRegistry()
     entry = run_registry.create(agent_name="demo", chain_id="c1")
@@ -111,7 +111,7 @@ def test_mcp_bridge_tracked_task_count_does_not_grow_with_event_count() -> None:
     events = EventLog()
 
     class _SessionWithChatEvents:
-        _chat_events = events
+        _audit_events = events
 
     class _FakeMCPSession:
         def __init__(self) -> None:
@@ -171,7 +171,7 @@ def test_a2a_bridge_detach_still_cancels_inflight_task_while_removal_wired() -> 
     events = EventLog()
 
     class _SessionWithChatEvents:
-        _chat_events = events
+        _audit_events = events
 
     run_registry = RunRegistry()
     entry = run_registry.create(agent_name="demo", chain_id="c1")

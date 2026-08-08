@@ -28,14 +28,14 @@ identity, per the Family 2 lesson:
    closes over ``self._hook_dispatcher``, which is unpacked onto ``self``
    only AFTER the builder returns): invoking the wired trigger publishes onto
    ``session._hook_bus``.
-4. ``hook_bus``'s ``emit_event`` sink reaches the family ``chat_events`` — a
+4. ``hook_bus``'s ``emit_event`` sink reaches the family ``audit_events`` — a
    forced subscriber-queue drop fires a ``bus_subscriber_dropped`` P6
-   audit-event that lands in ``session._chat_events``.
-5. ``hot_reloader.events IS chat_events`` (the value-dependency at the heart
-   of the pre-impl-caught crash: ``hot_reloader`` reads ``chat_events``
+   audit-event that lands in ``session._audit_events``.
+5. ``hot_reloader.events IS audit_events`` (the value-dependency at the heart
+   of the pre-impl-caught crash: ``hot_reloader`` reads ``audit_events``
    EAGERLY at construction, which is why the family is built AFTER Family 1)
    — a ``hot_reloader`` reload emits a ``config_reloaded`` event that lands in
-   ``session._chat_events``.
+   ``session._audit_events``.
 6. ``get_active_hot_reloader()`` publishes THIS session's ``hot_reloader``.
 
 Strip-falsify (invariant 2 is live / non-vacuous): re-running invariant 2's
@@ -50,7 +50,7 @@ of existing construction code), so the CLAUDE.md truncate-falsify
 recovery-feature PR gate does not apply; what this scaffold instead pins is
 that the hook-event WIRING itself survives the extraction byte-identically —
 including the reordering (fs_watcher / hook_bus move ~200+ lines down into the
-builder, and the whole family moves AFTER the Family 1 chat_events
+builder, and the whole family moves AFTER the Family 1 audit_events
 assignment). Per the extracted-refactor idiom
 (``docs/deep-dives/contributing/testing.md`` Annex: Scaffolding tests /
 CLAUDE.md's byte-identical-staged-externalization rule), this scaffold is
@@ -134,7 +134,7 @@ class TestFamily3HookEventBundleByteIdentical:
             {},                        # boot_in_set
             [],                        # composer_defs
             FsWatchConfig(),           # fs_watch_cfg
-            s._chat_events,            # chat_events (Family 1 EventLog)
+            s._audit_events,            # audit_events (Family 1 EventLog)
             s._registry,              # registry
             "family3-direct-sid",      # session_id
         )
@@ -224,13 +224,13 @@ class TestFamily3HookEventBundleByteIdentical:
             sub.close()
 
     @pytest.mark.asyncio
-    async def test_hook_bus_emit_event_reaches_family_chat_events(self, tmp_path) -> None:
+    async def test_hook_bus_emit_event_reaches_family_audit_events(self, tmp_path) -> None:
         """Tier 1: invariant 4 — the family ``hook_bus``'s ``emit_event`` sink
-        is wired to the family ``chat_events``. Forcing a subscriber-queue
+        is wired to the family ``audit_events``. Forcing a subscriber-queue
         overflow (publish past the subscriber maxsize without draining) makes
         the bus drop its oldest entry and — on the first drop — fire a
         metadata-only ``bus_subscriber_dropped`` P6 audit-event through
-        ``emit_event``; that event lands in ``session._chat_events``, observed
+        ``emit_event``; that event lands in ``session._audit_events``, observed
         via the EventLog's public ``all()`` read."""
         s = _make_session(tmp_path)
         # Attach ONE never-drained subscriber, then overflow it: HookBus's
@@ -240,24 +240,24 @@ class TestFamily3HookEventBundleByteIdentical:
         try:
             for i in range(200):
                 s._hook_bus.publish(HookEvent(kind="turn_end", payload={"i": i}))
-            types = [e.type for e in s._chat_events.all()]
+            types = [e.type for e in s._audit_events.all()]
             assert "bus_subscriber_dropped" in types
         finally:
             _sub.close()
 
     @pytest.mark.asyncio
-    async def test_hot_reloader_events_is_the_family_chat_events(self, tmp_path) -> None:
-        """Tier 1: invariant 5 — ``hot_reloader.events IS chat_events`` (the
+    async def test_hot_reloader_events_is_the_family_audit_events(self, tmp_path) -> None:
+        """Tier 1: invariant 5 — ``hot_reloader.events IS audit_events`` (the
         value-dependency whose omission from the original spec's safety
         enumeration would have crashed construction had the builder run before
-        the Family 1 chat_events assignment). Proven behaviorally: a
+        the Family 1 audit_events assignment). Proven behaviorally: a
         ``hot_reloader`` reload emits a ``config_reloaded`` P6 event through
-        its ``events`` sink, which lands in ``session._chat_events`` (EventLog
+        its ``events`` sink, which lands in ``session._audit_events`` (EventLog
         ``all()``) iff the sink IS that EventLog."""
         s = _make_session(tmp_path)
-        before = len(s._chat_events.all())
+        before = len(s._audit_events.all())
         await s._hot_reloader.apply_all(exclude=frozenset({"cron"}))
-        after = [e.type for e in s._chat_events.all()]
+        after = [e.type for e in s._audit_events.all()]
         assert len(after) > before
         assert "config_reloaded" in after
 

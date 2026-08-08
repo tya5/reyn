@@ -64,13 +64,13 @@ def test_end_to_end_list_mcp_servers_matches_conversation_and_llm_text(tmp_path)
 
     outbox = session.outbox
     forwarder = ChatLifecycleForwarder(outbox)
-    session._chat_events.add_subscriber(forwarder)
+    session._audit_events.add_subscriber(forwarder)
 
     loop = RouterLoop(host=session._router_host, chain_id="c1", router_model="gpt-4o")
     catalog = {"list_mcp_servers": {"function": {"name": "list_mcp_servers", "parameters": {}}}}
     ctx = DispatchContext(
         caller_kind="router", caller_id="alice", chain_id="c1",
-        tool_catalog=catalog, events=session._chat_events,
+        tool_catalog=catalog, events=session._audit_events,
     )
 
     async def _dispatch():

@@ -281,7 +281,7 @@ async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path):
     msg_id = session.queued_user_messages()[0]["msg_id"]
 
     captured: list = []
-    session.subscribe_chat_events(lambda ev: captured.append(ev))
+    session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     cancel_task = asyncio.create_task(session.cancel_queued(msg_id))
     iter_task = asyncio.create_task(session.run_one_iteration())
@@ -321,7 +321,7 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
     msg_id = session.queued_user_messages()[0]["msg_id"]
 
     captured: list = []
-    session.subscribe_chat_events(lambda ev: captured.append(ev))
+    session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     iter_task = asyncio.create_task(session.run_one_iteration())
     cancel_task = asyncio.create_task(session.cancel_queued(msg_id))
@@ -404,7 +404,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     view = RemoteQueueView()
     view.apply_snapshot(queue=[], turn_active=False, queue_seq=0)
     captured: list = []
-    session.subscribe_chat_events(lambda ev: captured.append(ev))
+    session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
     submitted = next(e for e in captured if e.type == "user_submitted")

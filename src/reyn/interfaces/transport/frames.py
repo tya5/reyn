@@ -3,7 +3,7 @@
 The inline CUI historically consumed its session through **two independent
 source paths** (ADR-0039 P1): the display outbox (``session.outbox`` → the
 registry forwarder → ``repl_outbox`` → ``renderer.message``) and the
-audit-event subscription (``session.chat_events`` → ``renderer.on_chat_event``,
+audit-event subscription (``session.audit_events`` → ``renderer.on_audit_event``,
 which drives the Working / Running / Waiting-for-you indicator). A remote
 client, however, sees ONE ordered event stream (AG-UI / SSE, P2). This module
 defines the unified, tagged frame vocabulary that both the local
@@ -15,12 +15,12 @@ defines the unified, tagged frame vocabulary that both the local
   working-indicator path).
 
 A frame carries its :class:`FrameTag` so the consuming client dispatches to the
-renderer's two entry points (``message`` for display, ``on_chat_event`` for
+renderer's two entry points (``message`` for display, ``on_audit_event`` for
 event) at the consuming end — one stream in, two renderer entry points out.
 
-The forward-set (:func:`renderer_chat_events`) is mostly **DERIVED** from the
+The forward-set (:func:`forwarded_frame_kinds`) is mostly **DERIVED** from the
 renderer's own vocabulary — ``_WAITING_ON_BY_EVENT`` (the tool-axis table) plus
-the turn / intervention-answer events ``on_chat_event`` handles — never
+the turn / intervention-answer events ``on_audit_event`` handles — never
 hand-listed. The dual-stream completeness gate
 (``tests/test_transport_dual_stream_completeness.py``) binds the transport's
 coverage to that vocabulary so a renderer event the transport does not forward
@@ -54,11 +54,11 @@ class FrameTag(Enum):
     """Which renderer entry point a frame dispatches to at the consuming end."""
 
     DISPLAY = "display"  # → renderer.message(OutboxMessage)
-    EVENT = "event"      # → renderer.on_chat_event(Event)
+    EVENT = "event"      # → renderer.on_audit_event(Event)
 
 
 # The turn-lifecycle + intervention-answer audit-events the renderer's
-# ``on_chat_event`` consumes DIRECTLY (i.e. not via the ``_WAITING_ON_BY_EVENT``
+# ``on_audit_event`` consumes DIRECTLY (i.e. not via the ``_WAITING_ON_BY_EVENT``
 # tool-axis table). Kept here next to the derivation so the completeness gate
 # has a single, reviewable source for the non-tool half of the vocabulary.
 _TURN_AND_ANSWER_EVENTS = frozenset(
@@ -143,10 +143,15 @@ _STREAMING_EVENTS = frozenset({"agent_delta"})
 
 
 @lru_cache(maxsize=1)
-def renderer_chat_events() -> frozenset[str]:
-    """The set of audit-event types the transport forwards onto the unified
-    frame stream (both ``InProcessTransport`` and the AG-UI endpoint filter
-    against this).
+def forwarded_frame_kinds() -> frozenset[str]:
+    """The set of frame kinds the transport forwards onto the unified frame
+    stream (both ``InProcessTransport`` and the AG-UI endpoint filter against
+    this). Deliberately NOT "audit-event types": most members ARE real
+    audit-events (``EventLog``-backed), but ``session_attached`` is not — it's
+    an ``EventFrame`` the registry attach seam puts directly on
+    ``repl_outbox``, never touching ``.reyn/events`` (#3794 P1). A name
+    claiming audit-event provenance for this set would be the same factual
+    error P1 fixed, restated.
 
     Union of:
 
@@ -155,7 +160,7 @@ def renderer_chat_events() -> frozenset[str]:
       / ``tool_failed``); extending WaitingOn to a new axis is one new entry
       there and this set follows automatically.
     - :data:`_TURN_AND_ANSWER_EVENTS` — the turn-lifecycle / intervention-answer
-      / user-submitted events ``renderer.on_chat_event`` branches on directly
+      / user-submitted events ``renderer.on_audit_event`` branches on directly
       (DERIVED from the renderer's own vocabulary, never hand-listed for this
       half — see ``tests/test_transport_dual_stream_completeness.py``).
     - :data:`_STREAMING_EVENTS` (#3288 ③b) — the ONE deliberate exception to
@@ -189,7 +194,7 @@ class DisplayFrame:
 
 @dataclass(frozen=True)
 class EventFrame:
-    """An event-path frame: one renderer-relevant audit-event → ``on_chat_event``."""
+    """An event-path frame: one renderer-relevant audit-event → ``on_audit_event``."""
 
     event: "Event"
     tag: FrameTag = FrameTag.EVENT
@@ -204,5 +209,5 @@ __all__ = [
     "EventFrame",
     "Frame",
     "FrameTag",
-    "renderer_chat_events",
+    "forwarded_frame_kinds",
 ]

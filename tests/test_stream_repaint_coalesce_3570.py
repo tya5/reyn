@@ -26,7 +26,7 @@ emitted by the production ``on_content_delta`` wiring
 (``RouterLoop._emit_agent_delta`` → session audit-events → the registry's focus
 listener → the transport queue → the app's frame pump). The LLM call itself is
 the only faked boundary, the established idiom of
-``tests/test_agent_delta_chat_event_3288.py`` and
+``tests/test_agent_delta_audit_event_3288.py`` and
 ``tests/test_3327_answer_bypasses_sentqueue.py``.
 """
 from __future__ import annotations

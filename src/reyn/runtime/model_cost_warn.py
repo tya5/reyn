@@ -56,7 +56,7 @@ def maybe_emit_model_cost_warn(
 
         warned.add(model_class)
         cost = get_input_cost_per_1m_usd(resolved_model)
-        session._chat_events.emit(
+        session._audit_events.emit(
             "model_cost_warn",
             model=resolved_model,
             model_class=model_class,
@@ -117,7 +117,7 @@ async def maybe_block_high_cost_model(
         cost_str = f"${cost:.2f}/1M input tokens" if cost is not None else "high-cost"
 
         if getattr(session, "_non_interactive", False):
-            session._chat_events.emit(
+            session._audit_events.emit(
                 "model_cost_block",
                 model=resolved_model,
                 model_class=model_class,
@@ -134,7 +134,7 @@ async def maybe_block_high_cost_model(
             extension_amount=1.0,
         )
         allow = bool(getattr(decision, "allow_continue", False))
-        session._chat_events.emit(
+        session._audit_events.emit(
             "model_cost_block",
             model=resolved_model,
             model_class=model_class,
