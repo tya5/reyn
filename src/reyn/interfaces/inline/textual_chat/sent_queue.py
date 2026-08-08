@@ -289,6 +289,24 @@ class SentQueue(Vertical):
             return [str(self._summary.content)] if self._rows else []
         return [str(row.content) for row in self._rows.values()]
 
+    def item_count(self) -> int:
+        """How many messages are queued — independent of how they are drawn.
+
+        Distinct from ``len(rendered_texts())`` on purpose. ``rendered_texts``
+        answers "what is on screen", which while summarised is ONE line
+        whatever the queue holds; this answers "how many are waiting", which
+        the collapse cannot change.
+
+        The distinction is not academic. ``_apply_compact_layout`` used
+        ``rendered_texts`` to decide whether the queue must collapse, so the
+        decision's INPUT moved with its own OUTPUT: collapse made the count
+        read 1, which said there was room, which un-collapsed it, which made
+        the count read 3 again. Measured flipping on every re-decide (#3680
+        follow-up). A count that survives the thing being decided is what
+        breaks the loop.
+        """
+        return len(self._rows)
+
     def has_items(self) -> bool:
         """Whether at least one queued row is currently shown.
 

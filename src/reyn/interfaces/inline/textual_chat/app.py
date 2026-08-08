@@ -2223,7 +2223,11 @@ class TextualChatApp(App):
             drawer_open=bool(drawer.display),
             rewind_open=bool(self._rewind_picker.display),
             completion_open=bool(self._completion.display),
-            queue_items=len(queue.rendered_texts()) if queue.has_items() else 0,
+            # ``item_count``, never ``len(rendered_texts())``: the latter is
+            # what is ON SCREEN, and while summarised that is one line no
+            # matter how many are queued — so the decision would read its own
+            # output as its input and flip on every re-decide.
+            queue_items=queue.item_count(),
             turn_active=self._activity.state is not None,
             intervention_open=bool(self._iv_panel.display),
         )
