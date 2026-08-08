@@ -944,7 +944,16 @@ def _cost_scope_state(
 #: retired renderer used, and which this port faithfully inherited) shifted the
 #: Output row's cells one column left of every other row. Deriving the width here
 #: means adding or renaming a row later cannot re-break the alignment.
-_COST_ROW_LABELS = ("COST", "Total", "Input", "Output", "Saved", "Saved%")
+#: The table's LABEL column — the scope names, spelled out (#3691). The table
+#: was transposed to make that possible: with scopes as COLUMNS they had to fit
+#: a 9-character value column and were abbreviated to ``Ses``/``Agt``/``Prj``,
+#: three strings a reader has to be taught. As rows they carry their own names,
+#: and the metric names move to the header where they already fit.
+#:
+#: It also costs two fewer lines — a header plus three scopes instead of a
+#: header plus five metrics — in a pane that competes for rows against every
+#: other drawer pane through ``compact_caps`` (#3680).
+_COST_ROW_LABELS = ("COST", "Session", "Agent", "Project")
 _COST_LABEL_W = max(len(label) for label in _COST_ROW_LABELS)
 _COST_COL_W = 9
 
@@ -959,8 +968,8 @@ def _cost_row(label: str, cells: "Sequence[str]") -> str:
 
 
 def _cost_breakdown_table(snap: dict) -> list[str]:
-    """The 5-row (Total/Input/Output/Saved/Saved%) × 3-column (Session/Agent/
-    Project) cost breakdown table.
+    """The 3-row (Session/Agent/Project) × 5-column (Total/Input/Output/Saved/
+    Saved%) cost breakdown table.
 
     Total is always the litellm-accurate authoritative figure (``cost_usd`` /
     ``cost_agent`` / ``cost_total`` — already computed via ``estimate_cost``,
@@ -977,13 +986,13 @@ def _cost_breakdown_table(snap: dict) -> list[str]:
 
     session_total = snap.get("cost_usd", 0.0)
     scopes = [
-        ("Ses", snap.get("cost_breakdown_session") or CostBreakdown(), session_total),
-        ("Agt", snap.get("cost_breakdown_agent") or CostBreakdown(),
+        ("Session", snap.get("cost_breakdown_session") or CostBreakdown(), session_total),
+        ("Agent", snap.get("cost_breakdown_agent") or CostBreakdown(),
          snap.get("cost_agent", session_total)),
-        ("Prj", snap.get("cost_breakdown_project") or CostBreakdown(),
+        ("Project", snap.get("cost_breakdown_project") or CostBreakdown(),
          snap.get("cost_total", session_total)),
     ]
-    header = _cost_row("COST", [name for name, _, _ in scopes])
+    header = _cost_row("COST", ["Total", "Input", "Output", "Saved", "Saved%"])
 
     per_scope = [
         (name, total, *_cost_scope_state(breakdown, total))
@@ -992,37 +1001,27 @@ def _cost_breakdown_table(snap: dict) -> list[str]:
     any_approx = any(state == "approx" for *_rest, state in per_scope)
     any_unavail = any(state == "unavail" for *_rest, state in per_scope)
 
-    total_row = _cost_row(
-        "Total", [f"${total:.4f}" for _, total, *_ in per_scope]
-    )
-
     def _cell(value: float, state: str) -> str:
         if state == "unavail":
             return "—"
         s = f"${value:.4f}"
         return ("~" + s)[:_COST_COL_W] if state == "approx" else s
 
-    input_row = _cost_row(
-        "Input",
-        [_cell(inp, state) for _, _, inp, _out, _sav, _pct, state in per_scope],
-    )
-    output_row = _cost_row(
-        "Output",
-        [_cell(out, state) for _, _, _inp, out, _sav, _pct, state in per_scope],
-    )
-    saved_row = _cost_row(
-        "Saved",
-        [_cell(sav, state) for _, _, _inp, _out, sav, _pct, state in per_scope],
-    )
-    pct_row = _cost_row(
-        "Saved%",
-        [
-            "—" if state == "unavail" else f"{round(100 * pct)}%"
-            for _, _, _inp, _out, _sav, pct, state in per_scope
-        ],
-    )
+    scope_rows = [
+        _cost_row(
+            name,
+            [
+                f"${total:.4f}",
+                _cell(inp, state),
+                _cell(out, state),
+                _cell(sav, state),
+                "—" if state == "unavail" else f"{round(100 * pct)}%",
+            ],
+        )
+        for name, total, inp, out, sav, pct, state in per_scope
+    ]
 
-    rows = [header, total_row, input_row, output_row, saved_row, pct_row]
+    rows = [header, *scope_rows]
     if any_approx:
         rows.append("~ approx at high volume (>200k tiered pricing)")
     if any_unavail:
@@ -1061,6 +1060,11 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
     return rows
 
 
+#: Where every Ctx line's value starts. Named so the labels cannot drift out
+#: of alignment one edit at a time — the cache row had already done so.
+_CTX_LABEL_W = 13
+
+
 def ctx_pane_lines(snap: "dict | None") -> list[str]:
     """The Ctx readout — CURRENT state only (cumulative figures live in the Cost
     pane instead, see :func:`cost_pane_lines`).
@@ -1093,13 +1097,23 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
     comp_trigger = status.get("effective_trigger", 0)
     comp_est = max(0, comp_trigger - status.get("free_window", 0))
     comp_pct = round(100 * comp_est / comp_trigger) if comp_trigger > 0 else 0
+    # The bar sits with the figure it draws (#3691). It has always visualised
+    # the WINDOW's fill, and it used to be printed after the compaction line —
+    # directly beneath "61% to trigger" while showing 42%. Two percentages, one
+    # of them a bar, adjacent and unrelated: the misreading is not a risk, it is
+    # the reading. #3691's own principle for this pane says the actual context
+    # window and the compaction estimate are not comparable and must stay
+    # visually separate; the layout was doing the opposite.
     return [
         f"window       {window:,} tokens  ({snap.get('ctx_source', 'unknown')})",
         f"prompt       {prompt_tokens:,} tokens  ({pct}% of window)",
-        f"free         {free:,} tokens",
-        _cache_hit_line("cache", recent_cached, recent_prompt),
-        f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
         f"             {_ctx_bar(prompt_tokens, window)}  {_ctx_pct(snap)}",
+        f"free         {free:,} tokens",
+        # Label column widened to match its neighbours — it was four spaces
+        # where every other label is seven, so the one line about the cache
+        # started in a different place from the five around it.
+        _cache_hit_line(f"{'cache':<{_CTX_LABEL_W}}", recent_cached, recent_prompt),
+        f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
     ]
 
 

@@ -149,11 +149,78 @@ async def test_real_snapshot_carries_every_key_the_chrome_reads(tmp_path) -> Non
 
 
 def _saved_pct_row(lines: "list[str]") -> str:
-    return next(line for line in lines if line.startswith("Saved%"))
+    """The SESSION scope's row — Saved% is its last column since #3691
+    transposed the table (scopes are rows now, metrics are columns)."""
+    return next(line for line in lines if line.startswith("Session"))
+
+
+def test_the_ctx_bar_sits_with_the_figure_it_draws() -> None:
+    """Tier 2: the window bar is adjacent to the window percentage, not to the
+    compaction one (#3691).
+
+    The bar has always drawn the WINDOW's fill. It used to be printed after the
+    compaction line — a 42% bar directly beneath "61% to trigger" — so the two
+    figures the pane deliberately keeps separate were rendered as if one
+    illustrated the other. Nothing about either number was wrong; the ADJACENCY
+    was, which is not a property either line has on its own.
+
+    Pinned by position rather than by the rendered strings: the claim is about
+    which line the bar neighbours, and asserting the text would pin the
+    formatting this test does not care about.
+    """
+    from reyn.interfaces.inline.textual_chat.chrome import ctx_pane_lines
+
+    lines = ctx_pane_lines({
+        "ctx_window": 128_000,
+        "ctx_used": 54_000,
+        "ctx_source": "model catalog",
+        "ctx_recent_usage": (57_386, 18_000),
+        "ctx_compaction_status_fn": lambda: {
+            "effective_trigger": 51_000, "free_window": 20_000,
+        },
+    })
+    bar = next(i for i, ln in enumerate(lines) if "░" in ln or "▓" in ln)
+    window_pct = next(i for i, ln in enumerate(lines) if ln.startswith("prompt"))
+    compaction = next(i for i, ln in enumerate(lines) if ln.startswith("compaction"))
+
+    assert bar == window_pct + 1, (
+        f"the bar is not under the window figure it draws: line {bar}, "
+        f"window figure on line {window_pct}"
+    )
+    assert bar < compaction, (
+        "the bar is still adjacent to the compaction estimate — the two figures "
+        "this pane keeps separate read as one illustrating the other"
+    )
+
+
+def test_every_ctx_label_puts_its_value_in_the_same_column() -> None:
+    """Tier 2: the Ctx labels are one column, not five that happen to be close.
+
+    ``cache`` had drifted four characters short of its neighbours, so one line
+    in six started somewhere else. Checked across every labelled line rather
+    than against the one that was wrong — a width that is only asserted where it
+    already broke cannot notice the next label added at the wrong one.
+    """
+    from reyn.interfaces.inline.textual_chat.chrome import ctx_pane_lines
+
+    lines = ctx_pane_lines({"ctx_window": 128_000, "ctx_used": 54_000})
+    labelled = [ln for ln in lines if ln[:1].strip()]
+    assert labelled, "no labelled lines — this gate would be vacuous"
+    starts = {
+        next(i for i, ch in enumerate(ln) if i and ch != " " and ln[i - 1] == " ")
+        for ln in labelled
+    }
+    first = min(starts)
+    assert starts == {first}, (
+        f"the value column starts in {sorted(starts)} — the labels are not one "
+        f"column, they are several that happen to be close"
+    )
 
 
 #: The cost table's own lines (everything before the footnotes / token lines).
-_COST_TABLE_PREFIXES = ("COST", "Total", "Input", "Output", "Saved", "Saved%")
+#: Scope names since #3691 — the table was transposed so they could be spelled
+#: out instead of abbreviated to fit a value column.
+_COST_TABLE_PREFIXES = ("COST", "Session", "Agent", "Project")
 
 
 def _cost_table_rows(lines: "list[str]") -> "list[str]":
