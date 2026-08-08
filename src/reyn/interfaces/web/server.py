@@ -307,15 +307,16 @@ def create_app() -> FastAPI:
 
     #3791 PR2: byte-identical extraction of what used to run inline at
     MODULE level (construction order, side effects, and every defensive
-    try/except unchanged) into this function — closing the import-time side
-    effect ITSELF, not merely deferring it (contrast #3671/#3812's "defer
-    construction", which doesn't fit here: route mounting genuinely needs to
-    be settled by the time ``app`` is handed to uvicorn, so there is no later
-    "first reference" to defer to). ``app = create_app()`` below still runs
-    the whole sequence at import time for production's single instance —
-    same net effect as before — but the construction is now a callable unit
-    a future caller (or a test wanting an app built against an EXPLICIT
-    config/cwd rather than ambient import-time state) can invoke directly,
+    try/except unchanged) into this function. ``app = create_app()`` below
+    still runs the whole sequence at import time for production's single
+    instance — the import-time side effect itself is UNCHANGED, not closed
+    (contrast #3671/#3812's "defer construction to first reference", which
+    doesn't fit here: route mounting genuinely needs to be settled by the
+    time ``app`` is handed to uvicorn, so there is no later "first
+    reference" to defer to). What this extraction actually buys: the
+    construction is now a callable unit, so a future caller (or a test
+    wanting an app built against an EXPLICIT config/cwd rather than
+    ambient import-time state) can invoke ``create_app()`` directly,
     instead of the sequence only being reachable by importing this module.
     """
     app = FastAPI(
