@@ -36,7 +36,9 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Pattern
 
@@ -135,6 +137,76 @@ async def _async_runner(
         )
 
     return await loop.run_in_executor(None, _drain)
+
+
+# KillInContainer: read the in-container PID (left in *pidfile* by run()'s
+# cancel-aware exec wrapper), signal it, verify it is actually gone. Injected
+# so cancel behavior is unit-testable without a live Docker daemon; default =
+# _docker_kill_in_container.
+KillInContainer = Callable[..., Awaitable[bool]]
+
+
+async def _docker_kill_in_container(
+    docker_bin: str, container: str, pidfile: str, *, grace_seconds: float = 2.0,
+) -> bool:
+    """#3862: killing the HOST-side ``docker exec`` client process does NOT
+    reliably kill the process running INSIDE the container — the two are
+    only connected by an I/O stream, not a process/signal relationship, so a
+    client-side ``kill_process_tree`` alone is a "sent, not received" fix
+    (the exact trap lead-coder flagged). This signals the REAL in-container
+    PID via a SEPARATE ``docker exec ... kill`` call, SIGTERM first, then
+    SIGKILL after ``grace_seconds`` if still alive — mirrors
+    ``kill_process_tree``'s own grace-then-force shape — and returns whether
+    a final liveness check confirms the process is actually gone (the
+    "stopped, not just signalled" witness).
+
+    Best-effort throughout: cancellation must not raise past this point — a
+    read/signal/liveness-check failure (container already gone, pidfile
+    missing because the workload exited before writing it, exec itself
+    denied) is swallowed and reported as ``False`` (could not verify), never
+    propagated.
+    """
+    loop = asyncio.get_running_loop()
+
+    def _docker_exec(*args: str) -> "subprocess.CompletedProcess[bytes]":
+        return subprocess.run(
+            [docker_bin, "exec", container, *args], capture_output=True, timeout=5,
+        )
+
+    try:
+        cat = await loop.run_in_executor(None, lambda: _docker_exec("cat", pidfile))
+        if cat.returncode != 0:
+            return False
+        cpid = cat.stdout.decode().strip()
+        if not cpid.isdigit():
+            return False
+    except Exception:  # noqa: BLE001 — cancellation must not raise
+        return False
+
+    async def _alive() -> bool:
+        try:
+            probe = await loop.run_in_executor(None, lambda: _docker_exec("kill", "-0", cpid))
+        except Exception:  # noqa: BLE001
+            return False
+        return probe.returncode == 0
+
+    try:
+        await loop.run_in_executor(None, lambda: _docker_exec("kill", "-TERM", cpid))
+    except Exception:  # noqa: BLE001
+        pass
+
+    deadline = loop.time() + grace_seconds
+    while loop.time() < deadline:
+        if not await _alive():
+            return True
+        await asyncio.sleep(0.1)
+
+    try:
+        await loop.run_in_executor(None, lambda: _docker_exec("kill", "-KILL", cpid))
+    except Exception:  # noqa: BLE001
+        pass
+    await asyncio.sleep(0.2)
+    return not await _alive()
 
 
 # ── In-container Python snippets (read args from sys.argv; emit on stdout) ────
@@ -289,6 +361,7 @@ class DockerEnvironmentBackend:
         python_bin: str = "python3",
         fs_runner: SyncRunner | None = None,
         runner: AsyncRunner | None = None,
+        kill_in_container: KillInContainer | None = None,
     ) -> None:
         self.container = container
         self.repo_dir = repo_dir
@@ -296,6 +369,10 @@ class DockerEnvironmentBackend:
         self.python_bin = python_bin
         self._fs_runner: SyncRunner = fs_runner or _sync_runner
         self._runner: AsyncRunner = runner or _async_runner
+        # #3862: injected so cancel behavior is unit-testable without a live
+        # Docker daemon. See _docker_kill_in_container's own docstring for
+        # why this is a separate step from killing the host-side client.
+        self._kill_in_container: KillInContainer = kill_in_container or _docker_kill_in_container
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -485,7 +562,7 @@ class DockerEnvironmentBackend:
 
     async def run(
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,
-        cwd: str | None = None,
+        cwd: str | None = None, cancel_event: "asyncio.Event | None" = None,
     ) -> SandboxResult:
         """``docker exec`` of argv (via a login shell) with cwd=repo_dir — NO host-diff bridge.
 
@@ -493,9 +570,8 @@ class DockerEnvironmentBackend:
         methods above), so there is nothing to sync in. Honors
         ``policy.timeout_seconds`` and (#3822) ``policy.max_output_bytes`` —
         the fidelity boundary (as in PR-A) applies only to env/cwd, not to
-        the output-cap and timeout every other launch route already shares.
-        ``cancel_event`` support is a separate, larger follow-up (#3822's own
-        measurement recorded it as a distinct gap; not fixed here).
+        the output-cap/timeout/cancel every other launch route already
+        shares.
 
         The host-side ``cwd`` (= the OS's ``workspace.base_dir``) is **ignored**:
         the repo lives at the in-container ``self.repo_dir`` (``-w``), which a
@@ -520,12 +596,99 @@ class DockerEnvironmentBackend:
         # in-container process sees EOF ("harness received empty stdin"). Mirrors
         # the `_py` FS-helper above; only when stdin is provided (sandboxed_exec
         # passes none → unchanged).
+        if cancel_event is None:
+            # No cancel support requested: original path, byte-identical.
+            exec_argv = [
+                self.docker_bin, "exec", *(["-i"] if stdin is not None else []),
+                "-w", self.repo_dir, self.container,
+                "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
+            ]
+            return await self._runner(
+                exec_argv, stdin=stdin, timeout=policy.timeout_seconds,
+                max_bytes=policy.max_output_bytes,
+            )
+
+        # #3862 cancel-aware path. Killing the HOST-side `docker exec` client
+        # does NOT reliably kill the process INSIDE the container (see
+        # _docker_kill_in_container's docstring) — so the wrapper script also
+        # records the in-container PID to a per-invocation pidfile BEFORE
+        # exec'ing into the real command (`echo $$` before `exec` reports the
+        # PID the exec'd process keeps, since exec replaces the image, not
+        # the PID). `"$1"` is the pidfile, `shift` drops it so `"$@"` is
+        # still argv-faithful for the real command — no new shell-injection
+        # surface versus the no-cancel path above.
+        pidfile = f"/tmp/.reyn-exec-{uuid.uuid4().hex}.pid"
         exec_argv = [
             self.docker_bin, "exec", *(["-i"] if stdin is not None else []),
             "-w", self.repo_dir, self.container,
-            "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
+            "bash", "-lc", 'echo $$ > "$1"; shift; exec "$@"',
+            "reyn-exec", pidfile, *argv,
         ]
-        return await self._runner(
-            exec_argv, stdin=stdin, timeout=policy.timeout_seconds,
-            max_bytes=policy.max_output_bytes,
+        try:
+            proc = subprocess.Popen(
+                exec_argv,
+                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as exc:
+            return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
+
+        if stdin is not None:
+            try:
+                proc.stdin.write(stdin)
+                proc.stdin.close()
+            except OSError:
+                pass
+
+        loop = asyncio.get_running_loop()
+        comm_future: asyncio.Future = loop.run_in_executor(
+            None, lambda: communicate_capped(proc, max_bytes=policy.max_output_bytes),
+        )
+        cancel_task = asyncio.create_task(cancel_event.wait())
+
+        done, _ = await asyncio.wait(
+            {comm_future, cancel_task},
+            timeout=policy.timeout_seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if cancel_task in done:
+            # #3862: signal the REAL in-container process, not just the host
+            # client — "stopped", not "signal sent", is the witness.
+            verified_stopped = await self._kill_in_container(
+                self.docker_bin, self.container, pidfile,
+            )
+            proc.kill()  # host-side client cleanup; does not itself stop the workload
+            try:
+                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
+                    asyncio.shield(comm_future), timeout=3.0,
+                )
+            except (asyncio.TimeoutError, Exception):
+                stdout_b, stderr_b, _trunc = b"", b"", False
+            return SandboxResult(
+                returncode=-int(signal.SIGTERM),
+                stdout=stdout_b or b"", stderr=stderr_b or b"",
+                truncated=_trunc, cancelled=verified_stopped,
+            )
+        elif not done:
+            cancel_task.cancel()
+            await self._kill_in_container(self.docker_bin, self.container, pidfile)
+            proc.kill()
+            try:
+                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
+                    asyncio.shield(comm_future), timeout=3.0,
+                )
+            except (asyncio.TimeoutError, Exception):
+                stdout_b, stderr_b, _trunc = b"", b"", False
+            return SandboxResult(
+                returncode=-1, stdout=stdout_b or b"",
+                stderr=(stderr_b or b"") + f"\ntimed out after {policy.timeout_seconds}s".encode(),
+                truncated=_trunc,
+            )
+
+        cancel_task.cancel()
+        stdout_b, stderr_b, truncated = await comm_future
+        return SandboxResult(
+            returncode=proc.returncode, stdout=stdout_b, stderr=stderr_b, truncated=truncated,
         )
