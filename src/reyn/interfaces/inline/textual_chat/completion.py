@@ -1,4 +1,4 @@
-"""Inline completion for the composer's ``/`` and ``:`` namespaces (#3354).
+r"""Inline completion for the composer's ``/`` and ``:`` namespaces (#3354).
 
 The retired prompt_toolkit inline app completed both namespaces in its input
 box (``_SlashCompleter`` / ``_SkillInvokeCompleter``, merged into one
