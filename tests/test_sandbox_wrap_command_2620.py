@@ -90,3 +90,56 @@ def test_landlock_wrap_command_uses_reexec_shim():
     sep = wrapped.argv.index("--")
     assert wrapped.argv[sep + 1:] == ["my-server", "--flag"]
     assert wrapped.cleanup is None
+
+
+# ── #3822: wrap_command() honestly returns env, not just argv — every
+# persistent-process caller (CodeAct, MCP stdio) that only reads .argv and
+# separately forgets to call resolve_passthrough_env silently inherits the
+# full parent environment (#3822's own finding, twice). These pin that
+# wrap_command's env matches the SAME allowlist run() already uses, for
+# every backend that implements it. ──────────────────────────────────────
+
+
+def test_noop_wrap_command_env_does_not_leak_an_unpassthroughed_var(monkeypatch):
+    """Tier 2: #3822 — a parent env var NOT in the policy allowlist / standard
+    network set does not reach wrapped.env, even on NoopBackend (no OS
+    isolation, but the env-scoping contract is unrelated to OS enforcement).
+    Strip the resolve_passthrough_env call in NoopBackend.wrap_command and
+    this goes RED."""
+    monkeypatch.setenv("REYN_3822_WRAP_TEST_MARKER", "should-not-leak")
+    backend = NoopBackend()
+    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
+    assert "REYN_3822_WRAP_TEST_MARKER" not in wrapped.env
+
+
+def test_seatbelt_wrap_command_env_does_not_leak_an_unpassthroughed_var(monkeypatch):
+    """Tier 2: #3822 — same invariant as the Noop case above, for Seatbelt."""
+    monkeypatch.setenv("REYN_3822_WRAP_TEST_MARKER", "should-not-leak")
+    backend = SeatbeltBackend()
+    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
+    assert "REYN_3822_WRAP_TEST_MARKER" not in wrapped.env
+    wrapped.cleanup()
+
+
+def test_landlock_wrap_command_env_does_not_leak_an_unpassthroughed_var(monkeypatch):
+    """Tier 2: #3822 — same invariant as the Noop case above, for Landlock."""
+    monkeypatch.setenv("REYN_3822_WRAP_TEST_MARKER", "should-not-leak")
+    backend = LandlockBackend()
+    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
+    assert "REYN_3822_WRAP_TEST_MARKER" not in wrapped.env
+
+
+def test_wrap_command_env_honors_a_declared_passthrough_name(monkeypatch):
+    """Tier 2: #3822 — a name IN policy.env_passthrough DOES reach wrapped.env
+    (the allowlist gates, it does not blanket-deny) — checked once across all
+    3 real backends so the positive and negative directions both have a
+    witness, not just the negative one above."""
+    monkeypatch.setenv("REYN_3822_WRAP_TEST_ALLOWED", "should-pass-through")
+    policy = SandboxPolicy(env_passthrough=["REYN_3822_WRAP_TEST_ALLOWED"])
+    for backend in (NoopBackend(), SeatbeltBackend(), LandlockBackend()):
+        wrapped = backend.wrap_command(["cmd"], policy)
+        assert wrapped.env.get("REYN_3822_WRAP_TEST_ALLOWED") == "should-pass-through", (
+            f"{backend.name}: declared env_passthrough name did not reach wrapped.env"
+        )
+        if wrapped.cleanup is not None:
+            wrapped.cleanup()

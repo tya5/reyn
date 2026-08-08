@@ -229,7 +229,9 @@ class SeatbeltBackend:
         launch (e.g. a stdio MCP server, #1344). The SBPL profile is written to a
         temp ``.sb`` file; the returned ``cleanup`` unlinks it — the caller invokes
         it once the wrapped subprocess is torn down (mirrors ``run()``'s own
-        temp-profile lifecycle, above)."""
+        temp-profile lifecycle, above). ``env`` is the SAME allowlisted build
+        ``run()`` uses (#3822) — a caller launching the wrapped argv with this
+        env gets the identical env-scoping ``run()``'s callers get."""
         profile_text = _build_sbpl_profile(policy)
         with tempfile.NamedTemporaryFile(
             suffix=".sb", mode="w", delete=False, encoding="utf-8",
@@ -243,8 +245,13 @@ class SeatbeltBackend:
             except OSError:
                 pass
 
+        env = resolve_passthrough_env(policy)
+        if "PATH" not in env and "PATH" in os.environ:
+            env["PATH"] = os.environ["PATH"]
+
         return WrappedCommand(
             argv=["sandbox-exec", "-f", profile_path, *argv],
+            env=env,
             cleanup=_cleanup,
         )
 

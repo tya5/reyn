@@ -104,7 +104,7 @@ class _ForkDenyingBackend:
     def wrap_command(self, argv, policy):  # pragma: no cover - unused here
         from reyn.security.sandbox.backend import WrappedCommand
 
-        return WrappedCommand(argv=list(argv))
+        return WrappedCommand(argv=list(argv), env={})
 
     async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None):
         return SandboxResult(returncode=128, stdout=b"", stderr=_REAL_FORK_STDERR)
