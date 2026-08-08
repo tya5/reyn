@@ -356,13 +356,19 @@ class LandlockBackend:
         Landlock has no CLI wrapper, so the shim (a re-exec-and-restrict-self
         module) IS the command-level wrap — the COMMAND-level analog of the
         Seatbelt ``sandbox-exec -f <profile>`` wrap. No cleanup resource is
-        owned (unlike Seatbelt's temp profile)."""
+        owned (unlike Seatbelt's temp profile). ``env`` is the SAME allowlisted
+        build ``run()`` uses (#3822): the shim itself reads no env (policy
+        travels via argv), so whatever env the caller launches this argv with
+        also reaches the workload unchanged across the shim's ``execvp``."""
         if not argv:
             raise ValueError("wrap_command: argv must be non-empty (command + args)")
         from ..landlock_exec import build_landlock_exec_argv
 
         executable, shim_argv = build_landlock_exec_argv(policy, argv[0], list(argv[1:]))
-        return WrappedCommand(argv=[executable, *shim_argv], cleanup=None)
+        env = resolve_passthrough_env(policy)
+        if "PATH" not in env and "PATH" in os.environ:
+            env["PATH"] = os.environ["PATH"]
+        return WrappedCommand(argv=[executable, *shim_argv], env=env, cleanup=None)
 
     async def run(
         self,
