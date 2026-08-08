@@ -496,7 +496,7 @@ class TextualChatApp(App):
     #3310 N2 reuses that SAME hydrate seam for a session SWITCH, not just a
     restart. N1 (#3321) added a ``session_attached`` chat-event — an
     ``EventFrame`` the registry puts directly on ``repl_outbox`` at the attach
-    seam, with NO ``await`` between the ``self._attached`` flip and the put —
+    seam, with NO ``await`` between the connection-switch flip and the put —
     so it is a stream BARRIER: everything on the frame stream before it
     belongs to the OLD attached session, everything after to the NEW one, by
     construction. :meth:`_handle_session_attached_event` consumes it: a cached
