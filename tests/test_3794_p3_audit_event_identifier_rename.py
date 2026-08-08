@@ -2,7 +2,7 @@
 
 Mechanical rename companion to P2 (#3838, prose, merged). Identifier sites
 across 20 distinct forms (``_chat_events``, ``on_chat_event``,
-``chat_events``, ``renderer_chat_events`` -> ``forwarded_audit_events``,
+``chat_events``, ``renderer_chat_events`` -> ``forwarded_frame_kinds``,
 ``subscribe_``/``unsubscribe_chat_events``, ``chat_event_types``,
 ``_forward_chat_event``, ``_is_self_chat_events_target``,
 ``_on_chat_event_for_state_change``, plus 8 test-function-name forms)

@@ -5,7 +5,7 @@ bug ("an outbox-only wire drops WaitingOn"). It enumerates the audit-event types
 the renderer's ``on_audit_event`` actually branches on — by AST-scanning the
 renderer source (the equality/membership literals) UNION the ``_WAITING_ON_BY_EVENT``
 tool-axis table — and asserts EACH is in the transport's forwarded set
-(``forwarded_audit_events``). A renderer event the transport does not forward ⇒
+(``forwarded_frame_kinds``). A renderer event the transport does not forward ⇒
 RED, so a future renderer event that isn't wired through the transport fails CI
 instead of silently vanishing on the wire.
 
@@ -18,7 +18,7 @@ import ast
 from pathlib import Path
 
 from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
-from reyn.interfaces.transport.frames import forwarded_audit_events
+from reyn.interfaces.transport.frames import forwarded_frame_kinds
 
 _RENDERER = (
     Path(__file__).resolve().parents[1]
@@ -58,7 +58,7 @@ def test_transport_forwards_every_renderer_consumed_audit_event() -> None:
     """Tier 2: each audit-event the renderer consumes is in the transport's
     forward-set. Un-forwarded ⇒ RED (the A2 dual-stream bug, designed out)."""
     consumed = _renderer_consumed_event_literals() | set(_WAITING_ON_BY_EVENT.keys())
-    forwarded = forwarded_audit_events()
+    forwarded = forwarded_frame_kinds()
 
     # Sanity: the enumeration actually found the renderer's vocabulary (a broken
     # scan that found nothing must not vacuously pass).

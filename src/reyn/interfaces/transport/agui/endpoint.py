@@ -57,7 +57,7 @@ from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
     Frame,
-    forwarded_audit_events,
+    forwarded_frame_kinds,
 )
 from reyn.interfaces.web.auth import AuthContext, ConnectionIdentity
 from reyn.interfaces.web.deps import get_registry
@@ -255,7 +255,7 @@ class _SessionFrameSource:
         self._registry = registry
         self._agent_name = agent_name
         self._q: "asyncio.Queue[Frame]" = asyncio.Queue()
-        self._forward = forwarded_audit_events()
+        self._forward = forwarded_frame_kinds()
         self._drain_task: "asyncio.Task | None" = None
         self._sub = None
         self._session = None

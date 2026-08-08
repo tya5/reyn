@@ -30,7 +30,7 @@ from pathlib import Path
 from reyn.core.events.events import Event
 from reyn.interfaces.transport.agui.profile import is_profiled
 from reyn.interfaces.transport.agui.protocol import CUSTOM, encode_frame
-from reyn.interfaces.transport.frames import EventFrame, forwarded_audit_events
+from reyn.interfaces.transport.frames import EventFrame, forwarded_frame_kinds
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
@@ -69,13 +69,13 @@ def _run(coro):
 
 def test_agent_delta_is_forwarded_and_profiled_on_the_wire() -> None:
     """Tier 1: "agent_delta" is in the transport's forward-set
-    (``forwarded_audit_events()`` — both ``InProcessTransport`` and the AG-UI
+    (``forwarded_frame_kinds()`` — both ``InProcessTransport`` and the AG-UI
     endpoint filter against this, so absence here means it never reaches
     EITHER client) AND its encoded CUSTOM name is a profiled ``reyn.event.*``
     entry (``tests/test_agui_profile_completeness.py`` enforces this
     generically for every forwarded etype; this is the etype-specific pin the
     ③b PR is responsible for)."""
-    assert "agent_delta" in forwarded_audit_events()
+    assert "agent_delta" in forwarded_frame_kinds()
 
     ev = encode_frame(EventFrame(Event(type="agent_delta", data={"text": "x"})))
     assert ev.type == CUSTOM

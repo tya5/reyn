@@ -18,7 +18,7 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.interfaces.repl.stream_client import run_output_loop
-from reyn.interfaces.transport.frames import forwarded_audit_events
+from reyn.interfaces.transport.frames import forwarded_frame_kinds
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
 
@@ -82,7 +82,7 @@ async def _drive(forward_events) -> list[str]:
 async def test_derived_forward_set_delivers_audit_events() -> None:
     """Tier 2: with the derived forward-set, the client receives the WaitingOn
     audit-events (the event path is wired)."""
-    seen = await _drive(forwarded_audit_events())
+    seen = await _drive(forwarded_frame_kinds())
     assert set(seen) == {"turn_started", "tool_called", "turn_settled"}
 
 

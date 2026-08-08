@@ -18,7 +18,7 @@ A frame carries its :class:`FrameTag` so the consuming client dispatches to the
 renderer's two entry points (``message`` for display, ``on_audit_event`` for
 event) at the consuming end — one stream in, two renderer entry points out.
 
-The forward-set (:func:`forwarded_audit_events`) is mostly **DERIVED** from the
+The forward-set (:func:`forwarded_frame_kinds`) is mostly **DERIVED** from the
 renderer's own vocabulary — ``_WAITING_ON_BY_EVENT`` (the tool-axis table) plus
 the turn / intervention-answer events ``on_audit_event`` handles — never
 hand-listed. The dual-stream completeness gate
@@ -143,10 +143,15 @@ _STREAMING_EVENTS = frozenset({"agent_delta"})
 
 
 @lru_cache(maxsize=1)
-def forwarded_audit_events() -> frozenset[str]:
-    """The set of audit-event types the transport forwards onto the unified
-    frame stream (both ``InProcessTransport`` and the AG-UI endpoint filter
-    against this).
+def forwarded_frame_kinds() -> frozenset[str]:
+    """The set of frame kinds the transport forwards onto the unified frame
+    stream (both ``InProcessTransport`` and the AG-UI endpoint filter against
+    this). Deliberately NOT "audit-event types": most members ARE real
+    audit-events (``EventLog``-backed), but ``session_attached`` is not — it's
+    an ``EventFrame`` the registry attach seam puts directly on
+    ``repl_outbox``, never touching ``.reyn/events`` (#3794 P1). A name
+    claiming audit-event provenance for this set would be the same factual
+    error P1 fixed, restated.
 
     Union of:
 
@@ -204,5 +209,5 @@ __all__ = [
     "EventFrame",
     "Frame",
     "FrameTag",
-    "forwarded_audit_events",
+    "forwarded_frame_kinds",
 ]

@@ -23,14 +23,14 @@ Gates covered here:
    draw (proving the silence above is the opt-in-draw property, not a broken
    pipe).
 4. Vocabulary/profile wiring: ``session_attached`` is in the frames
-   vocabulary (``forwarded_audit_events()``) AND registered in the AG-UI
+   vocabulary (``forwarded_frame_kinds()``) AND registered in the AG-UI
    extension profile (``is_profiled("reyn.event.session_attached")``).
    Stripping the ``profile.py`` entry alone is caught by the EXISTING
    completeness gate (``tests/test_agui_profile_completeness.py::
    test_every_custom_mapped_frame_is_profiled`` — strip-falsified during
    review, not committed here). Stripping the ``frames.py`` vocabulary entry
    alone is NOT caught by anything else (found during review: with
-   ``session_attached`` absent from ``forwarded_audit_events()``, the profile
+   ``session_attached`` absent from ``forwarded_frame_kinds()``, the profile
    gate's own enumeration simply never looks at it — silently untested, not
    RED) — pinned directly below so THAT half has its own gate too.
 
@@ -49,7 +49,7 @@ from reyn.core.events.events import Event, EventLog
 from reyn.interfaces.repl.renderer import ConsoleChatRenderer
 from reyn.interfaces.repl.stream_client import run_output_loop
 from reyn.interfaces.transport.agui.profile import is_profiled
-from reyn.interfaces.transport.frames import EventFrame, FrameTag, forwarded_audit_events
+from reyn.interfaces.transport.frames import EventFrame, FrameTag, forwarded_frame_kinds
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.outbox import OutboxMessage
@@ -346,14 +346,14 @@ def test_session_attached_is_an_event_frame_never_a_display_kind() -> None:
 
 
 def test_session_attached_is_in_the_frames_vocabulary() -> None:
-    """Tier 1: ``session_attached`` is in ``forwarded_audit_events()`` — the
+    """Tier 1: ``session_attached`` is in ``forwarded_frame_kinds()`` — the
     forward-set both ``InProcessTransport`` and the AG-UI endpoint filter
     against. Stripping this membership is NOT caught by
     ``test_agui_profile_completeness.py`` (its own enumeration reads THIS
     set, so removing the entry here just makes that gate stop looking at
     ``session_attached`` — silently untested, not RED — found during
     review); this direct pin is what actually catches that removal."""
-    assert "session_attached" in forwarded_audit_events()
+    assert "session_attached" in forwarded_frame_kinds()
 
 
 def test_session_attached_is_profiled_in_the_agui_extension() -> None:
@@ -362,6 +362,6 @@ def test_session_attached_is_profiled_in_the_agui_extension() -> None:
     half of gate 4. Strip-falsified during review (removing the
     ``CustomName`` entry turns ``test_agui_profile_completeness.py::
     test_every_custom_mapped_frame_is_profiled`` RED, since
-    ``session_attached`` IS in ``forwarded_audit_events()`` per the test
+    ``session_attached`` IS in ``forwarded_frame_kinds()`` per the test
     above, so the codec DOES emit ``reyn.event.session_attached`` for it)."""
     assert is_profiled("reyn.event.session_attached")

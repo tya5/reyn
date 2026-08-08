@@ -16,7 +16,7 @@ from reyn.interfaces.transport.frames import (
     EventFrame,
     Frame,
     FrameTag,
-    forwarded_audit_events,
+    forwarded_frame_kinds,
 )
 from reyn.interfaces.transport.in_process import InProcessTransport
 
@@ -27,5 +27,5 @@ __all__ = [
     "Frame",
     "FrameTag",
     "InProcessTransport",
-    "forwarded_audit_events",
+    "forwarded_frame_kinds",
 ]

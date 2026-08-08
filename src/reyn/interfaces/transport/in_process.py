@@ -13,7 +13,7 @@ seam, changing *routing* only (delivery is unchanged, behavior byte-identical):
   the pump passes it through unchanged instead of re-wrapping it.)
 - **Event path** — a ``session.audit_events`` subscription (wired via the
   registry's focus-listener binding, so it follows ``/attach``), *filtered to
-  the renderer's forward-set* (:func:`forwarded_audit_events`), enqueues each
+  the renderer's forward-set* (:func:`forwarded_frame_kinds`), enqueues each
   relevant event as an :class:`~reyn.interfaces.transport.frames.EventFrame` on
   the SAME unified stream.
 
@@ -40,7 +40,7 @@ from reyn.interfaces.transport.frames import (
     EventFrame,
     Frame,
     FrameTag,
-    forwarded_audit_events,
+    forwarded_frame_kinds,
 )
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ class InProcessTransport(ClientTransport):
         # DERIVED renderer vocabulary by default; injectable ONLY for the
         # strip-falsify test (an empty set makes the event path vanish → RED).
         self._forward_events = (
-            forward_events if forward_events is not None else forwarded_audit_events()
+            forward_events if forward_events is not None else forwarded_frame_kinds()
         )
         self._frames: "asyncio.Queue[Frame]" = asyncio.Queue()
         self._pump_task: "asyncio.Task | None" = None

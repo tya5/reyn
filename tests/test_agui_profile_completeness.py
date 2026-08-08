@@ -42,7 +42,7 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
-    forwarded_audit_events,
+    forwarded_frame_kinds,
 )
 from reyn.runtime.outbox import CONTROL_KINDS, DISPLAY_KINDS, VOCABULARY, OutboxMessage
 
@@ -68,7 +68,7 @@ def _emitted_custom_names() -> set[str]:
         ev = encode_frame(DisplayFrame(OutboxMessage.from_wire(kind=kind, text="x")))
         if ev.type == CUSTOM:
             names.add(ev.data["name"])
-    for etype in forwarded_audit_events():
+    for etype in forwarded_frame_kinds():
         ev = encode_frame(EventFrame(Event(type=etype, data={})))
         if ev.type == CUSTOM:
             names.add(ev.data["name"])
