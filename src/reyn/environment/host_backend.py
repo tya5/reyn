@@ -13,7 +13,7 @@ import glob as _glob
 from pathlib import Path
 from typing import Any, Pattern
 
-from reyn.data.workspace.text_codec import decode_text_or_none
+from reyn.data.text_codec import decode_text_or_none
 from reyn.environment.backend import GrepResult
 
 

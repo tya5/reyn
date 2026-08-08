@@ -64,7 +64,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.builtin.docs import read_builtin_body_bytes
-from reyn.data.workspace.text_codec import decode_text_or_none
+from reyn.data.text_codec import decode_text_or_none
 from reyn.plugins.body_read import read_plugin_body_bytes
 from reyn.plugins.skill_load import load_skill_body
 from reyn.schemas.models import LoadSkillIROp

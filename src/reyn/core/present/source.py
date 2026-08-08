@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from reyn.data.workspace.text_codec import decode_text_or_none
+from reyn.data.text_codec import decode_text_or_none
 
 if TYPE_CHECKING:
     from reyn.core.op_runtime.context import OpContext
