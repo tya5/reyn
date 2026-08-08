@@ -148,8 +148,19 @@ async def test_cost_records_actual_model_on_fallback() -> None:
     set_router_config(RouterConfig(use=True, num_retries=0, fallbacks={_PRIMARY: [_FALLBACK]}))
     tracker = BudgetTracker(CostConfig())
 
+    def _is(model: "str | None", want: str) -> bool:
+        """Whether ``model`` names ``want``, with or without its provider prefix.
+
+        The prefix is the TRANSPORT's (#3791): ``recorded_acompletion`` strips it
+        when proxy routing is configured. Comparing the prefixed form made this
+        fake's trigger miss there — the primary never raised, so no fallback ever
+        happened and the test failed for a reason that had nothing to do with
+        fallback attribution.
+        """
+        return (model or "").rsplit("/", 1)[-1] == want.rsplit("/", 1)[-1]
+
     async def _fake(*a, **k):
-        if k.get("model") == _PRIMARY:
+        if _is(k.get("model"), _PRIMARY):
             raise litellm.InternalServerError("down", model=_PRIMARY, llm_provider="openai")
         return _Resp(k.get("model"))
 
@@ -158,7 +169,9 @@ async def test_cost_records_actual_model_on_fallback() -> None:
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
             purpose="dogfood", recorder=tracker,
         )
-    assert _recorded_models(tracker) == [_FALLBACK], (
+    assert [m.rsplit("/", 1)[-1] for m in _recorded_models(tracker)] == [
+        _FALLBACK.rsplit("/", 1)[-1]
+    ], (
         "a fallback must record cost against the model that actually ran, not the "
         f"requested one (got {_recorded_models(tracker)!r})"
     )
@@ -166,8 +179,19 @@ async def test_cost_records_actual_model_on_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_cost_records_requested_model_when_router_off() -> None:
-    """Tier 2: OFF path is byte-identical — cost records the REQUESTED model even
-    if the (direct) response.model string differs (no actual-model switch)."""
+    """Tier 2: the OFF path records the REQUESTED model, never ``response.model``.
+
+    Not "byte-identical" any more (#3791). ``recorded_acompletion`` strips the
+    provider prefix when proxy routing is configured, so the recorded string is
+    ``gpt-4o-mini`` there and ``openai/gpt-4o-mini`` without it — the same
+    request over two transports. Pinning the prefixed form made this fail for
+    every developer with ``LITELLM_API_BASE`` set.
+
+    The claim survives the strip because ``response.model`` is deliberately a
+    third string (``some/normalized-name``): recording the response instead of
+    the request is still distinguishable either way, which is what stops the
+    looser comparison from being vacuous.
+    """
     # router OFF (default). The direct litellm.acompletion path.
     tracker = BudgetTracker(CostConfig())
 
@@ -179,7 +203,11 @@ async def test_cost_records_requested_model_when_router_off() -> None:
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
             purpose="dogfood", recorder=tracker,
         )
-    assert _recorded_models(tracker) == [_PRIMARY], (
-        "OFF path must record the requested model (byte-identical), not switch to "
-        f"response.model (got {_recorded_models(tracker)!r})"
+    recorded = _recorded_models(tracker)
+    assert [m.rsplit("/", 1)[-1] for m in recorded] == [_PRIMARY.rsplit("/", 1)[-1]], (
+        "OFF path must record the requested model, not switch to response.model "
+        f"(got {recorded!r})"
+    )
+    assert "normalized-name" not in repr(recorded), (
+        f"the RESPONSE's model was recorded instead of the request's: {recorded!r}"
     )

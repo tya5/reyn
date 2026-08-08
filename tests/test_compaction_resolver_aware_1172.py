@@ -44,6 +44,23 @@ def _resp(content: str) -> SimpleNamespace:
     )
 
 
+def _resolved_target(model_seen: str) -> str:
+    """The model litellm saw, with any provider prefix removed.
+
+    The prefix is not part of what these tests are about. ``recorded_acompletion``
+    strips it deliberately when proxy routing is configured — the proxy expects a
+    bare model name — so ``openai/resolved-standard`` and ``resolved-standard``
+    are the SAME resolution arriving over two transports (#3791).
+
+    Asserting the prefixed form pinned the transport as well as the resolution,
+    which made these tests pass on CI and fail for every developer with a
+    ``reyn.local.yaml`` that sets ``api_base``. The claim in each docstring is
+    that the CLASS was resolved; that is what is checked now, and a wrong
+    resolution still fails because the target after the prefix must still match.
+    """
+    return model_seen.rsplit("/", 1)[-1]
+
+
 def _run_capture(monkeypatch, engine: CompactionEngine) -> str:
     """Drive one real compact(); return the ``model`` litellm.acompletion saw."""
     seen: dict[str, str] = {}
@@ -77,7 +94,7 @@ def test_model_class_is_resolved_before_litellm(monkeypatch) -> None:
         resolver=resolver,
     )
     model_seen = _run_capture(monkeypatch, engine)
-    assert model_seen == "openai/resolved-standard", (
+    assert _resolved_target(model_seen) == "resolved-standard", (
         "the engine must resolve the model class before calling litellm; "
         f"litellm saw {model_seen!r} (a raw class would be rejected)"
     )
@@ -93,7 +110,7 @@ def test_planner_default_light_class_is_resolved(monkeypatch) -> None:
         cfg=CompactionConfig(use_chars4_estimate=True),
         resolver=resolver,
     )
-    assert _run_capture(monkeypatch, engine) == "openai/resolved-light"
+    assert _resolved_target(_run_capture(monkeypatch, engine)) == "resolved-light"
 
 
 def test_static_path_budget_uses_resolved_model_window() -> None:
@@ -128,16 +145,29 @@ def test_static_path_budget_uses_resolved_model_window() -> None:
     )
 
 
-def test_literal_litellm_string_passes_through(monkeypatch) -> None:
-    """Tier 2: an unknown literal litellm string is unchanged (passthrough);
-    resolver omitted defaults to an empty (builtin-only) resolver, so a string
-    that is neither a configured class nor a builtin reaches litellm as-is."""
-    engine = CompactionEngine(
-        model="myvendor/custom-not-a-builtin",
-        events=EventLog(),
-        cfg=CompactionConfig(use_chars4_estimate=True),
-    )  # no resolver → passthrough default (ModelResolver({}))
-    assert _run_capture(monkeypatch, engine) == "myvendor/custom-not-a-builtin"
+def test_literal_litellm_string_passes_through() -> None:
+    """Tier 2: an unknown literal litellm string is unchanged — asserted at the
+    RESOLVER, which is the layer that decides it.
+
+    This used to drive a whole ``compact()`` through a monkeypatched
+    ``litellm.acompletion`` and assert on the model that arrived there. That put
+    the transport inside the claim: ``recorded_acompletion`` strips the provider
+    prefix when proxy routing is configured, so "unchanged" was false in a
+    supported configuration and the test failed for every developer with
+    ``LITELLM_API_BASE`` set (#3791).
+
+    Weakening it to compare only the part after the prefix — my first repair —
+    was worse than the original: a resolver that wrongly rewrote
+    ``myvendor/custom-not-a-builtin`` to ``openai/custom-not-a-builtin`` would
+    have passed, which is the exact rewrite the test exists to forbid.
+
+    Asked of ``ModelResolver`` directly, "unchanged" is exact, byte-identical,
+    and cannot be affected by how the call is later transported.
+    """
+    assert (
+        ModelResolver({}).resolve("myvendor/custom-not-a-builtin").model
+        == "myvendor/custom-not-a-builtin"
+    ), "an unknown literal must reach litellm as written, never rewritten"
 
 
 # ── Regression guard: every src CompactionEngine construction passes resolver= ──
