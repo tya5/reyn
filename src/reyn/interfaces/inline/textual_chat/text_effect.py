@@ -51,6 +51,14 @@ before the list grew.
 Deliberately a flat list. The operator has not seen these yet, and narrowing it
 after they do should be a deletion, not a redesign.
 
+**Nothing in the test suite enforces those two criteria**, and that is on
+purpose: both are wall-clock figures, so pinning them would fail on a slower CI
+host for a reason that has nothing to do with reyn. Measured (#3860) — adding a
+93-second effect back to this list leaves the suite green. What the suite does
+hold is the property the rest of the design rests on: every member resolves the
+covered text back. Anyone adding to this list is choosing the speed and the
+length themselves, with the numbers on #3860 as the reference.
+
 Frame rate
 ----------
 :data:`DEFAULT_FPS` is 10, not the 30 the upstream example uses. Measured on
