@@ -2883,6 +2883,59 @@ class Session:
             # Defensive: observability must not crash the API.
             pass
 
+    def notify_turn_cancelled(self, chain_id: "str | None") -> None:
+        """Persist a genuinely-cancelled turn's outcome as a first-class
+        history entry (#3694).
+
+        Storage shape mirrors :meth:`notify_state_change` exactly (same
+        precedent, same owner ruling — "むやみに増やすべきでない、system
+        あるならそれで": no new role, reuse ``system``):
+          - ``role="system"`` — excluded from every LLM-facing turn list
+            (``RouterHistoryBuffer.build_history``'s allowlist is
+            ``role in ("user","assistant","tool","agent")``) and from
+            compaction candidates (``force_compact_now``'s own turns
+            filter is the same allowlist) — structurally, not by a new
+            check either of those already-existing filters would need.
+          - ``meta.kind="turn_cancelled"`` — distinguishes this from a
+            ``state_change`` system entry; a reader (TUI restore
+            projection) dispatches on this key, never on the rendered
+            ``content`` string.
+          - ``meta.chain_id`` — correlates back to the turn this outcome
+            belongs to (the same chain_id the cancelled turn's own
+            ``user_message_received`` / ``turn_started`` events carry).
+
+        Append-only, NOT an in-place edit: ``history.jsonl`` has no
+        rewrite path (only ``"a"``/``"r"`` opens exist — grepped), so a
+        cancelled outcome discovered at turn-end cannot be durably
+        recorded by mutating the (already-persisted) user turn's own
+        ``meta`` — that mutation would only live in memory and vanish on
+        restart. A NEW entry is the only way to add durable information
+        to an append-only log.
+
+        Called from exactly the places that OBSERVE a turn ending
+        because it was cancelled (not merely requested — a cancel racing
+        turn completion must never call this): ``RouterLoop``'s
+        cooperative-cancel terminal (``_loop_cancelled`` true at the
+        outer-loop exit) when reached, and ``Session.run_one_iteration``'s
+        hard-cancel ``CancelledError`` catch as the receiver for when a
+        ``cancel_inflight()`` hard ``Task.cancel()`` (the common
+        mid-LLM-call Ctrl+C case) injects ``CancelledError`` at whatever
+        await the turn was suspended on — which unwinds straight past
+        ``RouterLoop``'s own terminal check (measured: zero
+        ``CancelledError`` handling anywhere in ``router_loop.py``), so
+        that check never runs for a hard cancel. The two call sites are
+        mutually exclusive per actual cancelled turn (one always reaches
+        its stamp point, the other doesn't, for a given cancellation) —
+        this is a primary path plus the receiver for when it's skipped,
+        not two independent recorders that could double-append.
+        """
+        self._append_history(ChatMessage(
+            role="system",
+            content="Turn interrupted by user.",
+            ts=_now_iso(),
+            meta={"kind": "turn_cancelled", "chain_id": chain_id},
+        ))
+
     def _append_history_for_handler(
         self, role: str, text: str, ts: str, meta: dict,
     ) -> None:
@@ -5571,6 +5624,21 @@ class Session:
                             "message.",
                             kind, payload.get("chain_id"),
                         )
+                    else:
+                        # #3694: the receiver for when a hard cancel
+                        # (cancel_inflight()'s Task.cancel(), the common
+                        # mid-LLM-call Ctrl+C case) injects CancelledError
+                        # at whatever await the turn was suspended on —
+                        # this unwinds straight past RouterLoop's own
+                        # cooperative-cancel terminal (router_loop.py's
+                        # `if _loop_cancelled:` block, which never runs for
+                        # a hard cancel: zero CancelledError handling
+                        # anywhere in that module). Gated on
+                        # ``_turn_cancel_self_initiated`` — a cancel from
+                        # something OTHER than cancel_inflight() (the `if`
+                        # branch above) is NOT a user cancel and must not
+                        # be recorded as one.
+                        self.notify_turn_cancelled(payload.get("chain_id"))
                     _cancelled = True
             finally:
                 # #2242 Finding 1: reset UNCONDITIONALLY here, not per-branch above — if the

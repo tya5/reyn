@@ -158,10 +158,19 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(tm
         "a hard-cancelled turn's LLM reply must never be appended, even after "
         "the underlying hung call is released post-cancel"
     )
-    # (b) branch clean: only the pre-cancel user message is present (no
-    # partial assistant/tool entries from the aborted turn).
+    # (b) branch clean: only the pre-cancel user message plus the #3694
+    # cancelled-outcome marker are present (no partial assistant/tool
+    # entries from the aborted turn). The marker's role="system" (no new
+    # role, mirrors notify_state_change) is durable proof the hard-cancel
+    # WAS observed and recorded, not silent.
     roles = [m.role for m in session.history]
-    assert roles == ["user"], f"expected only the user message to survive; got {roles}"
+    assert roles == ["user", "system"], (
+        f"expected the user message + the #3694 cancelled-outcome marker "
+        f"(role=system); got {roles}"
+    )
+    cancelled_marker = session.history[-1]
+    assert cancelled_marker.meta.get("kind") == "turn_cancelled"
+    assert cancelled_marker.meta.get("chain_id") == "c-hard-cancel"
 
     # (d) the prior fire-and-forget WAL-append task survived (joined by
     # await_quiescent on the cancel path) — its durable effect is visible in
