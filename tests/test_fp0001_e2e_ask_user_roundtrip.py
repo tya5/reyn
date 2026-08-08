@@ -185,11 +185,30 @@ def _router_has_task_endpoints() -> bool:
         return False
 
 
-_SKIP_ROUTER = not _router_has_task_endpoints()
 _SKIP_REASON = (
     "F4 router endpoints (GET /a2a/tasks/{run_id}, POST /a2a/tasks/{run_id}/cancel, "
     "async_mode on message/send) are not yet mounted.  Remove this skip once F4 lands."
 )
+
+
+def _skip_unless_router_has_task_endpoints() -> None:
+    """Runtime skip (NOT a module-level ``@pytest.mark.skipif``) — #3791: a
+    ``skipif`` decorator's condition is evaluated at COLLECTION time, which
+    forced ``_router_has_task_endpoints()`` (and its ``from
+    reyn.interfaces.web.server import app``, which triggers
+    ``reyn.interfaces.web.server``'s own module-level ``load_config()`` call)
+    to run before ANY per-test fixture — including ``tests/conftest.py``'s
+    autouse ``_isolated_cwd`` — with cwd still wherever pytest was invoked
+    from. On a developer machine with ``reyn.local.yaml`` present, that one
+    collection-time import call leaked ``LITELLM_API_BASE`` (or any other
+    ``~/.reyn/secrets.env`` variable, per ADR-0030) into ``os.environ``
+    process-wide for the rest of the suite, since nothing tears it back down
+    outside a test's own fixture scope. Calling this from INSIDE each test
+    body instead means the check runs after ``_isolated_cwd`` has already
+    chdir'd to an isolated ``tmp_path`` with no ``reyn.yaml`` ancestor, so
+    ``load_config()`` never discovers a developer's real config at all."""
+    if not _router_has_task_endpoints():
+        pytest.skip(_SKIP_REASON)
 
 
 def _build_registry_for_test(tmp_path: Path):
@@ -229,13 +248,13 @@ def _build_registry_for_test(tmp_path: Path):
     return registry
 
 
-@pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
 def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     """Tier 2c: POST /a2a/agents/{name} with async_mode=true returns a task
     envelope {kind: 'task', id: run_id, status: 'running'}.
 
     Requires F4 router extensions.  Skipped otherwise.
     """
+    _skip_unless_router_has_task_endpoints()
     monkeypatch.chdir(tmp_path)
 
     import reyn.interfaces.web.routers.a2a as a2a_mod
@@ -309,7 +328,6 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
         app.dependency_overrides.clear()
 
 
-@pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
 def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeypatch):
     """Tier 2c: #2839 Phase 1 — the full create→cancel→disposition wiring proof,
     re-based onto RunRegistry (the internal Task backend is no longer consulted
@@ -330,6 +348,7 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
     session_id→contextId round-trip breaks (the sweep would find no channel and
     fire 0).
     """
+    _skip_unless_router_has_task_endpoints()
     monkeypatch.chdir(tmp_path)
 
     import reyn.interfaces.web.routers.a2a as a2a_mod
@@ -419,7 +438,6 @@ def test_e2e_create_with_webhook_then_cancel_fires_disposition(tmp_path, monkeyp
         app.dependency_overrides.clear()
 
 
-@pytest.mark.skipif(_SKIP_ROUTER, reason=_SKIP_REASON)
 def test_get_task_returns_a2a_envelope_from_run_registry(tmp_path, monkeypatch):
     """Tier 2c: (#2839 Phase 1) GET /a2a/tasks/{run_id} returns the spec A2A
     Task envelope read directly from RunRegistry. A run with
@@ -427,6 +445,7 @@ def test_get_task_returns_a2a_envelope_from_run_registry(tmp_path, monkeypatch):
     blocked→input-required overload — #2839 Phase 1 retires that interim
     placeholder, which the old Task-backed mapper's own comment flagged as an
     unfixed correctness bug: slice 7's promised block-reason split never landed)."""
+    _skip_unless_router_has_task_endpoints()
     monkeypatch.chdir(tmp_path)
 
     from reyn.interfaces.web.deps import get_registry, get_run_registry
