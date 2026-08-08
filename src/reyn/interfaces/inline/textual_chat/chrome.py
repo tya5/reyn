@@ -427,9 +427,10 @@ _LIST_PANES = frozenset({
 # interface for the #3801 shape will find these, see hints elsewhere written
 # the other way, and file them as the leftovers. They are not.
 #
-# What the ruling does NOT license is spelling one key two ways. If that is
-# fixed, fix it as a table-consistency change; it is a different claim from
-# the shape.
+# What the ruling does NOT license is spelling one key two ways — that was
+# raised separately (#3805) and settled: key names in these tables are
+# LOWERCASE, matching how the inline hints spell them. The tables differ from
+# the hints in SHAPE only, never in how a key is written.
 
 #: The composer's navigation keys, co-located with the widget that OWNS them (they
 #: are imperative ``Composer._on_key`` overrides, not declarative ``BINDINGS``, so
@@ -473,7 +474,7 @@ MENUBAR_KEYS: "list[tuple[str, str]]" = [
     # rest. PgUp/PgDn rather than ↑/↓ because ↑ already means "back to
     # composer" here (the row below), and this app already uses PgUp/PgDn for
     # "page through content" on the conversation.
-    ("PgUp / PgDn", "scroll this pane"),
+    ("pgup / pgdn", "scroll this pane"),
     ("↑", "back to composer"),
     ("esc", "back to composer"),
 ]
@@ -541,7 +542,7 @@ SEARCHBAR_KEYS: "list[tuple[str, str]]" = [
 #: ↑/↓/PageUp/PageDown/Home/End are flowview's OWN built-in cursor bindings
 #: (not re-declared here — this ledger only lists what reyn adds on top).
 CONVERSATION_CURSOR_KEYS: "list[tuple[str, str]]" = [
-    ("↑ / ↓ / PgUp / PgDn / Home / End", "move cursor"),
+    ("↑ / ↓ / pgup / pgdn / home / end", "move cursor"),
     ("enter / space", "copy entry to clipboard"),
     ("r", "open /rewind"),
     ("esc", "back to composer"),
