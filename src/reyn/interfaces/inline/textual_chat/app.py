@@ -725,6 +725,16 @@ class TextualChatApp(App):
         # a reader scrolling back actually is. ``priority`` so the focused
         # Input does not swallow it.
         Binding("ctrl+end", "jump_to_latest", "Back to the newest output", priority=True),
+        # #3796: a joke — a full-viewport text effect over the conversation
+        # pane, toggled by the same key. ``ctrl+l`` because its terminal
+        # meaning is "repaint the screen", which is the nearest thing this has
+        # to a convention, and because a Textual app repaints continuously so
+        # the chord does nothing today. Chosen from an enumeration of every
+        # binding this app, the composer and the pane declare, minus the ones
+        # that are terminal ALIASES rather than chords (ctrl+i/j/m/h are
+        # tab/enter/enter/backspace at the terminal and cannot be taken).
+        # ``priority`` so the focused composer does not swallow it.
+        Binding("ctrl+l", "toggle_text_effect", "Text effect (joke)", priority=True),
         # #3692 PR-A: the `c` binding that used to gate the text cursor
         # behind an explicit entry step is REMOVED, not rebound — flowview
         # 0.13 made the text cursor always-on (visual mode is the one real
@@ -2278,6 +2288,35 @@ class TextualChatApp(App):
                     text=f"interrupt failed: {type(exc).__name__}: {exc}",
                 )
             )
+
+    def action_toggle_text_effect(self) -> None:
+        """Start or stop the full-viewport text effect (#3796).
+
+        The SAME key both ways, and stopping is the library's own
+        ``stop_overlay`` — which restores the exact prior view (model, scroll
+        position, both cursors untouched). That is what makes the joke safe to
+        press: there is no reyn-side state to put back, so there is nothing for
+        reyn to put back WRONGLY.
+
+        The feed keeps running underneath. ``FlowView.render_line`` returns the
+        overlay line while one is set and never renders the content beneath, so
+        arriving output costs what it always costs and is simply not painted
+        until the effect stops — no buffering, and nothing to flush on return.
+        """
+        from reyn.interfaces.inline.textual_chat import screensaver
+        from reyn.runtime.outbox import OutboxMessage
+
+        if self._flow.overlay_active:
+            self._flow.stop_overlay()
+            return
+        if not screensaver.available():
+            self._ingest_frame(
+                OutboxMessage(kind="status", text=screensaver.unavailable_message())
+            )
+            return
+        self._flow.play_overlay(
+            screensaver.frame_factory(), fps=screensaver.DEFAULT_FPS, loop=True
+        )
 
     def _write_clipboard(self, text: str) -> bool:
         """Yank's clipboard sink: reyn's own local tool, result observable.
