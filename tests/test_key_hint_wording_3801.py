@@ -64,6 +64,54 @@ def test_the_rewind_picker_title_uses_the_convention() -> None:
     )
 
 
+def test_the_help_pane_never_shows_a_key_the_way_textual_names_it() -> None:
+    """Tier 1: the Help pane spells keys reyn's way, not Textual's (#3818).
+
+    The pane is built from two sources — hand-written tables, where a person
+    writes the display name, and the app's ``BINDINGS``, where Textual's key
+    IDENTIFIER was rendered verbatim. Interleaved on one screen that produced
+    ``escape  Close drawer`` directly beneath ``esc  back to composer``: one
+    key, two spellings, adjacent.
+
+    Asserted over the RENDERED lines rather than over either source, because
+    the defect existed in neither one alone — each was internally consistent,
+    and only the pane that shows both had a problem. A test reading one table
+    would have passed throughout.
+
+    ``escape`` is the only identifier reyn writes differently today, but the
+    check is stated as "no identifier appears in the key column" so a binding
+    for ``pageup`` or ``up`` — both already spelled differently in the tables
+    (``pgup``, ``↑``) — cannot introduce the same split by simply existing.
+    """
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    # Read from BINDINGS directly rather than through the app's own
+    # ``_app_binding_help``. That adapter is what production feeds the pane, so
+    # a bug there — dropping a binding — would make a test built on it pass by
+    # showing less. This asks what the pane WOULD render given everything the
+    # app declares, which is the question the defect was about.
+    pairs = [
+        (b[0], b[2]) if isinstance(b, tuple) else (b.key, b.description)
+        for b in TextualChatApp.BINDINGS
+        if isinstance(b, tuple) or (b.description and getattr(b, "show", True))
+    ]
+
+    rendered = chrome.help_pane_lines(pairs)
+    assert rendered[1:], "the pane rendered no key rows — this gate would be vacuous"
+
+    # Identifiers whose canonical Textual spelling is not how this interface
+    # writes them. Names only — the point is that none reaches the key column.
+    renamed = {"escape", "pageup", "pagedown", "up", "down"}
+    keys = {line.strip().split("  ", 1)[0] for line in rendered[1:] if "  " in line.strip()}
+    leaked = sorted(keys & renamed)
+    assert not leaked, (
+        f"the Help pane shows {leaked} in the key column — Textual's identifier "
+        "rather than how this interface writes the key. A binding's Help row "
+        "belongs in a hand-written table (chrome.*_KEYS) with show=False on the "
+        "binding, not rendered from the identifier."
+    )
+
+
 def test_the_help_tables_spell_key_names_the_way_the_hints_do() -> None:
     """Tier 1: key names in the Help tables are lowercase (#3805).
 
