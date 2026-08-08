@@ -1,9 +1,13 @@
 """sandboxed_exec kind handler — execute argv under a SandboxPolicy (FP-0017).
 
-Routes through `reyn.security.sandbox.get_default_backend()` so the OS selects the
-appropriate enforcement mechanism per platform. `get_default_backend` auto-
-selects SeatbeltBackend (macOS) or LandlockBackend (Linux) where available,
-falling back to NoopBackend on unsupported platforms.
+Backend resolution and the run+classify tail route through
+`reyn.security.sandbox.launcher` (#3823 ①) — the shared slice this handler
+and the shell-hook runner both did identically before. `resolve_backend`
+wraps `get_default_backend()` so the OS still auto-selects SeatbeltBackend
+(macOS) or LandlockBackend (Linux) where available, falling back to
+NoopBackend on unsupported platforms; argv0-resolution and the pre-exec
+threat scan below stay handler-local (not shared — see the launcher
+module's own docstring for why).
 
 Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
 """
@@ -13,8 +17,8 @@ import os
 from typing import Literal
 
 from reyn.schemas.models import SandboxedExecIROp
-from reyn.security.sandbox import SandboxPolicy, get_default_backend
-from reyn.security.sandbox.denial import classify_denial
+from reyn.security.sandbox import SandboxPolicy
+from reyn.security.sandbox.launcher import resolve_backend, run_and_classify
 from reyn.security.sandbox.policy import deny_narrowed_write_grants
 from reyn.security.sandbox.resolve import resolve_real_executable
 
@@ -54,7 +58,7 @@ async def handle(
     # name-based platform auto-selection (FP-0008 C7 #2). This lets a caller
     # route exec into a stateful backend (e.g. a Docker container) that the
     # name-based factory cannot build, without the handler knowing the caller.
-    backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
+    backend = resolve_backend(ctx.sandbox_backend, ctx.sandbox_config)
     # #1326: the agent-level (operator) sandbox policy (reyn.yaml sandbox.policy,
     # resolved onto the ctx) WINS over the op's own fields — so the policy is
     # deterministic and the LLM cannot override it. Falls back to the op-level
@@ -125,9 +129,10 @@ async def handle(
             ],
         )
 
-    result = await backend.run(
-        effective_argv, policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
+    launched = await run_and_classify(
+        backend, effective_argv, policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
     )
+    result = launched.result
 
     stdout_text = result.stdout.decode("utf-8", errors="replace")
     stderr_text = result.stderr.decode("utf-8", errors="replace")
@@ -152,11 +157,14 @@ async def handle(
             "truncated": False,
         }
 
-    # #2820: classify a launcher-fork denial (pure fn of returncode+stderr). None
-    # for any normal (even nonzero) exit — only a genuine sandbox denial is named,
-    # so the canonical layer can tell the LLM "environment/config, not tool
-    # availability" and the audit trail records the class.
-    denial_class = classify_denial(result.returncode, result.stderr)
+    # #2820: a launcher-fork denial (pure fn of returncode+stderr). None for
+    # any normal (even nonzero) exit — only a genuine sandbox denial is
+    # named, so the canonical layer can tell the LLM "environment/config,
+    # not tool availability" and the audit trail records the class.
+    # Classified inside run_and_classify (#3823 ①, the shared backend-resolve
+    # + run() + classify_denial slice both sandboxed_exec and the shell-hook
+    # runner already did identically) — reused here, not re-derived.
+    denial_class = launched.denial_class
 
     ctx.events.emit(
         "sandboxed_exec_completed",
