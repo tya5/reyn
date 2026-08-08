@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from reyn.core.kernel import codeact_runner
+from reyn.core.kernel.codeact_runner import CodeActRunner
 from reyn.security.sandbox import _subprocess_io
+from reyn.security.sandbox._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES
 
 
 def test_codeact_reads_through_the_capped_reader() -> None:
@@ -34,4 +38,33 @@ def test_codeact_reads_through_the_capped_reader() -> None:
     assert "proc.communicate(" not in inspect.getsource(codeact_runner), (
         "an uncapped `proc.communicate` read is back — plain communicate reads "
         "without a bound"
+    )
+
+
+@pytest.mark.asyncio
+async def test_hitting_the_cap_is_reported_to_the_caller() -> None:
+    """Tier 2: output past the cap sets ``truncated`` on the result.
+
+    Driven by a REAL child emitting past the real limit — no faked reader, no
+    lowered constant. The cap and the propagation are one behaviour from the
+    caller's side, and a witness that patched either would be testing the patch.
+
+    Why this exists as its own test: the cap swap and this propagation are
+    separate changes that happen to ship together. Strip the swap and the other
+    test goes red; strip only the propagation and, without this, everything
+    stays green while the caller silently stops being told its output was cut —
+    which is the #3688 shape the propagation was added to avoid.
+    """
+    async def dispatch(name: str, args: dict) -> dict:  # pragma: no cover - unused
+        return {"status": "ok", "data": {}}
+
+    over = MAX_SUBPROCESS_OUTPUT_BYTES + 1024
+    code = f"print('x' * {over})\nresult = 'done'"
+    out = await CodeActRunner().run(
+        code=code, dispatch=dispatch, allow_unsandboxed=True, timeout=120.0,
+    )
+
+    assert out.get("truncated") is True, (
+        f"output past the cap was not reported to the caller: "
+        f"{ {k: v for k, v in out.items() if k != 'stdout'} }"
     )
