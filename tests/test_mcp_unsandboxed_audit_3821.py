@@ -74,7 +74,10 @@ def test_unsandboxed_fallback_emits_audit_event(monkeypatch):
 
     assert (cmd, args) == ("my-mcp", ["--flag"])  # still launches, unwrapped
     emitted = _not_applied(events)
-    assert len(emitted) == 1
+    # One wrap failure reports that server once. A repeat would read as a second
+    # unsandboxed launch to anyone counting these — the event is the record of a
+    # security-relevant degradation, so its multiplicity is part of its meaning.
+    assert [d["server"] for d in emitted] == ["srv-a"]
     payload = emitted[0]
     assert payload["scope"] == "mcp_stdio"
     assert payload["server"] == "srv-a"
@@ -149,6 +152,5 @@ def test_connection_service_delivers_the_event_to_its_sink(monkeypatch):
     asyncio.run(_run_it())
 
     emitted = _not_applied(events)
-    assert len(emitted) == 1
-    assert emitted[0]["scope"] == "mcp_stdio"
-    assert emitted[0]["server"] == "echo"  # the service's own server name reached it
+    # The service's own server name reached the event, once per open.
+    assert [(d["scope"], d["server"]) for d in emitted] == [("mcp_stdio", "echo")]
