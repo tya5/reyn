@@ -97,9 +97,13 @@ class NoopBackend:
         """Passthrough: argv is returned UNCHANGED — no enforcement — but the
         call still went THROUGH the sandbox abstraction (the owner-acceptable
         no-isolation case, #2620), as opposed to a caller that never consulted
-        any backend at all."""
+        any backend at all. ``env`` is still the allowlisted build (#3822):
+        no OS isolation is applied on this backend, but the ENV-scoping
+        contract (never hand a model-authored subprocess the full parent
+        environment merely because the sandbox backend is Noop) is unrelated
+        to OS enforcement and stays in force."""
         _warn_once()
-        return WrappedCommand(argv=list(argv), cleanup=None)
+        return WrappedCommand(argv=list(argv), env=_build_env(policy), cleanup=None)
 
     async def run(
         self,

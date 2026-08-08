@@ -23,16 +23,26 @@ class WrappedCommand:
     for a PERSISTENT subprocess launch that the backend does not itself spawn
     (e.g. a stdio MCP server held open by the caller's transport) — the wrap
     prepends whatever the backend needs (a sandbox-exec invocation, a re-exec
-    shim, ...) and hands the full argv back for the caller to Popen/exec.
+    shim, ...) and hands back everything the caller needs to Popen/exec.
 
     ``argv`` is the full wrapped argv (wrapper prefix + the original command),
-    ready to launch directly. ``cleanup``, when set, releases a wrap-owned
-    resource (e.g. Seatbelt's temp ``.sb`` profile file) — the caller MUST
-    invoke it once the wrapped subprocess is torn down. ``None`` means the
-    wrap owns no such resource.
+    ready to launch directly. ``env`` is the allowlisted env every ``run()``
+    implementation already builds via ``resolve_passthrough_env(policy)`` (+
+    the ``PATH`` fallback every backend applies) — added here (#3822) because
+    a caller that only reads ``argv`` has no signal that env is a SEPARATE
+    thing it must also resolve itself, and two separate persistent-process
+    callers (CodeAct #3822, MCP stdio #3848) independently missed exactly
+    that and fell back to inheriting the full parent environment. The old
+    docstring's "hands the full argv back for the caller to Popen/exec" was
+    itself part of the gap: it declared enough for a *safe* exec while
+    actually providing only ARGV. ``cleanup``, when set, releases a
+    wrap-owned resource (e.g. Seatbelt's temp ``.sb`` profile file) — the
+    caller MUST invoke it once the wrapped subprocess is torn down. ``None``
+    means the wrap owns no such resource.
     """
 
     argv: list[str]
+    env: dict[str, str]
     cleanup: "Callable[[], None] | None" = None
 
 
