@@ -435,10 +435,17 @@ class SandboxConfig:
             cancel-teardown still apply). ``'strict'`` — an explicit
             allow-list (today's ``SandboxPolicy`` defaults / the pre-#3823
             behavior). ``'custom'`` — the operator writes both the direction
-            and the content via ``policy`` below. Allowed:
-            ``{'compat', 'strict', 'custom'}``. NOT YET WIRED to change
-            resolved-policy behavior anywhere — see the module-level note on
-            :data:`_SANDBOX_MODES` for why.
+            and the content via ``policy`` below. Declared in the enum
+            (``{'compat', 'strict', 'custom'}``) but ``'strict'``/``'custom'``
+            currently RAISE at construction (``ValueError``, "not implemented
+            yet") rather than being silently accepted-and-ignored — resolving
+            ``mode`` into an actual policy is not wired anywhere yet (see the
+            module-level note on :data:`_SANDBOX_MODES`), and accepting a
+            value that changes nothing would be a silent lie to an operator
+            who wrote it expecting containment. Only ``'compat'`` (the
+            unchanged, already-real default) validates today; the PR that
+            wires ``'strict'``/``'custom'`` removes this guard in the same
+            diff as the tests proving the wiring works.
         policy:
             The agent-level (operator) sandbox policy: a mapping of
             ``SandboxPolicy`` kwargs (``network`` / ``write_paths`` /
@@ -474,6 +481,24 @@ class SandboxConfig:
             raise ValueError(
                 f"sandbox.mode {self.mode!r} is not one of {sorted(_SANDBOX_MODES)}"
             )
+        if self.mode != "compat":
+            raise ValueError(
+                f"sandbox.mode {self.mode!r} is not implemented yet (#3823 ②) — "
+                "only 'compat' (the current, unchanged default behavior) is "
+                "accepted until strict/custom are wired into policy resolution"
+            )
+        # #3823 ②: strict/custom are declared in the enum but not yet WIRED
+        # into any resolved-policy behavior (see the module-level note on
+        # _SANDBOX_MODES). Accepting them silently here would be a lie to the
+        # operator, not a "written but unread" internal field like #3850's
+        # WrappedCommand.env before its callers consumed it — an operator who
+        # writes `mode: strict` forms a real expectation (containment is now
+        # enforced) that nothing currently honours; the config would validate
+        # and do nothing, silently staying compat underneath. Fail loudly
+        # instead. The PR that wires strict/custom into actual policy
+        # resolution removes this guard IN THE SAME DIFF as the tests proving
+        # the wiring works — so "wired but unread" cannot happen here the way
+        # it did for the internal field.
         if self.policy is not None:
             # Fail-fast on a malformed operator policy: construct a SandboxPolicy
             # to validate the keys (unknown key → TypeError → clear ValueError).
