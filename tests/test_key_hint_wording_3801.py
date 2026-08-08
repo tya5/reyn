@@ -64,6 +64,40 @@ def test_the_rewind_picker_title_uses_the_convention() -> None:
     )
 
 
+def test_the_help_tables_spell_key_names_the_way_the_hints_do() -> None:
+    """Tier 1: key names in the Help tables are lowercase (#3805).
+
+    The tables are exempt from the ``<key> to <verb>`` SHAPE (see the test
+    below) and that exemption never covered spelling. Before #3805 the same
+    keys appeared as ``pgup / pgdn`` in one table and ``PgUp / PgDn`` in
+    another, and one table used both conventions in adjacent rows.
+
+    Enumerated over every table this module publishes, not over the two sites
+    that happened to be wrong: a rule checked only where it was already broken
+    cannot notice the third table someone adds. The key column is the whole
+    claim — glyphs (``↑``) and separators pass through untouched, and the verb
+    column is prose and is not asked to be lowercase.
+    """
+    tables = {
+        "COMPOSER_KEYS": chrome.COMPOSER_KEYS,
+        "MENUBAR_KEYS": chrome.MENUBAR_KEYS,
+        "SENTQUEUE_KEYS": getattr(chrome, "SENTQUEUE_KEYS", []),
+        "CONVERSATION_CURSOR_KEYS": getattr(chrome, "CONVERSATION_CURSOR_KEYS", []),
+        "DRAWER_KEYS": getattr(chrome, "DRAWER_KEYS", []),
+    }
+    assert any(rows for rows in tables.values()), (
+        "no key tables were found — this gate would pass vacuously"
+    )
+    for name, rows in tables.items():
+        for key, _verb in rows:
+            letters = [ch for ch in key if ch.isalpha()]
+            assert not any(ch.isupper() for ch in letters), (
+                f"{name} spells a key with a capital: {key!r}. The tables are "
+                "exempt from the <key> to <verb> shape, not from how a key is "
+                "written."
+            )
+
+
 def test_the_help_tables_are_deliberately_not_converted() -> None:
     """Tier 1: the Help pane's key tables keep key and verb in two columns.
 
