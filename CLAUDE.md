@@ -181,6 +181,19 @@ These rules then keep multi-session work coherent:
    "this PR partially closes #X". For sub-PRs in a multi-PR arc, use `part of
    #X` or `toward #X`. Only the final PR that actually completes the umbrella
    issue should use `Closes #X`.
+   **This includes a sentence explicitly saying the PR does NOT close #X** —
+   "Does not close #X" and "closing #X is a separate call" both auto-close
+   #X on merge, because GitHub's parser matches the keyword-plus-number
+   pair with no awareness of negation or of the sentence being ABOUT the
+   decision rather than making it. Careless writers rarely hit this — `part
+   of #X` alone says everything needed. It's specifically hit by writers
+   trying to explain, carefully, why they're deliberately NOT closing
+   something (#3808, #3809, same night) — the more the sentence tries to
+   spell out the non-closing intent, the more likely it is to place the
+   keyword right next to the number. If you want to say a PR doesn't close
+   #X, say `part of #X` (or nothing) and leave "close" out of the sentence
+   entirely — don't write a sentence that contains both the keyword and the
+   number, no matter which way the sentence is negated.
    **Determining "final" is not a guess**: before writing `Closes #X` into a
    brief or PR body, enumerate every PR/issue whose body contains `part of
    #X` (`gh pr list --state all --search "#X in:body"`) and confirm none are
