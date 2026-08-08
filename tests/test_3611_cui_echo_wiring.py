@@ -113,7 +113,6 @@ async def _drive_one_line(
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
     transport, display = _transport_that_survives_eof_shutdown(session)
     renderer = _SilentRenderer()
 

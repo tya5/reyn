@@ -137,7 +137,6 @@ async def test_all_eight_builtin_points_dispatch_schema_matching_payloads(
         "reyn.runtime.router_loop.call_llm_tools", _llm_stub(_text_result("hi back")),
     )
     session = _make_session(tmp_path)
-    session.is_attached = True
     run_task = asyncio.create_task(session.run())
     await session.submit_user_text("hello")
     await _wait_for(lambda: any(p == "turn_end" for p, _ in captured))

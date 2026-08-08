@@ -487,7 +487,6 @@ async def test_the_session_built_seam_still_lands_a_reply_on_the_session_outbox(
     from tests._support.agent_session import make_session
 
     session = make_session(agent_name="default", snapshot_path=tmp_path / "snap.json")
-    session.is_attached = True
     ran = await execute_slash_command(session._slash_context(), "help", "")
 
     assert ran, "/help must be executed by the server-side slash executor"

@@ -203,7 +203,6 @@ async def _drive_one_submission(
         agent_name="own-submissions-wiring-3611",
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
     registry = _NoRouterLoopRegistry(session)
     transport = InProcessTransport(registry, intervention_channel=DEFAULT_CHAT_CHANNEL_ID)
     transport.start()

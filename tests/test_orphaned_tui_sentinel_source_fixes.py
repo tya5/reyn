@@ -70,7 +70,6 @@ async def test_quit_handler_emits_no_quit_sentinel(tmp_path, monkeypatch) -> Non
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/quit")
@@ -91,7 +90,6 @@ async def test_exit_handler_emits_no_quit_sentinel(tmp_path, monkeypatch) -> Non
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/exit")
@@ -113,7 +111,6 @@ async def test_donut_emits_system_reply_not_tui_sentinel(tmp_path, monkeypatch) 
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/donut")
@@ -139,7 +136,6 @@ async def test_matrix_emits_system_reply_not_tui_sentinel(tmp_path, monkeypatch)
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/matrix")

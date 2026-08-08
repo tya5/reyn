@@ -89,7 +89,6 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
     the L9 invariant ③b must not disturb."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     sink = _EventSink()
     session.subscribe_chat_events(sink)
@@ -141,7 +140,6 @@ def test_non_streaming_turn_emits_no_agent_delta_events(tmp_path, monkeypatch) -
     per-turn event emission."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     sink = _EventSink()
     session.subscribe_chat_events(sink)

@@ -3134,8 +3134,8 @@ class AgentRegistry:
             )
         return sid
 
-    async def ensure_running(self, name: str) -> "object":
-        """Load + start session.run() + forwarder for `name` without
+    async def ensure_running(self, name: str, sid: str = _DEFAULT_SID) -> "object":
+        """Load + start session.run() + forwarder for `(name, sid)` without
         changing the user-attached pointer. Used for agent-to-agent
         messaging (PR11): when A sends to B, B's task must be live to
         consume the inbox put, but the user's display stays on whoever
@@ -3143,9 +3143,22 @@ class AgentRegistry:
 
         The forwarder is still started so that, should the user later
         attach to B, B's pre-existing outbox messages route correctly.
+
+        #3793 stage 2: ``sid`` is now a parameter (defaulting to
+        ``_DEFAULT_SID`` — every pre-existing caller that omits it keeps
+        byte-identical behaviour). This is what makes this method the boot
+        -only primitive AG-UI's 5 ``registry.attach(agent_name)`` call sites
+        move to: AG-UI's own per-connection state (``SurfaceManager``, keyed
+        by ``connection_id``) already tracks who is attached to what — it
+        never read ``self._connection``/``attached_name``/``attached_session``
+        (measured: zero references in ``interfaces/transport/agui/``), so
+        the ONLY thing AG-UI actually needed from ``attach()`` was this boot
+        side effect. Calling this instead of ``attach()`` means an AG-UI
+        connection resolving/booting a session no longer flips the
+        registry's own ``AttachedConnection`` (the TUI's shared focus
+        pointer) — the ADR-0039 D4 N:N witness this stage exists to satisfy.
         """
         session = self.get_or_load(name)
-        sid = _DEFAULT_SID  # FP-0043 S3: name-keyed API drives the default session
         key = (name, sid)
         if key not in self._tasks or self._tasks[key].done():
             self._tasks[key] = asyncio.create_task(session.run())
@@ -3274,14 +3287,13 @@ class AgentRegistry:
         if old is not None and old != key:
             old_session = self._peek_session(old[0], old[1])
             if old_session is not None:
-                # Mark detached BEFORE switching so transient outbox emissions
-                # from the old session start dropping at the source
-                # (`Session._put_outbox` filters status/trace).
-                old_session.is_attached = False
                 # Move any focus-following front-end listeners off the old session.
+                # #3793 stage 2: no longer also flips a `Session.is_attached`
+                # bool here — `Session._put_outbox_nowait` derives "nobody is
+                # watching" directly from `outbox_hub.has_subscribers()`
+                # instead of a second, manually-synced representation.
                 self._unwire_focus_listeners(old_session)
 
-        new_session.is_attached = True
         if old != key:
             # First attach or a genuine switch: wire the focus listeners to the
             # now-focused session (no-op if no front-end bound any).
@@ -3314,9 +3326,10 @@ class AgentRegistry:
         get_or_loads the default session, BUILDING it if absent), this requires
         the target session to already exist (= opened via ``spawn_session``) and
         raises ``KeyError`` otherwise — no build, focus only. Mirrors ``attach``'s
-        run-loop/forwarder boot + the ``is_attached`` focus flip, so the focused
+        run-loop/forwarder boot + the connection-switch flip, so the focused
         session's output routes to ``repl_outbox`` and the previously-focused
-        session stops forwarding (``is_attached=False``)."""
+        session stops forwarding (``self._connection.is_attached(key)`` — #3793
+        stage 2: no longer also a ``Session.is_attached`` bool flip)."""
         target = self._peek_session(name, sid)
         if target is None:
             raise KeyError(f"no session {sid!r} for agent {name!r}")
@@ -3325,9 +3338,7 @@ class AgentRegistry:
         if old is not None and old != key:
             old_session = self._peek_session(old[0], old[1])
             if old_session is not None:
-                old_session.is_attached = False
                 self._unwire_focus_listeners(old_session)
-        target.is_attached = True
         if old != key:
             self._wire_focus_listeners(target)
         if key not in self._tasks or self._tasks[key].done():
@@ -3410,9 +3421,6 @@ class AgentRegistry:
         active = self._connection.active
         if active is None:
             return
-        session = self._peek_session(active[0], active[1])
-        if session is not None:
-            session.is_attached = False
         self._connection.switch(None)
 
     @property

@@ -110,6 +110,21 @@ class OutboxHub:
     def _remove(self, sub: HubSubscription) -> None:
         self._subs.discard(sub)
 
+    def has_subscribers(self) -> bool:
+        """Whether any surface currently holds a live subscription.
+
+        #3793 stage 2: the emission-time gate a producer uses to decide
+        whether a transient (status/trace) message is worth queuing at all —
+        distinct from ``_fanout``'s per-message no-op, which only applies
+        AFTER a message has already reached ``_drain`` (itself only running
+        once ``subscribe()`` has been called at least once). A session booted
+        via ``ensure_session_running`` (no forwarder — e.g. a persistent
+        ``cron:``/``webhook:`` session, FP-0043) may never be subscribed to
+        at all; without this earlier gate, ``_drain`` never starts and
+        ``session.outbox`` (the source queue) grows without bound for the
+        life of the session."""
+        return bool(self._subs)
+
     def _ensure_drain(self) -> None:
         if self._drain_task is None or self._drain_task.done():
             self._drain_task = asyncio.create_task(self._drain())
