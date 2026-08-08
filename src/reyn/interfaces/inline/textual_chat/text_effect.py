@@ -112,6 +112,18 @@ WAITING_FRAMES = 10
 #: responsiveness this whole design exists to buy.
 REVERSE_STRIDE = 5
 
+#: How many distinct effects a single ``ctrl+l`` press will try before giving
+#: up (#3866 follow-up). A build can end with no frames — the worker was
+#: cancelled, or the effect raised — and the first version of this treated
+#: that as "end the overlay", which after a long pulse reads as the wait
+#: having been for nothing rather than as a result. Retrying a DIFFERENT
+#: effect turns an effect-specific failure into an invisible extra beat of
+#: the same pulse; it does nothing for a host-level failure (e.g. memory
+#: pressure building a large cache), which is why this is bounded rather than
+#: "try every effect" — a systemic failure should surface, not spend seconds
+#: failing at every member of the list before saying so.
+MAX_BUILD_ATTEMPTS = 3
+
 #: The optional dependency this needs, and the extra that carries it.
 #:
 #: An EXTRA rather than a core dependency (owner ruling, #3796): not everyone who
@@ -390,27 +402,52 @@ def frame_factory(
         # round of #3796 exists to remove.
         if not art.strip():
             return
-        builder = _CacheBuilder(random.choice(effects), art, width, height)
-        # Sized to what was covered, not to the widget: a canvas narrower than a
-        # covered line CLIPS it (measured — a 100-cell line came back 78), and
-        # the effect would resolve to something the operator can see is not what
-        # was there.
-        try:
-            pulse = waiting_cycle(covered, dark=dark)
-            while not builder.ready:
-                if builder.gave_nothing:
-                    return  # cancelled, or the effect raised — end the overlay
-                # A WHOLE cycle before re-checking: the handover lands on a
-                # boundary, so the pulse is never cut mid-fade. The cost of
-                # waiting is at most one cycle (~1s at DEFAULT_FPS) after the
-                # cache is ready, which is cheaper than a visible seam.
-                yield from pulse
-            yield from _play(builder.frames)
-        finally:
-            # Reached when the overlay is dismissed and this generator is
-            # closed, which is the ONLY signal a stopped overlay gives. A build
-            # left running would hold a core for several seconds producing
-            # frames for a screen nobody is looking at.
-            builder.cancel()
+        pulse = waiting_cycle(covered, dark=dark)
+        # A bounded pool of DISTINCT attempts (#3866 follow-up), not one shot:
+        # a build can end with no frames — the worker cancelled, or the effect
+        # raised — and yielding nothing after a long pulse reads as the wait
+        # having failed rather than as a result. See :data:`MAX_BUILD_ATTEMPTS`
+        # for why this is bounded rather than exhaustive.
+        pool = random.sample(effects, k=min(MAX_BUILD_ATTEMPTS, len(effects)))
+        for cls in pool:
+            builder = _CacheBuilder(cls, art, width, height)
+            # Sized to what was covered, not to the widget: a canvas narrower
+            # than a covered line CLIPS it (measured — a 100-cell line came
+            # back 78), and the effect would resolve to something the operator
+            # can see is not what was there.
+            try:
+                while not builder.ready and not builder.gave_nothing:
+                    # A WHOLE cycle before re-checking: the handover lands on
+                    # a boundary, so the pulse is never cut mid-fade. The cost
+                    # of waiting is at most one cycle (~1s at DEFAULT_FPS)
+                    # after the cache is ready, which is cheaper than a
+                    # visible seam.
+                    yield from pulse
+                if builder.ready:
+                    yield from _play(builder.frames)
+                    return
+                # gave_nothing: try the next effect in the pool, on the SAME
+                # pulse — the operator sees one continuous wait, not a series
+                # of restarts.
+            finally:
+                # Reached when the overlay is dismissed and this generator is
+                # closed (cancels an in-flight build), and also on every
+                # ordinary loop exit (a no-op against an already-finished
+                # build — see _CacheBuilder.cancel). A build left running
+                # would hold a core for several seconds producing frames for
+                # a screen nobody is looking at.
+                builder.cancel()
+        # Every attempt in the pool failed. Hand the screen back PLAINLY —
+        # unfaded, unmoving — rather than let the overlay vanish on the next
+        # tick: that is the operator's own conversation as its own
+        # acknowledgement that this pull came up empty, distinct from "still
+        # building" (pulsing) and from "playing" (moving) so it cannot be
+        # mistaken for either. Held for a WHOLE pulse cycle's worth of frames
+        # (one at DEFAULT_FPS, same "one held beat" the pulse itself uses) —
+        # a single frame is one tick, ~100ms, which a fast build failure
+        # (measured: sub-frame for a constructor-time raise) would render as
+        # a flicker rather than a legible screen.
+        for _ in range(WAITING_FRAMES):
+            yield Text(art)
 
     return frames

@@ -4,7 +4,7 @@ The operator's report was that the effect stuttered: every frame was generated
 on the event loop as it was drawn. The change generates the whole effect ONCE,
 on a worker thread, and plays it from a list — so a tick costs a lookup.
 
-Three properties come out of that and each can fail silently:
+Four properties come out of that and each can fail silently:
 
 - **The wait is covered.** Generation takes seconds, so something has to be on
   screen meanwhile, and the handover must land on a pulse-cycle boundary — a
@@ -14,9 +14,21 @@ Three properties come out of that and each can fail silently:
   for several seconds producing frames for a screen nobody is looking at.
 - **The pulse eases.** A linear fade reads as a level being turned down; the
   operator asked for a breath.
+- **A failed build does not vanish.** The first version ended the overlay the
+  instant a build produced no frames — which, after the operator has been
+  watching a long pulse (owner: 「pulse 長いと期待が膨らむというガチャ的要素にはなる
+  かな」 — length read as anticipation, not overhead), reads as the wait having
+  failed rather than as a result. A DIFFERENT effect is retried, bounded, on
+  the SAME pulse; only if every attempt fails does the overlay end, and even
+  then with a held, legible frame rather than a silent cut.
 
 Timing is not pinned. How LONG a build takes is the host's business — what is
 pinned is that the pulse covers it and that the handover is aligned.
+
+The failure tests inject a REAL class shaped like a TTE effect (same
+constructor signature, same ``terminal_config``/``__iter__`` contract) that
+raises — not a mock of ``_CacheBuilder`` or ``frame_factory``, both of which
+would test the injection rather than the generator's own handling of it.
 """
 from __future__ import annotations
 
@@ -33,6 +45,37 @@ requires_tte = pytest.mark.skipif(
 )
 
 _COVERED = ["● a reply on screen", "", "▸ read_file(path=README.md)"] * 4
+
+
+class _RaisingEffect:
+    """A real TTE-shaped effect that always fails, immediately.
+
+    Same construction/iteration contract ``_CacheBuilder`` drives a genuine
+    effect through (``cls(art)``, ``.terminal_config.canvas_{width,height}``,
+    ``for frame in effect``) — this is not a stand-in for ``_CacheBuilder``
+    itself, it is a stand-in for the one thing genuinely outside reyn's
+    control: a specific effect misbehaving on specific input.
+    """
+
+    class terminal_config:
+        canvas_width = 0
+        canvas_height = 0
+
+    def __init__(self, art: str) -> None:
+        self.art = art
+
+    def __iter__(self):
+        raise RuntimeError("simulated effect failure")
+
+
+class _SlowRaisingEffect(_RaisingEffect):
+    """Like :class:`_RaisingEffect`, but only fails after doing real work —
+    the shape a resource failure (memory pressure building a large cache)
+    would actually take, as opposed to a constructor-time raise."""
+
+    def __iter__(self):
+        time.sleep(0.3)
+        raise RuntimeError("simulated failure after real work")
 
 
 def test_the_pulse_returns_to_where_it_started() -> None:
@@ -147,3 +190,112 @@ def test_closing_the_overlay_cancels_the_build() -> None:
     # one frame's time or something is wrong with the cancellation itself.
     while threading.active_count() > baseline:
         time.sleep(0.02)
+
+
+@requires_tte
+def test_a_failed_build_is_retried_with_a_different_effect() -> None:
+    """Tier 2: one effect failing is not the operator's problem.
+
+    The pool for one press is DISTINCT effects (``random.sample``, not
+    ``random.choice`` repeated) — retrying the SAME failing effect would just
+    fail again for the same reason. Verified end to end: with the failing
+    class first in the pool and a real effect second, the real effect plays.
+    """
+    from terminaltexteffects.effects import effect_rain
+
+    import reyn.interfaces.inline.textual_chat.text_effect as mod
+
+    original = mod.effect_classes
+    mod.effect_classes = lambda: [_RaisingEffect, effect_rain.Rain]
+    try:
+        generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
+        frames = []
+        try:
+            for _ in range(300):
+                frames.append(next(generator))
+                time.sleep(1 / text_effect.DEFAULT_FPS)
+        finally:
+            generator.close()
+    finally:
+        mod.effect_classes = original
+
+    # The real effect actually ran: its frames differ from one another (a
+    # held static screen, which is what a total failure falls back to, would
+    # not).
+    distinct = len({f.plain for f in frames[10:80]})
+    assert distinct > 5, (
+        f"only {distinct} distinct frames — the real effect never played"
+    )
+
+
+@requires_tte
+def test_every_attempt_failing_hands_back_a_held_legible_screen() -> None:
+    """Tier 2: when the whole pool fails, the overlay does not just vanish.
+
+    The first version ``return``ed on the first failure, which ends the
+    generator — upstream clears the overlay on the very next tick with no
+    signal at all (``OverlayFinished`` fires, but nothing on screen says why).
+    After a pulse the operator may have been watching for several seconds,
+    that reads as the wait having failed, not as an outcome.
+    """
+    import reyn.interfaces.inline.textual_chat.text_effect as mod
+
+    original = mod.effect_classes
+    mod.effect_classes = lambda: [_RaisingEffect] * text_effect.MAX_BUILD_ATTEMPTS
+    try:
+        generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
+        frames = list(generator)  # bounded: every attempt fails fast, by design
+    finally:
+        mod.effect_classes = original
+
+    assert frames, "the overlay ended with nothing shown at all"
+    # Held, not a flicker: at DEFAULT_FPS a single frame is ~100ms, which is
+    # why the fallback repeats itself for a whole pulse cycle.
+    assert len(frames) >= text_effect.WAITING_FRAMES, (
+        f"the fallback was shown for only {len(frames)} frame(s)"
+    )
+    # Legible: the operator's own screen, not a blank or a partial paint.
+    for line in _COVERED:
+        if line:
+            assert line in frames[-1].plain, (
+                f"the held frame does not show the covered screen: "
+                f"{frames[-1].plain!r}"
+            )
+    # Distinct from the pulse: every held frame carries the SAME style — no
+    # fading across the run — which is what makes "it's over" legible against
+    # "still waiting". Asserted pairwise against the first frame rather than
+    # counting distinct styles, so this pins the uniformity, not a count.
+    first_style = str(frames[0].style)
+    assert all(str(f.style) == first_style for f in frames), (
+        f"the fallback still looks like the pulse (styles vary): "
+        f"{sorted({str(f.style) for f in frames})}"
+    )
+
+
+@requires_tte
+def test_a_slow_failure_still_recovers_and_still_falls_back_cleanly() -> None:
+    """Tier 2: the retry pays real wall-clock time (a resource-style failure,
+    not an instant raise) and the pool is still exhausted correctly.
+
+    Distinct from the fast-failure test above: a build that does real work
+    before failing exercises the SAME cancel-on-``finally`` path a genuine
+    long-running effect would, once per pool attempt.
+    """
+    import reyn.interfaces.inline.textual_chat.text_effect as mod
+
+    original = mod.effect_classes
+    mod.effect_classes = lambda: [_SlowRaisingEffect] * text_effect.MAX_BUILD_ATTEMPTS
+    try:
+        generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
+        t0 = time.perf_counter()
+        frames = list(generator)
+        elapsed = time.perf_counter() - t0
+    finally:
+        mod.effect_classes = original
+
+    assert frames, "the overlay ended with nothing shown"
+    # Each of MAX_BUILD_ATTEMPTS attempts does ~0.3s of real work before
+    # failing — a wildly short total would mean the retries never ran.
+    assert elapsed > 0.3 * (text_effect.MAX_BUILD_ATTEMPTS - 1), (
+        f"only {elapsed:.2f}s elapsed — the pool did not actually retry"
+    )
