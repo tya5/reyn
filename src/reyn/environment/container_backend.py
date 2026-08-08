@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -411,13 +412,29 @@ class DockerEnvironmentBackend:
         'exec "$@"'`` rationale); ``-i`` is always passed (unlike ``run()``,
         which only opens stdin when the caller supplies some) because a
         persistent stdio server holds bidirectional pipes open for its whole
-        lifetime. No cleanup resource is owned (unlike Seatbelt's temp profile)."""
+        lifetime. No cleanup resource is owned (unlike Seatbelt's temp profile).
+
+        ``env``, unlike every other backend's ``wrap_command()`` (#3822): the
+        returned ``argv`` is a HOST-side ``docker`` CLI invocation, not the
+        sandboxed workload itself — the workload's actual env comes from the
+        container IMAGE's own login-shell activation (conda/nvm/pyenv), a
+        deliberate fidelity boundary this class's ``run()`` already documents
+        ("Honors only policy.timeout_seconds"). ``policy.env_passthrough``
+        has no meaning for a host-side ``docker exec`` invocation, so
+        fabricating an allowlisted env here would be inventing a value with
+        nothing to scope. The honest answer for what the HOST ``docker`` CLI
+        itself needs (``DOCKER_HOST`` / ``HOME`` / ``PATH`` / docker config
+        discovery) is "the same as `run()`'s own runners already assume" —
+        neither ``_sync_runner`` nor ``_async_runner`` passes ``env=`` at
+        all, i.e. full host inherit for the CLI call itself. Returning that
+        SAME choice here keeps ``wrap_command()`` and ``run()`` consistent
+        with each other rather than inventing a THIRD, novel policy."""
         wrapped_argv = [
             self.docker_bin, "exec", "-i",
             "-w", self.repo_dir, self.container,
             "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
         ]
-        return WrappedCommand(argv=wrapped_argv, cleanup=None)
+        return WrappedCommand(argv=wrapped_argv, env=dict(os.environ), cleanup=None)
 
     async def run(
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,
