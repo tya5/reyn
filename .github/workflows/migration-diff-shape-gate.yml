@@ -1,0 +1,54 @@
+name: migration-diff-shape gate
+
+# #3879 Stage 1 M1 (PR-0). TEMPORARY, unlike flat-tests-ratchet.yml: this
+# gate only makes sense while Stage-1 migration PRs are landing (a
+# legitimate PR deleting a Tier-4 test after Stage 1 is done would be
+# wrongly blocked by it). Same lifespan discipline as tests/scaffold/'s
+# triggered_by/removed_by convention:
+#
+#   triggered_by: #3879 Stage 1
+#   removed_by:   the PR that lands the LAST Stage-1 migration
+#
+# Not wired into the normal test.yml matrix — this is a repo-process gate,
+# not a test-suite gate, and needs full git history (fetch-depth: 0) to
+# diff against the merge-base, unlike test.yml's shallow checkout.
+#
+# ⚠️ KNOWN SCOPE GAP, flagged rather than silently guessed at (see PR body):
+# this triggers on ANY PR touching tests/** or the Stage-0 baseline, not only
+# Stage-1 migration PRs — an ordinary bug-fix PR editing an existing flat
+# test file is indistinguishable, at the diff-shape level, from a migration
+# PR that ISN'T a pure move, so both fail this gate identically. No
+# repo-wide precedent for a narrower per-PR opt-in signal was available at
+# authoring time (label / branch-name convention) — the `paths:` filter
+# below only prunes PRs that don't touch tests/ at all, it does not
+# distinguish "migration" from "ordinary edit" among PRs that do.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+      - "scripts/flat_tests_baseline.json"
+
+permissions:
+  contents: read
+
+jobs:
+  migration-diff-shape:
+    name: migration-diff-shape gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_migration_diff_shape.py is stdlib-only (argparse /
+      # subprocess). No pip install needed.
+      - name: Check the PR's diff is pure moves (Stage 1 migration shape)
+        run: |
+          python scripts/check_migration_diff_shape.py --base "origin/${{ github.base_ref }}"
