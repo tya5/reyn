@@ -397,6 +397,18 @@ class EventsConfig:
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
 _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
+# #3823 ②: compat / strict / custom — NOT "off" (owner ruling: "off" is
+# expressible as custom-with-everything-allowed, so it does not need its own
+# enum member). Schema only, as of this field's introduction: nothing in the
+# op-dispatch path reads `mode` yet — resolving it into an actual SandboxPolicy
+# is blocked on a separate design question (SandboxPolicy.write_paths is a
+# closed-enumeration/whitelist field by construction — empty means "deny all
+# writes", not "allow all" — so compat's write axis cannot be expressed with
+# today's field shape; #3823 comment thread has the open question). Adding
+# the validated enum here is safe and mode-independent regardless of how that
+# resolves.
+_SANDBOX_MODES = {"compat", "strict", "custom"}
+DEFAULT_SANDBOX_MODE = "compat"
 
 
 @dataclass
@@ -416,6 +428,17 @@ class SandboxConfig:
             ``'error'`` raises RuntimeError (useful to fail-fast in enforced
             production environments). ``'ignore'`` silently falls back.
             Allowed: ``{'warn', 'error', 'ignore'}``.
+        mode:
+            #3823 ②: which enumeration DIRECTION the resolved policy uses.
+            ``'compat'`` (default, owner-ruled "A" — a literal empty
+            deny-list, nothing blocked by default; audit/events/timeout/
+            cancel-teardown still apply). ``'strict'`` — an explicit
+            allow-list (today's ``SandboxPolicy`` defaults / the pre-#3823
+            behavior). ``'custom'`` — the operator writes both the direction
+            and the content via ``policy`` below. Allowed:
+            ``{'compat', 'strict', 'custom'}``. NOT YET WIRED to change
+            resolved-policy behavior anywhere — see the module-level note on
+            :data:`_SANDBOX_MODES` for why.
         policy:
             The agent-level (operator) sandbox policy: a mapping of
             ``SandboxPolicy`` kwargs (``network`` / ``write_paths`` /
@@ -433,6 +456,7 @@ class SandboxConfig:
 
     backend: str = "auto"
     on_unsupported: str = "warn"
+    mode: str = DEFAULT_SANDBOX_MODE
     policy: dict | None = None
 
     def __post_init__(self) -> None:
@@ -445,6 +469,10 @@ class SandboxConfig:
             raise ValueError(
                 f"sandbox.on_unsupported {self.on_unsupported!r} is not one of "
                 f"{sorted(_SANDBOX_ON_UNSUPPORTED)}"
+            )
+        if self.mode not in _SANDBOX_MODES:
+            raise ValueError(
+                f"sandbox.mode {self.mode!r} is not one of {sorted(_SANDBOX_MODES)}"
             )
         if self.policy is not None:
             # Fail-fast on a malformed operator policy: construct a SandboxPolicy
@@ -468,12 +496,13 @@ def _build_sandbox_config(raw: object) -> SandboxConfig:
     defaults = SandboxConfig()
     backend = str(raw.get("backend", defaults.backend))
     on_unsupported = str(raw.get("on_unsupported", defaults.on_unsupported))
+    mode = str(raw.get("mode", defaults.mode))
     # #1326: optional agent-level policy. Absent → None (SandboxLayer stays ⊤).
     policy_raw = raw.get("policy")
     policy = dict(policy_raw) if isinstance(policy_raw, dict) else None
     # Validation delegated to __post_init__ — raises ValueError with clear message.
     return SandboxConfig(
-        backend=backend, on_unsupported=on_unsupported, policy=policy
+        backend=backend, on_unsupported=on_unsupported, mode=mode, policy=policy
     )
 
 

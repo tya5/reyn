@@ -25,10 +25,50 @@ from reyn.security.sandbox import noop_backend as _noop_module
 
 
 def test_default_config_values():
-    """Tier 2: SandboxConfig() defaults to backend='auto', on_unsupported='warn'."""
+    """Tier 2: SandboxConfig() defaults to backend='auto', on_unsupported='warn',
+    mode='compat' (#3823 ②, owner-ruled "A")."""
     cfg = SandboxConfig()
     assert cfg.backend == "auto"
     assert cfg.on_unsupported == "warn"
+    assert cfg.mode == "compat"
+
+
+def test_config_rejects_invalid_mode():
+    """Tier 2: #3823 ② — SandboxConfig with unknown mode raises ValueError listing
+    the allowed set. "off" is deliberately NOT allowed — the owner ruling dropped
+    it (expressible as custom-with-everything-allowed instead)."""
+    with pytest.raises(ValueError, match="sandbox.mode") as exc_info:
+        SandboxConfig(mode="off")
+    msg = str(exc_info.value)
+    assert "off" in msg
+    for allowed in ("compat", "strict", "custom"):
+        assert allowed in msg
+
+
+def test_config_accepts_each_valid_mode():
+    """Tier 2: #3823 ② — compat/strict/custom are all accepted, byte-identical
+    round-trip (no normalization or silent rewriting)."""
+    for mode in ("compat", "strict", "custom"):
+        assert SandboxConfig(mode=mode).mode == mode
+
+
+def test_yaml_parse_defaults_mode_to_compat_when_absent():
+    """Tier 2: #3823 ② — a `sandbox:` YAML block that omits `mode` parses to
+    the compat default, not an error or a None. Real parser, not a hand-built
+    SandboxConfig, since this is the actual reyn.yaml -> SandboxConfig seam."""
+    from reyn.config.infra import _build_sandbox_config
+
+    cfg = _build_sandbox_config({"backend": "noop"})
+    assert cfg.mode == "compat"
+
+
+def test_yaml_parse_honors_an_explicit_mode():
+    """Tier 2: #3823 ② — an operator-declared `sandbox: {mode: strict}` reaches
+    SandboxConfig.mode unchanged."""
+    from reyn.config.infra import _build_sandbox_config
+
+    cfg = _build_sandbox_config({"mode": "strict"})
+    assert cfg.mode == "strict"
 
 
 def test_config_rejects_invalid_backend():
