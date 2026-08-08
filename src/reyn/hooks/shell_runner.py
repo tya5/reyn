@@ -26,10 +26,12 @@ Contract
 Sandbox (CRITICAL)
 ------------------
 The hook argv runs through the **same** :mod:`reyn.security.sandbox`
-backend that the ``sandboxed_exec`` op uses::
+backend that the ``sandboxed_exec`` op uses, via the shared resolve/run/
+classify slice both callers do identically (:mod:`reyn.security.sandbox.launcher`,
+#3823 ①)::
 
-    backend = sandbox_backend or get_default_backend(sandbox_config)
-    result = await backend.run(argv, policy, stdin=..., cwd=...)
+    backend = resolve_backend(sandbox_backend, sandbox_config)
+    launched = await run_and_classify(backend, argv, policy, stdin=..., cwd=...)
 
 No new subprocess machinery is introduced.  When the caller passes
 ``sandbox_backend=None`` and ``sandbox_config=None``, the factory auto-selects
@@ -507,9 +509,9 @@ async def run_shell_hook(
     # Import here so the module is importable without the sandbox package in
     # contexts where only the schema / allowlist code is needed.
     from reyn.security.sandbox import SandboxPolicy as _SandboxPolicy
-    from reyn.security.sandbox import get_default_backend
+    from reyn.security.sandbox.launcher import resolve_backend
 
-    backend = sandbox_backend if sandbox_backend is not None else get_default_backend(sandbox_config)
+    backend = resolve_backend(sandbox_backend, sandbox_config)
 
     # Build a safe default policy when none is supplied.
     # #2827/#3005: allow_subprocess / network / write_paths are the operator's
@@ -554,25 +556,29 @@ async def run_shell_hook(
     try:
         stdin_bytes = json.dumps(event_context, default=str).encode("utf-8")
 
-        result = await backend.run(
+        from reyn.security.sandbox.denial import DENIAL_FORK  # noqa: PLC0415
+        from reyn.security.sandbox.launcher import run_and_classify  # noqa: PLC0415
+
+        launched = await run_and_classify(
+            backend,
             argv,
             policy,
             stdin=stdin_bytes,
             cwd=cwd,
         )
+        result = launched.result
 
         # #2095 P3: the command actually ran (consent passed) — surface it as a
         # P6 event so an auto-run (allowlisted) shell hook isn't a silent
         # side-effect. Best-effort: a sink error must not break the run.
-        # #2827: classify a sandbox fork-denial the SAME way the op path does
+        # #2827: a sandbox fork-denial the SAME way the op path does
         # (op_runtime/sandboxed_exec.py, #2820 part B). Without this the hook
         # path's only signal was an opaque `fork: Operation not permitted`
         # warning, so an operator could not tell an environment/PATH problem
         # from a genuine command failure — and therefore could not know the
-        # ``subprocess:`` knob above is what fixes it. Pure function of
-        # (returncode, stderr); no I/O.
-        from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial  # noqa: PLC0415
-        denial_class = classify_denial(result.returncode, result.stderr)
+        # ``subprocess:`` knob above is what fixes it. Classified inside
+        # run_and_classify (#3823 ①) — reused here, not re-derived.
+        denial_class = launched.denial_class
 
         if emit_event is not None:
             try:
