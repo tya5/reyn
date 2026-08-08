@@ -50,12 +50,34 @@ Claiming any tier — 1, 2, or 3 — presupposes two things, in order:
    to a user. A reason that lives only inside the test that's supposed to
    be justified by it is not an anchor — it's the test citing itself.
 
+An issue or PR number passes ② by *shape* whether or not it passes it in
+substance — "an issue exists" is not "an issue decided a behavior." A
+decision record is only a real anchor when what it decided is independent
+of the test that cites it:
+
+> **Discriminator: delete the test. Does the anchor's sentence go false?**
+> No, it still holds → the anchor describes reyn, independent of this test
+> → valid. Yes, it goes false → the anchor was describing *the test*, not
+> reyn → circular, not an anchor.
+
+The shape most likely to pass ② without meeting it: **the issue or PR that
+exists *because* this test was going to be written** — its body argues for
+adding the test, which is the same content as the test's own docstring,
+just filed in a different place. Most likely of all: **the PR that landed
+the test itself** — citing it as the anchor is, almost by construction,
+circular.
+
 ```
 ✓ "the overlay stays up and readable when the pool is fully dead"   — behavior
 ✓ "an audit-event's type is a closed vocabulary"                     — contract
+✓ issue #2074 body: "unify capability narrowing" (decides a behavior,
+  independent of any one test)
 ✗ "a TTE effect resolves to its input"                — a third party's promise
 ✗ "bug X used to happen here"                          — a past bug's fingerprint
 ✗ "this function is written this way"                  — implementation, transcribed
+✗ "PR #1234 body (names this exact test)"     — the PR that landed the test
+✗ "PR #1234 body: rationale for adding this test" — argues for the test,
+  same content as its docstring, filed elsewhere — still circular
 ```
 
 **A test that fails this prerequisite was never classified as Tier 4 —
