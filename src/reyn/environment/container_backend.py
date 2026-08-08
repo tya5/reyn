@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Pattern
 
 from reyn.environment.backend import GrepResult
+from reyn.security.sandbox._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES, communicate_capped
 from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
 from reyn.security.sandbox.policy import SandboxPolicy
 
@@ -52,42 +53,88 @@ AsyncRunner = Callable[..., Awaitable[SandboxResult]]
 
 
 def _sync_runner(
-    argv: list[str], *, stdin: bytes | None = None, timeout: int | None = None
+    argv: list[str],
+    *,
+    stdin: bytes | None = None,
+    timeout: int | None = None,
+    max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
 ) -> SandboxResult:
-    """Real sync runner: spawn argv via ``subprocess.run`` and capture output."""
+    """Real sync runner: spawn argv via ``subprocess.Popen`` + the SAME capped
+    reader every other sandbox backend uses (``communicate_capped``, #3822/
+    #3837's own finding: Docker was the one launch route still doing a plain
+    ``capture_output=True`` — unbounded — read, the exact shape #3837 fixed
+    for CodeAct). A flooding in-container process can no longer OOM the host."""
     try:
-        completed = subprocess.run(
-            argv, input=stdin, capture_output=True, timeout=timeout, check=False,
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-    except subprocess.TimeoutExpired:
+    except OSError as exc:
+        return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
+    try:
+        stdout_b, stderr_b, truncated = communicate_capped(
+            proc, input=stdin, max_bytes=max_bytes, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        proc.wait()
+        stdout_b = exc.stdout if isinstance(exc.stdout, bytes) else b""
+        stderr_b = exc.stderr if isinstance(exc.stderr, bytes) else b""
         return SandboxResult(
-            returncode=-1, stdout=b"", stderr=f"timed out after {timeout}s".encode(),
+            returncode=-1, stdout=stdout_b,
+            stderr=stderr_b + f"\ntimed out after {timeout}s".encode(),
         )
     return SandboxResult(
-        returncode=completed.returncode, stdout=completed.stdout or b"", stderr=completed.stderr or b"",
+        returncode=proc.returncode, stdout=stdout_b, stderr=stderr_b, truncated=truncated,
     )
 
 
 async def _async_runner(
-    argv: list[str], *, stdin: bytes | None = None, timeout: int | None = None
+    argv: list[str],
+    *,
+    stdin: bytes | None = None,
+    timeout: int | None = None,
+    max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
 ) -> SandboxResult:
-    """Real async runner for run() (mirrors PR-A's _subprocess_runner)."""
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    """Real async runner for run() — mirrors ``_sync_runner`` above (and every
+    other sandbox backend's own blocking-path pattern: a real ``Popen`` drained
+    off the event loop via ``run_in_executor``, not ``asyncio.create_subprocess_exec``
+    + plain ``communicate()``, so the SAME output cap applies here (#3822/#3837).
+    ``cancel_event`` support is a separate, larger follow-up (#3822's own
+    measurement recorded this as a distinct gap) — this fix is output-cap only."""
     try:
-        out, err = await asyncio.wait_for(proc.communicate(input=stdin), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return SandboxResult(returncode=-1, stdout=b"", stderr=f"timed out after {timeout}s".encode())
-    return SandboxResult(
-        returncode=proc.returncode if proc.returncode is not None else -1,
-        stdout=out or b"", stderr=err or b"",
-    )
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
+
+    loop = asyncio.get_running_loop()
+
+    def _drain() -> SandboxResult:
+        try:
+            stdout_b, stderr_b, truncated = communicate_capped(
+                proc, input=stdin, max_bytes=max_bytes, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            stdout_b = exc.stdout if isinstance(exc.stdout, bytes) else b""
+            stderr_b = exc.stderr if isinstance(exc.stderr, bytes) else b""
+            return SandboxResult(
+                returncode=-1, stdout=stdout_b,
+                stderr=stderr_b + f"\ntimed out after {timeout}s".encode(),
+            )
+        return SandboxResult(
+            returncode=proc.returncode, stdout=stdout_b, stderr=stderr_b, truncated=truncated,
+        )
+
+    return await loop.run_in_executor(None, _drain)
 
 
 # ── In-container Python snippets (read args from sys.argv; emit on stdout) ────
@@ -443,8 +490,12 @@ class DockerEnvironmentBackend:
         """``docker exec`` of argv (via a login shell) with cwd=repo_dir — NO host-diff bridge.
 
         The files are already in ``repo_dir`` (the agent edited them via the FS
-        methods above), so there is nothing to sync in. Honors only
-        ``policy.timeout_seconds`` (the fidelity boundary, as in PR-A).
+        methods above), so there is nothing to sync in. Honors
+        ``policy.timeout_seconds`` and (#3822) ``policy.max_output_bytes`` —
+        the fidelity boundary (as in PR-A) applies only to env/cwd, not to
+        the output-cap and timeout every other launch route already shares.
+        ``cancel_event`` support is a separate, larger follow-up (#3822's own
+        measurement recorded it as a distinct gap; not fixed here).
 
         The host-side ``cwd`` (= the OS's ``workspace.base_dir``) is **ignored**:
         the repo lives at the in-container ``self.repo_dir`` (``-w``), which a
@@ -474,4 +525,7 @@ class DockerEnvironmentBackend:
             "-w", self.repo_dir, self.container,
             "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
         ]
-        return await self._runner(exec_argv, stdin=stdin, timeout=policy.timeout_seconds)
+        return await self._runner(
+            exec_argv, stdin=stdin, timeout=policy.timeout_seconds,
+            max_bytes=policy.max_output_bytes,
+        )
