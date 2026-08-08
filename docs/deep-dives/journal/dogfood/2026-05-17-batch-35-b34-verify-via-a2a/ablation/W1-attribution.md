@@ -65,7 +65,7 @@ Traceback (most recent call last):
   File ".../src/reyn/chat/session.py", line 1231, in run_one_iteration
     await self._handle_user_message(
   File ".../src/reyn/chat/session.py", line 1345, in _handle_user_message
-    self._chat_events.emit("user_message_received", text=text, chain_id=chain_id)
+    self._audit_events.emit("user_message_received", text=text, chain_id=chain_id)
   File ".../src/reyn/events/events.py", line 55, in emit
     sub(event)
   File ".../src/reyn/events/event_store.py", line 55, in __call__

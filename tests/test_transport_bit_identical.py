@@ -7,12 +7,12 @@ stream — routing only, delivery unchanged. This pins that byte-for-byte:
 - the DISPLAY sub-stream rendered THROUGH the transport (repl_outbox → pump →
   frames → run_output_loop → renderer.message) is identical to the direct
   ``renderer.message`` baseline; and
-- the EVENT sub-stream (chat_events → filtered subscription → frames →
-  renderer.on_chat_event) reproduces the identical WaitingOn / working-indicator
-  transition sequence as the direct ``renderer.on_chat_event`` baseline.
+- the EVENT sub-stream (audit_events → filtered subscription → frames →
+  renderer.on_audit_event) reproduces the identical WaitingOn / working-indicator
+  transition sequence as the direct ``renderer.on_audit_event`` baseline.
 
 The renderer is unchanged; only the source routing moved. Real instances only —
-a real ``InlineChatRenderer``, a real ``EventLog`` for chat_events, a real
+a real ``InlineChatRenderer``, a real ``EventLog`` for audit_events, a real
 ``repl_outbox`` queue behind a small registry double (no mocks).
 """
 from __future__ import annotations
@@ -64,28 +64,28 @@ class _RecordingInlineRenderer(InlineChatRenderer):
         super().__init__()
         self.working_states: list = []
 
-    def on_chat_event(self, event) -> None:
-        super().on_chat_event(event)
+    def on_audit_event(self, event) -> None:
+        super().on_audit_event(event)
         self.working_states.append(self.working_frags(_NOW))
 
 
 class _FakeRegistry:
-    """Registry double: a real EventLog for chat_events + a real repl_outbox
+    """Registry double: a real EventLog for audit_events + a real repl_outbox
     queue + the focus-listener binding the transport composes. No mocks."""
 
     def __init__(self) -> None:
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
-        self.chat_events = EventLog()
+        self.audit_events = EventLog()
         self._cb = None
 
-    def bind_focus_listeners(self, *, on_chat_event=None, intervention_channel=None) -> None:
-        self._cb = on_chat_event
-        if on_chat_event is not None:
-            self.chat_events.add_subscriber(on_chat_event)
+    def bind_focus_listeners(self, *, on_audit_event=None, intervention_channel=None) -> None:
+        self._cb = on_audit_event
+        if on_audit_event is not None:
+            self.audit_events.add_subscriber(on_audit_event)
 
     def unbind_focus_listeners(self) -> None:
         if self._cb is not None:
-            self.chat_events.remove_subscriber(self._cb)
+            self.audit_events.remove_subscriber(self._cb)
             self._cb = None
 
     def attached_session(self):
@@ -93,12 +93,12 @@ class _FakeRegistry:
 
 
 def _baseline(monkeypatch) -> tuple[str, list]:
-    """Direct-path baseline: renderer.on_chat_event + renderer.message directly."""
+    """Direct-path baseline: renderer.on_audit_event + renderer.message directly."""
     r = _RecordingInlineRenderer()
     buf = StringIO()
     monkeypatch.setattr(sys, "__stdout__", buf)
     for etype, data in _EVENTS:
-        r.on_chat_event(Event(type=etype, data=data))
+        r.on_audit_event(Event(type=etype, data=data))
     for msg in _DISPLAY:
         r.message(msg)
     return buf.getvalue(), r.working_states
@@ -114,7 +114,7 @@ async def _via_transport(monkeypatch) -> tuple[str, list]:
     monkeypatch.setattr(sys, "__stdout__", buf)
     try:
         for etype, data in _EVENTS:
-            fake.chat_events.emit(etype, **data)
+            fake.audit_events.emit(etype, **data)
         for msg in _DISPLAY:
             fake.repl_outbox.put_nowait(msg)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))

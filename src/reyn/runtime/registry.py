@@ -3188,7 +3188,7 @@ class AgentRegistry:
     def bind_focus_listeners(
         self,
         *,
-        on_chat_event: "Callable[..., None] | None" = None,
+        on_audit_event: "Callable[..., None] | None" = None,
         intervention_channel: str | None = None,
     ) -> None:
         """Bind front-end listeners that follow the focused (attached) session.
@@ -3199,7 +3199,7 @@ class AgentRegistry:
         subsequent ``attach`` / ``attach_session`` so an agent switch never
         strands them on the old session. Idempotent per front-end (one binding).
         """
-        self._focus_chat_listener = on_chat_event
+        self._focus_chat_listener = on_audit_event
         self._focus_intervention_channel = intervention_channel
         self._wire_focus_listeners(self.attached_session())
 
@@ -3215,7 +3215,7 @@ class AgentRegistry:
         if session is None:
             return
         if self._focus_chat_listener is not None:
-            session.subscribe_chat_events(self._focus_chat_listener)
+            session.subscribe_audit_events(self._focus_chat_listener)
         if self._focus_intervention_channel is not None:
             try:
                 session.register_intervention_listener(self._focus_intervention_channel)
@@ -3226,7 +3226,7 @@ class AgentRegistry:
         if session is None:
             return
         if self._focus_chat_listener is not None:
-            session.unsubscribe_chat_events(self._focus_chat_listener)
+            session.unsubscribe_audit_events(self._focus_chat_listener)
         if self._focus_intervention_channel is not None:
             try:
                 session.unregister_intervention_listener(self._focus_intervention_channel)
@@ -3237,8 +3237,8 @@ class AgentRegistry:
         """#3310 N1: notify the client a switch just happened, as a stream
         BARRIER on ``repl_outbox`` — the one queue every local client drains.
 
-        ★Altitude: this cannot ride ``new_session._chat_events`` (the per-
-        session audit-event stream `session.subscribe_chat_events` follows) —
+        ★Altitude: this cannot ride ``new_session._audit_events`` (the per-
+        session audit-event stream `session.subscribe_audit_events` follows) —
         that stream IS the thing being swapped, so a client keying its reset
         on an event emitted FROM the new session couldn't distinguish "new
         session's first frame" from "the switch itself". Emitting here, at

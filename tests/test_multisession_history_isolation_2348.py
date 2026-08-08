@@ -76,7 +76,7 @@ async def test_spawned_events_isolated_and_forwarder_survives_rewire(tmp_path, m
 
     assert a.events_dir != main.events_dir, "spawned session must have an isolated events dir"
 
-    a._chat_events.emit("budget_warn", dimension="daily_tokens")
+    a._audit_events.emit("budget_warn", dimension="daily_tokens")
 
     # subscriber completeness: the forwarder survived the swap → the outbox got the marker.
     msg = a.outbox.get_nowait()

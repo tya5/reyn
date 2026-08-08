@@ -151,7 +151,7 @@ def test_adapter_exposes_the_memory_capability_itself(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_events_identity(tmp_path):
-    """Tier 2: adapter.events is the same EventLog object as the session's _chat_events.
+    """Tier 2: adapter.events is the same EventLog object as the session's _audit_events.
 
     No duplicate event log surface — ensures there is a single append-only
     event log for the session (P6 compliance).

@@ -71,8 +71,8 @@ class _RecordingInlineRenderer(InlineChatRenderer):
         super().__init__()
         self.working_states: list = []
 
-    def on_chat_event(self, event) -> None:
-        super().on_chat_event(event)
+    def on_audit_event(self, event) -> None:
+        super().on_audit_event(event)
         self.working_states.append(self.working_frags(_NOW))
 
 
@@ -81,7 +81,7 @@ def _baseline(monkeypatch) -> tuple[str, list]:
     buf = StringIO()
     monkeypatch.setattr(sys, "__stdout__", buf)
     for etype, data in _EVENTS:
-        r.on_chat_event(Event(type=etype, data=data))
+        r.on_audit_event(Event(type=etype, data=data))
     for msg in _DISPLAY:
         r.message(msg)
     return buf.getvalue(), r.working_states

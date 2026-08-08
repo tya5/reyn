@@ -77,7 +77,7 @@ class _FakeSession:
             block_on_high_cost=block,
         )
         self._resolver = _FakeResolver()
-        self._chat_events = _FakeEventLog()
+        self._audit_events = _FakeEventLog()
         self._non_interactive = non_interactive
         self._handle_chat_limit_checkpoint = _RecordingCheckpoint(checkpoint_allows)
 
@@ -86,7 +86,7 @@ class _FakeSession:
         return self._handle_chat_limit_checkpoint.calls
 
     def event_snapshot(self) -> list[tuple[str, dict]]:
-        return self._chat_events.snapshot()
+        return self._audit_events.snapshot()
 
 
 def _run(coro):

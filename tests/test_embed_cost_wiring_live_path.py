@@ -91,7 +91,7 @@ async def _run_embed_tool_via_live_path(session: Session) -> dict:
 
     router_state = await build_resource_caller_state(session._router_host)
     tool_ctx = ToolContext(
-        events=session._chat_events,
+        events=session._audit_events,
         permission_resolver=None,
         workspace=None,
         caller_kind="router",

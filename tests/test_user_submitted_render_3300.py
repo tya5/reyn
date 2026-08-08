@@ -6,16 +6,16 @@ straight to the outbox. Each surface's event->display handler is responsible
 for BOTH rendering the echo AND neutralizing (ESC/control strip) at render
 time — this file proves that per surface:
 
-- ``ConsoleChatRenderer.on_chat_event`` (the plain / --cui / non-TTY path,
+- ``ConsoleChatRenderer.on_audit_event`` (the plain / --cui / non-TTY path,
   ALSO the remote/agui path when it resolves non-interactive — same renderer
   selection seam, ``logger_factory.make_renderer``).
-- ``InlineChatRenderer.on_chat_event`` — before #3292 this was the
+- ``InlineChatRenderer.on_audit_event`` — before #3292 this was the
   ``chat.render_mode: plain``-on-a-TTY fallback (reachable when the Textual
   app was bypassed but the interactive renderer stayed selected). #3292 made
   ``render_mode: plain`` force ``ConsoleChatRenderer`` too (genuine ``--cui``
   equivalence, not a hybrid), so this branch is no longer reachable through
   any current production call site's config alone; the coverage below is
-  retained as a direct unit-level pin on ``on_chat_event``'s own contract
+  retained as a direct unit-level pin on ``on_audit_event``'s own contract
   (defense-in-depth, not a claim of live reachability).
 - ``TextualChatApp._pump_frames`` (the default interactive-TTY surface,
   ``interfaces/inline/textual_chat/app.py``) — #3300 P2b REPLACES the direct-
@@ -40,7 +40,7 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
   output capture, mirroring ``test_renderer_console_width_2655.py``).
 - No private-state assertions — renders are observed via captured stdout /
   the model's own iteration, audit-events via the public
-  ``subscribe_chat_events`` surface.
+  ``subscribe_audit_events`` surface.
 - Each test docstring's first line declares its Tier.
 """
 from __future__ import annotations
@@ -212,7 +212,7 @@ def test_display_message_neutralizes_raw_esc_control_bytes() -> None:
 
 
 def test_console_renderer_renders_user_submitted_event(monkeypatch) -> None:
-    """Tier 2: ConsoleChatRenderer.on_chat_event renders the user line from a
+    """Tier 2: ConsoleChatRenderer.on_audit_event renders the user line from a
     "user_submitted" event (the removed outbox echo's replacement). Strip the
     ``elif etype == "user_submitted"`` branch -> nothing below is written and
     this assertion goes RED (non-vacuity)."""
@@ -220,7 +220,7 @@ def test_console_renderer_renders_user_submitted_event(monkeypatch) -> None:
     r = ConsoleChatRenderer()
     event = Event(type="user_submitted", data={"text": "hello from event", "meta": {}})
 
-    r.on_chat_event(event)
+    r.on_audit_event(event)
 
     assert "hello from event" in out.getvalue()
 
@@ -234,7 +234,7 @@ def test_console_renderer_neutralizes_at_render(monkeypatch) -> None:
     r = ConsoleChatRenderer()
     event = Event(type="user_submitted", data={"text": _RAW_ESC, "meta": {}})
 
-    r.on_chat_event(event)
+    r.on_audit_event(event)
 
     rendered = out.getvalue()
     assert "\x1b" not in rendered
@@ -245,13 +245,13 @@ def test_console_renderer_neutralizes_at_render(monkeypatch) -> None:
 # Surface: InlineChatRenderer — pre-#3292 this was the
 # chat.render_mode=plain-on-a-TTY fallback path; #3292 made that config value
 # select ConsoleChatRenderer instead (genuine --cui equivalence), so this
-# on_chat_event contract is no longer reachable via config alone. Coverage
+# on_audit_event contract is no longer reachable via config alone. Coverage
 # kept as a direct unit-level pin, not a live-reachability claim.
 # ---------------------------------------------------------------------------
 
 
 def test_inline_renderer_renders_user_submitted_event(monkeypatch) -> None:
-    """Tier 2: InlineChatRenderer.on_chat_event renders the user line from a
+    """Tier 2: InlineChatRenderer.on_audit_event renders the user line from a
     "user_submitted" event. Pre-#3292 this was the ONLY renderer entry point
     reachable when this class ran the shared plain PromptSession loop instead
     of the default TextualChatApp; #3292 made ``chat.render_mode: plain``
@@ -262,7 +262,7 @@ def test_inline_renderer_renders_user_submitted_event(monkeypatch) -> None:
     r = InlineChatRenderer()
     event = Event(type="user_submitted", data={"text": "hello inline", "meta": {}})
 
-    r.on_chat_event(event)
+    r.on_audit_event(event)
 
     assert "hello inline" in out.getvalue()
 
@@ -280,7 +280,7 @@ def test_inline_renderer_neutralizes_at_render(monkeypatch) -> None:
     r = InlineChatRenderer()
     event = Event(type="user_submitted", data={"text": _RAW_ESC, "meta": {}})
 
-    r.on_chat_event(event)
+    r.on_audit_event(event)
 
     rendered = out.getvalue()
     assert _RAW_ESC not in rendered
@@ -302,7 +302,7 @@ async def test_user_submitted_precedes_turn_started(tmp_path, monkeypatch) -> No
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     sink = _EventSink()
-    session.subscribe_chat_events(sink)
+    session.subscribe_audit_events(sink)
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools",
         _make_llm_stub_fn(
@@ -360,8 +360,8 @@ async def test_multi_client_each_subscriber_gets_its_own_echo_no_double_render(
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     sink_a, sink_b = _EventSink(), _EventSink()
-    session.subscribe_chat_events(sink_a)
-    session.subscribe_chat_events(sink_b)
+    session.subscribe_audit_events(sink_a)
+    session.subscribe_audit_events(sink_b)
 
     await session.submit_user_text("one submit, two clients")
 

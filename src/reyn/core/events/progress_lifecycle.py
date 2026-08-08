@@ -3,7 +3,7 @@
 Two remote protocols expose a best-effort progress stream over a live agent
 turn — A2A (``_A2AProgressBridge``: SSE buffer + webhook POST) and MCP
 (``_MCPProgressBridge``: ``notifications/progress``). Both subscribe to the
-SAME source, the session's chat audit-event log (``Session._chat_events``), and
+SAME source, the session's chat audit-event log (``Session._audit_events``), and
 both must forward the same selection under the same wording so a peer can apply
 one parser to either transport. This module is that single declaration; the two
 bridges hold no vocabulary of their own.

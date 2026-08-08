@@ -88,7 +88,7 @@ class _FailFirstThenSucceed:
 
 def _capture_events(session) -> list[Any]:
     seen: list[Any] = []
-    session._chat_events.add_subscriber(lambda e: seen.append(e))
+    session._audit_events.add_subscriber(lambda e: seen.append(e))
     return seen
 
 

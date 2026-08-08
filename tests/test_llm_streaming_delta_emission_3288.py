@@ -6,7 +6,7 @@ the SAME whole response internally — callers saw no behavioral difference.
 ③b's job is to carry the per-chunk deltas OUT to a caller-supplied callback
 while leaving that reconstruction (and everything callers already observed)
 untouched. This file is the llm.py-level half of that; the audit-event/
-transport half lives in ``tests/test_agent_delta_chat_event_3288.py``.
+transport half lives in ``tests/test_agent_delta_audit_event_3288.py``.
 
 Uses a scripted ``litellm.acompletion`` replacement (a real async callable —
 same idiom as ``test_llm_streaming_equivalence_3288.py``), never a

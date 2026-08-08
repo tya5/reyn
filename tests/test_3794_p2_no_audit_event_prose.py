@@ -10,10 +10,11 @@ it cannot silently regress as new prose is added.
 Scope matches the P2 design (issue #3794, architect comment): ``src/``,
 ``tests/``, ``docs/``, and root-level ``.md``/``.yaml``/``.toml``/``.json``,
 excluding ``.venv/``, ``site/``, ``.git/``. This gate is prose-only — it does
-NOT match ``chat_event`` (underscore) identifiers, which are P3's separate,
-much larger mechanical-rename scope (602 sites, one dedicated PR spanning
-``src/`` + ``tests/`` together). Matching identifiers here would make this
-gate RED the moment P2 lands and P3 hasn't, which is not this gate's job.
+NOT match the underscore-joined identifier spelling of this term, which was
+P3's separate, much larger mechanical-rename scope (602 sites, one dedicated
+PR spanning ``src/`` + ``tests/`` together, #3794 P3). Matching identifiers
+here would have made this gate RED the moment P2 landed and P3 hadn't, which
+was never this gate's job.
 
 ``docs/deep-dives/journal/`` is also excluded: it is a dated log of past
 dogfood/investigation runs, and its entries are historical statements of what
@@ -77,14 +78,14 @@ def _prose_hits(files: list[Path]) -> list[str]:
     return hits
 
 
-def test_positive_control_the_scanner_actually_detects_chat_event_prose() -> None:
+def test_positive_control_the_scanner_actually_detects_audit_event_prose() -> None:
     """Tier 2: the pattern DOES fire on a known chat-event sentence (guards the gate itself)."""
     known_positive = ["a stray line describing a chat-event delta on the wire"]
     hits = [line for line in known_positive if _PROSE_PATTERN.search(line)]
     assert hits, "the prose pattern failed to match a known chat-event sentence — the gate below would silently report a false zero"
 
 
-def test_no_chat_event_prose_remains_repo_wide() -> None:
+def test_no_audit_event_prose_remains_repo_wide() -> None:
     """Tier 2: zero "chat-event" prose occurrences remain in src/tests/docs + root config (#3794 P2)."""
     hits = _prose_hits(_prose_target_files())
     assert not hits, "found remaining chat-event prose (should read audit-event now):\n" + "\n".join(hits)
