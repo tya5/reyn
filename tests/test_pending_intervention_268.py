@@ -311,7 +311,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     asyncio.run(_drive())
 
     routed_events = [
-        e for e in session._chat_events.to_json()
+        e for e in session._audit_events.to_json()
         if e.get("type") == "intervention_routed"
     ]
     assert routed_events
@@ -382,7 +382,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
     asyncio.run(_drive())
 
     discarded = [
-        e for e in session._chat_events.to_json()
+        e for e in session._audit_events.to_json()
         if e.get("type") == "pending_intervention_discarded"
     ]
     assert discarded

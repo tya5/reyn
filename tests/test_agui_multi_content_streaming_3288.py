@@ -260,17 +260,17 @@ def test_late_joiner_strip_without_end_reyn_loses_the_body() -> None:
 class _FakeRegistry:
     def __init__(self) -> None:
         self.repl_outbox: "asyncio.Queue" = asyncio.Queue()
-        self.chat_events = EventLog()
+        self.audit_events = EventLog()
         self._cb = None
 
-    def bind_focus_listeners(self, *, on_chat_event=None, intervention_channel=None) -> None:
-        self._cb = on_chat_event
-        if on_chat_event is not None:
-            self.chat_events.add_subscriber(on_chat_event)
+    def bind_focus_listeners(self, *, on_audit_event=None, intervention_channel=None) -> None:
+        self._cb = on_audit_event
+        if on_audit_event is not None:
+            self.audit_events.add_subscriber(on_audit_event)
 
     def unbind_focus_listeners(self) -> None:
         if self._cb is not None:
-            self.chat_events.remove_subscriber(self._cb)
+            self.audit_events.remove_subscriber(self._cb)
             self._cb = None
 
     def attached_session(self):
@@ -306,7 +306,7 @@ async def _via_in_process(script) -> list:
     try:
         for f in script:
             if isinstance(f, EventFrame):
-                fake.chat_events.emit(f.event.type, **f.event.data)
+                fake.audit_events.emit(f.event.type, **f.event.data)
             else:
                 fake.repl_outbox.put_nowait(f.message)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))

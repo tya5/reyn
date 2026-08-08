@@ -294,7 +294,7 @@ def test_progress_bridge_send_gates_on_is_alive(monkeypatch) -> None:
         )
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -336,7 +336,7 @@ def test_bus_and_bridge_share_the_same_channel_state(monkeypatch) -> None:
     bus = A2AInterventionBus(run_id=entry.run_id, registry=registry)
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),

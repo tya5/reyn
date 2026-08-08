@@ -27,7 +27,7 @@ directly (``test_builder_does_not_crash_when_self_history_buffer_is_unset``)
 by deleting ``self._history_buffer`` / ``self._compaction_controller`` /
 ``self._budget_advisor`` from an already-constructed Session (reproducing the
 EXACT in-flight state the builder sees during ``__init__``, mirroring Family
-5's "does not crash before chat_events exists" idiom) and calling the builder
+5's "does not crash before audit_events exists" idiom) and calling the builder
 directly — an accidental ``self._history_buffer`` read anywhere in the
 None-then-patch chain would surface here as a real ``AttributeError``, not a
 silent mis-wire.
@@ -113,7 +113,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         ``self._history_buffer`` / ``self._compaction_controller`` instead
         of the builder's LOCAL variables, this raises ``AttributeError`` —
         exactly the crash this extraction must avoid. Mirrors Family 5's
-        "does not crash before chat_events exists" idiom for its own
+        "does not crash before audit_events exists" idiom for its own
         eager/deferred crux."""
         del session._history_buffer
         del session._compaction_controller
@@ -210,13 +210,13 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
 
         session._model_override = "openai/gpt-4o-mini"
         resolved_1 = session._resolver.resolve(session.model).model
-        expected_1 = get_max_input_tokens(resolved_1, events=session._chat_events)
+        expected_1 = get_max_input_tokens(resolved_1, events=session._audit_events)
         window_1 = budget_advisor.raw_context_window()["window"]
         assert window_1 == expected_1
 
         session._model_override = "openai/gpt-3.5-turbo"
         resolved_2 = session._resolver.resolve(session.model).model
-        expected_2 = get_max_input_tokens(resolved_2, events=session._chat_events)
+        expected_2 = get_max_input_tokens(resolved_2, events=session._audit_events)
         window_2 = budget_advisor.raw_context_window()["window"]
         assert window_2 == expected_2
         assert expected_1 != expected_2, (
@@ -248,7 +248,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
             compaction=session._compaction,
             compaction_controller=None,
             model_fn=lambda: session._resolver.resolve(session.model).model,
-            events=session._chat_events,
+            events=session._audit_events,
             media_store=session._media_store,
             router_host=session._router_host,
             action_retrieval=session._action_retrieval,

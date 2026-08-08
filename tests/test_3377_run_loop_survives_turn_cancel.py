@@ -231,7 +231,7 @@ async def test_cancelling_the_session_still_stops_the_loop_and_records_it(
         assert session.halted_reason == "cancelled", (
             f"the loop ended without a halt record; got {session.halted_reason!r}"
         )
-        halted = [e for e in session._chat_events.all() if e.type == "session_halted"]
+        halted = [e for e in session._audit_events.all() if e.type == "session_halted"]
         (halt_event,) = halted
         assert halt_event.data.get("reason") == "cancelled"
         assert any("cancelled" in m for m in _warnings(caplog))

@@ -217,11 +217,11 @@ class _FakeSession:
             model_threshold_per_1m_input_usd=threshold,
         )
         self._resolver = _FakeResolver()
-        self._chat_events = _FakeEventLog()
+        self._audit_events = _FakeEventLog()
 
     def event_snapshot(self) -> list[tuple[str, dict]]:
         """Public surface: returns recorded (event_type, data) pairs."""
-        return self._chat_events.snapshot()
+        return self._audit_events.snapshot()
 
 
 def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:

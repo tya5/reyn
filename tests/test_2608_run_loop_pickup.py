@@ -120,7 +120,7 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         await asyncio.sleep(0.1)
         assert session.inbox.empty()
         hook_turns_before = [
-            e for e in session._chat_events.all()
+            e for e in session._audit_events.all()
             if e.type == "turn_started" and e.data.get("kind") == "hook"
         ]
         assert hook_turns_before == []
@@ -142,11 +142,11 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         await _wait_for(
             lambda: any(
                 e.type == "turn_started" and e.data.get("kind") == "hook"
-                for e in session._chat_events.all()
+                for e in session._audit_events.all()
             )
         )
         (hook_turn_started,) = [
-            e for e in session._chat_events.all()
+            e for e in session._audit_events.all()
             if e.type == "turn_started" and e.data.get("kind") == "hook"
         ]
         assert hook_turn_started.data.get("kind") == "hook"
@@ -156,7 +156,7 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         await _wait_for(
             lambda: any(
                 e.type == "turn_settled" and e.data.get("kind") == "hook"
-                for e in session._chat_events.all()
+                for e in session._audit_events.all()
             )
         )
 

@@ -17,7 +17,7 @@ once), and that it reaches every operator-facing surface:
     reason; a healthy session's status line carries no such text (negative
     control).
   - Gate 3 (plain --cui): ``bottom_toolbar`` on both renderers surfaces the
-    reason once ``on_chat_event`` sees the event; a fresh renderer (no event
+    reason once ``on_audit_event`` sees the event; a fresh renderer (no event
     yet) shows nothing (negative control). ``ConsoleChatRenderer`` is the LIVE
     ``--cui`` renderer (and, since #3292, also the LIVE renderer for
     ``chat.render_mode: plain`` on a TTY without ``--cui`` — that config now
@@ -90,7 +90,7 @@ async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
     session = make_session(agent_name="alpha", state_log=log)
     events: list[Event] = []
-    session.subscribe_chat_events(events.append)
+    session.subscribe_audit_events(events.append)
     try:
         assert session.halted_reason is None
         await _inject_persistent_durability_failure(log)
@@ -135,7 +135,7 @@ async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
     session = make_session(agent_name="alpha", state_log=log)
     events: list[Event] = []
-    session.subscribe_chat_events(events.append)
+    session.subscribe_audit_events(events.append)
     try:
         await _inject_persistent_durability_failure(log)
 
@@ -233,12 +233,12 @@ def test_status_line_text_healthy_session_shows_no_banner() -> None:
 
 def test_console_renderer_bottom_toolbar_surfaces_halt() -> None:
     """Tier 1: ``ConsoleChatRenderer`` (the ``--cui`` renderer) shows the halt
-    reason in its persistent ``bottom_toolbar`` slot once ``on_chat_event``
+    reason in its persistent ``bottom_toolbar`` slot once ``on_audit_event``
     observes ``session_halted`` — the plain-path equivalent of the TUI status
     line, live even while the operator sits idle at the prompt."""
     renderer = ConsoleChatRenderer()
     assert renderer.bottom_toolbar() is None, "negative control: healthy renderer shows nothing"
-    renderer.on_chat_event(Event(type="session_halted", data={"reason": "durability_failure"}))
+    renderer.on_audit_event(Event(type="session_halted", data={"reason": "durability_failure"}))
     toolbar = renderer.bottom_toolbar()
     assert toolbar is not None
     assert "durability_failure" in toolbar
@@ -257,7 +257,7 @@ def test_inline_renderer_bottom_toolbar_surfaces_halt() -> None:
     contract, not a claim about that specific fallback's live reachability."""
     renderer = InlineChatRenderer()
     assert renderer.bottom_toolbar() is None, "negative control: healthy renderer shows nothing"
-    renderer.on_chat_event(Event(type="session_halted", data={"reason": "durability_failure"}))
+    renderer.on_audit_event(Event(type="session_halted", data={"reason": "durability_failure"}))
     toolbar = renderer.bottom_toolbar()
     assert toolbar is not None
     markup = toolbar.value

@@ -199,7 +199,7 @@ only needs to stop tracking the old session's entries.
 
 **Remote parity (#3310 N3).** `registry.repl_outbox` (above) is a LOCAL-only
 bus — the AG-UI/SSE `_SessionFrameSource` never drains it; it reads a
-session's own `outbox_hub`/`chat_events` directly, bound to ONE session
+session's own `outbox_hub`/`audit_events` directly, bound to ONE session
 object for the SSE connection's lifetime. A remote client that switched
 sessions therefore had NO way to obtain the new session's scrollback at all:
 the remote read-model's `conversation_history` is deliberately empty
@@ -223,7 +223,7 @@ untouched and not involved):
   session emits cannot possibly reach this connection's queue ahead of the
   barrier — true BY CONSTRUCTION regardless of whether an `await` is ever
   later introduced between the two steps (witnessed by
-  `test_switch_announce_precedes_any_new_session_chat_event`, an adversary
+  `test_switch_announce_precedes_any_new_session_audit_event`, an adversary
   that floods the target session's own audit-event stream the instant the
   switch is triggered). It never calls `registry.attach_session` itself, so
   it cannot race or double-apply that side effect — it only re-points THIS
@@ -587,7 +587,7 @@ through `encode_frame_wire_streaming`, which maps `agent_delta` onto the
 STANDARD `TEXT_MESSAGE_CONTENT` surface (#3288 ③d — see *Text lifecycle* above),
 never this `CUSTOM` name, on the wire a real client receives. This row documents
 what the plain codec functions do in isolation (still exercised directly by
-`tests/test_agent_delta_chat_event_3288.py`), not what ships on the connected
+`tests/test_agent_delta_audit_event_3288.py`), not what ships on the connected
 wire.
 
 | Custom `name`                        | Meaning                                          |
@@ -1155,7 +1155,7 @@ channel). Both ride the SAME unified frame stream as an `EventFrame`
 (`_TURN_AND_ANSWER_EVENTS`, `transport/frames.py`) — the encode/decode is
 generic (`transport/agui/protocol.py`), so no wire changes were needed for
 either event type. Every attached surface's event→display handler
-(`ConsoleChatRenderer.on_chat_event` / `InlineChatRenderer.on_chat_event` /
+(`ConsoleChatRenderer.on_audit_event` / `InlineChatRenderer.on_audit_event` /
 `TextualChatApp._pump_frames`) renders the line, neutralizing at that render
 boundary (`renderer.user_submitted_display_message` /
 `renderer.intervention_answer_display_message` —

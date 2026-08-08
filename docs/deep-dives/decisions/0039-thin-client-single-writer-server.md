@@ -76,7 +76,7 @@ updated in the same PR that lands this ADR to point here.
 - **Outbox streaming** — `interfaces/web/ws/chat.py`: N-client fan-out of
   `OutboxMessage`→JSON, detach-on-disconnect, drain-continues-in-background.
 - **Dual render stream** — `interfaces/repl/renderer.py`: the renderer
-  consumes **both** `message(OutboxMessage)` and `on_chat_event(event)`; the
+  consumes **both** `message(OutboxMessage)` and `on_audit_event(event)`; the
   "Working…" / WaitingOn indicator is driven by the audit-event stream, not the
   outbox.
 - **Network intervention** — `interfaces/web/a2a_intervention.py`: the

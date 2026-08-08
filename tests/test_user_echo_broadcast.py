@@ -13,9 +13,9 @@ derived notification.
 Covers:
   A. ``Session.submit_user_text`` emits a ``user_submitted`` audit-event (NOT an
      outbox frame) carrying the raw text + chain_id + msg_id + meta — every
-     ``subscribe_chat_events`` subscriber (= every attached client, simulated
+     ``subscribe_audit_events`` subscriber (= every attached client, simulated
      here as two independent subscriptions) sees it. Reverting the
-     ``self._chat_events.emit("user_submitted", ...)`` call added to
+     ``self._audit_events.emit("user_submitted", ...)`` call added to
      ``submit_user_text`` reproduces the bug directly: neither subscription
      below would see a "user_submitted" event at all.
   B. ``InterventionHandler.deliver_answer_to`` — the ONE funnel every answer
@@ -38,7 +38,7 @@ the sole surviving user-echo path.)
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / AsyncMock / patch usage — real Session / InterventionHandler
   / OutboxHub / InProcessTransport instances, or plain fakes (Fake > Mock).
-- Public surface observed: ``session.subscribe_chat_events()`` callbacks,
+- Public surface observed: ``session.subscribe_audit_events()`` callbacks,
   ``session.outbox_hub.subscribe()`` frames (Part B's absence-of-outbox-frame
   assertion), the injected ``event_log`` subscriber (Part B's echo
   assertions), history dicts collected via an injected callback.
@@ -84,7 +84,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
 
 class _EventSink:
     """A real (non-mock) audit-event subscriber — a plain callback collector,
-    standing in for one attached client's ``on_chat_event`` entry point."""
+    standing in for one attached client's ``on_audit_event`` entry point."""
 
     def __init__(self) -> None:
         self.events: list = []
@@ -122,8 +122,8 @@ async def test_submit_user_text_emits_user_submitted_to_every_subscriber(tmp_pat
     session = _make_session(tmp_path)
 
     sink_a, sink_b = _EventSink(), _EventSink()
-    session.subscribe_chat_events(sink_a)
-    session.subscribe_chat_events(sink_b)
+    session.subscribe_audit_events(sink_a)
+    session.subscribe_audit_events(sink_b)
 
     await session.submit_user_text("hello from client A")
 
@@ -161,7 +161,7 @@ async def test_submit_user_text_carries_chain_id_and_msg_id(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     sink = _EventSink()
-    session.subscribe_chat_events(sink)
+    session.subscribe_audit_events(sink)
 
     await session.submit_user_text("track my id")
 
@@ -180,7 +180,7 @@ async def test_submit_user_text_local_default_carries_no_attribution(tmp_path, m
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     sink = _EventSink()
-    session.subscribe_chat_events(sink)
+    session.subscribe_audit_events(sink)
 
     await session.submit_user_text("plain local turn")
 
@@ -197,7 +197,7 @@ async def test_submit_user_text_remote_attribution_reaches_the_event(tmp_path, m
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     sink = _EventSink()
-    session.subscribe_chat_events(sink)
+    session.subscribe_audit_events(sink)
 
     await session.submit_user_text(
         "hi from the wire",

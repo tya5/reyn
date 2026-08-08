@@ -98,7 +98,7 @@ def test_cancelled_marker_never_reaches_build_history(tmp_path, monkeypatch):
         compaction=session._compaction,
         compaction_controller=session._compaction_controller,
         model_fn=lambda: session._resolver.resolve(session.model).model,
-        events=session._chat_events,
+        events=session._audit_events,
         media_store=session._media_store,
         router_host=session._router_host,
         action_retrieval=session._action_retrieval,

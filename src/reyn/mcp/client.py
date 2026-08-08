@@ -603,6 +603,7 @@ class MCPClient:
         elicitation_handler: Any = None,
         server_name: str | None = None,
         non_interactive: bool | None = None,
+        emit_event: Callable[..., Any] | None = None,
     ) -> None:
         if not isinstance(config, dict):
             raise ValueError(f"MCP server config must be a dict, got {type(config).__name__}")
@@ -653,6 +654,13 @@ class MCPClient:
         # MCPConnectionService, both of which already know the server name at
         # construction time.
         self._server_name: str | None = server_name
+        # #3821: audit-event sink, same optional-injection shape as
+        # ``hooks/shell_runner``'s ``emit_event`` (None -> skip). Only the
+        # held-connection path (MCPConnectionService) wires one; the ephemeral
+        # MCPClientPool path has no sink to give, so a fallback there is still
+        # WARNING-only. That asymmetry is stated in _sandbox_wrap_stdio's
+        # docstring rather than left for a reader to discover from the wiring.
+        self._emit_event: Callable[..., Any] | None = emit_event
         # #2597 S2b: optional async server->client notifications bridge — a
         # ReynMCPMessageHandler (fastmcp.client.tasks.TaskNotificationHandler subclass;
         # see reyn.mcp.message_handler) that receives tools/prompts list_changed +
@@ -1461,7 +1469,17 @@ class MCPClient:
 
         A failure while resolving/probing the backend itself (not a normal
         outcome — defensive only) falls back to an unwrapped launch WITH a
-        loud warning, so a launch is never silently unsandboxed.
+        loud warning AND a ``sandbox_policy_not_applied`` audit-event (#3821),
+        so the fallback is legible after the fact and not only to whoever was
+        watching stderr at the time.
+
+        The audit-event needs a sink, and only the held-connection path
+        (:class:`~reyn.mcp.connection_service.MCPConnectionService`) has one.
+        Constructed WITHOUT ``emit_event`` — the ephemeral
+        :class:`~reyn.mcp.pool.MCPClientPool` path, and direct callers — the
+        fallback is WARNING-only, exactly as it was before #3821. So "never
+        silently unsandboxed" is true of the warning on every path, and of the
+        audit trail only where a sink was wired.
         """
         from reyn.security.sandbox import get_default_backend
 
@@ -1475,6 +1493,26 @@ class MCPClient:
                 f"(sandbox backend probe/wrap failed: {exc}).",
                 stacklevel=2,
             )
+            if self._emit_event is not None:
+                try:
+                    self._emit_event(
+                        "sandbox_policy_not_applied",
+                        # #3821: the kind's other producer (hooks/shell_runner)
+                        # reports ONE refused axis and carries ``policy_field``.
+                        # Here the whole policy failed to apply, so ``scope``
+                        # tells a subscriber which producer it is holding
+                        # instead of leaving it to infer that from a missing key.
+                        scope="mcp_stdio",
+                        server=self._server_name or "<unknown>",
+                        command=command,
+                        reason=f"{type(exc).__name__}: {exc}",
+                    )
+                except Exception as emit_exc:  # noqa: BLE001 — telemetry is best-effort
+                    logger.debug(
+                        "MCP stdio %r: sandbox_policy_not_applied emit failed: %s",
+                        command,
+                        emit_exc,
+                    )
             return command, args
 
         self._sandbox_cleanup = wrapped.cleanup

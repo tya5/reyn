@@ -58,7 +58,7 @@ def test_bridge_constructor_accepts_optional_webhook_url() -> None:
     from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -85,7 +85,7 @@ def test_send_appends_payload_to_history_events() -> None:
     entry = registry.create(agent_name="demo", chain_id="chain-A")
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -127,7 +127,7 @@ def test_send_skips_webhook_when_webhook_url_is_none(monkeypatch) -> None:
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -161,7 +161,7 @@ def test_send_posts_webhook_when_webhook_url_set(monkeypatch) -> None:
     entry = registry.create(agent_name="demo", chain_id="chain-A")
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -206,7 +206,7 @@ def test_sse_sink_failure_does_not_block_webhook(monkeypatch) -> None:
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -238,7 +238,7 @@ def test_webhook_sink_failure_does_not_block_sse(monkeypatch) -> None:
     entry = registry.create(agent_name="demo", chain_id="chain-A")
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -327,7 +327,7 @@ def test_sse_endpoint_replays_appended_events_via_history() -> None:
     entry = registry.create(agent_name="demo", chain_id="chain-A")
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),

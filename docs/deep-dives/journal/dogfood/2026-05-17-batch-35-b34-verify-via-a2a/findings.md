@@ -154,7 +154,7 @@ Conditions (N=3 each × 7 scenarios):
 - B35 W1 V=0 is **not reproduced** under condition A (= 4.3V/7). Rules out A2A pattern as the cause.
 - **Primary cause**: artifact verifier strictness gap — B35 W1 scored 5/7 scenarios `artifacts_pass=false` because the `direct_llm` skill answers inline (= no physical artifact file), but the scenario YAML declares `{skill: direct_llm, present: true}`. B33 W1 used permissive manual assessment skipping artifact check for inline-reply scenarios → 2V. Methodology mismatch.
 - **LLM variance**: ~±1V (= S6 multi-turn: 1/3 in A, 2/3 in B).
-- **EventStore stale-path bug confirmed** (condition C): `rm -rf .reyn/events/` while web server is live → `EventStore._active` holds stale path → next write FileNotFoundError. Stack: `session._handle_user_message → _chat_events.emit → EventStore.write → _active.open("a")`. Separate issue, MED severity.
+- **EventStore stale-path bug confirmed** (condition C): `rm -rf .reyn/events/` while web server is live → `EventStore._active` holds stale path → next write FileNotFoundError. Stack: `session._handle_user_message → _audit_events.emit → EventStore.write → _active.open("a")`. Separate issue, MED severity.
 
 ---
 

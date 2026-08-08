@@ -362,6 +362,10 @@ class MCPConnectionService:
             client = MCPClient(
                 config, agent_id=agent_id, message_handler=handler,
                 elicitation_handler=elicitation_handler, server_name=server,
+                # #3821: the sink reaches the client itself so an UNSANDBOXED
+                # stdio fallback leaves an audit-event, not only a warning.
+                # Same None-tolerant shape as every other use of _emit_sink here.
+                emit_event=self._emit_sink,
             )
             await client.__aenter__()  # initialize; held open (no matching __aexit__ until aclose/reconnect)
             self._clients[server] = client

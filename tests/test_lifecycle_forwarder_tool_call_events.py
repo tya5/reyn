@@ -4,7 +4,7 @@ issue #427 wiring fix (= post wave-#427 smoke finding 2026-05-22):
 
 ``dispatch/dispatcher.py:200-274`` emits ``tool_called`` /
 ``tool_returned`` / ``tool_failed`` against the session's
-``_chat_events`` log, which is subscribed by ``ChatLifecycleForwarder``.
+``_audit_events`` log, which is subscribed by ``ChatLifecycleForwarder``.
 Handlers wired to any other subscriber never fire — ToolCallRow never
 mounts, breaking the end-to-end functional path in production despite
 Tier 2 tests passing in isolation.

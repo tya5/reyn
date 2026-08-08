@@ -7,7 +7,7 @@ the DERIVED forward-set (production default) the same audit-events reach the
 renderer. This proves the dual-stream event path is a real seam, not decorative
 — the structural counter-evidence for the A2 "outbox-only drops WaitingOn" bug.
 
-Real instances only — a real ``EventLog`` for chat_events + a real repl_outbox
+Real instances only — a real ``EventLog`` for audit_events + a real repl_outbox
 queue behind a small registry double; no mocks.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.interfaces.repl.stream_client import run_output_loop
-from reyn.interfaces.transport.frames import renderer_chat_events
+from reyn.interfaces.transport.frames import forwarded_frame_kinds
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
 
@@ -31,7 +31,7 @@ class _EventRecordingRenderer:
     def __init__(self) -> None:
         self.events_seen: list[str] = []
 
-    def on_chat_event(self, event) -> None:
+    def on_audit_event(self, event) -> None:
         self.events_seen.append(getattr(event, "type", None))
 
     def message(self, msg) -> None:  # pragma: no cover - display path unused here
@@ -44,17 +44,17 @@ class _EventRecordingRenderer:
 class _FakeRegistry:
     def __init__(self) -> None:
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
-        self.chat_events = EventLog()
+        self.audit_events = EventLog()
         self._cb = None
 
-    def bind_focus_listeners(self, *, on_chat_event=None, intervention_channel=None) -> None:
-        self._cb = on_chat_event
-        if on_chat_event is not None:
-            self.chat_events.add_subscriber(on_chat_event)
+    def bind_focus_listeners(self, *, on_audit_event=None, intervention_channel=None) -> None:
+        self._cb = on_audit_event
+        if on_audit_event is not None:
+            self.audit_events.add_subscriber(on_audit_event)
 
     def unbind_focus_listeners(self) -> None:
         if self._cb is not None:
-            self.chat_events.remove_subscriber(self._cb)
+            self.audit_events.remove_subscriber(self._cb)
             self._cb = None
 
     def attached_session(self):
@@ -70,7 +70,7 @@ async def _drive(forward_events) -> list[str]:
     renderer = _EventRecordingRenderer()
     try:
         for etype, data in _EVENTS:
-            fake.chat_events.emit(etype, **data)
+            fake.audit_events.emit(etype, **data)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))
         await asyncio.wait_for(run_output_loop(transport, renderer), timeout=2.0)
     finally:
@@ -79,10 +79,10 @@ async def _drive(forward_events) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_derived_forward_set_delivers_chat_events() -> None:
+async def test_derived_forward_set_delivers_audit_events() -> None:
     """Tier 2: with the derived forward-set, the client receives the WaitingOn
     audit-events (the event path is wired)."""
-    seen = await _drive(renderer_chat_events())
+    seen = await _drive(forwarded_frame_kinds())
     assert set(seen) == {"turn_started", "tool_called", "turn_settled"}
 
 

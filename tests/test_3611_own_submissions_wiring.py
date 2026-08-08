@@ -121,7 +121,7 @@ class _NoRouterLoopRegistry:
     produce. Fixed by having the audit-event forward path append a synthetic
     ``"agent"`` ack to ``repl_outbox`` the SAME synchronous call that
     forwards ``user_submitted`` — real production code (``session.py``'s
-    ``_chat_events.emit``) calls every subscriber synchronously, so this
+    ``_audit_events.emit``) calls every subscriber synchronously, so this
     ack is guaranteed to be queued before ``route_input_line`` (and thus
     ``submit_user_text``) returns, landing well before the input loop's next
     pacing check. Its own text is never asserted on (only ``kind == "user"``
@@ -131,7 +131,7 @@ class _NoRouterLoopRegistry:
     def __init__(self, session) -> None:
         self._session = session
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
-        self._on_chat_event = None
+        self._on_audit_event = None
 
     def attached_session(self):
         return self._session
@@ -139,18 +139,18 @@ class _NoRouterLoopRegistry:
     def attach_failed(self) -> bool:
         return False
 
-    def bind_focus_listeners(self, *, on_chat_event=None, intervention_channel=None) -> None:
-        if on_chat_event is not None:
+    def bind_focus_listeners(self, *, on_audit_event=None, intervention_channel=None) -> None:
+        if on_audit_event is not None:
             def _forward_then_synthetic_ack(event) -> None:
-                on_chat_event(event)
+                on_audit_event(event)
                 if getattr(event, "type", None) == "user_submitted":
                     from reyn.runtime.outbox import OutboxMessage
                     self.repl_outbox.put_nowait(OutboxMessage(kind="agent", text=""))
 
-            self._on_chat_event = _forward_then_synthetic_ack
-            self._session.subscribe_chat_events(_forward_then_synthetic_ack)
+            self._on_audit_event = _forward_then_synthetic_ack
+            self._session.subscribe_audit_events(_forward_then_synthetic_ack)
         else:
-            self._on_chat_event = None
+            self._on_audit_event = None
         if intervention_channel is not None:
             try:
                 self._session.register_intervention_listener(intervention_channel)
@@ -158,16 +158,16 @@ class _NoRouterLoopRegistry:
                 pass
 
     def unbind_focus_listeners(self) -> None:
-        if self._on_chat_event is not None:
-            self._session.unsubscribe_chat_events(self._on_chat_event)
-        self._on_chat_event = None
+        if self._on_audit_event is not None:
+            self._session.unsubscribe_audit_events(self._on_audit_event)
+        self._on_audit_event = None
 
     async def shutdown(self) -> None:
         pass
 
 
 class _RecordingConsoleRenderer(ConsoleChatRenderer):
-    """A real ``ConsoleChatRenderer`` — its ``on_chat_event`` dispatch (the
+    """A real ``ConsoleChatRenderer`` — its ``on_audit_event`` dispatch (the
     production logic that decides WHEN a ``user_submitted`` event turns into
     a displayed message) runs completely unmodified. Only ``message``/
     ``_write`` are overridden, because the base class writes straight to
