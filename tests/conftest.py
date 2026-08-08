@@ -576,11 +576,20 @@ def pytest_configure(config: pytest.Config) -> None:
 
     network_gate.pytest_configure(config)
 
+    # #3872: a per-process memory ceiling. A test reached ~10 GB and cost the
+    # operator three reboots; nothing on the machine stopped it, and macOS does
+    # not enforce RLIMIT_AS. Started here so every pytest run carries it without
+    # anyone remembering to ask for it.
+    from reyn.dev.testing import memory_ceiling
+
+    memory_ceiling.pytest_configure(config)
+
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    from reyn.dev.testing import network_gate
+    from reyn.dev.testing import memory_ceiling, network_gate
 
     network_gate.pytest_runtest_setup(item)
+    memory_ceiling.pytest_runtest_setup(item)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:

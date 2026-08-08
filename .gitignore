@@ -67,3 +67,4 @@ spike_results/
 # Dev-team broker MCP config — per-developer, not reyn source
 /.mcp.json
 scratch/
+.reyn-memory-ceiling.log
