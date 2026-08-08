@@ -2502,6 +2502,23 @@ class RouterLoop:
                 text="✗ turn interrupted",
                 meta={"chain_id": self.chain_id},
             )
+            # #3694: durable cancelled-turn outcome — the cooperative-cancel
+            # terminal (this branch fires when the loop-head check caught
+            # the request before a hard Task.cancel() landed). Mirrors
+            # Session.notify_turn_cancelled's shape exactly (same
+            # role="system" + meta.kind precedent as notify_state_change);
+            # inlined here rather than added as a new RouterLoopHost method
+            # because host.append_history_entry already IS the generic
+            # "persist a ChatMessage, no outbox side effect" primitive this
+            # needs. The hard-cancel case (the more common mid-LLM-call
+            # Ctrl+C) never reaches this branch at all — CancelledError
+            # unwinds straight past it — so Session.run_one_iteration's own
+            # catch is the receiver for that case, not a duplicate of this.
+            self.host.append_history_entry(
+                role="system",
+                content="Turn interrupted by user.",
+                meta={"kind": "turn_cancelled", "chain_id": self.chain_id},
+            )
             return self._total_usage
 
         # Limit-deny path (#1496): give the LLM one final tool-less turn to
