@@ -20,7 +20,7 @@ Why the frames are renderables and not raw ANSI
 The effect is painted through ``FlowView.overlay``, which takes a Rich
 renderable and is **non-destructive**: the model, scroll position and both
 cursors are untouched, so stopping restores the exact prior view (upstream's
-guarantee, `textual-flowview` 0.15.3). TerminalTextEffects yields whole-screen
+guarantee, `textual-flowview` 0.16.0). TerminalTextEffects yields whole-screen
 ANSI strings, which ``Text.from_ansi`` converts — the upstream
 ``examples/screensaver.py`` is this same composition, and its existence is what
 settled the alternative (take the screen with raw ANSI, freezing the feed).
@@ -69,11 +69,6 @@ if TYPE_CHECKING:
 #: example's 30, which no measured effect reaches.
 DEFAULT_FPS = 10
 
-#: What the effect animates. Short: an effect renders its text INTO the
-#: viewport, so a long banner is either clipped or shrinks the animation to a
-#: crawl of tiny glyphs.
-BANNER = "reyn"
-
 #: The optional dependency this needs, and the extra that carries it.
 #:
 #: An EXTRA rather than a core dependency (owner ruling, #3796): not everyone who
@@ -109,12 +104,28 @@ def unavailable_message() -> str:
     )
 
 
-def frame_factory() -> "Callable[[int, int], Iterator[RenderableType]]":
-    """A ``(width, height) -> frames`` factory for ``FlowView.play_overlay``.
+def frame_factory() -> "Callable[[int, int, list[str]], Iterator[RenderableType]]":
+    """A ``(width, height, covered) -> frames`` factory for ``play_overlay``.
 
-    Re-invoked per loop cycle and on resize, so picking the effect INSIDE means
-    every cycle is a different one at the current size — upstream's own idiom,
-    and the reason the factory rather than a frame list is the interface.
+    ``covered`` is what the overlay is hiding — the body text of the rows on
+    screen, one string per row, top to bottom. **The effect acts on the
+    operator's own conversation**: their last replies dissolve and reassemble,
+    rather than a banner appearing over them.
+
+    That argument is the whole of #3796's second round. The first version
+    animated a fixed ``"reyn"``, because nothing could answer "what is on
+    screen right now" — and the pieces to compute it reyn-side (``row_text``,
+    ``scroll_offset.y``) are public, so composing them looked reasonable. It is
+    not: a sticky header displaces the top rows, so ``row_text(scroll_y + y)``
+    is the wrong row exactly while the reader is scrolled into a long entry,
+    and it would agree with the screen on the day it was written. The owner's
+    ruling was that FlowView must answer it (「viewport の内容は再構築すべきでは
+    ないでしょ」), and upstream 0.16.0 does — so the scroll offset and the
+    wrapping never appear on this side at all.
+
+    Re-invoked per loop cycle and on resize, so each cycle picks a fresh effect
+    AND re-reads what is on screen — a conversation that moved while the effect
+    was running is what the next cycle dissolves.
 
     Imports the library lazily, at the first press: reyn does not depend on it,
     and a module-level import would make an absent optional dependency a broken
@@ -131,8 +142,36 @@ def frame_factory() -> "Callable[[int, int], Iterator[RenderableType]]":
 
     effects = [effect_beams.Beams, effect_rain.Rain, effect_slide.Slide]
 
-    def frames(width: int, height: int) -> "Iterator[RenderableType]":
-        effect = random.choice(effects)(BANNER)
+    def frames(
+        width: int, height: int, covered: "list[str]"
+    ) -> "Iterator[RenderableType]":
+        # Newline-joined, and nothing else: ``covered`` is already one string
+        # per screen row at this width, so any re-wrapping or stripping here
+        # would be reyn deciding again what the screen looks like — the thing
+        # the upstream argument exists to prevent. Measured: TTE resolves this
+        # input back to exactly the text it was given, blank lines and leading
+        # indentation included.
+        art = "\n".join(covered)
+        # TTE raises on input that is non-empty but has no non-whitespace
+        # character — measured: "" is fine, "\n\n\n" and "   " both raise
+        # ``ValueError: max() iterable argument is empty`` from its own
+        # terminal.py. A viewport with nothing in it produces exactly that
+        # shape (blank rows joined by newlines), so this is the FRESH SESSION
+        # case, not an exotic one: the first thing an operator can do in a new
+        # conversation is press the key, and that crashed.
+        #
+        # Yielding nothing ends the overlay immediately, so the key is a
+        # visible no-op on an empty screen. That is the truthful outcome — the
+        # effect acts on what is on screen, and there is nothing there to act
+        # on — where substituting a banner would be the exact defect this
+        # round of #3796 exists to remove.
+        if not art.strip():
+            return
+        effect = random.choice(effects)(art)
+        # Sized to what was covered, not to the widget: a canvas narrower than
+        # a covered line CLIPS it (measured — a 100-cell line came back 78),
+        # and the effect would then resolve to something the operator can see
+        # is not what was there.
         effect.terminal_config.canvas_width = width
         effect.terminal_config.canvas_height = height
         # Iterated directly — see the module docstring on why

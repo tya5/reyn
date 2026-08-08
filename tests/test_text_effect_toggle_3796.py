@@ -68,8 +68,15 @@ async def test_the_same_key_starts_and_stops_it() -> None:
     than by inspecting reyn state, because reyn keeps none: the overlay IS the
     state, which is the property that makes the toggle safe.
     """
+    from reyn.runtime.outbox import OutboxMessage
+
     app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
     async with app.run_test() as pilot:
+        await pilot.pause()
+        # Something on screen: the effect acts on the covered rows, so an empty
+        # conversation has nothing to animate and ends immediately by design
+        # (see the empty-viewport test below).
+        app._ingest_frame(OutboxMessage(kind="agent", text="something to dissolve"))
         await pilot.pause()
 
         app.action_toggle_text_effect()
@@ -116,4 +123,65 @@ async def test_the_feed_is_intact_after_the_effect() -> None:
         )
         assert any("arrived during the effect" in t for t in after), (
             f"output that landed under the overlay was lost, not hidden: {after}"
+        )
+
+
+@requires_tte
+def test_the_frames_resolve_to_the_covered_text_not_a_banner() -> None:
+    """Tier 2: what the effect RESOLVES TO is the covered rows (#3796 round 2).
+
+    The operator found the first version animating a fixed ``"reyn"`` over their
+    conversation. My first attempt at a witness for the fix asserted that the
+    factory was *handed* the covered rows — and a banner implementation passes
+    that, because being handed an argument is not using it. Falsified exactly
+    so: reverting the body to ``art = "reyn"`` left that assertion green.
+
+    So this reads the FRAMES. A TTE effect resolves to the text it was given
+    (measured: the final frame comes back equal to the input, blank lines and
+    indentation included), which makes the last frame the one place the
+    argument's fate is observable without pinning a third-party animation's
+    intermediate pixels.
+    """
+    from reyn.interfaces.inline.textual_chat import screensaver
+
+    covered = [
+        "user: what does the drawer show?",
+        "",
+        "● thirteen tabs; Cost and Ctx are readouts",
+    ]
+    frames = list(screensaver.frame_factory()(78, len(covered), covered))
+    assert frames, "the factory produced no frames for a non-empty screen"
+
+    final = frames[-1].plain  # the factory yields rich Text
+    for line in covered:
+        if line:
+            assert line in final, (
+                f"the effect resolved to something other than the screen it "
+                f"covered — {line!r} is missing from {final!r}"
+            )
+    assert "reyn" not in final, "a banner leaked into the frames"
+
+
+@requires_tte
+@pytest.mark.asyncio
+async def test_an_empty_screen_is_a_no_op_not_a_crash() -> None:
+    """Tier 2: the key on a fresh, empty conversation does nothing — and
+    specifically does not raise.
+
+    Not an exotic case: an empty viewport is blank rows, which join to
+    ``"\n\n\n..."``, and TTE raises ``ValueError`` on input that is non-empty
+    but carries no non-whitespace character (measured: ``""`` is accepted,
+    ``"\n\n\n"`` and ``"   "`` are not). The first thing an operator can do in
+    a new session is press the key, so this was the first thing that crashed.
+
+    A no-op is the truthful outcome rather than a fallback banner: the effect
+    acts on what is on screen, and an empty screen has nothing to act on.
+    """
+    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_toggle_text_effect()  # must not raise
+        await pilot.pause()
+        assert not app.query_one(FlowView).overlay_active, (
+            "an empty screen started an overlay with nothing to animate"
         )
