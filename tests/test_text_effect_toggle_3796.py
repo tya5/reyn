@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 from textual_flowview import FlowView
 
-from reyn.interfaces.inline.textual_chat import TextualChatApp, screensaver
+from reyn.interfaces.inline.textual_chat import TextualChatApp, text_effect
 from tests.test_textual_chat_copy_rewind_3362 import (
     ScriptedTransport,
     _PickerReadModel,
@@ -27,7 +27,7 @@ from tests.test_textual_chat_copy_rewind_3362 import (
 )
 
 requires_tte = pytest.mark.skipif(
-    not screensaver.available(),
+    not text_effect.available(),
     reason="optional terminaltexteffects not installed (#3796 ⑤ undecided)",
 )
 
@@ -36,7 +36,7 @@ requires_tte = pytest.mark.skipif(
 async def test_the_key_says_so_when_the_library_is_absent() -> None:
     """Tier 2: with the optional library missing, the key reports it and names
     the install — instead of doing nothing, which reads as a broken key."""
-    if screensaver.available():
+    if text_effect.available():
         pytest.skip("library present; the absent path is what this pins")
 
     app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
@@ -142,14 +142,14 @@ def test_the_frames_resolve_to_the_covered_text_not_a_banner() -> None:
     argument's fate is observable without pinning a third-party animation's
     intermediate pixels.
     """
-    from reyn.interfaces.inline.textual_chat import screensaver
+    from reyn.interfaces.inline.textual_chat import text_effect
 
     covered = [
         "user: what does the drawer show?",
         "",
         "● thirteen tabs; Cost and Ctx are readouts",
     ]
-    frames = list(screensaver.frame_factory()(78, len(covered), covered))
+    frames = list(text_effect.frame_factory()(78, len(covered), covered))
     assert frames, "the factory produced no frames for a non-empty screen"
 
     final = frames[-1].plain  # the factory yields rich Text
@@ -185,3 +185,44 @@ async def test_an_empty_screen_is_a_no_op_not_a_crash() -> None:
         assert not app.query_one(FlowView).overlay_active, (
             "an empty screen started an overlay with nothing to animate"
         )
+
+
+@requires_tte
+def test_every_offered_effect_resolves_a_real_screen() -> None:
+    """Tier 2: EVERY effect in the rotation ends holding the text it covered
+    (#3860).
+
+    The list went from three to twelve on a measurement that does not live in
+    the tree. What protects it is this: #3859's whole design rests on an effect
+    resolving back to its input, and that property was checked for three effects
+    while the list had three. Adding nine looks like adding nine words.
+
+    Iterated over :func:`text_effect.effect_classes` rather than through the
+    factory's random draw — a rotation member that a draw happened to skip would
+    be exactly the one nobody checked.
+
+    Not a performance test. How fast or how long each effect runs is what chose
+    these twelve, and those figures live on #3860: pinning them here would fail
+    on a slower CI host for a reason that has nothing to do with reyn.
+    """
+    from rich.text import Text
+
+    from reyn.interfaces.inline.textual_chat import text_effect
+
+    covered = ["● a reply on screen", "", "▸ read_file(path=README.md)"]
+    art = "\n".join(covered)
+    for cls in text_effect.effect_classes():
+        effect = cls(art)
+        effect.terminal_config.canvas_width = 60
+        effect.terminal_config.canvas_height = len(covered)
+        last = None
+        for frame in effect:
+            last = frame
+        assert last is not None, f"{cls.__name__} produced no frames"
+        final = Text.from_ansi(last).plain
+        for line in covered:
+            if line:
+                assert line in final, (
+                    f"{cls.__name__} did not resolve the screen it covered — "
+                    f"{line!r} missing from {final!r}"
+                )

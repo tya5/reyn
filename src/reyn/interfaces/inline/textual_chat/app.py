@@ -2303,19 +2303,19 @@ class TextualChatApp(App):
         arriving output costs what it always costs and is simply not painted
         until the effect stops — no buffering, and nothing to flush on return.
         """
-        from reyn.interfaces.inline.textual_chat import screensaver
+        from reyn.interfaces.inline.textual_chat import text_effect
         from reyn.runtime.outbox import OutboxMessage
 
         if self._flow.overlay_active:
             self._flow.stop_overlay()
             return
-        if not screensaver.available():
+        if not text_effect.available():
             self._ingest_frame(
-                OutboxMessage(kind="status", text=screensaver.unavailable_message())
+                OutboxMessage(kind="status", text=text_effect.unavailable_message())
             )
             return
         self._flow.play_overlay(
-            screensaver.frame_factory(), fps=screensaver.DEFAULT_FPS, loop=True
+            text_effect.frame_factory(), fps=text_effect.DEFAULT_FPS, loop=True
         )
 
     def _write_clipboard(self, text: str) -> bool:
