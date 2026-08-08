@@ -131,12 +131,15 @@ These rules then keep multi-session work coherent:
    Manual / Visual item in the Test plan and tick the box, or replace
    `- [ ]` with `- [x] (skipped — <reason>)`. Reviewers do not merge
    while items are unchecked without an explicit waiver.
-   **Standing waiver, Visual items only (owner, 2026-08-08)**: "見た目
-   ゲートだとしても main マージ進めてよ。そうしないと会社で見れないんだ
-   から" — the operator's only way to actually SEE a visual/TTY result
-   is on `main` (their own execution environment), so waiting for a
-   visual check before merging inverts the real dependency: the check
-   needs the merge, not the other way around. Leave the Visual box
+   **Standing waiver, Visual items only (owner, 2026-08-08)**, quoted
+   verbatim on one line so the boundary of the owner's own words is
+   unambiguous: 「あと見た目ゲートだとしてもmainマージ進めてよ。そうしないと会社で見れないんだから」
+   (roughly: proceed with the main merge even for visual gates —
+   otherwise I can't see it at the company). The operator's only way to
+   actually SEE a visual/TTY result is on `main` (their own execution
+   environment), so waiting for a visual check before merging inverts
+   the real dependency: the check needs the merge, not the other way
+   around. Leave the Visual box
    unchecked in the Test plan (do not fabricate a check that didn't
    happen) and merge anyway; the operator confirms after, on `main`,
    and a follow-up PR fixes anything they flag. **This loosens the
