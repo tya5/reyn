@@ -165,6 +165,22 @@ def _make_session(
         chat_tool_use_scheme="universal-category",
     )
     session.register_intervention_listener("test")
+    # #3813 (#3793 stage 2 follow-up): status/trace are now dropped at
+    # emission unless outbox_hub.has_subscribers() — a REAL subscription is
+    # the true replacement for the old `session.is_attached = True` these
+    # tests set (a manually-synced flag). Subscribe BEFORE any test logic
+    # runs so status announces made during dispatch aren't dropped as
+    # "nobody is watching". _drain_outbox reads from this subscription.
+    # ``subscribe()`` needs a running loop (it arms the hub's drain task) —
+    # a handful of call sites build a session from a SYNC test body that
+    # never touches the outbox, so skip eagerly subscribing there; those
+    # never call ``_drain_outbox`` either.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        session._test_outbox_sub = None  # type: ignore[attr-defined]
+    else:
+        session._test_outbox_sub = session.outbox_hub.subscribe()  # type: ignore[attr-defined]
     return session
 
 
@@ -175,10 +191,18 @@ def _wal_events(tmp_path: Path) -> list[dict]:
     return list(log.iter_from(0))
 
 
-def _drain_outbox(session: Session) -> list:
+async def _drain_outbox(session: Session) -> list:
+    """Drain via the real hub subscription ``_make_session`` opened (#3813) —
+    reading ``session.outbox`` directly would race the hub's own drain task,
+    which starts consuming it the moment that subscription exists. The single
+    ``sleep(0)`` tick lets that task's already-scheduled continuation (queued
+    by the preceding ``put_nowait``'s waiter callback, via ``call_soon`` — not
+    delivered synchronously) actually run before this reads the sub queue."""
+    sub = session._test_outbox_sub  # type: ignore[attr-defined]
+    await asyncio.sleep(0)
     msgs = []
-    while not session.outbox.empty():
-        msgs.append(session.outbox.get_nowait())
+    while not sub._queue.empty():
+        msgs.append(sub._queue.get_nowait())
     return msgs
 
 
@@ -701,7 +725,7 @@ async def test_intervention_choices_no_match_emits_unknown_choice_hint(tmp_path,
         "_maybe_answer_oldest_intervention must return True for unknown choice"
     )
 
-    messages = _drain_outbox(session)
+    messages = await _drain_outbox(session)
     status_msgs = [m for m in messages if m.kind == "status"]
     unknown_msgs = [m for m in status_msgs if "unknown choice" in m.text]
     assert unknown_msgs, (
@@ -746,7 +770,7 @@ async def test_intervention_queued_status_when_dispatched_while_pending(tmp_path
     # to_thread; sleep(0) would drain the outbox before the prompt is emitted).
     await wait_until(lambda: bool(session.interventions.list_active()))
 
-    msgs_after_iv1 = _drain_outbox(session)
+    msgs_after_iv1 = await _drain_outbox(session)
     intervention_msgs = [m for m in msgs_after_iv1 if m.kind == "intervention"]
     assert intervention_msgs and "Question:" in intervention_msgs[0].text, (
         "iv1 announce must have been emitted"
@@ -758,7 +782,7 @@ async def test_intervention_queued_status_when_dispatched_while_pending(tmp_path
     # has been emitted (#1751: WAL append now fsyncs via to_thread).
     await wait_until(lambda: len(session.interventions.list_active()) >= 2)
 
-    msgs_after_iv2 = _drain_outbox(session)
+    msgs_after_iv2 = await _drain_outbox(session)
     queued_msgs = [
         m for m in msgs_after_iv2
         if m.kind == "status" and "queued" in m.text and "awaiting answer" in m.text
@@ -1042,7 +1066,7 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
     assert not router_called, "B2-H2 regression: _run_router_loop was called for a marker"
 
     # Outbox must contain a kind=agent failure message.
-    msgs = _drain_outbox(session)
+    msgs = await _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
     assert agent_msgs, (
         "B2-H2 regression: outbox has no 'agent' message; user was not notified of peer failure"
