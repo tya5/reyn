@@ -141,7 +141,17 @@ These rules then keep multi-session work coherent:
    author can only be inferred from branch naming (= a hint, not the
    workflow contract). The `Co-Authored-By: Claude` commit trailer
    does not propagate to PR comments, so this prefix is the only
-   cross-session signal.
+   cross-session signal. **This isn't just a courtesy convention — it's
+   the ONLY signal, because every session authenticates as the same
+   `gh` user.** `gh pr view N --json author` returns the same account
+   (`tya5`) regardless of which session opened it; it cannot
+   distinguish sessions the way it would across different human
+   accounts, so recommending it as a way to identify a PR's author role
+   is a real trap, not a redundant-but-harmless check (a lead-coder
+   session did exactly this before catching it: `--json author` on a
+   `tui-coder`-authored PR returned `tya5`, same as every other PR,
+   and only the body's own `**[tui-coder]**` prefix actually said who
+   wrote it).
 3. **If broker MCP is connected, supplement PR comments with
    `post_message` for time-sensitive coordination.** When a session
    would otherwise wait for the peer's next manual polling to notice
