@@ -39,7 +39,7 @@ from reyn.core.present.binding import ResolvedPresentation, resolve_bindings
 from reyn.core.present.catalog import validate_blueprint
 from reyn.core.present.fallback import default_viewer_blueprint, generic_blueprint
 from reyn.core.present.source import rehydrate_ref_text
-from reyn.data.workspace.text_codec import decode_text_or_none
+from reyn.data.text_codec import decode_text_or_none
 
 # The ``presented`` event's ``data_ref`` for a ``data_inline`` presentation — the bytes
 # were in the LLM's context, never persisted, so replay cannot re-render them.

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import codecs
 
-from reyn.data.workspace.text_codec import decode_text_or_none, encode_text
+from reyn.data.text_codec import decode_text_or_none, encode_text
 
 # ── decode_text_or_none ────────────────────────────────────────────────────
 
