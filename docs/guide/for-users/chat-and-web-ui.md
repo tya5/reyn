@@ -185,6 +185,7 @@ Press `↓` from an empty input to focus the status bar, then:
 |-----|--------|
 | `Ctrl+C` | Cancel the in-flight turn (a second `Ctrl+C` quits) |
 | `Ctrl+D` / `Ctrl+Q` | Quit (also `/quit`) |
+| `Ctrl+L` | Toggle a full-viewport text effect over the conversation (a joke) — the same key starts and stops it, and stopping restores the exact prior view. Needs the optional `effects` extra (`pip install 'reyn[effects]'`); without it, pressing the key shows a status message naming the install rather than doing nothing |
 
 ### Conversation pane (interactive TTY)
 
