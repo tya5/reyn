@@ -144,13 +144,31 @@ async def test_router_cache_rebuilds_on_config_change() -> None:
 @pytest.mark.asyncio
 async def test_cost_records_actual_model_on_fallback() -> None:
     """Tier 2: when a router fallback serves the call, cost is attributed to the
-    ACTUAL deployment (response.model), not the requested model."""
+    ACTUAL deployment (response.model), not the requested model.
+
+    #3833: under an operator proxy (``LITELLM_API_BASE`` set —
+    ``proxy_kwargs()`` returns a truthy ``api_base``), reyn's own funnel
+    strips the provider prefix before the model string reaches
+    ``litellm.acompletion`` (an OpenAI-compatible proxy expects a bare
+    name). Match/expect whichever form is ACTUALLY presented on the wire —
+    hardcoding the prefixed form here would make this mock's simulated
+    failure silently never fire under a proxy (the request would "succeed"
+    on the first try, recording the primary rather than exercising the
+    fallback at all), masking exactly the #3833 defect class this file
+    exists to catch. This is the SAME normalisation ``llm.py``'s
+    ``_single_deployment_router`` applies to the fallback map itself — see
+    ``_bare_model_name``.
+    """
     set_router_config(RouterConfig(use=True, num_retries=0, fallbacks={_PRIMARY: [_FALLBACK]}))
     tracker = BudgetTracker(CostConfig())
 
+    _stripped = bool(llm_mod.proxy_kwargs().get("api_base"))
+    _wire_primary = llm_mod._bare_model_name(_PRIMARY) if _stripped else _PRIMARY
+    _wire_fallback = llm_mod._bare_model_name(_FALLBACK) if _stripped else _FALLBACK
+
     async def _fake(*a, **k):
-        if k.get("model") == _PRIMARY:
-            raise litellm.InternalServerError("down", model=_PRIMARY, llm_provider="openai")
+        if k.get("model") == _wire_primary:
+            raise litellm.InternalServerError("down", model=_wire_primary, llm_provider="openai")
         return _Resp(k.get("model"))
 
     with mock.patch.object(litellm, "acompletion", side_effect=_fake):
@@ -158,7 +176,7 @@ async def test_cost_records_actual_model_on_fallback() -> None:
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
             purpose="dogfood", recorder=tracker,
         )
-    assert _recorded_models(tracker) == [_FALLBACK], (
+    assert _recorded_models(tracker) == [_wire_fallback], (
         "a fallback must record cost against the model that actually ran, not the "
         f"requested one (got {_recorded_models(tracker)!r})"
     )

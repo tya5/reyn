@@ -1477,7 +1477,19 @@ def _deployments_for_model(model: str, rcfg) -> list:
     return deployments
 
 
-def _single_deployment_router(model: str):
+def _bare_model_name(name: str) -> str:
+    """Strip a ``provider/`` prefix, if any — the same transform the proxy-
+    routing branch (``llm.py``'s main funnel, ``effective_model = model.
+    split("/", 1)[1] if extra.get("api_base") and "/" in model else model``)
+    applies to the PRIMARY model before it reaches litellm. #3833: model
+    identity (and fallback config) is a property of the MODEL, not of the
+    transport used to reach it (:func:`_single_deployment_router`'s own
+    docstring already states this principle for `num_retries`/credentials —
+    this is the same principle applied to fallback lookup)."""
+    return name.split("/", 1)[1] if "/" in name else name
+
+
+def _single_deployment_router(model: str, *, original_model: "str | None" = None):
     """#1829 S1→S4: return a per-running-loop-cached ``litellm.Router`` for
     *model*. Single deployment by default; when reyn.yaml ``llm.router.fallbacks``
     declares a chain for *model*, a **multi-deployment** Router (primary + each
@@ -1501,6 +1513,23 @@ def _single_deployment_router(model: str):
     key is ``(model, config-fingerprint)`` (#1829 S3b F1) — a changed
     ``llm.router.*`` rebuilds rather than silently reusing a stale Router, so the
     cache is correct without assuming config is loop-uniform.
+
+    #3833: *model* here is already the LITELLM-FACING name (the main funnel's
+    ``effective_model`` — provider-prefix-stripped when routing through a
+    proxy ``api_base``, unchanged for a direct-provider route). *original_model*
+    is the pre-strip class/config name, passed through ONLY so
+    ``llm.router.fallbacks`` config declared under that (possibly prefixed)
+    spelling is still found: the fallback map's declared intent is a property
+    of the MODEL, not of whether this particular call happens to route
+    through a proxy — a config keyed ``"openai/gpt-4o-mini"`` must resolve
+    the same fallback chain whether or not ``LITELLM_API_BASE`` is set.
+    Fallback TARGETS are then normalised to match *model*'s own
+    (stripped-or-not) convention, so the deployments this Router actually
+    builds — and the ``fallbacks`` kwarg litellm's Router reads at runtime —
+    name models the SAME way the primary does; a mismatch there would make
+    the config resolve but the Router silently never use it (the config
+    lookup and the runtime kwarg must agree — see the docstring's own
+    caution against fixing only one).
     """
     import litellm as _ll
     rcfg = _resolved_router_config()
@@ -1509,11 +1538,27 @@ def _single_deployment_router(model: str):
     if per_loop is None:
         per_loop = {}
         _ROUTERS_BY_LOOP[loop] = per_loop
-    cache_key = (model, _router_cache_fingerprint(rcfg))
+    # #3833: include original_model — two different pre-strip class names
+    # (e.g. "openai/gpt-4o" vs "azure/gpt-4o") can strip to the SAME bare
+    # `model`, but their reyn.yaml fallback declarations may differ; caching
+    # on the bare name alone could serve one class's Router to the other.
+    cache_key = (model, original_model, _router_cache_fingerprint(rcfg))
     router = per_loop.get(cache_key)
     if router is None:
+        # #3833: try the pre-strip (class/config) spelling FIRST — that is
+        # how an operator's reyn.yaml/reyn.local.yaml naturally writes a
+        # fallback chain — falling back to the already-bare `model` for a
+        # config that already declares bare names.
+        _raw_targets = None
+        if original_model is not None:
+            _raw_targets = rcfg.fallbacks.get(original_model)
+        if not _raw_targets:
+            _raw_targets = rcfg.fallbacks.get(model)
+        _stripped_primary = original_model is not None and original_model != model
         fb_targets = list(dict.fromkeys(
-            t for t in (rcfg.fallbacks.get(model) or []) if t and t != model
+            (_bare_model_name(t) if _stripped_primary else t)
+            for t in (_raw_targets or [])
+            if t and (_bare_model_name(t) if _stripped_primary else t) != model
         ))
         # model_list: the primary + each DISTINCT fallback target, each EXPANDED to
         # one deployment per usable credential (S4 rotation) or a single plain
@@ -2289,7 +2334,9 @@ async def recorded_acompletion(
             # and in the legacy ``text_completion`` helper, neither of which is
             # on this path (read from litellm's source, not assumed).
             return _stamp_usage_source(
-                await _single_deployment_router(effective_model).acompletion(
+                await _single_deployment_router(
+                    effective_model, original_model=model,
+                ).acompletion(
                     model=effective_model, messages=messages, **router_kwargs
                 ),
                 UsageSource.PROVIDER,
