@@ -610,7 +610,11 @@ class TextualChatApp(App):
     BINDINGS = [
         # Global fallback so Esc closes the drawer even when focus is INSIDE it
         # (an OptionList pane); the MenuBar's own ↑/Esc handles the menu-row case.
-        ("escape", "close_drawer", "Close drawer"),
+        # ``show=False``: the Help pane's row for this key is written by hand in
+        # ``chrome.MENUBAR_KEYS`` (#3818), because rendering Textual's own
+        # identifier here spelled it ``escape`` while every other row said
+        # ``esc``. The binding is unchanged — only who describes it.
+        Binding("escape", "close_drawer", "Close drawer", show=False),
         # #3352: hide/show either gutter, handing its whole column back to the
         # conversation body. Two bindings, not one, because the upstream
         # granularity is two INDEPENDENT flags (``FlowView.left_gutter_visible``
@@ -1462,7 +1466,11 @@ class TextualChatApp(App):
             if isinstance(b, tuple):
                 if len(b) >= 3:
                     out.append((b[0], b[2]))
-            elif getattr(b, "description", ""):
+            elif getattr(b, "description", "") and getattr(b, "show", True):
+                # ``show`` is Textual's own "advertise this key" flag, and this
+                # pane is the advertisement. Honouring it is what lets a
+                # binding hand its Help row to a hand-written table (#3818)
+                # without a translation step living here.
                 out.append((b.key, b.description))
         return out
 
