@@ -233,7 +233,12 @@ def project_restored_frames(
       ``{"error_message": ...}``) for a FAILURE — read directly off the
       persisted ``meta[TOOL_STATUS_META_KEY]`` typed flag (:func:`_failure_meta`;
       #73), never re-derived from ``m.text``.
-    - ``system`` / ``summary``       → skipped (internal chrome)
+    - ``system`` / ``summary``       → skipped (internal chrome), EXCEPT a
+      ``system`` entry carrying ``meta["kind"] == "turn_cancelled"``
+      (#3694) — a genuinely-cancelled turn's durable outcome, rescued by
+      ``meta.kind`` rather than by role so every OTHER ``system`` entry
+      (``state_change``, real SP chrome) stays skipped → ``kind="system"``,
+      matching the live path's own outbox rendering.
 
     An assistant message carrying ONLY ``tool_calls`` (empty text) produces no
     ``agent`` frame of its own — the call header is delivered entirely through
@@ -251,7 +256,23 @@ def project_restored_frames(
     frames: "list[OutboxMessage]" = []
     for m in messages:
         role = m.role
+        meta = m.meta or {}
         if role in _SKIP_ROLES:
+            # #3694: a cancelled-turn outcome reuses role="system" (the
+            # same no-new-role precedent as notify_state_change), so the
+            # blanket _SKIP_ROLES exclusion above would silently drop it
+            # too — restoring the exact "why was there no reply" gap this
+            # entry exists to close. Rescued by meta.kind, never by role:
+            # every OTHER system entry (state_change, genuine SP chrome)
+            # stays skipped.
+            if role == "system" and meta.get("kind") == "turn_cancelled":
+                frames.append(
+                    OutboxMessage(
+                        kind="system",
+                        text=m.text,
+                        meta={RESTORED_META_KEY: True, "chain_id": meta.get("chain_id")},
+                    )
+                )
             continue
         if role == "user":
             meta = m.meta or {}
