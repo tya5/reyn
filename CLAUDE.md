@@ -131,6 +131,18 @@ These rules then keep multi-session work coherent:
    Manual / Visual item in the Test plan and tick the box, or replace
    `- [ ]` with `- [x] (skipped — <reason>)`. Reviewers do not merge
    while items are unchecked without an explicit waiver.
+   **Standing waiver, Visual items only (owner, 2026-08-08)**: "見た目
+   ゲートだとしても main マージ進めてよ。そうしないと会社で見れないんだ
+   から" — the operator's only way to actually SEE a visual/TTY result
+   is on `main` (their own execution environment), so waiting for a
+   visual check before merging inverts the real dependency: the check
+   needs the merge, not the other way around. Leave the Visual box
+   unchecked in the Test plan (do not fabricate a check that didn't
+   happen) and merge anyway; the operator confirms after, on `main`,
+   and a follow-up PR fixes anything they flag. **This loosens the
+   Visual axis ONLY.** Falsification, consumer-sweep, and CI gates are
+   unaffected and still block merge exactly as before — this is not a
+   general "a waiver exists somewhere, so merge unchecked" license.
 2. **Role-prefix every issue / PR body / PR comment.** Start the PR
    body AND each follow-up comment with `**[role-name]** — ` (e.g.
    `[lead-coder]`, `[e2e-coder]`, `[tui-coder]`, `[dogfood-coder]`,
