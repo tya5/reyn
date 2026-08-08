@@ -62,6 +62,7 @@ always-loaded module.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -714,6 +715,52 @@ def agent_pane_options(
 # ── the six toggle/list categories the retired "more…" sub-bar owned (#3338) ──
 
 
+@dataclass(frozen=True)
+class DrawerRow:
+    """One actionable drawer row, as slots rather than as an assembled string
+    (#3691 Phase 2).
+
+    The four capability panes (tool / mcp / skill / hook) each built their rows
+    by hand and each spelled the same grammar out again: a state mark, the name,
+    an optional ``·``-separated note, and a slash command. Four spellings of one
+    grammar is four places for a change to reach three of. #3380 added the
+    denial-reason distinction and #3615 a third reason — both had to be applied
+    where the mark was decided, and the mark was decided in more than one place.
+
+    Slots, not a redesign. The rendered text is byte-identical to what the four
+    builders produced; what changes is that a reader (and the next change) sees
+    ``state`` / ``note`` / ``command`` as separate things instead of positions
+    inside a string.
+
+    ``command=None`` means **not operable** — a denied capability, or a
+    read-only fallback listing. The builders previously used ``""`` for this,
+    which is a value the caller has to know means "inert" rather than a type
+    that says so. The registry boundary still hands out ``""`` (see
+    :meth:`as_entry`), because ``pane_commands``' index-aligned contract is a
+    list of strings and changing that is a different change from this one.
+
+    NOT used by the model / agent panes. Their rows are a tree-and-selection
+    grammar (indentation, a ``▸`` focus mark at two levels, "· active"), not a
+    state grammar — giving them a ``state`` slot would be fitting the type to
+    the refactor rather than to the code.
+    """
+
+    label: str
+    state: "str | None" = None      # "on" | "off" | "--" — None = no state mark
+    note: "str | None" = None       # the "· ..." tail: a denial reason, a scope
+    command: "str | None" = None    # None = inert (denied, or a read-only row)
+
+    @property
+    def text(self) -> str:
+        """The row as the pane renders it."""
+        head = f"[{self.state}] {self.label}" if self.state else self.label
+        return f"{head}  · {self.note}" if self.note else head
+
+    def as_entry(self) -> "tuple[str, str]":
+        """``(row, slash)`` for the registry, whose contract predates this type."""
+        return self.text, self.command or ""
+
+
 def _denied_note(reason: "str | None") -> str:
     """The annotation for a non-flippable ``[--]`` row, by ``denied_reason`` (#3380,
     ``"unknown"`` added by #3615).
@@ -770,23 +817,26 @@ def _visibility_pane_entries(
     the accessor) → "not wired". A present-but-empty list means the seam answered and
     nothing is narrowed → "(none)". These rendered identically before."""
     raw = snap.get("visibility_items")
-    rows: "list[tuple[str, str]]" = []
+    rows: "list[DrawerRow]" = []
     for it in (raw or []):
         if it.get("kind") != kind:
             continue
         if it.get("denied"):
-            rows.append((f"[--] {it['name']}  · {_denied_note(it.get('denied_reason'))}", ""))
+            rows.append(DrawerRow(
+                label=it["name"], state="--",
+                note=_denied_note(it.get("denied_reason")),
+            ))
         else:
-            rows.append((
-                f"[{'on' if it['on'] else 'off'}] {it['name']}",
-                f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}",
+            rows.append(DrawerRow(
+                label=it["name"], state="on" if it["on"] else "off",
+                command=f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}",
             ))
     if rows:
-        return rows
+        return [r.as_entry() for r in rows]
     names = [d["name"] for d in (snap.get(fallback_key) or [])] if fallback_key else []
     if names:
-        return [(n, "") for n in names]
-    return [("(none)", "") if raw is not None else ("(not wired)", "")]
+        return [DrawerRow(label=n).as_entry() for n in names]
+    return [DrawerRow(label="(none)" if raw is not None else "(not wired)").as_entry()]
 
 
 def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
@@ -796,15 +846,18 @@ def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
     items = snap.get("hook_items") or []
     if items:
         return [
-            (
-                f"[{'on' if h['on'] else 'off'}] {h['name']}"
-                + (f"  · {h['scope']}" if h.get("scope") else ""),
-                f"/hook {'off' if h['on'] else 'on'} {h['name']}",
-            )
+            DrawerRow(
+                label=h["name"],
+                state="on" if h["on"] else "off",
+                note=h.get("scope") or None,
+                command=f"/hook {'off' if h['on'] else 'on'} {h['name']}",
+            ).as_entry()
             for h in items
         ]
     labels = [h["label"] for h in (snap.get("hooks") or [])]
-    return [(label, "") for label in labels] or [("(none)", "")]
+    return [DrawerRow(label=label).as_entry() for label in labels] or [
+        DrawerRow(label="(none)").as_entry()
+    ]
 
 
 def pipe_pane_lines(snap: "dict | None") -> list[str]:
