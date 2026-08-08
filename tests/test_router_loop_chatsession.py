@@ -124,7 +124,6 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True  # enable status messages
 
     async def fake_llm(*args, **kwargs):
         return _text_result("hi")
@@ -146,7 +145,6 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
     """Tier 1: agent reply from RouterLoop is appended to session history with role=agent. AsyncMock isolates from network for e2e path verification."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     async def fake_llm(*args, **kwargs):
         return _text_result("hello back")
@@ -185,7 +183,6 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
         registry=registry,
         chat_tool_use_scheme="universal-category",  # #1657
     )
-    session.is_attached = True
 
     rounds = [
         _tool_result([{"name": "invoke_action", "args": {

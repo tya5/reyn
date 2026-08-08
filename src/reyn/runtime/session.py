@@ -1276,9 +1276,6 @@ class Session:
         # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
         set_active_hot_reloader(self._hot_reloader)
-        # Detached by default; AgentRegistry.attach() flips this on to stop background display noise
-        self.is_attached: bool = False
-
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._chat_events)
@@ -6098,14 +6095,14 @@ class Session:
         # documented at docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
-        """Drop transient kinds while detached; durable kinds are queued.
+        """Drop transient kinds while nobody is subscribed; durable kinds are queued.
 
-        While `is_attached=False` (PR10 multi-agent: agent running in the
-        background), `status`/`trace` carry no value to a detached display
-        and would just accumulate in the queue. `agent`/`intervention`/
-        `error`/`__end__` are kept so they reach the user
-        when re-attached or remain in history (history append happens
-        independently in callers).
+        While ``self.outbox_hub`` has no live subscribers (#3793 stage 2: no
+        forwarder attached, no AG-UI/other surface subscribed), `status`/
+        `trace` carry no value to a display nobody is reading and would just
+        accumulate in the queue. `agent`/`intervention`/`error`/`__end__` are
+        kept so they reach the user once a surface subscribes or remain in
+        history (history append happens independently in callers).
 
         FP-0041 #489 PR-D2: outbox reply_to + external transport interceptor.
           - When ``msg.reply_to`` is unset and the session has a recent
@@ -6175,7 +6172,20 @@ class Session:
         if msg.reply_to is None and self._last_reply_to is not None:
             from dataclasses import replace
             msg = replace(msg, reply_to=self._last_reply_to)
-        if not self.is_attached and msg.kind in {"status", "trace"}:
+        # #3793 stage 2: the "nobody is watching, drop status/trace" gate
+        # (formerly ``if not self.is_attached: return`` here) is now derived
+        # from ``self.outbox_hub.has_subscribers()`` instead of a manually-
+        # synced bool — ``self.is_attached`` could not express per-connection
+        # focus once ADR-0039 D4's N:N model applies. This must be checked
+        # HERE, at emission, not left to ``OutboxHub._fanout``'s per-message
+        # no-op: ``_fanout`` only runs once ``_drain`` is consuming, and
+        # ``_drain`` itself only starts on the FIRST ``subscribe()`` — a
+        # session booted via ``ensure_session_running`` (no forwarder; e.g. a
+        # persistent ``cron:``/``webhook:`` session, FP-0043) may never be
+        # subscribed to at all, so without this earlier gate ``_drain`` never
+        # starts and ``self.outbox`` grows unboundedly for the session's
+        # whole lifetime (caught in #3813 review).
+        if not self.outbox_hub.has_subscribers() and msg.kind in {"status", "trace"}:
             return
         self.outbox.put_nowait(msg)
 

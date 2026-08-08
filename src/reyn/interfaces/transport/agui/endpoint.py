@@ -168,7 +168,14 @@ async def _drive_fail_close(agent_name: str, manager: SurfaceManager, registry) 
             if not manager.should_fail_close(now):
                 continue
             try:
-                session = await registry.attach(agent_name)
+                # #3793 stage 2: resolve/boot the session WITHOUT touching
+                # registry's own AttachedConnection (the local TUI's shared
+                # focus pointer) — AG-UI never reads attached_name/
+                # attached_session (measured: 0 references), so the only
+                # thing this call ever needed from attach() was the boot
+                # side effect. Applies to every registry.attach(agent_name)
+                # call in this file (5 sites, all changed the same way).
+                session = await registry.ensure_running(agent_name)
             except Exception:  # noqa: BLE001 — session gone: nothing to deny
                 session = None
             if session is not None:
@@ -400,7 +407,7 @@ async def agui_events(request: Request, agent_name: str):
     registry = get_registry()
     if not registry.exists(agent_name):
         return JSONResponse({"error": f"agent {agent_name!r} not found"}, status_code=404)
-    session = await registry.attach(agent_name)
+    session = await registry.ensure_running(agent_name)  # #3793 stage 2: boot-only, does not touch focus
 
     manager = _surface_manager(agent_name, auth)
     now = monotonic()
@@ -486,7 +493,7 @@ async def _handle_answer(request, auth, identity, connection_id, agent_name, pay
     iv_id = str(payload.get("toolCallId") or "").strip()
     if not iv_id:
         return JSONResponse({"error": "missing toolCallId", "answered": False}, status_code=400)
-    session = await get_registry().attach(agent_name)
+    session = await get_registry().ensure_running(agent_name)  # #3793 stage 2: boot-only, does not touch focus
     if manager is not None:
         manager.heartbeat(connection_id, monotonic())
     choice_id = payload.get("choiceId")
@@ -531,7 +538,7 @@ async def agui_seize(request: Request, agent_name: str):
         return JSONResponse({"seized": False, "error": "seize refused"}, status_code=409)
     registry = get_registry()
     if registry.exists(agent_name):
-        session = await registry.attach(agent_name)
+        session = await registry.ensure_running(agent_name)  # #3793 stage 2: boot-only, does not touch focus
         session.emit_audit_event(
             "client_seized",
             auth_user_id=identity.user_id,
@@ -601,7 +608,7 @@ async def agui_submit(request: Request, agent_name: str):
     if not auth.authorize_write(identity):
         return JSONResponse({"error": "unauthorized"}, status_code=403)
 
-    session = await registry.attach(agent_name)
+    session = await registry.ensure_running(agent_name)  # #3793 stage 2: boot-only, does not touch focus
     if ptype == "user_message":
         text = str(payload.get("text", "")).strip()
         if text:

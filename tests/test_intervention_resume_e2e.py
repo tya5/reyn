@@ -102,7 +102,6 @@ async def test_bus_returns_buffered_answer_without_dispatching(tmp_path, monkeyp
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     # Real flow: a prior-run intervention is in the snapshot; restore it,
     # answer it via the slash path, watcher buffers the answer.
@@ -144,7 +143,6 @@ async def test_bus_falls_through_to_dispatch_when_no_buffer(tmp_path, monkeypatc
     """Tier 2: backward compat — empty buffer → normal dispatch path."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     bus = ChatInterventionBus(session, run_id="rFresh", actor="demo")
     iv = UserIntervention(kind="ask_user", prompt="What's up?")
@@ -167,7 +165,6 @@ async def test_buffer_is_single_use(tmp_path, monkeypatch):
     """Tier 2c: a buffered answer is consumed once; second request goes through dispatch."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     # Setup: real flow populates the buffer (restore + answer)
     snap = _snapshot_with_intervention(
@@ -212,7 +209,6 @@ async def test_watcher_buffers_answer_when_restored_iv_resolves(tmp_path, monkey
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     snap = _snapshot_with_intervention(
         agent_name="alpha", iv_id="iv_restored", run_id="rW",
@@ -246,7 +242,6 @@ async def test_e2e_skill_resume_picks_up_user_answer(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     # Phase 1: snapshot has an outstanding intervention from the crashed run
     snap = _snapshot_with_intervention(
@@ -311,7 +306,6 @@ async def test_e2e_choice_intervention_round_trip(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     snap = AgentSnapshot.empty("alpha")
     snap.outstanding_interventions["iv_choice"] = {

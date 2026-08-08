@@ -12,7 +12,7 @@ Gates covered here:
 
 1. The event is emitted on BOTH switch paths (``attach`` / ``attach_session``),
    carrying the correct ``{agent, session_id}``.
-2. ★Barrier: the flip (``self._attached = key``) and the announce
+2. ★Barrier: the flip (``self._connection.switch(key)``) and the announce
    (``repl_outbox.put_nowait``) happen with NO real ``await`` suspension in
    between, so the announce is ALWAYS the first thing a switch contributes to
    ``repl_outbox`` — even when the newly-focused session already has a frame
@@ -148,7 +148,7 @@ async def test_barrier_announce_precedes_new_sessions_own_frames(tmp_path) -> No
     possible (a bare ``await asyncio.sleep(0)`` loop — the fastest ANY real
     consumer, however it is implemented, could ever react to the flip) and
     races to put its own frame onto ``repl_outbox`` the instant it observes
-    the switch. The flip (``self._attached = key``) and the announce
+    the switch. The flip (``self._connection.switch(key)``) and the announce
     (``repl_outbox.put_nowait``) have NO real ``await`` between them (design-
     pass contract, mirroring ``Session.cancel_queued``'s no-await critical
     section, #3300 Y-server / #3306) — so no matter how fast the adversary
@@ -203,7 +203,7 @@ async def test_barrier_holds_for_attach_session_too(tmp_path) -> None:
     """Tier 2: ★race gate, the ``attach_session`` (sid-switch) call site —
     the SAME adversary as above, per-site (not cross-masked by the
     ``attach`` test): ``attach_session`` has its OWN
-    ``self._attached = key`` / announce pair (a separate code path from
+    ``self._connection.switch(key)`` / announce pair (a separate code path from
     ``attach``), so it needs its own independent proof the barrier holds
     there too."""
     reg = _registry(tmp_path)

@@ -637,7 +637,6 @@ async def test_disk_loaded_pipeline_invokable_through_full_live_loop(
     holder["reg"] = reg
     reg.create("test_agent")
     session = reg.get_or_load("test_agent")
-    session.is_attached = True
 
     invoke = LLMToolCallResult(
         content=None,

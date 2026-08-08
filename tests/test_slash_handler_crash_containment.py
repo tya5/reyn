@@ -40,7 +40,6 @@ async def test_raising_slash_handler_is_contained_not_fatal(
     command consumed (loop survives) and emits an error line."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     async def _boom(ctx, args: str) -> None:
         raise RuntimeError("handler exploded")

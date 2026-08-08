@@ -106,7 +106,6 @@ async def test_router_cap_force_close_wrap_up_emits_limit_stopped(
     is emitted (no fallback canned error)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     llm = _ScriptedLLM([text_result("cap reached; completed steps 1-3")])
     await session._emit_router_cap_exhausted_user(
@@ -136,7 +135,6 @@ async def test_router_cap_fallback_when_wrap_up_empty(
     the original canned error + agent fallback reply is emitted instead."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     llm = _ScriptedLLM([LLMToolCallResult(
         content=None, tool_calls=[], finish_reason="stop", usage=_USAGE,

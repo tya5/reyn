@@ -146,7 +146,6 @@ async def test_c_staging_ride_alongs_injected_as_system_messages(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     stub = _make_llm_stub_fn(_text_result("got it"))
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
@@ -216,7 +215,6 @@ async def test_c_staging_no_ride_alongs_no_system_messages(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     stub = _make_llm_stub_fn(_text_result("hello back"))
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
@@ -327,7 +325,6 @@ async def test_c_staging_cleared_durably_after_injection(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     stub = _make_llm_stub_fn(_text_result("done"))
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
@@ -481,7 +478,6 @@ async def test_c_staging_slash_command_does_not_consume_staged(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     # Stage a C message manually.
     session._next_turn_context.append(

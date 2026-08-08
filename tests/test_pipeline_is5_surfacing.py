@@ -78,7 +78,6 @@ def _registry_backed_session(tmp_path: Path):
     holder["reg"] = reg
     reg.create("test_agent")
     session = reg.get_or_load("test_agent")
-    session.is_attached = True
     return reg, session
 
 # ---------------------------------------------------------------------------

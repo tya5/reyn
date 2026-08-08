@@ -128,7 +128,6 @@ async def test_hook_slash_disables_via_public_state(tmp_path, monkeypatch):
     _write_agent_hook(tmp_path, "myhook")
     reg.get_or_load("alice")
     s = reg.get_session("alice", await reg.spawn_session_recorded("alice", presentation_consumer=None, intervention_bridge=None))
-    s.is_attached = True
 
     await hook_cmd(slash_ctx(s), "off myhook")
     assert {h["name"]: h["enabled"] for h in s.hook_state()}.get("myhook") is False
