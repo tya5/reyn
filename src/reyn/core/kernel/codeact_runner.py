@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from reyn.security.sandbox import kill_process_tree
+from reyn.security.sandbox._subprocess_io import communicate_capped
 
 
 def _harness_subprocess_env() -> dict[str, str]:
@@ -167,18 +168,31 @@ class CodeActRunner:
             self._service(parent_sock, dispatch, loop, final_box)
         )
 
-        # ``communicate(input=...)`` writes the request to stdin (the child reads it
-        # fully before touching the control channel), then reads stdout/stderr +
-        # waits. It runs in an executor thread, so the ``service_task`` services the
-        # control channel concurrently on the event loop while the child blocks on a
-        # mid-execution tool() call.
+        # Writes the request to stdin (the child reads it fully before touching the
+        # control channel), then reads stdout/stderr + waits. It runs in an executor
+        # thread, so the ``service_task`` services the control channel concurrently
+        # on the event loop while the child blocks on a mid-execution tool() call.
+        #
+        # ``communicate_capped``, not ``proc.communicate`` (#3822): the same reader
+        # every other command-level launch route already uses, capping each stream
+        # and draining the excess so the child never blocks on a full pipe. Plain
+        # ``communicate`` reads without a bound, and _subprocess_io's own docstring
+        # says why that is not survivable — "emitting unbounded output can OOM the
+        # host BEFORE the wall-clock timeout fires". The 30s timeout below is
+        # therefore not a substitute for the cap; it is the thing the cap exists to
+        # arrive ahead of. This seam is also the one running model-authored code, so
+        # a snippet printing in a loop is an ordinary mistake rather than an exotic
+        # one.
         request_bytes = json.dumps(request).encode("utf-8")
         comm_future = loop.run_in_executor(
-            None, lambda: proc.communicate(input=request_bytes),
+            None, lambda: communicate_capped(proc, input=request_bytes),
         )
         timed_out = False
+        truncated = False
         try:
-            stdout_b, stderr_b = await asyncio.wait_for(comm_future, timeout=timeout)
+            stdout_b, stderr_b, truncated = await asyncio.wait_for(
+                comm_future, timeout=timeout
+            )
         except asyncio.TimeoutError:
             timed_out = True
             service_task.cancel()
@@ -214,8 +228,18 @@ class CodeActRunner:
             final.pop("op", None)
             final["stdout"] = (stdout_b or b"").decode("utf-8", errors="replace")
             final["stderr"] = (stderr_b or b"").decode("utf-8", errors="replace")
+            # Surfaced, never silent (#3822). A cap that drops output without
+            # saying so leaves the reader comparing a truncated stdout against
+            # what they expected and concluding the snippet misbehaved — the
+            # #3688 shape, where a region showed less than it held and the
+            # absence was indistinguishable from the thing never existing.
+            if truncated:
+                final["truncated"] = True
             return final
-        return self._parse_response(stdout_b, stderr_b, proc.returncode)
+        response = self._parse_response(stdout_b, stderr_b, proc.returncode)
+        if truncated and isinstance(response, dict):
+            response["truncated"] = True
+        return response
 
     def _resolve_sandbox_spawn(
         self,
