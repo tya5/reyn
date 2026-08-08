@@ -2289,6 +2289,17 @@ class TextualChatApp(App):
                 )
             )
 
+    def _terminal_is_dark(self) -> bool:
+        """Whether the terminal's background is dark — asked of the theme, with
+        dark as the fallback when there is nothing to ask (mirrors
+        ``ActivityRow._terminal_is_dark``, and for the same reason: the answer
+        is the app's to give and a latched value would outlive a theme change).
+        """
+        try:
+            return bool(self.current_theme.dark)
+        except Exception:  # noqa: BLE001 — a colour choice must not raise
+            return True
+
     def action_toggle_text_effect(self) -> None:
         """Start or stop the full-viewport text effect (#3796).
 
@@ -2314,8 +2325,15 @@ class TextualChatApp(App):
                 OutboxMessage(kind="status", text=text_effect.unavailable_message())
             )
             return
+        # ``loop=False``: the factory's generator never ends on its own (it
+        # plays forward, rewinds, and repeats), so looping at the library level
+        # would never come up. Resize still rebuilds — flowview re-invokes the
+        # factory when the viewport dimensions change, which is also what makes
+        # a stale cache impossible.
         self._flow.play_overlay(
-            text_effect.frame_factory(), fps=text_effect.DEFAULT_FPS, loop=True
+            text_effect.frame_factory(dark=self._terminal_is_dark()),
+            fps=text_effect.DEFAULT_FPS,
+            loop=False,
         )
 
     def _write_clipboard(self, text: str) -> bool:

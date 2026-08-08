@@ -114,6 +114,24 @@ TOKENS: "dict[str, str]" = {
 #: the high-contrast end against that terminal's background and the GROUND sits
 #: between the two, so the band always moves away from the background rather
 #: than toward it.
+#: The waiting blink (#3860 follow-up): the pulse shown while the effect's frame
+#: cache is still being built.
+#:
+#: Same two-pair shape as the shine below, for the same reason — one pair cannot
+#: work on both grounds, and the PEAK is the high-contrast end against that
+#: terminal's background. The pulse runs PEAK -> GROUND -> PEAK, so the text
+#: fades toward the background and returns rather than blinking on and off:
+#: a hard on/off reads as a fault, a slow breath reads as work in progress.
+#:
+#: RGB rather than ANSI-16 by the operator's own ruling for this surface. There
+#: is no conventional colour for "a cache is being built", and sixteen colours
+#: carry no midpoints to interpolate through — the fade IS the message here, so
+#: dropping to ANSI would not dim the effect, it would delete it.
+BLINK_PEAK_DARK = "#cdd6f4"
+BLINK_GROUND_DARK = "#2b3040"
+BLINK_PEAK_LIGHT = "#242a38"
+BLINK_GROUND_LIGHT = "#c9cfdd"
+
 SHINE_GROUND_DARK = "#5c6478"
 SHINE_PEAK_DARK = "#e6ecf8"
 SHINE_GROUND_LIGHT = "#9aa1b1"
