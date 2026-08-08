@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 
 import pytest
 
@@ -244,14 +245,33 @@ def test_every_attempt_failing_hands_back_a_held_legible_screen() -> None:
     mod.effect_classes = lambda: [_RaisingEffect] * text_effect.MAX_BUILD_ATTEMPTS
     try:
         generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
-        frames = list(generator)  # bounded: every attempt fails fast, by design
+        # NOT list(): the generator terminates because every pool member
+        # fails, but how many PULSE frames it yields before the fallback is
+        # decided by thread-scheduling luck (the GIL's slice interval), not by
+        # the test — the same shape #3872 cost the operator three reboots
+        # over (lead-coder, PR #3876 review: "measured 413 MB, incidentally
+        # small is not designed small"). A ``deque(..., maxlen=N)`` drains the
+        # SAME generator but retains only the last N — memory is bounded by
+        # ``N``, a constant, regardless of scheduling.
+        #
+        # N = WAITING_FRAMES is not just a safety margin, it is exact: the
+        # fallback loop (the code after every pool attempt has failed) always
+        # yields precisely WAITING_FRAMES frames as the generator's LAST
+        # frames before StopIteration. A deque of that length therefore holds
+        # ONLY the fallback segment, whatever came before it (zero pulse
+        # frames or several full cycles) — which also fixes a latent flaw in
+        # the style-uniformity check below: with list(), frames[0] could be a
+        # PULSE frame from before the last attempt failed, and this test would
+        # have been asserting two different things depending on how the race
+        # resolved on the run.
+        frames = deque(generator, maxlen=text_effect.WAITING_FRAMES)
     finally:
         mod.effect_classes = original
 
     assert frames, "the overlay ended with nothing shown at all"
-    # Held, not a flicker: at DEFAULT_FPS a single frame is ~100ms, which is
-    # why the fallback repeats itself for a whole pulse cycle.
-    assert len(frames) >= text_effect.WAITING_FRAMES, (
+    # Exactly the fallback segment, by the maxlen argument above — not "at
+    # least", because there is nothing else this deque could hold.
+    assert len(frames) == text_effect.WAITING_FRAMES, (
         f"the fallback was shown for only {len(frames)} frame(s)"
     )
     # Legible: the operator's own screen, not a blank or a partial paint.
@@ -263,8 +283,9 @@ def test_every_attempt_failing_hands_back_a_held_legible_screen() -> None:
             )
     # Distinct from the pulse: every held frame carries the SAME style — no
     # fading across the run — which is what makes "it's over" legible against
-    # "still waiting". Asserted pairwise against the first frame rather than
-    # counting distinct styles, so this pins the uniformity, not a count.
+    # "still waiting". Every item in this deque IS the fallback (see above),
+    # so comparing against frames[0] is now comparing fallback to fallback,
+    # not risking a leftover pulse frame at the front.
     first_style = str(frames[0].style)
     assert all(str(f.style) == first_style for f in frames), (
         f"the fallback still looks like the pulse (styles vary): "
@@ -288,7 +309,11 @@ def test_a_slow_failure_still_recovers_and_still_falls_back_cleanly() -> None:
     try:
         generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
         t0 = time.perf_counter()
-        frames = list(generator)
+        # deque, not list() — same reasoning as the test above: termination
+        # is guaranteed (every pool member fails), but the FRAME COUNT before
+        # that is scheduler-decided, not test-decided. maxlen bounds memory by
+        # a constant instead of by how lucky this run's thread scheduling is.
+        frames = deque(generator, maxlen=text_effect.WAITING_FRAMES)
         elapsed = time.perf_counter() - t0
     finally:
         mod.effect_classes = original
