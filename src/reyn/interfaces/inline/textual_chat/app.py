@@ -2223,7 +2223,11 @@ class TextualChatApp(App):
             drawer_open=bool(drawer.display),
             rewind_open=bool(self._rewind_picker.display),
             completion_open=bool(self._completion.display),
-            queue_items=len(queue.rendered_texts()) if queue.has_items() else 0,
+            # ``item_count``, never ``len(rendered_texts())``: the latter is
+            # what is ON SCREEN, and while summarised that is one line no
+            # matter how many are queued — so the decision would read its own
+            # output as its input and flip on every re-decide.
+            queue_items=queue.item_count(),
             turn_active=self._activity.state is not None,
             intervention_open=bool(self._iv_panel.display),
         )
@@ -2284,7 +2288,51 @@ class TextualChatApp(App):
         return ok
 
     def action_close_drawer(self) -> None:
-        self._open_drawer(None)
+        """``esc`` at the bottom of the ladder (#3806).
+
+        The rungs above this one each own a thing to dismiss — the completion
+        popup, the sent queue's focus, the intervention panel — and they stop
+        the event when they act. What reaches here is an ``esc`` nobody else
+        wanted, so this rung answers "there is nothing to dismiss": close the
+        drawer if it is open, otherwise go back to following the newest output.
+
+        **Only when the composer is empty.** With a draft in it, ``esc`` does
+        nothing at all rather than moving the view: someone who has typed and
+        pressed ``esc`` is most likely reaching for "never mind" on the text,
+        and scrolling the conversation instead would answer a question they did
+        not ask. ``ctrl+end`` stays the way back that works regardless, which is
+        why this rung can afford to be conditional and that one cannot.
+
+        Sending does NOT return to the tail — measured, and left that way
+        deliberately (#3806): "did it send" is answered by the sent queue and
+        the NOW row, both of which sit OUTSIDE the scrolling region. The
+        convention elsewhere (Slack, Discord, a shell) is to jump on send, and
+        the reason for it is that those interfaces have nowhere but the scroll
+        region to show that the message left. reyn does, so the convention
+        arrives here without the thing that justified it.
+        """
+        drawer = self.query_one("#drawer", ContentSwitcher)
+        if drawer.display:
+            self._open_drawer(None)
+            return
+        composer = self.query_one(Composer)
+        if not composer.has_focus:
+            # A rung that predates this one and rode on ``_open_drawer(None)``'s
+            # side effect: esc from the conversation pane (or anywhere else that
+            # let it bubble) returns focus to the composer — #3365's "esc alone
+            # owns 'back' everywhere". It has to be named here now, because the
+            # branch above no longer runs when there is no drawer to close, and
+            # an unnamed rung is one nobody knows is load-bearing until it is
+            # gone. Its own gate caught this within the hour.
+            composer.focus()
+            return
+        if composer.text.strip():
+            return
+        # Delegated, not reimplemented: ``ctrl+end`` already means exactly this
+        # and carries the reasoning for doing both the scroll and the row's
+        # state synchronously. A second copy here would be two ways back to the
+        # tail, free to drift apart.
+        self.action_jump_to_latest()
 
     def action_focus_conversation(self) -> None:
         """``Ctrl+O``: hand focus to the conversation pane (#3692 PR-B ①).

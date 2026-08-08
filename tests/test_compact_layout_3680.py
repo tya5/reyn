@@ -225,6 +225,79 @@ async def test_collapsing_the_queue_loses_no_item() -> None:
 
 
 @pytest.mark.asyncio
+async def test_re_deciding_the_layout_does_not_change_it() -> None:
+    """Tier 2b: the decision is stable under repetition — it does not feed on
+    its own result.
+
+    ``_apply_compact_layout`` runs on a resize, on a drawer opening or closing,
+    on every queued item arriving, and on the live chrome refresh. It asked the
+    queue how many items it had via ``rendered_texts()`` — which, once
+    collapsed, is ONE line however many are waiting. So collapsing made the
+    count read 1, which said there was room, which expanded it, which made the
+    count read 3 again: measured flipping on EVERY re-decide, which an operator
+    sees as the region blinking between two layouts while they do nothing.
+
+    Pinned by running the decision repeatedly rather than by asserting the
+    fixed input, because the defect was not a wrong value — each pass was
+    individually correct about what it could see. Only repetition shows it.
+    """
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(80, 16)) as pilot:
+        await pilot.pause()
+        await _crowded(app, transport, pilot)
+
+        queue = app.query_one(SentQueue)
+        settled = queue.summarised
+        for attempt in range(4):
+            app._apply_compact_layout()
+            await pilot.pause()
+            assert queue.summarised == settled, (
+                f"re-decide #{attempt + 1} flipped the layout: {settled} -> "
+                f"{queue.summarised}. The decision is reading its own output."
+            )
+
+
+@pytest.mark.asyncio
+async def test_the_item_count_survives_being_collapsed() -> None:
+    """Tier 2b: how many are queued does not change with how they are drawn.
+
+    This is the property the oscillation violated, stated on its own so it
+    holds even if the layout policy is rewritten: a caller asking "how many are
+    waiting" must get the same answer collapsed or not. ``rendered_texts()``
+    deliberately does not — it answers "what is on screen" — which is why the
+    two are separate calls.
+    """
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(80, 16)) as pilot:
+        await pilot.pause()
+        await _crowded(app, transport, pilot)
+
+        queue = app.query_one(SentQueue)
+        assert queue.summarised, "this test needs the collapsed state to be the case"
+        collapsed_count = queue.item_count()
+        collapsed_lines = len(queue.rendered_texts())
+
+        # Round-tripped through the widget rather than through a resize: at
+        # THIS height closing the drawer is not enough room (the sibling test
+        # above measures that), and the claim here is about the two reads, not
+        # about the resize plumbing.
+        queue.set_summarised(False)
+        await pilot.pause()
+
+        assert queue.item_count() == collapsed_count, (
+            f"the item count moved with the rendering: {collapsed_count} "
+            f"collapsed vs {queue.item_count()} expanded"
+        )
+        assert len(queue.rendered_texts()) != collapsed_lines, (
+            "rendered_texts() did NOT change across the collapse, so this test "
+            "would pass even if the two reads were the same call — the "
+            "distinction it exists to pin is not being exercised"
+        )
+
+
+@pytest.mark.asyncio
 async def test_room_returning_restores_the_rows() -> None:
     """Tier 2b: the policy is reversible.
 
