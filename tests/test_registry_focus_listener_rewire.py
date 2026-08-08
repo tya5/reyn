@@ -1,12 +1,12 @@
 """Tier 2: focus-following front-end listeners re-wire on agent switch.
 
-The REPL binds session-level listeners (the working-indicator chat-event callback
+The REPL binds session-level listeners (the working-indicator audit-event callback
 and the ask_user intervention listener) that must follow the ATTACHED session. If
 they stay bound to the initially-attached session, a `/attach <other>` leaves the
 spinner dead and interventions auto-refusing on the new agent. The registry
 re-wires them on every attach. The intervention listener's has_active_listener()
 is the public, observable proxy for the shared wire/unwire mechanism (the
-chat-event callback rides the same path).
+audit-event callback rides the same path).
 
 Real AgentRegistry + real Sessions (no mocks).
 """

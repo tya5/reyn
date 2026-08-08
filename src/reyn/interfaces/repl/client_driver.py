@@ -179,7 +179,7 @@ async def run_chat_client(
     # #3287: on an interactive TTY, `prompt_session.prompt_async` below already
     # leaves the typed line on the terminal the instant Enter is pressed — the
     # user-line echo already happened there. Without suppressing it, the
-    # broadcast `user_submitted` chat-event this same submission produces (see
+    # broadcast `user_submitted` audit-event this same submission produces (see
     # `run_output_loop`) renders it a SECOND time, printing every LLM-round-trip
     # turn's own line twice (a local `/quit` never reaches `submit_user_text`,
     # so it never doubled — the exact contrast the bug report noted). `None`
@@ -202,7 +202,7 @@ async def run_chat_client(
     #   - `own_submissions` (msg_id set, #3287/F1): the LOCAL path
     #     (`InProcessTransport`) has no connection-id concept, so it keeps the
     #     msg_id-based set instead — also race-free (same-task, no yield point
-    #     between the chat-event emit and the id reaching the caller).
+    #     between the audit-event emit and the id reaching the caller).
     # Only one is ever active per session (the other stays `None`) — never
     # shared across clients either way, so another attached client's turns
     # always render normally (see both loops' docstrings in `stream_client.py`).

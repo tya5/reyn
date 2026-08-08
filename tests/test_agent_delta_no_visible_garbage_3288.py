@@ -1,5 +1,5 @@
 """Tier 2: #3288 ③b/③c — the "no visible-garbage window" property for the
-"agent_delta" chat-event, witnessed on the ACTUAL ``TextualChatApp`` pump
+"agent_delta" audit-event, witnessed on the ACTUAL ``TextualChatApp`` pump
 (production code untouched — imported and driven read-only from this test,
 per the #3299/P5 non-interference constraint on
 ``interfaces/inline/textual_chat/``).
@@ -183,7 +183,7 @@ async def _arrival_witness(transport: QueueTransport, pilot, app: TextualChatApp
 @pytest.mark.asyncio
 async def test_agent_delta_draws_exactly_one_coalesced_entry() -> None:
     """Tier 2: ③c re-point of ③b's "draws nothing" — N ``agent_delta``
-    chat-events for ONE reply must never produce more than ONE FlowView
+    audit-events for ONE reply must never produce more than ONE FlowView
     entry, and that entry's content must be the progressively-coalesced
     text — never a junk/generic row per delta (the property ③b's original
     assertion was guarding, restated for a world where ③c's consumer

@@ -4,12 +4,12 @@
 constructs the :class:`~reyn.interfaces.transport.in_process.InProcessTransport`
 from the registry and wires the stream-consuming client
 (:mod:`reyn.interfaces.repl.stream_client`) to it. The client then consumes ONE
-unified frame stream (display outbox + the renderer-relevant chat-event subset)
+unified frame stream (display outbox + the renderer-relevant audit-event subset)
 and routes user input back through the transport's send side, so a local run
 exercises the same client path a remote client (P2) will.
 
 Agent switching (`/attach <name>`) flips the registry's attached pointer; the
-transport's focus binding re-wires the chat-event subscription across the
+transport's focus binding re-wires the audit-event subscription across the
 switch, and both the input and output sides funnel through the registry-owned
 ``repl_outbox`` the transport drains.
 """
@@ -60,9 +60,9 @@ async def run_repl(
     # The transport is the client's sole seam to the session. It composes the
     # two pre-existing render paths behind ONE unified frame stream:
     #  - the display outbox (session.outbox → forwarder → repl_outbox), and
-    #  - the renderer's working-indicator chat-event subset (turn_started →
+    #  - the renderer's working-indicator audit-event subset (turn_started →
     #    spinner, turn_settled → idle, tool_called → Running <tool>, …).
-    # `start()` binds the focus-following chat-event subscription + the
+    # `start()` binds the focus-following audit-event subscription + the
     # intervention listener channel (so ask_user / cost-warn / permission
     # prompts surface and can be answered — the session is built with
     # enforce_listener_presence=True, so an unregistered listener silently

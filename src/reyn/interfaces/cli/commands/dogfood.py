@@ -590,7 +590,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     def _wipe_scenario_state() -> None:
         """Delete per-scenario ephemeral state so each run starts clean."""
         targets = _scenario_state_targets(project_root, agent_name)
-        # Wipe the agent's chat event files so EventStore.iter_all() only
+        # Wipe the agent's audit event files so EventStore.iter_all() only
         # returns events from this scenario's turns.
         if targets["events_chat_dir"].is_dir():
             shutil.rmtree(targets["events_chat_dir"], ignore_errors=True)

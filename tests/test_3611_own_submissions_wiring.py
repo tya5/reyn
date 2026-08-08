@@ -57,7 +57,7 @@ Differs from #3611's own approach in TWO ways worth naming:
    themselves perform, ``shutdown``, ``attach_failed``) around a real,
    directly-constructed ``Session`` — with no router loop ever started, so
    there is nothing left to race. This test only needs the SYNCHRONOUS
-   ``user_submitted`` chat-event ``Session.submit_user_text`` emits on
+   ``user_submitted`` audit-event ``Session.submit_user_text`` emits on
    every call (before any inbox consumption); it was never testing turn
    completion in the first place.
 
@@ -66,7 +66,7 @@ Differs from #3611's own approach in TWO ways worth naming:
 broadcast echo does not layer under/over it. That stays a single live
 observation (per #3611, unchanged for this sibling mechanism) — this only
 guards the WIRING from ``is_tty`` through to whether the broadcast
-``user_submitted`` chat-event gets suppressed or rendered.
+``user_submitted`` audit-event gets suppressed or rendered.
 
 Policy compliance (docs/deep-dives/contributing/testing.md): no
 unittest.mock/MagicMock/AsyncMock/patch on a reyn collaborator — a real
@@ -118,7 +118,7 @@ class _NoRouterLoopRegistry:
     first. Without a reply, that wait never resolves and the loop hangs
     forever past one line — not a defect in the wiring under test, just this
     stand-in's own absence of the piece an ordinary turn would eventually
-    produce. Fixed by having the chat-event forward path append a synthetic
+    produce. Fixed by having the audit-event forward path append a synthetic
     ``"agent"`` ack to ``repl_outbox`` the SAME synchronous call that
     forwards ``user_submitted`` — real production code (``session.py``'s
     ``_chat_events.emit``) calls every subscriber synchronously, so this
@@ -269,7 +269,7 @@ async def test_tty_run_chat_client_wires_own_submissions_and_suppresses(
 ) -> None:
     """Tier 2: #3611 item 3 wiring pin — is_tty=True (genuine, via a real pty
     fd) reaches run_chat_client's own_submissions=set() construction, so the
-    broadcast user_submitted chat-event for THIS client's own turn is
+    broadcast user_submitted audit-event for THIS client's own turn is
     suppressed (the terminal's own PromptSession render already showed it,
     #3287's own reasoning) rather than double-rendered."""
     echoed = await _drive_one_submission(

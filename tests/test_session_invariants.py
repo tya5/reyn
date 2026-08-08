@@ -1082,10 +1082,10 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
         f"B2-H2: no message with meta.peer_failure=True; msgs: {agent_msgs!r}"
     )
 
-    # Chat event log must contain peer_reply_failed_surfaced event (P6 audit).
+    # Audit event log must contain peer_reply_failed_surfaced event (P6 audit).
     chat_event_types = [e.type for e in session._chat_events.all()]
     assert "peer_reply_failed_surfaced" in chat_event_types, (
-        f"B2-H2: expected 'peer_reply_failed_surfaced' chat event; got: {chat_event_types!r}"
+        f"B2-H2: expected 'peer_reply_failed_surfaced' audit event; got: {chat_event_types!r}"
     )
 
 
@@ -1183,10 +1183,10 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
         f"B2-H2 relay: raw marker was forwarded verbatim; should be localized: {fwd['response']!r}"
     )
 
-    # Chat event log must contain peer_reply_failed_surfaced event (P6 audit).
+    # Audit event log must contain peer_reply_failed_surfaced event (P6 audit).
     chat_event_types = [e.type for e in session._chat_events.all()]
     assert "peer_reply_failed_surfaced" in chat_event_types, (
-        f"B2-H2 relay: expected 'peer_reply_failed_surfaced' chat event; got: {chat_event_types!r}"
+        f"B2-H2 relay: expected 'peer_reply_failed_surfaced' audit event; got: {chat_event_types!r}"
     )
 
 

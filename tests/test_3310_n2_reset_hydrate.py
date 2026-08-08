@@ -555,7 +555,7 @@ async def test_reset_sent_queue_view_and_widget_and_item_meta(tmp_path, monkeypa
     FOUR: a fresh ``RemoteQueueView()``, ``_queue_seeded=False`` (so the
     existing seed-on-first-frame path re-seeds the NEW session), the sent-queue
     WIDGET's rows, and the meta side-table. A queued item materializes via a
-    ``user_submitted`` chat-event (the real production path,
+    ``user_submitted`` audit-event (the real production path,
     ``_handle_user_submitted_event``) on alpha; switching to beta must show
     the sent-queue region EMPTY, never alpha's still-queued row."""
     monkeypatch.chdir(tmp_path)

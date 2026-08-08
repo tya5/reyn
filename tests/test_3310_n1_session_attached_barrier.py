@@ -6,7 +6,7 @@ session's frames reach the client, but historically nothing told the client
 THAT a switch had happened. This adds a ``session_attached`` ``EventFrame``
 carrying ``{agent, session_id}``, emitted at the registry attach seam
 DIRECTLY on ``repl_outbox`` (never routed through a
-session's own chat-events — that stream is the thing being swapped).
+session's own audit-events — that stream is the thing being swapped).
 
 Gates covered here:
 

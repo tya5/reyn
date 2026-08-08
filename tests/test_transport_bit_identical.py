@@ -1,7 +1,7 @@
 """Tier 2: InProcessTransport is a behavior-preserving refactor (ADR-0039 P1).
 
 The P1 unification moves the inline CUI's two direct render paths (the display
-outbox and the renderer's chat-event subscription) behind ONE transport frame
+outbox and the renderer's audit-event subscription) behind ONE transport frame
 stream — routing only, delivery unchanged. This pins that byte-for-byte:
 
 - the DISPLAY sub-stream rendered THROUGH the transport (repl_outbox → pump →
@@ -58,7 +58,7 @@ _EVENTS = [
 
 class _RecordingInlineRenderer(InlineChatRenderer):
     """A real InlineChatRenderer that records the working-indicator state after
-    each chat-event (public working_frags, fixed clock → deterministic)."""
+    each audit-event (public working_frags, fixed clock → deterministic)."""
 
     def __init__(self) -> None:
         super().__init__()

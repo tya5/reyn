@@ -26,7 +26,7 @@ Covers (see the architect's #3300 design-pass comments on the issue):
      under ANY interleaving with a snapshot read: no duplicate, no
      resurrection-after-dispatch, no loss.
   6. **deltas keep the model in sync** — a real session's ``user_submitted``
-     (enqueue) and ``turn_started`` (dispatch) chat-events, consumed through
+     (enqueue) and ``turn_started`` (dispatch) audit-events, consumed through
      ``RemoteQueueView``, produce an accurate queue model end-to-end.
 
 Real ``Session``/``AgentRegistry``/``StateLog`` throughout — no
@@ -223,7 +223,7 @@ async def test_remote_parity_state_snapshot_matches_local_accessors(tmp_path):
 @pytest.mark.asyncio
 async def test_late_joiner_mid_turn_connect_reconstructs_correct_state(tmp_path):
     """Tier 2: #3300 P2a core correctness property. A client "connecting"
-    DURING a turn — having missed the ``turn_started`` chat-event that
+    DURING a turn — having missed the ``turn_started`` audit-event that
     dispatched the in-flight item — still reconstructs the CORRECT
     queue (the second, still-undispatched item) + turn-active=True from the
     STATE_SNAPSHOT alone.
@@ -359,7 +359,7 @@ def test_remote_queue_view_snapshot_mid_stream_stays_consistent_with_redelivery(
 @pytest.mark.asyncio
 async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path):
     """Tier 2: a real ``Session``'s ``user_submitted`` (enqueue) and
-    ``turn_started`` (dispatch) chat-events — the SAME events P1 (C) already
+    ``turn_started`` (dispatch) audit-events — the SAME events P1 (C) already
     emits and the renderer/AG-UI transport already forward — drive a
     ``RemoteQueueView`` to an accurate final state end-to-end (subscribe via
     the public ``subscribe_chat_events`` seam, no private-state peeking)."""

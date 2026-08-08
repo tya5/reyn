@@ -1,7 +1,7 @@
 """Tier 2: the "user_submitted" event's DISPLAY-boundary rendering (#3300 P1 C).
 
 ``Session.submit_user_text`` (runtime/session.py) now emits a raw-text
-``user_submitted`` chat-event instead of writing a neutralized "user" frame
+``user_submitted`` audit-event instead of writing a neutralized "user" frame
 straight to the outbox. Each surface's event->display handler is responsible
 for BOTH rendering the echo AND neutralizing (ESC/control strip) at render
 time — this file proves that per surface:
@@ -39,7 +39,7 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
   same pattern ``test_1800_wake_drain.py`` uses — and ``sys.__stdout__`` for
   output capture, mirroring ``test_renderer_console_width_2655.py``).
 - No private-state assertions — renders are observed via captured stdout /
-  the model's own iteration, chat-events via the public
+  the model's own iteration, audit-events via the public
   ``subscribe_chat_events`` surface.
 - Each test docstring's first line declares its Tier.
 """
@@ -117,7 +117,7 @@ async def _run_n_turns_then_shutdown(session: Session, n: int, timeout: float = 
 
 
 class _EventSink:
-    """A real (non-mock) chat-event subscriber — a plain callback collector."""
+    """A real (non-mock) audit-event subscriber — a plain callback collector."""
 
     def __init__(self) -> None:
         self.events: list = []
@@ -352,7 +352,7 @@ async def test_history_persistence_unaffected_by_the_echo_move(tmp_path, monkeyp
 async def test_multi_client_each_subscriber_gets_its_own_echo_no_double_render(
     tmp_path, monkeypatch,
 ) -> None:
-    """Tier 2: ADR-0039 multi-client preserved — TWO independent chat-event
+    """Tier 2: ADR-0039 multi-client preserved — TWO independent audit-event
     subscribers (standing in for two attached clients, including the
     submitter) each receive exactly ONE "user_submitted" event for one
     submit — single source (the event), no double-render, no client-local-

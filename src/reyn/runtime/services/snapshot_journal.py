@@ -221,7 +221,7 @@ class SnapshotJournal:
         when absent — already dispatched (``consume_inbox`` already pruned it),
         already cancelled by a prior call (idempotent), or unknown. The caller
         (``Session.cancel_queued``) uses this boolean to decide whether to also
-        emit the ``inbox_cancel`` chat-event delta and record the msg_id for
+        emit the ``inbox_cancel`` audit-event delta and record the msg_id for
         skip-at-consume.
 
         ★§1 (CLAUDE.md recovery-feature gate / architect design-pass contract

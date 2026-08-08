@@ -3,7 +3,7 @@
 ``EventStore.write()`` used to ``open()``/``write()`` synchronously, directly
 on the event loop — the same class of bug as #1765's WAL append, except
 unmitigated (not even fsync was offloaded) and far more exposed (fires on
-every chat event, not just WAL appends). This suite verifies:
+every audit event, not just WAL appends). This suite verifies:
 
 - the event loop keeps making progress during a slow write (the actual bug
   being fixed) — RED against a hypothetical synchronous write, verified via

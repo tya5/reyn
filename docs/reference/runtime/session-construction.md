@@ -114,7 +114,7 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
   cannot itself be a durable event) — the operator-visible pair to the raised
   `DurabilityHaltError`. #2280: the first time this latches (on EITHER the accept-edge
   `_put_inbox` raise or the process-edge `run_one_iteration` halt — guarded so it fires
-  once), a `session_halted` chat-event carrying `reason` is emitted, so an operator who is
+  once), a `session_halted` audit-event carrying `reason` is emitted, so an operator who is
   IDLE (not currently submitting an op) learns the halt proactively — the TUI status line
   (`interfaces/inline/textual_chat/chrome.py`'s `status_line_text`) and the plain `--cui`
   renderers' `bottom_toolbar` both surface it via this event, never by polling

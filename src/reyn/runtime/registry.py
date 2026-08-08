@@ -337,7 +337,7 @@ class AgentRegistry:
         # sharing this one, which is what actually lets `attach()` on one
         # connection stop affecting another.
         self._connection = AttachedConnection()
-        # Focus-following front-end listeners (REPL/CUI): a chat-event callback
+        # Focus-following front-end listeners (REPL/CUI): an audit-event callback
         # (working indicator) and an intervention listener channel (ask_user) that
         # must follow the attached session across agent switches. None until a
         # front-end binds them; wired to the attached session on bind and re-wired
@@ -1041,7 +1041,7 @@ class AgentRegistry:
         return count
 
     def last_activity_at(self, name: str) -> datetime | None:
-        """Last mtime across history.jsonl and any chat events file.
+        """Last mtime across history.jsonl and any audit events file.
 
         history.jsonl lives in `agents/<name>/`; chat audit log lives under
         `events/agents/<name>/chat/<YYYY-MM>/*.jsonl` (PR20). Take the max
@@ -2922,7 +2922,7 @@ class AgentRegistry:
         # so sessions of the same agent shared one history.jsonl (conversations bled
         # across sessions) and one events/agents/<name>/chat tree. history.jsonl is an
         # independent durable transcript (not WAL-reconstructed, outside snapshot/rewind
-        # scope); chat events are the P6 audit log. Isolating both aligns them with the
+        # scope); audit events are the P6 audit log. Isolating both aligns them with the
         # already-per-session WAL/snapshot above. "main" (_DEFAULT_SID) never reaches
         # this fixup (it comes through get_or_load), so single-session agents keep the
         # legacy name-only paths byte-identical — no migration.
@@ -3193,7 +3193,7 @@ class AgentRegistry:
     ) -> None:
         """Bind front-end listeners that follow the focused (attached) session.
 
-        The interactive REPL/CUI binds its working-indicator chat-event callback
+        The interactive REPL/CUI binds its working-indicator audit-event callback
         and its intervention listener channel here ONCE; the registry wires them
         to the currently-attached session now and re-wires them on every
         subsequent ``attach`` / ``attach_session`` so an agent switch never
@@ -3238,7 +3238,7 @@ class AgentRegistry:
         BARRIER on ``repl_outbox`` — the one queue every local client drains.
 
         ★Altitude: this cannot ride ``new_session._chat_events`` (the per-
-        session chat-event stream `session.subscribe_chat_events` follows) —
+        session audit-event stream `session.subscribe_chat_events` follows) —
         that stream IS the thing being swapped, so a client keying its reset
         on an event emitted FROM the new session couldn't distinguish "new
         session's first frame" from "the switch itself". Emitting here, at

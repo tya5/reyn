@@ -18,7 +18,7 @@ Off-loop write (owner dogfood finding, 2026-07-10): ``write()`` used to
 ``open()``/``write()`` synchronously, directly on the event loop — the SAME
 class of bug as #1765's WAL append (a filesystem stall freezes the WHOLE
 event loop), except unmitigated (not even fsync was offloaded) and far more
-exposed (fires on every chat event — at least once per turn via
+exposed (fires on every audit event — at least once per turn via
 ``turn_completed``, plus once per tool call, per hook, etc., vs. #1765's
 WAL-append-only exposure). Fixed by routing the write through a
 ``DurabilityWorker`` (the SAME off-loop primitive #1765 introduced — reused,

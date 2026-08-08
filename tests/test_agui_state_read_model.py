@@ -32,7 +32,7 @@ async def _sse_lines(text):
 @pytest.mark.asyncio
 async def test_remote_status_view_reflects_snapshot_then_delta() -> None:
     """Tier 2: the client status view carries the server's snapshot values, then
-    a delta updates them (WaitingOn from the chat-event stream + a cost change)."""
+    a delta updates them (WaitingOn from the audit-event stream + a cost change)."""
     # A mutable server-side status source: cost rises between frames, so the
     # emitter produces a STATE_DELTA. WaitingOn is derived from the event stream.
     state = {"cost_agent": 1.0, "cost_total": 1.0, "ctx_used": 10, "ctx_window": 100,

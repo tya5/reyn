@@ -6,7 +6,7 @@ intervention_handler.py``) used to broadcast a resolved answer's DISPLAY text
 as a ``kind="user"`` outbox frame — the SAME category error #3301/P1(C)
 retired for the ordinary-submit path (an INPUT written into the display/
 OUTPUT channel). This migrates the answer-echo to an
-``intervention_answer_submitted`` chat-event, following the ``user_submitted``
+``intervention_answer_submitted`` audit-event, following the ``user_submitted``
 precedent exactly: RAW text on the wire, each consuming surface neutralizes
 at its OWN render boundary.
 

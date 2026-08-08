@@ -1254,9 +1254,9 @@ class RouterLoop:
         return self._last_call_usage
 
     def _emit_agent_delta(self, text: str) -> None:
-        """#3288 ③b: forward one streamed content-delta chunk as a chat-event
+        """#3288 ③b: forward one streamed content-delta chunk as an audit-event
         — the owner-ratified L4 replacement (issue #3288 comment thread): a
-        partial rides ``host.events`` (the SAME chat-event channel
+        partial rides ``host.events`` (the SAME audit-event channel
         ``user_submitted`` / ``router_represent_round`` already use), NEVER
         ``host.put_outbox`` — ``OutboxMessage.__post_init__`` validates
         ``kind`` against the closed display vocabulary, so an
@@ -1290,7 +1290,7 @@ class RouterLoop:
         CONSEQUENCE; naming the consequence keeps a consumer from having to
         learn every cause that can produce one.
 
-        Best-effort: a failing chat-event emit must never abort the
+        Best-effort: a failing audit-event emit must never abort the
         in-flight LLM call it is merely narrating.
         """
         try:
@@ -1301,7 +1301,7 @@ class RouterLoop:
                 round_index=self._delta_round_index,
             )
         except Exception:  # noqa: BLE001 — narration must never break the turn
-            logger.exception("router: agent_delta chat-event emit failed")
+            logger.exception("router: agent_delta audit-event emit failed")
 
     async def run(self, user_text: str, history: list[dict]) -> TokenUsage:
         """Process one user utterance end-to-end. Emits to host.put_outbox.
@@ -2035,7 +2035,7 @@ class RouterLoop:
                         # #1683: chat path emits llm_called + llm_response_received
                         # so the TUI cost tab updates (kernel emits via LLMCallRecorder).
                         emit_cost_events=True,
-                        # #3288 ③b: forward streamed content-deltas as chat-events
+                        # #3288 ③b: forward streamed content-deltas as audit-events
                         # (③a's capability gate decides whether this ever fires —
                         # a non-streaming call never invokes it).
                         on_content_delta=self._emit_agent_delta,

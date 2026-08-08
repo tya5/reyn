@@ -85,7 +85,7 @@ async def maybe_dispatch_slash(
     two runs of the same command produce two identical result blocks with
     nothing to attribute them to, and once a command can also run while a turn
     is in flight, a result cannot even be told from turn output. An ordinary
-    turn's echo comes from the ``user_submitted`` chat-event (#3300 P1 C), which
+    turn's echo comes from the ``user_submitted`` audit-event (#3300 P1 C), which
     a command never emits — so this is the only surface that can produce it.
 
     ``echo=False`` is for a client whose own input surface ALREADY put the line

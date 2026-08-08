@@ -1,7 +1,7 @@
-"""Tier 2: the transport forwards EVERY chat-event the renderer consumes (P1).
+"""Tier 2: the transport forwards EVERY audit-event the renderer consumes (P1).
 
 FP-0056-isomorphic completeness gate — the structural form of the A2 dual-stream
-bug ("an outbox-only wire drops WaitingOn"). It enumerates the chat-event types
+bug ("an outbox-only wire drops WaitingOn"). It enumerates the audit-event types
 the renderer's ``on_chat_event`` actually branches on — by AST-scanning the
 renderer source (the equality/membership literals) UNION the ``_WAITING_ON_BY_EVENT``
 tool-axis table — and asserts EACH is in the transport's forwarded set
@@ -55,7 +55,7 @@ def _renderer_consumed_event_literals() -> set[str]:
 
 
 def test_transport_forwards_every_renderer_consumed_chat_event() -> None:
-    """Tier 2: each chat-event the renderer consumes is in the transport's
+    """Tier 2: each audit-event the renderer consumes is in the transport's
     forward-set. Un-forwarded ⇒ RED (the A2 dual-stream bug, designed out)."""
     consumed = _renderer_consumed_event_literals() | set(_WAITING_ON_BY_EVENT.keys())
     forwarded = renderer_chat_events()
@@ -67,6 +67,6 @@ def test_transport_forwards_every_renderer_consumed_chat_event() -> None:
 
     missing = consumed - forwarded
     assert not missing, (
-        "renderer consumes chat-events the transport does NOT forward — they "
+        "renderer consumes audit-events the transport does NOT forward — they "
         f"would vanish on the wire (A2 dual-stream bug): {sorted(missing)}"
     )

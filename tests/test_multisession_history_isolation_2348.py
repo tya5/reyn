@@ -1,4 +1,4 @@
-"""Tier 2: #2348 — sessions of the same agent get ISOLATED history + chat events.
+"""Tier 2: #2348 — sessions of the same agent get ISOLATED history + audit events.
 
 Spawned sessions share the agent's identity object, so ``history_path`` (name-only) and
 ``events_dir`` (name-only) collided across every session of one agent — conversation A's messages
@@ -65,7 +65,7 @@ async def test_spawned_sessions_have_isolated_history(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_spawned_events_isolated_and_forwarder_survives_rewire(tmp_path, monkeypatch):
-    """Tier 2: #2348 — the chat events of a spawned session land in its OWN per-session events dir
+    """Tier 2: #2348 — the audit events of a spawned session land in its OWN per-session events dir
     (not the shared/main tree), AND the set_events_dir subscriber swap preserves the other
     subscribers (the ChatLifecycleForwarder still bridges to the outbox — a naive rebuild would
     drop it and events would stop reaching the outbox/TUI)."""
