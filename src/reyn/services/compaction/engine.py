@@ -1391,16 +1391,20 @@ async def retry_loop(
                     summary = chat_summary.to_dict()
                     raw_middle = []
                 except Exception as exc:
-                    # Detect compaction overflow from litellm exception.
-                    # #3783 stage 1: was a local 4-keyword subset MISSING
-                    # "too long"/"too large" — a real behaviour change, not
-                    # cosmetic: an overflow message using either phrase alone
-                    # was silently NOT recognised at this one site (unlike
-                    # the other 4, which already had all 6). Now the single
-                    # shared predicate (type-checked first).
-                    if is_context_overflow_error(exc):
-                        raise CompactionOverflowError(str(exc)) from exc
-                    raise
+                    # #3783 stage 3 (owner-ratified): EVERY compact()-call
+                    # exception now recovers by default — shrinking the
+                    # input is a general remedy (a truncated JSON response,
+                    # a transient 5xx, a rate limit), not an overflow-
+                    # specific one, so gating the wrap on
+                    # ``is_context_overflow_error`` locked out exactly the
+                    # failures shrinking helps most (a response cut off by
+                    # an output cap raises a plain ``JSONDecodeError`` that
+                    # shares no keyword with the overflow predicate). No new
+                    # predicate here — the discriminator that stops a
+                    # never-recoverable cause from looping forever is the
+                    # stage-2 cap below (``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS``),
+                    # not a per-exception-type allowlist at this site.
+                    raise CompactionOverflowError(str(exc)) from exc
 
             response = await main_call(
                 SP=SP,
@@ -1443,7 +1447,21 @@ async def retry_loop(
         except (CompactionOverflowError, ContextOverflowError) as _overflow_exc:
             # Compaction call or main call overflowed — fall through to
             # shrink. #3783 stage 2: name the cause + cap same-cause repeats.
-            _cause = type(_overflow_exc).__name__
+            # #3783 stage 3: name the WRAPPED exception's type, not the
+            # wrapper's — since stage 3, EVERY compact()-call failure is
+            # wrapped as ``CompactionOverflowError`` (see its raise site
+            # above), so ``type(_overflow_exc).__name__`` would always read
+            # the same constant string regardless of what actually failed,
+            # making two unrelated failures miscount as "the same cause
+            # twice" against the cap below. ``__cause__`` is always set (both
+            # wrap sites above raise ``... from exc``); the fallback to the
+            # wrapper's own type name only matters for a hypothetical future
+            # raise site that omits the chain.
+            _cause = (
+                type(_overflow_exc.__cause__).__name__
+                if _overflow_exc.__cause__ is not None
+                else type(_overflow_exc).__name__
+            )
             if _cause == _last_recover_cause:
                 _consecutive_same_cause += 1
             else:
