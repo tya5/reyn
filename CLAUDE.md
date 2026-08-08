@@ -136,6 +136,27 @@ Ask each test in the diff:
 6. **Is the declared Tier the true one?** Only a human can answer this; the audit
    cannot. Say which of 1's answers you reached and why.
 
+**Which answers block.** The questions produced the right observation on their
+first use and the PR merged anyway: #3876's ⑤ answer was "bounded only by the
+thread scheduler, not by the test" — written down, measured at 413 MB, and let
+through as a note. The operator had to ask why. **An answer recorded is not an
+answer acted on**, which is the same gap as an audit that reads a Tier string.
+So each question has a blocking answer, not just an answer:
+
+| | blocks when the answer is |
+|---|---|
+| 1 | a third party's, or a past bug's |
+| 2 | yes — the same expression is on both sides |
+| 3 | yes — it stays green with the mechanism removed |
+| 4 | it would be green having never run, **and the PR does not say so** |
+| 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
+| 6 | the declared Tier is not the one question 1 reached |
+
+⚠️ 4 blocks on the *silence*, not on the skip: a file that skips whole in CI is
+often correct (an optional extra), and what makes it a defect is a green nobody
+qualified. 5 has no such carve-out — "it is small today" is a measurement of
+today, and the runaway that started this was small until it wasn't.
+
 **Reviewer's note, on the PR:** record the answers per test before merging. A
 lead-coder merge train refuses any PR touching `tests/` without one — the promise
 "I will open the tests next time" is exactly the shape this replaces.
