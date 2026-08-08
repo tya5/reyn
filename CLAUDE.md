@@ -103,6 +103,13 @@ Key constraints (full rationale in the doc):
   that lands the refactor**.
 - Each test docstring's first line must declare its Tier:
   `"""Tier 3a: ..."""`.
+- Declaring a Tier presupposes a named behavior/contract that exists
+  **outside** the test's own docstring (a doc, a charter lens, a decision
+  record, a user-visible promise) — not a new axis, the precondition
+  every Tier already carried. See `testing.md` § "The prerequisite every
+  tier shares." Distinct from the six questions below: that section asks
+  whether an already-tiered test is *well-formed*; this asks whether it
+  had standing to claim a tier at all.
 
 ## Test review — six questions, asked of the test's own code
 
