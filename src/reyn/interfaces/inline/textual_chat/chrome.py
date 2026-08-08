@@ -1052,6 +1052,11 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
     return rows
 
 
+#: Where every Ctx line's value starts. Named so the labels cannot drift out
+#: of alignment one edit at a time — the cache row had already done so.
+_CTX_LABEL_W = 13
+
+
 def ctx_pane_lines(snap: "dict | None") -> list[str]:
     """The Ctx readout — CURRENT state only (cumulative figures live in the Cost
     pane instead, see :func:`cost_pane_lines`).
@@ -1084,13 +1089,23 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
     comp_trigger = status.get("effective_trigger", 0)
     comp_est = max(0, comp_trigger - status.get("free_window", 0))
     comp_pct = round(100 * comp_est / comp_trigger) if comp_trigger > 0 else 0
+    # The bar sits with the figure it draws (#3691). It has always visualised
+    # the WINDOW's fill, and it used to be printed after the compaction line —
+    # directly beneath "61% to trigger" while showing 42%. Two percentages, one
+    # of them a bar, adjacent and unrelated: the misreading is not a risk, it is
+    # the reading. #3691's own principle for this pane says the actual context
+    # window and the compaction estimate are not comparable and must stay
+    # visually separate; the layout was doing the opposite.
     return [
         f"window       {window:,} tokens  ({snap.get('ctx_source', 'unknown')})",
         f"prompt       {prompt_tokens:,} tokens  ({pct}% of window)",
-        f"free         {free:,} tokens",
-        _cache_hit_line("cache", recent_cached, recent_prompt),
-        f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
         f"             {_ctx_bar(prompt_tokens, window)}  {_ctx_pct(snap)}",
+        f"free         {free:,} tokens",
+        # Label column widened to match its neighbours — it was four spaces
+        # where every other label is seven, so the one line about the cache
+        # started in a different place from the five around it.
+        _cache_hit_line(f"{'cache':<{_CTX_LABEL_W}}", recent_cached, recent_prompt),
+        f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
     ]
 
 
