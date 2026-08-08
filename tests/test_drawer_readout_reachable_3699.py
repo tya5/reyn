@@ -220,6 +220,12 @@ def test_the_help_text_says_how_to_scroll_itself() -> None:
     exactly where it was.
     """
     keys = {key for key, _label in MENUBAR_KEYS}
-    assert any("PgDn" in key or "pagedown" in key.lower() for key in keys), (
+    # Matched case-insensitively and on the abbreviation the tables actually
+    # use. The first version tested for "PgDn" or "pagedown" — neither of which
+    # is how the ledger spells it (#3805 settled on lowercase `pgdn`), so the
+    # assertion was about a spelling rather than about whether paging is
+    # mentioned at all, and it went red on a change that made the ledger MORE
+    # consistent.
+    assert any("pgdn" in key.lower() or "pagedown" in key.lower() for key in keys), (
         f"the drawer's key ledger does not mention paging: {sorted(keys)}"
     )
