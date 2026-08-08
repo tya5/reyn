@@ -17,6 +17,7 @@ own rather than being the reason the others skip.
 from __future__ import annotations
 
 import pytest
+from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp, screensaver
 from tests.test_textual_chat_copy_rewind_3362 import (
@@ -44,7 +45,7 @@ async def test_the_key_says_so_when_the_library_is_absent() -> None:
         app.action_toggle_text_effect()
         await pilot.pause()
 
-        assert not app._flow.overlay_active, "an overlay was started without the library"
+        assert not app.query_one(FlowView).overlay_active, "an overlay was started without the library"
         said = [t for t in _texts(app) if "terminaltexteffects" in t]
         assert said, f"the key did nothing visible: {_texts(app)}"
         assert any("pip install" in t for t in said), (
@@ -67,11 +68,11 @@ async def test_the_same_key_starts_and_stops_it() -> None:
 
         app.action_toggle_text_effect()
         await pilot.pause()
-        assert app._flow.overlay_active, "the first press started nothing"
+        assert app.query_one(FlowView).overlay_active, "the first press started nothing"
 
         app.action_toggle_text_effect()
         await pilot.pause()
-        assert not app._flow.overlay_active, (
+        assert not app.query_one(FlowView).overlay_active, (
             "the second press left the overlay up — the joke is now an accident"
         )
 
