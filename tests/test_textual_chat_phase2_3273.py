@@ -197,7 +197,7 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     # someone has to remember to edit. Raised on the bump PR rather than
     # removed here: deleting another gate mid-bump is how a bump hides a
     # regression.
-    assert textual_flowview.__version__ == "0.15.1"
+    assert textual_flowview.__version__ == "0.15.3"
     # The native animation primitive reyn now drives the blink through: FlowView
     # accepts an ``animation_fps`` and owns its own animation tick.
     import inspect

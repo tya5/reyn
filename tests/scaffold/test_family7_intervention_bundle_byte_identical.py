@@ -245,7 +245,7 @@ class TestFamily7InterventionBundleByteIdentical:
         pin is genuinely reading the live cross-family wiring."""
         fresh_chains = ChainManager(
             journal=session._journal,
-            events=session._chat_events,
+            events=session._audit_events,
             chain_timeout_seconds=session._chain_timeout_seconds,
             max_hop_depth=session._max_hop_depth,
         )

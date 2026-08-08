@@ -649,7 +649,7 @@ class _A2AProgressBridge:
         return len(self._tasks)
 
     def attach(self) -> None:
-        events = getattr(self._session, "_chat_events", None)
+        events = getattr(self._session, "_audit_events", None)
         if events is not None:
             events.add_subscriber(self.on_event)
 
@@ -657,7 +657,7 @@ class _A2AProgressBridge:
         if self._detached:
             return
         self._detached = True
-        events = getattr(self._session, "_chat_events", None)
+        events = getattr(self._session, "_audit_events", None)
         if events is not None:
             events.remove_subscriber(self.on_event)
         # Snapshot before cancelling: a done callback discards its task

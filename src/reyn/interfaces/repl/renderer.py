@@ -32,7 +32,7 @@ def _meta_prefix(meta: dict) -> str:
 def user_submitted_display_message(event) -> OutboxMessage:
     """Build the display :class:`OutboxMessage` for a ``user_submitted``
     audit-event — the ONE neutralize-at-display-boundary seam every surface's
-    ``on_chat_event`` (this module) / frame-pump handler
+    ``on_audit_event`` (this module) / frame-pump handler
     (``interfaces.inline.textual_chat.app``) calls to render the user-line echo
     (#3300 P1 C).
 
@@ -119,11 +119,11 @@ class ChatRenderer:
     def cost_summary(self, usage: TokenUsage, cost_usd: float | None) -> None:
         """Render token totals + estimated cost on shutdown."""
 
-    def on_chat_event(self, event) -> None:
+    def on_audit_event(self, event) -> None:
         """Hook for live session events (default no-op).
 
         `run_repl` subscribes this to the attached session via
-        `Session.subscribe_chat_events`. Override to drive a working indicator.
+        `Session.subscribe_audit_events`. Override to drive a working indicator.
         Called synchronously on the session loop with an `Event` (`.type`/`.data`).
         """
 
@@ -156,7 +156,7 @@ class ConsoleChatRenderer(ChatRenderer):
         # Tracks whether the last write left a single-line transient on screen
         # that the next write should overwrite.
         self._transient_active = False
-        self._thinking = False  # driven by on_chat_event
+        self._thinking = False  # driven by on_audit_event
         # #2280: the durability-halt reason once ``session_halted`` fires
         # (``None`` while running) — surfaced via ``bottom_toolbar`` below so a
         # plain ``--cui`` operator sitting idle at the prompt sees it the
@@ -164,7 +164,7 @@ class ConsoleChatRenderer(ChatRenderer):
         # ``DurabilityHaltError``.
         self._halted_reason: "str | None" = None
 
-    def on_chat_event(self, event) -> None:
+    def on_audit_event(self, event) -> None:
         etype = event.type
         if etype == "turn_started":
             self._thinking = True
@@ -900,19 +900,19 @@ class InlineChatRenderer(ChatRenderer):
         # True once any message has been rendered → drives the blank-line separator
         # between message blocks (none before the first).
         self._seen_message = False
-        # Working-indicator state, driven by on_chat_event (turn_started/completed).
+        # Working-indicator state, driven by on_audit_event (turn_started/completed).
         self._thinking = False
         self._think_start = 0.0
         # ctrl-c cancel-in-flight flag: set via request_cancel(), cleared on
         # turn end so it never leaks into the next turn. Owned here (on the
-        # renderer, not in an input-driver closure) so on_chat_event can clear it even
+        # renderer, not in an input-driver closure) so on_audit_event can clear it even
         # though the ConditionalContainer stops rendering the working row the
         # moment _thinking becomes False.
         self._cancelling = False
         # Working-indicator sub-state (owner: "Working… もっと状態細分化できないの?" →
         # "何に待たされているのか知りたい"). Set/cleared from two DIFFERENT signals:
-        # tool_called/tool_returned/tool_failed arrive via on_chat_event (below,
-        # the SAME _chat_events subscription driving _thinking already); the
+        # tool_called/tool_returned/tool_failed arrive via on_audit_event (below,
+        # the SAME _audit_events subscription driving _thinking already); the
         # user-wait state is NOT one of those — verified that ask_user.py is the
         # ONLY one of the 6 intervention_bus.request() callers
         # (permissions.py/limit_handler.py/mcp_install.py/elicitation.py/
@@ -940,7 +940,7 @@ class InlineChatRenderer(ChatRenderer):
         self._halted_reason: "str | None" = None
 
     def request_cancel(self) -> None:
-        """Record ctrl-c cancel-in-flight; cleared automatically by on_chat_event on turn end."""
+        """Record ctrl-c cancel-in-flight; cleared automatically by on_audit_event on turn end."""
         self._cancelling = True
 
     def working_frags(self, now: float) -> list:
@@ -955,7 +955,7 @@ class InlineChatRenderer(ChatRenderer):
         self._waiting_on = waiting_on
         self._waiting_on_since = time.monotonic()
 
-    def on_chat_event(self, event) -> None:
+    def on_audit_event(self, event) -> None:
         from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT, _WAITING_ON_THINKING
         etype = getattr(event, "type", None)
         if etype == "turn_started":
@@ -999,7 +999,7 @@ class InlineChatRenderer(ChatRenderer):
             self.message(intervention_answer_display_message(event))
         elif etype == "session_halted":
             # #2280: the durability-halt observability surface — see
-            # ConsoleChatRenderer.on_chat_event's identical branch.
+            # ConsoleChatRenderer.on_audit_event's identical branch.
             self._halted_reason = (getattr(event, "data", None) or {}).get("reason")
 
     def bottom_toolbar(self):
@@ -1083,7 +1083,7 @@ class InlineChatRenderer(ChatRenderer):
         # confirm, elicitation, hook confirm) — InterventionHandler.announce()
         # (intervention_handler.py) puts a kind="intervention" OutboxMessage for
         # every one of them, unlike user_intervention_requested (ask_user only).
-        # The OUT transition is on_chat_event's user_answered_intervention
+        # The OUT transition is on_audit_event's user_answered_intervention
         # handler (also common to all 6 — InterventionHandler.record_answer).
         if msg.kind == "intervention":
             from reyn.interfaces.repl.status import _WAITING_ON_FOR_USER

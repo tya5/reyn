@@ -123,13 +123,13 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
     session._router_last_reason = "out_of_scope"
 
     captured_events: list[dict] = []
-    original_emit = session._chat_events.emit
+    original_emit = session._audit_events.emit
 
     def capture(name, **kw):
         captured_events.append({"name": name, **kw})
         return original_emit(name, **kw)
 
-    session._chat_events.emit = capture  # type: ignore[assignment]
+    session._audit_events.emit = capture  # type: ignore[assignment]
 
     _run(session._handle_inbox_text("hello", chain_id="chain-x"))
 

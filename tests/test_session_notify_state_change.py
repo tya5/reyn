@@ -187,13 +187,13 @@ def test_state_change_entries_not_in_compactor_candidates(tmp_path):
 
 def test_notify_state_change_emits_observability_event(tmp_path):
     """Tier 2: each notify_state_change call emits a
-    ``state_change_notified`` event on the session's chat_events log
+    ``state_change_notified`` event on the session's audit_events log
     so #398 sub-task 6 measurement can count emission frequency by
     source without scraping chat history.
     """
     session = _make_session(tmp_path)
     captured: list = []
-    session._chat_events.add_subscriber(captured.append)
+    session._audit_events.add_subscriber(captured.append)
 
     session.notify_state_change("perm granted", source="permission_manager")
 

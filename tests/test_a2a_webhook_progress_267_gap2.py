@@ -21,7 +21,7 @@ Pins:
      share). The liveness of those kinds is gated separately, in
      ``tests/test_progress_lifecycle_fanout_3357.py`` — pinning a literal
      set here is what let two producer-less kinds survive (#3357).
-  2. ``attach()`` subscribes to ``session._chat_events``;
+  2. ``attach()`` subscribes to ``session._audit_events``;
      ``detach()`` unsubscribes + cancels in-flight tasks; idempotent.
   3. Untracked audit-event kinds are ignored (= ``tool_called`` /
      ``turn_settled`` / etc. don't fire the bridge).
@@ -55,7 +55,7 @@ class _FakeRunRegistry:
 
 
 def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | None = None):
-    """Build a bridge with a fake session whose ``_chat_events`` is the
+    """Build a bridge with a fake session whose ``_audit_events`` is the
     given EventLog (or a fresh one). The bridge's _send is monkey-patched
     to capture posts so we don't need to mock ``post_webhook`` globally.
     """
@@ -63,7 +63,7 @@ def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | N
 
     class _FakeSession:
         def __init__(self, events: EventLog) -> None:
-            self._chat_events = events
+            self._audit_events = events
 
     if events is None:
         events = EventLog()
@@ -116,9 +116,9 @@ def test_a2a_progress_bridge_shares_the_mcp_bridge_declaration() -> None:
 # ── 2. attach / detach lifecycle ──────────────────────────────────────
 
 
-def test_attach_subscribes_to_chat_events() -> None:
+def test_attach_subscribes_to_audit_events() -> None:
     """Tier 2: ``attach()`` adds the bridge's ``on_event`` callback to
-    the session's chat_events subscriber list (= so EventLog dispatches
+    the session's audit_events subscriber list (= so EventLog dispatches
     will reach the bridge).
     """
     captured: list = []
@@ -128,7 +128,7 @@ def test_attach_subscribes_to_chat_events() -> None:
     assert bridge.on_event in events.subscribers
 
 
-def test_detach_unsubscribes_from_chat_events() -> None:
+def test_detach_unsubscribes_from_audit_events() -> None:
     """Tier 2: ``detach()`` removes the subscriber + flips internal flag
     so subsequent events are silently ignored.
     """
@@ -251,7 +251,7 @@ def test_send_posts_canonical_progress_payload(monkeypatch) -> None:
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post_webhook)
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),
@@ -288,7 +288,7 @@ def test_send_swallows_transport_errors(monkeypatch) -> None:
     monkeypatch.setattr(notifications_mod, "post_webhook", _failing_post)
 
     class _FakeSession:
-        _chat_events = EventLog()
+        _audit_events = EventLog()
 
     bridge = _A2AProgressBridge(
         session=_FakeSession(),

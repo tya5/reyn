@@ -69,7 +69,7 @@ async def test_shutdown_drains_event_store(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     session = reg.get_or_load("owner")
 
-    session._chat_events.emit("budget_warn", dimension="daily_tokens")
+    session._audit_events.emit("budget_warn", dimension="daily_tokens")
     await reg.shutdown()
 
     assert _event_store_file_contains(session, "budget_warn"), (
@@ -189,7 +189,7 @@ async def test_remove_session_closes_event_store_synchronously_before_cancel(tmp
     spawned = reg.get_session("owner", spawned_sid)
     spawned.register_intervention_listener("test")
 
-    spawned._chat_events.emit("budget_warn", dimension="daily_tokens")
+    spawned._audit_events.emit("budget_warn", dimension="daily_tokens")
 
     await reg.remove_session("owner", spawned_sid, record=False)
 

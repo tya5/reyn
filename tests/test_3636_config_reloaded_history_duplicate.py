@@ -110,7 +110,7 @@ def test_two_distinct_pipeline_installs_render_distinct_history(tmp_path):
     duplicates, and the two ``config_watcher`` history entries carry distinct
     ``content`` naming each pipeline."""
     session = _make_session(tmp_path)
-    reloader = HotReloader(project_root=tmp_path, events=session._chat_events)
+    reloader = HotReloader(project_root=tmp_path, events=session._audit_events)
     pre = len(_state_changes(session))
 
     for name in ("rag_ingest", "rag_query"):
@@ -141,7 +141,7 @@ def test_two_installs_without_detail_reproduce_the_measured_duplicate(tmp_path):
     (adding ``detail``) is the thing closing the gap, not an unrelated
     change."""
     session = _make_session(tmp_path)
-    reloader = HotReloader(project_root=tmp_path, events=session._chat_events)
+    reloader = HotReloader(project_root=tmp_path, events=session._audit_events)
 
     for _ in range(2):
         asyncio.run(

@@ -82,10 +82,10 @@ def test_turn_settled_clears_indicator_after_short_circuit_turn() -> None:
     """Tier 2: turn_settled clears the working indicator even when no
     turn_completed fired (slash / intervention short-circuit paths)."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
+    r.on_audit_event(_evt("turn_started"))
     assert r.bottom_toolbar() is not None
     # A slash turn ends with turn_settled (no turn_completed) — must clear.
-    r.on_chat_event(_evt("turn_settled"))
+    r.on_audit_event(_evt("turn_settled"))
     assert r.bottom_toolbar() is None
 
 
@@ -117,17 +117,17 @@ def test_cancelling_state_does_not_bleed_into_next_turn() -> None:
     """Tier 2: a ctrl-c cancel in one turn does not show 'Cancelling…' in the next.
 
     The ConditionalContainer hides the working row when _thinking=False, so the old
-    clear-in-_working_frags path was dead code. on_chat_event must reset the flag on
+    clear-in-_working_frags path was dead code. on_audit_event must reset the flag on
     turn end so it never leaks. Verified via InlineChatRenderer.working_frags() —
     the same public surface the app drives; no private state is read in setup or
     assertion.
     """
     for end_event in ("turn_settled", "turn_completed", "turn_cancelled"):
         r = InlineChatRenderer()
-        r.on_chat_event(_evt("turn_started"))
+        r.on_audit_event(_evt("turn_started"))
         r.request_cancel()           # public API: simulate user pressing ctrl-c mid-turn
-        r.on_chat_event(_evt(end_event))
-        r.on_chat_event(_evt("turn_started"))   # next turn begins
+        r.on_audit_event(_evt(end_event))
+        r.on_audit_event(_evt("turn_started"))   # next turn begins
         text = "".join(t for _, t in r.working_frags(time.monotonic()))
         assert "Cancelling" not in text, (
             f"after {end_event}, next turn still shows Cancelling indicator"
@@ -216,8 +216,8 @@ def test_tool_called_sets_running_state():
     this is a second, independent subscriber, not new plumbing) makes the
     working row name that tool."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
-    r.on_chat_event(_evt("tool_called", tool="edit_file"))
+    r.on_audit_event(_evt("turn_started"))
+    r.on_audit_event(_evt("tool_called", tool="edit_file"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Running edit_file…" in text
 
@@ -226,9 +226,9 @@ def test_tool_returned_resets_to_thinking():
     """Tier 2: "tool_returned" clears the tool name — falls back to
     "Thinking…" while the LLM processes the tool's result."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
-    r.on_chat_event(_evt("tool_called", tool="edit_file"))
-    r.on_chat_event(_evt("tool_returned", tool="edit_file"))
+    r.on_audit_event(_evt("turn_started"))
+    r.on_audit_event(_evt("tool_called", tool="edit_file"))
+    r.on_audit_event(_evt("tool_returned", tool="edit_file"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Thinking" in text
     assert "Running" not in text
@@ -238,9 +238,9 @@ def test_tool_failed_resets_to_thinking():
     """Tier 2: "tool_failed" also clears the tool name (mirrors tool_returned
     — the dispatch attempt is over either way)."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
-    r.on_chat_event(_evt("tool_called", tool="shell"))
-    r.on_chat_event(_evt("tool_failed", tool="shell"))
+    r.on_audit_event(_evt("turn_started"))
+    r.on_audit_event(_evt("tool_called", tool="shell"))
+    r.on_audit_event(_evt("tool_failed", tool="shell"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Thinking" in text
     assert "Running" not in text
@@ -252,10 +252,10 @@ def test_second_tool_call_replaces_first_in_same_turn():
     verified in router_loop.py's SchemeOps.dispatch) shows whichever tool is
     CURRENTLY dispatched, not the first one from earlier in the turn."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
-    r.on_chat_event(_evt("tool_called", tool="read_file"))
-    r.on_chat_event(_evt("tool_returned", tool="read_file"))
-    r.on_chat_event(_evt("tool_called", tool="edit_file"))
+    r.on_audit_event(_evt("turn_started"))
+    r.on_audit_event(_evt("tool_called", tool="read_file"))
+    r.on_audit_event(_evt("tool_returned", tool="read_file"))
+    r.on_audit_event(_evt("tool_called", tool="edit_file"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Running edit_file…" in text
     assert "read_file" not in text
@@ -270,7 +270,7 @@ def test_intervention_message_sets_waiting_for_you():
     chokepoint) switches the working row to "Waiting for you"."""
     from reyn.runtime.outbox import OutboxMessage
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
+    r.on_audit_event(_evt("turn_started"))
     r.message(OutboxMessage(kind="intervention", text="Continue?"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Waiting for you" in text
@@ -281,9 +281,9 @@ def test_user_answered_intervention_resets_to_thinking():
     — also common to all 6 intervention paths) clears the user-wait state."""
     from reyn.runtime.outbox import OutboxMessage
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
+    r.on_audit_event(_evt("turn_started"))
     r.message(OutboxMessage(kind="intervention", text="Continue?"))
-    r.on_chat_event(_evt("user_answered_intervention"))
+    r.on_audit_event(_evt("user_answered_intervention"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Thinking" in text
     assert "Waiting for you" not in text
@@ -294,10 +294,10 @@ def test_waiting_on_does_not_leak_into_next_turn():
     user-wait) from a PRIOR turn must not still show as active once a new
     turn begins (mirrors the existing cancelling-state non-bleed guard)."""
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))
-    r.on_chat_event(_evt("tool_called", tool="read_file"))
-    r.on_chat_event(_evt("turn_settled"))
-    r.on_chat_event(_evt("turn_started"))   # next turn, no tool_called yet
+    r.on_audit_event(_evt("turn_started"))
+    r.on_audit_event(_evt("tool_called", tool="read_file"))
+    r.on_audit_event(_evt("turn_settled"))
+    r.on_audit_event(_evt("turn_started"))   # next turn, no tool_called yet
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Thinking" in text
     assert "Running" not in text
@@ -313,9 +313,9 @@ def test_waiting_on_since_updates_on_each_transition(monkeypatch):
     monkeypatch.setattr(renderer_mod.time, "monotonic", lambda: fake_now["t"])
 
     r = InlineChatRenderer()
-    r.on_chat_event(_evt("turn_started"))       # think_start = 100
+    r.on_audit_event(_evt("turn_started"))       # think_start = 100
     fake_now["t"] = 110.0
-    r.on_chat_event(_evt("tool_called", tool="grep_files"))  # waiting_on_since = 110
+    r.on_audit_event(_evt("tool_called", tool="grep_files"))  # waiting_on_since = 110
     fake_now["t"] = 115.0                        # 5s into the tool call, 15s into the turn
 
     text = "".join(t for _, t in r.working_frags(115.0))

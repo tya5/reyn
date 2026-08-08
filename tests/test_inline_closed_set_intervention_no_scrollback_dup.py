@@ -123,9 +123,9 @@ async def test_closed_set_intervention_still_sets_the_waiting_on_user_indicator(
     monkeypatch.setattr(sys, "__stdout__", buf)
     # A turn must be "in flight" for the working row to render at all
     # (working_line returns [] when idle) — drive that through the same
-    # public on_chat_event() path production uses (Session.subscribe_chat_events),
+    # public on_audit_event() path production uses (Session.subscribe_audit_events),
     # not by poking the private _thinking flag directly.
-    renderer.on_chat_event(SimpleNamespace(type="turn_started", data={}))
+    renderer.on_audit_event(SimpleNamespace(type="turn_started", data={}))
     renderer.message(msg)
 
     frags = renderer.working_frags(100.0)

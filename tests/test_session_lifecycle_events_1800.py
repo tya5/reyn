@@ -62,9 +62,9 @@ def _collect_events(session: Session) -> list[dict]:
     def _subscriber(event) -> None:
         collected.append({"type": event.type, **event.data})
 
-    # add_subscriber is the public API on EventLog; _chat_events is the
+    # add_subscriber is the public API on EventLog; _audit_events is the
     # session's internal EventLog that all session-level emits target.
-    session._chat_events.add_subscriber(_subscriber)
+    session._audit_events.add_subscriber(_subscriber)
     return collected
 
 

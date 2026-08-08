@@ -51,10 +51,10 @@ from reyn.schemas.models import Event  # noqa: E402
 
 
 class _FakeSession:
-    """Minimal stand-in for Session exposing `_chat_events`."""
+    """Minimal stand-in for Session exposing `_audit_events`."""
 
     def __init__(self, event_log: EventLog) -> None:
-        self._chat_events = event_log
+        self._audit_events = event_log
 
 
 class _FakeMCPSession:

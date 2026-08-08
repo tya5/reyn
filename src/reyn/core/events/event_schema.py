@@ -592,7 +592,7 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
         seam="emit",
         classification="SINK_BINDING",
         reason=(
-            "``lambda et, **d: self._chat_events.emit(et, **d)`` handed to the "
+            "``lambda et, **d: self._audit_events.emit(et, **d)`` handed to the "
             "HookBus / HookDispatcher / Composer as their ``emit_event`` sink. "
             "The kinds are censused at those components' own emit sites."
         ),

@@ -11,7 +11,7 @@ the world ONLY through the ``ClientTransport`` it is handed — it imports no
 ``Session`` / ``Workspace`` / tool / registry surface (enforced by
 ``tests/test_stream_client_single_writer_boundary.py``). One stream comes in;
 the renderer's two entry points (``message`` for display frames,
-``on_chat_event`` for event frames) go out, dispatched by frame tag. This is
+``on_audit_event`` for event frames) go out, dispatched by frame tag. This is
 what makes the future remote client (P2) single-writer-safe for free: it is the
 same client, a different transport.
 """
@@ -297,7 +297,7 @@ async def run_output_loop(
                         # match a LATER, unrelated event (ids never reused).
                         own_submissions.discard(event_msg_id)
                         continue
-            renderer.on_chat_event(event)
+            renderer.on_audit_event(event)
             continue
         msg = frame.message
         if msg.kind == "__end__":

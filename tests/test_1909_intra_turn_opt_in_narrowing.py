@@ -127,7 +127,7 @@ async def test_on_engages_mid_turn_and_emits_audit_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _make(narrowing_on("iteration"))
     captured = []
-    session.subscribe_chat_events(
+    session.subscribe_audit_events(
         lambda ev: captured.append(ev)
         if getattr(ev, "type", None) == "untrusted_narrowing_engaged"
         else None

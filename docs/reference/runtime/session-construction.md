@@ -65,15 +65,15 @@ direct/test construction.
 
 ## Family 1 — Audit-event spine (P6)
 
-`_build_audit_event_bundle` constructs `event_store` → `chat_events` (`EventLog`) →
-`outbox_hub`, plus the opt-in OTEL subscriber attached to `chat_events` when an OTLP
+`_build_audit_event_bundle` constructs `event_store` → `audit_events` (`EventLog`) →
+`outbox_hub`, plus the opt-in OTEL subscriber attached to `audit_events` when an OTLP
 endpoint is configured (P5 ADR-0039: config value or `OTEL_EXPORTER_OTLP_ENDPOINT` env).
 `None`/no-endpoint → not attached, zero overhead, byte-identical to no-OTEL. This is
-Family 1 because several later families (3, 4, 6a, 8a) eagerly read `self._chat_events`
+Family 1 because several later families (3, 4, 6a, 8a) eagerly read `self._audit_events`
 at construction and must run *after* it — the ordering constraint that pins Family 1 to
 run before Families 3/4/6a/8a below.
 
-`self._chat_events` is also published as the process's ambient `EventLog` sink for the LLM
+`self._audit_events` is also published as the process's ambient `EventLog` sink for the LLM
 `acompletion` chokepoint (#1669: `set_llm_request_event_log`) — every in-session LLM call
 emits an observable `llm_request` event without threading events through the call stack.
 
@@ -130,9 +130,9 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
 
 `_build_hook_event_bundle` constructs `hook_bus` → the awaited `hook_dispatcher` →
 `fs_watcher` → `composer_registry` → `composed_consumer` → `hot_reloader` together. It runs
-right after Family 1's `chat_events` assignment because this family *consumes*
-`chat_events`: `hot_reloader` reads it EAGERLY at construction (`events=chat_events`), and
-`hook_bus`/`hook_dispatcher`/the Composers emit through deferred `self._chat_events`
+right after Family 1's `audit_events` assignment because this family *consumes*
+`audit_events`: `hot_reloader` reads it EAGERLY at construction (`events=audit_events`), and
+`hook_bus`/`hook_dispatcher`/the Composers emit through deferred `self._audit_events`
 lambdas.
 
 The config-derivation this builder takes as inputs is resolved inline, BEFORE the builder
@@ -231,7 +231,7 @@ need live.
 
 `_build_budget` constructs the budget adapter — a byte-identical extraction, the
 simplest of the `#3082` families (no reordering). It runs here (unchanged position) because
-it *consumes* Family 1's `chat_events`, read EAGERLY (`events=`). It returns the
+it *consumes* Family 1's `audit_events`, read EAGERLY (`events=`). It returns the
 `BudgetGateway` directly (`#3121` step4 removed the prior single-field wrapper dataclass).
 
 Two other cost-adjacent construction points stay inline:
@@ -279,18 +279,18 @@ Family 1 instead. #3408 measured that nothing between the two positions reads or
 this family's own attrs (`_action_embedding_index`/`_embedding_provider`/
 `_embedding_model_class`/`_action_usage_tracker`), so the move is safe.
 
-Before #3408, this family had no eager dependency on `chat_events` — only the
-`_on_hot_list_changed` closure's DEFERRED `self._chat_events` NAME resolution, because the
+Before #3408, this family had no eager dependency on `audit_events` — only the
+`_on_hot_list_changed` closure's DEFERRED `self._audit_events` NAME resolution, because the
 EventLog did not exist yet at the builder's old (pre-Family-1) call site. #3408 closed that
-deferral instead of keeping it: the builder now takes `chat_events` as an eager arg and the
-closure binds it by IDENTITY (the `_audit_bundle.chat_events` object, passed through), not
-by re-resolving `self._chat_events` on every call. This closes the #2856 accident's CLASS —
+deferral instead of keeping it: the builder now takes `audit_events` as an eager arg and the
+closure binds it by IDENTITY (the `_audit_bundle.audit_events` object, passed through), not
+by re-resolving `self._audit_events` on every call. This closes the #2856 accident's CLASS —
 a name reference silently resolving to a DIFFERENT EventLog than the one live when it was
 written — not just the one instance: an identity reference can't retarget.
 
-The rationale (git-grep evidence: `_chat_events =` is a single assignment repo-wide, in
+The rationale (git-grep evidence: `_audit_events =` is a single assignment repo-wide, in
 `Session.__init__` only) is machine-checked, not just asserted in the docstring —
-`tests/test_chat_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
+`tests/test_audit_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
 path adds a second assignment site, naming the offending file:line and saying "route this
 through the builder arg instead."
 
@@ -347,9 +347,9 @@ of the threading, along with the `KIND_FAMILY` registry entry it used to
 justify in `event_schema.py`'s `DYNAMIC_KIND_EMIT_SITES`.
 
 The `_on_hot_list_changed` closure in the `ActionUsageTracker` setup a few
-lines below still uses the same deferred-`self._chat_events`-capture
+lines below still uses the same deferred-`self._audit_events`-capture
 pattern the removed sink used to mirror (C.4 hotfix, 2026-05-27: capturing
-`self.events` instead of `self._chat_events` at construction time raised
+`self.events` instead of `self._audit_events` at construction time raised
 `AttributeError` the moment the sink fired, silently swallowed by the
 surrounding `try/except` — see git history for the original incident
 writeup). That recurrence risk is still live for `_on_hot_list_changed`,
@@ -557,7 +557,7 @@ nothing pending; a dict carries `{"kind", ...}`.
 hybrid design (案 C): `InterAgentMessaging` owns agent-side logic, transport-side routing is
 handled by FP-0013 `RoutingLayer` via `send_request_callback`/`send_response_callback`
 injection). Byte-identical extraction, same construction order, same (unmoved) position —
-post-waist, reading Family 7's `self._chains` and Family 1's `self._chat_events` eagerly
+post-waist, reading Family 7's `self._chains` and Family 1's `self._audit_events` eagerly
 (both already set by this point) plus a tail of deferred `self.*`/`lambda: self.*` closures
 kept verbatim.
 
@@ -579,7 +579,7 @@ exist yet here, and an OpContext is per-turn state that must not be snapshotted)
 ## Family 8c — MCP connection service
 
 `_build_mcp_connection_service` — see the builder's own docstring for the full deferred-
-resolution crux (4 lambdas resolving `self._chat_events`/`self._router_host`/
+resolution crux (4 lambdas resolving `self._audit_events`/`self._router_host`/
 `self._hook_dispatcher`/`self._interventions` at CALL time, none of which exist yet at this
 position in `__init__`).
 
@@ -610,9 +610,9 @@ teardown via `aclose_mcp_connections` (`registry.remove_session` /
 **Deferred lambdas.** Three of the six constructor arguments are lambdas
 that defer resolution to CALL time, because none of the attributes they
 close over exist on `self` yet at this point in `__init__`:
-- `emit_sink` / `tools_cache_invalidate` defer `self._chat_events` /
+- `emit_sink` / `tools_cache_invalidate` defer `self._audit_events` /
   `self._router_host` (both assigned later in `__init__`) — mirrors the
-  `emit_event=lambda et, **d: self._chat_events.emit(et, **d)` pattern used
+  `emit_event=lambda et, **d: self._audit_events.emit(et, **d)` pattern used
   elsewhere.
 - `hook_trigger` defers `self._hook_dispatcher` (same H1 pattern
   `_build_hook_event_bundle`'s `fs_watcher` uses).
@@ -812,7 +812,7 @@ trust decision on a specific skill, discovered later if at all.
   so its driver→parent bridge (`on_pipeline_run_attached`) can re-emit a driver `presented`
   audit event onto the PARENT's log (`bridged_from=<driver_sid>`), closing the split audit
   trail the visible-output bridge (Half-A) leaves.
-- `_on_chat_event_for_state_change` (#398 v4 emitter family) — a generic events-log
+- `_on_audit_event_for_state_change` (#398 v4 emitter family) — a generic events-log
   subscriber converting known op-emitted events (`mcp_server_installed`, future:
   `config_reloaded`/`sp_version_changed`) to `state_change` history entries via the
   `_STATE_CHANGE_EVENT_MAPPINGS` dispatch table. Sister to the `permission_manager`

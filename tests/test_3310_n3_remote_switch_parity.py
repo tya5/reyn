@@ -3,7 +3,7 @@
 N1 (#3321) gave the LOCAL registry seam a ``session_attached`` barrier
 audit-event on ``repl_outbox``. A REMOTE AG-UI client never sees it: the
 emitter's per-connection ``_SessionFrameSource`` reads a session's own
-``outbox_hub``/``chat_events`` directly (never ``registry.repl_outbox``), and
+``outbox_hub``/``audit_events`` directly (never ``registry.repl_outbox``), and
 is bound to ONE session object for the SSE connection's lifetime — so a
 switch left it stranded on the OLD session, and even if it followed, the
 emitter's ``MESSAGES_SNAPSHOT`` backlog is fixed at connect time (#3288/#3300
@@ -53,7 +53,7 @@ reach the queue before its subscriber exists, so "barrier precedes any of the
 new session's own frames" holds BY CONSTRUCTION, not merely because there is
 currently no ``await`` between the two steps. Witnessed by an adversary that
 floods the target session's OWN audit-event stream starting the instant the
-switch is triggered (``test_switch_announce_precedes_any_new_session_chat_event``).
+switch is triggered (``test_switch_announce_precedes_any_new_session_audit_event``).
 
 (b) The strip-falsify RED for gate 1 is bounded and assertion-based, not a
 120s-timeout hang: collection helpers below (``_collect_sse_within`` /
@@ -313,7 +313,7 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_switch_announce_precedes_any_new_session_chat_event(tmp_path) -> None:
+async def test_switch_announce_precedes_any_new_session_audit_event(tmp_path) -> None:
     """Tier 2: ★co-vet #3322 (a). The ``session_attached`` announce reaches
     this connection's own frame queue BEFORE the target session's audit-event
     subscriber goes live — never after.
@@ -337,7 +337,7 @@ async def test_switch_announce_precedes_any_new_session_chat_event(tmp_path) -> 
 
         async def _adversary() -> None:
             for _ in range(200):
-                session_b._chat_events.emit("turn_started")
+                session_b._audit_events.emit("turn_started")
                 await asyncio.sleep(0)
 
         adversary_task = asyncio.create_task(_adversary())

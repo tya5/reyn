@@ -109,7 +109,7 @@ being true.
 
 **Best when it names what ACTUALLY happened**, not merely what could happen.
 The strongest instance from #3404: *"Sink closure resolves
-`self._chat_events` at CALL time — eager `self.events` capture once
+`self._audit_events` at CALL time — eager `self.events` capture once
 **silently disabled `search_actions` for every operator**."* It says the
 break was **silent**, not merely possible — which is exactly what stops the
 next person from "fixing" it back to eager capture.

@@ -3,8 +3,8 @@
 Second concrete emitter for the ``notify_state_change`` API. When the
 LLM (or any chat-router-initiated path) successfully installs an MCP
 server, the op_runtime ``mcp_install`` handler emits an
-``mcp_server_installed`` event on the session's chat_events log. The
-``_on_chat_event_for_state_change`` subscriber sees it and mints a
+``mcp_server_installed`` event on the session's audit_events log. The
+``_on_audit_event_for_state_change`` subscriber sees it and mints a
 ``state_change`` history entry so the LLM's next turn sees "MCP
 server 'X' was installed." — breaks the symmetric trap to #352
 where the LLM kept saying "I can't access X" after X was newly
@@ -12,7 +12,7 @@ installed.
 
 Pins:
 
-  1. ``mcp_server_installed`` event on the session's chat_events log
+  1. ``mcp_server_installed`` event on the session's audit_events log
      triggers a state_change history entry.
   2. The summary text uses the ``server_name`` field from the event.
   3. The state_change carries ``source="mcp_install"`` for audit.
@@ -79,7 +79,7 @@ def test_mcp_server_installed_is_in_dispatch_table():
 
 
 def test_mcp_server_installed_event_mints_state_change(tmp_path):
-    """Tier 2: emitting ``mcp_server_installed`` on the session's chat_events
+    """Tier 2: emitting ``mcp_server_installed`` on the session's audit_events
     log triggers a state_change history entry (#398 v4 emitter #2). The LLM's
     next turn reads "MCP server 'X' was installed." and breaks out of the
     "I can't access X" trap.
@@ -87,7 +87,7 @@ def test_mcp_server_installed_event_mints_state_change(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    session._chat_events.emit(
+    session._audit_events.emit(
         "mcp_server_installed",
         server_id="io.github.modelcontextprotocol/server-sqlite",
         server_name="sqlite",
@@ -109,7 +109,7 @@ def test_mcp_server_installed_uses_server_name_field(tmp_path):
     """
     session = _make_session(tmp_path)
 
-    session._chat_events.emit(
+    session._audit_events.emit(
         "mcp_server_installed",
         server_id="long.registry.id/server-fs",
         server_name="filesystem",
@@ -125,7 +125,7 @@ def test_mcp_server_installed_uses_server_name_field(tmp_path):
 def test_non_mapped_event_does_not_trigger_state_change(tmp_path):
     """Tier 2: events not in the dispatch table are silently ignored —
     the subscriber doesn't accidentally mint state_change entries for
-    every event on the chat_events log.
+    every event on the audit_events log.
 
     Without this filter the subscriber would create a flood of
     state_change entries for events like ``router_loop_started`` or
@@ -134,10 +134,10 @@ def test_non_mapped_event_does_not_trigger_state_change(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    # Several non-mapped events that ARE legitimate chat_events traffic.
-    session._chat_events.emit("router_iteration_started")
-    session._chat_events.emit("llm_called", model="x")
-    session._chat_events.emit("act_executed", tool="some_tool")
+    # Several non-mapped events that ARE legitimate audit_events traffic.
+    session._audit_events.emit("router_iteration_started")
+    session._audit_events.emit("llm_called", model="x")
+    session._audit_events.emit("act_executed", tool="some_tool")
 
     # No new state_change entries.
     assert len(_state_changes(session)) == pre_count
@@ -156,7 +156,7 @@ def test_malformed_event_data_skipped_defensively(tmp_path):
     pre_count = len(_state_changes(session))
 
     # Emit without the ``server_name`` field the template needs.
-    session._chat_events.emit("mcp_server_installed", server_id="x")
+    session._audit_events.emit("mcp_server_installed", server_id="x")
 
     # No state_change entry minted (= silently skipped).
     assert len(_state_changes(session)) == pre_count
@@ -173,9 +173,9 @@ def test_multiple_installs_each_mint_separate_state_change(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    session._chat_events.emit("mcp_server_installed", server_name="sqlite")
-    session._chat_events.emit("mcp_server_installed", server_name="git")
-    session._chat_events.emit("mcp_server_installed", server_name="fetch")
+    session._audit_events.emit("mcp_server_installed", server_name="sqlite")
+    session._audit_events.emit("mcp_server_installed", server_name="git")
+    session._audit_events.emit("mcp_server_installed", server_name="fetch")
 
     entries = _state_changes(session)
     assert len(entries) == pre_count + 3
@@ -191,7 +191,7 @@ def test_multiple_installs_each_mint_separate_state_change(tmp_path):
 
 
 def test_mcp_server_removed_event_mints_state_change(tmp_path):
-    """Tier 2: emitting ``mcp_server_removed`` on the session's chat_events log
+    """Tier 2: emitting ``mcp_server_removed`` on the session's audit_events log
     triggers a state_change history entry (#398 v4 emitter #3). Symmetric to
     ``mcp_server_installed`` — surfaces the "no longer available" state-change
     to the LLM so it doesn't keep trying to call a server that was just removed.
@@ -199,7 +199,7 @@ def test_mcp_server_removed_event_mints_state_change(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    session._chat_events.emit(
+    session._audit_events.emit(
         "mcp_server_removed",
         server="sqlite",
         scope="project",
@@ -222,7 +222,7 @@ def test_mcp_server_removed_uses_server_field(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    session._chat_events.emit("mcp_server_removed", server="git")
+    session._audit_events.emit("mcp_server_removed", server="git")
 
     entries = _state_changes(session)
     assert len(entries) == pre_count + 1
@@ -233,7 +233,7 @@ def test_mcp_server_removed_uses_server_field(tmp_path):
 
 
 def test_index_dropped_event_mints_state_change(tmp_path):
-    """Tier 2: emitting ``index_dropped`` on the session's chat_events log
+    """Tier 2: emitting ``index_dropped`` on the session's audit_events log
     triggers a state_change history entry (#398 v4 emitter #4). Recall against
     the dropped source will now miss; the LLM seeing this entry understands
     "the source I was citing yesterday doesn't exist today".
@@ -241,7 +241,7 @@ def test_index_dropped_event_mints_state_change(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    session._chat_events.emit(
+    session._audit_events.emit(
         "index_dropped",
         source="some-docs-collection",
         chunks_dropped=42,
@@ -266,9 +266,9 @@ def test_install_remove_dropindex_all_minted_separately(tmp_path):
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
 
-    session._chat_events.emit("mcp_server_installed", server_name="x")
-    session._chat_events.emit("mcp_server_removed", server="y")
-    session._chat_events.emit("index_dropped", source="z")
+    session._audit_events.emit("mcp_server_installed", server_name="x")
+    session._audit_events.emit("mcp_server_removed", server="y")
+    session._audit_events.emit("index_dropped", source="z")
 
     entries = _state_changes(session)[pre_count:]
     sources = [e.meta.get("source") for e in entries]
