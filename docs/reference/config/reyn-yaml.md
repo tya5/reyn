@@ -1824,13 +1824,35 @@ chat:
 
 ### `chat.compaction.section_token_caps` fields
 
+**Only `topic_arc` is an enforced cap.** All five values are serialized into
+the compactor's prompt as size *guidance* for the LLM, but `decisions` /
+`pending` / `session_user_facts` / `artifacts_referenced` are taken directly
+from the LLM's parsed response with no post-processing — nothing truncates
+them if the model overshoots. `topic_arc` alone goes through a 3-tier
+deterministic bound after the LLM returns (fit → LLM re-summarize, bounded by
+`resummarize_passes` → a deterministic `hard_truncate_summary` floor, #1163),
+so `topic_arc` never exceeds its body budget; the other four can.
+
+This is a real, current asymmetry, not a design intentionally scoped that
+way — no record motivating `topic_arc`-only enforcement was found; #1163
+replaced `topic_arc`'s previous blind character-cut, and the other four
+never had any bound of their own to begin with. It is not being closed:
+an oversized `decisions`/`pending`/etc. section survives at most one turn.
+`router_loop_driver.py`'s pre-frame guard (`context_budget_advisor.
+maybe_force_compact`) recomputes the effective token budget before every
+send and forces another compaction pass if the current history still
+exceeds it — so an overshoot from one of the four un-enforced sections is
+caught and re-compacted at the very next turn, at the cost of that one
+turn running with a larger-than-configured section rather than a hard
+failure or an unbounded blow-up.
+
 | Field | Default | Description |
 |-------|---------|-------------|
-| `topic_arc` | `200` | Token cap for the topic-arc summary section. |
-| `decisions` | `400` | Token cap for the decisions section. |
-| `pending` | `400` | Token cap for the pending-items section. |
-| `session_user_facts` | `200` | Token cap for user-facts carried across compactions. |
-| `artifacts_referenced` | `300` | Token cap for artifact reference listings. |
+| `topic_arc` | `200` | Token target for the topic-arc summary section — the only one of the five that's enforced after the LLM returns (see above). |
+| `decisions` | `400` | Token target for the decisions section, given to the LLM as prompt guidance — not enforced on the returned value. |
+| `pending` | `400` | Token target for the pending-items section, given to the LLM as prompt guidance — not enforced on the returned value. |
+| `session_user_facts` | `200` | Token target for user-facts carried across compactions, given to the LLM as prompt guidance — not enforced on the returned value. |
+| `artifacts_referenced` | `300` | Token target for artifact reference listings, given to the LLM as prompt guidance — not enforced on the returned value. |
 
 ### Removed keys
 
