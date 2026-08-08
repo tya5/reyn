@@ -25,14 +25,20 @@ widget; the hazards they add are the header's two structural risks: an
 informational row silently becoming the Tab target (an off-by-one accept), and
 an informational row claiming keys the user still needs.
 
-#3545 added the row-WRAP tests at the end, on the same grounds and against the
-same widget: a skill description does not fit on one line, and the two ways that
-can go wrong are invisible to a "the menu opened" assertion — text silently lost
-between the source and the mounted option, and a continuation line landing at
-column 0 where the next candidate's own ``:name`` starts, so three rows read as
-six. The third test there is the structural one: indenting by mounting each
-visual line as its OWN option would satisfy both of the first two while breaking
-``↓``, the highlight and the Tab accept.
+#3545 added the row-height tests at the end, on the same grounds and against the
+same widget: a skill description does not fit on one line, and what can go wrong
+is invisible to a "the menu opened" assertion — a row landing at column 0 where
+the next candidate's own ``:name`` starts, so three rows read as six.
+
+#3551 (owner ruling A) changed the mechanism from a hanging-indent wrap to a
+one-line clip, so those tests now pin the clip. The INVARIANT is unchanged and is
+what they assert: no row may exceed the width, because an overflowing row is
+re-wrapped by Textual itself at column 0 and #3545's symptom returns. It is
+asserted in CELLS against a fixture carrying wide characters — a clip written
+with ``len`` passes a character-counting check and still overflows a terminal.
+The structural test is unchanged: mounting each visual line as its OWN option
+would satisfy the visual checks while breaking ``↓``, the highlight and the Tab
+accept.
 
 Real ``TextualChatApp`` + real ``ClientTransport`` + real ``Session`` (via the
 shared ``tests._support.agent_session.make_session``) + real ``SkillEntry``
@@ -47,6 +53,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
+from rich.cells import cell_len
 
 from reyn.core.events.state_log import StateLog
 from reyn.data.skills.registry import SkillEntry
@@ -58,8 +65,8 @@ from reyn.interfaces.inline.textual_chat.completion import (
     KIND_NONE,
     KIND_SKILL,
     NO_MATCH_ROW,
+    ROW_ELLIPSIS,
     USAGE_ROW_PREFIX,
-    WRAP_INDENT,
     CompletionPopup,
     compute_completion,
 )
@@ -1240,7 +1247,7 @@ async def test_a_usage_only_hint_does_not_claim_the_navigation_keys(
         )
 
 
-# ── #3545: a wrapped row keeps its text and its indent ──────────────────────
+# ── #3545/#3551: a long row stays ONE candidate, one line ──────────────────
 
 
 def _wrapping_skill_entries():
@@ -1264,24 +1271,35 @@ def _wrapping_skill_entries():
             ),
             path="b.md",
         ),
+        SkillEntry(
+            name="draft_translate",
+            # Wide characters: two cells each, so a clip measured in CHARACTERS
+            # would leave this row overflowing by its own width — and Textual
+            # re-wraps an overflowing row at column 0, which is #3545's symptom
+            # arriving through a different door.
+            description=(
+                "生成物を対象言語へ翻訳し、用語集との整合を検査したうえで、"
+                "監査証跡に翻訳元と訳文の対応を記録します"
+            ),
+            path="c.md",
+        ),
     ]
 
 
 @pytest.mark.asyncio
-async def test_a_wrapped_skill_row_keeps_its_whole_description(tmp_path) -> None:
-    """Tier 2b: a skill description too long for one line survives INTACT into
-    the option the widget actually mounted (#3545).
+async def test_a_long_skill_row_is_clipped_to_one_line(tmp_path) -> None:
+    """Tier 2b: a skill description too long for the width occupies ONE line and
+    says it was cut (#3551, owner ruling A — replaces the wrap this test used to
+    pin).
 
-    The report read as text being lost by the popup, so the assertion is the
-    value a losing build cannot produce: the FULL description, character for
-    character, recovered from the mounted row by undoing the wrap. Reading it
-    off ``rendered_rows`` (the mounted options) rather than off
-    ``CompletionState`` is what makes that a claim about the widget instead of
-    about a formatter it might not call.
+    The row is read off ``rendered_rows`` (the mounted options) rather than off
+    ``CompletionState``, so this is a claim about the widget rather than about a
+    formatter it might not call.
 
-    The wrap itself is asserted as a precondition rather than assumed — a row
-    that happened to fit on one line would satisfy every "text survived" check
-    while testing nothing about wrapping.
+    Three things, and the third is the one a lazy implementation fails: one
+    visual line, an ellipsis saying text was dropped, and the description's
+    BEGINNING still present — clipping to the width must not cost the reader the
+    part that distinguishes two skills.
     """
     entries = _wrapping_skill_entries()
     session = _real_session(tmp_path, skills=entries)
@@ -1300,31 +1318,44 @@ async def test_a_wrapped_skill_row_keeps_its_whole_description(tmp_path) -> None
 
         assert popup.is_open, "typing : did not open the skill menu"
         rows = popup.rendered_rows()
-        assert any("\n" in row for row in rows), (
-            f"test setup: no row wrapped at this width, so the defect's "
-            f"condition was never reached: {rows}"
-        )
+        # Precondition, asserted rather than assumed, and against the width the
+        # widget actually has: a description that already FIT would satisfy
+        # every check below while testing nothing about clipping.
+        width = popup.scrollable_content_region.width
+        assert any(
+            cell_len(f":{e.name}  {e.description}") > width for e in entries
+        ), f"test setup: every row already fits {width} cells, nothing to clip"
         for entry in entries:
             row = next((r for r in rows if r.startswith(f":{entry.name}")), None)
             assert row is not None, f"{entry.name} is missing from the menu: {rows}"
-            unwrapped = row.replace("\n" + WRAP_INDENT, " ")
-            assert entry.description in unwrapped, (
-                f"the description was lost between the source and the mounted "
-                f"row — mounted {unwrapped!r}, expected to contain "
-                f"{entry.description!r}"
+            assert "\n" not in row, f"the row is more than one line: {row!r}"
+            assert row.endswith(ROW_ELLIPSIS), (
+                f"text was dropped without saying so: {row!r}"
+            )
+            head = entry.description[:20]
+            assert head in row, (
+                f"the clip ate the start of the description, which is what "
+                f"tells two skills apart — mounted {row!r}, expected to open "
+                f"with {head!r}"
             )
 
 
 @pytest.mark.asyncio
-async def test_a_wrapped_row_indents_its_continuation_lines(tmp_path) -> None:
-    """Tier 2b: every continuation line of a wrapped row is indented, so a
-    wrapped candidate cannot read as an extra candidate (#3545).
+async def test_no_row_overflows_the_width_in_CELLS(tmp_path) -> None:
+    """Tier 2b: #3545's invariant, carried through #3551's change of mechanism —
+    a candidate must never read as two.
 
-    The reported symptom was three skill rows reading as six because Textual's
-    own wrap returns each continuation to column 0 — exactly where the NEXT
-    candidate's ``:name`` starts. The assertion is therefore about the column a
-    continuation begins at, not about how the row is spelled: it must not start
-    where a fresh row would.
+    #3545's symptom was three skill rows reading as six, because Textual returns
+    each continuation to column 0, exactly where the NEXT candidate's ``:name``
+    starts. #3551 replaced the hanging indent with a one-line clip, which
+    removes continuations — but only while every row FITS. A row one cell too
+    wide is re-wrapped by Textual itself and the symptom returns unchanged, so
+    the invariant to hold is the width, not the absence of a newline in reyn's
+    own output.
+
+    Measured in cells, against a fixture that includes wide characters: a clip
+    written with ``len`` passes a character-counting assertion and still
+    overflows the terminal.
     """
     entries = _wrapping_skill_entries()
     session = _real_session(tmp_path, skills=entries)
@@ -1342,20 +1373,19 @@ async def test_a_wrapped_row_indents_its_continuation_lines(tmp_path) -> None:
         await pilot.pause()
 
         assert popup.is_open, "typing : did not open the skill menu"
-        continuations = [
-            line
-            for row in popup.rendered_rows()
-            for line in row.split("\n")[1:]
-        ]
-        assert continuations, (
-            f"test setup: nothing wrapped, so there is no continuation to "
-            f"check: {popup.rendered_rows()}"
-        )
-        for line in continuations:
-            assert line.startswith(WRAP_INDENT), (
-                f"a continuation line starts at column 0, where the next "
-                f"candidate's own token starts: {line!r}"
-            )
+        width = popup.scrollable_content_region.width
+        assert width > 0, "test setup: the popup was never laid out"
+        rows = popup.rendered_rows()
+        assert rows, "test setup: the menu mounted no rows"
+        wide = [r for r in rows if r.startswith(":draft_translate")]
+        assert wide, f"test setup: the wide-character row is missing: {rows}"
+        for row in rows:
+            for line in row.split("\n"):
+                assert cell_len(line) <= width, (
+                    f"a row is {cell_len(line)} cells wide in a {width}-cell "
+                    f"region — Textual will re-wrap it at column 0 and it will "
+                    f"read as a second candidate: {line!r}"
+                )
 
 
 @pytest.mark.asyncio
@@ -1415,15 +1445,18 @@ async def test_one_wrapped_candidate_stays_one_selectable_option(tmp_path) -> No
 
 
 @pytest.mark.asyncio
-async def test_an_open_menu_re_wraps_when_the_terminal_width_changes(tmp_path) -> None:
-    """Tier 2b: a menu that is already open re-wraps for the new width when the
-    terminal is resized under it (#3545).
+async def test_an_open_menu_re_clips_when_the_terminal_width_changes(tmp_path) -> None:
+    """Tier 2b: a menu that is already open re-clips for the new width when the
+    terminal is resized under it (#3545, #3551).
 
-    The wrap is computed against a width, so it goes stale the moment the width
+    The clip is computed against a width, so it goes stale the moment the width
     moves; a menu is open exactly while the user is typing, which is also when
-    nothing else would rebuild it. Asserted on the invariant rather than on the
-    resulting line lengths: whatever the width, the text is still whole and the
-    continuations are still indented.
+    nothing else would rebuild it. A stale clip is worse under #3551 than the
+    stale wrap it replaces: too-wide rows are re-wrapped by Textual at column 0,
+    so every candidate reads as two.
+
+    Asserted on the invariant rather than on the resulting text: whatever the
+    width, every row still fits it in cells and still opens with its own name.
     """
     entries = _wrapping_skill_entries()
     session = _real_session(tmp_path, skills=entries)
@@ -1447,16 +1480,14 @@ async def test_an_open_menu_re_wraps_when_the_terminal_width_changes(tmp_path) -
 
         after = popup.rendered_rows()
         assert after != before, (
-            f"the menu kept the wrap it was built with at the old width: "
+            f"the menu kept the clip it was built with at the old width: "
             f"{after}"
         )
+        width = popup.scrollable_content_region.width
         for entry in entries:
             row = next((r for r in after if r.startswith(f":{entry.name}")), None)
             assert row is not None, f"{entry.name} vanished on resize: {after}"
-            assert entry.description in row.replace("\n" + WRAP_INDENT, " "), (
-                f"the re-wrap lost text: {row!r}"
+            assert cell_len(row) <= width, (
+                f"the re-clip left a {cell_len(row)}-cell row in a {width}-cell "
+                f"region: {row!r}"
             )
-            for line in row.split("\n")[1:]:
-                assert line.startswith(WRAP_INDENT), (
-                    f"the re-wrap dropped the continuation indent: {line!r}"
-                )
