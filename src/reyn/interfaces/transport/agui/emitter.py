@@ -12,7 +12,7 @@ On connect it replays the reconnect snapshots (A4): ``MESSAGES_SNAPSHOT`` (the
 display backlog) then ``STATE_SNAPSHOT`` (the status read-model).
 
 **Session-switch parity (#3310 N3).** A session switch is treated as a
-*logical reconnect*: right after a ``session_attached`` chat-event (#3310 N1,
+*logical reconnect*: right after a ``session_attached`` ``EventFrame`` (#3310 N1,
 carrying ``{agent, session_id}``) is forwarded on the wire, this emitter
 re-fires the SAME reconnect protocol — ``MESSAGES_SNAPSHOT`` (the NEW
 session's backlog, resolved via the caller-supplied ``backlog_provider``) then
@@ -95,7 +95,7 @@ class AgUiEmitter:
         # (or None when no session is attached); ``backlog`` is the display
         # history replayed on connect for reconnect (A4). ``backlog_provider``
         # (#3310 N3) is called with ``(agent, session_id)`` off a mid-stream
-        # ``session_attached`` chat-event to fetch the switched-to session's
+        # ``session_attached`` ``EventFrame`` to fetch the switched-to session's
         # backlog for the re-fire; ``None`` means this connection never
         # switches sessions (byte-identical to pre-N3 behavior).
         self._frames = frames

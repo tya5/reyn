@@ -507,7 +507,7 @@ async def test_upstream_consumed_sentinels_stay_out_of_the_conversation() -> Non
     by ``AgentRegistry._forwarder`` before they can reach a LOCAL client's frame
     stream (pinned by ``test_attach_request_forwarded.py`` and
     ``test_3310_n3_remote_switch_parity.py``), and their effect reaches this app
-    as the ``session_attached`` chat-event.
+    as the ``session_attached`` ``EventFrame``.
 
     On the REMOTE path they differ, which is why this gate feeds them in as
     frames (the remote shape) rather than asserting they cannot arrive:

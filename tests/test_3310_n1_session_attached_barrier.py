@@ -3,9 +3,9 @@
 A session/agent switch (``/attach <name>`` -> ``registry.attach()``,
 ``/session switch <sid>`` -> ``registry.attach_session()``) flips which
 session's frames reach the client, but historically nothing told the client
-THAT a switch had happened. This adds a ``session_attached`` chat-event
-carrying ``{agent, session_id}``, emitted at the registry attach seam as an
-``EventFrame`` put DIRECTLY on ``repl_outbox`` (never routed through a
+THAT a switch had happened. This adds a ``session_attached`` ``EventFrame``
+carrying ``{agent, session_id}``, emitted at the registry attach seam
+DIRECTLY on ``repl_outbox`` (never routed through a
 session's own chat-events — that stream is the thing being swapped).
 
 Gates covered here:

@@ -133,7 +133,7 @@ logger = logging.getLogger(__name__)
 # ``__attach_request__`` / ``__session_switch_request__`` branches ``continue``
 # without ever putting the message on ``repl_outbox``), so neither reaches a
 # LOCAL client's frame stream; their effect arrives instead as the
-# ``session_attached`` chat-event (#3310 N2,
+# ``session_attached`` ``EventFrame`` (#3310 N2,
 # :meth:`TextualChatApp._handle_session_attached_event`). Nothing about
 # ``/attach`` or ``/session switch`` is implemented by this set.
 #
@@ -494,7 +494,7 @@ class TextualChatApp(App):
     on the wire) → hydration is a no-op and the pane starts blank as before.
 
     #3310 N2 reuses that SAME hydrate seam for a session SWITCH, not just a
-    restart. N1 (#3321) added a ``session_attached`` chat-event — an
+    restart. N1 (#3321) added a ``session_attached``
     ``EventFrame`` the registry puts directly on ``repl_outbox`` at the attach
     seam, with NO ``await`` between the connection-switch flip and the put —
     so it is a stream BARRIER: everything on the frame stream before it
@@ -2992,7 +2992,7 @@ class TextualChatApp(App):
 
     def _handle_session_attached_event(self, event) -> None:
         """The session-switch reset barrier (#3310 N2, consuming N1's
-        ``session_attached`` chat-event, ``{agent, session_id}``).
+        ``session_attached`` ``EventFrame``, ``{agent, session_id}``).
 
         ★Design thesis (architect deep-dive, issue #3310 §1): a cached
         FlowView cannot be the source of truth after a switch — while THIS
