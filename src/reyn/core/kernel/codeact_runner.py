@@ -31,27 +31,50 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.security.sandbox import kill_process_tree
 from reyn.security.sandbox._subprocess_io import communicate_capped
 
+if TYPE_CHECKING:
+    from reyn.security.sandbox import SandboxPolicy
 
-def _harness_subprocess_env() -> dict[str, str]:
-    """Env for the harness subprocess with the PARENT process's reyn tree propagated
-    onto PYTHONPATH (#1609). Without this, ``python -m reyn.core.kernel._codeact_harness``
-    resolves ``reyn`` from the spawned interpreter's default ``sys.path`` — which in a
-    multi-worktree editable-install dev env can point at a DIFFERENT worktree lacking
-    this harness module (``No module named reyn.core.kernel._codeact_harness``). Prepending
-    this process's reyn tree makes the subprocess resolve the SAME tree. Production
-    (single reyn install) is unaffected — same path either way. (The codeact harness
-    interpreter is always the host ``sys.executable`` — #1663; it does NOT honor
-    ``REYN_HARNESS_PYTHON`` (unlike the preprocessor harness), so this PYTHONPATH
-    propagation pairs with that host interpreter.)"""
+
+def _harness_subprocess_env(policy: "SandboxPolicy") -> dict[str, str]:
+    """Env for the harness subprocess: the SAME allowlist chokepoint
+    (:func:`resolve_passthrough_env`) every other sandboxed launch route uses
+    (#3075 fix 5), not a bespoke full-environ copy (#3822 — CodeAct was the one
+    seam still doing ``dict(os.environ)``, handing a model-authored snippet
+    every parent env var — secrets included — while the sibling
+    ``SandboxBackend.run`` seam already went through the allowlist).
+
+    On top of that base, the PARENT process's reyn tree is prepended onto
+    PYTHONPATH (#1609). Without this, ``python -m
+    reyn.core.kernel._codeact_harness`` resolves ``reyn`` from the spawned
+    interpreter's default ``sys.path`` — which in a multi-worktree
+    editable-install dev env can point at a DIFFERENT worktree lacking this
+    harness module (``No module named reyn.core.kernel._codeact_harness``).
+    Prepending this process's reyn tree makes the subprocess resolve the SAME
+    tree. Production (single reyn install) is unaffected — same path either
+    way. (The codeact harness interpreter is always the host
+    ``sys.executable`` — #1663; it does NOT honor ``REYN_HARNESS_PYTHON``
+    (unlike the preprocessor harness), so this PYTHONPATH propagation pairs
+    with that host interpreter.) ``policy.env_passthrough`` MUST already
+    contain ``"PYTHONPATH"`` for the "preserve an existing PYTHONPATH" half of
+    this to work — ``_resolve_sandbox_spawn`` forces it on every path, the
+    same way it force-sets ``timeout_seconds``.
+
+    PATH is added after the allowlist call by the same convention every
+    backend follows (``resolve_passthrough_env``'s own docstring: "PATH
+    fallback is applied by each backend after calling this").
+    """
     import reyn  # noqa: PLC0415
+    from reyn.security.sandbox.policy import resolve_passthrough_env  # noqa: PLC0415
 
     tree = str(Path(reyn.__file__).resolve().parent.parent)  # dir containing the reyn pkg
-    env = dict(os.environ)
+    env = resolve_passthrough_env(policy)
+    if "PATH" not in env and "PATH" in os.environ:
+        env["PATH"] = os.environ["PATH"]
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = tree + (os.pathsep + existing if existing else "")
     return env
@@ -114,7 +137,7 @@ class CodeActRunner:
         ``sandbox_backend.wrap_command(...)`` — see ``_resolve_sandbox_spawn``.
         """
         base_argv = [self.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
-        argv, cleanup, spawn_error = self._resolve_sandbox_spawn(
+        argv, cleanup, spawn_error, resolved_policy = self._resolve_sandbox_spawn(
             base_argv, sandbox_backend, sandbox_policy, timeout, allow_unsandboxed,
         )
         if spawn_error is not None:
@@ -146,7 +169,7 @@ class CodeActRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=cwd,
-                env=_harness_subprocess_env(),  # #1609: parent reyn tree on PYTHONPATH
+                env=_harness_subprocess_env(resolved_policy),  # #1609/#3822: allowlisted env + PYTHONPATH
                 start_new_session=True,
             )
         except OSError as exc:
@@ -248,10 +271,14 @@ class CodeActRunner:
         sandbox_policy: dict | None,
         timeout: float,
         allow_unsandboxed: bool,
-    ) -> tuple[list[str] | None, Callable[[], None] | None, str | None]:
+    ) -> tuple[list[str] | None, Callable[[], None] | None, str | None, "SandboxPolicy | None"]:
         """Resolve the spawn argv + a cleanup callable for the active sandbox, or an
-        error string (fail-closed). Returns ``(argv, cleanup, error)``; exactly one
-        of ``argv`` / ``error`` is non-None.
+        error string (fail-closed). Returns ``(argv, cleanup, error, policy)``;
+        exactly one of ``argv`` / ``error`` is non-None. ``policy`` is the resolved
+        ``SandboxPolicy`` whenever ``argv`` is non-None — the caller uses it to build
+        the child's env through the SAME allowlist chokepoint (:func:`resolve_passthrough_env`)
+        every other sandboxed launch route uses (#3822 env), instead of a bespoke
+        ``dict(os.environ)`` copy.
 
         - Any AVAILABLE real backend (Seatbelt / Landlock): delegate to the
           backend's own ``wrap_command(base_argv, policy)`` (#2626's
@@ -263,30 +290,38 @@ class CodeActRunner:
           test-only escape for the transport/proxy core). NoopBackend's
           ``wrap_command`` is a passthrough (no isolation), so it is deliberately
           excluded here — CodeAct must never silently run unsandboxed.
+
+        ``PYTHONPATH`` is forced into ``env_passthrough`` on every path (#1609's
+        multi-worktree fix, rewritten in policy vocabulary rather than as a second,
+        parallel decision) — the harness subprocess otherwise cannot resolve the
+        parent's reyn tree.
         """
+        from reyn.security.sandbox import SandboxPolicy  # noqa: PLC0415
+
         name = getattr(sandbox_backend, "name", None)
         available = bool(sandbox_backend is not None and sandbox_backend.available())
 
         if sandbox_backend is None or name in (None, "noop") or not available:
             if allow_unsandboxed:
-                return base_argv, None, None
+                return base_argv, None, None, SandboxPolicy(env_passthrough=["PYTHONPATH"])
             return None, None, (
                 "CodeAct requires an available OS sandbox backend (Seatbelt / "
                 "Landlock); none available — refusing to run unsandboxed (fail-closed)."
-            )
-
-        from reyn.security.sandbox import SandboxPolicy  # noqa: PLC0415
+            ), None
 
         policy_dict = dict(sandbox_policy or {})
         policy_dict["timeout_seconds"] = timeout
+        policy_dict["env_passthrough"] = sorted(
+            set(policy_dict.get("env_passthrough", [])) | {"PYTHONPATH"}
+        )
         policy = SandboxPolicy(**policy_dict)
 
         try:
             wrapped = sandbox_backend.wrap_command(base_argv, policy)
         except Exception as exc:  # noqa: BLE001 — fail-closed on any wrap failure
-            return None, None, f"CodeAct: sandbox_backend.wrap_command failed: {exc}"
+            return None, None, f"CodeAct: sandbox_backend.wrap_command failed: {exc}", None
 
-        return wrapped.argv, wrapped.cleanup, None
+        return wrapped.argv, wrapped.cleanup, None, policy
 
     async def _service(
         self, sock: socket.socket, dispatch: DispatchFn, loop: asyncio.AbstractEventLoop,

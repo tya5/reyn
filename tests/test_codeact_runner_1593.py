@@ -224,12 +224,14 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
     sandbox_policy = {"network": False, "env_passthrough": ["PATH"]}
 
-    argv, cleanup, error = runner._resolve_sandbox_spawn(
+    argv, cleanup, error, resolved_policy = runner._resolve_sandbox_spawn(
         base_argv, backend, sandbox_policy, 30.0, False,
     )
     assert error is None
     assert argv is not None
     assert cleanup is not None
+    assert resolved_policy is not None
+    assert "PYTHONPATH" in resolved_policy.env_passthrough  # #3822: forced on every path
 
     # Same shape as a direct wrap_command() call: sandbox-exec -f <profile> <base_argv>.
     # The profile PATH differs (each call gets its own fresh temp file), so compare
@@ -267,16 +269,40 @@ def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
     base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
     sandbox_policy = {"network": False, "env_passthrough": ["PATH"]}
 
-    argv, cleanup, error = runner._resolve_sandbox_spawn(
+    argv, cleanup, error, resolved_policy = runner._resolve_sandbox_spawn(
         base_argv, backend, sandbox_policy, 30.0, False,
     )
     assert error is None
     assert cleanup is None  # Landlock owns no cleanup resource (no temp file)
+    assert resolved_policy is not None
+    assert "PYTHONPATH" in resolved_policy.env_passthrough  # #3822: forced on every path
 
+    # #3822: codeact's resolved policy forces PYTHONPATH into env_passthrough
+    # on every path, so the equivalent direct call must declare it too — this
+    # is comparing against the SAME policy codeact actually resolved, not the
+    # caller-supplied one, per resolved_policy.env_passthrough above.
     direct = backend.wrap_command(
-        base_argv, SandboxPolicy(network=False, env_passthrough=["PATH"], timeout_seconds=30.0),
+        base_argv,
+        SandboxPolicy(network=False, env_passthrough=["PATH", "PYTHONPATH"], timeout_seconds=30.0),
     )
     assert argv == direct.argv  # byte-identical — same deterministic build
+
+
+def test_unsandboxed_escape_still_resolves_a_policy_with_pythonpath() -> None:
+    """Tier 2: #3822 env — the ``allow_unsandboxed`` test-only escape (no real
+    backend) still returns a resolved ``SandboxPolicy`` with ``PYTHONPATH`` in
+    ``env_passthrough``, matching the sandboxed branches. Strip the forced
+    ``env_passthrough=["PYTHONPATH"]`` on this branch and this goes RED."""
+    runner = CodeActRunner()
+    base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
+
+    argv, cleanup, error, resolved_policy = runner._resolve_sandbox_spawn(
+        base_argv, None, None, 30.0, True,
+    )
+    assert error is None
+    assert argv == base_argv
+    assert resolved_policy is not None
+    assert "PYTHONPATH" in resolved_policy.env_passthrough
 
 
 # ── #1609: harness subprocess PYTHONPATH propagation (multi-worktree drift) ───
@@ -292,9 +318,10 @@ def test_harness_subprocess_env_prepends_reyn_tree() -> None:
 
     import reyn
     from reyn.core.kernel.codeact_runner import _harness_subprocess_env
+    from reyn.security.sandbox import SandboxPolicy
 
     tree = str(Path(reyn.__file__).resolve().parent.parent)
-    env = _harness_subprocess_env()
+    env = _harness_subprocess_env(SandboxPolicy(env_passthrough=["PYTHONPATH"]))
     assert env["PYTHONPATH"].split(os.pathsep)[0] == tree  # parent tree resolved first
 
 
@@ -305,10 +332,66 @@ def test_harness_subprocess_env_preserves_existing_pythonpath(monkeypatch) -> No
 
     monkeypatch.setenv("PYTHONPATH", "/some/existing/path")
     from reyn.core.kernel.codeact_runner import _harness_subprocess_env
+    from reyn.security.sandbox import SandboxPolicy
 
-    parts = _harness_subprocess_env()["PYTHONPATH"].split(os.pathsep)
+    parts = _harness_subprocess_env(
+        SandboxPolicy(env_passthrough=["PYTHONPATH"])
+    )["PYTHONPATH"].split(os.pathsep)
     assert "/some/existing/path" in parts
     assert parts[-1] == "/some/existing/path"  # appended after the prepended tree
+
+
+def test_harness_subprocess_env_does_not_leak_arbitrary_parent_vars(monkeypatch) -> None:
+    """Tier 2: #3822 env — a parent env var NOT in the policy allowlist / standard
+    network set does NOT reach the harness subprocess.
+
+    CodeAct runs model-authored code; before this fix ``_harness_subprocess_env``
+    did ``dict(os.environ)`` — every parent env var, secrets included, reached the
+    snippet's process regardless of the policy CodeAct was given. Strip the
+    ``resolve_passthrough_env`` call (put back a bare ``dict(os.environ)``) and
+    this goes RED, because the marker below is not in ``STANDARD_NETWORK_ENV_NAMES``
+    or the policy's ``env_passthrough``.
+    """
+    import os
+
+    from reyn.core.kernel.codeact_runner import _harness_subprocess_env
+    from reyn.security.sandbox import SandboxPolicy
+
+    monkeypatch.setenv("REYN_3822_TEST_SECRET_MARKER", "should-not-leak")
+    env = _harness_subprocess_env(SandboxPolicy(env_passthrough=["PYTHONPATH"]))
+    assert "REYN_3822_TEST_SECRET_MARKER" not in env, (
+        "an arbitrary parent env var reached the CodeAct harness subprocess — "
+        "the allowlist chokepoint was bypassed"
+    )
+    assert "PYTHONPATH" in env  # #1609 still holds through the allowlist
+
+
+@pytest.mark.asyncio
+async def test_codeact_snippet_cannot_read_an_unpassthroughed_parent_env_var(monkeypatch) -> None:
+    """Tier 2: #3822 env — end-to-end, through the REAL ``run()`` call path
+    (not just the ``_harness_subprocess_env`` unit above): a real snippet's
+    ``os.environ`` genuinely does not contain a parent-only marker.
+
+    This is the seam lead-coder flagged (#3834/#3835/#3837 pattern): the
+    IMPLEMENTED side of a fix needs its own witness, not just the incidental
+    side. Strip the fix (revert ``_harness_subprocess_env`` to
+    ``dict(os.environ)``) and this goes RED for the stated reason — the real
+    snippet, in a real subprocess, would then read the marker back.
+    """
+    async def dispatch(name: str, args: dict) -> dict:  # pragma: no cover - unused
+        return {"status": "ok", "data": {}}
+
+    monkeypatch.setenv("REYN_3822_TEST_SECRET_MARKER", "should-not-leak")
+    code = "import os\nresult = os.environ.get('REYN_3822_TEST_SECRET_MARKER', 'ABSENT')"
+    out = await CodeActRunner().run(
+        code=code, dispatch=dispatch, allow_unsandboxed=True,
+        allowed_modules=["os"], timeout=30.0,
+    )
+    assert out["ok"] is True, out
+    assert out["result"] == "ABSENT", (
+        "the CodeAct snippet read a parent-only env var — the allowlist "
+        "chokepoint was bypassed on the real run() call path"
+    )
 
 
 @pytest.mark.asyncio
