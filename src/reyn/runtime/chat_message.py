@@ -139,7 +139,7 @@ class ChatMessage:
     # wire-shape builder reads and embeds the binary at LLM-call time.
     content: str | list[dict] = ""
     ts: str = ""
-    seq: int = 0  # monotonic per-session sequence id; 0 for non-conversational entries
+    seq: int = 0  # monotonic per-session sequence id; #3704: 0 = no coordinate assigned (pre-fix history only — every entry now gets one at persist time, any role)
     meta: dict = field(default_factory=dict)
     # OpenAI/Anthropic tool-turn fields ─────────────────────────────────
     # ``tool_calls`` is set ONLY on ``role="assistant"`` entries where the
