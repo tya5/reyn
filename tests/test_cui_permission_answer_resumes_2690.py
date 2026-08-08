@@ -137,7 +137,7 @@ def _granted_paths(session: Session) -> list[str]:
     reporter found MISSING for the hung write."""
     return [
         e.data.get("path")
-        for e in session._chat_events.all()
+        for e in session._audit_events.all()
         if e.type == "permission_granted"
     ]
 

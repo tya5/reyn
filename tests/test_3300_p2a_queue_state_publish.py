@@ -362,7 +362,7 @@ async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path):
     ``turn_started`` (dispatch) audit-events — the SAME events P1 (C) already
     emits and the renderer/AG-UI transport already forward — drive a
     ``RemoteQueueView`` to an accurate final state end-to-end (subscribe via
-    the public ``subscribe_chat_events`` seam, no private-state peeking)."""
+    the public ``subscribe_audit_events`` seam, no private-state peeking)."""
     session = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
     call_started, release = _install_hanging_run_turn(session)
 
@@ -370,7 +370,7 @@ async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path):
     view.apply_snapshot(queue=[], turn_active=False, queue_seq=0)
 
     captured: list = []
-    session.subscribe_chat_events(lambda ev: captured.append(ev))
+    session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
     # Apply the just-emitted user_submitted delta.
@@ -426,7 +426,7 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     view.apply_snapshot(queue=[], turn_active=False, queue_seq=0)
 
     captured: list = []
-    session.subscribe_chat_events(lambda ev: captured.append(ev))
+    session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
     ev = next(e for e in captured if e.type == "user_submitted")

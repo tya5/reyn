@@ -13,7 +13,7 @@ notifications, budget warnings, session-level errors) can land here
 without expanding the lifecycle forwarder's per-handler contract.
 
 Wired up in :class:`reyn.runtime.session.Session` via
-``self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox, registry=self._registry))``.
+``self._audit_events.add_subscriber(ChatLifecycleForwarder(self.outbox, registry=self._registry))``.
 The optional ``registry`` lets a handler bridge-subscribe to another session's
 own EventLog (#2570: a pipeline driver-session's live step progress).
 """
@@ -249,7 +249,7 @@ class ChatLifecycleForwarder:
     # ── Tool-call lifecycle (issue #427 wiring fix 2026-05-22) ───────────
     # ``dispatch/dispatcher.py:200-274`` emits ``tool_called`` /
     # ``tool_returned`` / ``tool_failed`` against the session's
-    # ``_chat_events`` log (= router-level). This forwarder is the
+    # ``_audit_events`` log (= router-level). This forwarder is the
     # subscriber of that log. See memory
     # ``feedback_verify_existing_event_emission_before_adding`` for the
     # subscriber-layer verification discipline.
@@ -308,7 +308,7 @@ class ChatLifecycleForwarder:
 
     # ── Pipeline attached live-progress bridge (#2570) ────────────────────
     # session_api.py's run_pipeline_attached emits pipeline_run_attached onto
-    # THIS session's own _chat_events right after spawning the driver-session
+    # THIS session's own _audit_events right after spawning the driver-session
     # (sync-attached path only). The driver-session's pipeline_step_started /
     # pipeline_step_completed events land on ITS OWN EventLog — a session
     # distinct from this one, invisible here unless we bridge-subscribe.

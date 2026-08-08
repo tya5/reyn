@@ -212,7 +212,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
     events: list = []
-    session._chat_events.add_subscriber(lambda e: events.append(e))
+    session._audit_events.add_subscriber(lambda e: events.append(e))
 
     msg_id = await session.submit_user_text("inject me", attribution=None)
     peeked = await session._peek_mid_turn_injection()

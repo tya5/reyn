@@ -159,7 +159,7 @@ _SKIP_KINDS = frozenset(
 # Turn-end event types (#72): when one of these lands on the EVENT-tag frame
 # path, any tool row still RUNNING is a confirmed ORPHAN — its completion frame
 # can never arrive for THIS turn, since the turn itself just ended. Mirrors the
-# plain renderer's ``on_chat_event`` turn-end branch
+# plain renderer's ``on_audit_event`` turn-end branch
 # (``src/reyn/interfaces/repl/renderer.py``): ``turn_settled`` fires for EVERY
 # turn kind (incl. slash short-circuits) and is the primary signal;
 # ``turn_completed`` / ``turn_cancelled`` are belt-and-suspenders. Deliberately

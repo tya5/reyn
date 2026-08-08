@@ -358,7 +358,7 @@ def _collect_events(session: Session) -> list[dict]:
     def _sub(event) -> None:
         collected.append({"type": event.type, **event.data})
 
-    session._chat_events.add_subscriber(_sub)
+    session._audit_events.add_subscriber(_sub)
     return collected
 
 
@@ -416,7 +416,7 @@ async def test_emit_origin_self_stimulating_chain_force_closes_at_cap(tmp_path):
         # Simulate the LLM, THIS turn, calling the real emit_hook_event
         # handler — the self-stimulating step of the chain.
         ctx = OpContext(
-            workspace=None, events=session._chat_events, permission_decl=PermissionDecl(),
+            workspace=None, events=session._audit_events, permission_decl=PermissionDecl(),
             session_id=session._session_id, hook_bus=session._hook_bus,
         )
         op = EmitHookEventIROp(kind="emit_hook_event", event_name="ping")
