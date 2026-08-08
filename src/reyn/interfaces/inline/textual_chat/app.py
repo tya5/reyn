@@ -2284,15 +2284,35 @@ class TextualChatApp(App):
 
         Synchronous by contract (flowview calls it inside ``yank``), so this
         uses the blocking helper rather than the async one — the shell-out is a
-        single short-lived subprocess. Returns whether a tool actually accepted
-        the text, which is what lets a failed yank be reported rather than
-        silently look like it worked (OSC 52, the default, cannot be
-        acknowledged at all)."""
+        single short-lived subprocess.
+
+        REPORTS its own failure rather than only returning it. The bool is
+        returned because the sink contract has one, but nothing upstream reads
+        it: flowview's ``action_yank`` calls ``yank()`` and discards the value,
+        so a bool alone reaches no one. Without the report a yank onto a machine
+        with no clipboard backend is indistinguishable from a yank that worked —
+        the user presses ``y``, the selection clears, and nothing says the
+        clipboard is unchanged. That is the failure mode #3616 exists for: the
+        operator's own report came through THIS path (copy mode ``c`` -> ``y``),
+        not the entry copy, and their acceptance test is a real-machine copy on
+        a Windows shell where a missing backend is a live possibility.
+
+        Failure only. A successful yank already shows itself — the selection
+        clears — so a "copied" line per yank would be noise on the one path a
+        user repeats. The wording matches the entry-copy path
+        (:meth:`on_flow_view_entry_copied`) so the two sinks do not describe the
+        same outcome two different ways."""
+        from reyn.runtime.outbox import OutboxMessage
+
         try:
             ok = copy_to_clipboard(text)
         except Exception:
             logger.exception("textual chat: yank clipboard write failed")
-            return False
+            ok = False
+        if not ok:
+            self._ingest_frame(
+                OutboxMessage(kind="status", text="clipboard copy failed")
+            )
         return ok
 
     def action_close_drawer(self) -> None:
