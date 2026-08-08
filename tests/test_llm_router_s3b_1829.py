@@ -19,7 +19,6 @@ Tier line first; no private-state / count pins beyond the public contract.
 """
 from __future__ import annotations
 
-import os
 from unittest import mock
 
 import litellm
@@ -143,18 +142,6 @@ async def test_router_cache_rebuilds_on_config_change() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    os.environ.get("LITELLM_API_BASE") is not None,
-    strict=True,
-    reason=(
-        "#3833: llm.router.fallbacks is keyed on the model name BEFORE the "
-        "provider-prefix strip, and recorded_acompletion strips it when proxy "
-        "routing is configured — so litellm resolves the group as `gpt-4o-mini` "
-        "against a map keyed `openai/gpt-4o-mini` and reports "
-        "`Available Model Group Fallbacks=None`. Configured fallbacks silently "
-        "never apply under a proxy."
-    ),
-)
 async def test_cost_records_actual_model_on_fallback() -> None:
     """Tier 2: when a router fallback serves the call, cost is attributed to the
     ACTUAL deployment (response.model), not the requested model."""
