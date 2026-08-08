@@ -258,6 +258,14 @@ voice = [
     "sounddevice>=0.4.6",
     "faster-whisper>=1.0.0",
 ]
+# #3796: the full-viewport text effect on ctrl+l — a joke, and the only thing
+# in reyn that wants an animation library. Its own extra rather than a core
+# dependency (owner ruling, 2026-08-08「依存は extra かな」): not everyone who
+# installs reyn should carry a dependency for a joke. Without it the key says so
+# and names this extra, so the feature is discoverable without being installed.
+effects = [
+    "terminaltexteffects>=0.12",
+]
 # OpenTelemetry (OTLP) export surface — opt-in observability. Reyn core stays
 # SDK-free unless an operator activates OTEL export (an OTLP endpoint plus this
 # extra); when the SDK isn't installed the exporter stays not-attached, fail-open.
