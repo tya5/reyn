@@ -114,10 +114,13 @@ that audit, passed review, and one of them cost the operator three reboots.
 
 Ask each test in the diff:
 
-1. **Whose contract is this?** reyn's / a third-party's / a past bug's. The last
-   two are Tier 4. (#3872: "a TTE effect resolves to its input" is TTE's promise;
-   `assert "reyn" not in final` is one defect's fingerprint, and any *other* wrong
-   string passes it.)
+1. **Which Tier does it fit — 1, 2, 3, or none?** Name the one, not the word
+   "Tier". `testing.md` is a whitelist: what fits no Tier is Tier 4 and is not
+   written. Two shapes that look like they fit and do not — **a third party's
+   property** (#3872: "a TTE effect resolves to its input" is TTE's promise, not
+   reyn's) and **a past bug's fingerprint** (`assert "reyn" not in final`, which
+   any *other* wrong string passes). Answering "it's reyn's" is not an answer:
+   reyn's own trivia fits no Tier either.
 2. **Is it the implementation, transcribed?** If the same expression appears on
    both sides, it can only fail when someone deliberately edits that line — and
    they will edit both. (#3872: `art = "\n".join(covered)` asserted back.)
@@ -145,12 +148,12 @@ So each question has a blocking answer, not just an answer:
 
 | | blocks when the answer is |
 |---|---|
-| 1 | a third party's, or a past bug's |
+| 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
 | 2 | yes — the same expression is on both sides |
 | 3 | yes — it stays green with the mechanism removed |
 | 4 | it would be green having never run, **and the PR does not say so** |
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
-| 6 | the declared Tier is not the one question 1 reached |
+| 6 | the declared Tier is not the one question 1 named |
 
 ⚠️ 4 blocks on the *silence*, not on the skip: a file that skips whole in CI is
 often correct (an optional extra), and what makes it a defect is a green nobody
