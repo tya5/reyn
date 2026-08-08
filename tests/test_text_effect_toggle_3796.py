@@ -127,21 +127,24 @@ async def test_the_feed_is_intact_after_the_effect() -> None:
 
 
 @requires_tte
-def test_the_frames_resolve_to_the_covered_text_not_a_banner() -> None:
-    """Tier 2: what the effect RESOLVES TO is the covered rows (#3796 round 2).
+def test_the_effect_is_given_the_covered_screen(monkeypatch) -> None:
+    """Tier 1: reyn hands the effect the rows that are on screen (#3796 round 2).
 
     The operator found the first version animating a fixed ``"reyn"`` over their
-    conversation. My first attempt at a witness for the fix asserted that the
-    factory was *handed* the covered rows — and a banner implementation passes
-    that, because being handed an argument is not using it. Falsified exactly
-    so: reverting the body to ``art = "reyn"`` left that assertion green.
+    conversation. The witness that replaced it read the animation's FINAL FRAME
+    and asserted the covered lines came back — which pins a property of
+    TerminalTextEffects (an effect resolves to its input), not a promise reyn
+    makes. No Tier covers a third-party's behaviour, and the earlier form also
+    cost 10 GB on the branch where the factory stopped being finite (#3872).
 
-    So this reads the FRAMES. A TTE effect resolves to the text it was given
-    (measured: the final frame comes back equal to the input, blank lines and
-    indentation included), which makes the last frame the one place the
-    argument's fate is observable without pinning a third-party animation's
-    intermediate pixels.
+    reyn's promise ends at the hand-off: what it gives the effect is the visible
+    rows, joined, and nothing else. A real effect records that in
+    ``input_data``, so this reads it from a genuine instance — no stand-in, and
+    no frames generated. Replace the body's ``art`` with a banner and this goes
+    RED on the value itself rather than on what an animation did with it.
     """
+    from terminaltexteffects.effects import effect_rain
+
     from reyn.interfaces.inline.textual_chat import text_effect
 
     covered = [
@@ -149,25 +152,23 @@ def test_the_frames_resolve_to_the_covered_text_not_a_banner() -> None:
         "",
         "● thirteen tabs; Cost and Ctx are readouts",
     ]
-    # Only the LAST frame is read, so only the last frame is kept. `list()`
-    # here materialised every frame to look at one of them — harmless while
-    # the factory is finite, and 10 GB the moment it is not (#3872: the
-    # cache+pulse factory waits on a thread, so `list()` collected frames
-    # for as long as that thread took, which the collecting itself slowed).
-    # A test should not be the reason a machine reboots.
-    last = None
-    for frame in text_effect.frame_factory()(78, len(covered), covered):
-        last = frame
-    assert last is not None, "the factory produced no frames for a non-empty screen"
+    seen: list = []
 
-    final = last.plain  # the factory yields rich Text
-    for line in covered:
-        if line:
-            assert line in final, (
-                f"the effect resolved to something other than the screen it "
-                f"covered — {line!r} is missing from {final!r}"
-            )
-    assert "reyn" not in final, "a banner leaked into the frames"
+    class _Recording(effect_rain.Rain):
+        def __init__(self, art: str) -> None:
+            seen.append(art)
+            super().__init__(art)
+
+    monkeypatch.setattr(text_effect, "effect_classes", lambda: [_Recording])
+    frames = text_effect.frame_factory()(78, len(covered), covered)
+    next(frames, None)  # one frame: enough to reach the construction, not to animate
+    frames.close()
+
+    assert seen, "the factory never constructed an effect"
+    assert seen[0] == "\n".join(covered), (
+        f"reyn handed the effect {seen[0]!r} instead of the screen it covered"
+    )
+
 
 
 @requires_tte
