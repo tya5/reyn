@@ -1,7 +1,7 @@
 """Tier 2: #3288 ③d — AG-UI generic multi-CONTENT streaming.
 
 ③b (#3305's sibling PR) put a streamed LLM reply's per-chunk deltas on a
-SEPARATE chat-event channel (``agent_delta``), forwarded on the wire as an
+SEPARATE audit-event channel (``agent_delta``), forwarded on the wire as an
 opaque ``CUSTOM`` event — a generic AG-UI client could not render it as
 streaming text at all; it saw one whole-text ``TEXT_MESSAGE_CONTENT`` only,
 after the fact. ③d upgrades the wire encoding so a generic client streams
@@ -334,7 +334,7 @@ async def _via_agui(script) -> list:
 
 @pytest.mark.asyncio
 async def test_local_and_remote_reconstruct_the_identical_streamed_sequence() -> None:
-    """Tier 2: ★local ≡ remote — the SAME script (N ``agent_delta`` chat-events
+    """Tier 2: ★local ≡ remote — the SAME script (N ``agent_delta`` audit-events
     + the terminal ``kind="agent"`` completion) drives ``InProcessTransport``
     and the AG-UI wire (real ``AgUiEmitter`` → real SSE → real
     ``AgUiTransport``); the reyn client's reconstructed Frame sequence is

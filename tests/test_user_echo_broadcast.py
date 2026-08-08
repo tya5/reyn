@@ -6,12 +6,12 @@ P6b-1). The user's OWN turn used to ride the SAME outbox (a
 ``self._put_outbox(OutboxMessage(kind="user", ...))`` call in
 ``submit_user_text``) — #3300 P1 (C) replaced that outbox echo (a category
 error: an INPUT written into the display/OUTPUT channel, plus a double-write of
-the same text) with a ``user_submitted`` chat-event every attached surface's
+the same text) with a ``user_submitted`` audit-event every attached surface's
 event→display handler renders — single source of truth = the inbox, echo =
 derived notification.
 
 Covers:
-  A. ``Session.submit_user_text`` emits a ``user_submitted`` chat-event (NOT an
+  A. ``Session.submit_user_text`` emits a ``user_submitted`` audit-event (NOT an
      outbox frame) carrying the raw text + chain_id + msg_id + meta — every
      ``subscribe_chat_events`` subscriber (= every attached client, simulated
      here as two independent subscriptions) sees it. Reverting the
@@ -25,7 +25,7 @@ Covers:
      context are orthogonal sinks, so the external-source fence (FP-0050/#1862)
      is provably untouched (raw broadcast text vs. fenced history text, same
      answer). This was itself migrated from a ``kind="user"`` outbox frame to
-     an ``intervention_answer_submitted`` chat-event (also #3300, the LAST site
+     an ``intervention_answer_submitted`` audit-event (also #3300, the LAST site
      to carry the category error Part A's fix already retired elsewhere) — the
      assertions below read the event (``event_log`` subscriber), not the
      outbox, following the exact same precedent Part A does.
@@ -70,7 +70,7 @@ from tests._support.agent_session import make_session
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
-    """Minimal real Session — no router/registry needed for the chat-event
+    """Minimal real Session — no router/registry needed for the audit-event
     invariants exercised here."""
     session = make_session(
         agent_name=agent_name,
@@ -83,7 +83,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> Session:
 
 
 class _EventSink:
-    """A real (non-mock) chat-event subscriber — a plain callback collector,
+    """A real (non-mock) audit-event subscriber — a plain callback collector,
     standing in for one attached client's ``on_chat_event`` entry point."""
 
     def __init__(self) -> None:
@@ -104,14 +104,14 @@ async def _get(sub, timeout: float = 2.0) -> OutboxMessage:
 
 
 # ---------------------------------------------------------------------------
-# Part A — Session.submit_user_text emits a user_submitted chat-event
+# Part A — Session.submit_user_text emits a user_submitted audit-event
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_submit_user_text_emits_user_submitted_to_every_subscriber(tmp_path, monkeypatch):
-    """Tier 2: submit_user_text emits a "user_submitted" chat-event to EVERY
-    chat-event subscriber, not just the inbox that drives the turn.
+    """Tier 2: submit_user_text emits a "user_submitted" audit-event to EVERY
+    audit-event subscriber, not just the inbox that drives the turn.
 
     Two independent subscriptions stand in for two attached thin clients
     (client A = the submitter, client B = a peer). Both must see the SAME
@@ -275,11 +275,11 @@ def _make_iv(
 @pytest.mark.asyncio
 async def test_free_text_answer_broadcasts_answer_event(tmp_path, monkeypatch):
     """Tier 2: a resolved free-text answer (no choices — ask_user) broadcasts
-    an "intervention_answer_submitted" chat-event carrying the raw answer
+    an "intervention_answer_submitted" audit-event carrying the raw answer
     text, in addition to the existing history append + audit event.
 
     Migrated from the retired ``kind="user"`` outbox-frame assertion (#3300 —
-    event-ifying the last outbox echo site) to the chat-event it was replaced
+    event-ifying the last outbox echo site) to the audit-event it was replaced
     with, per the "migrate the assertion, don't delete the gate" rule."""
     monkeypatch.chdir(tmp_path)
     outbox: list[OutboxMessage] = []

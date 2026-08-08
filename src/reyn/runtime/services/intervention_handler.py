@@ -90,10 +90,10 @@ def _user_frame_meta(attribution: "dict | None") -> dict:
     """Mirrors ``session._user_frame_meta`` (kept in sync — see that
     docstring for the full rationale).
 
-    Builds ``meta`` for the ``intervention_answer_submitted`` chat-event that
+    Builds ``meta`` for the ``intervention_answer_submitted`` audit-event that
     broadcasts an intervention answer's DISPLAY text (ADR-0039 multi-client
-    input-broadcast fix, migrated from a ``kind="user"`` outbox frame to a
-    chat-event as part of #3300 — see the emit site in ``deliver_answer_to``).
+    input-broadcast fix, migrated from a ``kind="user"`` outbox frame to an
+    audit-event as part of #3300 — see the emit site in ``deliver_answer_to``).
     ``attribution`` is ``None`` for every local UI caller (the inline CUI's
     free-text-answer / choice-region paths) → empty meta, the renderer shows
     the bare operator line. The AG-UI answer path (``endpoint.py._handle_answer``)
@@ -337,7 +337,7 @@ class InterventionHandler:
             answer_text=text if not iv.choices else "",
             **attrib,
         )
-        # ADR-0039 multi-client input-broadcast fix, migrated to a chat-event
+        # ADR-0039 multi-client input-broadcast fix, migrated to an audit-event
         # (part of #3300 — the last site still using the category error
         # #3301/P1(C) retired for the ordinary-submit path: an INPUT written
         # into the display/OUTPUT channel). Every answer path (TUI free-text /

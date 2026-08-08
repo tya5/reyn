@@ -19,7 +19,7 @@ Three namespaces:
   A ``CUSTOM`` ``name``; ``value`` is ``{"text": <the display line text>}``.
   (``presentation`` also carries its render-node model on the ``_reyn`` block's
   ``meta.nodes``, inert on the wire.) Closed member set (below).
-- ``reyn.event.<etype>`` — a reyn chat-event (working-indicator axis) with no
+- ``reyn.event.<etype>`` — a reyn audit-event (working-indicator axis) with no
   standard AG-UI analog. A ``CUSTOM`` ``name``; ``value`` is the event's data
   object. Closed member set (below).
 - ``reyn.intervention.<kind>`` — the HITL frontend-tool ``toolName``. ``<kind>``
@@ -48,7 +48,7 @@ INTERVENTION_NS = "reyn.intervention"
 # Human-readable namespace summaries — enumerated in the profile doc section.
 NAMESPACES: dict[str, str] = {
     DISPLAY_NS: "a reyn display frame with no standard AG-UI analog (CUSTOM name; value: {text})",
-    EVENT_NS: "a reyn chat-event with no standard AG-UI analog (CUSTOM name; value: the event data object)",
+    EVENT_NS: "a reyn audit-event with no standard AG-UI analog (CUSTOM name; value: the event data object)",
     INTERVENTION_NS: "the HITL intervention frontend-tool toolName (open namespace; args: {prompt, detail, choices, suggestions})",
 }
 
@@ -125,7 +125,7 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "reyn.display.tool_call_failed", DISPLAY_NS, "{text: str}",
         "a tool-call failure trace line",
     ),
-    # ── reyn.event.<etype> — chat-events with no standard AG-UI analog ──
+    # ── reyn.event.<etype> — audit-events with no standard AG-UI analog ──
     CustomName(
         "reyn.event.user_answered_intervention", EVENT_NS, "the event data object",
         "the user answered an intervention (working-indicator axis)",
@@ -161,7 +161,7 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "{agent, session_id}, the identity a client keys its display/reset "
         "on. Emitted at the registry attach seam (`AgentRegistry.attach`/"
         "`attach_session`), put directly on `repl_outbox` as a stream "
-        "BARRIER (no session's own chat-events, since that stream is the "
+        "BARRIER (no session's own audit-events, since that stream is the "
         "thing being swapped) — forwarded ahead of any consumer (N2, a "
         "separate PR, adds the client-side reset)",
     ),
@@ -172,7 +172,7 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "produced it, #3656: a turn that calls a tool emits more than one "
         "assistant message, and the rounds are told apart by this); a "
         "NON-PERSISTENT, purely additive notification "
-        "(the owner-ratified L4 chat-event route, replacing the earlier "
+        "(the owner-ratified L4 audit-event route, replacing the earlier "
         "OutboxMessage-kind ADR wording) — the single source of truth stays "
         "the completed full-text kind=\"agent\" OutboxMessage emitted exactly "
         "once at turn end (L9 whole-persist is unaffected). A surface with no "

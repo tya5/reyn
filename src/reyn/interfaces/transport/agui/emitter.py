@@ -3,7 +3,7 @@
 The single-writer server holds the session; a remote client attaches over
 HTTP+SSE. This emitter is the server half of that wire: it consumes the SAME
 unified ``Frame`` stream the local :class:`~reyn.interfaces.transport.in_process.InProcessTransport`
-produces (display outbox + renderer-relevant chat-events) and serializes it to
+produces (display outbox + renderer-relevant audit-events) and serializes it to
 AG-UI SSE via :mod:`reyn.interfaces.transport.agui.protocol`. Because both
 transports feed off the identical frame source, *local ≡ remote by construction*
 (D2) — the emitter adds only wire framing, never new render semantics.
@@ -32,12 +32,12 @@ its WaitingOn state.
 It then streams each frame as its AG-UI **wire sequence** (:func:`encode_frame_wire_streaming` —
 a whole text message is the canonical ``TEXT_MESSAGE_START`` → ``…_CONTENT`` →
 ``…_END`` triplet, P4; a message that streamed (#3288 ③b/③d, ``agent_delta``
-chat-events) instead gets a REAL multi-CONTENT sequence — one ``TEXT_MESSAGE_START``
+audit-events) instead gets a REAL multi-CONTENT sequence — one ``TEXT_MESSAGE_START``
 at the first delta, one ``TEXT_MESSAGE_CONTENT`` per delta, one ``TEXT_MESSAGE_END``
 at completion carrying the completion's full text — via a ``TextStreamTracker``
 this emitter owns, scoped to THIS connection; every other frame is a single
 event), and after each frame emits a ``STATE_DELTA`` when the projected status
-changed — the current WaitingOn label is tracked off the chat-event stream so the
+changed — the current WaitingOn label is tracked off the audit-event stream so the
 remote status panel follows Thinking / Running / Waiting-for-you without a
 second source.
 """
@@ -59,7 +59,7 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.agui.state import StatusModel, project_status
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 
-# WaitingOn label derivation off the chat-event stream — a lightweight, local
+# WaitingOn label derivation off the audit-event stream — a lightweight, local
 # mirror of the renderer's ``_WAITING_ON_BY_EVENT`` table + turn lifecycle, kept
 # here so the emitter need not import the inline app (which pulls the renderer).
 # turn_settled/completed/cancelled → idle (None); tool_called → Running <tool>.

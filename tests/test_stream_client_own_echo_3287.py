@@ -4,7 +4,7 @@ Repro (real TTY, ``reyn chat --cui``): a turn that goes through a real LLM
 round-trip prints the user's own line TWICE — ``prompt_session.prompt_async``
 (``run_input_loop``, ``stream_client.py``) already leaves ``you > <text>`` on
 the terminal the instant Enter is pressed, and then the broadcast
-``user_submitted`` chat-event this same submission produces re-renders it a
+``user_submitted`` audit-event this same submission produces re-renders it a
 second time via ``renderer.on_chat_event`` (``run_output_loop``). A local
 ``/quit`` never reaches ``submit_user_text`` (short-circuited earlier in
 ``run_input_loop``), so it never emits a ``user_submitted`` event and never

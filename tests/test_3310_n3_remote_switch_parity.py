@@ -1,7 +1,7 @@
 """Tier 2: #3310 N3 — remote (AG-UI) parity for session switch.
 
 N1 (#3321) gave the LOCAL registry seam a ``session_attached`` barrier
-chat-event on ``repl_outbox``. A REMOTE AG-UI client never sees it: the
+audit-event on ``repl_outbox``. A REMOTE AG-UI client never sees it: the
 emitter's per-connection ``_SessionFrameSource`` reads a session's own
 ``outbox_hub``/``chat_events`` directly (never ``registry.repl_outbox``), and
 is bound to ONE session object for the SSE connection's lifetime — so a
@@ -47,12 +47,12 @@ Gates:
 ★co-vet follow-up on this PR (#3322):
 
 (a) The announce is enqueued onto this connection's queue BEFORE
-``_bind(target)`` makes the new session's chat-event subscriber live (moved,
-2-line reorder) — a chat-event the new session emits synchronously cannot
+``_bind(target)`` makes the new session's audit-event subscriber live (moved,
+2-line reorder) — an audit-event the new session emits synchronously cannot
 reach the queue before its subscriber exists, so "barrier precedes any of the
 new session's own frames" holds BY CONSTRUCTION, not merely because there is
 currently no ``await`` between the two steps. Witnessed by an adversary that
-floods the target session's OWN chat-event stream starting the instant the
+floods the target session's OWN audit-event stream starting the instant the
 switch is triggered (``test_switch_announce_precedes_any_new_session_chat_event``).
 
 (b) The strip-falsify RED for gate 1 is bounded and assertion-based, not a
@@ -315,10 +315,10 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_switch_announce_precedes_any_new_session_chat_event(tmp_path) -> None:
     """Tier 2: ★co-vet #3322 (a). The ``session_attached`` announce reaches
-    this connection's own frame queue BEFORE the target session's chat-event
+    this connection's own frame queue BEFORE the target session's audit-event
     subscriber goes live — never after.
 
-    An adversary floods session B's OWN chat-event stream with real
+    An adversary floods session B's OWN audit-event stream with real
     ``turn_started`` events (a type in the renderer-forwarded set) starting
     the INSTANT the switch request is queued. Such an event can only ever
     reach ``_q`` once B's subscriber is live (``add_subscriber`` does not

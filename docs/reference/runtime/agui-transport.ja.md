@@ -34,7 +34,7 @@ Reyn のチャットクライアントはストリームを消費する UI で�
     異なる意図である — こちらは「まだ turn が始まっていない特定の queued item」を対象と
     し、現在実行中の turn は対象にしない。サーバー側の意味論(`Session.cancel_queued`):
     queued の場合 → 除去(WAL `inbox_cancel` tombstone + 同期的な snapshot-prune の後、
-    `inbox_cancel` chat-event delta を emit。下記「STATE_* — ステータス read-model」と
+    `inbox_cancel` audit-event delta を emit。下記「STATE_* — ステータス read-model」と
     `reyn.event.inbox_cancel` を参照)。既に dispatch 済みの場合 → no-op(`cancel_inflight`
     へのエスカレーションは行わない)。冪等(同じ id への2回目のキャンセルは no-op — at-most-once
     の再送に対して安全)。
@@ -158,7 +158,7 @@ streaming が適用されるのは**narrative reply 経路のみ**である。`R
 たびに `reyn.event.agent_delta` を emit し、#3288 ③d がそれを標準の text surface に
 マップする)は代わりに**本物の multi-CONTENT シーケンス**を得る: 最初の delta で
 `TEXT_MESSAGE_START`、delta ごとに 1 つの本物の `TEXT_MESSAGE_CONTENT`(それぞれが自分
-自身の `_reyn` を運び、その正確な `agent_delta` chat-event を再構成する——そのため reyn
+自身の `_reyn` を運び、その正確な `agent_delta` audit-event を再構成する——そのため reyn
 client のインフライトな描画は、フレームが in-process で届いたのかこのワイヤー経由で届いた
 のかによらず同一である)、そして完了時に `TEXT_MESSAGE_END`。★完了は **END のみ**に
 マップされる——全文を再送する 2 つ目の CONTENT は**決して**発行しない(delta をライブ描画
@@ -209,7 +209,7 @@ reasoning display frame を再構築し、その描画はバイト単位で不�
 
 ### Working-indicator path(turn lifecycle + tool 軸)
 
-| reyn chat-event               | AG-UI event      |
+| reyn audit-event              | AG-UI event      |
 |-------------------------------|------------------|
 | `turn_started`                | `RUN_STARTED`    |
 | `turn_settled` / `turn_completed` / `turn_cancelled` | `RUN_FINISHED` |
@@ -340,12 +340,12 @@ durability failure(#2259)でセッションが fail-stop した後は理由(例:
 `Session.queued_user_messages()`)、`turn_active` は turn が現在 dispatch 中かどうか
 (`Session.turn_active`)。同じ snapshot+delta channel に乗せることで、client は
 **late-joiner-safe** になる: turn 途中で接続した(dispatch を引き起こした
-`turn_started` chat-event を見逃した)client も、部分的な event 由来の推測ではなく
+`turn_started` audit-event を見逃した)client も、部分的な event 由来の推測ではなく
 snapshot から正しい queue + turn-active 状態を得る。P2a はこの状態の publish のみで、
 sent-queue widget としての描画は P2b。
 
 item が `queue` から抜けるのは、同じ snapshot+delta channel 上の互いに排他な2つの
-granular chat-event delta のいずれかを経由する — `turn_started`(dispatch された。下記
+granular audit-event delta のいずれかを経由する — `turn_started`(dispatch された。下記
 「Working-indicator path」参照)、または `inbox_cancel`(上記の `cancel_queued` client
 message で id 指定キャンセルされた。#3300 P3)。server 自身の atomic な
 queued/dispatched 判定が、ある item についてこの2つのうち正確に一方のみが必ず発火する
@@ -407,7 +407,7 @@ display 行のテキストである。
 
 ### `reyn.event.<etype>`
 
-標準的な AG-UI 対応物を持たない reyn の chat-event。`value` はそのイベントのデータ
+標準的な AG-UI 対応物を持たない reyn の audit-event。`value` はそのイベントのデータ
 オブジェクトである。ほとんどのメンバーは working-indicator 軸(turn-lifecycle /
 tool-call / user-submitted / cancel)だが、`agent_delta`(#3288 ③b)は**別系統の
 streaming-notification 軸**である——下記の行、および `frames.py` の
@@ -454,7 +454,7 @@ name ではなく)標準の `TEXT_MESSAGE_CONTENT` surface にマップする(#3
 ## Local ≡ remote
 
 server は、ローカルの in-process transport が生成するのと**同一の**統一 frame stream
-(display outbox + レンダラーに関連する chat-event の部分集合)をシリアライズする。AG-UI
+(display outbox + レンダラーに関連する audit-event の部分集合)をシリアライズする。AG-UI
 transport が加えるのは wire framing のみであり、新しい render semantics は一切加えない —
 そのため remote レンダラーの display バイト列と working-indicator の遷移は、ローカルの
 ものと同一である。
@@ -470,10 +470,10 @@ tab を持ち、それぞれが closed-set の `RadioSet` か自由記述の `In
 delivery)、除去されずに ✓ / inert とマークされる——そのため同時に複数の
 intervention が pending であっても、それぞれが順不同で独立に回答可能であり、
 1 つが他方を押しのけることはない)、A2A peer、上記の AG-UI HITL round-trip)は
-`intervention_answer_submitted` という chat-event を emit する(#3300 — 最後に
+`intervention_answer_submitted` という audit-event を emit する(#3300 — 最後に
 残っていた outbox `kind="user"` ブロードキャスト site を event 化したもので、下記の
 `user_submitted` の前例に正確に倣う)。送信されたターン(`Session.submit_user_text`)は
-兄弟にあたる `user_submitted` という chat-event を emit する(#3300 P1 C — 以前の
+兄弟にあたる `user_submitted` という audit-event を emit する(#3300 P1 C — 以前の
 outbox-echo write を置き換えた。INPUT を display/OUTPUT channel に書き込むのは
 category error だったため)。どちらも同一の統一 frame stream に
 `EventFrame` として乗る(`_TURN_AND_ANSWER_EVENTS`、`transport/frames.py`)——
@@ -507,7 +507,7 @@ broadcast の `user_submitted` event で再度描画すると、LLM round-trip �
   する。`ClientTransport.submit_user_text` はそのため割り当てられた `msg_id`
   を返す(以前は `None` だった)——`InProcessTransport` は
   `Session.submit_user_text` 自身の戻り値をそのまま返す(同一タスク内なので
-  race フリー: chat-event の emit から呼び出し元へ id が届くまでの間に何も
+  race フリー: audit-event の emit から呼び出し元へ id が届くまでの間に何も
   yield しない)。
 - **リモート(`AgUiTransport`)**: 代わりに broadcast event の
   `meta.auth_connection_id` を、クライアント自身の `connection_id` と比較する

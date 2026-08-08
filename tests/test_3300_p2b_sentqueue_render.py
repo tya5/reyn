@@ -18,7 +18,7 @@ describes for the render side:
 
 The client queue model is driven by ``RemoteQueueView`` (#3300 P2a, REUSED
 as-is — its seq-gated merge is not reinvented here), fed by the SAME
-``user_submitted``/``turn_started`` chat-events every surface already
+``user_submitted``/``turn_started`` audit-events every surface already
 receives.
 
 Gates covered (per the architect's P2b scope comment):

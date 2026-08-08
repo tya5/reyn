@@ -211,7 +211,7 @@ def test_working_line_cancelling_overrides_waiting_on():
 
 
 def test_tool_called_sets_running_state():
-    """Tier 2: a "tool_called" chat event (the SAME event lifecycle_forwarder.py
+    """Tier 2: a "tool_called" audit event (the SAME event lifecycle_forwarder.py
     already consumes to render the scrollback's "▸ tool(...)" trace line —
     this is a second, independent subscriber, not new plumbing) makes the
     working row name that tool."""

@@ -58,7 +58,7 @@ async def run_input_loop(
     terminal once Enter is pressed — that IS the user-line echo. Every
     submitted line is handed to :func:`route_input_line`, which records the
     ``msg_id`` the transport's ``submit_user_text`` assigns (the SAME
-    correlation id — #3300 P2a — the broadcast ``user_submitted`` chat-event
+    correlation id — #3300 P2a — the broadcast ``user_submitted`` audit-event
     carries) into this set, so :func:`run_output_loop` can recognise that
     event BY ID and skip re-rendering it — otherwise the terminal's own echo
     and the event-driven echo both land, printing the line twice. Correlating
@@ -158,7 +158,7 @@ async def route_input_line(
     screen. On an interactive TTY ``prompt_session.prompt_async`` did (the same
     fact ``own_submissions`` exists for, #3287), so the shared layer must not
     echo it again; on a piped run nothing did, and the echo is the only record
-    of what was asked for. A command emits no ``user_submitted`` chat-event, so
+    of what was asked for. A command emits no ``user_submitted`` audit-event, so
     the suppression ``own_submissions`` performs for a TURN has no equivalent
     here — the decision has to be made before the display is written, not after.
 
@@ -181,7 +181,7 @@ async def route_input_line(
 
     ``own_submissions`` (#3287) is populated ONLY on the branch that actually
     calls ``submit_user_text`` — that is the ONLY branch that produces a
-    ``user_submitted`` chat-event for ``run_output_loop`` to match against. An
+    ``user_submitted`` audit-event for ``run_output_loop`` to match against. An
     intervention answer takes the direct-delivery branch above and returns
     before reaching it, so nothing is added for it (there is no matching
     ``user_submitted`` event to ever consume such an entry). The transport's
@@ -222,7 +222,7 @@ async def run_output_loop(
 ) -> None:
     """Drain the transport's unified frame stream to the renderer.
 
-    A ``user_submitted`` chat-event is a BROADCAST — every attached client
+    A ``user_submitted`` audit-event is a BROADCAST — every attached client
     (this one included) gets it, so a second attached client can still be
     relying on it as the only render of a turn it didn't type itself. On an
     interactive TTY, THIS client's own submissions are different:
@@ -254,7 +254,7 @@ async def run_output_loop(
     - ``own_submissions`` (a ``msg_id`` set, F1): the LOCAL path
       (``InProcessTransport``) has no connection-id concept, so it correlates
       by the ``msg_id`` its ``submit_user_text`` call returns instead — also
-      race-free (same-task, no yield point between the chat-event emit and
+      race-free (same-task, no yield point between the audit-event emit and
       the id reaching the caller).
 
     Only one of the two is ever non-``None`` for a given session (see

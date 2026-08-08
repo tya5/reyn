@@ -5,7 +5,7 @@ the accept-edge (``Session._put_inbox``) already fail-stops synchronously
 (raises ``DurabilityHaltError`` — the pre-existing SAFETY mechanism, untouched
 here), but an operator who is IDLE (not currently submitting anything) had no
 way to learn the session halted until their next interaction. Issue #2280 asks
-for a proactive surface — this module gates that a `session_halted` chat-event
+for a proactive surface — this module gates that a `session_halted` audit-event
 now fires the moment the fail-stop latches (on EITHER edge, guarded to fire
 once), and that it reaches every operator-facing surface:
 
@@ -81,7 +81,7 @@ async def _inject_persistent_durability_failure(log: StateLog) -> None:
 async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
     """Tier 2: the PROCESS-edge fail-stop (``run_one_iteration``, the exact
     path an IDLE operator's halt is discovered on — no exception raised to
-    any caller) emits a ``session_halted`` chat-event carrying ``reason`` the
+    any caller) emits a ``session_halted`` audit-event carrying ``reason`` the
     moment it latches. A second process-edge check does not re-emit (guarded
     on ``halted_reason is None``). RED if the emit is absent: an idle
     operator would have no proactive signal at all, only ever the accept-edge

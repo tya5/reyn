@@ -15,7 +15,7 @@ connect) + ``STATE_DELTA`` (on change). This module owns three pieces:
   ``Session.turn_active``) onto this SAME snapshot/delta channel, so a queue
   consumer (a test harness today; the P2b sent-queue widget later) is
   late-joiner-safe for free: it need not have observed every prior
-  ``user_submitted``/``turn_started`` chat-event, only the current snapshot.
+  ``user_submitted``/``turn_started`` audit-event, only the current snapshot.
 - :class:`StatusModel` — the server-side differ: holds the last projected view
   and yields the changed keys (:meth:`delta`) so the emitter streams a compact
   ``STATE_DELTA`` instead of a full snapshot on every tick.
@@ -51,7 +51,7 @@ _WIRE_KEYS = (
     # channel (connect-time snapshot + delta thereafter) so a remote client
     # is late-joiner-safe: a client connecting mid-turn gets the correct
     # queue + turn_active from the snapshot rather than needing to have
-    # observed every prior turn_started/user_submitted chat-event.
+    # observed every prior turn_started/user_submitted audit-event.
     "queue",
     "turn_active",
     # The order-race gate token (#3300 P2a design-pass pin D) — see
@@ -69,7 +69,7 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
 
     ``snapshot`` is the CUI's ``_snapshot`` dict (or ``None`` when no session is
     attached). ``waiting_on`` is the current WaitingOn label (from the
-    chat-event stream) folded in so the remote panel shows the same
+    audit-event stream) folded in so the remote panel shows the same
     Thinking / Running / Waiting-for-you state the local one does.
     """
     snap = snapshot or {}
@@ -140,7 +140,7 @@ class RemoteStatusView:
 class RemoteQueueView:
     """Client-side sent-queue reader (#3300 P2a) — merges a ``STATE_SNAPSHOT``
     queue baseline with the granular ``user_submitted`` (enqueue) /
-    ``turn_started`` (dispatch) chat-event deltas, using the **seq-gate**
+    ``turn_started`` (dispatch) audit-event deltas, using the **seq-gate**
     order-race protocol (design-pass pin D).
 
     Why a seq gate: ``RemoteStatusView`` above is safe because its delta is
@@ -223,7 +223,7 @@ class RemoteQueueView:
 
     def apply_turn_active(self, turn_active: bool) -> None:
         """Apply a plain turn-active flip (e.g. from a ``turn_settled``
-        chat-event or a ``STATE_DELTA``'s ``turn_active`` key) — not
+        audit-event or a ``STATE_DELTA``'s ``turn_active`` key) — not
         seq-gated: idempotent boolean, no resurrection risk."""
         self.turn_active = turn_active
 

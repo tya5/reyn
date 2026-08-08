@@ -139,7 +139,7 @@ async def run_remote_repl(
             this widened return type).
             ``submit_user_text`` (#3287) additionally reads ``resp["msg_id"]``
             here — the server's echo of the SAME correlation id its broadcast
-            ``user_submitted`` chat-event carries (#3300 P2a). This id is
+            ``user_submitted`` audit-event carries (#3300 P2a). This id is
             NOT what closes remote own-echo suppression, though (#3309 F2):
             it only becomes visible once this await returns, and the server
             may already have pushed the SSE broadcast for the same submission

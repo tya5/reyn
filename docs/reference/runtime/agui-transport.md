@@ -33,7 +33,7 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
     `cancel_inflight` above: this targets one specific queued item that has not
     started a turn yet, never the currently-running turn. Server-side semantics
     (`Session.cancel_queued`): queued → removed (WAL `inbox_cancel` tombstone +
-    synchronous snapshot-prune, then an `inbox_cancel` chat-event delta, see
+    synchronous snapshot-prune, then an `inbox_cancel` audit-event delta, see
     "STATE_* — the status read-model" and `reyn.event.inbox_cancel` below);
     already dispatched → a no-op (never escalated to `cancel_inflight`);
     idempotent (a second cancel of the same id is a no-op, safe for an
@@ -158,7 +158,7 @@ the control-sentinel dispositions above). `AgentRegistry.attach`/
 `{agent, session_id}` — the identity a client keys its display/reset cache on
 — put DIRECTLY on `repl_outbox` (`registry.py`, the
 `_announce_session_attached` helper), never routed through the just-swapped
-session's own chat-events.
+session's own audit-events.
 
 The barrier property is the point: the `self._attached = key` flip and the
 `repl_outbox.put_nowait(...)` happen with NO `await` in between (both are
@@ -215,16 +215,16 @@ untouched and not involved):
   fan-out — see *the control-sentinel dispositions* above). On seeing it, it
   **enqueues the `session_attached` `EventFrame` onto this connection's own
   queue BEFORE re-pointing itself at the target session** (`registry.get_session`
-  + subscribing to the new session's chat-events) — the SAME vocabulary N1
+  + subscribing to the new session's audit-events) — the SAME vocabulary N1
   defined, an independent per-connection equivalent since `repl_outbox` never
   reaches a remote surface. This ordering (announce, then subscribe) is
-  load-bearing, not incidental: the new session's chat-event subscriber does
-  not exist yet when the announce is enqueued, so a chat-event the new
+  load-bearing, not incidental: the new session's audit-event subscriber does
+  not exist yet when the announce is enqueued, so an audit-event the new
   session emits cannot possibly reach this connection's queue ahead of the
   barrier — true BY CONSTRUCTION regardless of whether an `await` is ever
   later introduced between the two steps (witnessed by
   `test_switch_announce_precedes_any_new_session_chat_event`, an adversary
-  that floods the target session's own chat-event stream the instant the
+  that floods the target session's own audit-event stream the instant the
   switch is triggered). It never calls `registry.attach_session` itself, so
   it cannot race or double-apply that side effect — it only re-points THIS
   connection's own view. A registry-less construction (every pre-N3 unit test)
@@ -288,7 +288,7 @@ reconstruction block; START/END are generic scaffold the reyn client decodes to
 raw LLM content-delta as it arrives; #3288 ③d maps it onto the STANDARD text
 surface) instead gets a REAL multi-CONTENT sequence: `TEXT_MESSAGE_START` at the
 first delta, one genuine `TEXT_MESSAGE_CONTENT` per delta (each carrying its OWN
-`_reyn`, reconstructing that exact `agent_delta` chat-event — so a reyn client's
+`_reyn`, reconstructing that exact `agent_delta` audit-event — so a reyn client's
 in-flight rendering, if any, is identical whether the frames arrived in-process
 or over this wire), then `TEXT_MESSAGE_END` at completion. ★The completion is
 mapped to **END ONLY — never a second CONTENT re-sending the full text** (a
@@ -342,7 +342,7 @@ Two boundaries hold this signal in place:
 
 ### Working-indicator path (turn lifecycle + tool axis)
 
-| reyn chat-event               | AG-UI event      |
+| reyn audit-event              | AG-UI event      |
 |-------------------------------|------------------|
 | `turn_started`                | `RUN_STARTED`    |
 | `turn_settled` / `turn_completed` / `turn_cancelled` | `RUN_FINISHED` |
@@ -485,11 +485,11 @@ item `{msg_id, chain_id, text}` — `Session.queued_user_messages()`), and
 `turn_active` is whether a turn is currently dispatched
 (`Session.turn_active`). Riding the same snapshot+delta channel makes a client
 **late-joiner-safe**: connecting mid-turn (having missed the `turn_started`
-chat-event that dispatched the in-flight item) still gets the correct queue +
+audit-event that dispatched the in-flight item) still gets the correct queue +
 turn-active state from the snapshot, not a partial event-derived guess. P2a
 publishes this state only — rendering it as a sent-queue widget is P2b.
 
-An item leaves `queue` via one of two mutually-exclusive granular chat-event
+An item leaves `queue` via one of two mutually-exclusive granular audit-event
 deltas on the same snapshot+delta channel — `turn_started` (dispatched; see
 "Working-indicator path" below) or `inbox_cancel` (cancelled by id via the
 `cancel_queued` client message above, #3300 P3): the server's own atomic
@@ -571,7 +571,7 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 
 ### `reyn.event.<etype>`
 
-A reyn chat-event with no standard AG-UI analog. `value` is the event's data
+A reyn audit-event with no standard AG-UI analog. `value` is the event's data
 object. Most members are the working-indicator axis (turn-lifecycle /
 tool-call / user-submitted / cancel); `agent_delta` (#3288 ③b) is a SEPARATE
 streaming-notification axis — see its row below and the `_STREAMING_EVENTS`
@@ -1115,7 +1115,7 @@ skipped, not fatal.
 ## Local ≡ remote
 
 The server serializes the SAME unified frame stream the local in-process
-transport produces (display outbox + the renderer-relevant chat-event subset).
+transport produces (display outbox + the renderer-relevant audit-event subset).
 The AG-UI transport adds only wire framing, never new render semantics — so the
 remote renderer's display bytes and working-indicator transitions are identical
 to the local ones.
@@ -1146,10 +1146,10 @@ delivers targeted at THAT intervention's id — R1 by-id delivery — and marks
 it ✓/inert without removing it, so several simultaneously-outstanding
 interventions are each independently answerable, in any order, without one
 displacing another), an A2A peer, and the AG-UI HITL round-trip above) emits
-an `intervention_answer_submitted` chat-event (#3300 — event-ifying the LAST
+an `intervention_answer_submitted` audit-event (#3300 — event-ifying the LAST
 outbox `kind="user"` broadcast site, following the `user_submitted` precedent
 below exactly). A submitted turn (`Session.submit_user_text`) emits the
-sibling `user_submitted` chat-event (#3300 P1 C — replacing an earlier
+sibling `user_submitted` audit-event (#3300 P1 C — replacing an earlier
 outbox-echo write, a category error: an INPUT written into the display/OUTPUT
 channel). Both ride the SAME unified frame stream as an `EventFrame`
 (`_TURN_AND_ANSWER_EVENTS`, `transport/frames.py`) — the encode/decode is
@@ -1183,7 +1183,7 @@ DIFFERENT correlation mechanisms — one per transport shape, neither by text:
   `ClientTransport.submit_user_text` returns the assigned `msg_id`
   (previously `None`) — `InProcessTransport` returns `Session.submit_user_text`'s
   own return value directly, same-task and race-free (nothing yields between
-  the chat-event emit and the id reaching the caller).
+  the audit-event emit and the id reaching the caller).
 - **Remote (`AgUiTransport`)**: matches the broadcast event's
   `meta.auth_connection_id` against the client's OWN `connection_id` instead
   (`remote_client.py` mints it client-side with `uuid.uuid4()` BEFORE any

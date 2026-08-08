@@ -22,7 +22,7 @@ Design (the load-bearing invariants this module carries):
 
 - **Re-decided invariant (#3288 ③d): "1 frame ⇄ 1 ``_reyn``-bearing event"
   now holds ONLY for a non-streamed whole message.** ③b introduced
-  ``agent_delta`` chat-events (token-level LLM deltas); ③d gives them a REAL
+  ``agent_delta`` audit-events (token-level LLM deltas); ③d gives them a REAL
   multi-CONTENT wire lifecycle via :func:`encode_frame_wire_streaming` (used
   by :class:`~reyn.interfaces.transport.agui.emitter.AgUiEmitter` in place of
   :func:`encode_frame_wire`). For a message that streamed: N ``agent_delta``
@@ -417,7 +417,7 @@ _TURN_TERMINAL_ETYPES: "frozenset[str]" = frozenset(
 
 class TextStreamTracker:
     """Per-connection state correlating a streamed reply's ``agent_delta``
-    chat-events with its terminal ``kind="agent"`` completion (#3288 ③d),
+    audit-events with its terminal ``kind="agent"`` completion (#3288 ③d),
     keyed by ``chain_id`` — the turn-correlation id both carry
     (``RouterLoop._emit_agent_delta`` stamps it on every delta;
     ``RouterLoop.run``'s terminal ``put_outbox(meta={"chain_id": ...})`` stamps

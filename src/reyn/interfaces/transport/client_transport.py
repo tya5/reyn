@@ -5,7 +5,7 @@ transport seam so a local run exercises the same client path a remote client
 (P2, AG-UI / SSE) will. A ``ClientTransport`` presents the client with:
 
 - a unified, ordered, tagged frame stream (:meth:`frames`) merging the display
-  outbox and the renderer-relevant chat-event subset (see
+  outbox and the renderer-relevant audit-event subset (see
   :mod:`reyn.interfaces.transport.frames`); and
 - a send seam (:meth:`submit_user_text`, :meth:`answer_intervention_text`,
   :meth:`answer_intervention_choice`, :meth:`put_display`,
@@ -15,7 +15,7 @@ transport seam so a local run exercises the same client path a remote client
 That last property is the **single-writer contract**: the client (renderer +
 input handling) writes to the world ONLY through the transport, which is what
 makes the future remote client single-writer-safe for free. The in-process
-implementation composes the existing forwarder + chat-event subscription behind
+implementation composes the existing forwarder + audit-event subscription behind
 this seam; a wire implementation (P2) is a second transport, not a second
 client codepath.
 
@@ -49,7 +49,7 @@ class ClientTransport(ABC):
 
     @abstractmethod
     def start(self) -> None:
-        """Begin producing frames (wire up the display + chat-event sources)."""
+        """Begin producing frames (wire up the display + audit-event sources)."""
 
     @abstractmethod
     def close(self) -> None:
@@ -64,7 +64,7 @@ class ClientTransport(ABC):
         """Submit a user turn (the ordinary new-turn path).
 
         Returns the server-assigned ``msg_id`` — the SAME correlation id the
-        broadcast ``user_submitted`` chat-event carries (#3300 P2a). Two
+        broadcast ``user_submitted`` audit-event carries (#3300 P2a). Two
         independent things read it (#3287/#3309):
 
         - the LOCAL (in-process) plain-loop client, whose own terminal already

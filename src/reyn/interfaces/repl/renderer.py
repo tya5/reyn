@@ -31,7 +31,7 @@ def _meta_prefix(meta: dict) -> str:
 
 def user_submitted_display_message(event) -> OutboxMessage:
     """Build the display :class:`OutboxMessage` for a ``user_submitted``
-    chat-event — the ONE neutralize-at-display-boundary seam every surface's
+    audit-event — the ONE neutralize-at-display-boundary seam every surface's
     ``on_chat_event`` (this module) / frame-pump handler
     (``interfaces.inline.textual_chat.app``) calls to render the user-line echo
     (#3300 P1 C).
@@ -52,7 +52,7 @@ def user_submitted_display_message(event) -> OutboxMessage:
 
 def intervention_answer_display_message(event) -> OutboxMessage:
     """Build the display :class:`OutboxMessage` for an
-    ``intervention_answer_submitted`` chat-event — the SAME
+    ``intervention_answer_submitted`` audit-event — the SAME
     neutralize-at-display-boundary seam :func:`user_submitted_display_message`
     uses, applied to the last remaining answer-echo path (#3300, following the
     #3301/P1(C) ``user_submitted`` precedent exactly).
@@ -175,7 +175,7 @@ class ConsoleChatRenderer(ChatRenderer):
         elif etype == "intervention_answer_submitted":
             # #3300: the last outbox `kind="user"` broadcast site
             # (InterventionHandler.deliver_answer_to) migrated to this
-            # chat-event — same render/neutralize idiom as user_submitted.
+            # audit-event — same render/neutralize idiom as user_submitted.
             self.message(intervention_answer_display_message(event))
         elif etype == "session_halted":
             self._halted_reason = (event.data or {}).get("reason")
@@ -992,7 +992,7 @@ class InlineChatRenderer(ChatRenderer):
         elif etype == "intervention_answer_submitted":
             # #3300: the last outbox `kind="user"` broadcast site
             # (InterventionHandler.deliver_answer_to) migrated to this
-            # chat-event — same render/neutralize idiom as user_submitted, and
+            # audit-event — same render/neutralize idiom as user_submitted, and
             # the same #3292 now-unreached status (see the note above) — the
             # default TTY path has its own handler
             # (TextualChatApp._handle_intervention_answer_event).

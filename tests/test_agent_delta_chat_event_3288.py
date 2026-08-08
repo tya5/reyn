@@ -1,10 +1,10 @@
-"""Tier 2: #3288 ③b — the "agent_delta" chat-event, end-to-end through a real
+"""Tier 2: #3288 ③b — the "agent_delta" audit-event, end-to-end through a real
 Session + RouterLoop.
 
 The owner's ratified decision (issue #3288 comment thread) replaces the
 original ADR L4 wording ("add ``agent_delta`` to the ``OutboxMessage`` closed
-vocabulary") with a chat-event route: a partial rides ``host.events`` (the
-SAME chat-event channel ``user_submitted`` / ``router_represent_round``
+vocabulary") with an audit-event route: a partial rides ``host.events`` (the
+SAME audit-event channel ``user_submitted`` / ``router_represent_round``
 already use), never ``OutboxMessage``. This file witnesses the two invariants
 that decision must preserve:
 
@@ -42,7 +42,7 @@ _PIECES = ["hello ", "streamed ", "world"]
 
 
 class _EventSink:
-    """A real (non-mock) chat-event subscriber — a plain callback collector
+    """A real (non-mock) audit-event subscriber — a plain callback collector
     (mirrors ``tests/test_user_submitted_render_3300.py``'s ``_EventSink``)."""
 
     def __init__(self) -> None:
@@ -84,7 +84,7 @@ def test_agent_delta_is_forwarded_and_profiled_on_the_wire() -> None:
 
 
 def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monkeypatch) -> None:
-    """Tier 2: streamed deltas surface as "agent_delta" chat-events, in order,
+    """Tier 2: streamed deltas surface as "agent_delta" audit-events, in order,
     while the outbox + history stay whole-persist (exactly once, full text) —
     the L9 invariant ③b must not disturb."""
     monkeypatch.chdir(tmp_path)
@@ -109,7 +109,7 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
 
     _run(session._handle_inbox_text("hi", chain_id="chain-delta-1"))
 
-    # (1) one "agent_delta" chat-event per piece, in order, carrying the raw
+    # (1) one "agent_delta" audit-event per piece, in order, carrying the raw
     # per-chunk text — the non-vacuity witness that streaming actually ran
     # (not just that on_content_delta was accepted and ignored).
     delta_events = [e for e in sink.events if e.type == "agent_delta"]
@@ -135,7 +135,7 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
 def test_non_streaming_turn_emits_no_agent_delta_events(tmp_path, monkeypatch) -> None:
     """Tier 2: non-vacuity witness — a turn whose ``call_llm_tools`` stand-in
     never invokes ``on_content_delta`` (the non-capable / non-streaming case)
-    produces ZERO "agent_delta" chat-events, proving the previous test's
+    produces ZERO "agent_delta" audit-events, proving the previous test's
     events came specifically from the callback firing, not from generic
     per-turn event emission."""
     monkeypatch.chdir(tmp_path)

@@ -89,7 +89,7 @@ def test_unrelated_event_is_dropped() -> None:
     """Tier 2: events with no matching on_<type> handler don't write to outbox.
 
     Lifecycle forwarder shares the EventLog subscriber slot with the
-    session's per-skill chat events — it must NOT echo phase / llm /
+    session's per-skill audit events — it must NOT echo phase / llm /
     skill events into the outbox (those are the per-skill forwarder's
     job).
     """
