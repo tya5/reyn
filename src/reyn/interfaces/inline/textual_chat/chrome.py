@@ -477,6 +477,14 @@ MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("pgup / pgdn", "scroll this pane"),
     ("↑", "back to composer"),
     ("esc", "back to composer"),
+    # Owned HERE rather than sourced from the app's ``BINDINGS`` (#3818). The
+    # binding still exists and still does the work — but Textual identifies the
+    # key as ``escape``, and rendering the identifier put ``escape  Close
+    # drawer`` directly under ``esc  back to composer``: one key, two
+    # spellings, one screen. reyn already owns how a key is written (every
+    # other row in every one of these tables), so the fix is to let it own this
+    # one too rather than to translate at the last moment.
+    ("esc", "close drawer"),
 ]
 
 #: Keys RESERVED by an approved-but-unimplemented feature — claimed, but bound
