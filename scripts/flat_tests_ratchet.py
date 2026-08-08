@@ -125,14 +125,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
-    measured = measured_flat_files()
+    # Read the module globals by NAME here (not via the callees' own default
+    # parameter values, bound once at def-time) so a test can monkeypatch
+    # `_TESTS_DIR`/`_BASELINE_PATH`/`_ROOT` on this module and have main()
+    # actually observe it — a default-arg is evaluated once at function
+    # definition, a name lookup inside a function body is not.
+    measured = measured_flat_files(_TESTS_DIR)
 
     if args.write_baseline:
-        write_baseline(measured)
+        write_baseline(measured, _BASELINE_PATH)
         print(f"Wrote {len(measured)} flat test filenames to {_BASELINE_PATH}")
         return 0
 
-    baseline = load_baseline()
+    baseline = load_baseline(_BASELINE_PATH)
     new = new_flat_files(measured, baseline)
 
     exit_code = 0
@@ -162,7 +167,7 @@ def main(argv: "list[str] | None" = None) -> int:
         )
 
     if args.check_growth:
-        old = baseline_at_ref(args.check_growth)
+        old = baseline_at_ref(args.check_growth, _BASELINE_PATH, _ROOT)
         if old is not None and len(baseline) > len(old):
             exit_code = 1
             added = baseline - old

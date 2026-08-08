@@ -17,9 +17,11 @@ from pathlib import Path
 
 import pytest
 
+import scripts.flat_tests_ratchet as flat_tests_ratchet
 from scripts.flat_tests_ratchet import (
     baseline_at_ref,
     load_baseline,
+    main,
     measured_flat_files,
     new_flat_files,
     write_baseline,
@@ -140,3 +142,88 @@ def test_baseline_at_ref_returns_none_when_the_ref_lacks_the_file(
         root=_real_git_repo,
     )
     assert result_missing is None
+
+
+# ── main()'s --check-growth branch — the gate's OWN reason to exist ─────────
+# lead-coder's blocking review finding: 12 tests covered every HELPER, none
+# covered whether `main(["--check-growth", ref])` actually rejects growth —
+# stripping the growth-rejection branch entirely left every prior test green.
+# These drive the real CLI entry point end-to-end against a real git repo,
+# both directions (grow rejects / shrink allows), matching the two-sided
+# requirement lead-coder's second blocking comment added.
+
+
+@pytest.fixture
+def _repo_with_tests_dir(_real_git_repo: Path) -> Path:
+    """Extends :func:`_real_git_repo` with a real ``tests/`` directory whose
+    flat files match the committed baseline exactly — so the growth-check
+    tests below isolate `--check-growth`'s OWN pass/fail, uncontaminated by
+    the separate "new file not in baseline" check `main()` also runs."""
+    tests_dir = _real_git_repo / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text("# test\n", encoding="utf-8")
+    (tests_dir / "test_b.py").write_text("# test\n", encoding="utf-8")
+    return _real_git_repo
+
+
+def test_main_check_growth_rejects_a_baseline_that_grew(
+    monkeypatch: pytest.MonkeyPatch, _repo_with_tests_dir: Path,
+) -> None:
+    """Tier 2: the blocking gap itself — `main(["--check-growth", "HEAD"])`
+    must exit nonzero when the WORKING-TREE baseline carries a name HEAD's
+    committed baseline does not, independent of `measured`. Hand-editing the
+    baseline to pre-authorize a name with no corresponding real file is
+    exactly the loophole `--check-growth` exists to close.
+
+    NON-VACUITY (falsification, verified locally): reverting the growth-check
+    branch in `main()` — commenting out the `if args.check_growth: ...` block
+    entirely — makes this test FAIL (main returns 0), confirming the test
+    actually depends on that branch running, not merely on `new` being
+    nonempty (`measured` here still equals the OLD baseline, so the
+    new-file check alone stays green)."""
+    baseline_path = _repo_with_tests_dir / "scripts" / "flat_tests_baseline.json"
+    baseline_path.write_text(
+        json.dumps(["test_a.py", "test_b.py", "test_hand_added.py"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(flat_tests_ratchet, "_BASELINE_PATH", baseline_path)
+    monkeypatch.setattr(flat_tests_ratchet, "_TESTS_DIR", _repo_with_tests_dir / "tests")
+    monkeypatch.setattr(flat_tests_ratchet, "_ROOT", _repo_with_tests_dir)
+    monkeypatch.chdir(_repo_with_tests_dir)
+
+    exit_code = main(["--check-growth", "HEAD"])
+
+    assert exit_code != 0, (
+        "main() did not reject a baseline that grew vs HEAD with no "
+        "corresponding new file on disk"
+    )
+
+
+def test_main_check_growth_allows_a_baseline_that_shrank(
+    monkeypatch: pytest.MonkeyPatch, _repo_with_tests_dir: Path,
+) -> None:
+    """Tier 2: the other side of the same requirement (lead-coder's second
+    blocking comment) — a baseline that SHRANK (Stage 1's `git mv` removing
+    a name once the file moved into a subdirectory) must NOT be rejected by
+    `--check-growth`. Without this half, a fix that made the growth check
+    fire on ANY change (not just growth) would still pass the test above."""
+    baseline_path = _repo_with_tests_dir / "scripts" / "flat_tests_baseline.json"
+    tests_dir = _repo_with_tests_dir / "tests"
+    # Simulate Stage 1: test_b.py moved out of tests/ into a subdirectory,
+    # and its name dropped from the baseline — both sides shrink together,
+    # as a real `git mv` + ratchet re-run would produce.
+    (tests_dir / "test_b.py").unlink()
+    baseline_path.write_text(
+        json.dumps(["test_a.py"], indent=2) + "\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(flat_tests_ratchet, "_BASELINE_PATH", baseline_path)
+    monkeypatch.setattr(flat_tests_ratchet, "_TESTS_DIR", tests_dir)
+    monkeypatch.setattr(flat_tests_ratchet, "_ROOT", _repo_with_tests_dir)
+    monkeypatch.chdir(_repo_with_tests_dir)
+
+    exit_code = main(["--check-growth", "HEAD"])
+
+    assert exit_code == 0, (
+        "main() rejected a baseline that only SHRANK — a real Stage-1 git-mv "
+        "migration would be blocked by its own ratchet"
+    )
