@@ -133,6 +133,72 @@ def _validate_agent_name(name: str) -> None:
         )
 
 
+class AttachedConnection:
+    """#3793 stage 1 (ADR-0039 D4 conformance) — the vocabulary architect's
+    design settled on for a "connection" (the tmux-multiplexer analogy: a
+    connection is a *client*, not a session):
+
+    - ``attached`` — the set of sessions a connection receives OUTPUT from.
+      N-capable (multiple sessions could be attached at once — stage 2/3).
+    - ``active`` — the ONE destination for un-addressed INPUT (composer free
+      text). Exactly one per connection, or None.
+    - ``addressed`` input (an id-carrying answer — ``cancel_queued(msg_id)``,
+      ``answer_intervention_by_id``) is NOT this class's concern: it already
+      reaches whichever session owns that id, independent of ``active`` —
+      unaffected by this class and must stay that way.
+
+    ★Stage 1 invariant (deliberately, not yet the end state): ``switch``
+    always fully REPLACES the previous entry — ``attached`` never holds more
+    than one key. This is what keeps stage 1 a "zero behaviour change" PR:
+    TUI and AG-UI share ONE instance of this class today (byte-identical to
+    sharing one ``_attached`` tuple), and switching still means exactly what
+    it always meant — detach the old, attach the new. Stage 2 is what
+    actually lets ``attached`` grow past one entry (giving AG-UI its own
+    instance instead of sharing the registry's).
+
+    Lives inside ``registry.py`` for stage 1 (the registry still constructs
+    and owns the one shared instance) — the design's end state moves
+    ownership to "the connection" itself, a transport-side concept core
+    should not construct; that relocation is stage 2/3, not this class's
+    definition changing.
+    """
+
+    def __init__(self) -> None:
+        self._attached: "dict[tuple[str, str], None]" = {}  # insertion-ordered set
+        self._active: "tuple[str, str] | None" = None
+        self._background_attach_error: "str | None" = None
+
+    def attached_set(self) -> "frozenset[tuple[str, str]]":
+        """The full N-capable attached set (stage 1: always 0 or 1 entries)."""
+        return frozenset(self._attached)
+
+    @property
+    def active(self) -> "tuple[str, str] | None":
+        return self._active
+
+    def is_attached(self, key: "tuple[str, str]") -> bool:
+        return key in self._attached
+
+    def switch(self, key: "tuple[str, str] | None") -> "tuple[str, str] | None":
+        """Replace the (stage 1: at-most-one) attached/active entry with
+        ``key`` (``None`` to clear/detach). Returns the PREVIOUS active key
+        (or ``None``) so the caller can detach/unwire it — mirrors what
+        ``AgentRegistry.attach``'s own ``old = self._attached`` capture did
+        before this class existed."""
+        old = self._active
+        self._attached.clear()
+        if key is not None:
+            self._attached[key] = None
+        self._active = key
+        return old
+
+    def record_background_attach_error(self, error: "str | None") -> None:
+        self._background_attach_error = error
+
+    def attach_failed(self) -> bool:
+        return self._background_attach_error is not None
+
+
 class AgentRegistry:
     """In-process map of agent_name -> Session with persistence wired in.
 
@@ -265,7 +331,12 @@ class AgentRegistry:
         # per-conversation, so they scale with sessions, not identities.
         self._tasks: dict[tuple[str, str], asyncio.Task] = {}         # (name,sid) -> session.run() task
         self._forward_tasks: dict[tuple[str, str], asyncio.Task] = {} # (name,sid) -> outbox forwarder
-        self._attached: "tuple[str, str] | None" = None              # (name, sid) focus
+        # #3793 stage 1 (ADR-0039 D4): TUI and AG-UI both point at this ONE
+        # shared instance today (zero behaviour change — see AttachedConnection's
+        # own docstring). Stage 2 gives AG-UI its own instance instead of
+        # sharing this one, which is what actually lets `attach()` on one
+        # connection stop affecting another.
+        self._connection = AttachedConnection()
         # Focus-following front-end listeners (REPL/CUI): a chat-event callback
         # (working indicator) and an intervention listener channel (ask_user) that
         # must follow the attached session across agent switches. None until a
@@ -289,14 +360,14 @@ class AgentRegistry:
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
-        # #3671 P3: the ONE place a caller doing a BACKGROUND attach (P2's
+        # #3671 P3 (now #3793 stage 1: moved onto self._connection): the ONE
+        # place a caller doing a BACKGROUND attach (P2's
         # `chat.py._background_attach`, running off the render path) can
         # record that its attach ultimately failed, so a client reading
         # `has_session() is False` can distinguish "still connecting" from
         # "gave up" (see `ClientTransport.attach_failed`). `None` = no
         # recorded failure. Cleared at the top of `attach()` so a fresh
         # attach attempt is never shadowed by a stale prior failure.
-        self._background_attach_error: str | None = None
         # #3671 P4 item C-1: post-WAL-replay snapshots `restore_all(only_names
         # =...)` deferred instead of building+running immediately — applied
         # once, lazily, the first time `get_or_load` actually constructs that
@@ -818,7 +889,7 @@ class AgentRegistry:
         are both preserved on disk."""
         if name == DEFAULT_AGENT_NAME:
             raise ValueError("cannot remove the default agent")
-        if self._attached is not None and self._attached[0] == name:
+        if self._connection.active is not None and self._connection.active[0] == name:
             raise ValueError(f"cannot remove attached agent {name!r}")
         target = self._dir / name
         if not target.is_dir():
@@ -3170,9 +3241,9 @@ class AgentRegistry:
         category error #3288 ③b designed out.
 
         ★Barrier property (design-pass, issue #3310): this call is placed
-        IMMEDIATELY after the ``self._attached = key`` flip, with NO
-        ``await`` anywhere in between (both are plain synchronous
-        statements: an attribute assignment and ``Queue.put_nowait``, never
+        IMMEDIATELY after the ``self._connection.switch(key)`` flip, with NO
+        ``await`` anywhere in between (``switch`` is a plain synchronous
+        method, and ``Queue.put_nowait`` never suspends, unlike
         ``await Queue.put``). Single event loop ⇒ nothing can interleave
         inside that synchronous region, so on the ``repl_outbox`` FIFO
         "before this frame = old session's frames, after = new session's
@@ -3195,11 +3266,11 @@ class AgentRegistry:
         # so a caller retrying after `record_background_attach_error` sees a
         # clean "connecting" state again immediately, not "failed" until
         # this attempt ALSO finishes.
-        self._background_attach_error = None
+        self._connection.record_background_attach_error(None)
         new_session = self.get_or_load(name)
         sid = _DEFAULT_SID  # FP-0043 S3: attach(name) focuses the default session
         key = (name, sid)
-        old = self._attached
+        old = self._connection.active
         if old is not None and old != key:
             old_session = self._peek_session(old[0], old[1])
             if old_session is not None:
@@ -3223,7 +3294,7 @@ class AgentRegistry:
             self._forward_tasks[key] = asyncio.create_task(
                 self._forwarder(name, sid)
             )
-        self._attached = key
+        self._connection.switch(key)
         self._announce_session_attached(name, sid)
 
         # Re-announce any pending interventions for the user. While detached,
@@ -3250,7 +3321,7 @@ class AgentRegistry:
         if target is None:
             raise KeyError(f"no session {sid!r} for agent {name!r}")
         key = (name, sid)
-        old = self._attached
+        old = self._connection.active
         if old is not None and old != key:
             old_session = self._peek_session(old[0], old[1])
             if old_session is not None:
@@ -3263,7 +3334,7 @@ class AgentRegistry:
             self._tasks[key] = asyncio.create_task(target.run())
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
-        self._attached = key
+        self._connection.switch(key)
         self._announce_session_attached(name, sid)
         for iv in target._interventions.list_active():
             if not iv.future.done():
@@ -3299,7 +3370,7 @@ class AgentRegistry:
                     # Session shut down — propagate to REPL only if we're the
                     # attached one (otherwise REPL would terminate spuriously
                     # on a detached session's shutdown).
-                    if key == self._attached:
+                    if self._connection.is_attached(key):
                         await self.repl_outbox.put(msg)
                     return
                 if msg.kind == "__attach_request__":
@@ -3327,7 +3398,7 @@ class AgentRegistry:
                         # (re-post removed: was for Textual TUI header refresh —
                         # dead code after TUI deletion; _output_loop never used it.)
                     continue
-                if key == self._attached:
+                if self._connection.is_attached(key):
                     await self.repl_outbox.put(msg)
                 # else: drop — session is detached, transient kinds were already
                 # dropped at source, durable narration is in history.jsonl
@@ -3336,30 +3407,34 @@ class AgentRegistry:
 
     def detach(self) -> None:
         """Mark the attached session as detached without stopping its task."""
-        if self._attached is None:
+        active = self._connection.active
+        if active is None:
             return
-        session = self._peek_session(self._attached[0], self._attached[1])
+        session = self._peek_session(active[0], active[1])
         if session is not None:
             session.is_attached = False
-        self._attached = None
+        self._connection.switch(None)
 
     @property
     def attached_name(self) -> str | None:
-        # FP-0043 S3: _attached is (name, sid); the public accessor exposes the
-        # agent NAME (byte-identical to the prior str|None).
-        return self._attached[0] if self._attached is not None else None
+        # FP-0043 S3: the connection's active key is (name, sid); the public
+        # accessor exposes the agent NAME (byte-identical to the prior str|None).
+        active = self._connection.active
+        return active[0] if active is not None else None
 
     @property
     def attached_sid(self) -> str | None:
         """FP-0043 Stage 4a: the focused session-id (or None) — the public
         surface for `/session list`'s focus marker + tests, so callers don't
-        reach into `_attached`."""
-        return self._attached[1] if self._attached is not None else None
+        reach into the connection's own state."""
+        active = self._connection.active
+        return active[1] if active is not None else None
 
     def attached_session(self) -> "object | None":
-        if self._attached is None:
+        active = self._connection.active
+        if active is None:
             return None
-        return self._peek_session(self._attached[0], self._attached[1])
+        return self._peek_session(active[0], active[1])
 
     def record_background_attach_error(self, error: str) -> None:
         """#3671 P3: called by a caller doing a BACKGROUND attach (P2's
@@ -3369,14 +3444,14 @@ class AgentRegistry:
         A caller that never does a background attach never calls this; a
         transport reading `attach_failed()` before ANY attach was even
         attempted correctly still sees `False` (== "connecting")."""
-        self._background_attach_error = error
+        self._connection.record_background_attach_error(error)
 
     def attach_failed(self) -> bool:
         """#3671 P3: whether the most recent attach attempt is KNOWN to have
         given up (vs. still in flight, or having never started) — see
         `record_background_attach_error`. Cleared at the top of every
         `attach()` call, so a retry is never shadowed by a stale failure."""
-        return self._background_attach_error is not None
+        return self._connection.attach_failed()
 
     async def resume_deferred_agents(self) -> "list[str]":
         """#3671 P4 item C-1 (v2, owner ruling): proactively build+restore+run
@@ -3528,13 +3603,14 @@ class AgentRegistry:
         current attach focus.
         """
         out: list[dict] = []
+        active = self._connection.active
         for name in self.loaded_names():
             sids = sorted((self._sessions.get(name) or {}).keys())
             out.append({
                 "agent": name,
-                "attached": self._attached is not None and self._attached[0] == name,
+                "attached": active is not None and active[0] == name,
                 "sessions": [
-                    {"sid": sid, "attached": self._attached == (name, sid)}
+                    {"sid": sid, "attached": active == (name, sid)}
                     for sid in sids
                 ],
             })

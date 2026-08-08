@@ -755,7 +755,8 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
             transport.push_display(OutboxMessage(kind="user", text="alpha noop"))
             await _settle(pilot)
 
-            # NOTE: flips ``registry._attached`` directly rather than calling
+            # NOTE: flips the registry's connection pointer directly (#3793
+            # stage 1: ``AttachedConnection.switch``) rather than calling
             # ``reg.attach("beta")`` again — the auto-driver was deliberately
             # stopped above (so THIS test controls dispatch); a real
             # ``attach()`` call re-boots a fresh ``session.run()`` background
@@ -767,7 +768,7 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
             # the app's ``_snapshot()`` only ever reads
             # ``registry.attached_session()``, never re-derives from a live
             # ``attach()`` call itself.
-            reg._attached = ("beta", _DEFAULT_SID)
+            reg._connection.switch(("beta", _DEFAULT_SID))
             transport.push_event(
                 "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID}
             )
