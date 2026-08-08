@@ -306,7 +306,6 @@ async def test_the_cui_runs_a_command_without_submitting_it_as_a_turn(
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
     transport, display = local_transport(session)
 
     await route_input_line(transport, "/help", None)
@@ -347,7 +346,6 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
     transport = RecordingTransport(session)
     app = TextualChatApp(transport=transport)
 
@@ -393,7 +391,6 @@ async def test_two_runs_of_one_command_are_distinguishable_on_screen(
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
     transport, display = local_transport(session)
 
     for line in ("/cost", "/budget", "/cost"):
@@ -442,7 +439,6 @@ async def test_a_client_whose_terminal_already_echoed_does_not_echo_twice(
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
 
     transport, display = local_transport(session)
     await route_input_line(transport, "/cost", None, terminal_echoed=True)
@@ -460,7 +456,8 @@ async def test_a_client_whose_terminal_already_echoed_does_not_echo_twice(
     )
 
 
-def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) -> None:
     """Tier 2: the AG-UI ``slash_command`` arm runs a NAME, and refuses an
     unknown one.
 
@@ -476,9 +473,20 @@ def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) -> None:
     answers ``ran: false`` — a client on a different build, not a crash — and it
     is what proves ``ran: true`` above is reporting a real resolution rather than
     acking everything.
+
+    #3793 stage 2: this test is now ``async`` (was a plain ``def`` using the
+    SYNC ``TestClient``) — subscribing to ``session.outbox_hub`` requires a
+    running event loop (``subscribe()`` calls ``asyncio.create_task``), and
+    the subscription must stay alive for the SAME event loop across both the
+    subscribe call and the POST, which only ``httpx.AsyncClient`` (one loop
+    for the whole test) provides — the sync ``TestClient`` spins up and tears
+    down its own loop per call, so a subscription opened outside it (or a
+    bare ``asyncio.create_task`` call outside any loop at all) cannot work.
     """
+    import asyncio
+
     from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+    from httpx import ASGITransport, AsyncClient
 
     from reyn.interfaces.transport.agui import endpoint as endpoint_mod
     from reyn.interfaces.transport.agui.endpoint import router
@@ -489,41 +497,59 @@ def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) -> None:
     app.include_router(router)
     app.state.auth = AuthContext(token="s3cret", require_token=True)
     monkeypatch.setattr(endpoint_mod, "get_registry", lambda: reg)
-    client = TestClient(app)
 
-    resp = client.post(
-        "/agui/chat/operator?token=s3cret",
-        json={"type": "slash_command", "name": "help", "args": ""},
-    )
-    assert resp.status_code == 200 and resp.json().get("ran") is True, (
-        f"the remote slash arm did not run /help: {resp.status_code} {resp.text}"
-    )
-    session = reg.attached_session()
-    assert session is not None, "the endpoint's attach produced no session"
-    # Both display queues, because an attached registry runs a forwarder that
-    # moves ``session.outbox`` into ``repl_outbox`` (what the AG-UI stream is fed
-    # from) and whether it has run yet is a scheduling detail, not the claim.
-    displayed = [
-        msg
-        for queue in (session.outbox, reg.repl_outbox)
-        for msg in iter(
-            lambda q=queue: None if q.empty() else q.get_nowait(), None
+    # #3793 stage 2: the AG-UI endpoint now resolves/boots via
+    # ``registry.ensure_running`` (not ``attach``), which deliberately does
+    # NOT flip the registry's own ``AttachedConnection`` — an AG-UI request
+    # must not affect what the LOCAL TUI's ``attached_session()`` reports
+    # (that's the whole point of this stage). So the reply is no longer
+    # observable via ``reg.repl_outbox`` (the registry's own forwarder now
+    # DROPS this session's output, since it is never the registry's
+    # "attached" one) — subscribing to the session's ``outbox_hub`` directly,
+    # BEFORE the POST, is what a real AG-UI client's open SSE stream
+    # (``_SessionFrameSource``, wired in ``agui_events``) already does; this
+    # test mirrors that instead of relying on the now-decoupled repl_outbox
+    # side channel.
+    session = reg._peek_session("operator")
+    assert session is not None, "the operator session must already be loaded"
+    sub = session.outbox_hub.subscribe()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/agui/chat/operator?token=s3cret",
+            json={"type": "slash_command", "name": "help", "args": ""},
         )
-        if getattr(msg, "text", None) is not None
-    ]
-    assert any("Slash commands:" in m.text for m in displayed), (
-        "the remote /help produced no reply on the stream the connected client "
-        f"reads. got kinds={[getattr(m, 'kind', None) for m in displayed]!r}"
-    )
+        assert resp.status_code == 200 and resp.json().get("ran") is True, (
+            f"the remote slash arm did not run /help: {resp.status_code} {resp.text}"
+        )
+        # Yield to the event loop so the hub's background drain task (a
+        # separate asyncio.Task the request handler's put_nowait doesn't
+        # itself await) gets a turn to fan the message out to this
+        # subscription before we check it. #3793 stage 2 / owner policy:
+        # unbounded wait for the real predicate, no iteration/time cap.
+        while sub._queue.empty():
+            await asyncio.sleep(0.01)
+        displayed = []
+        while not sub._queue.empty():
+            msg = sub._queue.get_nowait()
+            if getattr(msg, "text", None) is not None:
+                displayed.append(msg)
+        assert any("Slash commands:" in m.text for m in displayed), (
+            "the remote /help produced no reply on the stream a connected client "
+            f"reads. got kinds={[getattr(m, 'kind', None) for m in displayed]!r}"
+        )
+        sub.close()
 
-    unknown = client.post(
-        "/agui/chat/operator?token=s3cret",
-        json={"type": "slash_command", "name": "no_such_command", "args": ""},
-    )
-    assert unknown.status_code == 200 and unknown.json().get("ran") is False, (
-        "an unresolvable command name did not answer ran:false — the arm is "
-        f"acking without resolving. {unknown.status_code} {unknown.text}"
-    )
+        unknown = await client.post(
+            "/agui/chat/operator?token=s3cret",
+            json={"type": "slash_command", "name": "no_such_command", "args": ""},
+        )
+        assert unknown.status_code == 200 and unknown.json().get("ran") is False, (
+            "an unresolvable command name did not answer ran:false — the arm is "
+            f"acking without resolving. {unknown.status_code} {unknown.text}"
+        )
 
 
 @pytest.mark.asyncio
@@ -545,7 +571,6 @@ async def test_both_clients_run_the_same_layer(tmp_path, monkeypatch) -> None:
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    session.is_attached = True
 
     cui_transport, cui_display = local_transport(session)
     await route_input_line(cui_transport, "/halp", None)

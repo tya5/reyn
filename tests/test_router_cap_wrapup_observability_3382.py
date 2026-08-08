@@ -39,7 +39,6 @@ def _make_session(tmp_path: Path) -> Session:
         budget_tracker=BudgetTracker(CostConfig()),
         safety=safety,
     )
-    session.is_attached = True
     return session
 
 

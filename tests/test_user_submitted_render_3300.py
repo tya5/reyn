@@ -301,7 +301,6 @@ async def test_user_submitted_precedes_turn_started(tmp_path, monkeypatch) -> No
     not a mock, per policy)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
     sink = _EventSink()
     session.subscribe_chat_events(sink)
     monkeypatch.setattr(
@@ -332,7 +331,6 @@ async def test_history_persistence_unaffected_by_the_echo_move(tmp_path, monkeyp
     outbox)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools",
         _make_llm_stub_fn(

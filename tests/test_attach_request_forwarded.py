@@ -49,7 +49,6 @@ class _FakeSession:
         # A real OutboxHub over this fake's real outbox preserves the test's
         # producer→forwarder path (no mock).
         self.outbox_hub = OutboxHub(self.outbox)
-        self.is_attached: bool = False
         self._interventions = _FakeInterventions()
 
     async def run(self) -> None:

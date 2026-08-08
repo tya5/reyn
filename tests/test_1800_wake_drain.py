@@ -122,7 +122,6 @@ async def test_wake_drain_equivalence_single_message(tmp_path, monkeypatch) -> N
     monkeypatch.chdir(tmp_path)
 
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     stub = _make_llm_stub_fn(_text_result("hello back"))
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
@@ -166,7 +165,6 @@ async def test_wake_drain_equivalence_three_messages(tmp_path, monkeypatch) -> N
     monkeypatch.chdir(tmp_path)
 
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     stubs = [_text_result(f"reply {i}") for i in range(3)]
     monkeypatch.setattr(

@@ -100,7 +100,6 @@ async def test_chat_session_passes_shared_resume_directive_always_on(monkeypatch
     monkeypatch.setattr(rl, "call_llm_tools", scripted)
 
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     await session._handle_inbox_text("hello", chain_id="chain-test-b44")
 

@@ -137,7 +137,6 @@ async def test_session_restore_state_re_enqueues_intervention(tmp_path, monkeypa
     """Tier 2: outstanding_interventions in snapshot → registry queue populated."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     snap = _snapshot_with_intervention(
         agent_name="alpha", iv_id="iv_recovered", prompt="Recovered Q?",
@@ -165,7 +164,6 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     snap = _snapshot_with_intervention(
         agent_name="alpha", iv_id="iv_to_answer", prompt="Answer me",
@@ -224,7 +222,6 @@ async def test_multiple_restored_interventions_preserve_order(tmp_path, monkeypa
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     snap = AgentSnapshot.empty("alpha")
     for i in range(3):
@@ -256,7 +253,6 @@ async def test_restore_state_with_no_interventions_is_noop(tmp_path, monkeypatch
     """Tier 2: backward compat — empty outstanding_interventions doesn't break."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     snap = AgentSnapshot.empty("alpha")
     snap.applied_seq = 0

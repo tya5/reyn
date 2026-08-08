@@ -80,6 +80,13 @@ class _FakeRegistry:
     async def attach(self, name: str):
         return self.session
 
+    async def ensure_running(self, name: str, sid: str = "main"):
+        # #3793 stage 2: the endpoint's real call sites use this instead of
+        # attach() now — kept as a separate method (not an alias) so a test
+        # asserting on ONE of the two independently still catches which path
+        # fired, matching the production split.
+        return self.session
+
 
 def _app(monkeypatch, registry: _FakeRegistry) -> FastAPI:
     app = FastAPI()

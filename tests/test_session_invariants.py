@@ -231,7 +231,6 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
 
     session = _make_session(tmp_path, registry=registry,
                             on_limit=OnLimitConfig(mode="unattended"))
-    session.is_attached = True
 
     # Round 1: router asks to delegate; round 2 is never reached in this test
     # because send_to_agent is async (loop exits after delegation).
@@ -292,7 +291,6 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
 
     session = _make_session(tmp_path, registry=registry,
                             on_limit=OnLimitConfig(mode="unattended"))
-    session.is_attached = True
 
     # Phase 1: router delegates to peer_agent.
     stub_round1 = _make_llm_stub(_delegate_result("peer_agent", "help me"))
@@ -383,7 +381,6 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
         chain_timeout_seconds=0.05,
         on_limit=OnLimitConfig(mode="unattended"),
     )
-    session.is_attached = True
 
     # Router delegates to slow_peer (which never responds).
     stub = _make_llm_stub(_delegate_result("slow_peer", "process this"))
@@ -513,7 +510,6 @@ async def test_inbox_put_consume_emits_wal_events_with_monotonic_seq(tmp_path, m
     monkeypatch.chdir(tmp_path)
 
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     # Queue three user messages.
     await session.submit_user_text("msg one")
@@ -651,7 +647,6 @@ async def test_intervention_drop_for_run_cancels_all_matching(tmp_path, monkeypa
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     iv1 = _iv(run_id="rA", prompt="First Q?")
     iv2 = _iv(run_id="rA", prompt="Second Q?")
@@ -689,7 +684,6 @@ async def test_intervention_choices_no_match_emits_unknown_choice_hint(tmp_path,
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     choices = [
         InterventionChoice(id="yes", label="[Y]es", hotkey="y"),
@@ -742,7 +736,6 @@ async def test_intervention_queued_status_when_dispatched_while_pending(tmp_path
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     iv1 = _iv(prompt="First Q?")
     iv2 = _iv(prompt="Second Q?")
@@ -908,7 +901,6 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     session = _make_session(
         tmp_path, agent_name="specialist", registry=registry
     )
-    session.is_attached = True
 
     # LLM returns empty content (finish_reason="stop", content="").
     # With ADR-0021 Option F, RouterLoop detects this as empty-stop and
@@ -974,7 +966,6 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     session = _make_session(
         tmp_path, agent_name="specialist", registry=registry
     )
-    session.is_attached = True
 
     # Force RouterCapExceeded from the handler.
     from reyn.runtime.errors import RouterCapExceeded
@@ -1027,7 +1018,6 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
     from reyn.runtime.session import _no_reply_marker
 
     session = _make_session(tmp_path, agent_name="default_agent")
-    session.is_attached = True
 
     # Inject a no-reply marker as if a specialist peer sent it.
     marker = _no_reply_marker("specialist", "router completed without producing a text reply")
@@ -1109,7 +1099,6 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     session = _make_session(
         tmp_path, agent_name="relay_agent", registry=registry
     )
-    session.is_attached = True
 
     # Manually register a pending chain: relay_agent is waiting on "specialist"
     # for a request that came from "origin_agent".

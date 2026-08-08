@@ -1276,9 +1276,6 @@ class Session:
         # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
         set_active_hot_reloader(self._hot_reloader)
-        # Detached by default; AgentRegistry.attach() flips this on to stop background display noise
-        self.is_attached: bool = False
-
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._chat_events)
@@ -6175,8 +6172,16 @@ class Session:
         if msg.reply_to is None and self._last_reply_to is not None:
             from dataclasses import replace
             msg = replace(msg, reply_to=self._last_reply_to)
-        if not self.is_attached and msg.kind in {"status", "trace"}:
-            return
+        # #3793 stage 2: the "nobody is watching, drop status/trace" gate
+        # (formerly ``if not self.is_attached: return`` here) is removed —
+        # ``self.is_attached`` was a SECOND, single-bool representation of
+        # "attached-ness" that (a) could not express per-connection focus
+        # once ADR-0039 D4's N:N model applies, and (b) was already
+        # redundant: ``OutboxHub._fanout`` genuinely no-ops with zero
+        # subscribers (an empty ``self._subs`` set — the for loop body never
+        # runs), which is the SAME "nobody is watching" property this line
+        # existed to approximate, but derived from who is actually listening
+        # instead of a manually-synced flag.
         self.outbox.put_nowait(msg)
 
     # ── compaction helpers (FP-0019 Wave 1) ────────────────────────────────────

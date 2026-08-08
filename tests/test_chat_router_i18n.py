@@ -287,7 +287,6 @@ def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypat
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="ja")
-    session.is_attached = True
 
     captured_prompts: list[str] = []
 
@@ -381,7 +380,6 @@ def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language=None)
-    session.is_attached = True
 
     from reyn.runtime.errors import RouterCapExceeded
 
@@ -420,7 +418,6 @@ def test_retry_exhausted_wrap_up_success_replaces_canned_fallback(
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3, output_language="ja")
-    session.is_attached = True
     _pin_llm(monkeypatch, ScriptedLLM([_text_result("完了した内容の要約です")]))
 
     monkeypatch.setattr(Session, "_reset_router_turn_counter", lambda self: None)

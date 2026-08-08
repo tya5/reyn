@@ -83,7 +83,6 @@ async def test_dispatch_intervention_appends_wal_before_await(tmp_path, monkeypa
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     iv = _iv(run_id="rA", prompt="What's your name?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
@@ -118,7 +117,6 @@ async def test_deliver_answer_appends_intervention_resolved(tmp_path, monkeypatc
     """Tier 2: successful answer → ``intervention_resolved`` in WAL."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     iv = _iv(prompt="Free text?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
@@ -150,7 +148,6 @@ async def test_unknown_choice_does_not_emit_resolved(tmp_path, monkeypatch):
     """Tier 2: unknown-choice answer leaves the intervention pending — no resolve."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     choices = [
         InterventionChoice(id="yes", label="[Y]es", hotkey="y"),
@@ -190,7 +187,6 @@ async def test_outstanding_interventions_in_snapshot_after_dispatch(tmp_path, mo
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     iv = _iv(run_id="rZ", prompt="Persisted?")
     task = asyncio.ensure_future(session._dispatch_intervention(iv))

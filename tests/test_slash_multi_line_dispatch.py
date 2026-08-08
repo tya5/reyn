@@ -46,7 +46,6 @@ async def test_multi_line_slash_warns_and_dispatches_first_line(
     """Tier 2: extra non-whitespace lines after a slash command produce a warning."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/pending\nthis was meant to be a question")
@@ -69,7 +68,6 @@ async def test_trailing_newline_only_does_not_warn(tmp_path, monkeypatch):
     """Tier 2: ``/cmd\\n`` (trailing newline, no content) must not warn."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/pending\n")
@@ -85,7 +83,6 @@ async def test_trailing_whitespace_lines_do_not_warn(tmp_path, monkeypatch):
     """Tier 2: trailing whitespace-only lines must not produce a warning."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/pending\n   \n\t\n")
@@ -107,7 +104,6 @@ async def test_args_on_first_line_still_reach_handler(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    session.is_attached = True
 
     transport, display = local_transport(session)
     consumed = await maybe_dispatch_slash(transport, "/pending discard bogus_id\nstray line")
