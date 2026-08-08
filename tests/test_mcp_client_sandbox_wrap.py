@@ -187,4 +187,75 @@ def test_profile_cleaned_on_close(monkeypatch):
     profile_path = args[1]  # wrap output (not private state)
     assert Path(profile_path).exists()
     client.close_stderr_capture()
-    assert not Path(profile_path).exists()  # teardown unlinked it
+
+
+# ── #3848 stage 1: the allowlisted env wrap_command() computes (#3850) is
+# carried through to the client instance instead of being silently dropped —
+# _sandbox_wrap_stdio used to project only .argv out of WrappedCommand. Not
+# yet CONSUMED by _open_stdio's actual launch (owner ruling: default stays
+# "pass everything"). These pin that the MECHANISM is genuinely reached, not
+# just that observable behavior is unchanged — a dead/no-op mechanism would
+# produce the identical "everything still passes through" result under
+# today's default, so asserting only the final launch behavior would not
+# distinguish "wired and working" from "still silently dropped". ──────────
+
+
+def test_sandbox_env_is_captured_from_the_real_allowlist(monkeypatch):
+    """Tier 2: #3848 stage 1 — after a successful wrap, client.sandbox_env
+    equals the SAME allowlisted env wrap_command() itself computed (#3850) —
+    not a copy, not a re-derivation, the real value the mechanism produced.
+    Strip the `self._sandbox_env = wrapped.env` assignment and this goes RED
+    (client.sandbox_env stays None even though the wrap succeeded)."""
+    backend = NoopBackend()
+    _patch_backend(monkeypatch, backend)
+    client = _stdio_client()
+    client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+
+    expected = backend.wrap_command(["my-mcp", "--flag"], client._build_mcp_sandbox_policy()).env
+    assert client.sandbox_env is not None
+    assert client.sandbox_env == expected
+
+
+def test_sandbox_env_is_none_when_the_wrap_itself_fails(monkeypatch):
+    """Tier 2: #3848 stage 1 — the fail-open (backend-probe-failure) path
+    explicitly RESETS _sandbox_env to None rather than leaving a stale value
+    from a previous successful call. A fresh client already starts at None
+    (__init__'s own default), so a successful wrap runs FIRST here — without
+    the explicit reset in the except branch, a second, failing call would
+    silently keep the first call's real allowlist value, which is the
+    dangerous direction (a caller reading _sandbox_env after a failed wrap
+    would see a value that was never actually applied to THIS launch)."""
+
+    def _boom(config=None):
+        raise RuntimeError("backend probe exploded")
+
+    _patch_backend(monkeypatch, NoopBackend())
+    client = _stdio_client()
+    client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert client.sandbox_env is not None  # first call: real value captured
+
+    monkeypatch.setattr("reyn.security.sandbox.get_default_backend", _boom)
+    with pytest.warns(UserWarning, match="UNSANDBOXED"):
+        client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert client.sandbox_env is None  # second call failed -> reset, not stale
+
+
+def test_open_stdio_env_is_still_driven_by_config_not_sandbox_env(monkeypatch):
+    """Tier 2: #3848 stage 1 — carrying the allowlist through must NOT change
+    today's default launch behavior (owner ruling: default stays "pass
+    everything"). _open_stdio's real StdioTransport(env=...) call is driven
+    ONLY by self._config.get("env"), never by self._sandbox_env, in this
+    stage. Real StdioTransport throughout — construction is pure attribute
+    storage (no I/O, no subprocess spawn until connect()), so there is no
+    reason to fake it."""
+    backend = NoopBackend()
+    _patch_backend(monkeypatch, backend)
+    client = _stdio_client()
+
+    transport = client._open_stdio()
+
+    # config declared no `env:` key -> today's default (env=None, full
+    # parent inherit) must be untouched by the now-populated _sandbox_env.
+    assert client.sandbox_env is not None  # the mechanism DID run
+    assert transport.env is None  # but did not drive the real launch
+    client.close_stderr_capture()

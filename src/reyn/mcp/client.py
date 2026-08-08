@@ -701,6 +701,16 @@ class MCPClient:
         # Invoked in close_stderr_capture(). None when the backend's wrap owns
         # no such resource (Noop / Landlock).
         self._sandbox_cleanup: Callable[[], None] | None = None
+        # #3848 stage 1: the allowlisted env wrap_command() computes (#3850),
+        # carried through instead of being silently dropped the way it was
+        # before this — _sandbox_wrap_stdio used to project only .argv out of
+        # WrappedCommand. NOT yet consumed by _open_stdio's actual launch
+        # (the owner ruling's default is "pass everything", which #3850's
+        # allowlist is narrower than) — this is the seam stage 2's opt-in
+        # whitelist/blacklist config will read from. None when the wrap
+        # failed (fail-open with a warning + audit-event, #3821) — there is
+        # no allowlisted value to offer in that case.
+        self._sandbox_env: dict[str, str] | None = None
         # #2597 capability/version gate: captured in initialize() right after
         # ``client.__aenter__()`` completes FastMCP's initialize handshake (verified
         # against fastmcp 3.4.2: ``fastmcp.Client.initialize_result`` is populated at
@@ -724,6 +734,16 @@ class MCPClient:
         the caller didn't supply one at construction. Used only for error-message
         context (:func:`require_capability`) — never for lookup."""
         return self._server_name
+
+    @property
+    def sandbox_env(self) -> "dict[str, str] | None":
+        """The allowlisted env ``wrap_command()`` computed for this client's
+        stdio launch (#3848 stage 1), or ``None`` if the wrap failed or
+        hasn't run yet. NOT the env actually used to launch the subprocess
+        in this stage — see ``self._sandbox_env``'s own docstring for why;
+        this accessor exists so the mechanism is inspectable through a
+        public surface rather than only via private state."""
+        return self._sandbox_env
 
     @property
     def negotiated_version(self) -> str | None:
@@ -1480,6 +1500,11 @@ class MCPClient:
         fallback is WARNING-only, exactly as it was before #3821. So "never
         silently unsandboxed" is true of the warning on every path, and of the
         audit trail only where a sink was wired.
+
+        #3848 stage 1: also stores ``self._sandbox_env`` (the allowlisted env
+        ``wrap_command()`` computes, #3850) — carried through rather than
+        dropped, but not yet CONSUMED by ``_open_stdio``'s actual launch (see
+        ``self._sandbox_env``'s own docstring for why).
         """
         from reyn.security.sandbox import get_default_backend
 
@@ -1513,9 +1538,11 @@ class MCPClient:
                         command,
                         emit_exc,
                     )
+            self._sandbox_env = None
             return command, args
 
         self._sandbox_cleanup = wrapped.cleanup
+        self._sandbox_env = wrapped.env
         return wrapped.argv[0], list(wrapped.argv[1:])
 
     def _open_stdio(self) -> "Any":
@@ -1528,6 +1555,12 @@ class MCPClient:
         # #1344: wrap the server subprocess in the platform sandbox (Seatbelt)
         # so an LLM-invoked MCP tool cannot escape the sandbox via the server.
         command, args = self._sandbox_wrap_stdio(command, args)
+        # #3848 stage 1: self._sandbox_env (the allowlisted env, now carried
+        # through rather than dropped) is intentionally NOT consumed here —
+        # the owner ruling's default is "pass everything" (unchanged), which
+        # the allowlist is narrower than. Stage 2's opt-in whitelist mode
+        # will read self._sandbox_env; opt-in blacklist mode will filter
+        # os.environ against an operator-declared name set instead.
         env = self._config.get("env")
         # Subprocess stderr capture for diagnostic readback on init
         # failure. FastMCP's ``StdioTransport`` accepts ``log_file`` (a
