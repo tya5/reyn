@@ -409,9 +409,12 @@ class RouterHistoryBuffer:
         # every turn, not a one-shot override): the next user turn slices
         # [consolidation] + recent turns, never re-slicing the dropped raw
         # head/tail → no immediate re-overflow. Position-based (turns after the
-        # consolidation in history order), NOT seq>covers — assistant/tool turns
-        # keep seq=0 (only user/agent get a monotonic seq), so a seq filter would
-        # wrongly drop post-handoff assistant replies. GATED to force-close
+        # consolidation in history order), NOT seq>covers — #3704 gave every
+        # role a monotonic seq at persist time, but history predating that fix
+        # still has assistant/tool entries stuck at seq==0 forever (no
+        # backfill), so a seq filter would wrongly drop their post-handoff
+        # replies on any session with pre-fix history. Position-based sidesteps
+        # the old/new-history split entirely. GATED to force-close
         # consolidations only (the dedicated `consolidation` field) — normal
         # compaction summaries fall through to the unchanged head/tail+bridge
         # path below, so normal chat stays byte-identical.
