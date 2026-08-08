@@ -1,0 +1,39 @@
+name: flat-tests ratchet
+
+# #3879 Stage 0: reject any NEW .py file landing directly in tests/ (no
+# subdirectory). The ~1,128 files already there are grandfathered via the
+# committed baseline (scripts/flat_tests_baseline.json) — this only blocks
+# new additions. See scripts/flat_tests_ratchet.py's module docstring for the
+# full design rationale (issue #3879).
+#
+# A dedicated workflow (not folded into test.yml) so the --check-growth step
+# can diff the PR's baseline file against the PR's merge-base cleanly, with
+# a fetch-depth deep enough to resolve it — test.yml's jobs don't need git
+# history at all today and a shallow clone there is intentional.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  flat-tests-ratchet:
+    name: flat-tests ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/flat_tests_ratchet.py is stdlib-only (argparse / json /
+      # subprocess). No pip install needed.
+      - name: Check the flat-tests ratchet (no new file, baseline unchanged or shrunk)
+        run: |
+          python scripts/flat_tests_ratchet.py --check-growth "origin/${{ github.base_ref }}"
