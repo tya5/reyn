@@ -2612,10 +2612,24 @@ class Session:
     # ── persistence ─────────────────────────────────────────────────────────────
 
     def _append_history(self, msg: ChatMessage) -> None:
-        # Assign monotonic seq for conversational entries (user/agent). Other
-        # roles (summary) keep seq=0 — they aren't part of the
-        # turn ordering used by the slicer.
-        if msg.role in ("user", "agent") and msg.seq == 0:
+        # #3704: assign a monotonic seq to every persisted entry regardless
+        # of role. Previously gated on ``msg.role in ("user", "agent")`` —
+        # ``"agent"`` was never a real role (``ChatMessage``'s role Literal
+        # has always been "user"/"assistant"/"tool"/"system"/"summary"; no
+        # commit ever introduced an "agent" role), so this condition only
+        # ever matched "user". assistant/tool entries persisted with
+        # seq==0 permanently, and CompactionController._select_candidates's
+        # ``t.seq > prev_cover`` filter (services/compaction_controller.py)
+        # reads seq==0 as "already covered" — so assistant/tool turns were
+        # silently EXCLUDED from every compaction candidate set, unfixably,
+        # since seq is set once at persist time. Owner-ratified fix
+        # (2026-08-08): drop the role gate rather than fix the spelling —
+        # ``seq == 0`` used to mean two different things ("not yet
+        # assigned" and "covered by an already-compacted summary"), and
+        # ``t.seq > prev_cover`` cannot tell them apart; removing the gate
+        # collapses it to ONE meaning ("no coordinate assigned" — true only
+        # for old, pre-fix history entries now).
+        if msg.seq == 0:
             msg.seq = self._next_seq
             self._next_seq += 1
         # #2360: anchor each turn to the WAL seq at append time so the conversation
@@ -3028,10 +3042,13 @@ class Session:
                     self.history.append(ChatMessage(**raw))
                 except Exception:
                     continue
-        # Initialize the seq counter past any seqs already in the file. Old
-        # entries without seq fall back to 0; the synthetic seq for them is
-        # assigned by the slicer at read time, so we only care about the
-        # max of explicitly-stored seqs here for the next-write counter.
+        # Initialize the seq counter past any seqs already in the file.
+        # #3704: entries persisted before the role-gate removal (assistant/
+        # tool turns from the old buggy path) have seq==0 and stay that
+        # way forever — nothing re-derives or backfills a coordinate for
+        # them at read time. ``if m.seq`` below simply ignores those
+        # zeros when finding the max, which is correct: a 0 never
+        # legitimately outranks a real assigned seq.
         max_seen = max((m.seq for m in self.history if m.seq), default=0)
         self._next_seq = max_seen + 1
 
