@@ -3,8 +3,8 @@
 A joke. It draws a TerminalTextEffects animation across the FlowView's viewport
 and stops on the same key, leaving the feed exactly where it was.
 
-Not a screensaver, despite the issue's original title. It was one until the
-operator changed the trigger:
+Named for what it is rather than for what it was. The issue opened as a
+screensaver and so did this module; the operator changed the trigger:
 
     「ジョークだし、アイドルスクリーンセーバじゃなくて、キーバインドで開始終了にしようか」
 

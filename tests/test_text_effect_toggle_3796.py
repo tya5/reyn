@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 from textual_flowview import FlowView
 
-from reyn.interfaces.inline.textual_chat import TextualChatApp, screensaver
+from reyn.interfaces.inline.textual_chat import TextualChatApp, text_effect
 from tests.test_textual_chat_copy_rewind_3362 import (
     ScriptedTransport,
     _PickerReadModel,
@@ -27,7 +27,7 @@ from tests.test_textual_chat_copy_rewind_3362 import (
 )
 
 requires_tte = pytest.mark.skipif(
-    not screensaver.available(),
+    not text_effect.available(),
     reason="optional terminaltexteffects not installed (#3796 ⑤ undecided)",
 )
 
@@ -36,7 +36,7 @@ requires_tte = pytest.mark.skipif(
 async def test_the_key_says_so_when_the_library_is_absent() -> None:
     """Tier 2: with the optional library missing, the key reports it and names
     the install — instead of doing nothing, which reads as a broken key."""
-    if screensaver.available():
+    if text_effect.available():
         pytest.skip("library present; the absent path is what this pins")
 
     app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
@@ -142,14 +142,14 @@ def test_the_frames_resolve_to_the_covered_text_not_a_banner() -> None:
     argument's fate is observable without pinning a third-party animation's
     intermediate pixels.
     """
-    from reyn.interfaces.inline.textual_chat import screensaver
+    from reyn.interfaces.inline.textual_chat import text_effect
 
     covered = [
         "user: what does the drawer show?",
         "",
         "● thirteen tabs; Cost and Ctx are readouts",
     ]
-    frames = list(screensaver.frame_factory()(78, len(covered), covered))
+    frames = list(text_effect.frame_factory()(78, len(covered), covered))
     assert frames, "the factory produced no frames for a non-empty screen"
 
     final = frames[-1].plain  # the factory yields rich Text
