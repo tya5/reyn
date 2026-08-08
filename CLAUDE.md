@@ -104,6 +104,42 @@ Key constraints (full rationale in the doc):
 - Each test docstring's first line must declare its Tier:
   `"""Tier 3a: ..."""`.
 
+## Test review — six questions, asked of the test's own code
+
+**Read the tests in the diff, not the PR body's account of them.** `test_tier_audit.py`
+reads the code for five of its six checks; the Tier line it matches as a *string*
+(`^Tier [123][abc]?:`). A declaration is not a classification, and nothing else
+looks. On 2026-08-09 two tests pinning TerminalTextEffects' own behaviour passed
+that audit, passed review, and one of them cost the operator three reboots.
+
+Ask each test in the diff:
+
+1. **Whose contract is this?** reyn's / a third-party's / a past bug's. The last
+   two are Tier 4. (#3872: "a TTE effect resolves to its input" is TTE's promise;
+   `assert "reyn" not in final` is one defect's fingerprint, and any *other* wrong
+   string passes it.)
+2. **Is it the implementation, transcribed?** If the same expression appears on
+   both sides, it can only fail when someone deliberately edits that line — and
+   they will edit both. (#3872: `art = "\n".join(covered)` asserted back.)
+3. **Would it stay green with the mechanism dead?** Assert a value a dead
+   mechanism cannot produce. "Was handed X" is not a witness for "used X"
+   (#3859), and #3850 landed a field that was required, populated, tested, and
+   read by nobody.
+4. **Would it stay green having never run?** skip / collection error / zero
+   collected all wear green's colour. Name what a missing optional dependency
+   silently skips — CI has no `effects` extra, so #3796's file skips whole and
+   its green says nothing (#2999 is the same shape with a docker-daemon skip).
+5. **What does it accumulate, and who bounds it?** A `list()` over a producer
+   whose length is decided by the *caller's* pace is unbounded by construction.
+   (#3872: the app's timer paced it at 10fps; `list()` paced it at CPU speed, and
+   the collecting starved the worker thread it was waiting on — 10 GB.)
+6. **Is the declared Tier the true one?** Only a human can answer this; the audit
+   cannot. Say which of 1's answers you reached and why.
+
+**Reviewer's note, on the PR:** record the answers per test before merging. A
+lead-coder merge train refuses any PR touching `tests/` without one — the promise
+"I will open the tests next time" is exactly the shape this replaces.
+
 ## PR workflow (READ BEFORE OPENING / REVIEWING A PR)
 
 This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
