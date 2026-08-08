@@ -30,6 +30,27 @@ manager — must NOT be used here. Measured: inside it, TTE writes cursor-contro
 sequences to stdout, which is Textual's screen. Outside it, iteration yields the
 same frames and writes nothing (0 bytes captured).
 
+Which effects
+-------------
+Twelve of TerminalTextEffects' thirty-seven, chosen by measurement rather than
+taste (#3860 — the operator's 「ちょっと種類が少なく感じる」). Every one of the
+thirty-seven resolves back to the text it was given, so that is not the filter;
+two other properties are:
+
+- **p90 >= 12 fps.** An effect whose slow tenth cannot make the interval hitches
+  visibly at :data:`DEFAULT_FPS`.
+- **<= 25 seconds per cycle.** ``loop=True`` picks a fresh effect only at the END
+  of a cycle, so a long effect does not merely take longer — it *suppresses the
+  variety*, which is the thing the operator noticed.
+
+``beams`` was in the original three and fails both (10.5 fps, 29 seconds). It is
+worth naming why that mattered more than the count: a third of the rotation was
+spending half a minute on one effect, so the *felt* variety was below three even
+before the list grew.
+
+Deliberately a flat list. The operator has not seen these yet, and narrowing it
+after they do should be a deletion, not a redesign.
+
 Frame rate
 ----------
 :data:`DEFAULT_FPS` is 10, not the 30 the upstream example uses. Measured on
@@ -104,6 +125,50 @@ def unavailable_message() -> str:
     )
 
 
+def effect_classes() -> list:
+    """The effects the key rotates through — twelve, chosen by measurement
+    (#3860; the criteria are in the module docstring).
+
+    A function rather than a module constant so the optional dependency stays
+    optional: importing the classes at module scope would make an absent
+    ``terminaltexteffects`` an ImportError on a module reyn imports for the
+    ``available()`` check alone.
+
+    Public because the LIST is the thing the operator narrows after seeing it,
+    and because a test can then check every member rather than whichever ones a
+    random draw happens to produce.
+    """
+    from terminaltexteffects.effects import (
+        effect_expand,
+        effect_highlight,
+        effect_middleout,
+        effect_pour,
+        effect_print,
+        effect_rain,
+        effect_random_sequence,
+        effect_scattered,
+        effect_slice,
+        effect_slide,
+        effect_smoke,
+        effect_wipe,
+    )
+
+    return [
+        effect_expand.Expand,
+        effect_highlight.Highlight,
+        effect_middleout.MiddleOut,
+        effect_pour.Pour,
+        effect_print.Print,
+        effect_rain.Rain,
+        effect_random_sequence.RandomSequence,
+        effect_scattered.Scattered,
+        effect_slice.Slice,
+        effect_slide.Slide,
+        effect_smoke.Smoke,
+        effect_wipe.Wipe,
+    ]
+
+
 def frame_factory() -> "Callable[[int, int, list[str]], Iterator[RenderableType]]":
     """A ``(width, height, covered) -> frames`` factory for ``play_overlay``.
 
@@ -134,13 +199,8 @@ def frame_factory() -> "Callable[[int, int, list[str]], Iterator[RenderableType]
     import random
 
     from rich.text import Text
-    from terminaltexteffects.effects import (
-        effect_beams,
-        effect_rain,
-        effect_slide,
-    )
 
-    effects = [effect_beams.Beams, effect_rain.Rain, effect_slide.Slide]
+    effects = effect_classes()
 
     def frames(
         width: int, height: int, covered: "list[str]"
