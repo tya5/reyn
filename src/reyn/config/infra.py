@@ -397,6 +397,18 @@ class EventsConfig:
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
 _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
+# #3823 ②: compat / strict / custom — NOT "off" (owner ruling: "off" is
+# expressible as custom-with-everything-allowed, so it does not need its own
+# enum member). Schema only, as of this field's introduction: nothing in the
+# op-dispatch path reads `mode` yet — resolving it into an actual SandboxPolicy
+# is blocked on a separate design question (SandboxPolicy.write_paths is a
+# closed-enumeration/whitelist field by construction — empty means "deny all
+# writes", not "allow all" — so compat's write axis cannot be expressed with
+# today's field shape; #3823 comment thread has the open question). Adding
+# the validated enum here is safe and mode-independent regardless of how that
+# resolves.
+_SANDBOX_MODES = {"compat", "strict", "custom"}
+DEFAULT_SANDBOX_MODE = "compat"
 
 
 @dataclass
@@ -416,6 +428,24 @@ class SandboxConfig:
             ``'error'`` raises RuntimeError (useful to fail-fast in enforced
             production environments). ``'ignore'`` silently falls back.
             Allowed: ``{'warn', 'error', 'ignore'}``.
+        mode:
+            #3823 ②: which enumeration DIRECTION the resolved policy uses.
+            ``'compat'`` (default, owner-ruled "A" — a literal empty
+            deny-list, nothing blocked by default; audit/events/timeout/
+            cancel-teardown still apply). ``'strict'`` — an explicit
+            allow-list (today's ``SandboxPolicy`` defaults / the pre-#3823
+            behavior). ``'custom'`` — the operator writes both the direction
+            and the content via ``policy`` below. Declared in the enum
+            (``{'compat', 'strict', 'custom'}``) but ``'strict'``/``'custom'``
+            currently RAISE at construction (``ValueError``, "not implemented
+            yet") rather than being silently accepted-and-ignored — resolving
+            ``mode`` into an actual policy is not wired anywhere yet (see the
+            module-level note on :data:`_SANDBOX_MODES`), and accepting a
+            value that changes nothing would be a silent lie to an operator
+            who wrote it expecting containment. Only ``'compat'`` (the
+            unchanged, already-real default) validates today; the PR that
+            wires ``'strict'``/``'custom'`` removes this guard in the same
+            diff as the tests proving the wiring works.
         policy:
             The agent-level (operator) sandbox policy: a mapping of
             ``SandboxPolicy`` kwargs (``network`` / ``write_paths`` /
@@ -433,6 +463,7 @@ class SandboxConfig:
 
     backend: str = "auto"
     on_unsupported: str = "warn"
+    mode: str = DEFAULT_SANDBOX_MODE
     policy: dict | None = None
 
     def __post_init__(self) -> None:
@@ -446,6 +477,28 @@ class SandboxConfig:
                 f"sandbox.on_unsupported {self.on_unsupported!r} is not one of "
                 f"{sorted(_SANDBOX_ON_UNSUPPORTED)}"
             )
+        if self.mode not in _SANDBOX_MODES:
+            raise ValueError(
+                f"sandbox.mode {self.mode!r} is not one of {sorted(_SANDBOX_MODES)}"
+            )
+        if self.mode != "compat":
+            raise ValueError(
+                f"sandbox.mode {self.mode!r} is not implemented yet (#3823 ②) — "
+                "only 'compat' (the current, unchanged default behavior) is "
+                "accepted until strict/custom are wired into policy resolution"
+            )
+        # #3823 ②: strict/custom are declared in the enum but not yet WIRED
+        # into any resolved-policy behavior (see the module-level note on
+        # _SANDBOX_MODES). Accepting them silently here would be a lie to the
+        # operator, not a "written but unread" internal field like #3850's
+        # WrappedCommand.env before its callers consumed it — an operator who
+        # writes `mode: strict` forms a real expectation (containment is now
+        # enforced) that nothing currently honours; the config would validate
+        # and do nothing, silently staying compat underneath. Fail loudly
+        # instead. The PR that wires strict/custom into actual policy
+        # resolution removes this guard IN THE SAME DIFF as the tests proving
+        # the wiring works — so "wired but unread" cannot happen here the way
+        # it did for the internal field.
         if self.policy is not None:
             # Fail-fast on a malformed operator policy: construct a SandboxPolicy
             # to validate the keys (unknown key → TypeError → clear ValueError).
@@ -468,12 +521,13 @@ def _build_sandbox_config(raw: object) -> SandboxConfig:
     defaults = SandboxConfig()
     backend = str(raw.get("backend", defaults.backend))
     on_unsupported = str(raw.get("on_unsupported", defaults.on_unsupported))
+    mode = str(raw.get("mode", defaults.mode))
     # #1326: optional agent-level policy. Absent → None (SandboxLayer stays ⊤).
     policy_raw = raw.get("policy")
     policy = dict(policy_raw) if isinstance(policy_raw, dict) else None
     # Validation delegated to __post_init__ — raises ValueError with clear message.
     return SandboxConfig(
-        backend=backend, on_unsupported=on_unsupported, policy=policy
+        backend=backend, on_unsupported=on_unsupported, mode=mode, policy=policy
     )
 
 
