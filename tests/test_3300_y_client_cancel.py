@@ -1,7 +1,7 @@
 """#3300 Y-client — the client half of cancel-by-id.
 
 Y-server (PR #3306) landed ``Session.cancel_queued(msg_id)`` (snapshot-prune +
-WAL tombstone + skip-at-consume) and the ``inbox_cancel`` chat-event delta;
+WAL tombstone + skip-at-consume) and the ``inbox_cancel`` audit-event delta;
 ``ClientTransport.cancel_queued(msg_id)`` exists on both transports and
 ``submit_user_text`` now returns the assigned ``msg_id`` (PR #3309). This file
 covers the REMAINING client half, scoped to

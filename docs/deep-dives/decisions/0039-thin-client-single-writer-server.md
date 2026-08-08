@@ -77,7 +77,7 @@ updated in the same PR that lands this ADR to point here.
   `OutboxMessage`→JSON, detach-on-disconnect, drain-continues-in-background.
 - **Dual render stream** — `interfaces/repl/renderer.py`: the renderer
   consumes **both** `message(OutboxMessage)` and `on_chat_event(event)`; the
-  "Working…" / WaitingOn indicator is driven by the chat-event stream, not the
+  "Working…" / WaitingOn indicator is driven by the audit-event stream, not the
   outbox.
 - **Network intervention** — `interfaces/web/a2a_intervention.py`: the
   two-way pause already works over the wire (peer learns "input-required"
@@ -111,7 +111,7 @@ The inline CUI already dispatches on `OutboxMessage.kind`. Make that the
 **in-process transport** (local) vs **AG-UI/SSE transport** (remote). Both
 feed the **same renderer** ⇒ draw / input / intervention / status-bar are
 **bit-identical**. The seam must carry **outbox + the renderer-relevant
-chat-event subset** (WaitingOn is chat-event-driven; an outbox-only wire
+audit-event subset** (WaitingOn is audit-event-driven; an outbox-only wire
 would drop it and break bit-identity). Local ≡ remote by construction; the
 thin-client and single-writer properties fall out for free.
 
@@ -248,7 +248,7 @@ Near-term unnecessary → late phase.
   seize as Axis-B UX gated by Axis-A membership; retrofit of the existing
   ws/A2A surface.
 - **P1 — CUI → stream-consuming client (in-process transport).** Local `reyn
-  chat` consumes outbox + chat-events *through* the seam. Assert
+  chat` consumes outbox + audit-events *through* the seam. Assert
   bit-identical pre/post.
 - **P2 — AG-UI transport + event mapping (server→client).** Mapping over
   HTTP+SSE; present-on-wire; per-connection re-guard; session-state view via

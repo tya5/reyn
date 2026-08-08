@@ -1,9 +1,9 @@
-"""Tier 2: the transport's chat-event forward-set is LOAD-BEARING (ADR-0039 P1).
+"""Tier 2: the transport's audit-event forward-set is LOAD-BEARING (ADR-0039 P1).
 
 Strip-falsify (the P1 analog of the strip-verification discipline): an
-``InProcessTransport`` whose forward-set is emptied delivers ZERO chat-events to
+``InProcessTransport`` whose forward-set is emptied delivers ZERO audit-events to
 the client, so the WaitingOn / Working / Running transitions vanish — RED. With
-the DERIVED forward-set (production default) the same chat-events reach the
+the DERIVED forward-set (production default) the same audit-events reach the
 renderer. This proves the dual-stream event path is a real seam, not decorative
 — the structural counter-evidence for the A2 "outbox-only drops WaitingOn" bug.
 
@@ -26,7 +26,7 @@ _EVENTS = [("turn_started", {}), ("tool_called", {"tool": "grep_files"}), ("turn
 
 
 class _EventRecordingRenderer:
-    """Records the chat-event types the client actually delivers (real double)."""
+    """Records the audit-event types the client actually delivers (real double)."""
 
     def __init__(self) -> None:
         self.events_seen: list[str] = []
@@ -81,7 +81,7 @@ async def _drive(forward_events) -> list[str]:
 @pytest.mark.asyncio
 async def test_derived_forward_set_delivers_chat_events() -> None:
     """Tier 2: with the derived forward-set, the client receives the WaitingOn
-    chat-events (the event path is wired)."""
+    audit-events (the event path is wired)."""
     seen = await _drive(renderer_chat_events())
     assert set(seen) == {"turn_started", "tool_called", "turn_settled"}
 
@@ -89,9 +89,9 @@ async def test_derived_forward_set_delivers_chat_events() -> None:
 @pytest.mark.asyncio
 async def test_stripped_forward_set_makes_waiting_on_vanish() -> None:
     """Tier 2: strip-falsify — with the forward-set emptied, the client receives
-    NO chat-events → WaitingOn transitions vanish → RED for the event path."""
+    NO audit-events → WaitingOn transitions vanish → RED for the event path."""
     seen = await _drive(frozenset())
     assert seen == [], (
-        "stripping the chat-event forward-set must drop ALL renderer chat-events; "
+        "stripping the audit-event forward-set must drop ALL renderer audit-events; "
         f"got {seen!r} — the event path is not actually gated by the forward-set"
     )

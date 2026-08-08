@@ -94,7 +94,7 @@ def _cmd_list(args: argparse.Namespace) -> None:
             continue  # default view hides archived agents
         role_first_line = (profile.role or "").strip().splitlines()
         role_excerpt = role_first_line[0] if role_first_line else ""
-        # Last activity = max mtime across history.jsonl + chat events tree.
+        # Last activity = max mtime across history.jsonl + audit events tree.
         latest = 0.0
         history = entry / "history.jsonl"
         if history.is_file():

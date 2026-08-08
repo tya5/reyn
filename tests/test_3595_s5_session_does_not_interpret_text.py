@@ -382,7 +382,7 @@ async def test_two_runs_of_one_command_are_distinguishable_on_screen(
     the first and third results are byte-identical and nothing on screen says
     which invocation each belongs to.
 
-    A command emits no ``user_submitted`` chat-event (#3300 P1 C is the turn
+    A command emits no ``user_submitted`` audit-event (#3300 P1 C is the turn
     path), so this echo is the only surface that can produce the line.
     """
     monkeypatch.chdir(tmp_path)

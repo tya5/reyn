@@ -15,7 +15,7 @@ Two production call sites updated by this PR:
   - ``A2AInterventionBus.on_dispatch`` — fires the input-required
     payload to the peer's webhook on each iv dispatch.
   - ``_A2AProgressBridge._send`` — fires the in-progress payloads
-    for each tracked chat event (phase / llm / act).
+    for each tracked audit event (phase / llm / act).
 
 Both share the same ``RunRegistry.webhook_channel_state(run_id)``
 ChannelState instance so an alternating sequence (input-required →

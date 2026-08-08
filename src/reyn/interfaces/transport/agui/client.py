@@ -172,7 +172,7 @@ class AgUiTransport(ClientTransport):
 
     async def submit_user_text(self, text: str) -> str:
         # #3287: the server echoes the msg_id it assigned (the SAME
-        # correlation id the broadcast user_submitted chat-event carries,
+        # correlation id the broadcast user_submitted audit-event carries,
         # #3300 P2a) in the POST's JSON response — see
         # `agui/endpoint.py`'s `user_message` handler. `""` (never a raised
         # exception / None-propagating crash) on any shape the caller can't
@@ -256,7 +256,7 @@ class AgUiTransport(ClientTransport):
         # #3300 P3 (Y-server) remote parity: POST the cancel-by-id op; the
         # server's response is HTTP-accepted (2xx), not the cancel's own
         # queued/no-op result — the client observes the actual outcome via
-        # the server-authoritative `inbox_cancel` chat-event delta (never a
+        # the server-authoritative `inbox_cancel` audit-event delta (never a
         # client-local "cancel succeeded" inference), same as every other
         # queue-affecting mutation on this transport.
         return bool(await self._send({"type": "cancel_queued", "msg_id": msg_id}))

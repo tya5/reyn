@@ -61,7 +61,7 @@ def _disposition(kind: str) -> str:
 
 def _emitted_custom_names() -> set[str]:
     """The ``reyn.*`` Custom names the codec puts on the wire for the FORWARDED
-    display vocabulary (:data:`DISPLAY_KINDS`) + the derived chat-event
+    display vocabulary (:data:`DISPLAY_KINDS`) + the derived audit-event
     vocabulary. Reads the codec's output, never the profile."""
     names: set[str] = set()
     for kind in DISPLAY_KINDS:  # every wire-forwarded kind (control-filtered excluded)

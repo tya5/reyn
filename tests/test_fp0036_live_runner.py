@@ -213,7 +213,7 @@ async def test_event_isolation_between_scenarios(tmp_path, monkeypatch):
     2. Inspect that Scenario B's events list does not include Scenario A's
        events (i.e. the per-scenario wipe resets the event dir).
 
-    We verify this structurally: after the wipe the chat event dir is
+    We verify this structurally: after the wipe the audit event dir is
     absent, so EventStore.iter_all() returns only events from the new run.
     """
     monkeypatch.chdir(tmp_path)
@@ -230,7 +230,7 @@ async def test_event_isolation_between_scenarios(tmp_path, monkeypatch):
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
     result_a = await runner_fn(scenario_a)
 
-    # The chat events dir should exist after scenario A.
+    # The audit events dir should exist after scenario A.
     events_chat_dir = tmp_path / ".reyn" / "events" / "agents" / "default" / "chat"
 
     # After scenario B is run, the runner wipes the event dir first.

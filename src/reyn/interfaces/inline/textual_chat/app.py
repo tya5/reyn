@@ -425,7 +425,7 @@ class TextualChatApp(App):
     line is NOT echoed locally — it returns as a ``kind="user"`` frame on the
     same stream, so the model is fed entirely from frames and stays equivalent
     to the plain renderer's turn sequence. A COMMAND line is the exception and
-    has to be: it emits no ``user_submitted`` chat-event, so nothing would ever
+    has to be: it emits no ``user_submitted`` audit-event, so nothing would ever
     send that frame back. The shared client-side slash layer writes the echo
     through ``put_display`` (#3595 S5) — still a frame on the same stream, so
     the model is still fed entirely from frames.
@@ -1073,7 +1073,7 @@ class TextualChatApp(App):
         self._pane_commands: "dict[str, list[str]]" = {}
         # #3288 ③c: in-flight streamed reply, keyed by ``chain_id`` — the SAME
         # authoritative correlation id ``RouterLoop._emit_agent_delta`` stamps
-        # on every ``agent_delta`` chat-event AND the one the terminal
+        # on every ``agent_delta`` audit-event AND the one the terminal
         # ``kind="agent"`` OutboxMessage carries in its ``meta["chain_id"]``
         # (never a guessed key — text-match correlation was tried and
         # reverted earlier in this arc, issue #3288/#3309). Each value is a
@@ -3254,10 +3254,10 @@ class TextualChatApp(App):
         return None
 
     def _handle_intervention_answer_event(self, event) -> None:
-        """Fold an ``intervention_answer_submitted`` chat-event into the flow
+        """Fold an ``intervention_answer_submitted`` audit-event into the flow
         entry that ASKED the question (#3300 — the last outbox `kind="user"`
         broadcast site, ``InterventionHandler.deliver_answer_to``, migrated to
-        a chat-event; #3540 — the fold).
+        an audit-event; #3540 — the fold).
 
         #3540: the answer belongs to a question that ALREADY has a flow entry
         (``announce``'s ``kind="intervention"`` row), so appending it as its own

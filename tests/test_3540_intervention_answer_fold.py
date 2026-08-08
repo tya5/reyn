@@ -222,7 +222,7 @@ def _build_handler(
     tmp_path: Path,
 ) -> "tuple[InterventionHandler, InterventionRegistry, list, list, list]":
     """A real, fully-wired handler whose THREE outputs are all captured:
-    the announce outbox frames, the emitted chat-events, and the history
+    the announce outbox frames, the emitted audit-events, and the history
     appends — the producer both sides of the gate are driven from."""
     state_log = StateLog(tmp_path / "state.wal")
     outbox: "list[OutboxMessage]" = []

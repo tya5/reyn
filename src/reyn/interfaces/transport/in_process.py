@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 class InProcessTransport(ClientTransport):
-    """The local transport: forwarder + filtered chat-events → one frame stream."""
+    """The local transport: forwarder + filtered audit-events → one frame stream."""
 
     def __init__(
         self,
@@ -79,7 +79,7 @@ class InProcessTransport(ClientTransport):
     # -- lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        # Event path: subscribe the FILTERED chat-event callback + the
+        # Event path: subscribe the FILTERED audit-event callback + the
         # intervention channel via the registry's focus binding (follows
         # /attach). Display path: pump repl_outbox into the unified stream.
         self._registry.bind_focus_listeners(
@@ -101,7 +101,7 @@ class InProcessTransport(ClientTransport):
         # Synchronous subscriber (same mechanism as before): enqueue ONLY the
         # renderer-relevant subset onto the unified stream. Non-renderer events
         # are dropped here — the transport carries the renderer's vocabulary,
-        # not every chat-event.
+        # not every audit-event.
         etype = getattr(event, "type", None)
         if etype in self._forward_events:
             self._frames.put_nowait(EventFrame(event))
@@ -113,7 +113,7 @@ class InProcessTransport(ClientTransport):
         # #3310 N1: ``repl_outbox`` carries an ``EventFrame`` too now — the
         # registry attach seam (``AgentRegistry._announce_session_attached``)
         # puts a ``session_attached`` EventFrame directly on this queue (the
-        # barrier), rather than routing through a session's own chat-events
+        # barrier), rather than routing through a session's own audit-events
         # (the very stream a switch swaps). Pass an already-tagged frame
         # through UNCHANGED; only a bare ``OutboxMessage`` gets re-tagged as a
         # ``DisplayFrame`` here.

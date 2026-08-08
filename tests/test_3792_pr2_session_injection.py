@@ -201,7 +201,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     """Tier 2: #3792 — a successful commit does all three: (1) appends a
     ``role="user"`` entry to ``session.history`` (the restore SSoT), (2)
     prunes the item from ``journal.snapshot.inbox`` (the inbox SSoT), (3)
-    emits a ``turn_started`` chat-event carrying the injected message's own
+    emits a ``turn_started`` audit-event carrying the injected message's own
     chain_id — the SAME shape the ordinary turn-boundary promote uses.
 
     Falsification (performed during review): commenting out any ONE of the

@@ -1,9 +1,9 @@
 """#3288 ③c — the TUI L7 consumer that coalesces streaming "agent_delta"
-chat-events into one FlowView entry per reply
+audit-events into one FlowView entry per reply
 (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp._handle_agent_delta_event`).
 
 This is the LAST phase of the token-streaming arc (③a core streaming, ③b
-chat-event emit, ③d AG-UI generic multi-CONTENT — all merged). Nothing
+audit-event emit, ③d AG-UI generic multi-CONTENT — all merged). Nothing
 consumed "agent_delta" in the TUI before this phase; ``tests/
 test_agent_delta_no_visible_garbage_3288.py`` (③b, re-pointed by this same
 PR) covers the core "N deltas -> exactly one coalesced entry" property with

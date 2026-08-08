@@ -157,7 +157,7 @@ def _corr_keys(data: dict[str, Any]) -> list[str]:
     """Correlation keys for an event, most-specific first.
 
     A run is correlated by ``run_id`` when present, else by ``agent_id`` (the
-    session-scoped identity the EventLog auto-stamps onto chat events), else a
+    session-scoped identity the EventLog auto-stamps onto audit events), else a
     process-default bucket. Both keys are returned when both are present so a
     root span stored under either can be found by a child that carries the
     other (robust to the chat path's run_id-absent-on-session_started gap).

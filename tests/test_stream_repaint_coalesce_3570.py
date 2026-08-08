@@ -23,7 +23,7 @@ What is asserted is "another task got the loop while the burst drained" and
 Real ``AgentRegistry`` + real ``Session`` + real ``RouterLoop`` + real
 ``InProcessTransport`` + real ``TextualChatApp`` throughout — the deltas are
 emitted by the production ``on_content_delta`` wiring
-(``RouterLoop._emit_agent_delta`` → session chat-events → the registry's focus
+(``RouterLoop._emit_agent_delta`` → session audit-events → the registry's focus
 listener → the transport queue → the app's frame pump). The LLM call itself is
 the only faked boundary, the established idiom of
 ``tests/test_agent_delta_chat_event_3288.py`` and
@@ -286,7 +286,7 @@ async def test_a_mixed_backlog_coalesces_per_chain_not_per_delta(
     to how much else the turn emits — which is exactly the tool-heavy turn where
     the loop is busiest.
 
-    Real transport, real ordered queue: deltas ride the production chat-event
+    Real transport, real ordered queue: deltas ride the production audit-event
     emit (``host.events.emit("agent_delta", ...)``, the SAME call
     ``RouterLoop._emit_agent_delta`` makes) and the tool frames ride
     ``repl_outbox`` (the display path the registry forwarder feeds).

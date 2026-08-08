@@ -4,7 +4,7 @@ Server-authoritative, WAL-durable cancellation of a queued (not yet
 dispatched) inbox item. Y-client (the textual_chat sent-queue row removal +
 composer newline-prepend) is a LATER, separately-owned PR — this file gates
 the SERVER half only: ``Session.cancel_queued`` / ``SnapshotJournal.cancel_inbox``
-/ the WAL ``inbox_cancel`` vocabulary / the ``inbox_cancel`` chat-event delta /
+/ the WAL ``inbox_cancel`` vocabulary / the ``inbox_cancel`` audit-event delta /
 remote (agui) parity.
 
 Covers (see the architect's #3300 design-pass comments on the issue):
@@ -396,7 +396,7 @@ def test_remote_queue_view_apply_inbox_cancel_removes_by_msg_id():
 
 @pytest.mark.asyncio
 async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path):
-    """Tier 2: a real ``Session.cancel_queued``'s ``inbox_cancel`` chat-event
+    """Tier 2: a real ``Session.cancel_queued``'s ``inbox_cancel`` audit-event
     — the SAME event the transport/agui completeness gates bind — drives a
     ``RemoteQueueView`` to the correct final state end-to-end."""
     session, _ = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")

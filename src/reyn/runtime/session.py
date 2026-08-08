@@ -1213,7 +1213,7 @@ class Session:
         # agents/<name>/ is state-only (PR20); Agent-derived workspace_dir, ensure it exists (FP-0043 Stage 2)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
-        self.events_dir = (  # PR20: chat events dir, created lazily by EventStore on first write
+        self.events_dir = (  # PR20: audit events dir, created lazily by EventStore on first write
             # #3705: anchored on the same root as workspace_dir — was a bare
             # relative `Path(".reyn")`, silently ignoring workspace_state_dir.
             self._reyn_state_root / "events" / "agents" / self.agent_name / "chat"
@@ -1446,7 +1446,7 @@ class Session:
         self._budget.accumulate(result)
 
     def subscribe_chat_events(self, cb: "Callable[..., None]") -> None:
-        """Register ``cb`` for this session's chat events (narrow public API).
+        """Register ``cb`` for this session's audit events (narrow public API).
 
         Encapsulates the internal EventLog so UI callers (e.g. the inline CUI
         working indicator) subscribe without reaching into ``_chat_events``.
@@ -1471,7 +1471,7 @@ class Session:
         Swaps ONLY the ``EventStore`` subscriber on ``_chat_events`` (remove old, add
         new); every OTHER subscriber (the ``ChatLifecycleForwarder`` outbox bridge, the
         state-change converter, any attach-time focus listener) is preserved. A rebuild
-        of the subscriber list would silently drop them and chat events would stop
+        of the subscriber list would silently drop them and audit events would stop
         reaching the outbox / TUI — so the swap is surgical, not a reconstruction.
         """
         new_store = EventStore(
@@ -1811,7 +1811,7 @@ class Session:
         Called once per queue-affecting mutation — a ``user`` item entering
         the inbox (``submit_user_text``) or leaving it (dispatch,
         ``turn_started``) — and the returned value is stamped onto that
-        mutation's chat-event (``seq=``). A client merging the granular
+        mutation's audit-event (``seq=``). A client merging the granular
         ``user_submitted``/``turn_started`` deltas keeps the highest ``seq``
         it has applied (seeded from ``STATE_SNAPSHOT``'s ``queue_seq``) and
         discards any delta whose ``seq`` is not strictly greater — this is
@@ -2780,7 +2780,7 @@ class Session:
         ``(data: dict) -> str`` for formatters that need optional-field
         handling a plain template can't express (#3636 — see
         ``_format_config_reloaded``). New emitters only need to (a) emit
-        a known event type on the chat events log and (b) register
+        a known event type on the audit events log and (b) register
         their (source, template) in the mapping.
 
         Defensive: malformed event payloads (= missing template keys,
@@ -4942,7 +4942,7 @@ class Session:
         FAILED persistently — the agent stops accepting operations rather than accept one whose
         durable record will never land.
 
-        #2280: the FIRST time this latches, also emit a ``session_halted`` chat-event (guarded by
+        #2280: the FIRST time this latches, also emit a ``session_halted`` audit-event (guarded by
         ``self._halted_reason is None`` so a durability-dead session that keeps rejecting further
         ops does not re-emit on every subsequent submit) — the observability half of the halt. The
         raise above is unconditional and IS the safety mechanism (synchronous, on every call, no
@@ -5003,7 +5003,7 @@ class Session:
         Each item: ``{"msg_id": str, "chain_id": str | None, "text": str | None,
         "meta": dict}`` — ``msg_id``/``chain_id`` are the correlation ids a
         client matches against the ``user_submitted`` (enqueue) /
-        ``turn_started`` (dispatch) chat-event deltas to keep its queue model
+        ``turn_started`` (dispatch) audit-event deltas to keep its queue model
         in sync. ``meta`` (#3300 P2b co-vet fix) is the SAME ADR-0039
         attribution ``submit_user_text`` stamps on the ``user_submitted``
         event (``_user_frame_meta`` — now ALSO stored on the inbox payload,
@@ -5039,7 +5039,7 @@ class Session:
           ``asyncio.Queue`` entry cannot be removed in place — no such API —
           so it is discarded, never dispatched, whenever it is eventually
           dequeued: see ``_consume_inbox``/``_drain_to_wake``); and an
-          ``inbox_cancel`` chat-event delta is emitted, seq-stamped like
+          ``inbox_cancel`` audit-event delta is emitted, seq-stamped like
           ``user_submitted``/``turn_started`` (the sent-queue order-race-gate
           token, ``_bump_queue_seq``) — the server-authoritative removal
           signal every attached client (local + remote/agui) applies to its
@@ -5190,7 +5190,7 @@ class Session:
         — there is no real ``await`` suspension between them for another
         task to interleave into.
 
-        Reuses the SAME ``turn_started`` chat-event shape the ordinary
+        Reuses the SAME ``turn_started`` audit-event shape the ordinary
         turn-boundary promote uses (``run_one_iteration``) rather than a new
         kind — the sent-queue's ``_handle_turn_started_event`` already
         matches by ``chain_id`` and does not care whether this is the FIRST
@@ -6451,7 +6451,7 @@ class Session:
         (= the agent name when no narrower scope applies, or the
         current chain_id for chain-scoped checkpoints). Emits a
         ``safety_limit_checkpoint`` audit event so the decision is
-        visible alongside the existing chat events.
+        visible alongside the existing audit events.
 
         #3053: the bus resolves BRIDGE-AWARE via ``_make_router_intervention_bus``
         (the SAME seam #3052 gave every MCP router-op, and #3053 gave the

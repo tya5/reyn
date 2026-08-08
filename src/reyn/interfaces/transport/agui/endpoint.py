@@ -227,7 +227,7 @@ class _SessionFrameSource:
     ``agent_name`` are supplied, reacts to it independently: it re-points
     itself at the target session (:meth:`_peek_session`'s public counterpart,
     ``registry.get_session``) and synthesizes the SAME ``session_attached``
-    chat-event #3310 N1 emits on ``repl_outbox`` — the barrier the emitter
+    audit-event #3310 N1 emits on ``repl_outbox`` — the barrier the emitter
     (``AgUiEmitter``) uses to re-fire the reconnect protocol for the new
     session (its ``backlog_provider``). This is a PARALLEL, independent
     reaction to a message the registry's own forwarder already handles for
@@ -263,7 +263,7 @@ class _SessionFrameSource:
         self._bind(session)
 
     def _bind(self, session) -> None:
-        """Point this source at ``session``'s own chat-event stream (the
+        """Point this source at ``session``'s own audit-event stream (the
         outbox-hub subscription is (re)established per drain iteration,
         see :meth:`_drain_outbox`)."""
         self._session = session
@@ -339,10 +339,10 @@ class _SessionFrameSource:
                     sub.close()
                     # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
                     # is enqueued BEFORE ``_bind(target)`` makes the new
-                    # session's chat-event subscriber live. ``_bind`` calls
+                    # session's audit-event subscriber live. ``_bind`` calls
                     # ``add_subscriber`` synchronously, and ``_on_chat_event``
                     # is itself synchronous (``_q.put_nowait`` — no await),
-                    # so a chat-event the new session emits CANNOT reach
+                    # so an audit-event the new session emits CANNOT reach
                     # ``_q`` before its subscriber exists. Emitting the
                     # announce first, THEN subscribing, therefore makes
                     # "barrier before any of the new session's own frames"
@@ -375,7 +375,7 @@ class _SessionFrameSource:
             frame = await self._q.get()
             # #3570, the server-side instance of the same shape as
             # ``InProcessTransport.frames``: ``_q`` is fed by SYNCHRONOUS
-            # ``put_nowait`` callers (the chat-event subscriber, the forwarder),
+            # ``put_nowait`` callers (the audit-event subscriber, the forwarder),
             # so a burst leaves it non-empty and ``get()`` stops suspending —
             # the emitter would then encode + serialize the whole burst without
             # the server's event loop running anything else (other connections'
@@ -615,7 +615,7 @@ async def agui_submit(request: Request, agent_name: str):
             # ADR-0039 multi-client input-broadcast fix: attribute this
             # submit the same way `_handle_answer` attributes a HITL grant
             # (auth_user_id + connection id) — `submit_user_text` emits a
-            # `user_submitted` chat-event (#3300 P1 C) that every attached
+            # `user_submitted` audit-event (#3300 P1 C) that every attached
             # surface's event→display handler renders as this client's turn,
             # not just the agent's reply.
             msg_id = await session.submit_user_text(

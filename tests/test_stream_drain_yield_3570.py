@@ -21,7 +21,7 @@ which is the class #3473 just closed. The delta the app is ingesting is the
 logical tick.
 
 Real ``AgentRegistry`` + real ``Session`` + real ``InProcessTransport`` + real
-``TextualChatApp``; the deltas ride the production chat-event emit
+``TextualChatApp``; the deltas ride the production audit-event emit
 (``host.events.emit("agent_delta", ...)``, the call ``RouterLoop
 ._emit_agent_delta`` makes) and the tool frames ride ``repl_outbox`` (the
 display path the registry forwarder feeds). No mocks.
@@ -326,7 +326,7 @@ async def test_the_server_frame_source_suspends_between_frames_of_a_burst(
     stop for the burst, which is a strictly wider blast radius than one TUI.
 
     Real ``Session`` + real ``_SessionFrameSource``; the burst is emitted
-    through the production chat-event channel, so the queue fills exactly the
+    through the production audit-event channel, so the queue fills exactly the
     way a streamed reply fills it.
 
     Strip-falsify (PR body): dropping the suspension makes every gap 0."""

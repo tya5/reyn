@@ -234,7 +234,7 @@ command:
 ★ **The shared layer echoes the typed line through `put_display` before it
 dispatches.** A command's output is client-authored display; so is its input,
 and `ClientTransport.put_display`'s docstring names "user echo" as its first
-payload. A turn gets its echo from the `user_submitted` chat-event (#3300 P1 C)
+payload. A turn gets its echo from the `user_submitted` audit-event (#3300 P1 C)
 and a command emits none, so nothing else can produce it — and result-without-
 input is worse than either extreme: two runs of the same command render two
 identical blocks with nothing to attribute them to. The one exception is a
