@@ -34,11 +34,20 @@ Witnesses:
 (f) non-fabrication — a cancel from something OTHER than
     ``cancel_inflight()`` (``_turn_cancel_self_initiated`` False) must NOT
     be recorded as a user cancel.
+(g) hard-cancel wiring (② — ``Session.run_one_iteration``'s
+    ``CancelledError`` catch), driven through a REAL ``Session`` via
+    ``cancel_inflight()`` against an in-flight (hung) turn — the same
+    controllable-hang seam ``tests/test_2242_hard_cancel.py`` uses. Kept
+    HERE (not only cross-referenced) after review caught that this file's
+    own suite went fully green with ② stripped to a no-op — the positive
+    witness lived exclusively in test_2242_hard_cancel.py's UPDATED
+    assertion, invisible to anyone reading this file in isolation.
 
-The hard-cancel wiring (② — ``Session.run_one_iteration``'s
-``CancelledError`` catch) is witnessed for real by
-``tests/test_2242_hard_cancel.py``'s existing end-to-end hard-cancel test,
-updated in this same PR to assert the new marker's presence + shape.
+``tests/test_2242_hard_cancel.py``'s own end-to-end hard-cancel test was
+ALSO updated in this same PR (its pre-existing assertion pinned "only the
+user message survives a hard cancel", now correctly "user message + the
+marker") — that update is corroborating evidence, not this file's sole
+witness for ②.
 """
 from __future__ import annotations
 
@@ -46,11 +55,13 @@ import asyncio
 
 import pytest
 
+from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
+from tests._support.agent_session import make_session as _make_hard_cancel_session
 from tests._support.router_loop import FakeRouterHost, text_result
 from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
 from tests._support.session import make_session as _make_session
@@ -267,3 +278,59 @@ async def test_a_non_self_initiated_cancel_does_not_fabricate_a_user_cancel_mark
         f"a cancel from something other than cancel_inflight() must NOT "
         f"fabricate a user-cancel marker; got {cancelled_markers!r}"
     )
+
+
+# ── (g) hard-cancel wiring (②), driven through a REAL Session ────────────
+
+
+@pytest.mark.asyncio
+async def test_hard_cancel_via_cancel_inflight_persists_the_marker(tmp_path) -> None:
+    """Tier 2: arm (g) — the ② receiver, witnessed IN THIS FILE (not only
+    cross-referenced) so a reader/reviewer of this file alone sees the
+    positive path for the "more common" case the module docstring itself
+    names.
+
+    Falsification (performed for real, per lead-coder/architect co-vet):
+    replacing ``session.notify_turn_cancelled(...)`` at the
+    ``_turn_cancel_self_initiated`` branch in ``Session.run_one_iteration``
+    with a no-op makes ALL 6 of this file's PRE-EXISTING tests stay green
+    (none of arms (a)-(f) exercise ② at all) while
+    ``test_2242_hard_cancel.py``'s own updated assertion goes RED — proving
+    ② had a real but not-self-contained witness. This test closes that gap:
+    the SAME strip makes THIS test go RED on its own, restored clean."""
+    session = _make_hard_cancel_session(
+        agent_name="hard-cancel-3694-agent",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snapshot.json",
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _hanging_run_turn(user_text: str, chain_id: str) -> None:
+        started.set()
+        await release.wait()
+
+    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
+
+    await session._put_inbox("user", {"text": "hello", "chain_id": "c-hard-cancel-g"})
+    turn_task = asyncio.create_task(session.run_one_iteration())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        # The REAL delivery mechanism: cancel_inflight() (NOT a raw
+        # Task.cancel()) — sets _turn_cancel_self_initiated=True FIRST,
+        # which is what gates notify_turn_cancelled's call.
+        result = await session.cancel_inflight()
+        assert "cancel" in result.lower()
+
+        release.set()
+        completed = await asyncio.wait_for(turn_task, timeout=5)
+        assert completed is True
+    finally:
+        release.set()
+
+    (marker,) = [
+        m for m in session.history
+        if m.role == "system" and m.meta.get("kind") == "turn_cancelled"
+    ]
+    assert marker.meta.get("chain_id") == "c-hard-cancel-g"
