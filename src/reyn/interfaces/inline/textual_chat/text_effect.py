@@ -86,6 +86,8 @@ terminal's differential update actually sends), and anything on Windows/git-bash
 """
 from __future__ import annotations
 
+import math
+import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -97,6 +99,30 @@ if TYPE_CHECKING:
 #: measurement this is chosen from — it is deliberately below the upstream
 #: example's 30, which no measured effect reaches.
 DEFAULT_FPS = 10
+
+#: How many frames one cycle of the waiting pulse takes. At :data:`DEFAULT_FPS`
+#: that is a one-second breath — and it is also the interval at which the cache
+#: is checked, so the switch to the real effect lands on a cycle boundary and
+#: never cuts a fade in half.
+WAITING_FRAMES = 10
+
+#: How many cached frames the rewind skips per tick. Rewinding by STEPPING
+#: rather than by raising the frame rate: a cached tick costs one lookup, and a
+#: 5x rate would cost five times the rendering a second — spending the
+#: responsiveness this whole design exists to buy.
+REVERSE_STRIDE = 5
+
+#: How many distinct effects a single ``ctrl+l`` press will try before giving
+#: up (#3866 follow-up). A build can end with no frames — the worker was
+#: cancelled, or the effect raised — and the first version of this treated
+#: that as "end the overlay", which after a long pulse reads as the wait
+#: having been for nothing rather than as a result. Retrying a DIFFERENT
+#: effect turns an effect-specific failure into an invisible extra beat of
+#: the same pulse; it does nothing for a host-level failure (e.g. memory
+#: pressure building a large cache), which is why this is bounded rather than
+#: "try every effect" — a systemic failure should surface, not spend seconds
+#: failing at every member of the list before saying so.
+MAX_BUILD_ATTEMPTS = 3
 
 #: The optional dependency this needs, and the extra that carries it.
 #:
@@ -131,6 +157,123 @@ def unavailable_message() -> str:
         f"text effects need the optional '{_EXTRA}' extra — "
         f"pip install 'reyn[{_EXTRA}]'"
     )
+
+
+def _pulse_colours(dark: bool) -> "tuple[str, ...]":
+    """One colour per frame of the waiting pulse: peak -> ground -> peak.
+
+    A raised cosine rather than a straight line, for the reason the operator
+    named — a linear fade reads as a level being turned down, an eased one reads
+    as breathing. The same shape and the same ``blend_rgb`` call the shine band
+    uses (``activity_row._shine_ramp``), so the two animations in this interface
+    move by one law instead of each inventing its own.
+
+    The text never actually goes out. The trough is
+    :data:`~palette.BLINK_GROUND_DARK`, near the terminal's background but not
+    on it: a fade that reached the background would blink OFF, and off is what a
+    fault looks like.
+    """
+    from rich.color import Color, blend_rgb
+
+    from reyn.interfaces.inline.textual_chat import palette
+
+    peak = Color.parse(
+        palette.BLINK_PEAK_DARK if dark else palette.BLINK_PEAK_LIGHT
+    ).get_truecolor()
+    ground = Color.parse(
+        palette.BLINK_GROUND_DARK if dark else palette.BLINK_GROUND_LIGHT
+    ).get_truecolor()
+    out: "list[str]" = []
+    for i in range(WAITING_FRAMES):
+        # A FULL turn of cosine: starts at the peak, reaches the ground at the
+        # halfway frame, and would be back at the peak on the frame AFTER the
+        # last — so consecutive cycles butt together with no repeated frame at
+        # the seam.
+        fade = 0.5 + math.cos(2.0 * math.pi * i / WAITING_FRAMES) / 2.0
+        c = blend_rgb(ground, peak, cross_fade=fade)
+        out.append(f"#{c.red:02x}{c.green:02x}{c.blue:02x}")
+    return tuple(out)
+
+
+def waiting_cycle(covered: "list[str]", *, dark: bool = True) -> list:
+    """One cycle of the pulse over ``covered`` — what is shown while the cache
+    is still being built.
+
+    The operator's own conversation, breathing. Not a spinner and not a banner:
+    the effect that follows acts on this same text, so the wait is that text
+    too, and the handover is a change of motion rather than a change of subject.
+    """
+    from rich.text import Text
+
+    art = "\n".join(covered)
+    return [Text(art, style=colour) for colour in _pulse_colours(dark)]
+
+
+class _CacheBuilder:
+    """Builds an effect's whole frame list off the UI thread.
+
+    Why a thread: generation is 3-9 seconds for one effect at a real viewport
+    size (measured, 100x23) of CPU work inside TerminalTextEffects' own Python
+    loop. On the event loop that is the stutter this change removes; per tick,
+    lazily, is what the stutter WAS.
+
+    Cancellable between frames, because the key is a toggle and pressing it
+    during a build has to close the overlay at once. Python cannot kill a
+    thread, so the loop checks a flag — which is why the check sits inside the
+    frame loop rather than around it.
+    """
+
+    def __init__(self, cls, art: str, width: int, height: int) -> None:
+        self._frames: list = []
+        self._done = threading.Event()
+        self._cancelled = threading.Event()
+        self._thread = threading.Thread(
+            target=self._build,
+            args=(cls, art, width, height),
+            daemon=True,
+            name="reyn-text-effect-cache",
+        )
+        self._thread.start()
+
+    def _build(self, cls, art: str, width: int, height: int) -> None:
+        from rich.text import Text
+
+        try:
+            effect = cls(art)
+            effect.terminal_config.canvas_width = width
+            effect.terminal_config.canvas_height = height
+            out: list = []
+            for frame in effect:
+                if self._cancelled.is_set():
+                    return
+                out.append(Text.from_ansi(frame))
+            self._frames = out
+        except Exception:  # noqa: BLE001 — a joke must not take the session with it
+            self._frames = []
+        finally:
+            self._done.set()
+
+    @property
+    def ready(self) -> bool:
+        """The cache is complete AND has frames."""
+        return self._done.is_set() and bool(self._frames)
+
+    @property
+    def gave_nothing(self) -> bool:
+        """The build ended with no frames — cancelled, or the effect raised."""
+        return self._done.is_set() and not self._frames
+
+    @property
+    def frames(self) -> list:
+        return self._frames
+
+    def cancel(self) -> None:
+        """Ask the build to stop at its next frame.
+
+        Does not join: the caller is the UI thread, and the worker is a daemon
+        holding nothing but its own partial list.
+        """
+        self._cancelled.set()
 
 
 def effect_classes() -> list:
@@ -177,7 +320,25 @@ def effect_classes() -> list:
     ]
 
 
-def frame_factory() -> "Callable[[int, int, list[str]], Iterator[RenderableType]]":
+def _play(frames: list):
+    """Forward, then rewind, forever — the operator's shape for the loop.
+
+    Rewinding by STEPPING through the cache (:data:`REVERSE_STRIDE`) rather than
+    by raising the frame rate. Both look like a fast rewind; only one keeps a
+    tick at one lookup, and the rate is what this whole change is buying back.
+
+    Both ends are trimmed by one frame per pass so the extremes are not held for
+    two ticks — a repeated first/last frame reads as a stall in an animation
+    that is otherwise always moving.
+    """
+    while True:
+        yield from frames
+        yield from frames[-2::-REVERSE_STRIDE]
+
+
+def frame_factory(
+    *, dark: bool = True
+) -> "Callable[[int, int, list[str]], Iterator[RenderableType]]":
     """A ``(width, height, covered) -> frames`` factory for ``play_overlay``.
 
     ``covered`` is what the overlay is hiding — the body text of the rows on
@@ -199,6 +360,12 @@ def frame_factory() -> "Callable[[int, int, list[str]], Iterator[RenderableType]
     Re-invoked per loop cycle and on resize, so each cycle picks a fresh effect
     AND re-reads what is on screen — a conversation that moved while the effect
     was running is what the next cycle dissolves.
+
+    ``dark`` is whether the terminal's background is dark — the app's to answer
+    (``App.current_theme.dark``), asked at the press rather than cached here, the
+    same way the shine band asks it. It picks the pulse's colour pair: one pair
+    cannot serve both grounds, since a near-white peak on a white terminal is
+    the pulse disappearing rather than the pulse being subtle.
 
     Imports the library lazily, at the first press: reyn does not depend on it,
     and a module-level import would make an absent optional dependency a broken
@@ -235,16 +402,52 @@ def frame_factory() -> "Callable[[int, int, list[str]], Iterator[RenderableType]
         # round of #3796 exists to remove.
         if not art.strip():
             return
-        effect = random.choice(effects)(art)
-        # Sized to what was covered, not to the widget: a canvas narrower than
-        # a covered line CLIPS it (measured — a 100-cell line came back 78),
-        # and the effect would then resolve to something the operator can see
-        # is not what was there.
-        effect.terminal_config.canvas_width = width
-        effect.terminal_config.canvas_height = height
-        # Iterated directly — see the module docstring on why
-        # ``terminal_output()`` must not wrap this.
-        for frame in effect:
-            yield Text.from_ansi(frame)
+        pulse = waiting_cycle(covered, dark=dark)
+        # A bounded pool of DISTINCT attempts (#3866 follow-up), not one shot:
+        # a build can end with no frames — the worker cancelled, or the effect
+        # raised — and yielding nothing after a long pulse reads as the wait
+        # having failed rather than as a result. See :data:`MAX_BUILD_ATTEMPTS`
+        # for why this is bounded rather than exhaustive.
+        pool = random.sample(effects, k=min(MAX_BUILD_ATTEMPTS, len(effects)))
+        for cls in pool:
+            builder = _CacheBuilder(cls, art, width, height)
+            # Sized to what was covered, not to the widget: a canvas narrower
+            # than a covered line CLIPS it (measured — a 100-cell line came
+            # back 78), and the effect would resolve to something the operator
+            # can see is not what was there.
+            try:
+                while not builder.ready and not builder.gave_nothing:
+                    # A WHOLE cycle before re-checking: the handover lands on
+                    # a boundary, so the pulse is never cut mid-fade. The cost
+                    # of waiting is at most one cycle (~1s at DEFAULT_FPS)
+                    # after the cache is ready, which is cheaper than a
+                    # visible seam.
+                    yield from pulse
+                if builder.ready:
+                    yield from _play(builder.frames)
+                    return
+                # gave_nothing: try the next effect in the pool, on the SAME
+                # pulse — the operator sees one continuous wait, not a series
+                # of restarts.
+            finally:
+                # Reached when the overlay is dismissed and this generator is
+                # closed (cancels an in-flight build), and also on every
+                # ordinary loop exit (a no-op against an already-finished
+                # build — see _CacheBuilder.cancel). A build left running
+                # would hold a core for several seconds producing frames for
+                # a screen nobody is looking at.
+                builder.cancel()
+        # Every attempt in the pool failed. Hand the screen back PLAINLY —
+        # unfaded, unmoving — rather than let the overlay vanish on the next
+        # tick: that is the operator's own conversation as its own
+        # acknowledgement that this pull came up empty, distinct from "still
+        # building" (pulsing) and from "playing" (moving) so it cannot be
+        # mistaken for either. Held for a WHOLE pulse cycle's worth of frames
+        # (one at DEFAULT_FPS, same "one held beat" the pulse itself uses) —
+        # a single frame is one tick, ~100ms, which a fast build failure
+        # (measured: sub-frame for a constructor-time raise) would render as
+        # a flicker rather than a legible screen.
+        for _ in range(WAITING_FRAMES):
+            yield Text(art)
 
     return frames
