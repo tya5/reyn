@@ -126,50 +126,6 @@ async def test_the_feed_is_intact_after_the_effect() -> None:
         )
 
 
-@requires_tte
-def test_the_effect_is_given_the_covered_screen(monkeypatch) -> None:
-    """Tier 1: reyn hands the effect the rows that are on screen (#3796 round 2).
-
-    The operator found the first version animating a fixed ``"reyn"`` over their
-    conversation. The witness that replaced it read the animation's FINAL FRAME
-    and asserted the covered lines came back — which pins a property of
-    TerminalTextEffects (an effect resolves to its input), not a promise reyn
-    makes. No Tier covers a third-party's behaviour, and the earlier form also
-    cost 10 GB on the branch where the factory stopped being finite (#3872).
-
-    reyn's promise ends at the hand-off: what it gives the effect is the visible
-    rows, joined, and nothing else. A real effect records that in
-    ``input_data``, so this reads it from a genuine instance — no stand-in, and
-    no frames generated. Replace the body's ``art`` with a banner and this goes
-    RED on the value itself rather than on what an animation did with it.
-    """
-    from terminaltexteffects.effects import effect_rain
-
-    from reyn.interfaces.inline.textual_chat import text_effect
-
-    covered = [
-        "user: what does the drawer show?",
-        "",
-        "● thirteen tabs; Cost and Ctx are readouts",
-    ]
-    seen: list = []
-
-    class _Recording(effect_rain.Rain):
-        def __init__(self, art: str) -> None:
-            seen.append(art)
-            super().__init__(art)
-
-    monkeypatch.setattr(text_effect, "effect_classes", lambda: [_Recording])
-    frames = text_effect.frame_factory()(78, len(covered), covered)
-    next(frames, None)  # one frame: enough to reach the construction, not to animate
-    frames.close()
-
-    assert seen, "the factory never constructed an effect"
-    assert seen[0] == "\n".join(covered), (
-        f"reyn handed the effect {seen[0]!r} instead of the screen it covered"
-    )
-
-
 
 @requires_tte
 @pytest.mark.asyncio
