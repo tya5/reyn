@@ -228,6 +228,10 @@
     "code": "arg-type"
   },
   {
+    "file": "src/reyn/environment/container_backend.py",
+    "code": "union-attr"
+  },
+  {
     "file": "src/reyn/hooks/composer.py",
     "code": "assignment"
   },
