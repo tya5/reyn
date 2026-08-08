@@ -25,10 +25,71 @@ from reyn.security.sandbox import noop_backend as _noop_module
 
 
 def test_default_config_values():
-    """Tier 2: SandboxConfig() defaults to backend='auto', on_unsupported='warn'."""
+    """Tier 2: SandboxConfig() defaults to backend='auto', on_unsupported='warn',
+    mode='compat' (#3823 ②, owner-ruled "A")."""
     cfg = SandboxConfig()
     assert cfg.backend == "auto"
     assert cfg.on_unsupported == "warn"
+    assert cfg.mode == "compat"
+
+
+def test_config_rejects_invalid_mode():
+    """Tier 2: #3823 ② — SandboxConfig with unknown mode raises ValueError listing
+    the allowed set. "off" is deliberately NOT allowed — the owner ruling dropped
+    it (expressible as custom-with-everything-allowed instead)."""
+    with pytest.raises(ValueError, match="sandbox.mode") as exc_info:
+        SandboxConfig(mode="off")
+    msg = str(exc_info.value)
+    assert "off" in msg
+    for allowed in ("compat", "strict", "custom"):
+        assert allowed in msg
+
+
+def test_config_accepts_compat_mode():
+    """Tier 2: #3823 ② — 'compat' round-trips byte-identical (no normalization)."""
+    assert SandboxConfig(mode="compat").mode == "compat"
+
+
+def test_config_refuses_unwired_modes_rather_than_silently_ignoring_them():
+    """Tier 2: #3823 ② — strict/custom are declared in the enum but NOT wired
+    into any resolved-policy behavior yet, so accepting them would silently
+    lie to an operator who believes containment is now enforced (lead-coder's
+    finding, distinguished from #3850's internal-field "written but unread"
+    case: an operator forms a real expectation from config, unlike a private
+    field only code reads). Must fail loudly, not validate-and-ignore."""
+    for mode in ("strict", "custom"):
+        with pytest.raises(ValueError, match="not implemented yet"):
+            SandboxConfig(mode=mode)
+
+
+def test_yaml_parse_defaults_mode_to_compat_when_absent():
+    """Tier 2: #3823 ② — a `sandbox:` YAML block that omits `mode` parses to
+    the compat default, not an error or a None. Real parser, not a hand-built
+    SandboxConfig, since this is the actual reyn.yaml -> SandboxConfig seam."""
+    from reyn.config.infra import _build_sandbox_config
+
+    cfg = _build_sandbox_config({"backend": "noop"})
+    assert cfg.mode == "compat"
+
+
+def test_yaml_parse_honors_an_explicit_compat_mode():
+    """Tier 2: #3823 ② — an operator-declared `sandbox: {mode: compat}` reaches
+    SandboxConfig.mode unchanged (the one mode actually wired/accepted today)."""
+    from reyn.config.infra import _build_sandbox_config
+
+    cfg = _build_sandbox_config({"mode": "compat"})
+    assert cfg.mode == "compat"
+
+
+def test_yaml_parse_propagates_the_not_implemented_refusal_for_strict():
+    """Tier 2: #3823 ② — an operator writing `sandbox: {mode: strict}` in
+    reyn.yaml today gets a loud, real config-load error, not a silently
+    accepted-and-ignored value. Same discriminator as the dataclass-level
+    test above, exercised through the actual YAML-parse seam."""
+    from reyn.config.infra import _build_sandbox_config
+
+    with pytest.raises(ValueError, match="not implemented yet"):
+        _build_sandbox_config({"mode": "strict"})
 
 
 def test_config_rejects_invalid_backend():
