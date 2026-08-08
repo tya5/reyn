@@ -3289,9 +3289,9 @@ class AgentRegistry:
             if old_session is not None:
                 # Move any focus-following front-end listeners off the old session.
                 # #3793 stage 2: no longer also flips a `Session.is_attached`
-                # bool here — OutboxHub's own zero-subscriber no-op already
-                # achieves "nobody is watching" without a second, manually-
-                # synced representation (see Session._put_outbox_nowait).
+                # bool here — `Session._put_outbox_nowait` derives "nobody is
+                # watching" directly from `outbox_hub.has_subscribers()`
+                # instead of a second, manually-synced representation.
                 self._unwire_focus_listeners(old_session)
 
         if old != key:

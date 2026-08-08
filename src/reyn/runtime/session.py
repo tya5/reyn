@@ -6095,14 +6095,14 @@ class Session:
         # documented at docs/concepts/data-retrieval/chat-compaction.md#compaction-paths
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
-        """Drop transient kinds while detached; durable kinds are queued.
+        """Drop transient kinds while nobody is subscribed; durable kinds are queued.
 
-        While `is_attached=False` (PR10 multi-agent: agent running in the
-        background), `status`/`trace` carry no value to a detached display
-        and would just accumulate in the queue. `agent`/`intervention`/
-        `error`/`__end__` are kept so they reach the user
-        when re-attached or remain in history (history append happens
-        independently in callers).
+        While ``self.outbox_hub`` has no live subscribers (#3793 stage 2: no
+        forwarder attached, no AG-UI/other surface subscribed), `status`/
+        `trace` carry no value to a display nobody is reading and would just
+        accumulate in the queue. `agent`/`intervention`/`error`/`__end__` are
+        kept so they reach the user once a surface subscribes or remain in
+        history (history append happens independently in callers).
 
         FP-0041 #489 PR-D2: outbox reply_to + external transport interceptor.
           - When ``msg.reply_to`` is unset and the session has a recent
@@ -6173,15 +6173,20 @@ class Session:
             from dataclasses import replace
             msg = replace(msg, reply_to=self._last_reply_to)
         # #3793 stage 2: the "nobody is watching, drop status/trace" gate
-        # (formerly ``if not self.is_attached: return`` here) is removed —
-        # ``self.is_attached`` was a SECOND, single-bool representation of
-        # "attached-ness" that (a) could not express per-connection focus
-        # once ADR-0039 D4's N:N model applies, and (b) was already
-        # redundant: ``OutboxHub._fanout`` genuinely no-ops with zero
-        # subscribers (an empty ``self._subs`` set — the for loop body never
-        # runs), which is the SAME "nobody is watching" property this line
-        # existed to approximate, but derived from who is actually listening
-        # instead of a manually-synced flag.
+        # (formerly ``if not self.is_attached: return`` here) is now derived
+        # from ``self.outbox_hub.has_subscribers()`` instead of a manually-
+        # synced bool — ``self.is_attached`` could not express per-connection
+        # focus once ADR-0039 D4's N:N model applies. This must be checked
+        # HERE, at emission, not left to ``OutboxHub._fanout``'s per-message
+        # no-op: ``_fanout`` only runs once ``_drain`` is consuming, and
+        # ``_drain`` itself only starts on the FIRST ``subscribe()`` — a
+        # session booted via ``ensure_session_running`` (no forwarder; e.g. a
+        # persistent ``cron:``/``webhook:`` session, FP-0043) may never be
+        # subscribed to at all, so without this earlier gate ``_drain`` never
+        # starts and ``self.outbox`` grows unboundedly for the session's
+        # whole lifetime (caught in #3813 review).
+        if not self.outbox_hub.has_subscribers() and msg.kind in {"status", "trace"}:
+            return
         self.outbox.put_nowait(msg)
 
     # ── compaction helpers (FP-0019 Wave 1) ────────────────────────────────────

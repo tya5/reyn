@@ -259,21 +259,19 @@ async def test_addressed_delivery_does_not_depend_on_active(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_source_queue_does_not_grow_unboundedly_without_tui_focus(tmp_path) -> None:
-    """Tier 2: #3793 stage 2 — with the ``Session.is_attached`` gate removed,
-    EVERY ``_put_outbox_nowait`` call (including status/trace) now always
-    reaches ``session.outbox`` (the hub's source queue), instead of being
-    dropped at the source when nobody was "attached". This test confirms the
-    production boot path (``ensure_running``, which always starts the
-    forwarder) keeps that source queue drained regardless — the forwarder's
-    own hub subscription is what prevents unbounded growth, not the removed
-    gate.
+    """Tier 2: #3793 stage 2 — with the ``Session.is_attached`` gate replaced
+    by ``outbox_hub.has_subscribers()``, a status/trace message emitted while
+    the forwarder IS subscribed (registry focus is irrelevant to the hub)
+    still reaches and drains through ``session.outbox`` (the hub's source
+    queue) — the forwarder's own hub subscription is what keeps the queue
+    drained here, same as before the gate's re-derivation.
 
     Falsification (performed during review): starting a session WITHOUT
     booting the forwarder (calling ``get_or_load`` alone, skipping
     ``ensure_running``'s task-boot) and repeating the same puts makes
     ``session.outbox.qsize()`` grow with every message — confirming the
-    forwarder's hub subscription (not the removed gate) is what bounds this
-    in the real boot path.
+    forwarder's hub subscription is what bounds this in the real boot path,
+    not merely the gate.
     """
     reg = _registry(tmp_path)
     session = await reg.ensure_running("alpha")  # boots the forwarder too
@@ -288,4 +286,50 @@ async def test_source_queue_does_not_grow_unboundedly_without_tui_focus(tmp_path
     assert session.outbox.qsize() == 0, (
         "the forwarder's hub subscription must keep draining session.outbox "
         f"regardless of TUI focus; got qsize={session.outbox.qsize()}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_source_queue_does_not_grow_for_never_subscribed_session(tmp_path) -> None:
+    """Tier 2: #3793 stage 2 review follow-up (blocking finding on #3813) —
+    a session booted via ``ensure_session_running`` (FP-0043 4b-2: no
+    forwarder, used by persistent ``cron:``/``webhook:`` sessions and other
+    fire-and-forget drivers) is never subscribed to by anything. Before this
+    stage, ``Session.is_attached`` defaulted ``False`` for such a session, so
+    ``status``/``trace`` were dropped at the source regardless. After the
+    field's removal, EVERY put reached ``session.outbox`` unconditionally —
+    and since nothing ever calls ``outbox_hub.subscribe()``, the hub's drain
+    task never starts, so the source queue would grow without bound for the
+    session's entire (potentially process-lifetime) duration.
+
+    The fix: ``_put_outbox_nowait`` now gates status/trace on
+    ``outbox_hub.has_subscribers()`` directly (not on a drain task already
+    running), so a never-subscribed session drops them at emission exactly
+    as the old ``is_attached``-False default did — this test is the N:N-model
+    equivalent of that old default, derived from actual subscriber state.
+
+    Falsification (performed for real): temporarily changing the gate back to
+    unconditional ``self.outbox.put_nowait(msg)`` (no ``has_subscribers()``
+    check) makes ``session.outbox.qsize()`` grow to 20 after this same loop —
+    confirmed RED for the exact predicted reason, then restored to GREEN.
+    """
+    reg = _registry(tmp_path)
+    # Mirrors reyn.hooks.ingress.CronIngressAdapter.resolve_session exactly:
+    # a persistent cron:<job_name> session, resolved then booted with no
+    # forwarder — the real shape a never-subscribed session takes in prod.
+    session = reg.resolve_session("alpha", "cron", "nightly")
+    registry_running = reg.ensure_session_running("alpha", "cron:nightly")
+    assert registry_running is session
+
+    for i in range(20):
+        session._put_outbox_nowait(
+            OutboxMessage(kind="status", text=f"status {i}")
+        )
+        await asyncio.sleep(0)
+
+    assert not session.outbox_hub.has_subscribers()
+    assert session.outbox.qsize() == 0, (
+        "a never-subscribed (ensure_session_running-booted) session's outbox "
+        f"must not grow from transient status/trace puts; got "
+        f"qsize={session.outbox.qsize()}"
     )
