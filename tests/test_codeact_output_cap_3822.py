@@ -68,3 +68,46 @@ async def test_hitting_the_cap_is_reported_to_the_caller() -> None:
         f"output past the cap was not reported to the caller: "
         f"{ {k: v for k, v in out.items() if k != 'stdout'} }"
     )
+
+
+@pytest.mark.asyncio
+async def test_hitting_the_cap_is_reported_on_the_crash_path_too() -> None:
+    """Tier 2: the SAME report on the no-final-frame path (#3821 follow-up).
+
+    ``run`` returns through two exits and both propagate ``truncated``: the
+    ``final_box`` frame above, and this one — the crash-path fallback taken when
+    the snippet dies before the result channel carries a frame, where the reply
+    is reconstructed from raw stdout/stderr.
+
+    Why a second test rather than a second assertion: the first witness stripped
+    BOTH propagation lines at once and went red, which proves at least one of
+    them is covered — not both. A joint strip cannot distinguish "both witnessed"
+    from "one witnessed and the other along for the ride", and here it was the
+    latter: deleting this branch's line alone left the suite green. The cap is
+    least likely to be a footnote exactly on the crash path, where the reader is
+    already trying to work out what killed the snippet from its output.
+
+    The child raises ``SystemExit`` after emitting past the cap. The harness
+    surfaces every failure through ``except Exception``, which SystemExit is not
+    a subclass of — so the interpreter unwinds with no final frame on the channel
+    and the parent takes the reconstruct-from-stdout exit. The condition is
+    produced by the child, not simulated at the seam, and needs no import (the
+    snippet runs in safe mode, where ``os``/``sys`` are unavailable).
+    """
+    async def dispatch(name: str, args: dict) -> dict:  # pragma: no cover - unused
+        return {"status": "ok", "data": {}}
+
+    over = MAX_SUBPROCESS_OUTPUT_BYTES + 1024
+    code = f"print('x' * {over}, flush=True)\nraise SystemExit(3)\n"
+    out = await CodeActRunner().run(
+        code=code, dispatch=dispatch, allow_unsandboxed=True, timeout=120.0,
+    )
+
+    # Which exit produced this reply, asserted rather than assumed: the
+    # final-frame branch always attaches ``stdout``, so its absence is how this
+    # test knows it is not quietly re-testing the branch above.
+    assert "stdout" not in out, f"took the final-frame exit, not the crash path: {out.keys()}"
+    assert out.get("truncated") is True, (
+        f"the crash path dropped the truncation report: "
+        f"{ {k: v for k, v in out.items() if k != 'stdout'} }"
+    )
