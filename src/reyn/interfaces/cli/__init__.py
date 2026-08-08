@@ -36,6 +36,14 @@ def main() -> None:
     mark_cli_reached()
     parser = build_parser()
     args = parser.parse_args()
+    # #3869: name the process before the subcommand runs, so anything the
+    # operator inspects afterwards (ps, Activity Monitor, a crash post-mortem)
+    # says "reyn:chat" instead of "python3.12". Set AFTER parsing because the
+    # subcommand is the whole payload of the name, and before args.func because
+    # that call is where a long-running surface (chat, serve) stops returning.
+    from reyn.runtime.proctitle import set_process_title  # noqa: PLC0415
+
+    set_process_title(getattr(args, "command", None))
     try:
         args.func(args)
     except MissingCredentialsError as exc:
