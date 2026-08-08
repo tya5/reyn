@@ -11,9 +11,9 @@ seam, changing *routing* only (delivery is unchanged, behavior byte-identical):
   :class:`~reyn.interfaces.transport.frames.EventFrame` directly — the
   ``session_attached`` switch-barrier the registry attach seam puts there;
   the pump passes it through unchanged instead of re-wrapping it.)
-- **Event path** — a ``session.chat_events`` subscription (wired via the
+- **Event path** — a ``session.audit_events`` subscription (wired via the
   registry's focus-listener binding, so it follows ``/attach``), *filtered to
-  the renderer's forward-set* (:func:`renderer_chat_events`), enqueues each
+  the renderer's forward-set* (:func:`forwarded_audit_events`), enqueues each
   relevant event as an :class:`~reyn.interfaces.transport.frames.EventFrame` on
   the SAME unified stream.
 
@@ -40,7 +40,7 @@ from reyn.interfaces.transport.frames import (
     EventFrame,
     Frame,
     FrameTag,
-    renderer_chat_events,
+    forwarded_audit_events,
 )
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ class InProcessTransport(ClientTransport):
         # DERIVED renderer vocabulary by default; injectable ONLY for the
         # strip-falsify test (an empty set makes the event path vanish → RED).
         self._forward_events = (
-            forward_events if forward_events is not None else renderer_chat_events()
+            forward_events if forward_events is not None else forwarded_audit_events()
         )
         self._frames: "asyncio.Queue[Frame]" = asyncio.Queue()
         self._pump_task: "asyncio.Task | None" = None
@@ -83,7 +83,7 @@ class InProcessTransport(ClientTransport):
         # intervention channel via the registry's focus binding (follows
         # /attach). Display path: pump repl_outbox into the unified stream.
         self._registry.bind_focus_listeners(
-            on_chat_event=self._forward_chat_event,
+            on_audit_event=self._forward_audit_event,
             intervention_channel=self._intervention_channel,
         )
         self._pump_task = asyncio.create_task(self._pump_outbox())
@@ -97,7 +97,7 @@ class InProcessTransport(ClientTransport):
 
     # -- frame production ---------------------------------------------------
 
-    def _forward_chat_event(self, event: "Event") -> None:
+    def _forward_audit_event(self, event: "Event") -> None:
         # Synchronous subscriber (same mechanism as before): enqueue ONLY the
         # renderer-relevant subset onto the unified stream. Non-renderer events
         # are dropped here — the transport carries the renderer's vocabulary,

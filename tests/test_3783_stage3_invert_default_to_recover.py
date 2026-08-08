@@ -299,7 +299,7 @@ async def test_compaction_side_unrecovered_error_emits_router_context_overflow_u
     monkeypatch.setattr(engine, "_acompletion", _always_fail)
 
     seen: list = []
-    session._chat_events.add_subscriber(lambda e: seen.append(e.type))
+    session._audit_events.add_subscriber(lambda e: seen.append(e.type))
 
     with pytest.raises(ContextOverflowError):
         await session._run_router_loop("trigger a turn", "chain-3783-stage3-c")

@@ -5,7 +5,7 @@ crash-recoverable driver-session runs the pipeline, emitting
 ``pipeline_step_started`` / ``pipeline_step_completed`` (with ``total_steps``)
 onto the DRIVER-session's own EventLog. That EventLog belongs to a session
 distinct from the human-attached caller, so the TUI (subscribed only to the
-caller's own ``_chat_events``) had no signal to bridge-subscribe to.
+caller's own ``_audit_events``) had no signal to bridge-subscribe to.
 
 ``session_api.run_pipeline_attached`` closes that gap: when given
 ``caller_events``, it emits a ``pipeline_run_attached`` marker

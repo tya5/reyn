@@ -206,7 +206,7 @@ Once the pane holds focus (via `Ctrl+O` or `Shift+Tab`), the cursor moves with `
 ### Working indicator
 
 The `turn_started` → `turn_settled` event pair (consumed by
-`ChatRenderer.on_chat_event`) is the sole signal that drives the
+`ChatRenderer.on_audit_event`) is the sole signal that drives the
 turn-in-progress ("thinking…") indicator — there is no separate, manually
 managed status line. An earlier version had one, and it double-displayed
 against the event-driven indicator (both showing at once) and could leave an

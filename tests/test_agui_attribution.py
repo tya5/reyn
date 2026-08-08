@@ -40,7 +40,7 @@ async def test_answer_stamps_auth_user_id_and_connection(tmp_path, monkeypatch) 
     session = _make_session(tmp_path)
 
     captured: list = []
-    session.subscribe_chat_events(
+    session.subscribe_audit_events(
         lambda ev: captured.append(ev)
         if getattr(ev, "type", None) == "user_answered_intervention"
         else None
@@ -74,7 +74,7 @@ async def test_local_answer_has_no_wire_attribution(tmp_path, monkeypatch) -> No
     session = _make_session(tmp_path)
 
     captured: list = []
-    session.subscribe_chat_events(
+    session.subscribe_audit_events(
         lambda ev: captured.append(ev)
         if getattr(ev, "type", None) == "user_answered_intervention"
         else None

@@ -492,7 +492,7 @@ def build_server(
 
             # issue #271 M1: progress emit bridge — if the client provided
             # a progressToken in this request's metadata, subscribe a
-            # bridge to the agent's chat_events EventLog that translates
+            # bridge to the agent's audit_events EventLog that translates
             # lifecycle events into ``notifications/progress`` messages
             # so the peer (= Reyn-as-MCP-client) can render "what is the
             # server doing right now" instead of waiting silently.
@@ -917,7 +917,7 @@ class _MCPProgressBridge:
         return len(self._tasks)
 
     def attach(self) -> None:
-        events = getattr(self._session, "_chat_events", None)
+        events = getattr(self._session, "_audit_events", None)
         if events is not None:
             events.add_subscriber(self._on_event)
 
@@ -925,7 +925,7 @@ class _MCPProgressBridge:
         if self._detached:
             return
         self._detached = True
-        events = getattr(self._session, "_chat_events", None)
+        events = getattr(self._session, "_audit_events", None)
         if events is not None:
             events.remove_subscriber(self._on_event)
         # Best-effort: cancel in-flight notification tasks so they don't

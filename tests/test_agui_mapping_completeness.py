@@ -6,7 +6,7 @@ renderer consumes has two halves:
 - **DisplayFrame kinds** — the ``OutboxMessage.kind`` literals the renderer's
   ``message`` / ``format_inline_message`` dispatch on (AST-scanned from the
   renderer source, NOT from the codec's own table — non-circular).
-- **EventFrame types** — the ``renderer_chat_events()`` set the transport
+- **EventFrame types** — the ``forwarded_audit_events()`` set the transport
   forwards (derived, not hand-listed).
 
 For EACH, the codec must round-trip it: ``encode_frame`` → SSE → ``decode_event``
@@ -33,7 +33,7 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
-    renderer_chat_events,
+    forwarded_audit_events,
 )
 from reyn.runtime.outbox import OutboxMessage
 
@@ -135,10 +135,10 @@ def test_every_display_kind_round_trips_over_the_wire() -> None:
         assert decoded.message.meta == {"k": "v"}
 
 
-def test_every_forwarded_chat_event_round_trips_over_the_wire() -> None:
-    """Tier 2: each of the renderer_chat_events encodes→decodes back to the
+def test_every_forwarded_audit_event_round_trips_over_the_wire() -> None:
+    """Tier 2: each of the forwarded_audit_events encodes→decodes back to the
     same event type and data. Unmapped / lossy ⇒ RED."""
-    events = renderer_chat_events()
+    events = forwarded_audit_events()
 
     # Sanity: the derived set is the expected non-trivial vocabulary.
     assert {"tool_called", "tool_returned", "tool_failed", "turn_started"} <= events

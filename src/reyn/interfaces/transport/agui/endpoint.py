@@ -57,7 +57,7 @@ from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
     Frame,
-    renderer_chat_events,
+    forwarded_audit_events,
 )
 from reyn.interfaces.web.auth import AuthContext, ConnectionIdentity
 from reyn.interfaces.web.deps import get_registry
@@ -214,7 +214,7 @@ def session_backlog_frames(registry, name: str, sid: str) -> "list[Frame]":
 class _SessionFrameSource:
     """Per-connection unified frame stream off a session (server analogue of
     :class:`InProcessTransport`): fan out ``session.outbox`` as DisplayFrames and
-    the renderer-relevant ``session.chat_events`` subset as EventFrames onto one
+    the renderer-relevant ``session.audit_events`` subset as EventFrames onto one
     ordered queue.
 
     **Session-switch follow (#3310 N3).** This source is bound to ONE session
@@ -242,7 +242,7 @@ class _SessionFrameSource:
     ★No per-client "which frames has this connection already seen"
     bookkeeping (design constraint, #3310 issue thread — rejected as state
     that has to be kept correct forever). The switch-follow above is
-    re-subscription only: WHICH session's ``outbox_hub``/``chat_events`` this
+    re-subscription only: WHICH session's ``outbox_hub``/``audit_events`` this
     source currently reads from (:attr:`_session`, replaced wholesale on a
     switch), plus a FRESH read of that session's live ``history`` at
     switch-time (the emitter's ``backlog_provider``) — never a set of
@@ -255,7 +255,7 @@ class _SessionFrameSource:
         self._registry = registry
         self._agent_name = agent_name
         self._q: "asyncio.Queue[Frame]" = asyncio.Queue()
-        self._forward = renderer_chat_events()
+        self._forward = forwarded_audit_events()
         self._drain_task: "asyncio.Task | None" = None
         self._sub = None
         self._session = None
@@ -267,20 +267,20 @@ class _SessionFrameSource:
         outbox-hub subscription is (re)established per drain iteration,
         see :meth:`_drain_outbox`)."""
         self._session = session
-        self._events = getattr(session, "chat_events", None) or getattr(
-            session, "_chat_events", None
+        self._events = getattr(session, "audit_events", None) or getattr(
+            session, "_audit_events", None
         )
         if self._events is not None:
-            self._events.add_subscriber(self._on_chat_event)
+            self._events.add_subscriber(self._on_audit_event)
 
     def _unbind(self, session) -> None:
-        events = getattr(session, "chat_events", None) or getattr(
-            session, "_chat_events", None
+        events = getattr(session, "audit_events", None) or getattr(
+            session, "_audit_events", None
         )
         if events is not None:
-            events.remove_subscriber(self._on_chat_event)
+            events.remove_subscriber(self._on_audit_event)
 
-    def _on_chat_event(self, event) -> None:
+    def _on_audit_event(self, event) -> None:
         if getattr(event, "type", None) in self._forward:
             self._q.put_nowait(EventFrame(event))
 
@@ -340,7 +340,7 @@ class _SessionFrameSource:
                     # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
                     # is enqueued BEFORE ``_bind(target)`` makes the new
                     # session's audit-event subscriber live. ``_bind`` calls
-                    # ``add_subscriber`` synchronously, and ``_on_chat_event``
+                    # ``add_subscriber`` synchronously, and ``_on_audit_event``
                     # is itself synchronous (``_q.put_nowait`` — no await),
                     # so an audit-event the new session emits CANNOT reach
                     # ``_q`` before its subscriber exists. Emitting the

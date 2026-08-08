@@ -127,7 +127,7 @@ async def test_real_mcp_push_fires_configured_hook_into_session_inbox(tmp_path):
         # The EventLog side (②b, unchanged) still fires — confirms the receive-loop
         # actually processed the push before we assert on the NEW hook side.
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in session._chat_events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in session._audit_events.all())
         )
 
         # #2608 H1: the hook side — the templated push landed in the (public) inbox.
@@ -157,7 +157,7 @@ async def test_no_configured_hook_leaves_hook_side_a_pure_noop(tmp_path):
         assert result["isError"] is False
 
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in session._chat_events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in session._audit_events.all())
         )
         # Give the (no-op) hook dispatch a fair chance to have run before asserting
         # the negative — the drain task still runs, HookDispatcher.dispatch() is

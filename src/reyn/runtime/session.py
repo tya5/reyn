@@ -557,9 +557,9 @@ class DurabilityHaltError(RuntimeError):
 @dataclass(frozen=True)
 class _AuditEventBundle:
     """#3082 Family 1: the audit-event spine (P6) — ``event_store`` (disk-backed
-    log) → ``chat_events`` (the ``EventLog`` nearly every other Session
+    log) → ``audit_events`` (the ``EventLog`` nearly every other Session
     sub-component consumes) → ``outbox_hub`` (the outbox fan-out), plus the
-    opt-in OTEL subscriber attached to ``chat_events``. Pure output→input
+    opt-in OTEL subscriber attached to ``audit_events``. Pure output→input
     value object: :meth:`Session._build_audit_event_bundle` is a byte-identical
     extraction of the construction sequence that used to run inline in
     ``Session.__init__`` — same objects, same order, same args. This is the
@@ -567,7 +567,7 @@ class _AuditEventBundle:
     as explicit inputs instead of reaching into ``self`` mid-construction."""
 
     event_store: EventStore
-    chat_events: EventLog
+    audit_events: EventLog
     outbox_hub: OutboxHub
     otel_exporter: "object | None"
 
@@ -585,8 +585,8 @@ class _HookEventBundle:
     the construction sequence that used to run inline in ``Session.__init__``
     — same objects, same construction order, same args (eager sibling reads
     use the builder's LOCAL variables; deferred lambdas keep resolving
-    ``self._hook_dispatcher`` / ``self._chat_events`` at call time, exactly as
-    before). This family CONSUMES Family 1's ``chat_events`` (the
+    ``self._hook_dispatcher`` / ``self._audit_events`` at call time, exactly as
+    before). This family CONSUMES Family 1's ``audit_events`` (the
     ``hot_reloader`` reads it eagerly at construction), so the builder is
     invoked AFTER the audit-event bundle is unpacked — the #3082 pipeline's
     output→input order. Config-derivation (``_boot_in_set`` /
@@ -623,11 +623,11 @@ class _RetrievalBundle:
     Pure output→input value object. #3408 moved the call site from its
     original pre-Family-1 position to run right AFTER Family 1
     (``_build_audit_event_bundle``), so this family's closure
-    (``_on_hot_list_changed``) now takes ``chat_events`` as an eager builder
+    (``_on_hot_list_changed``) now takes ``audit_events`` as an eager builder
     input — like ``hot_reloader`` (Family 3) and ``budget`` (Family 4) — and
-    binds it by IDENTITY instead of resolving ``self._chat_events`` by NAME
+    binds it by IDENTITY instead of resolving ``self._audit_events`` by NAME
     at call time. Before #3408, the builder ran BEFORE Family 1 (so
-    ``self._chat_events`` did not exist yet at its old call site) and the
+    ``self._audit_events`` did not exist yet at its old call site) and the
     closure deferred the name lookup to call time to avoid an
     ``AttributeError``; #3408 measured that nothing between the old and new
     call sites reads or writes this family's own attrs, moved the call site
@@ -706,7 +706,7 @@ class _HistoryCompactionBundle:
         exists).
       - **cross-family** (Families 1/5/6a's already-built outputs, or
         early ``__init__`` params/config, all set on ``self`` before this
-        builder runs): kept as ``self._X`` — ``self._chat_events``
+        builder runs): kept as ``self._X`` — ``self._audit_events``
         (Family 1), ``self._router_host`` (Family 6a), ``self._resolver``
         / ``self._compaction`` / ``self._media_store`` /
         ``self._offload_config`` / ``self._budget_tracker`` /
@@ -780,7 +780,7 @@ class _InterventionBundle:
     still constructed directly in ``__init__`` right after this builder
     returns). Safe: every one of ``chain_timeout_glue``'s deps (LOCAL
     ``chains``, cross-family ``self._journal`` [Family 2] /
-    ``self._chat_events`` [Family 1], plus a handful of already-set bound
+    ``self._audit_events`` [Family 1], plus a handful of already-set bound
     methods / config) is already resolved at the new position; nothing
     between the old and new position ever reads ``chain_timeout_glue``
     (its only caller outside ``__init__`` is at line ~6774); and
@@ -811,7 +811,7 @@ class _InterventionBundle:
     as ``self.*`` — ``on_announce=self._announce_intervention`` on
     ``interventions``. Cross-family / config dependencies (already set on
     ``self`` before this builder runs) are kept as ``self._X`` —
-    ``self._journal`` (Family 2), ``self._chat_events`` (Family 1),
+    ``self._journal`` (Family 2), ``self._audit_events`` (Family 1),
     ``self._chain_timeout_seconds``, ``self._max_hop_depth``, plus
     ``chain_timeout_glue``'s bound-method callbacks
     (``self._append_history`` / ``self._reset_router_turn_counter`` /
@@ -1234,16 +1234,16 @@ class Session:
         # have if the peek had never happened.
         self._pending_inbox_item: "tuple[str, dict] | None" = None
         self.outbox: asyncio.Queue = asyncio.Queue()
-        # event_store -> chat_events -> outbox_hub (+ opt-in OTEL), byte-identical extraction (#3082 Family 1, see session-construction.md#family-1-audit-event-spine-p6)
+        # event_store -> audit_events -> outbox_hub (+ opt-in OTEL), byte-identical extraction (#3082 Family 1, see session-construction.md#family-1-audit-event-spine-p6)
         _audit_bundle = self._build_audit_event_bundle(observability_config)
         self.outbox_hub = _audit_bundle.outbox_hub
         self._event_store = _audit_bundle.event_store
-        self._chat_events = _audit_bundle.chat_events
+        self._audit_events = _audit_bundle.audit_events
         self._otel_exporter = _audit_bundle.otel_exporter
         # Embedding block + action_usage_tracker (#3082 Family 5). MOVED here,
-        # right after Family 1, so the hot-list sink can bind chat_events by
-        # IDENTITY (the _audit_bundle.chat_events OBJECT, passed as a builder
-        # arg) instead of by NAME (a `self._chat_events` lookup deferred to
+        # right after Family 1, so the hot-list sink can bind audit_events by
+        # IDENTITY (the _audit_bundle.audit_events OBJECT, passed as a builder
+        # arg) instead of by NAME (a `self._audit_events` lookup deferred to
         # CALL time). #3408: the name-lookup form is the #2856 accident's
         # class -- a name reference can resolve to a DIFFERENT EventLog than
         # the one that was live at bind time (the #2856 bug bound `self.events`
@@ -1252,18 +1252,18 @@ class Session:
         # move here because Family 5 has no eager dependency on anything
         # Family 3/6a/etc. build later (see session-construction.md#family-5-retrieval).
         _retrieval_bundle = self._build_retrieval_bundle(
-            self._action_retrieval, embedding_config, self.agent_name, self._chat_events,
+            self._action_retrieval, embedding_config, self.agent_name, self._audit_events,
         )
         self._action_embedding_index = _retrieval_bundle.action_embedding_index
         self._embedding_provider = _retrieval_bundle.embedding_provider
         self._embedding_model_class = _retrieval_bundle.embedding_model_class
         self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
-        # hook_bus -> hook_dispatcher -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader; runs right after Family 1 since hot_reloader reads chat_events eagerly (#3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
+        # hook_bus -> hook_dispatcher -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader; runs right after Family 1 since hot_reloader reads audit_events eagerly (#3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         _hook_bundle = self._build_hook_event_bundle(
             _boot_in_set,
             self._composer_defs,
             _fs_watch_cfg,
-            self._chat_events,
+            self._audit_events,
             self._registry,
             self._session_id,
         )
@@ -1278,7 +1278,7 @@ class Session:
         set_active_hot_reloader(self._hot_reloader)
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
-        set_llm_request_event_log(self._chat_events)
+        set_llm_request_event_log(self._audit_events)
         # Publish reyn.yaml llm.router.* as the ambient router config (#1829 S3b, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         if router_config is not None:
             from reyn.llm.llm import set_router_config
@@ -1302,19 +1302,19 @@ class Session:
         )
         # Surfaces session-level lifecycle events (compaction, attach/detach, budget warnings) into the conv pane (#162, see session-construction.md#misc-lifecycle-wiring)
         from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
-        self._chat_events.add_subscriber(
+        self._audit_events.add_subscriber(
             ChatLifecycleForwarder(
-                self.outbox, registry=self._registry, events=self._chat_events
+                self.outbox, registry=self._registry, events=self._audit_events
             )
         )
         # Generic events-log subscriber converting op-emitted events to state_change history entries (#398 v4 emitter family, see session-construction.md#misc-lifecycle-wiring)
-        self._chat_events.add_subscriber(
-            self._on_chat_event_for_state_change,
+        self._audit_events.add_subscriber(
+            self._on_audit_event_for_state_change,
         )
 
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
         self._budget = self._build_budget(
-            budget_tracker, self._chat_events, self.agent_name, _router_cap,
+            budget_tracker, self._audit_events, self.agent_name, _router_cap,
         )
 
         # Memory persistence adapter, byte-identical extraction, pre-waist position (#3082 Family 8b, see session-construction.md#family-8b-memory)
@@ -1426,7 +1426,7 @@ class Session:
                 compaction=self._compaction,
                 compaction_controller=self._compaction_controller,
                 token_learner=self._token_learner,
-                events=self._chat_events,
+                events=self._audit_events,
                 model_override_fn=lambda: self._model_override,
                 history_buffer=self._history_buffer,
                 budget_advisor=self._budget_advisor,
@@ -1445,19 +1445,19 @@ class Session:
     def _accumulate(self, result) -> None:
         self._budget.accumulate(result)
 
-    def subscribe_chat_events(self, cb: "Callable[..., None]") -> None:
+    def subscribe_audit_events(self, cb: "Callable[..., None]") -> None:
         """Register ``cb`` for this session's audit events (narrow public API).
 
         Encapsulates the internal EventLog so UI callers (e.g. the inline CUI
-        working indicator) subscribe without reaching into ``_chat_events``.
+        working indicator) subscribe without reaching into ``_audit_events``.
         ``cb`` receives an ``Event`` (``.type`` / ``.data``) synchronously on the
-        session loop. Pair with :meth:`unsubscribe_chat_events`.
+        session loop. Pair with :meth:`unsubscribe_audit_events`.
         """
-        self._chat_events.add_subscriber(cb)
+        self._audit_events.add_subscriber(cb)
 
-    def unsubscribe_chat_events(self, cb: "Callable[..., None]") -> bool:
-        """Remove a callback registered via :meth:`subscribe_chat_events`."""
-        return self._chat_events.remove_subscriber(cb)
+    def unsubscribe_audit_events(self, cb: "Callable[..., None]") -> bool:
+        """Remove a callback registered via :meth:`subscribe_audit_events`."""
+        return self._audit_events.remove_subscriber(cb)
 
     def set_events_dir(self, events_dir: Path) -> None:
         """#2348: re-point this session's chat EventStore to a per-session directory.
@@ -1468,7 +1468,7 @@ class Session:
         registry's ``spawn_session`` fixup calls this — parallel to the snapshot/WAL
         re-key — before the run-loop goes live, so no event lands in the shared tree.
 
-        Swaps ONLY the ``EventStore`` subscriber on ``_chat_events`` (remove old, add
+        Swaps ONLY the ``EventStore`` subscriber on ``_audit_events`` (remove old, add
         new); every OTHER subscriber (the ``ChatLifecycleForwarder`` outbox bridge, the
         state-change converter, any attach-time focus listener) is preserved. A rebuild
         of the subscriber list would silently drop them and audit events would stop
@@ -1479,8 +1479,8 @@ class Session:
             max_bytes=self._events_config.max_bytes,
             max_age_seconds=self._events_config.max_age_seconds,
         )
-        self._chat_events.remove_subscriber(self._event_store)
-        self._chat_events.add_subscriber(new_store)
+        self._audit_events.remove_subscriber(self._event_store)
+        self._audit_events.add_subscriber(new_store)
         self.events_dir = events_dir
         self._event_store = new_store
 
@@ -2761,12 +2761,12 @@ class Session:
         attribution path."""
         return self._last_sender
 
-    def _on_chat_event_for_state_change(self, event) -> None:
+    def _on_audit_event_for_state_change(self, event) -> None:
         """Generic events-log subscriber that converts known emitter events
         to ``state_change`` history entries (= #398 v4 emitter family).
 
         The chat router's ``OpContext.events`` is bound to this session's
-        ``_chat_events`` (= session.py make_router_op_context). When the
+        ``_audit_events`` (= session.py make_router_op_context). When the
         LLM invokes an op like ``mcp_install`` and the op emits its
         success event, this subscriber sees it and mints the
         corresponding state_change so the LLM's next turn sees the
@@ -2888,7 +2888,7 @@ class Session:
         # measurement pipeline can count state_change emission frequency
         # by source without scraping the chat history).
         try:
-            self._chat_events.emit(
+            self._audit_events.emit(
                 "state_change_notified",
                 summary=summary,
                 source=source or "",
@@ -3126,7 +3126,7 @@ class Session:
         # echo (no parallel outbox write); msg_id is a PUBLIC wire key (unlike the
         # internal `_put_inbox` key); display neutralization happens downstream.
         # See agui-transport.md.
-        self._chat_events.emit(
+        self._audit_events.emit(
             "user_submitted",
             text=text,
             chain_id=chain_id,
@@ -3369,9 +3369,9 @@ class Session:
         self, observability_config: "object | None"
     ) -> "_AuditEventBundle":
         """#3082 Family 1: build the audit-event (P6) spine — ``event_store``
-        (disk-backed) -> ``chat_events`` (the ``EventLog`` nearly every other
+        (disk-backed) -> ``audit_events`` (the ``EventLog`` nearly every other
         Session sub-component consumes) -> ``outbox_hub`` (the outbox
-        fan-out), plus the opt-in OTEL subscriber attached to ``chat_events``.
+        fan-out), plus the opt-in OTEL subscriber attached to ``audit_events``.
 
         Byte-identical extraction of the sequence that used to run inline in
         ``__init__`` — same objects, same construction order, same args.
@@ -3403,7 +3403,7 @@ class Session:
             max_bytes=self._events_config.max_bytes,
             max_age_seconds=self._events_config.max_age_seconds,
         )
-        chat_events = EventLog(
+        audit_events = EventLog(
             subscribers=[event_store],
             agent_id=self._agent.agent_id,  # FP-0016 E: auto-inject agent_id into every event
         )
@@ -3412,12 +3412,12 @@ class Session:
             from reyn.observability.otel_exporter import build_otel_exporter
             otel_exporter = build_otel_exporter(observability_config)
             if otel_exporter is not None:
-                chat_events.add_subscriber(otel_exporter)
+                audit_events.add_subscriber(otel_exporter)
         except Exception:  # noqa: BLE001 — OTEL attach must never break session init
             otel_exporter = None
         return _AuditEventBundle(
             event_store=event_store,
-            chat_events=chat_events,
+            audit_events=audit_events,
             outbox_hub=outbox_hub,
             otel_exporter=otel_exporter,
         )
@@ -3429,7 +3429,7 @@ class Session:
         boot_in_set: "dict",
         composer_defs: list,
         fs_watch_cfg: "object",
-        chat_events: "EventLog",
+        audit_events: "EventLog",
         registry: "AgentRegistry | None",
         session_id: str,
     ) -> "_HookEventBundle":
@@ -3450,14 +3450,14 @@ class Session:
         fs_watcher's ``hook_trigger`` and every ``emit_event`` sink are
         lambdas that fire only from ``run()`` / dispatch (long after
         __init__), so they keep resolving ``self._hook_dispatcher`` /
-        ``self._chat_events`` unchanged.
+        ``self._audit_events`` unchanged.
 
         Placement (call-site in ``__init__``): this family is built AFTER the
-        Family 1 audit-event bundle because it CONSUMES ``chat_events`` —
-        ``hot_reloader`` reads it EAGERLY (``events=chat_events``). That is the
+        Family 1 audit-event bundle because it CONSUMES ``audit_events`` —
+        ``hot_reloader`` reads it EAGERLY (``events=audit_events``). That is the
         #3082 pipeline's output→input order (Family 1 → Family 3), and it is
         also byte-identical to the original inline code, where the
-        hot_reloader was likewise constructed after the ``chat_events`` EventLog.
+        hot_reloader was likewise constructed after the ``audit_events`` EventLog.
 
         Config-derivation is a precursor threaded in explicitly rather than
         folded in: ``boot_in_set`` (the IN-set — ALSO read by cron, so it must
@@ -3489,11 +3489,11 @@ class Session:
         # 4b, is the first consumer) — until then this is a no-op alongside
         # every dispatch() call (see HookBus.publish's zero-subscriber path).
         # #2886: the same deferred-lambda emit_event sink threaded into
-        # HookDispatcher/Composer below — the lambda resolves ``self._chat_events``
+        # HookDispatcher/Composer below — the lambda resolves ``self._audit_events``
         # only at first-drop time, never at construction — so a subscriber-queue
         # drop is fail-visible via a metadata-only bus_subscriber_dropped P6
         # audit-event.
-        hook_bus = HookBus(emit_event=lambda et, **d: self._chat_events.emit(et, **d))
+        hook_bus = HookBus(emit_event=lambda et, **d: self._audit_events.emit(et, **d))
         # #1800 slice 5b: the awaited HookDispatcher. Hooks load from the resolved
         # ``hooks:`` block; None/absent → empty registry → every dispatch() is a
         # no-op (run-loop byte-identical to a hooks-free build). Constructed
@@ -3533,8 +3533,8 @@ class Session:
             consent_gate=lambda: self._interventions.has_active_listener(),
             # #2095 P3: P6-event sink so an auto-run (allowlisted) shell hook
             # surfaces in the events tab instead of being a silent side-effect.
-            # Lambda defers ``self._chat_events`` resolution to dispatch time.
-            emit_event=lambda et, **d: self._chat_events.emit(et, **d),
+            # Lambda defers ``self._audit_events`` resolution to dispatch time.
+            emit_event=lambda et, **d: self._audit_events.emit(et, **d),
             # Phase 4a: broadcast every dispatched HookEvent to this session's
             # own bus, independently of the Sync hooks_for() loop above.
             bus=hook_bus,
@@ -3562,7 +3562,7 @@ class Session:
                 composer_defs,
                 bus=hook_bus,
                 durable_store=self._build_composer_pending_store(composer_defs),
-                emit_event=lambda et, **kw: self._chat_events.emit(et, **kw),
+                emit_event=lambda et, **kw: self._audit_events.emit(et, **kw),
             ),
         )
         composed_consumer = ComposedEventConsumer(
@@ -3570,10 +3570,10 @@ class Session:
         )
 # #2073 S1: the config hot-reloader reads ONLY the IN-set (.reyn/*.yaml); the
 # OUT-set (reyn.yaml) is restart-only and never picked up here. Applies at the
-# turn_end safe-point (apply_pending below); reads chat_events eagerly.
+# turn_end safe-point (apply_pending below); reads audit_events eagerly.
         hot_reloader = HotReloader(
             project_root=getattr(registry, "_project_root", None) or Path.cwd(),
-            events=chat_events,
+            events=audit_events,
         )
         return _HookEventBundle(
             hook_bus=hook_bus,
@@ -3589,7 +3589,7 @@ class Session:
     def _build_budget(
         self,
         budget_tracker: "BudgetTracker | None",
-        chat_events: "EventLog",
+        audit_events: "EventLog",
         agent_name: str,
         router_cap: int,
     ) -> "BudgetGateway":
@@ -3601,14 +3601,14 @@ class Session:
 
         Byte-identical extraction of the construction that used to run
         inline in ``__init__`` — same object, same args. Takes
-        ``budget_tracker`` / ``chat_events`` / ``agent_name`` / ``router_cap``
+        ``budget_tracker`` / ``audit_events`` / ``agent_name`` / ``router_cap``
         explicitly rather than reaching into ``self`` mid-construction:
         ``budget_tracker`` is the LOCAL ``__init__`` parameter (NOT
         ``self._budget_tracker``, which is a separate tracking assignment
         made earlier in ``__init__`` for callers that receive the tracker by
         value, and is out of scope for this extraction — same shape as
-        Family 2's ``state_log``); ``chat_events`` is Family 1's
-        ``EventLog``, read EAGERLY here (``events=chat_events``), which is
+        Family 2's ``state_log``); ``audit_events`` is Family 1's
+        ``EventLog``, read EAGERLY here (``events=audit_events``), which is
         why this builder is invoked after the Family 1 bundle is unpacked
         (same eager-sibling-dependency shape as Family 3's ``hot_reloader``);
         ``agent_name`` is the property value already resolvable at the
@@ -3623,7 +3623,7 @@ class Session:
         wrapper dataclass was ceremony, see #3082 anti-pattern #2.)"""
         return BudgetGateway(
             budget_tracker=budget_tracker,
-            events=chat_events,
+            events=audit_events,
             agent_name=agent_name,
             default_router_cap=router_cap,
         )
@@ -3633,7 +3633,7 @@ class Session:
         action_retrieval: "ActionRetrievalConfig",
         embedding_config: "EmbeddingConfig | None",
         agent_name: str,
-        chat_events: "EventLog",
+        audit_events: "EventLog",
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
         (three attrs, one conditional construction guarded by
@@ -3662,19 +3662,19 @@ class Session:
         all resolvable at the new call site exactly as they were at the old
         one, since nothing between the two positions reads or writes them.
 
-        ``chat_events`` IS a builder input (#3408), unlike its pre-#3408
+        ``audit_events`` IS a builder input (#3408), unlike its pre-#3408
         shape where it was deliberately excluded so the closure below
-        (``_on_hot_list_changed``) could defer ``self._chat_events``
+        (``_on_hot_list_changed``) could defer ``self._audit_events``
         resolution to CALL time — the EventLog did not exist yet at the
         builder's old (pre-Family-1) call site, so an eager reference there
         would have raised ``AttributeError``. #3408 moved the call site
-        instead of keeping the deferral: ``git grep '_chat_events ='`` across
+        instead of keeping the deferral: ``git grep '_audit_events ='`` across
         ``src`` finds exactly ONE assignment, ``Session.__init__``'s single
-        ``self._chat_events = _audit_bundle.chat_events`` — no restore/attach
+        ``self._audit_events = _audit_bundle.audit_events`` — no restore/attach
         path re-binds it — so a NAME lookup deferred to call time and an
         IDENTITY reference captured once at construction resolve to the same
         object today. The identity form is preferred structurally: a name
-        lookup re-resolves ``self._chat_events`` on every call, so a future
+        lookup re-resolves ``self._audit_events`` on every call, so a future
         rebinding of that name (however unlikely) would retarget every
         deferred closure that names it silently — the #2856 accident's
         class (a name reference resolved to a DIFFERENT EventLog than the
@@ -3682,9 +3682,9 @@ class Session:
         captured once cannot retarget: it either keeps pointing at the
         EventLog it was given, or (if that assumption ever breaks) the
         AST single-assignment guard in
-        ``tests/test_chat_events_single_assignment_3408.py`` goes RED first,
+        ``tests/test_audit_events_single_assignment_3408.py`` goes RED first,
         naming the new call site and saying "route this through the builder
-        arg, not a rediscovered eager ``self._chat_events``."
+        arg, not a rediscovered eager ``self._audit_events``."
 
         FP-0034 Phase 2 steps 1 + 5 / Issue #192:
         see the three embedding attrs' and ``action_usage_tracker``'s
@@ -3743,13 +3743,13 @@ class Session:
                 from reyn.tools.action_usage_tracker import ActionUsageTracker
                 # Issue #192 / #3408: wire a callback that emits
                 # ``hot_list_updated`` on every reorder of the compacted
-                # ranking. Binds the ``chat_events`` builder ARG by IDENTITY
-                # (not a ``self._chat_events`` name lookup) — see this
+                # ranking. Binds the ``audit_events`` builder ARG by IDENTITY
+                # (not a ``self._audit_events`` name lookup) — see this
                 # method's docstring for why identity binding is safe today
                 # and what keeps it safe (the AST single-assignment guard).
                 def _on_hot_list_changed(ranking: list[dict]) -> None:
                     try:
-                        chat_events.emit(
+                        audit_events.emit(
                             "hot_list_updated", ranking=ranking,
                         )
                     except Exception:
@@ -3861,7 +3861,7 @@ class Session:
         # class docstring for why a snapshot of any of them is right on turn 1
         # and wrong afterwards.
         self._router_op_context_source = RouterOpContextSource(
-            events=self._chat_events,
+            events=self._audit_events,
             permission_resolver=self._perm,
             file_permissions_fn=self._get_file_permissions_for_router,
             mcp_servers_fn=self._get_mcp_servers_for_router,
@@ -3975,7 +3975,7 @@ class Session:
             permission_resolver=self._perm,
             mcp_servers=self._mcp_servers,
             project_context=self._project_context,
-            events=self._chat_events,
+            events=self._audit_events,
             resolver=self._resolver,
             memory=self._memory,
             journal=self._journal,
@@ -4137,7 +4137,7 @@ class Session:
             # window, so resolve the active class → litellm string each call
             # instead of caching the construction-time model.
             model_fn=lambda: self._resolver.resolve(self.model).model,
-            events=self._chat_events,
+            events=self._audit_events,
             media_store=self._media_store,
             router_host=self._router_host,
             action_retrieval=self._action_retrieval,
@@ -4178,7 +4178,7 @@ class Session:
                 # `/model` switch) actually pick up the new model — this
                 # closure is called again lazily, at most once per rebuild.
                 model=self.model,
-                events=self._chat_events,
+                events=self._audit_events,
                 system_prompt_provider=history_buffer.build_system_prompt,
                 resolver=self._resolver,
                 # #1190 stage (ii): record chat compaction LLM spend (purpose=compaction).
@@ -4188,7 +4188,7 @@ class Session:
             )
 
         compaction_controller = CompactionController(
-            event_log=self._chat_events,
+            event_log=self._audit_events,
             config=self._compaction,
             # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
             threat_scan=self._safety.threat_scan,
@@ -4221,7 +4221,7 @@ class Session:
             media_store=self._media_store,
             # #1752: live resolved model (see RouterHistoryBuffer above).
             model_fn=lambda: self._resolver.resolve(self.model).model,
-            events=self._chat_events,
+            events=self._audit_events,
             history_fn=history_buffer.build_history,
             offload_config=self._offload_config,
         )
@@ -4279,7 +4279,7 @@ class Session:
         classification."""
         chains = ChainManager(
             journal=self._journal,
-            events=self._chat_events,
+            events=self._audit_events,
             chain_timeout_seconds=self._chain_timeout_seconds,
             max_hop_depth=self._max_hop_depth,
         )
@@ -4301,7 +4301,7 @@ class Session:
         intervention_handler = InterventionHandler(
             intervention_registry=interventions,
             journal=self._journal,
-            event_log=self._chat_events,
+            event_log=self._audit_events,
             put_outbox=self._put_outbox,
             append_history=self._append_history_for_handler,
             # FP-0050 / #1862 (EP7): fences external peer-answer copies
@@ -4311,7 +4311,7 @@ class Session:
         intervention_coordinator = InterventionCoordinator(
             registry=interventions,
             handler=intervention_handler,
-            events=self._chat_events,
+            events=self._audit_events,
         )
 
         # session.py refactor PR-4 (FP-0019 series final): ChainTimeoutGlue owns
@@ -4319,7 +4319,7 @@ class Session:
         from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
         chain_timeout_glue = ChainTimeoutGlue(
             append_history_fn=self._append_history,
-            events=self._chat_events,
+            events=self._audit_events,
             reset_turn_counter_fn=self._reset_router_turn_counter,
             run_router_loop_fn=self._run_router_loop,
             emit_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
@@ -4353,7 +4353,7 @@ class Session:
         multi-component families) — every arg is either an eager
         ``self._X`` (cross-family / config, already set on ``self`` by this
         point: Family 7's ``self._chains``, Family 1's
-        ``self._chat_events``, plus early params/properties) or a deferred
+        ``self._audit_events``, plus early params/properties) or a deferred
         bound method / ``lambda`` closing over ``self`` (kept verbatim,
         NEVER eager-ized — ``run_router_loop`` /
         ``get_router_loop_delegations`` / ``set_router_loop_delegations`` /
@@ -4364,7 +4364,7 @@ class Session:
         against. Returns the ``InterAgentMessaging`` instance directly
         (#3121 step4 removed the prior single-field wrapper dataclass)."""
         inter_agent_messaging = InterAgentMessaging(
-            event_log=self._chat_events,
+            event_log=self._audit_events,
             chain_manager=self._chains,
             agent_name=self.agent_name,
             max_hop_depth=self._max_hop_depth,
@@ -4398,7 +4398,7 @@ class Session:
         construction that used to run inline in ``__init__`` — same object,
         same keyword args, same (unmoved) position.
 
-        Most args are an eager ``self._X`` (Family 1's ``self._chat_events``,
+        Most args are an eager ``self._X`` (Family 1's ``self._audit_events``,
         already set on ``self`` by this point) or a bound method / property
         already available at construction time (``self._file_write`` /
         ``self._file_read`` / ``self._file_delete`` /
@@ -4423,7 +4423,7 @@ class Session:
         wrapper dataclass)."""
         memory = MemoryService(
             agent_workspace_dir=self.workspace_dir,
-            events=self._chat_events,
+            events=self._audit_events,
             file_write=self._file_write,
             file_read=self._file_read,
             file_delete=self._file_delete,
@@ -4434,7 +4434,7 @@ class Session:
             threat_scan=self._safety.threat_scan,
             knowledge_sync=MemoryKnowledgeSync(
                 op_context_fn=lambda: self._router_host.make_router_op_context(),
-                events=self._chat_events,
+                events=self._audit_events,
             ),
         )
         return memory
@@ -4451,7 +4451,7 @@ class Session:
 
         ★★ This family's crux (the sharpest deferred-resolution case in all
         of F8 — 4 refs, vs Family 5's 2): FOUR of the six keyword args below
-        are ``lambda`` closures that resolve ``self._chat_events`` /
+        are ``lambda`` closures that resolve ``self._audit_events`` /
         ``self._router_host`` / ``self._hook_dispatcher`` /
         ``self._interventions`` at CALL time — none of those four
         attributes exist yet at this builder's call site. Eager-izing ANY
@@ -4470,7 +4470,7 @@ class Session:
         # binding raises AttributeError here (session-construction.md#mcpconnectionservice-four-deferred-lambdas-over-not-yet-built-siblings-2597).
         from reyn.mcp.connection_service import MCPConnectionService
         mcp_connection_service = MCPConnectionService(
-            emit_sink=lambda et, **d: self._chat_events.emit(et, **d),
+            emit_sink=lambda et, **d: self._audit_events.emit(et, **d),
             tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
             hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
             elicitation_bus=self.as_request_bus(),
@@ -4952,7 +4952,7 @@ class Session:
         if self._state_log is not None and self._state_log.durability_failed:
             if self._halted_reason is None:
                 self._halted_reason = "durability_failure"
-                self._chat_events.emit("session_halted", reason=self._halted_reason)
+                self._audit_events.emit("session_halted", reason=self._halted_reason)
             raise DurabilityHaltError(
                 f"agent '{self.agent_name}' halted: persistent durability failure — the agent "
                 "stopped accepting operations to avoid silent unbounded loss (in-memory state must "
@@ -5091,7 +5091,7 @@ class Session:
         if not cancelled:
             return False
         self._cancelled_msg_ids.add(msg_id)
-        self._chat_events.emit(
+        self._audit_events.emit(
             "inbox_cancel", msg_id=msg_id, seq=self._bump_queue_seq(),
         )
         return True
@@ -5219,7 +5219,7 @@ class Session:
             meta=payload.get("meta") or {},
         ))
         await self._journal.consume_inbox(msg_id=msg_id)
-        self._chat_events.emit(
+        self._audit_events.emit(
             "turn_started",
             kind=kind,
             chain_id=payload.get("chain_id"),
@@ -5474,7 +5474,7 @@ class Session:
             self._restore_intervention_tasks = self._interventions.restore(
                 restored, watcher=_on_restored_resolved,
             )
-        self._chat_events.emit(
+        self._audit_events.emit(
             "session_restored",
             applied_seq=snapshot.applied_seq,
             inbox_size=len(snapshot.inbox),
@@ -5515,7 +5515,7 @@ class Session:
         if self._state_log is not None and self._state_log.durability_failed:
             if self._halted_reason is None:
                 self._halted_reason = "durability_failure"
-                self._chat_events.emit("session_halted", reason=self._halted_reason)
+                self._audit_events.emit("session_halted", reason=self._halted_reason)
             return False
         # #1800 slice 4a/4b: drain up to the first wake=true trigger.
         # ride_alongs holds wake=false C messages accumulated before the
@@ -5567,7 +5567,7 @@ class Session:
         # turn_start hook here. chain_id from the payload (may be absent for
         # non-user triggers — that is fine, kind alone identifies the turn type).
         # #3300 P2a: `seq` is the sent-queue mutation/order-race-gate token — see docs/reference/runtime/agui-transport.md#reynevent (`turn_started` / `user_submitted`).
-        self._chat_events.emit(
+        self._audit_events.emit(
             "turn_started",
             kind=kind,
             chain_id=payload.get("chain_id"),
@@ -5670,7 +5670,7 @@ class Session:
                 # slash / intervention short-circuits that return before the router),
                 # giving UI working-indicators driven by turn_started a reliable
                 # clear signal regardless of how the turn ended.
-                self._chat_events.emit(
+                self._audit_events.emit(
                     "turn_settled", kind=kind, chain_id=payload.get("chain_id"),
                 )
             if _cancelled:
@@ -5874,11 +5874,11 @@ class Session:
             )
 
     async def run(self) -> None:
-        self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
+        self._audit_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
         # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
         # chat_started; marks the boundary of the session's resource scope so
         # slice 5b can attach the session_start hook here.
-        self._chat_events.emit("session_started", agent_name=self.agent_name)
+        self._audit_events.emit("session_started", agent_name=self.agent_name)
         # #1800 slice 5b: session_start lifecycle hooks.
         await self._hook_dispatcher.dispatch(
             "session_start",
@@ -5920,7 +5920,7 @@ class Session:
             # notice per session.
             if self._halted_reason is None:
                 self._halted_reason = "cancelled"
-                self._chat_events.emit("session_halted", reason=self._halted_reason)
+                self._audit_events.emit("session_halted", reason=self._halted_reason)
             logger.warning(
                 "Session.run() for agent '%s' is ending because it was cancelled — "
                 "the run-loop stops here and its inbox will not be consumed again.",
@@ -5953,10 +5953,10 @@ class Session:
                         "Composer/ComposedEventConsumer teardown raised during session "
                         "teardown", exc_info=True,
                     )
-                self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
+                self._audit_events.emit("chat_stopped", agent_name=self.agent_name)
                 # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
                 # chat_stopped; marks the end of the session's resource scope.
-                self._chat_events.emit("session_completed", agent_name=self.agent_name)
+                self._audit_events.emit("session_completed", agent_name=self.agent_name)
                 # #1800 slice 5b: session_end lifecycle hooks (F's natural resource
                 # scope). The run-loop has exited, so an E push here is not drained
                 # (harmless); session_end is the C/F point in practice.
@@ -6085,13 +6085,13 @@ class Session:
             role="user", content=content, ts=_now_iso(),
             meta={"chain_id": chain_id},
         ))
-        self._chat_events.emit(
+        self._audit_events.emit(
             "user_message_received", text=text, chain_id=chain_id,
             media_block_count=len(attached_media),
         )
         # NOTE: no "thinking…" status is emitted here. The turn-in-progress signal
         # is the event-driven working indicator (turn_started → turn_settled, via
-        # ChatRenderer.on_chat_event), so a separate "thinking…" status line is a
+        # ChatRenderer.on_audit_event), so a separate "thinking…" status line is a
         # redundant double-display (the inline CUI showed both "· thinking…" and
         # the "Working…" spinner). It was also the source of an orphaned blank line
         # before each reply (a cleared transient leaving its separator behind).
@@ -6138,7 +6138,7 @@ class Session:
                 chain_id,
             )
             try:
-                self._chat_events.emit(
+                self._audit_events.emit(
                     "router_loop_terminated_by_exception",
                     chain_id=chain_id,
                     error_type=type(exc).__name__,
@@ -6337,7 +6337,7 @@ class Session:
         degraded into a user-visible "budget exhausted" message.
         """
         # #1496: emit audit event + attempt LLM wrap-up
-        self._chat_events.emit(
+        self._audit_events.emit(
             "limit_denied",
             kind="router_cap",
             count=exc.count,
@@ -6488,7 +6488,7 @@ class Session:
             self._safety_extensions[kind] = (
                 self._safety_extensions.get(kind, 0.0) + decision.extension
             )
-        self._chat_events.emit(
+        self._audit_events.emit(
             "safety_limit_checkpoint",
             kind=kind,
             allow_continue=decision.allow_continue,
@@ -6701,7 +6701,7 @@ class Session:
         """
         denied = self._interventions.deny_unanswerable_active(reason)
         for iv in denied:
-            self._chat_events.emit(
+            self._audit_events.emit(
                 "intervention_denied",
                 intervention_id=iv.id,
                 kind=iv.kind,
@@ -6720,7 +6720,7 @@ class Session:
         terminal, when authority moved). These types are not in the renderer
         forward-set, so they are audit-only (never a render frame).
         """
-        self._chat_events.emit(event_type, **data)
+        self._audit_events.emit(event_type, **data)
 
     async def _announce_intervention(self, iv: UserIntervention) -> None:
         """Thin wrapper → InterventionHandler.announce."""
@@ -6807,7 +6807,7 @@ class Session:
         """
         ok = self._interventions.discard_stalled(iv_id)
         if ok:
-            self._chat_events.emit(
+            self._audit_events.emit(
                 "pending_intervention_discarded",
                 iv_id=iv_id,
                 reason=reason,
@@ -6833,7 +6833,7 @@ class Session:
         iv = self._interventions.claim_stalled(iv_id, new_channel_id)
         if iv is None:
             return None
-        self._chat_events.emit(
+        self._audit_events.emit(
             "pending_intervention_claimed",
             iv_id=iv_id,
             new_origin_channel_id=new_channel_id,
@@ -6897,7 +6897,7 @@ class Session:
         """
         self_ans = await self.try_self_answer(iv)
         if self_ans is not None:
-            self._chat_events.emit(
+            self._audit_events.emit(
                 "intervention_routed",
                 route="self_answer",
                 iv_kind=iv.kind,
@@ -6907,7 +6907,7 @@ class Session:
 
         parent = self.resolve_parent_agent(iv)
         if parent is not None:
-            self._chat_events.emit(
+            self._audit_events.emit(
                 "intervention_routed",
                 route="parent_delegate",
                 iv_kind=iv.kind,
@@ -6933,7 +6933,7 @@ class Session:
         # ``handle_intervention``); when the check fires, it emits its
         # own ``user_channel_stalled`` event so the audit trail remains
         # decisive (= one event per actual outcome).
-        self._chat_events.emit(
+        self._audit_events.emit(
             "intervention_routed",
             route="user_channel",
             iv_kind=iv.kind,
@@ -7092,7 +7092,7 @@ class Session:
             f"chain interrupted: peer agent {peer!r} discarded its "
             f"run ({reason}); waiting_on={waiting}"
         )
-        self._chat_events.emit(
+        self._audit_events.emit(
             "chain_peer_discarded",
             chain_id=chain_id,
             peer=peer,
@@ -7224,7 +7224,7 @@ class Session:
             # Axis 4 (config-tier collision, LOUD not silent): docs/concepts/tools-integrations/skills.md#operator-explicit-invocation-the-skill-namespace-3100
             tiers = self._skill_collisions.get(name)
             if tiers:
-                self._chat_events.emit(
+                self._audit_events.emit(
                     "skill_invoke_collision", name=name, tiers=list(tiers),
                 )
                 await self._put_outbox(OutboxMessage(
@@ -7267,7 +7267,7 @@ class Session:
             # op's skill-load event, reyn.core.op_runtime.file), scoped to the
             # explicit `:` path specifically so a replay can tell "the model
             # read this on its own" apart from "the operator explicitly asked".
-            self._chat_events.emit(
+            self._audit_events.emit(
                 "skill_invoke_body_loaded", name=entry.name, path=entry.path,
             )
 
@@ -7893,7 +7893,7 @@ class Session:
         # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the
         # only placement that fires exactly once per turn regardless of which terminal path the
         # loop took; moving it into RouterLoop risks double-emission or a missed terminal path.
-        self._chat_events.emit("turn_completed", chain_id=chain_id)
+        self._audit_events.emit("turn_completed", chain_id=chain_id)
         # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
         # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
         await self._hook_dispatcher.dispatch(

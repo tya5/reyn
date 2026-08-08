@@ -213,7 +213,7 @@ _DISPLAY_KIND_EVENT: dict[str, str] = {
 # EventFrame ``Event.type`` → AG-UI event type. turn_* → RUN_*; tool_* →
 # TOOL_CALL_*; ``user_answered_intervention`` / ``user_submitted`` (#3300 P1 C)
 # are reyn-private → CUSTOM (the ``_event_event_type`` default, not listed
-# below). Every entry in ``renderer_chat_events()`` — not just the ones
+# below). Every entry in ``forwarded_audit_events()`` — not just the ones
 # explicitly mapped here — round-trips losslessly via ``_reyn``; the
 # completeness gate binds the transport's forward-set to the renderer's
 # vocabulary independently of this table's non-CUSTOM selections.

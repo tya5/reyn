@@ -20,7 +20,7 @@ with a real async callable (never a mock, per testing.md) that invokes the
 (``RouterLoop._emit_agent_delta``) before returning the final
 ``LLMToolCallResult`` — this exercises the REAL production wiring
 (``router_loop.py``'s call site → ``RouterHostAdapter.events`` →
-``Session._chat_events``), not a re-implementation of it.
+``Session._audit_events``), not a re-implementation of it.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from pathlib import Path
 from reyn.core.events.events import Event
 from reyn.interfaces.transport.agui.profile import is_profiled
 from reyn.interfaces.transport.agui.protocol import CUSTOM, encode_frame
-from reyn.interfaces.transport.frames import EventFrame, renderer_chat_events
+from reyn.interfaces.transport.frames import EventFrame, forwarded_audit_events
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
@@ -69,13 +69,13 @@ def _run(coro):
 
 def test_agent_delta_is_forwarded_and_profiled_on_the_wire() -> None:
     """Tier 1: "agent_delta" is in the transport's forward-set
-    (``renderer_chat_events()`` — both ``InProcessTransport`` and the AG-UI
+    (``forwarded_audit_events()`` — both ``InProcessTransport`` and the AG-UI
     endpoint filter against this, so absence here means it never reaches
     EITHER client) AND its encoded CUSTOM name is a profiled ``reyn.event.*``
     entry (``tests/test_agui_profile_completeness.py`` enforces this
     generically for every forwarded etype; this is the etype-specific pin the
     ③b PR is responsible for)."""
-    assert "agent_delta" in renderer_chat_events()
+    assert "agent_delta" in forwarded_audit_events()
 
     ev = encode_frame(EventFrame(Event(type="agent_delta", data={"text": "x"})))
     assert ev.type == CUSTOM
@@ -91,7 +91,7 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
     session = _make_session(tmp_path)
 
     sink = _EventSink()
-    session.subscribe_chat_events(sink)
+    session.subscribe_audit_events(sink)
 
     async def fake_llm(*args, **kwargs):
         on_delta = kwargs.get("on_content_delta")
@@ -142,7 +142,7 @@ def test_non_streaming_turn_emits_no_agent_delta_events(tmp_path, monkeypatch) -
     session = _make_session(tmp_path)
 
     sink = _EventSink()
-    session.subscribe_chat_events(sink)
+    session.subscribe_audit_events(sink)
 
     async def fake_llm(*args, **kwargs):
         return LLMToolCallResult(

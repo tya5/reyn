@@ -29,7 +29,7 @@ Three namespaces:
 
 **Non-circular completeness gate.** ``tests/test_agui_profile_completeness.py``
 enumerates the reyn-mapped vocabulary *from the source vocabulary* — display kinds
-+ ``renderer_chat_events`` (encoded through the codec, ``CUSTOM`` names collected)
++ ``forwarded_audit_events`` (encoded through the codec, ``CUSTOM`` names collected)
 AND the intervention frontend-tool encoder's real ``toolName`` — and asserts each
 emitted ``reyn.*`` name is profiled (a closed-member entry or an open-namespace
 prefix). An unprofiled name is RED — doc-drift is designed out, the same discipline

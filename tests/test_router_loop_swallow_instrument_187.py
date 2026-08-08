@@ -14,7 +14,7 @@ outbox message still goes out unchanged — the instrument is additive.
 
 The failure is injected with a real async stub (a Fake that raises) — no
 MagicMock — and the assertion reads the public EventLog surface
-(``_chat_events.all()``), not private state.
+(``_audit_events.all()``), not private state.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
     await s._handle_inbox_text("hello", chain_id="c-test")
 
     terminated = [
-        e for e in s._chat_events.all()
+        e for e in s._audit_events.all()
         if e.type == "router_loop_terminated_by_exception"
     ]
     assert terminated, (

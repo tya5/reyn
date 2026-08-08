@@ -58,7 +58,7 @@ def _collect_events(session: Session) -> list[dict]:
     def _sub(event) -> None:  # Event → flat dict (the house-style accessor)
         collected.append({"type": event.type, **event.data})
 
-    session._chat_events.add_subscriber(_sub)
+    session._audit_events.add_subscriber(_sub)
     return collected
 
 

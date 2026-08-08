@@ -74,13 +74,13 @@ async def test_router_cap_limit_denied_event_emitted(
     session = _make_session(tmp_path)
 
     emitted: list[dict] = []
-    orig_emit = session._chat_events.emit
+    orig_emit = session._audit_events.emit
 
     def capture(name, **kw):
         emitted.append({"type": name, **kw})
         return orig_emit(name, **kw)
 
-    session._chat_events.emit = capture  # type: ignore[assignment]
+    session._audit_events.emit = capture  # type: ignore[assignment]
 
     llm = _ScriptedLLM([text_result("wrap-up summary here")])
     await session._emit_router_cap_exhausted_user(

@@ -1,10 +1,10 @@
 """Tier 2: ChatLifecycleForwarder does NOT emit ``hot_list_updated`` messages.
 
 ``on_hot_list_updated`` is not implemented in ChatLifecycleForwarder.
-A ``hot_list_updated`` event on the chat_events bus produces no outbox
+A ``hot_list_updated`` event on the audit_events bus produces no outbox
 message (no live consumer: no display surface renders this kind).
 
-The underlying tracker event still fires on ``_chat_events``; only the
+The underlying tracker event still fires on ``_audit_events``; only the
 outbox-forwarding path is absent.
 """
 from __future__ import annotations

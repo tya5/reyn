@@ -2,7 +2,7 @@
 from one shared declaration (#3357).
 
 Both remote progress bridges subscribe to the same source — the session's chat
-audit-event log (``Session._chat_events``) — and forward a selection of kinds as
+audit-event log (``Session._audit_events``) — and forward a selection of kinds as
 progress notifications. Two invariants, asserted separately:
 
 - **The mechanism is honest.** Every kind in ``PROGRESS_LIFECYCLE_EVENTS`` has a
@@ -204,7 +204,7 @@ def test_a2a_bridge_forwards_a_live_tool_dispatch_audit_event() -> None:
     # attribute off it (the chat audit-event log), and that log is the real
     # ``EventLog`` production dispatches through.
     class _SessionWithChatEvents:
-        _chat_events = events
+        _audit_events = events
 
     run_registry = RunRegistry()
     entry = run_registry.create(agent_name="demo", chain_id="c1")
