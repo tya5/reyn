@@ -46,10 +46,16 @@ async def test_the_key_says_so_when_the_library_is_absent() -> None:
         await pilot.pause()
 
         assert not app.query_one(FlowView).overlay_active, "an overlay was started without the library"
-        said = [t for t in _texts(app) if "terminaltexteffects" in t]
+        said = [t for t in _texts(app) if "effects" in t]
         assert said, f"the key did nothing visible: {_texts(app)}"
-        assert any("pip install" in t for t in said), (
-            f"the message does not say how to fix it: {said}"
+        # The EXTRA, not the raw package. An operator told to install
+        # `terminaltexteffects` directly gets a working key and never learns the
+        # extra exists — which is the extra failing at its one job.
+        assert any("reyn[effects]" in t for t in said), (
+            f"the message names no extra to install: {said}"
+        )
+        assert not any("pip install terminaltexteffects" in t for t in said), (
+            f"the message routes around the extra: {said}"
         )
 
 

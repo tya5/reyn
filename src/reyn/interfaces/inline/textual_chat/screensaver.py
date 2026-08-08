@@ -74,10 +74,15 @@ DEFAULT_FPS = 10
 #: crawl of tiny glyphs.
 BANNER = "reyn"
 
-#: The optional dependency this needs. Not a reyn dependency — whether to take
-#: one on for a joke is an open question on #3796, so this module works out
-#: whether it is there rather than assuming it.
+#: The optional dependency this needs, and the extra that carries it.
+#:
+#: An EXTRA rather than a core dependency (owner ruling, #3796): not everyone who
+#: installs reyn should carry an animation library for a joke. The message names
+#: the extra, never the raw package — an operator told to install the package
+#: directly gets a working key and never learns the extra exists, which is the
+#: extra failing at the one job it has.
 _DEP = "terminaltexteffects"
+_EXTRA = "effects"
 
 
 def available() -> bool:
@@ -99,8 +104,8 @@ def unavailable_message() -> str:
     and this is the one failure mode of the feature that is not a bug.
     """
     return (
-        f"text effects need the optional {_DEP} package — "
-        f"pip install {_DEP}"
+        f"text effects need the optional '{_EXTRA}' extra — "
+        f"pip install 'reyn[{_EXTRA}]'"
     )
 
 
