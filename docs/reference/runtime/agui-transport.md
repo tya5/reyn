@@ -154,9 +154,9 @@ renderable display kinds):
 reach a client — but historically nothing told the client THAT a switch had
 happened (the old Textual TUI's header re-post was deleted as dead code; see
 the control-sentinel dispositions above). `AgentRegistry.attach`/
-`attach_session` now emit a `session_attached` chat-event carrying
+`attach_session` now emit a `session_attached` `EventFrame` carrying
 `{agent, session_id}` — the identity a client keys its display/reset cache on
-— as an `EventFrame` put DIRECTLY on `repl_outbox` (`registry.py`, the
+— put DIRECTLY on `repl_outbox` (`registry.py`, the
 `_announce_session_attached` helper), never routed through the just-swapped
 session's own chat-events.
 
