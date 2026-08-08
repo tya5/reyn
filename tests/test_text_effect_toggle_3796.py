@@ -68,8 +68,15 @@ async def test_the_same_key_starts_and_stops_it() -> None:
     than by inspecting reyn state, because reyn keeps none: the overlay IS the
     state, which is the property that makes the toggle safe.
     """
+    from reyn.runtime.outbox import OutboxMessage
+
     app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
     async with app.run_test() as pilot:
+        await pilot.pause()
+        # Something on screen: the effect acts on the covered rows, so an empty
+        # conversation has nothing to animate and ends immediately by design
+        # (see the empty-viewport test below).
+        app._ingest_frame(OutboxMessage(kind="agent", text="something to dissolve"))
         await pilot.pause()
 
         app.action_toggle_text_effect()
@@ -116,4 +123,86 @@ async def test_the_feed_is_intact_after_the_effect() -> None:
         )
         assert any("arrived during the effect" in t for t in after), (
             f"output that landed under the overlay was lost, not hidden: {after}"
+        )
+
+
+@requires_tte
+@pytest.mark.asyncio
+async def test_the_effect_animates_what_is_on_screen_not_a_banner() -> None:
+    """Tier 2: the frames are built from the conversation the overlay is
+    covering — the defect the operator found on their own machine (#3796
+    round 2).
+
+    The first version animated a fixed ``"reyn"``. It looked correct in every
+    way a test could have checked before this one: the overlay appeared, it
+    dismissed, the feed survived. What it did NOT do was have anything to do
+    with the screen it was drawn over, and only a person looking at it could
+    see that.
+
+    So the assertion is on the ARGUMENT: upstream hands the factory the covered
+    rows, and what reaches the effect must be those rows. Checked by capturing
+    what the factory is called with, through the real ``play_overlay`` — not by
+    reading frames, which would pin a third-party animation's pixels.
+    """
+    from reyn.interfaces.inline.textual_chat import screensaver
+    from reyn.runtime.outbox import OutboxMessage
+
+    seen: "list[list[str]]" = []
+    real_factory = screensaver.frame_factory
+
+    def recording_factory():
+        inner = real_factory()
+
+        def frames(width: int, height: int, covered: "list[str]"):
+            seen.append(list(covered))
+            return inner(width, height, covered)
+
+        return frames
+
+    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(
+            OutboxMessage(kind="agent", text="a reply the effect should act on")
+        )
+        await pilot.pause()
+
+        screensaver.frame_factory = recording_factory
+        try:
+            app.action_toggle_text_effect()
+            await pilot.pause()
+        finally:
+            screensaver.frame_factory = real_factory
+        app.action_toggle_text_effect()
+        await pilot.pause()
+
+    assert seen, "the factory was never called — nothing was measured"
+    covered_text = "\n".join(seen[0])
+    assert "a reply the effect should act on" in covered_text, (
+        f"the effect was handed something other than the screen: {seen[0]}"
+    )
+
+
+@requires_tte
+@pytest.mark.asyncio
+async def test_an_empty_screen_is_a_no_op_not_a_crash() -> None:
+    """Tier 2: the key on a fresh, empty conversation does nothing — and
+    specifically does not raise.
+
+    Not an exotic case: an empty viewport is blank rows, which join to
+    ``"\n\n\n..."``, and TTE raises ``ValueError`` on input that is non-empty
+    but carries no non-whitespace character (measured: ``""`` is accepted,
+    ``"\n\n\n"`` and ``"   "`` are not). The first thing an operator can do in
+    a new session is press the key, so this was the first thing that crashed.
+
+    A no-op is the truthful outcome rather than a fallback banner: the effect
+    acts on what is on screen, and an empty screen has nothing to act on.
+    """
+    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_toggle_text_effect()  # must not raise
+        await pilot.pause()
+        assert not app.query_one(FlowView).overlay_active, (
+            "an empty screen started an overlay with nothing to animate"
         )

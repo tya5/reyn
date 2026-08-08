@@ -138,10 +138,19 @@ dependencies = [
     # work (#3811 and the present-op `image` component) needs to know is
     # supported — "the library did not change" is a reason not to fear the bump,
     # not a reason to skip it.
+    # 0.16.0 (`feat!`) changes the overlay factory's signature:
+    # `frames(width, height)` -> `frames(width, height, covered)`, where
+    # `covered` is the body text of the rows the overlay is hiding, one string
+    # per visible row. A BREAKING change taken deliberately — reyn's #3796
+    # effect animated a fixed banner because there was no way to ask what was
+    # on screen, and reconstructing it reyn-side from the scroll offset was
+    # rejected (owner: 「viewport の内容は再構築すべきではないでしょ。flowview が
+    # 対応すべきでしょ」). The break is the point: a two-argument factory that
+    # kept working would keep animating the wrong thing silently.
     # The SHA is the *commit*, not the tag object: v0.13.1/v0.12.0 are
     # LIGHTWEIGHT tags (no `^{}` peel in `git ls-remote`), same as v0.9.0,
     # unlike the annotated v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@21c6a1caf6b216dfbba89ac12aa9310b0c759909",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@c34ee6ed0d968ea885d2ce6815c715adbbb50faa",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
