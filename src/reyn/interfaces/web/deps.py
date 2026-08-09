@@ -124,25 +124,12 @@ def _get_perm_resolver():
         from reyn.security.permissions.permissions import PermissionResolver
         config = _load_config()
         root = _get_project_root()
-        # Copy so the #1401 grant setdefault below never mutates the shared config.
         perm_config = dict(getattr(config, "permissions", {}) or {})
-        # #1401: --grant-file-write grants file.read/write at the resolver layer
-        # (mirrors `reyn chat`/run.py/eval). #3925: file.write is scoped to
-        # the zone root (ZoneRoot, via the "<zone-root>" spelling). Before
-        # #3925 this was effectively unrestricted: the permission layer does
-        # not consult the sandbox (#3901 PR-B ③ retired FILE_READ/FILE_WRITE
-        # from SandboxLayer's permission-∩ projection), and this call site
-        # passes no sandbox_backend/default_sandbox_policy of its own
-        # (measured directly), so between #3901 and #3925 there was no floor
-        # on this axis at all — a real, if narrow-window, over-broad grant
-        # this closes. Any narrowing a sandbox backend applies at its own
-        # enforcement layer is a separate, backend-level mechanism this
-        # grant does not rely on. setdefault preserves explicit operator
-        # config.
+        # #3924: --grant-file-write is removed (owner ruling — per-invocation
+        # CLI permission flags don't scope well in a multi-agent system;
+        # measured zero real call sites outside its own tests). File access
+        # now flows purely from reyn.yaml's own permissions: section.
         _ov = get_cli_scoped_overrides()
-        if _ov.grant_file_write:
-            perm_config.setdefault("file.read", "allow")
-            perm_config.setdefault("file.write", ["<zone-root>"])
         _perm_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=root,
@@ -217,13 +204,14 @@ from dataclasses import dataclass  # noqa: E402
 @dataclass(frozen=True)
 class CliScopedOverrides:
     """The `reyn web` scoped capability overrides (#1401). All defaults = the
-    pre-#1401 web/A2A behaviour (no env-backend, no exclude, no grant)."""
+    pre-#1401 web/A2A behaviour (no env-backend, no exclude). #3924 removed
+    the file-write grant field this used to also carry — that capability is
+    reyn.yaml's own permissions: section now."""
 
     environment_backend: object | None = None  # FS+exec backend INSTANCE (single-shared)
     workspace_base_dir: object | None = None   # container repo root (Path | None)
     workspace_state_dir: object | None = None  # host-side OS state dir (Path | None)
     exclude_tools: "frozenset | None" = None   # tool names hidden from the LLM catalog
-    grant_file_write: bool = False             # grant file.read/write at the resolver
 
 
 _cli_scoped: "CliScopedOverrides | None" = None

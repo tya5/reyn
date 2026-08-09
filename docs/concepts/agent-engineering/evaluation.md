@@ -35,7 +35,7 @@ The OS never interprets the checklist content — it is the calling agent's own 
 
 ### `reyn run-once`
 
-The non-interactive CLI entry point for running an agent without a live approval prompt (`reyn eval` was a phase-graph-era command; it was deleted alongside that engine — `reyn run-once` is its current, live counterpart). Permissions must already be pre-approved before the run starts — e.g. `--grant-file-write` grants a specific capability at invocation time rather than via an interactive prompt. This is what makes a self-review-gated pipeline usable in CI: the scoring loop and the permission model are orthogonal, so a non-interactive run's trust decisions are made once, up front, not re-litigated per invocation.
+The non-interactive CLI entry point for running an agent without a live approval prompt (`reyn eval` was a phase-graph-era command; it was deleted alongside that engine — `reyn run-once` is its current, live counterpart). Permissions must already be pre-approved before the run starts — e.g. `permissions.file.write` declared in `reyn.yaml` grants a specific capability durably (`#3924` removed the per-invocation `--grant-file-write` CLI flag this used to describe) rather than via an interactive prompt. This is what makes a self-review-gated pipeline usable in CI: the scoring loop and the permission model are orthogonal, so a non-interactive run's trust decisions are made once, up front, not re-litigated per invocation.
 
 ## Where it's still thin
 

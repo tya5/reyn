@@ -40,9 +40,12 @@ now builds a real (host-backend, non-interactive) ``ToolContext`` +
 ``AgentRegistry`` and wires both into the executor — a pipeline built from
 ANY step kind (``transform``/``tool``/``agent``/``call``/``match``/``fold``/
 ``for_each``/``parallel``) runs standalone. Permissions are **fail-closed by
-default** (byte-identical to ``reyn chat``'s own no-flag posture) — a
-``--grant-file-write`` flag, same name/semantics as ``reyn chat``'s, opts a
-SPECIFIC invocation into file.read/file.write; ``http.get`` is never
+default** (byte-identical to ``reyn chat``'s own no-flag posture) — #3924
+removed the ``--grant-file-write`` flag (owner ruling: per-invocation CLI
+permission flags are hard to scope in a multi-agent system, and this flag
+had zero real call sites outside its own tests); the operator instead
+writes ``permissions.file.write: ["<zone-root>"]`` in ``reyn.yaml`` to
+opt a project into file.read/file.write durably. ``http.get`` is never
 blanket-granted (see ``_build_run_tool_context``'s docstring). This matters
 because a pipeline may be installed from an untrusted source (``reyn pipe
 install --source``) — it must not silently gain broad file/network access
@@ -249,22 +252,6 @@ def register(sub) -> None:
         dest="async_",
         action="store_true",
         help=argparse.SUPPRESS,
-    )
-    # Same flag name/semantics as `reyn chat --grant-file-write` (chat.py):
-    # OFF by default (fail-closed — a pipeline installed from an untrusted
-    # source must not silently gain file.read/file.write merely by being
-    # RUN); the operator opts in per invocation to trust THIS run.
-    run_p.add_argument(
-        "--grant-file-write",
-        dest="grant_file_write",
-        action="store_true",
-        help=(
-            "Grant file.read/file.write at the resolver layer for this run, "
-            "scoped to the project root. Off by default — a tool:/agent: "
-            "step that touches the filesystem without this flag is denied, "
-            "the same fail-closed posture 'reyn chat' has without its own "
-            "--grant-file-write."
-        ),
     )
     run_p.set_defaults(func=run_run)
 
@@ -540,8 +527,7 @@ def _grant_configured_mcp_servers(perm_config: dict, configured_servers: "list[s
 
 
 def _build_run_tool_context(
-    project_root: Path, router_state: "Any | None", *, grant_file_write: bool = False,
-    config: "Any | None" = None,
+    project_root: Path, router_state: "Any | None", *, config: "Any | None" = None,
 ):
     """Build a real, standalone ``ToolContext`` for ``reyn pipe run``'s
     ``tool:`` step dispatch — routed through the SAME seam a live agent
@@ -562,10 +548,12 @@ def _build_run_tool_context(
         instead routes through ``ctx.router_state.host.mcp_call_tool`` ->
         ``Session._mcp_call_tool``, which gates via the SESSION's own
         resolver, not this one — carrying the mutated config through both
-        construction paths keeps them consistent). ``grant_file_write``
-        (``--grant-file-write``, off by default) mirrors ``reyn chat
-        --grant-file-write`` exactly (``file.read``/``file.write`` only).
-        ``http.get`` is NEVER blanket-granted — ``reyn chat`` doesn't either
+        construction paths keeps them consistent). File access follows
+        whatever ``config.permissions`` (``reyn.yaml``) declares — #3924
+        removed the ``--grant-file-write`` CLI flag this used to also check
+        (owner ruling: per-invocation permission flags don't scope well in
+        a multi-agent system; measured zero real call sites outside its own
+        tests). ``http.get`` is NEVER blanket-granted — ``reyn chat`` doesn't either
         (it relies on ``require_http_get``'s interactive JIT prompt; a
         non-interactive caller with no prompt to answer is correctly
         denied, same as a non-interactive ``reyn chat``). A pipeline
@@ -628,16 +616,6 @@ def _build_run_tool_context(
         perm_config = dict(getattr(config, "permissions", {}) or {})
     except Exception:
         perm_config = {}
-    if grant_file_write:
-        perm_config.setdefault("file.read", "allow")
-        # #3925: scoped to the zone root (ZoneRoot, via "<zone-root>") — was
-        # `allow` (unrestricted). This helper builds no sandbox_backend/
-        # default_sandbox_policy of its own (measured directly), and the
-        # permission layer stopped consulting the sandbox's write_paths when
-        # #3901 PR-B retired FILE_WRITE from SandboxLayer's permission-∩
-        # projection, so the prior `allow` form was genuinely unrestricted
-        # here, not merely broad.
-        perm_config.setdefault("file.write", ["<zone-root>"])
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,
@@ -815,7 +793,6 @@ def run_run(args: argparse.Namespace) -> None:
     # positive-zero property, unaffected by this removal); an agent-using
     # pipeline hits litellm's own typed exception unmodified on its first
     # LLM call.
-    grant_file_write = bool(getattr(args, "grant_file_write", False))
     # A real, standalone AgentRegistry (registry_bootstrap) so an
     # AgentStep can genuinely spawn+run an ephemeral session — see the module
     # docstring for the corrected tool:/agent: scope decision. It also doubles
@@ -823,7 +800,7 @@ def run_run(args: argparse.Namespace) -> None:
     # RouterHostAdapter feeds the tool-step ToolContext's router_state below —
     # every real Session builds one unconditionally, live chat session or not.
     agent_registry = build_agent_registry_from_project(
-        project_root, config, non_interactive=True, grant_file_write=grant_file_write,
+        project_root, config, non_interactive=True,
     )
 
     run_id = f"cli-{uuid.uuid4().hex}"
@@ -875,7 +852,7 @@ def run_run(args: argparse.Namespace) -> None:
                 return _router_state_cache["state"]
 
             tool_ctx = _build_run_tool_context(
-                project_root, None, grant_file_write=grant_file_write, config=config,
+                project_root, None, config=config,
             )
             base_dispatch = _make_tool_dispatch(tool_ctx)
 

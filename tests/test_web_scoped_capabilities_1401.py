@@ -1,11 +1,17 @@
 """Tier 2: #1401 — `reyn web` scoped capabilities reach the A2A server path.
 
-PR-A ports the 3 scoped capabilities `reyn chat` has (#1289/#1398/#1400) to the
+PR-A ports the scoped capabilities `reyn chat` has (#1289/#1398/#1400) to the
 A2A/`reyn web` path so a headless SWE-eval server runs agent file/exec ops in a
-per-instance container, scopes out tools (web for faithful eval), and grants
-repo file-write. The env-backend INSTANCE is threaded (not an env-var string —
-rebuilding it app-side would double-build the container, re-opening the drift
-class #1402/#1412 rooted) via web/deps' module-global holder.
+per-instance container and scopes out tools (web for faithful eval). The
+env-backend INSTANCE is threaded (not an env-var string — rebuilding it
+app-side would double-build the container, re-opening the drift class
+#1402/#1412 rooted) via web/deps' module-global holder.
+
+#3924 removed the --grant-file-write CLI flag (and the CliScopedOverrides
+holder field it threaded) — that capability is config-only now:
+reyn.yaml's own permissions.file.write. See test_grant_file_write_gates_
+real_in_repo_write below for the config-driven replacement of what this
+file used to test via the holder.
 
 Observable invariants (no private-state asserts):
 
@@ -16,7 +22,7 @@ Observable invariants (no private-state asserts):
   uvicorn's reload-worker subprocess — silent-no-op footgun);
 - the holder's values round-trip to the construction: web/deps' factory passes
   them to `build_scoped_chat_session` (the #1402-documented None-default fill),
-  and the perm resolver applies the grant + file_zone anchor.
+  and the perm resolver applies reyn.yaml's permissions + the file_zone anchor.
 """
 from __future__ import annotations
 
@@ -43,7 +49,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
 def _ns(**kw) -> argparse.Namespace:
     base = dict(
         env_backend="host", container=None, repo_dir=None,
-        grant_file_write=False, exclude_tools=None, reload=False,
+        exclude_tools=None, reload=False,
     )
     base.update(kw)
     return argparse.Namespace(**base)
@@ -60,13 +66,11 @@ def test_cli_scoped_overrides_contextmanager_isolation():
     override never leaks across tests."""
     set_cli_scoped_overrides(None)
     assert get_cli_scoped_overrides().exclude_tools is None
-    ov = CliScopedOverrides(exclude_tools=frozenset({"web_search"}), grant_file_write=True)
+    ov = CliScopedOverrides(exclude_tools=frozenset({"web_search"}))
     with cli_scoped_overrides(ov):
         g = get_cli_scoped_overrides()
         assert g.exclude_tools == frozenset({"web_search"})
-        assert g.grant_file_write is True
     assert get_cli_scoped_overrides().exclude_tools is None
-    assert get_cli_scoped_overrides().grant_file_write is False
 
 
 # ---------------------------------------------------------------------------
@@ -84,30 +88,30 @@ def test_no_scoped_flag_is_noop():
 
 @pytest.mark.parametrize("scoped_kw", [
     {"env_backend": "docker"},
-    {"grant_file_write": True},
     {"exclude_tools": "web_search,web_fetch"},
 ])
 def test_reload_guard_blocks_each_scoped_flag(scoped_kw):
-    """Tier 2: #1401 — each scoped flag + --reload fails loud (SystemExit), not a
-    silent no-op. The guard fires BEFORE build_environment_backend so no
-    container is launched by this test."""
+    """Tier 2: #1401 — each remaining scoped flag + --reload fails loud
+    (SystemExit), not a silent no-op. The guard fires BEFORE
+    build_environment_backend so no container is launched by this test.
+    #3924 removed --grant-file-write (a 3rd parametrize case here before) —
+    it no longer participates in scoped_intent at all."""
     set_cli_scoped_overrides(None)
     with pytest.raises(SystemExit):
         _apply_cli_scoped_overrides(_ns(reload=True, **scoped_kw))
 
 
-def test_exclude_and_grant_thread_to_holder():
-    """Tier 2: #1401 — --exclude-tools (comma-split) + --grant-file-write thread
-    to the holder for the factory / resolver to read. No container launch on the
-    exclude/grant-only path (env_backend stays None)."""
+def test_exclude_threads_to_holder():
+    """Tier 2: #1401 — --exclude-tools (comma-split) threads to the holder
+    for the factory / resolver to read. No container launch on the
+    exclude-only path (env_backend stays None). #3924 removed the
+    --grant-file-write half of this test — that capability is config-only
+    now (reyn.yaml permissions.file.write), not a holder field."""
     set_cli_scoped_overrides(None)
     try:
-        _apply_cli_scoped_overrides(
-            _ns(exclude_tools="web_search, web_fetch", grant_file_write=True)
-        )
+        _apply_cli_scoped_overrides(_ns(exclude_tools="web_search, web_fetch"))
         g = get_cli_scoped_overrides()
         assert g.exclude_tools == frozenset({"web_search", "web_fetch"})
-        assert g.grant_file_write is True
         assert g.environment_backend is None
     finally:
         set_cli_scoped_overrides(None)
@@ -152,14 +156,30 @@ def test_factory_threads_holder_to_build_scoped_chat_session():
 
 
 # ---------------------------------------------------------------------------
-# Real-resolver enforcement (R1): the holder grant + file_zone actually GATE
+# Real-resolver enforcement (R1): reyn.yaml permissions + file_zone actually GATE
 # ---------------------------------------------------------------------------
 
 
-async def _web_can_write(target: str, sandbox: "SandboxPolicy", *, grant: bool, ws) -> bool:
+def _write_reyn_yaml(tmp_path: Path, *, permissions: dict | None = None) -> None:
+    lines = ["model: standard"]
+    if permissions is not None:
+        lines.append("permissions:")
+        for key, value in permissions.items():
+            lines.append(f'  "{key}": {value!r}' if isinstance(value, str) else f'  "{key}": {value}')
+    (tmp_path / "reyn.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # deps._load_config / _get_project_root are process-global lru_caches
+    # (unlike the holder, which cli_scoped_overrides resets on its own) — a
+    # reyn.yaml rewrite mid-test is invisible to _get_perm_resolver() unless
+    # these are cleared too, the same class of staleness this test module's
+    # own R1 section exists to avoid.
+    deps._load_config.cache_clear()
+    deps._get_project_root.cache_clear()
+
+
+async def _web_can_write(target: str, sandbox: "SandboxPolicy", *, ws) -> bool:
     """Build the REAL web `_get_perm_resolver()` under the holder and check
     whether ``require_file_write`` permits ``target`` (no None resolver)."""
-    with cli_scoped_overrides(CliScopedOverrides(grant_file_write=grant, workspace_base_dir=ws)):
+    with cli_scoped_overrides(CliScopedOverrides(workspace_base_dir=ws)):
         resolver = deps._get_perm_resolver()
         try:
             await resolver.require_file_write(PermissionDecl(), target, "default", sandbox_policy=sandbox)
@@ -170,16 +190,21 @@ async def _web_can_write(target: str, sandbox: "SandboxPolicy", *, grant: bool, 
 
 @pytest.mark.asyncio
 async def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
-    """Tier 2: R1 — the --grant-file-write holder flag ACTUALLY gates file.write
-    on the REAL web perm resolver. Differential (the falsification pair):
-    grant=True allows an in-repo write, grant=False denies it. Not a string-grep."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    """Tier 2: R1 — #3924: reyn.yaml's permissions.file.write ACTUALLY gates
+    file.write on the REAL web perm resolver — the config-only replacement
+    for the removed --grant-file-write holder flag. Differential (the
+    falsification pair): declared permits an in-repo write, undeclared
+    denies it. Not a string-grep."""
     monkeypatch.chdir(tmp_path)
     repo = tmp_path / "container_repo"
     sandbox = SandboxPolicy(write_paths=[str(repo)])
     target = str(repo / "src" / "x.py")
-    assert await _web_can_write(target, sandbox, grant=True, ws=repo) is True
-    assert await _web_can_write(target, sandbox, grant=False, ws=repo) is False
+
+    _write_reyn_yaml(tmp_path, permissions={"file.write": "allow"})
+    assert await _web_can_write(target, sandbox, ws=repo) is True
+
+    _write_reyn_yaml(tmp_path, permissions=None)
+    assert await _web_can_write(target, sandbox, ws=repo) is False
 
 
 @pytest.mark.asyncio
@@ -188,10 +213,10 @@ async def test_file_zone_root_from_holder_anchors_default_zone(tmp_path, monkeyp
     (#1414) at RUNTIME. Differential (no grant): a write into <repo>/.reyn (the
     default write zone anchored on file_zone_root) is allowed when ws_base_dir=
     repo, but DENIED when the holder has no ws_base_dir (zone anchors on host)."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    _write_reyn_yaml(tmp_path, permissions=None)
     monkeypatch.chdir(tmp_path)
     repo = tmp_path / "container_repo"
     sandbox = SandboxPolicy(write_paths=[str(repo)])
     default_zone_target = str(repo / ".reyn" / "x.yaml")
-    assert await _web_can_write(default_zone_target, sandbox, grant=False, ws=repo) is True
-    assert await _web_can_write(default_zone_target, sandbox, grant=False, ws=None) is False
+    assert await _web_can_write(default_zone_target, sandbox, ws=repo) is True
+    assert await _web_can_write(default_zone_target, sandbox, ws=None) is False

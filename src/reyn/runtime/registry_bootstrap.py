@@ -27,11 +27,17 @@ Two tiers of extraction, deliberately:
   chat``'s own richer construction (model selection, ``--exclude-tools``,
   environment-backend choice, interactive CUI logging, …) — those stay
   ``chat.py``'s own bespoke bits, built the same way as before, on top of
-  the same ``build_scoped_chat_session``/``AgentRegistry`` seams. The
-  ``--grant-file-write`` posture IS ported (as a ``grant_file_write`` param,
-  same semantics as ``chat.py``'s flag — see :func:`build_agent_registry_from_project`)
-  since a fail-closed-by-default permission posture is a correctness/security
-  property this helper must not silently drop, not merely a CLI convenience.
+  the same ``build_scoped_chat_session``/``AgentRegistry`` seams. Fail-
+  closed-by-default permissions ARE ported (``perm_config`` reads exactly
+  ``reyn.yaml``'s own ``permissions:`` section, byte-identical to
+  ``chat.py``'s own no-flag posture) since that is a correctness/security
+  property this helper must not silently drop, not merely a CLI
+  convenience — #3924 removed the CLI-level ``--grant-file-write`` flag
+  both this helper and ``chat.py`` used to also read (owner ruling:
+  per-invocation permission flags don't scope well in a multi-agent
+  system; measured zero real call sites outside its own tests). An
+  operator opts a project into that capability durably via
+  ``permissions.file.write: ["<zone-root>"]`` in ``reyn.yaml`` instead.
   Forcing chat's full parameter surface (~25 kwargs) through this
   helper would either (a) duplicate that surface here (real drift risk, zero
   evidenced benefit — no second caller needs it yet) or (b) require
@@ -92,7 +98,6 @@ def build_agent_registry_from_project(
     *,
     non_interactive: bool = False,
     agent_name: "str | None" = None,
-    grant_file_write: bool = False,
 ) -> "AgentRegistry":
     """Build a minimal, standalone ``AgentRegistry`` for a non-interactive,
     one-shot caller — e.g. ``reyn pipe run``'s ``agent:`` step support.
@@ -110,19 +115,19 @@ def build_agent_registry_from_project(
       backend should use ``reyn chat``/``reyn run`` instead.
     - **Fail-closed permissions by default** — ``perm_config`` is exactly
       whatever ``reyn.yaml``'s own ``permissions:`` section declares, byte-
-      identical to ``reyn chat``'s own no-flag default. ``grant_file_write``
-      (default ``False``) mirrors ``reyn chat --grant-file-write`` EXACTLY
-      (same two keys, same ``setdefault`` semantics) — the caller must
-      explicitly opt in per invocation. ``http.get`` is NEVER blanket-granted
-      here, matching ``reyn chat`` (which relies on ``require_http_get``'s
-      interactive JIT-approval prompt instead of a blanket grant); a
-      non-interactive caller without a JIT prompt to answer is correctly
-      denied HTTP access unless ``reyn.yaml`` itself grants it — the same
-      outcome a non-interactive ``reyn chat`` invocation would have. A
-      pipeline installed from an untrusted source (``reyn pipe install
-      --source``) must not silently gain broad file/network access merely by
-      being RUN — the operator opts in per invocation, the same trust
-      decision ``reyn chat --grant-file-write`` already requires.
+      identical to ``reyn chat``'s own no-flag default (#3924 removed the
+      CLI-level ``--grant-file-write`` flag both this helper and
+      ``chat.py`` used to also read; an operator opts a project into
+      ``file.read``/``file.write`` durably via ``reyn.yaml`` instead).
+      ``http.get`` is NEVER blanket-granted here, matching ``reyn chat``
+      (which relies on ``require_http_get``'s interactive JIT-approval
+      prompt instead of a blanket grant); a non-interactive caller without
+      a JIT prompt to answer is correctly denied HTTP access unless
+      ``reyn.yaml`` itself grants it — the same outcome a non-interactive
+      ``reyn chat`` invocation would have. A pipeline installed from an
+      untrusted source (``reyn pipe install --source``) gains only what
+      ``reyn.yaml`` already grants merely by being RUN — no per-invocation
+      widening.
     - **``interactive=not non_interactive``** on the ``PermissionResolver`` —
       a one-shot caller has no one to answer an interactive approval prompt.
     - **Default model tier** (``config.model``) + a fresh ``ModelResolver``
@@ -148,17 +153,8 @@ def build_agent_registry_from_project(
 
     perm_config = dict(getattr(config, "permissions", {}) or {})
     # Fail-closed by default (byte-identical to `reyn chat`'s own no-flag
-    # posture). Only grant file.read/file.write when the caller explicitly
-    # opts in (mirrors `reyn chat --grant-file-write` exactly) — NEVER
-    # blanket-grant http.get (see docstring).
-    # #3925: file.write is scoped to the zone root (ZoneRoot, via
-    # "<zone-root>") — was `allow` (unrestricted). This factory passes
-    # sandbox_backend=None explicitly (see below), so pre-#3925 the grant
-    # was genuinely unrestricted, not merely broad: no sandbox floor of any
-    # kind applied on this axis at this call site.
-    if grant_file_write:
-        perm_config.setdefault("file.read", "allow")
-        perm_config.setdefault("file.write", ["<zone-root>"])
+    # posture) — NEVER blanket-grant http.get (see docstring). #3924 removed
+    # the --grant-file-write CLI flag this used to also check.
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,

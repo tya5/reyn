@@ -31,7 +31,6 @@ prompt は stdin から全体を（行単位でなく）読みます。
 | フラグ | 説明 |
 |------|------|
 | `--max-iterations N` | 自律ループの 1 メッセージあたり tool-call 予算。デフォルト `80` — 対話 chat より高く、agent が explore → edit → verify を完了まで反復できる。 |
-| `--grant-file-write` | resolver 層で `file.read` + `file.write` を付与し、非対話 agent が prompt なしで working tree を編集できる。`file.write` は zone root にスコープされる(`#3925`) — これは permission 側の概念であり sandbox 側ではない: permission 層は sandbox を参照しない(`#3901` PR-B ③ でこの結合は退役)。`reyn chat --grant-file-write` と同じ。 |
 | `--exclude-tools NAMES` | agent の LLM-visible カタログから隠すツール名（カンマ区切り、例 `web_search,web_fetch`）。`reyn chat --exclude-tools` と同じ。 |
 | `--exclude-categories NAMES` | カタログソースで隠すカテゴリ名（カンマ区切り、例: task に Reyn 自身のソースが無関係なら `reyn_repo`）。`reyn chat --exclude-categories` と同じ。 |
 
@@ -55,10 +54,12 @@ environment-backend フラグと [共通フラグ](common-flags.md) は `reyn ch
 echo "README を要約して open TODO を列挙して" | reyn run-once
 ```
 
-working tree を編集しうる named agent を駆動:
+working tree を編集しうる named agent を駆動 — 付与は `reyn.yaml` で宣言する
+（`#3924` で `--grant-file-write` フラグは削除。設定形式は
+[`reyn chat` のオプション](chat.ja.md) を参照）:
 
 ```bash
-cat task.md | reyn run-once coder --grant-file-write
+cat task.md | reyn run-once coder
 ```
 
 外部リポジトリ task で web ツールと Reyn-source カテゴリを隠す:
