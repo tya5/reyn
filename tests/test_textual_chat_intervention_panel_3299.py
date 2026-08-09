@@ -51,6 +51,7 @@ the testing policy.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import AsyncIterator
 
 import pytest
@@ -1300,28 +1301,38 @@ async def test_pending_intervention_panel_does_not_swallow_the_screen(
         )
 
 
-@pytest.mark.asyncio
-async def test_tabs_bar_height_is_the_native_fixed_two_rows() -> None:
-    """Tier 1: ★ direct witness for the root cause — the panel's internal
-    ``Tabs`` bar (the tab-caption row) must be Textual's OWN fixed
-    ``height: 2`` default, never stretched to ``auto``.
+def test_tabs_bar_has_no_height_override_reyn_relies_on_textuals_default() -> None:
+    """Tier 1: reyn's contract for the tab-caption bar is NOT setting a height
+    rule for it — not "Textual's Tabs defaults to height 2", which is
+    Textual's own promise, not reyn's (#3311's real-TTY regression made this
+    distinction concrete). An earlier revision added ``InterventionPanel
+    Tabs { height: auto; }`` by (wrong) analogy with the ``TabbedContent``
+    rule beside it; ``Tabs`` is NOT designed for auto-sizing and the override
+    resolved to ~30 rows on an 80x24 screen (tui-coder's real-TTY witness),
+    ballooning the whole panel and pushing the FlowView/Composer off-screen.
+    Every widget-STATE assertion (displayed, focused) stayed green through
+    that regression — only the actual CSS declaration catches it.
 
-    NON-VACUITY (falsification, verified locally): restoring the
-    ``InterventionPanel Tabs { height: auto; }`` rule makes the ``Tabs``
-    widget's own computed region height balloon (observed locally: from 2 to
-    over 30 rows on an 80x24 screen) instead of staying at 2."""
-    from textual.widgets import Tabs
+    Static (no real TTY, no Textual app, no ``pytest.mark.asyncio``): parses
+    ``InterventionPanel.DEFAULT_CSS`` directly, so it runs even where
+    the ``effects``/real-terminal extras are unavailable. Asserts no rule
+    targets the bare ``Tabs`` type — word-bounded so ``TabbedContent`` (a
+    different, legitimately-ruled type two lines below) never matches.
 
-    transport = RecordingTransport([_choice_intervention()], end=False)
-    app = TextualChatApp(transport=transport)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        await pilot.pause()
-
-        panel = app.query_one(InterventionPanel)
-        tabs_bar = panel.query_one(TabbedContent).query_one(Tabs)
-        assert tabs_bar.region.height == 2, (
-            f"the intervention panel's Tabs bar is not Textual's native fixed "
-            f"height (2) — got {tabs_bar.region.height}; region={tabs_bar.region!r}"
-        )
+    A ``height`` rule reappearing on ``Tabs``, at ANY value — not just
+    ``auto`` — is what this guards against: reyn's contract is "we don't
+    touch it", not "Textual's default happens to be small". If Textual ever
+    changes that default, this stays green (reyn still touches nothing);
+    if reyn re-adds a rule, this goes red regardless of the value chosen.
+    """
+    css = InterventionPanel.DEFAULT_CSS
+    tabs_rule = re.search(r"\bTabs\s*\{", css)
+    assert tabs_rule is None, (
+        "InterventionPanel.DEFAULT_CSS declares a rule for the bare `Tabs` "
+        "selector — reyn's contract is to declare NONE (see #3311): adding "
+        "one here, even a seemingly-harmless height:auto by analogy with "
+        "the TabbedContent rule beside it, reproduces a real-TTY regression "
+        "where Tabs (not designed for auto-sizing) ballooned to ~30 rows on "
+        "an 80x24 screen and pushed the FlowView/Composer off-screen. "
+        f"Found: {css[tabs_rule.start():tabs_rule.start() + 80]!r}"
+    )
