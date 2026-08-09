@@ -167,6 +167,34 @@ def _bare_ctx(state_log: "StateLog | None" = None) -> ToolContext:
     )
 
 
+def _read_disk_events(events_dir: Path, *, run_id: str) -> "list[dict]":
+    """#3928: read a session's OWN on-disk audit-event JSONL log (rotated
+    into ``YYYY-MM/`` subdirs by ``EventStore``) instead of ``EventLog.all()``
+    — #3868 removes the unbounded in-memory list ``.all()`` reads, and this
+    is the one site #3927's mechanical conversion could not reach (the
+    driver-session's ``EventLog`` reference is only obtainable AFTER the
+    attached run returns, via the bridge marker's ``driver_sid`` — no forward
+    subscriber can be attached before that). Filters by ``data.run_id`` since
+    an audit event carries no session-identity field of its own (only
+    ``type``/``timestamp``/``data`` — schemas/models.py:972) and, per #3928's
+    own measurement, a driver session's directory is physically distinct from
+    its caller's (``sessions/<sid>/chat`` vs the bare ``agents/<name>/chat``)
+    even when they share an agent_name, so no cross-session filtering is
+    needed beyond run_id disambiguating concurrent runs within one file."""
+    out: "list[dict]" = []
+    if not events_dir.is_dir():
+        return out
+    for f in sorted(events_dir.rglob("*.jsonl")):
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            raw = json.loads(line)
+            if raw.get("data", {}).get("run_id") == run_id:
+                out.append(raw)
+    return out
+
+
 def _steps(n: int) -> Pipeline:
     return Pipeline(steps=[
         ToolStep(name="is6_step", args={"tag": f"s{i}"}, output=f"o{i}")
@@ -628,13 +656,24 @@ async def test_attached_run_emits_bridge_marker_on_callers_own_eventlog(
     assert driver_sid != "main"
     driver_session = reg.get_session("worker", driver_sid)
     assert driver_session is not None
-    driver_events = driver_session.router_host.events.all()
-    started = [e for e in driver_events if e.type == "pipeline_step_started"]
-    completed = [e for e in driver_events if e.type == "pipeline_step_completed"]
-    assert {e.data["step_index"] for e in started} == {0, 1}
-    assert {e.data["step_index"] for e in completed} == {1, 2}
-    assert all(e.data["total_steps"] == 2 for e in started + completed)
-    assert all(e.data["step_kind"] == "tool" for e in started + completed)
+
+    # #3928: read the driver-session's own on-disk audit-event log instead of
+    # EventLog.all() — #3868 removes the unbounded in-memory list. Drain
+    # first: run_pipeline_attached does not call aclose() on the driver's
+    # EventStore (measured directly, #3928 issue comment), so an event
+    # submitted to the off-loop write worker on the pump's last step can
+    # still be in flight when this line runs — measured directly too (3 of
+    # the 4 step events were on disk before the drain, 4 after, in the same
+    # run). aclose_event_store() is idempotent so this is safe even if a
+    # later teardown also calls it.
+    await driver_session.aclose_event_store()
+    driver_events = _read_disk_events(driver_session.events_dir, run_id=outcome["run_id"])
+    started = [e for e in driver_events if e["type"] == "pipeline_step_started"]
+    completed = [e for e in driver_events if e["type"] == "pipeline_step_completed"]
+    assert {e["data"]["step_index"] for e in started} == {0, 1}
+    assert {e["data"]["step_index"] for e in completed} == {1, 2}
+    assert all(e["data"]["total_steps"] == 2 for e in started + completed)
+    assert all(e["data"]["step_kind"] == "tool" for e in started + completed)
 
 
 @pytest.mark.asyncio
