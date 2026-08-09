@@ -1,8 +1,13 @@
 """Tier 1: #2081 S1 — the ``delegation:`` config field (config-selectable policy).
 
-S1 adds ``delegation.capability_default`` (inherit|deny, default=inherit). S1 is
-INERT — nothing consumes the value yet (S2 wires the unbound-delegate fallback). So
-this slice only pins the contract: parse / default / validate / load_config round-trip.
+S1 adds ``delegation.capability_default`` (inherit|deny, default=inherit). S1 was
+INERT at landing — nothing consumed the value yet. #2092 (S2) has since wired the
+consumer: ``registry.py``'s unbound-delegate fallback reads
+``self._delegation_capability_default`` and, under ``deny``, applies the
+restrictive ``_delegate`` floor (see ``docs/concepts/runtime/capability-profile.md``
+§ "gateway:delegation-unsafe"). This slice's own scope is unchanged — it only pins
+the S1 contract: parse / default / validate / load_config round-trip — S2's wiring
+is covered by its own tests, not this file's.
 
 The default (``inherit``) keeps a fresh install byte-identical to pre-#2081.
 """

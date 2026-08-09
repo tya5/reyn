@@ -216,7 +216,7 @@ mindmap
 
 #### Time-Travel / Rewind (Resume)
 
-User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2d) are production. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: [ADR-0038](deep-dives/decisions/0038-user-facing-time-travel-rewind.md).
+User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2c/2d) are production; 2b's substrate reads (`list_branches`, `list_rewind_points(include_abandoned=True)`) exist but its own tree-layout consumer (`branch_tree.py::build_branch_tree_rows`) has zero production caller — see the two rows below. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: [ADR-0038](deep-dives/decisions/0038-user-facing-time-travel-rewind.md) (its status line predates this correction — flagged separately, not edited here).
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
@@ -225,10 +225,10 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2
 | PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Time-Travel concepts](concepts/runtime/time-travel.md) · Crash Recovery |
 | Consistent-cut rewind | Both substrates (runtime state + workspace shadow-git `as-of-N`) rewound atomically | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | Append-only reset-record | Undo appends a reset-record at seq R; history before R is preserved on the current branch (no destructive rewrite) | [Time-Travel concepts](concepts/runtime/time-travel.md) |
-| Retention window + GC | Configurable checkpoint retention window; stale snapshots GC'd automatically | [How-to: rewind](guide/for-users/time-travel.md) |
+| Retention floor clamp (mechanism only — **not config-wired**) | `RetentionPolicy`/`compute_retention_floor` (ADR-0038 D5) correctly clamp the WAL floor given a policy — but `RetentionPolicy.from_config` is never called from any production config-load path (`AgentRegistry` is always built with `retention_policy=None` → live/no-deeper-retention), and no `reyn.yaml` schema recognizes a `retention:` key at all. Every non-default `RetentionPolicy(...)` construction in the repo is in `tests/`. Matches `time-travel.md`'s own "designed, not yet wired" pending-features entry — this row previously claimed the opposite | [How-to: rewind](guide/for-users/time-travel.md) |
 | Branch registry | Abandoned-interval lineage: each fork receives a registry entry with origin seq | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | `checkout(seq)` unified primitive | Active-branch seq → undo; inactive-branch seq → fork-switch. One primitive for both directions | [Time-Travel concepts](concepts/runtime/time-travel.md) |
-| Multi-fork tree UX | Always-tree picker with per-branch anchor labels | [How-to: rewind](guide/for-users/time-travel.md) |
+| Multi-fork tree UX (**substrate only — not wired into the picker**) | The 2a substrate (`list_branches`, `list_rewind_points(include_abandoned=True)`) is real and covers the fork-switch/checkout path; the 2b tree-layout function (`branch_tree.py::build_branch_tree_rows`) has a unit test (`tests/test_branch_tree_2b.py`) as its only caller anywhere in the repo — `rewind_picker.py` (the actual `/rewind` widget) has no "branch"/"abandoned" logic at all and lists current-branch checkpoints only, matching `time-travel.md`'s own "not yet wired" pending-features entry | [How-to: rewind](guide/for-users/time-travel.md) |
 | Act-turn runtime-only rewind | Ghost-Replay memo truncate for rewind within an in-flight turn (no substrate round-trip) | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | Container-mode shadow-git | Shadow-git `as-of-N` rewind supported inside the container environment backend | [How-to: rewind](guide/for-users/time-travel.md) |
 | Deterministic CI rewind gate | `test_live_rewind_gate.py` — Phase-1 rewind deterministic gate | — |
