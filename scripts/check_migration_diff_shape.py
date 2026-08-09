@@ -37,20 +37,33 @@ so it is never subject to that limit. This gate does not need to raise it.
 ## PR touching tests/, including ordinary Q3/Q4 assert-repair PRs)
 
 This gate is INACTIVE — exits 0 immediately, checks nothing — unless the
-diff contains at least one pure (``R100``) rename whose new path lands
-under ``tests/``. A PR with no such rename is not a migration PR, whatever
-it claims to be (a label, a branch name, a PR-body declaration): the whole
-audit this session has been running finds that exact "declaration ≠
-reality" shape everywhere else (Tier labels no one earned, "falsify done"
-claims that were only reasoned through, a hand-editable baseline) and a
-self-declared "this is a migration PR" signal would just be one more
-instance of it. So the diff's own content is the only signal read.
+diff shows real evidence of a tests/ migration: a pure (``R100``) rename
+under ``tests/``, OR a brand-new ``.py`` file landing inside a ``tests/``
+SUBDIRECTORY (see :func:`is_new_file_in_tests_subdir`). A PR with neither
+signal is not a migration PR, whatever it claims to be (a label, a branch
+name, a PR-body declaration): the whole audit this session has been
+running finds that exact "declaration ≠ reality" shape everywhere else
+(Tier labels no one earned, "falsify done" claims that were only reasoned
+through, a hand-editable baseline) and a self-declared "this is a
+migration PR" signal would just be one more instance of it. So the diff's
+own content is the only signal read.
 
-Accepted trade-off: a "migration" whose renames git's ``-M100%`` failed to
-detect at ALL (every file fully rewritten, zero pure renames) makes this
-gate inactive too — but Stage 0's ratchet independently rejects that shape
-as new flat/relocated files it has never seen. The two gates catch it
-between them, neither alone.
+★ Corrected in review, not assumed correct from the design description:
+this module's FIRST version claimed "a 'migration' whose renames
+`-M100%` failed to detect at all makes this gate inactive too, but Stage
+0's ratchet independently rejects that shape — the two gates catch it
+between them." **That claim was false, and neither this author nor
+lead-coder (who wrote it first, in the #3885 design comment) had checked
+it before it shipped into this docstring** — `flat_tests_ratchet.py`'s
+`measured_flat_files()` globs `tests/*.py` NON-recursively (its own
+docstring says so explicitly: "a file already moved into a subdirectory
+is correctly absent"), so a fully-rewritten file landing in
+`tests/<pkg>/` — exactly where a real migration destination is — was
+invisible to BOTH gates, not caught by either. Fixed by adding the second
+activation signal above rather than by weakening the claim to a caveat;
+the class of "I transcribed a claim instead of checking it" is the same
+one this whole #3872/#3879 arc has been finding all night, this time in
+the gate meant to guard against exactly that shape.
 
 ## Allowed diff lines, once active (everything else in scope is rejected)
 
@@ -117,7 +130,7 @@ def blob_at_head(path: str, root: Path = _ROOT) -> "bytes | None":
 
 def is_tests_rename(line: str) -> bool:
     """Whether *line* is a pure (R100) rename whose NEW path lands under
-    ``tests/`` — the activation signal for the whole gate (see
+    ``tests/`` — one of the two activation signals for the whole gate (see
     :func:`gate_is_active`)."""
     parts = line.split("\t")
     if not parts[0].startswith("R"):
@@ -126,24 +139,58 @@ def is_tests_rename(line: str) -> bool:
     return similarity == "100" and len(parts) == 3 and parts[2].startswith("tests/")
 
 
+def is_new_file_in_tests_subdir(line: str) -> bool:
+    """Whether *line* is a brand-new ``.py`` file landing inside a
+    ``tests/`` SUBDIRECTORY (``tests/<pkg>/...``, not a direct child) — the
+    OTHER activation signal, and the fix to a real gap found in this gate's
+    own first version (#3885 review, lead-coder + this author both
+    transcribed an unverified claim that Stage 0's ratchet would catch this
+    shape on its own — checked directly and it does not:
+    ``flat_tests_ratchet.measured_flat_files()`` globs ``tests/*.py``
+    NON-recursively, by its own docstring's own words, so a file already
+    landed in a subdirectory is invisible to it). A fully-rewritten "move"
+    (git's ``-M100%`` failing to detect ANY rename because every byte
+    changed) produces exactly this shape: a new ``A`` line under
+    ``tests/<pkg>/``, with no matching rename anywhere — this is what makes
+    that case activate the gate, where :func:`is_tests_rename` alone would
+    have missed it entirely."""
+    parts = line.split("\t")
+    if parts[0] != "A" or len(parts) != 2:
+        return False
+    path = parts[1]
+    if not path.endswith(".py"):
+        return False
+    # "tests/<subdir>/..." has at least 3 slash-separated segments; a direct
+    # child ("tests/test_a.py") has exactly 2 and is Stage 0's territory,
+    # not this gate's — an empty __init__.py addition is legitimately
+    # allowed once active (see offending_lines), so it must still be able
+    # to trigger activation here too.
+    return path.count("/") >= 2 and path.startswith("tests/")
+
+
 def gate_is_active(lines: "list[str]") -> bool:
-    """The gate applies ONLY to a PR whose diff contains at least one pure
-    rename under ``tests/`` — never to a label, a branch-name convention, or
-    any other DECLARATION of "this is a migration PR" (lead-coder's
-    correction, #3885 review: a self-declared signal is exactly the
+    """The gate applies ONLY to a PR whose diff shows REAL evidence of a
+    tests/ migration — never a label, a branch-name convention, or any
+    other DECLARATION of "this is a migration PR" (lead-coder's #3885
+    review correction: a self-declared signal is exactly the
     declaration-vs-reality gap this whole audit exists to close — Tier
     labels, "falsify done" claims, hand-edited baselines, all the same
-    shape). The diff's own content is the only signal: no ``tests/``
-    rename anywhere → this PR isn't a migration PR, whatever it claims to
-    be, and every OTHER PR touching ``tests/`` (an ordinary Q3/Q4 assert
-    repair, a bug fix) passes through untouched — accepted trade-off (see
-    module docstring): a "migration" whose renames git's ``-M100%`` failed
-    to detect at all (a fully rewritten, byte-different move) makes THIS
-    gate inactive, but Stage 0's ratchet still independently rejects it as
-    a new flat file (or a new file in a package it never asserts anything
-    about) — the two gates catch that shape between them, not either
-    alone."""
-    return any(is_tests_rename(line) for line in lines)
+    shape). Two signals, either one activates:
+
+    - :func:`is_tests_rename` — a pure R100 rename under ``tests/``.
+    - :func:`is_new_file_in_tests_subdir` — a brand-new ``.py`` landing in a
+      ``tests/`` SUBDIRECTORY, which is what a FULLY-rewritten "move" (zero
+      bytes shared, so ``-M100%`` detects no rename at all) looks like —
+      without this second signal, that exact shape passed both this gate
+      (inactive, no rename) AND Stage 0's ratchet (non-recursive glob, blind
+      to subdirectories) untouched. Found and fixed in review, not assumed
+      correct from the design description (see module's own account of the
+      mistake).
+
+    No signal anywhere → this PR isn't touching tests/'s Stage-1 migration
+    at all, whatever it claims to be, and an ordinary Q3/Q4 assert-repair PR
+    passes through untouched."""
+    return any(is_tests_rename(line) or is_new_file_in_tests_subdir(line) for line in lines)
 
 
 def _in_scope(line: str) -> bool:

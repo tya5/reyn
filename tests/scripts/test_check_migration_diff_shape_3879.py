@@ -65,7 +65,16 @@ def test_rewrite_disguised_as_a_move_is_caught(_repo: Path) -> None:
     a new file at the destination with ONE extra line. `git diff -M100%`
     reports this as separate A/D lines (verified: NOT a lower-similarity
     Rxxx — confirmed directly in the module docstring's own measurement),
-    and the gate must flag both lines as offenders."""
+    and the gate must ACTIVATE on this shape (no rename exists — only
+    `is_new_file_in_tests_subdir` catches it, per the #3885 review fix) and
+    flag both lines as offenders.
+
+    ★ Checking activation explicitly, not just calling offending_lines()
+    directly, closes a real gap this session's own falsify-verification
+    already found once (a test bypassing gate_is_active() and silently no
+    longer reflecting main()'s real behavior) — this exact scenario is what
+    the second review round found BOTH this gate (originally, no rename =
+    inactive) and Stage 0's non-recursive ratchet missed entirely."""
     core = _repo / "tests" / "core"
     core.mkdir()
     (core / "test_a.py").write_text("line1\nline2\nline3\nline4\n", encoding="utf-8")
@@ -73,6 +82,11 @@ def test_rewrite_disguised_as_a_move_is_caught(_repo: Path) -> None:
     _commit_all(_repo, "rewrite disguised as move")
 
     lines = diff_name_status("HEAD~1", root=_repo)
+    assert gate_is_active(lines), (
+        "a fully-rewritten move into a subdirectory did not activate the "
+        "gate — this is the exact shape neither this gate nor Stage 0's "
+        "ratchet caught before the fix"
+    )
     offenders = offending_lines(lines, root=_repo)
     assert "A\ttests/core/test_a.py" in offenders, (
         f"the new (rewritten) file's A line was not flagged: {offenders!r}"
