@@ -232,6 +232,7 @@ async def test_landlock_with_no_deny_lists_emits_no_unenforced_event(tmp_path):
         permission_decl=PermissionDecl(),
         permission_resolver=None,
         sandbox_backend=_LandlockShapedBackend(),
+        default_sandbox_policy={},
     )
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)

@@ -132,11 +132,16 @@ async def test_handler_surfaces_denial_class_and_argv0_end_to_end():
         events=events,
         permission_decl=PermissionDecl(),
         sandbox_backend=_ForkDenyingBackend(),
+        # #3907: the op no longer carries policy fields — a concrete (even
+        # empty/compat) policy is required, mirroring what a real
+        # context-building path always resolves. This test's own axis is
+        # denial-CLASSIFICATION passthrough (the backend hardcodes the fork
+        # denial regardless of policy content), not policy content itself.
+        default_sandbox_policy={},
     )
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["python3", "-c", "print(2+2)"],
-        env_passthrough=["PATH"],
         timeout_seconds=30,
     )
 
