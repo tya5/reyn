@@ -53,6 +53,12 @@ All fields are optional; absent or `null` means unrestricted on that axis.
 | `mcp_allow` | `list[str] \| null` | MCP server allow-list. `null` = unconstrained. |
 | `mcp_deny` | `list[str]` | MCP server deny-list. |
 
+A profile YAML left over from before the SKILL axis was removed may still
+carry `skill_allow`/`skill_deny` keys — the loader ignores them silently
+(forward-compat) rather than rejecting the file. There is no warning that
+those keys have stopped doing anything; an old profile file is not a signal
+that skill capability is being narrowed.
+
 ### Axis B — tool narrowing
 
 | Field | Type | Semantics |
