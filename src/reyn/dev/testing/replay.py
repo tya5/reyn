@@ -327,7 +327,7 @@ class LLMReplay:
         a NEW key while the OLD entry (recorded against the old schema)
         stayed on disk, so the fixture then matched both generations and
         stopped measuring anything (a stale fixture goes RED and gets
-        noticed; a stacked one stays GREEN). The fix drops two kinds of
+        noticed; a stacked one stays GREEN). The fix drops three kinds of
         on-disk entry before writing:
 
         1. Any entry whose ``key`` matches a key THIS session (re-)recorded —
@@ -341,6 +341,13 @@ class LLMReplay:
            change is expected to move) matches an entry this session
            recorded — that is an EARLIER generation of a call this run
            superseded, the #3634 stacking case proper.
+        3. Any "environment" entry whose ``name`` matches a precondition
+           THIS session captured (#3969) — an environment entry carries no
+           ``key`` at all (it's keyed by precondition ``name``, one snapshot
+           per precondition), so rules 1/2 structurally cannot see it; #3634's
+           own fix never covered this kind, so every record-mode flush
+           appended a fresh "environment" line without ever dropping the
+           stale one, unboundedly, across every re-recording.
 
         Every other on-disk entry (a genuinely different call, e.g. one
         recorded by a SIBLING test sharing this same fixture file —
@@ -397,6 +404,18 @@ class LLMReplay:
         # since a dict lookup collapses it, but still a fixture that grows a
         # line every time an UNCHANGED call is re-recorded).
         session_keys = {entry["key"] for entry in self._pending}
+        # #3969: "environment" entries carry no ``key`` at all — they're
+        # keyed by ``name`` (one snapshot per registered precondition), so
+        # the key/group_signature machinery above structurally cannot see
+        # them. Without this, every record-mode flush() appended a fresh
+        # "environment" line without ever dropping the stale one (the same
+        # failure #3634 fixed for completion entries, just on a kind #3634's
+        # own fix never looked at — found by tui-coder re-recording #3967's
+        # fixture). ``captured`` is this call's freshly-captured snapshots
+        # (always present in record mode, one per registered precondition —
+        # see above); an on-disk "environment" entry whose name matches one
+        # of them is the stale prior generation.
+        captured_names = {entry["name"] for entry in captured}
 
         kept_existing: list[dict[str, Any]] = []
         if self.fixture_path.exists():
@@ -409,10 +428,16 @@ class LLMReplay:
                 except Exception:
                     # Corrupt line — same silent-skip policy as `_load`.
                     continue
+                kind = entry.get("kind", "completion")
+                if kind == "environment":
+                    if entry.get("name") in captured_names:
+                        continue  # this session re-captured this precondition — drop the old copy
+                    kept_existing.append(entry)
+                    continue
                 key = entry.get("key")
                 if key in session_keys:
                     continue  # this session re-recorded this exact call — drop the old copy
-                if entry.get("kind", "completion") == "completion":
+                if kind == "completion":
                     components = entry.get("key_components")
                     if (
                         isinstance(components, dict)
