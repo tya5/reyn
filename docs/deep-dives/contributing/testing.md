@@ -581,6 +581,40 @@ ever run the production code it claims to falsify? A genuine instance that
 never calls the real method under test fails that bar exactly like a mock
 does, for an unrelated reason a mock's own ban never named.
 
+**"Does the test run the production code" is necessary but not
+sufficient — the shape recurs even through a `super()` call.** A subclass
+can call `super()` (so the real method genuinely executes) and still
+commit this anti-pattern, if what gets asserted is the subclass's own
+post-processing of that call, not anything about what production actually
+did. The real discriminator is narrower: **is the hand-built stub the
+*target of the assert*, or only an *input condition* feeding a real
+production check?**
+
+```
+✗ calls super(), then mangles the result, then asserts the mangled value
+  — the assert examines the stub's own arithmetic, production ran but
+  wasn't checked
+✓ never calls super() at all, but only as an input a real production
+  function is asked to classify — the assert examines what PRODUCTION
+  concluded, not what the stub did
+```
+
+`#3917`'s own census turned up a legitimate instance of the second shape:
+`_WholesaleDead` in `test_sandbox_self_test_2983.py` is a `NoopBackend`
+subclass whose `wrap_command` hand-breaks the `allow_subprocess=False`
+branch (the real #2962 shape — a filter that kills the target command
+outright). The test that uses it does not assert anything about
+`_WholesaleDead`'s own behavior; it asserts that reyn's real
+`probe_subprocess_enforcement`, handed this backend, correctly reports it
+as **not** enforcing — the stub is the input condition, production's own
+classification is what's under test, and the docstring names the exact
+production line the strip would kill (*"Strip the non-forking control
+from `probe_subprocess_enforcement` and this test fails"*). Whether the
+stub calls `super()` is a useful first screen (a stub that never calls
+production obviously can't be an input condition to it) but not the rule
+itself — a stub can call `super()` and still fail this bar if the assert
+never asks production anything.
+
 **Why "would it stay green with the mechanism dead?" invited this.** That
 phrasing asks you to imagine a dead mechanism, and imagining one is
 something you can always do *inside the test itself* — build a stub, break
