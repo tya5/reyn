@@ -630,7 +630,14 @@ def _build_run_tool_context(
         perm_config = {}
     if grant_file_write:
         perm_config.setdefault("file.read", "allow")
-        perm_config.setdefault("file.write", "allow")
+        # #3925: scoped to the zone root (ZoneRoot, via "<zone-root>") — was
+        # `allow` (unrestricted). This helper builds no sandbox_backend/
+        # default_sandbox_policy of its own (measured directly), and the
+        # permission layer stopped consulting the sandbox's write_paths when
+        # #3901 PR-B retired FILE_WRITE from SandboxLayer's permission-∩
+        # projection, so the prior `allow` form was genuinely unrestricted
+        # here, not merely broad.
+        perm_config.setdefault("file.write", ["<zone-root>"])
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,

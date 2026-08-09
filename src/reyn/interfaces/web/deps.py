@@ -127,19 +127,22 @@ def _get_perm_resolver():
         # Copy so the #1401 grant setdefault below never mutates the shared config.
         perm_config = dict(getattr(config, "permissions", {}) or {})
         # #1401: --grant-file-write grants file.read/write at the resolver layer
-        # (mirrors `reyn chat`/run.py/eval). This grant has no scope of its
-        # own — the permission layer does not consult the sandbox (#3901
-        # PR-B ③ retired FILE_READ/FILE_WRITE from SandboxLayer's
-        # permission-∩ projection; an operator cannot know a sandbox's path
-        # floor, so it is no longer treated as permission). Scoping this
-        # grant is a #3925 concern on the permission side, not yet built.
-        # Any narrowing a sandbox backend applies at its own enforcement
-        # layer is a separate, backend-level mechanism this grant does not
-        # rely on. setdefault preserves explicit operator config.
+        # (mirrors `reyn chat`/run.py/eval). #3925: file.write is scoped to
+        # the zone root (ZoneRoot, via the "<zone-root>" spelling). Before
+        # #3925 this was effectively unrestricted: the permission layer does
+        # not consult the sandbox (#3901 PR-B ③ retired FILE_READ/FILE_WRITE
+        # from SandboxLayer's permission-∩ projection), and this call site
+        # passes no sandbox_backend/default_sandbox_policy of its own
+        # (measured directly), so between #3901 and #3925 there was no floor
+        # on this axis at all — a real, if narrow-window, over-broad grant
+        # this closes. Any narrowing a sandbox backend applies at its own
+        # enforcement layer is a separate, backend-level mechanism this
+        # grant does not rely on. setdefault preserves explicit operator
+        # config.
         _ov = get_cli_scoped_overrides()
         if _ov.grant_file_write:
             perm_config.setdefault("file.read", "allow")
-            perm_config.setdefault("file.write", "allow")
+            perm_config.setdefault("file.write", ["<zone-root>"])
         _perm_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=root,
