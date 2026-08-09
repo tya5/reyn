@@ -20,6 +20,16 @@ Defined in `src/reyn/security/sandbox/policy.py` — the dataclass every backend
 (#3901 — the two are not mirrors of one another; `reyn/core/op_runtime/
 sandboxed_exec.py` converts one into the other).
 
+**These are `SandboxPolicy`'s own internal field names — not what an operator
+writes in `reyn.yaml`.** `#3823` layered a separate, decoupled config
+vocabulary on top (`allow_write_paths` / `deny_read_paths` / `deny_write_paths`
+/ `subprocess` / `allow_env_names` / `deny_env_names`), translated into the
+internal names below by `_translate_sandbox_policy_config` before construction
+— see [`reyn.yaml` § `sandbox.policy` sub-keys](../../reference/config/reyn-yaml.md#sandbox-block)
+or [Configure the sandbox](../../guide/for-users/configure-sandbox.md) for the
+vocabulary you actually write. This table is the internal reference for
+reading `policy.py` itself.
+
 Every field except `write_paths` defaults to full compat (owner ruling B,
 #3901): the sandbox's job is bounding what happens *behind* a permitted
 action, not re-deciding what the launching shell could already do.
@@ -114,7 +124,7 @@ sandbox:
 
 Sandbox configuration is **operator-level** — set in `reyn.yaml` or via CLI flags, not per-workflow or per-phase. See [`reyn.yaml` reference → `sandbox:`](../../reference/config/reyn-yaml.md) for the full config schema.
 
-> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase workflow declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection for the `network`/`subprocess`/`env` axes (it wins over op-declared fields, so a workflow or the LLM cannot widen it) — `write_paths` (and the read/write deny-lists) do NOT participate in that intersection, since they are values an operator cannot know in advance and the kernel backend consumes them directly (#3901 PR-B ③); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
+> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase workflow declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection for the `network`/`subprocess`/`env` axes (it wins over op-declared fields, so a workflow or the LLM cannot widen it) — `allow_write_paths` (and the read/write deny-lists) do NOT participate in that intersection, since they are values an operator cannot know in advance and the kernel backend consumes them directly (#3901 PR-B ③); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
 
 ## See also
 

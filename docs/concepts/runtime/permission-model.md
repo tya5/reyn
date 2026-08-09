@@ -390,11 +390,11 @@ what compat-by-default means for a command that can read a secret.
 
 | Axis | Policy | Rationale |
 |---|---|---|
-| write | tight workspace-allowlist (`write_paths`), closed by default | The one axis an operator cannot know in advance (a workspace floor value) and therefore cannot express as permission — bounds what a process can persist. |
+| write (`allow_write_paths`) | tight workspace-allowlist, closed by default | The one axis an operator cannot know in advance (a workspace floor value) and therefore cannot express as permission — bounds what a process can persist. |
 | network | open by default (owner decision, 2026-06-05, generalised to full compat by `#3901`) | A sandboxed process reaches the network the same way the launching shell can, unless `network: false` is set explicitly. |
-| exec (`deny_subprocess`) | open by default | Child-process spawning is allowed unless denied explicitly (enforced on Linux via seccomp, macOS via Seatbelt). |
-| env (`env_deny_names`) | open by default | The whole environment passes through, same trust level as the launching shell, unless specific names are denied. |
-| read | **broad-allow by default** + optional sensitive deny-list, empty by default | Unchanged since #1199 — the strict read-allowlist was abolished; `read_deny_paths` is opt-in defense-in-depth, not a default protection. |
+| exec (`subprocess`) | open by default | Child-process spawning is allowed unless `subprocess: false` is set explicitly (enforced on Linux via seccomp, macOS via Seatbelt). |
+| env (`deny_env_names`, or `allow_env_names` to switch to allow-list semantics) | open by default | The whole environment passes through, same trust level as the launching shell, unless specific names are denied (or, under `allow_env_names`, unless a name isn't on the list). |
+| read | **broad-allow by default** + optional sensitive deny-list, empty by default | Unchanged since #1199 — the strict read-allowlist was abolished; `deny_read_paths` is opt-in defense-in-depth, not a default protection. |
 
 **Why broad read was originally safe, and why that argument no longer
 carries the whole weight.** The original #1199 design reasoned that a
@@ -410,10 +410,10 @@ Code's read-restriction-as-secondary posture) — what changed is that
 **reyn no longer promises the exfiltration gate is closed by default**;
 protecting a credential a sandboxed command can read is now the
 operator's own responsibility, exercised explicitly (`network: false`,
-`env_deny_names`, `read_deny_paths`), the same posture `#3901`'s owner
+`deny_env_names`, `deny_read_paths`), the same posture `#3901`'s owner
 ruling applies to every non-write axis.
 
-**Defense-in-depth deny-list, opt-in.** `read_deny_paths` (empty by
+**Defense-in-depth deny-list, opt-in.** `deny_read_paths` (empty by
 default since `#3901`; previously defaulted to OS-level credential
 stores — `~/.ssh`, `~/.aws`, `~/.gnupg`, …) carves sensitive locations out
 of the broad read surface **when an operator sets it**. It is not a
