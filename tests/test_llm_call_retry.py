@@ -54,6 +54,7 @@ from reyn.llm.llm import (
     _is_retryable_exc,
     _llm_call_with_retry,
 )
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -175,6 +176,7 @@ async def test_no_retry_on_success(monkeypatch):
     monkeypatch.setattr(llm_mod.asyncio, "sleep", lambda _: _no_op_coro())
 
     log = _make_event_log()
+    collected = collect_events(log)
     resp = _fake_response()
 
     async def _ok():
@@ -183,7 +185,7 @@ async def test_no_retry_on_success(monkeypatch):
     result = await _llm_call_with_retry(_ok, "model-x", log)
     assert result is resp
 
-    types = [e.type for e in log.all()]
+    types = [e.type for e in collected]
     assert "llm_call_retry" not in types
     assert "llm_call_retry_exhausted" not in types
 
@@ -211,6 +213,7 @@ async def test_retry_and_succeed(monkeypatch):
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep)
 
     log = _make_event_log()
+    collected = collect_events(log)
     resp = _fake_response()
     stub = _FailThenSucceedCallable(
         fail_count=1,
@@ -223,9 +226,9 @@ async def test_retry_and_succeed(monkeypatch):
     assert stub.call_count == 2
 
     # Exactly one retry event (present) and no exhausted event (absent)
-    retry_events = [e for e in log.all() if e.type == "llm_call_retry"]
+    retry_events = [e for e in collected if e.type == "llm_call_retry"]
     assert retry_events, "at least one llm_call_retry event must be emitted after a timeout"
-    assert not any(e.type == "llm_call_retry_exhausted" for e in log.all()), (
+    assert not any(e.type == "llm_call_retry_exhausted" for e in collected), (
         "llm_call_retry_exhausted must NOT be emitted when retry succeeds"
     )
 
@@ -262,6 +265,7 @@ async def test_all_retries_exhausted(monkeypatch):
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
 
     log = _make_event_log()
+    collected = collect_events(log)
     exc = litellm.exceptions.ServiceUnavailableError("503", response=None, llm_provider="test", model="m")
     stub = _AlwaysFailCallable(exc)
 
@@ -270,7 +274,7 @@ async def test_all_retries_exhausted(monkeypatch):
 
     assert stub.call_count == _LLM_RETRY_MAX_ATTEMPTS
 
-    exhausted = [e for e in log.all() if e.type == "llm_call_retry_exhausted"]
+    exhausted = [e for e in collected if e.type == "llm_call_retry_exhausted"]
     assert exhausted, "llm_call_retry_exhausted must be emitted when all retries fail"
     assert exhausted[0].data["model"] == "model-503"
     assert exhausted[0].data["error_kind"] == "ServiceUnavailableError"
@@ -299,6 +303,7 @@ async def test_4xx_no_retry(monkeypatch):
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _record_sleep)
 
     log = _make_event_log()
+    collected = collect_events(log)
     exc = litellm.exceptions.BadRequestError(
         "invalid request", response=None, llm_provider="test", model="m"
     )
@@ -311,7 +316,7 @@ async def test_4xx_no_retry(monkeypatch):
     assert stub.call_count == 1
     assert sleep_calls == []
 
-    types = [e.type for e in log.all()]
+    types = [e.type for e in collected]
     assert "llm_call_retry" not in types
     assert "llm_call_retry_exhausted" not in types
 
@@ -342,6 +347,7 @@ async def test_httpx_errors_retried(monkeypatch):
 
     for exc_cls in (httpx.ConnectError, httpx.ReadTimeout):
         log = _make_event_log()
+        collected = collect_events(log)
         try:
             raw_exc = exc_cls("connection failed")
         except TypeError:
@@ -358,7 +364,7 @@ async def test_httpx_errors_retried(monkeypatch):
         assert result is resp, f"{exc_cls.__name__} should be retried"
         assert stub.call_count == 2
 
-        retry_events = [e for e in log.all() if e.type == "llm_call_retry"]
+        retry_events = [e for e in collected if e.type == "llm_call_retry"]
         assert retry_events, f"{exc_cls.__name__}: expected at least one llm_call_retry event"
 
 
@@ -445,6 +451,7 @@ async def test_empty_choices_retried_then_succeed(monkeypatch):
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
 
     log = _make_event_log()
+    collected = collect_events(log)
     valid = _fake_response()
     stub = _ReturnEmptyThenValidCallable(empty_count=1, valid_response=valid)
 
@@ -452,10 +459,10 @@ async def test_empty_choices_retried_then_succeed(monkeypatch):
     assert result is valid
     assert stub.call_count == 2
 
-    retry_events = [e for e in log.all() if e.type == "llm_call_retry"]
+    retry_events = [e for e in collected if e.type == "llm_call_retry"]
     assert retry_events, "empty choices must emit a llm_call_retry event"
     assert retry_events[0].data["error_kind"] == "EmptyLLMResponseError"
-    assert not any(e.type == "llm_call_retry_exhausted" for e in log.all())
+    assert not any(e.type == "llm_call_retry_exhausted" for e in collected)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +483,7 @@ async def test_empty_choices_exhausted_raises_named_error(monkeypatch):
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
 
     log = _make_event_log()
+    collected = collect_events(log)
     stub = _AlwaysEmptyCallable()
 
     with pytest.raises(EmptyLLMResponseError):
@@ -483,7 +491,7 @@ async def test_empty_choices_exhausted_raises_named_error(monkeypatch):
 
     assert stub.call_count == _LLM_RETRY_MAX_ATTEMPTS
 
-    exhausted = [e for e in log.all() if e.type == "llm_call_retry_exhausted"]
+    exhausted = [e for e in collected if e.type == "llm_call_retry_exhausted"]
     assert exhausted, "persistent empty choices must emit llm_call_retry_exhausted"
     assert exhausted[0].data["error_kind"] == "EmptyLLMResponseError"
 

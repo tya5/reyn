@@ -31,6 +31,7 @@ import re
 from pathlib import Path
 
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_DIR_NAMES = {".venv", "site", ".git", "__pycache__"}
@@ -88,9 +89,10 @@ def test_public_emit_seam_and_private_field_write_the_same_event_log(tmp_path) -
         agent_name="p3-witness",
         snapshot_path=tmp_path / "snapshot.json",
     )
-    before = len(session._audit_events.all())
+    collected = collect_events(session._audit_events)
+    before = len(collected)
     session.emit_audit_event("p3_witness_kind", marker="p3-rename-witness")
-    after = session._audit_events.all()
+    after = collected
     assert len(after) == before + 1
     assert after[-1].type == "p3_witness_kind"
     assert after[-1].data.get("marker") == "p3-rename-witness"

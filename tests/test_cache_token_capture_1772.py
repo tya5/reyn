@@ -24,6 +24,7 @@ from litellm.types.utils import PromptTokensDetailsWrapper, Usage
 from reyn.core.events.events import EventLog, set_llm_request_event_log
 from reyn.llm.llm import _extract_cache_tokens, _extract_usage, recorded_acompletion
 from reyn.llm.pricing import TokenUsage
+from tests._support.events import collect_events
 
 
 def test_extract_anthropic_style_read_and_creation() -> None:
@@ -126,6 +127,7 @@ def test_cost_event_carries_flat_cache_tokens(monkeypatch, _reset_event_log) -> 
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
     monkeypatch.setattr(litellm, "acompletion", _resp)
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     asyncio.run(recorded_acompletion(
@@ -136,7 +138,7 @@ def test_cost_event_carries_flat_cache_tokens(monkeypatch, _reset_event_log) -> 
         emit_cost_events=True,
     ))
 
-    resp = next(e for e in log.all() if e.type == "llm_response_received")
+    resp = next(e for e in collected if e.type == "llm_response_received")
     assert resp.data["prompt_tokens"] == 3000
     assert resp.data["cached_tokens"] == 2719
     assert resp.data["cache_creation_tokens"] == 0

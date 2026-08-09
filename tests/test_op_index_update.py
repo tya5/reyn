@@ -22,6 +22,7 @@ from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import IndexUpdateIROp
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Fake provider
@@ -309,6 +310,7 @@ async def test_index_update_cost_warning_fires_over_threshold(
     monkeypatch.setattr(_config_mod, "load_config", lambda *a, **kw: _FakeReynConfig())
 
     ctx = _make_ctx(tmp_path)
+    collected = collect_events(ctx.events)
     op = IndexUpdateIROp(
         kind="index_update", source="docs",
         chunks=[
@@ -322,7 +324,7 @@ async def test_index_update_cost_warning_fires_over_threshold(
     assert result["cost_warning"] is not None
     assert result["cost_warning"]["chunk_count"] == 2
     assert result["cost_warning"]["threshold"] == 1
-    assert any(e.type == "index_update_cost_warning" for e in ctx.events.all())
+    assert any(e.type == "index_update_cost_warning" for e in collected)
 
 
 @pytest.mark.asyncio
@@ -336,6 +338,7 @@ async def test_index_update_no_cost_warning_under_threshold(
     monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
+    collected = collect_events(ctx.events)
     op = IndexUpdateIROp(
         kind="index_update", source="docs",
         chunks=[_chunk("chunk a", "ha", "a.md")],
@@ -344,7 +347,7 @@ async def test_index_update_no_cost_warning_under_threshold(
 
     assert result.get("status") != "error", result
     assert result["cost_warning"] is None
-    assert not any(e.type == "index_update_cost_warning" for e in ctx.events.all())
+    assert not any(e.type == "index_update_cost_warning" for e in collected)
 
 
 # ---------------------------------------------------------------------------

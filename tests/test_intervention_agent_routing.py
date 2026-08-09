@@ -34,6 +34,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_buses import AgentRequestBus
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 
 def _recovery_kwargs(agent_name: str) -> dict:
@@ -114,13 +115,14 @@ def test_default_routing_emits_user_channel_event(tmp_path: Path) -> None:
     traces, future routing-policy analysis) can see the decision.
     """
     session = make_session(agent_name="t")
+    collected = collect_events(session._audit_events)
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     asyncio.run(session.handle_intervention(iv))
 
     # session._audit_events is the EventLog used for chat-side events.
     events = [
-        e for e in session._audit_events.to_json()
+        e for e in [e.model_dump(mode="json") for e in collected]
         if e.get("type") == "intervention_routed"
     ]
     assert events, "intervention_routed event must fire on each handle_intervention call"
@@ -161,12 +163,13 @@ def test_self_answer_branch_emits_self_answer_event() -> None:
     ``route="self_answer"``.
     """
     session = _SelfAnsweringSession(agent=Agent(agent_name="t"), **_recovery_kwargs("t"))
+    collected = collect_events(session._audit_events)
     iv = UserIntervention(kind="permission.shell", prompt="Run ls?")
 
     asyncio.run(session.handle_intervention(iv))
 
     events = [
-        e for e in session._audit_events.to_json()
+        e for e in [e.model_dump(mode="json") for e in collected]
         if e.get("type") == "intervention_routed"
     ]
     assert events
@@ -219,21 +222,23 @@ def test_parent_delegate_branch_emits_parent_delegate_event() -> None:
     event on the parent's audit_events log.
     """
     parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"), **_recovery_kwargs("parent"))
+    parent_collected = collect_events(parent._audit_events)
     child = _DelegatingSession(agent=Agent(agent_name="child"), **_recovery_kwargs("child"))
+    child_collected = collect_events(child._audit_events)
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
     asyncio.run(child.handle_intervention(iv))
 
     child_events = [
-        e for e in child._audit_events.to_json()
+        e for e in [e.model_dump(mode="json") for e in child_collected]
         if e.get("type") == "intervention_routed"
     ]
     assert child_events
     assert child_events[-1]["data"]["route"] == "parent_delegate"
 
     parent_events = [
-        e for e in parent._audit_events.to_json()
+        e for e in [e.model_dump(mode="json") for e in parent_collected]
         if e.get("type") == "intervention_routed"
     ]
     assert parent_events
@@ -261,6 +266,7 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
     design (issue #254 design discussion log).
     """
     parent = _SelfAnsweringSession(agent=Agent(agent_name="parent"), **_recovery_kwargs("parent"))
+    parent_collected = collect_events(parent._audit_events)
     child = _SelfAndParentSession(agent=Agent(agent_name="child"), **_recovery_kwargs("child"))
     child.set_parent(parent)
 
@@ -274,7 +280,7 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
     # And the parent's audit_events has NO intervention_routed event
     # (= parent's handle_intervention was never invoked).
     parent_events = [
-        e for e in parent._audit_events.to_json()
+        e for e in [e.model_dump(mode="json") for e in parent_collected]
         if e.get("type") == "intervention_routed"
     ]
     assert not parent_events

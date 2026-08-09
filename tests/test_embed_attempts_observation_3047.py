@@ -39,6 +39,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.schemas.models import EmbedIROp
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import collect_events
 
 # A real litellm-priceable embedding model, so the recorded figure is a real
 # `litellm.model_cost` lookup rather than a fabricated rate.
@@ -163,6 +164,7 @@ async def test_real_retry_populates_attempts_and_op_emits_embed_attempts(
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
 
     ctx, events, _gateway = _ctx_with_gateway()
+    collected = collect_events(events)
     result = await embed_handle(
         EmbedIROp(kind="embed", texts=["hello"], embedding_model="standard"), ctx
     )
@@ -174,8 +176,8 @@ async def test_real_retry_populates_attempts_and_op_emits_embed_attempts(
     # not carry `attempts` — the provider populates the data, the op emits it).
     # The real retry loop ran twice: attempt 1 (500) + attempt 2 (200), so the
     # provider-populated count reaches the event as 2 (not the vacuous 1).
-    attempts_events = [e for e in events.all() if e.type == "embed_attempts"]
-    assert attempts_events, [e.type for e in events.all()]
+    attempts_events = [e for e in collected if e.type == "embed_attempts"]
+    assert attempts_events, [e.type for e in collected]
     payload = attempts_events[0].data
     assert payload["attempts"] == 2, payload
     assert payload["successful_batches"] == 1, payload

@@ -44,6 +44,7 @@ from reyn.data.embedding.litellm_provider import (
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import EmbedIROp
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import collect_events
 
 _MODEL = "openai/text-embedding-3-small"
 
@@ -257,6 +258,7 @@ async def test_cancel_event_interrupts_a_stalled_embed_op_immediately(
     """
     cancel_event = asyncio.Event()
     ctx, events = _make_ctx(cancel_event=cancel_event)
+    collected = collect_events(events)
 
     async def _fire_soon() -> None:
         await asyncio.sleep(0.3)
@@ -269,7 +271,7 @@ async def test_cancel_event_interrupts_a_stalled_embed_op_immediately(
     )
 
     assert result["status"] == "cancelled"
-    assert "embed_cancelled" in [e.type for e in events.all()]
+    assert "embed_cancelled" in [e.type for e in collected]
 
 
 @pytest.mark.asyncio
@@ -287,6 +289,7 @@ async def test_uncancelled_embed_keeps_its_normal_failure_shape(
     does not reshape the outcome, so `status="cancelled"` means a cancel and
     nothing else (a provider failure still raises, and emits no cancel event)."""
     ctx, events = _make_ctx(cancel_event=asyncio.Event())  # never set
+    collected = collect_events(events)
 
     with pytest.raises(RuntimeError, match="Embedding failed"):
         await asyncio.wait_for(
@@ -294,4 +297,4 @@ async def test_uncancelled_embed_keeps_its_normal_failure_shape(
             timeout=60.0,
         )
 
-    assert "embed_cancelled" not in [e.type for e in events.all()]
+    assert "embed_cancelled" not in [e.type for e in collected]

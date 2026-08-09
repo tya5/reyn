@@ -37,6 +37,7 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPClient
 from reyn.schemas.models import MCPIROp
+from tests._support.events import collect_events
 
 
 class _StubPool:
@@ -217,6 +218,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
+    collected = collect_events(events)
     ctx = OpContext(
         workspace=None,  # type: ignore[arg-type]
         events=events,
@@ -235,7 +237,7 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     # At least two mcp_progress events should have been emitted with the
     # structured fields the forwarder consumes.
     progress_events = [
-        e.model_dump(mode="json") for e in events.all()
+        e.model_dump(mode="json") for e in collected
         if e.type == "mcp_progress"
     ]
     assert progress_events, "expected mcp_progress events to be emitted"

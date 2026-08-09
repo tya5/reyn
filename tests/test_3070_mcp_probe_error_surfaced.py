@@ -50,6 +50,7 @@ from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
 from reyn.core.pipeline.schema import SchemaRegistry
 from reyn.mcp.client import MCPClient
 from reyn.schemas.models import MCPIROp
+from tests._support.events import collect_events
 
 _PREFLIGHT_SCHEMA = {"fields": {"status": {"type": "enum", "values": ["ok"]}}}
 
@@ -129,6 +130,7 @@ def test_mcp_completed_event_carries_the_real_error_text_on_isError() -> None:
 
     real_text = "Error calling tool 'list_metadata': No module named 'sqlite_vec'"
     events = EventLog()
+    collected = collect_events(events)
     ctx = OpContext(
         workspace=None,  # type: ignore[arg-type]
         events=events,
@@ -143,7 +145,7 @@ def test_mcp_completed_event_carries_the_real_error_text_on_isError() -> None:
     op = MCPIROp(kind="mcp", server="reyn_vector_store", tool="list_metadata", args={})
     asyncio.run(mcp_op_handler._execute(op, ctx))
 
-    completed = [e for e in events.all() if e.type == "mcp_completed"]
+    completed = [e for e in collected if e.type == "mcp_completed"]
     # exactly one `mcp_completed` event: this single-unpack IS the assertion
     # (raises ValueError if zero or more than one landed), not a length pin.
     (only,) = completed
@@ -160,6 +162,7 @@ def test_mcp_completed_event_carries_no_error_text_on_success() -> None:
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
+    collected = collect_events(events)
     ctx = OpContext(
         workspace=None,  # type: ignore[arg-type]
         events=events,
@@ -183,7 +186,7 @@ def test_mcp_completed_event_carries_no_error_text_on_success() -> None:
     op = MCPIROp(kind="mcp", server="reyn_chunker", tool="chunk", args={})
     asyncio.run(mcp_op_handler._execute(op, ctx))
 
-    completed = [e for e in events.all() if e.type == "mcp_completed"]
+    completed = [e for e in collected if e.type == "mcp_completed"]
     (only,) = completed
     assert only.data["is_error"] is False
     assert only.data["error"] is None

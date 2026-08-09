@@ -24,6 +24,7 @@ import pytest
 from reyn.config.chat import ThreatScanConfig
 from reyn.core.events.events import EventLog
 from reyn.runtime.services.memory_service import MemoryService
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers — thin closure-based fakes for file callbacks
@@ -133,10 +134,11 @@ def _make_service(
     *,
     threat_scan=None,
     knowledge_sync=None,
-) -> tuple[MemoryService, EventLog]:
+) -> tuple[MemoryService, list]:
     """Construct a MemoryService with real EventLog and closure-based file
     callbacks rooted at *tmp_path*."""
     events = EventLog()
+    collected = collect_events(events)
     fw, fr, fd, fri = _make_callbacks(tmp_path)
     svc = MemoryService(
         agent_workspace_dir=tmp_path / "agents" / "test_agent",
@@ -148,7 +150,7 @@ def _make_service(
         threat_scan=threat_scan,
         knowledge_sync=knowledge_sync,
     )
-    return svc, events
+    return svc, collected
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +284,7 @@ async def test_poisoned_remember_is_rejected_and_nothing_is_persisted(
     assert not (Path(svc.memory_dir("agent")) / "MEMORY.md").exists()
     assert result["error"]["kind"] == "threat_blocked"
     assert result["error"]["pattern_id"]
-    assert "threat_block" in [e.type for e in events.all()]
+    assert "threat_block" in [e.type for e in events]
 
 
 @pytest.mark.asyncio
@@ -302,7 +304,7 @@ async def test_legit_remember_is_not_blocked_by_an_enabled_scan(
 
     assert result["saved"] == "ordinary"
     assert Path(svc.memory_path("agent", "ordinary")).exists()
-    assert "threat_block" not in [e.type for e in events.all()]
+    assert "threat_block" not in [e.type for e in events]
 
 
 @pytest.mark.asyncio
@@ -353,7 +355,7 @@ async def test_forget_surfaces_a_knowledge_deindex_failure(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_events_emitted_for_remember_and_forget(tmp_path: Path) -> None:
-    """Tier 2: remember emits memory_saved; forget emits memory_deleted. Read via EventLog.all()."""
+    """Tier 2: remember emits memory_saved; forget emits memory_deleted. Read via collect_events()."""
     svc, events = _make_service(tmp_path)
 
     await svc.remember(
@@ -365,18 +367,18 @@ async def test_events_emitted_for_remember_and_forget(tmp_path: Path) -> None:
         body="content",
     )
 
-    emitted = [e.type for e in events.all()]
+    emitted = [e.type for e in events]
     assert "memory_saved" in emitted
 
-    saved_event = next(e for e in events.all() if e.type == "memory_saved")
+    saved_event = next(e for e in events if e.type == "memory_saved")
     assert saved_event.data["slug"] == "evt-test"
     assert saved_event.data["layer"] == "agent"
 
     await svc.forget(layer="agent", slug="evt-test")
 
-    emitted_after = [e.type for e in events.all()]
+    emitted_after = [e.type for e in events]
     assert "memory_deleted" in emitted_after
 
-    deleted_event = next(e for e in events.all() if e.type == "memory_deleted")
+    deleted_event = next(e for e in events if e.type == "memory_deleted")
     assert deleted_event.data["slug"] == "evt-test"
     assert deleted_event.data["layer"] == "agent"

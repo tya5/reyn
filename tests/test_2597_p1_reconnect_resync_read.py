@@ -28,6 +28,7 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPError
 from reyn.mcp.connection_service import MCPConnectionService
+from tests._support.events import collect_events
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
@@ -64,6 +65,7 @@ async def test_reconnect_emits_synthetic_resource_updated_for_missed_disconnect_
     be silently lost, since the fresh session never received any push for it)
     is surfaced via the synthetic resync signal, not dropped."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
     try:
         client = await service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
@@ -78,9 +80,9 @@ async def test_reconnect_emits_synthetic_resource_updated_for_missed_disconnect_
         await client.list_resources()
 
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in collected)
         )
-        matching = [e for e in events.all() if e.type == "mcp_resource_updated"]
+        matching = [e for e in collected if e.type == "mcp_resource_updated"]
         (only_event,) = matching  # exactly one — the synthetic resync, no real push occurred
         assert only_event.data.get("server") == "srv"
         assert only_event.data.get("uri") == _URI
@@ -102,6 +104,7 @@ async def test_first_open_emits_no_synthetic_update():
     ``mcp_resource_updated`` event of any kind (real or synthetic) may appear,
     since neither a push nor a reconnect happened."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
     try:
         client = await service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
@@ -111,7 +114,7 @@ async def test_first_open_emits_no_synthetic_update():
         await client.list_resources()
 
         await asyncio.sleep(0.1)  # give any (wrongly) synthetic emit a fair chance
-        matching = [e for e in events.all() if e.type == "mcp_resource_updated"]
+        matching = [e for e in collected if e.type == "mcp_resource_updated"]
         assert matching == [], (
             "the first open (and further calls against the still-live "
             "connection) must not emit any mcp_resource_updated — only a "
@@ -141,6 +144,7 @@ async def test_reconnect_resync_also_fires_hook_trigger_identically_to_real_push
 
     trigger = _RecordingTrigger()
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     service = MCPConnectionService(
         emit_sink=lambda et, **d: events.emit(et, **d),
         hook_trigger=trigger,
@@ -154,7 +158,7 @@ async def test_reconnect_resync_also_fires_hook_trigger_identically_to_real_push
         await client.list_resources()
 
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in collected)
         )
         await _wait_for(lambda: len(trigger.calls) >= 1)
 

@@ -19,6 +19,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.hot_reload import HotReloader, validate_in_set
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 # ── validate-before-apply (the structural IN-set check) ─────────────────────
 
@@ -60,6 +61,7 @@ async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
     # the loader's job-list merge but fails validate)
     (reyn_dir / "cron.yaml").write_text("cron:\n  jobs:\n    - name: j1\n", encoding="utf-8")
     events = EventLog()
+    collected = collect_events(events)
     hr = HotReloader(project_root=tmp_path, events=events)
     calls: list = []
 
@@ -73,7 +75,7 @@ async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
 
     assert summary["rejected"]                 # the reload was rejected
     assert calls == []                         # no seam ran (rollback)
-    assert [e.type for e in events.all() if e.type == "config_reloaded"] == []
+    assert [e.type for e in collected if e.type == "config_reloaded"] == []
 
 
 # ── the real reapply seams (real minimal Session) ──────────────────────────

@@ -18,6 +18,7 @@ from reyn.services.compaction.engine import (
     trim_head,
     trim_tail,
 )
+from tests._support.events import collect_events
 
 _M = ""  # model (unused with use_chars4)
 
@@ -115,9 +116,10 @@ def test_over_budget_single_cycle_kept_whole_with_new_event():
     not a truncation)."""
     turns = [_asst_tc("t1", 80, 1), _tool("t1", 80, 2)]  # 20 + 20 = 40 tokens, alone > 25
     events = EventLog()
+    collected = collect_events(events)
     head = trim_head(turns, max_tokens=25, model=_M, use_chars4=True, events=events)
     assert [t["seq"] for t in head] == [1, 2], "the whole cycle survives (call + result), over budget"
-    kinds = [e.type for e in events.all()]
+    kinds = [e.type for e in collected]
     assert "tool_cycle_kept_whole_over_budget" in kinds, "the keep-whole event is emitted"
     assert "turn_too_large_truncated" not in kinds, "it is NOT reported as a truncation (no loss)"
 
@@ -127,8 +129,9 @@ def test_over_budget_non_cycle_turn_keeps_legacy_truncated_event():
     event (backward-compat — the group change only adds the cycle case)."""
     turns = [_user(200, 1)]  # 50 tokens alone > 25
     events = EventLog()
+    collected = collect_events(events)
     trim_head(turns, max_tokens=25, model=_M, use_chars4=True, events=events)
-    kinds = [e.type for e in events.all()]
+    kinds = [e.type for e in collected]
     assert "turn_too_large_truncated" in kinds
     assert "tool_cycle_kept_whole_over_budget" not in kinds
 

@@ -45,6 +45,7 @@ from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session  # noqa: E402
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run  # noqa: E402
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _QUESTION = "REYN2708P32A which branch?"
 _ANSWER = "REYN2708P32A-the-blue-branch"
@@ -105,8 +106,8 @@ def _interventions(msgs: list) -> list:
     return [m for m in msgs if getattr(m, "kind", None) == "intervention"]
 
 
-def _driver_sid_from(events) -> "str | None":
-    for e in events.all():
+def _driver_sid_from(collected) -> "str | None":
+    for e in collected:
         if e.type == "pipeline_run_attached":
             return e.data.get("driver_sid")
     return None
@@ -124,6 +125,7 @@ async def test_attached_ask_user_reaches_parent_operator_and_answer_flows_back(
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")
+    caller_collected = collect_events(caller.router_host.events)
     # The live operator: register a listener on the parent under the chat channel the
     # bridge routes to (the same id repl.py binds via bind_focus_listeners).
     caller.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
@@ -150,10 +152,11 @@ async def test_attached_ask_user_reaches_parent_operator_and_answer_flows_back(
         await wait_until(lambda: bool(caller.interventions.list_active()), timeout=15.0)
         # Capture the driver session while it is still live (the persistent driver is
         # removed from the registry once the attached run completes).
-        driver_sid = _driver_sid_from(caller.router_host.events)
+        driver_sid = _driver_sid_from(caller_collected)
         assert driver_sid is not None
         driver = reg.get_session("worker", driver_sid)
         assert driver is not None
+        driver_collected = collect_events(driver.router_host.events)
         # The operator was prompted on the parent surface (an "intervention" announce on
         # the parent's own outbox — the same queue+kind a chat-native ask_user reaches).
         assert _interventions(_drain(caller.outbox)), (
@@ -174,7 +177,7 @@ async def test_attached_ask_user_reaches_parent_operator_and_answer_flows_back(
     # ``user_answered_intervention`` on the PARENT's log (dispatch ran on the parent), with
     # the real answer text, not the empty auto-refuse.
     answered = [
-        e for e in caller.router_host.events.all()
+        e for e in caller_collected
         if e.type == "user_answered_intervention"
     ]
     assert any(e.data.get("answer_text") == _ANSWER for e in answered), (
@@ -183,7 +186,7 @@ async def test_attached_ask_user_reaches_parent_operator_and_answer_flows_back(
     # And it flowed back INTO the driver's ask_user op (its P6 ``user_intervention_received``
     # carries the real answer, not the fabricated empty auto-refuse text).
     received = [
-        e for e in driver.router_host.events.all()
+        e for e in driver_collected
         if e.type == "user_intervention_received"
     ]
     assert received, "no user_intervention_received on the driver log (ask never resolved)"

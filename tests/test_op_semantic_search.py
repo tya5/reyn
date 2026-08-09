@@ -23,6 +23,7 @@ from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import SemanticSearchIROp
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Fake provider
@@ -249,6 +250,7 @@ async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pyte
     monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
+    collected = collect_events(ctx.events)
     op = SemanticSearchIROp(
         kind="semantic_search", query="q", sources=["s1"], top_k=5, embedding_model="standard",
     )
@@ -256,7 +258,7 @@ async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pyte
 
     assert result["chunks"] == []
     assert result["mode"] == "fallback"
-    assert any(e.type == "semantic_search_embed_failed" for e in ctx.events.all())
+    assert any(e.type == "semantic_search_embed_failed" for e in collected)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +478,7 @@ async def test_semantic_search_query_embed_redacts_secret_at_egress(
     await _seed(tmp_path, "docs", [_chunk("some chunk", [1.0, 0.0, 0.0], "c1")])
 
     ctx = _make_ctx(tmp_path)
+    collected = collect_events(ctx.events)
     # A secret-shaped query (matches the FP-0050 redact_secrets patterns —
     # same shape as tests/test_op_embed.py's PRE-embed seam test).
     secret_query = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
@@ -492,4 +495,4 @@ async def test_semantic_search_query_embed_redacts_secret_at_egress(
     assert "REDACTED" in fake.received_texts[0]
     # The seam firing on the QUERY path is observable (P6 audit-event) —
     # mirrors index_update's ingestion redaction.
-    assert any(e.type == "embed_secret_redacted" for e in ctx.events.all())
+    assert any(e.type == "embed_secret_redacted" for e in collected)

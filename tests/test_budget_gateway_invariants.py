@@ -5,7 +5,7 @@ Policy compliance (`docs/deep-dives/contributing/testing.md`):
 - No private-state assertions. Observation flows through:
     - gateway.total_usage / gateway.total_cost_usd (public properties)
     - gateway.router_cap (public property)
-    - events.all() (EventLog public read accessor)
+    - collect_events(events) (a real subscriber-collected list — tests/_support/events.py)
     - RouterCapExceeded exception attributes (public)
 - Each test docstring's first line starts with `Tier 2: ...`.
 """
@@ -19,6 +19,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.services.budget_gateway import BudgetGateway
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,6 +145,7 @@ def test_router_cap_fires_at_nth_invocation():
     rejection with cap=3.
     """
     gw, events = _make_gateway(cap=3)
+    collected = collect_events(events)
 
     # Three calls within cap: all succeed; counter reaches 3.
     gw.check_and_increment_router_cap("msg1")
@@ -163,7 +165,7 @@ def test_router_cap_fires_at_nth_invocation():
     assert exc.last_reason == "ran_out_of_ideas"
 
     # Exactly one event emitted (only on the violation, not on the three preceding calls).
-    emitted = events.all()
+    emitted = collected
     exhausted_events = [e for e in emitted if e.type == "router_retry_exhausted"]
     assert exhausted_events, "router_retry_exhausted event must be emitted on cap violation"
     assert sum(1 for _ in exhausted_events) == 1, (
@@ -186,6 +188,7 @@ def test_router_cap_long_user_text_truncated():
     (counter is already 1 >= cap=1).
     """
     gw, events = _make_gateway(cap=1)
+    collected = collect_events(events)
 
     # First call within cap.
     gw.check_and_increment_router_cap("seed")
@@ -195,7 +198,7 @@ def test_router_cap_long_user_text_truncated():
     with pytest.raises(RouterCapExceeded):
         gw.check_and_increment_router_cap(long_text)
 
-    emitted = events.all()
+    emitted = collected
     exhausted_events = [e for e in emitted if e.type == "router_retry_exhausted"]
     assert exhausted_events, "router_retry_exhausted event must be emitted"
     # user_message must be truncated — verify it matches exactly the first 200 chars.
@@ -215,6 +218,7 @@ def test_reset_router_turn_counter_clears_state():
     and the last_reason, so the next turn starts fresh.
     """
     gw, events = _make_gateway(cap=3)
+    collected = collect_events(events)
 
     # Burn two slots and set a reason.
     gw.check_and_increment_router_cap("first")
@@ -242,7 +246,7 @@ def test_reset_router_turn_counter_clears_state():
     # No router_retry_exhausted event from the first two calls (they
     # were within budget). Only one event from the cap violation.
     exhausted_events = [
-        e for e in events.all() if e.type == "router_retry_exhausted"
+        e for e in collected if e.type == "router_retry_exhausted"
     ]
     assert exhausted_events, "router_retry_exhausted event must be emitted on cap violation"
     assert not exhausted_events[1:], (

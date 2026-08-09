@@ -36,6 +36,7 @@ from reyn.mcp.gateway import MCPFault, MCPGateway
 from reyn.schemas.models import MCPSubscribeResourceIROp, MCPUnsubscribeResourceIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
+from tests._support.events import collect_events
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
@@ -156,6 +157,7 @@ async def test_held_connection_subscribe_receives_real_push_as_event():
     chain (MCPClient.subscribe_resource -> ReynMCPMessageHandler.
     on_resource_updated -> emit_sink -> EventLog) end to end."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
     try:
         client = await service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
@@ -166,10 +168,10 @@ async def test_held_connection_subscribe_receives_real_push_as_event():
         assert result["isError"] is False
 
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in collected)
         )
 
-        matching = [e for e in events.all() if e.type == "mcp_resource_updated"]
+        matching = [e for e in collected if e.type == "mcp_resource_updated"]
         (only_event,) = matching  # exactly one push for one bump_and_notify call
         assert only_event.data.get("server") == "srv"
         assert only_event.data.get("uri") == _URI
@@ -202,6 +204,7 @@ async def test_subscription_survives_transport_death_reconnect():
     mcp.ClientSession (which otherwise has no memory of the old session's
     subscriptions)."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
     try:
         client = await service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
@@ -223,9 +226,9 @@ async def test_subscription_survives_transport_death_reconnect():
         assert result["isError"] is False
 
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in collected)
         )
-        matching = [e for e in events.all() if e.type == "mcp_resource_updated"]
+        matching = [e for e in collected if e.type == "mcp_resource_updated"]
         assert matching, (
             "a server-side push on the RECONNECTED session produced no "
             "mcp_resource_updated event — the subscription did not survive the "
@@ -283,6 +286,7 @@ async def test_subscribe_execute_real_subscribe_and_emits_events():
     from reyn.core.op_runtime.mcp_subscribe_resource import _execute
 
     events = EventLog()
+    collected = collect_events(events)
     service = MCPConnectionService()
     op = MCPSubscribeResourceIROp(kind="mcp_subscribe_resource", server="srv", uri=_URI)
 
@@ -294,7 +298,7 @@ async def test_subscribe_execute_real_subscribe_and_emits_events():
 
     assert result["status"] == "ok"
     assert result["uri"] == _URI
-    types_seen = [e.type for e in events.all()]
+    types_seen = [e.type for e in collected]
     assert "mcp_resource_subscribe" in types_seen
     assert "mcp_resource_subscribed" in types_seen
     assert "mcp_resource_subscribe_failed" not in types_seen
@@ -308,6 +312,7 @@ async def test_unsubscribe_execute_real_round_trip():
     from reyn.core.op_runtime.mcp_unsubscribe_resource import _execute as _unsub_execute
 
     events = EventLog()
+    collected = collect_events(events)
     service = MCPConnectionService()
     sub_op = MCPSubscribeResourceIROp(kind="mcp_subscribe_resource", server="srv", uri=_URI)
     unsub_op = MCPUnsubscribeResourceIROp(kind="mcp_unsubscribe_resource", server="srv", uri=_URI)
@@ -320,7 +325,7 @@ async def test_unsubscribe_execute_real_round_trip():
         await service.aclose()
 
     assert result["status"] == "ok"
-    types_seen = [e.type for e in events.all()]
+    types_seen = [e.type for e in collected]
     assert "mcp_resource_unsubscribed" in types_seen
 
 
@@ -329,6 +334,7 @@ def test_subscribe_handle_denies_without_permissions_mcp_declared():
     PermissionDecl does not declare the server under `mcp` (mirrors
     mcp_read_resource's own test)."""
     events = EventLog()
+    collected = collect_events(events)
     resolver = PermissionResolver(config_permissions={}, project_root=Path("."), interactive=False)
     ctx = _make_ctx(events, resolver=resolver, decl=PermissionDecl())
     ctx.intervention_bus = _UnusedBus()
@@ -337,7 +343,7 @@ def test_subscribe_handle_denies_without_permissions_mcp_declared():
     result = _run(execute_op(op, ctx))
 
     assert result["status"] == "denied"
-    denials = [e for e in events.all() if e.type == "permission_denied"]
+    denials = [e for e in collected if e.type == "permission_denied"]
     assert denials
     assert denials[0].data.get("kind") == "mcp_subscribe_resource"
 

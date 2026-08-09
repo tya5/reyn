@@ -31,6 +31,7 @@ from reyn.security.secrets.oauth import (
     OAuthProviderConfig,
     device_grant_flow,
 )
+from tests._support.events import collect_events
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -115,6 +116,7 @@ async def test_device_grant_flow_success() -> None:
         user_action_calls.append(data)
 
     events = EventLog()
+    collected = collect_events(events)
     provider = _make_provider()
     client = _mock_transport(_handler)
     try:
@@ -137,7 +139,7 @@ async def test_device_grant_flow_success() -> None:
     assert user_action_calls[0]["verification_uri"] == "https://example.com/device"
 
     # P6 events
-    emitted = events.all()
+    emitted = collected
     started = [e for e in emitted if e.type == "oauth_login_started"]
     completed = [e for e in emitted if e.type == "oauth_login_completed"]
     assert started, "oauth_login_started event must be emitted"
@@ -331,6 +333,7 @@ async def test_device_grant_flow_emits_events() -> None:
         return poll_responses.popleft()
 
     events = EventLog()
+    collected = collect_events(events)
     provider = _make_provider()
     client = _mock_transport(_handler)
     try:
@@ -343,7 +346,7 @@ async def test_device_grant_flow_emits_events() -> None:
     finally:
         await client.aclose()
 
-    all_events = events.all()
+    all_events = collected
     started = next(e for e in all_events if e.type == "oauth_login_started")
     completed = next(e for e in all_events if e.type == "oauth_login_completed")
 

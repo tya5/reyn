@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from reyn.security.secrets import CredentialScopeError, ScopedSecretStore
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -287,6 +288,7 @@ def test_sub_skill_credential_scope_event_emitted(tmp_path: Path) -> None:
     from reyn.core.events.events import EventLog
 
     events = EventLog()
+    collected = collect_events(events)
     allowed = ["github_token"]
 
     # Mirror the event emission from run_skill.handle():
@@ -298,7 +300,7 @@ def test_sub_skill_credential_scope_event_emitted(tmp_path: Path) -> None:
 
     # The event must appear in the log.
     found = [
-        e for e in events.all()
+        e for e in collected
         if e.type == "sub_skill_credential_scope"
     ]
     (evt,) = found
@@ -311,6 +313,7 @@ def test_sub_skill_credential_scope_event_wildcard(tmp_path: Path) -> None:
     from reyn.core.events.events import EventLog
 
     events = EventLog()
+    collected = collect_events(events)
     allowed = ["*"]
 
     events.emit(
@@ -320,7 +323,7 @@ def test_sub_skill_credential_scope_event_wildcard(tmp_path: Path) -> None:
     )
 
     found = [
-        e for e in events.all()
+        e for e in collected
         if e.type == "sub_skill_credential_scope"
     ]
     (evt_wildcard,) = found

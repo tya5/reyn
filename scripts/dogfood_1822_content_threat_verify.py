@@ -123,20 +123,34 @@ _LEGIT_EXEC = [
 ]
 
 
-def _events_of(events: EventLog, kind: str) -> list:
-    return [e for e in events.all() if e.type == kind]
+def _collect(log: EventLog) -> list:
+    """#3868 PR-2: EventLog.all() is being removed (no longer a real
+    production API — see events.py's module docstring). Collect via a
+    subscriber instead, mirroring production's EventStore-as-subscriber
+    mechanism (the same pattern as tests/_support/events.py's
+    collect_events, not imported here — scripts/ cannot depend on
+    tests/_support, a test-only module). Call this immediately after
+    constructing *log*, before any action this script observes."""
+    collected: list = []
+    log.add_subscriber(collected.append)
+    return collected
+
+
+def _events_of(collected: list, kind: str) -> list:
+    return [e for e in collected if e.type == kind]
 
 
 async def _exec_blocks(cfg: ThreatScanConfig, argv: list[str]) -> tuple[bool, list]:
     """Call the REAL handle(); True if it raised PermissionError at the scan gate.
     Returns (blocked, exec_threat_blocked events)."""
     ev = EventLog()
+    ev_events = _collect(ev)
     ctx = _CtxShim(cfg, ev)
     try:
         await exec_handle(_OpShim(argv), ctx, "control_ir")
-        return False, _events_of(ev, "exec_threat_blocked")
+        return False, _events_of(ev_events, "exec_threat_blocked")
     except PermissionError:
-        return True, _events_of(ev, "exec_threat_blocked")
+        return True, _events_of(ev_events, "exec_threat_blocked")
 
 
 def _exec_scan_blocks(cfg: ThreatScanConfig, argv: list[str]):
@@ -154,8 +168,9 @@ async def _run() -> int:
     print("== 1. Class A tool-result SCAN (context) — attack neutralization ==")
     hits = 0
     for label, payload in _ATTACK_CONTEXT:
-        ev = EventLog(); RouterHostAdapter.scan_tool_result(_SeamShim(cfg, ev), payload)
-        m = _events_of(ev, "threat_scan_match"); ok = bool(m); hits += ok
+        ev = EventLog(); ev_events = _collect(ev)
+        RouterHostAdapter.scan_tool_result(_SeamShim(cfg, ev), payload)
+        m = _events_of(ev_events, "threat_scan_match"); ok = bool(m); hits += ok
         ids = ",".join(sorted({e.data.get("pattern_id") for e in m})) or "-"
         print(f"  [{'DETECT' if ok else 'MISS  '}] {label:20} → {ids}")
     print(f"  → context-scope attack detection: {hits}/{len(_ATTACK_CONTEXT)}\n")
@@ -170,9 +185,10 @@ async def _run() -> int:
     print("== 3. Class B agent-write BLOCK (strict) — poisoned writes ==")
     blocked = 0; strict_corpus = _ATTACK_CONTEXT + _ATTACK_STRICT
     for label, payload in strict_corpus:
-        ev = EventLog(); hit = RouterHostAdapter.scan_for_block(_SeamShim(cfg, ev), payload, scope="strict")
+        ev = EventLog(); ev_events = _collect(ev)
+        hit = RouterHostAdapter.scan_for_block(_SeamShim(cfg, ev), payload, scope="strict")
         blk = hit is not None; blocked += blk
-        be = _events_of(ev, "threat_block")
+        be = _events_of(ev_events, "threat_block")
         print(f"  [{'BLOCK' if blk else 'pass ':5}] {label:20} "
               f"→ {('event=' + be[0].data.get('pattern_id')) if be else '-'}")
     print(f"  → write-block coverage: {blocked}/{len(strict_corpus)}\n")
@@ -190,9 +206,11 @@ async def _run() -> int:
     print("== 5. FALSE-POSITIVE rate (realistic legit corpora) ==")
     fp_scan = fp_block = 0
     for payload in _LEGIT:
-        ev = EventLog(); RouterHostAdapter.scan_tool_result(_SeamShim(cfg, ev), payload)
-        sm = _events_of(ev, "threat_scan_match")
-        ev2 = EventLog(); bh = RouterHostAdapter.scan_for_block(_SeamShim(cfg, ev2), payload, scope="strict")
+        ev = EventLog(); ev_events = _collect(ev)
+        RouterHostAdapter.scan_tool_result(_SeamShim(cfg, ev), payload)
+        sm = _events_of(ev_events, "threat_scan_match")
+        ev2 = EventLog()
+        bh = RouterHostAdapter.scan_for_block(_SeamShim(cfg, ev2), payload, scope="strict")
         if sm:
             fp_scan += 1
             print(f"  [scan-FP ] {','.join(sorted({e.data.get('pattern_id') for e in sm})):22} ← {payload[:54]!r}")

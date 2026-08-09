@@ -21,6 +21,7 @@ import pytest
 
 from reyn.core.events.events import EventLog, set_llm_request_event_log
 from reyn.llm.llm import recorded_acompletion
+from tests._support.events import collect_events
 
 
 class _FakeProviderError(Exception):
@@ -72,13 +73,14 @@ def test_error_event_emitted_and_reraised(monkeypatch) -> None:
                              response_text="405 page"),
     )
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     with pytest.raises(_FakeProviderError):
         _call(monkeypatch, temperature=0.5)
 
     # Exactly one llm_request_error (unpack-enforcement).
-    (err,) = [e for e in log.all() if e.type == "llm_request_error"]
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
     data = err.data
     assert data["model"] == "gpt-5.4"
     assert data["purpose"] == "main"
@@ -99,12 +101,13 @@ def test_error_body_not_truncated(monkeypatch) -> None:
                              response_text=""),
     )
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     with pytest.raises(_FakeProviderError):
         _call(monkeypatch)
 
-    (err,) = [e for e in log.all() if e.type == "llm_request_error"]
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
     # Exact equality proves the whole body survived (no truncation).
     assert err.data["provider_body"] == long_body
 
@@ -122,12 +125,13 @@ def test_error_event_redacts_secret_value(monkeypatch) -> None:
         ),
     )
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     with pytest.raises(_FakeProviderError):
         _call(monkeypatch, api_key="sk-supersecret-123")
 
-    (err,) = [e for e in log.all() if e.type == "llm_request_error"]
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
     data = err.data
     # The secret must not leak anywhere in the captured error event.
     assert "sk-supersecret-123" not in repr(data), "secret value must be scrubbed"
