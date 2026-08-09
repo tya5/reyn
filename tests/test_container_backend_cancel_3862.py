@@ -89,12 +89,20 @@ async def test_cancel_actually_stops_the_real_process_not_just_the_client(
     marker = tmp_path / "alive.count"
     marker.write_text("0")
     script = (
-        "import time,sys\n"
+        "import os,time,sys\n"
         "p = sys.argv[1]\n"
         "n = 0\n"
         "while True:\n"
         "    n += 1\n"
-        "    open(p, 'w').write(str(n))\n"
+        # #3963: atomic write (tmp -> os.replace), not a bare truncating
+        # `open(p, 'w').write(...)` — the latter lets a concurrent reader
+        # observe the file mid-truncate (content == "") and blow up on
+        # `int("")`, a failure unrelated to this test's own cancel/liveness
+        # claim. os.replace() is POSIX-atomic: any reader sees either the
+        # complete old write or the complete new one, never a partial state.
+        "    tmp = p + '.tmp'\n"
+        "    open(tmp, 'w').write(str(n))\n"
+        "    os.replace(tmp, p)\n"
         "    time.sleep(0.05)\n"
     )
     backend = _backend(fake_docker_bin, tmp_path)
