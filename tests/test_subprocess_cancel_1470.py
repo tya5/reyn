@@ -230,8 +230,10 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     from reyn.schemas.models import SandboxedExecIROp  # noqa: PLC0415
     from reyn.security.permissions.permissions import PermissionDecl  # noqa: PLC0415
     from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
+    from tests._support.events import collect_events  # noqa: PLC0415
 
     events = EventLog()
+    collected = collect_events(events)
     workspace = Workspace(events=events)
 
     cancel_event = asyncio.Event()
@@ -259,7 +261,7 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     assert result["kind"] == "sandboxed_exec"
 
     # P6: sandboxed_exec_cancelled event emitted (not sandboxed_exec_completed)
-    emitted_types = [e.type for e in events.all()]
+    emitted_types = [e.type for e in collected]
     assert "sandboxed_exec_cancelled" in emitted_types, (
         f"sandboxed_exec_cancelled not in {emitted_types}"
     )

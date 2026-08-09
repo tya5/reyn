@@ -108,8 +108,10 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
+    from tests._support.events import collect_events
 
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events)
     ctx = OpContext(
         workspace=ws,
@@ -122,7 +124,7 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
         kind="sandboxed_exec", argv=["/bin/echo", "x"], network=True,  # op REQUESTS network
     )
     await handle(op, ctx)
-    started = [e for e in events.all() if e.type == "sandboxed_exec_started"]
+    started = [e for e in collected if e.type == "sandboxed_exec_started"]
     (ev,) = started
     assert ev.data["network"] is False  # enforced policy, NOT op.network=True
 
@@ -186,8 +188,10 @@ async def test_minimal_synthesis_path_enforces_the_floor_not_the_op_default(
     from reyn.data.workspace.workspace import Workspace
     from reyn.tools.exec import op_context_from_tool_context
     from reyn.tools.types import ToolContext
+    from tests._support.events import collect_events
 
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events, base_dir=tmp_path)
     tool_ctx = ToolContext(
         events=events,
@@ -208,7 +212,7 @@ async def test_minimal_synthesis_path_enforces_the_floor_not_the_op_default(
 
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
     await handle(op, legacy_ctx)
-    started = [e for e in events.all() if e.type == "sandboxed_exec_started"]
+    started = [e for e in collected if e.type == "sandboxed_exec_started"]
     (ev,) = started
     assert ev.data["network"] is True, (
         "the minimal-synthesis path enforced the op's own raw default "
