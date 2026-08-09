@@ -76,6 +76,63 @@ def test_config_accepts_strict_mode_and_resolves_it() -> None:
     assert resolved["write_paths"] == ["/repo"]
 
 
+def test_strict_mode_default_yields_to_an_explicit_operator_allow() -> None:
+    """Tier 2: #3823's spec headline — "mode decides only the DEFAULT for an
+    axis left unset; mode never decides DIRECTION, an explicit operator write
+    always wins" — has no witness (#3957, architect co-vet on #3953, PR
+    comment 5231152103). Every existing strict-mode test (including
+    ``test_config_accepts_strict_mode_and_resolves_it`` immediately above)
+    only ever calls ``resolve_sandbox_policy`` with an EMPTY/absent
+    ``config_policy``, so ``explicit`` is always ``{}`` and the
+    ``if key not in explicit`` branch at ``policy.py``'s
+    ``resolve_sandbox_policy`` is never taken with a non-empty ``explicit`` —
+    rewriting it to ``if True`` still passes every test that existed before
+    this one.
+
+    ⚠️ ``if key not in explicit: -> if True:`` (#3957's own originally-named
+    falsify target) is NOT a working falsify recipe for the two tests below
+    either — it is a NO-OP against the current code, verified directly: the
+    unconditional ``floor.update(explicit)`` right after the strict loop
+    already makes ``explicit`` win regardless of that inner ``if``, so both
+    new tests stay green under that exact mutation. The recipe that DOES
+    isolate each test: (1) strict leg — move ``floor.update(explicit)`` to
+    run BEFORE the strict-mode loop instead of after, with the loop then
+    unconditionally overwriting; (2) compat leg — scope
+    ``floor.update(explicit)`` inside the ``if mode == "strict":`` block so
+    an explicit write is silently dropped under compat. Each isolates to
+    exactly the one test naming that leg.
+
+    strict leg: an operator who explicitly writes ``network: true`` under
+    ``mode: strict`` gets network ON — the strict default (off) applies only
+    to axes the operator left UNSET, never overriding an axis they wrote."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    resolved = resolve_sandbox_policy(
+        {"network": True}, write_paths=["/repo"], mode="strict"
+    )
+    assert resolved["network"] is True
+
+
+def test_compat_mode_still_respects_an_explicit_operator_deny() -> None:
+    """Tier 2: #3823 — companion to the strict-leg test above, closing the
+    other direction (#3957's explicit two-direction requirement: a
+    single-direction test alone stays green under an implementation that
+    only consults ``explicit`` when ``mode == "strict"``, which is a
+    narrower — and wrong — reading of the spec's "mode never decides
+    direction" promise).
+
+    compat leg: an operator who explicitly denies subprocess under
+    ``mode: compat`` (compat's own dataclass default allows it) still gets
+    subprocess denied — an explicit write is honored under EITHER mode, not
+    just strict."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    resolved = resolve_sandbox_policy(
+        {"subprocess": False}, write_paths=["/repo"], mode="compat"
+    )
+    assert resolved["deny_subprocess"] is True
+
+
 def test_config_rejects_an_unknown_policy_key_rather_than_dropping_it() -> None:
     """Tier 2: #3823 — the config-vocabulary translation layer must FAIL LOUD
     on a key it does not recognize, not silently drop it. lead-coder's
