@@ -26,13 +26,13 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.transport.agui.surface import SurfaceManager
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import NO_SURFACE_REFUSAL_REASON
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 
 

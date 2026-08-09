@@ -30,7 +30,6 @@ import io
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from rich.console import Console
 
 from reyn.core.events.event_store import EventStore
@@ -47,6 +46,7 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 # A terminal control/ESC injection payload: ESC + CSI red SGR, a bell, and a NUL.
 ESC = "\x1b[31mINJECT\x1b[0m\x07\x00"

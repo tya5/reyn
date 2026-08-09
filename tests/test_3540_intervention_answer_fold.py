@@ -267,7 +267,7 @@ async def test_live_and_restore_produce_the_same_entry_sequence(tmp_path: Path) 
     report: two entries live, one restored) detectable from EITHER side —
     implementation sameness is not asserted anywhere, because it is a proxy
     for this, not the property itself."""
-    from _async_wait import wait_until  # noqa: PLC0415 — shared #1751 test helper
+    from tests._async_wait import wait_until  # noqa: PLC0415 — shared #1751 test helper
 
     handler, registry, outbox, events, history = _build_handler(tmp_path)
     iv = UserIntervention(

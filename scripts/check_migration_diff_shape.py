@@ -109,6 +109,54 @@ shares no content with anything, so it never gets a ``C`` line; a
 copy-left-behind always does. See :func:`is_tests_copy` and
 :func:`gate_is_active`'s third signal.
 
+## #3995 — R100 does not imply "safe" for a position-dependent file
+
+The gate's own founding axiom — "byte-identical rename ⇒ safe, because the
+diff shows zero content change" — is false for a file whose meaning depends
+on its OWN LOCATION in the tree: ``Path(__file__).parent.parent`` is
+byte-identical before and after a move (so ``-M100%`` correctly reports
+``R100``), but its VALUE changes, because ``__file__`` itself changed. A
+real instance broke exactly this way mid-arc (#3989, #3994) — caught by CI
+at runtime, not by this gate, because this gate cannot evaluate code, only
+read a diff, and a diff format deliberately discards "where did this file
+used to live."
+
+Architect's FIRST resolution (#3995): narrow the gate's CLAIM to "byte-
+identical AND does not leave its own directory (by ``.parent`` hop count)
+⇒ safe". **Retracted by lead-coder (#4002, same night)**: a real
+counter-example — ``Path(__file__).parent / "_support"``, only ONE hop,
+so it did not "leave its own directory" by that rule — still breaks on a
+move, because ``_support`` is a FIXED shared directory that does not
+travel with the file. The proposed fix (classify by "does the target
+travel with the file") was ITSELF then retracted (architect, same
+thread): that property depends on the MOVE, not on the source text alone
+— unresolvable by static analysis regardless of how the predicate is
+phrased.
+
+**What actually ships (architect's final correction)**: do not try to
+INFER anything about a hypothetical future move — the move has ALREADY
+HAPPENED by the time this gate runs (CI's real checkout has the file at
+its new path). So this gate does not guess at all: it re-resolves every
+``__file__``-rooted expression in the moved file's content using the
+file's ACTUAL new location (:func:`_file_depth_predicate.parse_file_
+relative_targets`) and asks the one question that needs no guessing —
+**does the target still exist on disk?** ``Path(__file__).parent.parent``
+resolving to a directory that doesn't exist post-move, or ``Path(
+__file__).parent / "_support"`` resolving to a nonexistent ``tests/
+hooks/_support``, are both caught the same way, by the same ground-truth
+check — see :func:`position_dependent_rename_lines`. When it fires, this
+gate does not declare the rename safe — the file may well be a legitimate
+move, but THIS AUTOMATED GATE cannot tell without a human looking, and
+says so rather than guessing "safe" the way it used to.
+
+``scripts/check_file_depth_reference.py`` (the add-time / static half)
+does NOT share this exact check — it cannot, since no move exists yet to
+resolve against; it applies its own narrower, filesystem-derived proxy
+instead (see that module's own docstring). Two DIFFERENT mechanisms
+sharing only the underlying AST resolver, not one shared predicate — the
+"1機構" framing this docstring originally used was itself part of what
+got retracted.
+
 ## Lifespan — this gate is temporary, unlike Stage 0's ratchet
 
 Stage 0's ratchet (``flat_tests_ratchet.py``) is permanent: it must keep
@@ -126,6 +174,18 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+
+# `python scripts/check_migration_diff_shape.py` (the real CI invocation,
+# see migration-diff-shape-gate.yml) puts THIS file's own directory
+# (`scripts/`) on sys.path[0], not the repo root — `from scripts.x import y`
+# fails there with ModuleNotFoundError (confirmed by running it directly,
+# not assumed). `tests/scripts/test_check_migration_diff_shape_3879.py`
+# imports this module the OTHER way (`from scripts.check_migration_diff_shape
+# import ...`, pytest run from repo root, repo root on sys.path) — so this
+# file must tolerate being reached by either path.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _file_depth_predicate import parse_file_relative_targets  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 _ALLOWED_MODIFIED_PATHS = frozenset({"scripts/flat_tests_baseline.json"})
@@ -418,6 +478,20 @@ def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
             # e.g. "R100" — the percentage is everything after "R".
             similarity = status[1:]
             if similarity == "100" and len(parts) == 3:
+                new_path = parts[2]
+                if new_path.endswith(".py") and _rename_breaks_file_relative_targets(
+                    new_path, root
+                ):
+                    # #4002 (superseding #3995's own first attempt):
+                    # byte-identical is NOT "safe" here — re-resolving the
+                    # moved file's __file__-rooted expression(s) AT ITS
+                    # REAL NEW LOCATION finds a target that no longer
+                    # exists on disk. This gate cannot judge whether the
+                    # move is legitimate (it may well be); it can only say
+                    # it is unable to declare it safe — see
+                    # position_dependent_rename_lines() / main().
+                    offenders.append(line)
+                    continue
                 continue
             offenders.append(line)
             continue
@@ -457,6 +531,47 @@ def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
     return offenders
 
 
+def _rename_breaks_file_relative_targets(new_path: str, root: Path) -> bool:
+    """#4002: does *new_path* (already sitting at its REAL post-move
+    location on disk — this is called against a real checkout, not a git
+    blob, precisely because directories have no blob to inspect) contain a
+    ``__file__``-rooted expression whose target, resolved using the file's
+    ACTUAL new location, no longer exists? No guessing about "does this
+    name travel with the file" — the move already happened, so the
+    question is answered by looking, not inferring."""
+    full = root / new_path
+    try:
+        content = full.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return any(
+        not target.exists()
+        for target in parse_file_relative_targets(content, full)
+    )
+
+
+def position_dependent_rename_lines(offenders: "list[str]", root: Path = _ROOT) -> "list[str]":
+    """Which of *offenders* (the output of :func:`offending_lines`) are R100
+    renames flagged for #4002's reason specifically — the moved file's
+    ``__file__``-rooted expression(s), re-resolved at the file's real new
+    location, no longer exist on disk — as opposed to every other offender
+    shape (a genuine content edit, a low-similarity rename, an unpermitted
+    addition). Isolated purely for reporting: `main()` gives this class of
+    offender a distinct message ("cannot judge, needs human review") rather
+    than the generic "not a pure move" one, since a position-dependent R100
+    line IS a pure move at the byte level — the reason it's flagged is
+    different in kind."""
+    flagged = []
+    for line in offenders:
+        parts = line.split("\t")
+        if not (parts[0] == "R100" and len(parts) == 3):
+            continue
+        new_path = parts[2]
+        if new_path.endswith(".py") and _rename_breaks_file_relative_targets(new_path, root):
+            flagged.append(line)
+    return flagged
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument(
@@ -489,21 +604,44 @@ def main(argv: "list[str] | None" = None) -> int:
         return 0
 
     print("migration-diff-shape gate FAILED:\n", file=sys.stderr)
-    print(
-        f"{len(offenders)} diff line(s) are not a pure move (R100), an empty "
-        "tests/<pkg>/__init__.py, or the Stage-0 baseline:",
-        file=sys.stderr,
-    )
-    for line in offenders:
-        print(f"  {line}", file=sys.stderr)
-    print(
-        "\nA Stage-1 migration PR moves tests, never edits their content — "
-        "`git mv` the file(s) above rather than recreating them at the new "
-        "path, and split any real content change into a SEPARATE PR (this "
-        "gate cannot tell 'legitimate unrelated fix' from 'the exact rewrite "
-        "this gate exists to catch' — it rejects both on purpose).",
-        file=sys.stderr,
-    )
+
+    position_dependent = position_dependent_rename_lines(offenders)
+    other = [line for line in offenders if line not in position_dependent]
+
+    if position_dependent:
+        print(
+            f"{len(position_dependent)} R100 (byte-identical) rename(s) "
+            "cannot be declared safe (#3995): the moved file's own content "
+            "contains a __file__-rooted expression that reaches OUTSIDE its "
+            "own directory (e.g. `.parent.parent`, `.parents[N]`, `/ \"..\"`) "
+            "— its bytes don't change but its VALUE does, since __file__ "
+            "itself changes with the move. This may be a perfectly "
+            "legitimate move; this gate cannot tell, so it does not guess "
+            "\"safe\" the way it used to. Use the marker-walk "
+            "`tests._support.paths.REPO_ROOT` instead, or route this move "
+            "to human review:",
+            file=sys.stderr,
+        )
+        for line in position_dependent:
+            print(f"  {line}", file=sys.stderr)
+
+    if other:
+        print(
+            f"\n{len(other)} diff line(s) are not a pure move (R100), an "
+            "empty tests/<pkg>/__init__.py, or the Stage-0 baseline:",
+            file=sys.stderr,
+        )
+        for line in other:
+            print(f"  {line}", file=sys.stderr)
+        print(
+            "\nA Stage-1 migration PR moves tests, never edits their content "
+            "— `git mv` the file(s) above rather than recreating them at the "
+            "new path, and split any real content change into a SEPARATE PR "
+            "(this gate cannot tell 'legitimate unrelated fix' from 'the "
+            "exact rewrite this gate exists to catch' — it rejects both on "
+            "purpose).",
+            file=sys.stderr,
+        )
     return 1
 
 

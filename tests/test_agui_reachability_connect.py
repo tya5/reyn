@@ -20,7 +20,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.transport.agui.client import AgUiTransport
@@ -29,6 +28,7 @@ from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 
 

@@ -374,7 +374,7 @@ async def test_producer_closed_set_answer_round_trips_through_restore(tmp_path: 
         ],
     )
     dispatch_task = asyncio.ensure_future(handler.dispatch(iv))
-    from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
+    from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
     await wait_until(lambda: bool(registry.list_active()))
 
     resolved = await handler.deliver_answer_to(iv, "", choice_id_override="yes")

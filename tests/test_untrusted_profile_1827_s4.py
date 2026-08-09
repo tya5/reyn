@@ -127,7 +127,7 @@ async def test_external_answer_stamps_untrusted_marker():
     iv = UserIntervention(kind="ask_user", prompt="?", run_id="r")
     iv.future = asyncio.get_running_loop().create_future()
     task = asyncio.ensure_future(h.dispatch(iv))
-    from _async_wait import wait_until
+    from tests._async_wait import wait_until
     await wait_until(lambda: bool(registry.list_active()))
 
     await h.deliver_answer_to(iv, "the answer", external_source=True)
@@ -145,7 +145,7 @@ async def test_local_answer_does_not_stamp_marker():
     iv = UserIntervention(kind="ask_user", prompt="?", run_id="r")
     iv.future = asyncio.get_running_loop().create_future()
     task = asyncio.ensure_future(h.dispatch(iv))
-    from _async_wait import wait_until
+    from tests._async_wait import wait_until
     await wait_until(lambda: bool(registry.list_active()))
 
     await h.deliver_answer_to(iv, "local", external_source=False)

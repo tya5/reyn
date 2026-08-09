@@ -33,7 +33,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
@@ -43,6 +42,7 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------

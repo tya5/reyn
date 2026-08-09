@@ -22,8 +22,9 @@ import pytest
 from reyn.intervention_choices import ACCEPT, DECLINE
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.paths import REPO_ROOT
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _ELICIT_SERVER = _SUPPORT_DIR / "mcp_elicitation_server.py"
 _CFG = {"type": "stdio", "command": sys.executable, "args": [str(_ELICIT_SERVER)]}
 

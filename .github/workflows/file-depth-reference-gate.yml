@@ -1,0 +1,43 @@
+name: file-depth-reference gate
+
+# #3995/#4002: reject any tests/ file whose __file__-rooted expression
+# reaches tests/ itself (or above it), or lands on one of tests/'s direct
+# child directories (a fixed, shared peer like _support/fixtures that does
+# not travel with an individual file's future move) — the add-time/static
+# half of the same defect class check_migration_diff_shape.py's move-time
+# half closes. Permanent, unlike migration-diff-shape-gate.yml's temporary
+# Stage-1 lifespan: this class of breakage (a silent path failure the
+# moment a file moves to a different depth) can recur for as long as
+# tests/ has subdirectories at all. See scripts/check_file_depth_reference.py's
+# module docstring for the full design rationale (issue #3995).
+#
+# No diff/base-ref needed — a whole-tree scan against a baseline of zero,
+# unlike flat-tests-ratchet.yml's --check-growth (which diffs a committed
+# baseline file). A shallow checkout is enough.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  file-depth-reference:
+    name: file-depth-reference gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_file_depth_reference.py (and its _file_depth_predicate.py
+      # dependency) is stdlib-only (ast / pathlib / sys). No pip install needed.
+      - name: Check no tests/ file references a fixed tests/ location via __file__
+        run: |
+          python scripts/check_file_depth_reference.py

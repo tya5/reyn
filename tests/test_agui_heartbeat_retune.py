@@ -27,7 +27,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -45,6 +44,7 @@ from reyn.interfaces.web.auth import AuthContext
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import NO_SURFACE_REFUSAL_REASON
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 
 # ── (d) the load-bearing ordering invariant, on the actual shipped constants ──

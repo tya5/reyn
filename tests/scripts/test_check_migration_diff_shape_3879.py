@@ -22,6 +22,7 @@ from scripts.check_migration_diff_shape import (
     has_matching_basename_rewrite_pair,
     is_tests_copy,
     offending_lines,
+    position_dependent_rename_lines,
 )
 
 
@@ -556,6 +557,89 @@ def test_an_unrelated_new_file_and_an_unrelated_deletion_leaves_the_gate_inactiv
         "with no basename relationship, incorrectly activated the gate — "
         "the exact #3929 false positive this fix closes"
     )
+
+
+# ── #4002 (superseding #3995's own first attempt) — R100 does not imply
+# "safe" for a position-dependent file. architect's final design: no static
+# guessing at all — the move has ALREADY HAPPENED by the time this gate
+# runs, so it re-resolves every __file__-rooted expression at the file's
+# REAL new location and asks the one question that needs no guessing: does
+# the target still exist? A real instance broke exactly this way mid-arc
+# (#3989, #3994), caught at CI runtime, not by this gate — this is the fix
+# that lets the gate itself say so, instead of declaring "safe".
+
+
+def test_r100_rename_of_a_position_dependent_file_is_not_declared_safe(
+    _repo: Path,
+) -> None:
+    """Tier 2: #4002 — THE gate's own founding axiom ("byte-identical ⇒
+    safe") is false for a file whose meaning depends on its OWN LOCATION.
+    A pure `git mv` of a file containing `Path(__file__).parent.parent`
+    reports R100 (bytes unchanged) but the VALUE changes with the move —
+    re-resolved at the new location, the target (repo root) is nonexistent
+    from `tests/core/`'s vantage (this throwaway fixture has no `scripts/`
+    at all, so the target is missing regardless — the real-repo case is
+    the same nonexistence, just at the wrong depth instead of absent
+    outright); either way this must now be flagged, not passed through."""
+    (_repo / "tests" / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"\n',
+        encoding="utf-8",
+    )
+    _commit_all(_repo, "give test_a.py a depth-2 __file__ reference")
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a.py"],
+        cwd=_repo, check=True,
+    )
+    _commit_all(_repo, "pure byte-identical move")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    offenders = offending_lines(lines, root=_repo)
+    assert offenders, (
+        "a byte-identical rename of a file whose __file__ reference leaves "
+        "its own directory was wrongly declared safe"
+    )
+    flagged = position_dependent_rename_lines(offenders, root=_repo)
+    assert flagged, (
+        f"the offender was not classified as position-dependent: {offenders!r}"
+    )
+
+
+def test_r100_rename_of_a_still_resolvable_file_stays_clean(
+    _repo: Path,
+) -> None:
+    """Tier 2: non-vacuity for the fix above — a file whose __file__
+    reference resolves to something that GENUINELY STILL EXISTS at the new
+    location (`Path(__file__).parent / "fixture.json"`, a fixture
+    co-located with — and moved together with, in the same commit as — the
+    test file) must still pass through untouched; the check must not
+    over-fire on every __file__ usage, only ones whose target is actually
+    missing post-move."""
+    (_repo / "tests" / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_FIXTURE = Path(__file__).parent / "fixture.json"\n',
+        encoding="utf-8",
+    )
+    (_repo / "tests" / "fixture.json").write_text("{}\n", encoding="utf-8")
+    _commit_all(_repo, "give test_a.py a co-located fixture reference")
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a.py"],
+        cwd=_repo, check=True,
+    )
+    subprocess.run(
+        ["git", "mv", "tests/fixture.json", "tests/core/fixture.json"],
+        cwd=_repo, check=True,
+    )
+    _commit_all(_repo, "pure byte-identical move, fixture moved alongside")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert offending_lines(lines, root=_repo) == []
 
 
 def test_a_same_basename_zero_similarity_disguised_move_still_activates_the_gate(

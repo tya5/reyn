@@ -34,8 +34,6 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
-
 from reyn.core.events.state_log import StateLog  # noqa: E402
 from reyn.core.pipeline.executor import Pipeline, ToolStep  # noqa: E402
 from reyn.llm.llm import LLMToolCallResult  # noqa: E402
@@ -44,6 +42,7 @@ from reyn.runtime.registry import AgentRegistry  # noqa: E402
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session  # noqa: E402
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run  # noqa: E402
 from reyn.runtime.session_params import PresentationWiring
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
 

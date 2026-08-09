@@ -19,8 +19,9 @@ from reyn.mcp.client import MCPError
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.mcp.pool import MCPClientPool
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
 
 _CFG = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
