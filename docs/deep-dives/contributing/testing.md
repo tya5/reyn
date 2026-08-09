@@ -555,6 +555,58 @@ asserts on the resolved instance (`loop.router_model`, …) rather than raw
 constructor kwargs. It is the seam analogue of the rule above: adapt to the
 contract, don't bypass it.
 
+### The strip-falsify mimicry
+
+Two independent sessions, one hour apart, wrote the same shape (`#3902`'s
+`_NoFoldEventLog`, `#3916`'s `_PreNineOhOneAgentLayer`):
+
+1. Subclass the production class; override the method under test with a
+   hand-written body that breaks the one branch being checked.
+2. Assert the subclass behaves the way it was just written to behave.
+3. Call it a strip-falsify — a proof the mechanism is load-bearing.
+
+It proves nothing: the production method never runs. Deleting the real
+mechanism entirely leaves this test exactly as green as it started, because
+the test was never exercising the real thing — it was exercising a stand-in
+whose behavior the test's own author dictated one line above the assert.
+Both authors even wrote the disclaimer the [Mock vs Fake](#mock-vs-fake)
+section asks for — `#3902`: *"not a mock of EventLog, a genuine (if
+deliberately broken) instance"*; `#3916`: *"not a mock, a genuine instance
+sharing every other method"* — and both are correct: neither is a mock.
+**That's exactly why this recurs.** The Fake ban's own reason (a mock's
+signature can drift silently from the real API) doesn't apply to a real
+subclass with one overridden method, so avoiding a mock reads as clearing
+the bar. It doesn't — the bar these tests miss is different: does the test
+ever run the production code it claims to falsify? A genuine instance that
+never calls the real method under test fails that bar exactly like a mock
+does, for an unrelated reason a mock's own ban never named.
+
+**Why "would it stay green with the mechanism dead?" invited this.** That
+phrasing asks you to imagine a dead mechanism, and imagining one is
+something you can always do *inside the test itself* — build a stub, break
+one branch by hand, assert the stub does what you just wrote it to do. The
+question CLAUDE.md's six questions now asks instead — **who would miss
+this test if it were gone?** — cannot be answered by imagining anything: a
+stub or a hand-assembled collaborator list is a configuration only the
+test itself builds, so the honest answer to "who relies on this" is
+nobody. Owner's framing (2026-08-09): a test review should not ask
+questions execution already answers for free — "does this assert
+currently fire" is exactly that, which is what made the file:line/RED
+phrasing tried here first the wrong fix too: it still asked about
+*execution*, only moved the record of it from the test to the PR body.
+"Who would miss it" asks about *existence*, which review — not
+execution — is the only thing that can answer.
+
+**The conclusion, once you can name the shape: delete the test.** A test
+whose only defensible witness is its own hand-built double is not a test
+of the mechanism it claims to falsify — it is a test of the double, and
+the double is not load-bearing to anyone. There is no version of this
+shape worth keeping "if only it ran the real strip" — a strip-falsify that
+actually exercises the mechanism does not need this shape at all (see
+[the prerequisite every tier shares](#the-prerequisite-every-tier-shares):
+a claim needs an anchor outside the test, and a stub the test built for
+itself is not one).
+
 ### When a Fake is justified — and what it requires
 
 Everything above states when a Fake is FORBIDDEN (the real collaborator is

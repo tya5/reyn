@@ -593,9 +593,13 @@ def _run(args: argparse.Namespace) -> None:
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # #187: --grant-file-write grants file.read/write at the resolver layer
     # (mirrors `reyn run` run.py:126 + the eval swe_bench path
-    # eval_benchmark.py:742). The grant is bounded by the sandbox write_paths ∩
-    # (env-backend repo zone), so the effective scope is the working tree, not
-    # global. setdefault preserves any explicit operator setting.
+    # eval_benchmark.py:742). write is bounded by the sandbox write_paths ∩
+    # (env-backend repo zone), so its effective scope is the working tree, not
+    # global. read is NOT bounded the same way: the resolve_sandbox_policy
+    # floor never sets read_paths, so SandboxLayer.FILE_READ resolves to ⊤
+    # (unconstrained) here — this grant's read reaches anywhere the process
+    # can read, not just the working tree (#3924). setdefault preserves any
+    # explicit operator setting.
     if getattr(args, "grant_file_write", False):
         perm_config.setdefault("file.read", "allow")
         perm_config.setdefault("file.write", "allow")

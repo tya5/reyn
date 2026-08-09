@@ -138,10 +138,26 @@ Ask each test in the diff:
 2. **Is it the implementation, transcribed?** If the same expression appears on
    both sides, it can only fail when someone deliberately edits that line — and
    they will edit both. (#3872: `art = "\n".join(covered)` asserted back.)
-3. **Would it stay green with the mechanism dead?** Assert a value a dead
-   mechanism cannot produce. "Was handed X" is not a witness for "used X"
-   (#3859), and #3850 landed a field that was required, populated, tested, and
-   read by nobody.
+3. **Who would miss this test if it were gone?** Not whether the assert
+   currently fires — whether execution can tell you that for free, and
+   review should not re-derive what a CI run already answers. Three
+   answers: *nobody* → delete. *A situation only this test itself
+   constructs* (production never builds that configuration) → delete.
+   *A production consumer, or another real mechanism* → keep. The middle
+   answer is the discriminator, and it catches more than one shape: a
+   hand-written stub that subclasses the production class and breaks one
+   branch (`#3902`'s `_NoFoldEventLog`, `#3916`'s
+   `_PreNineOhOneAgentLayer` — see `testing.md` § "The strip-falsify
+   mimicry"), and — same answer, different shape — a manually assembled
+   collaborator list with one layer removed by hand
+   (`#3916`'s `test_falsification_removing_a_layer_regrants_a_denied_capability`:
+   `EffectivePermission([AgentLayer(decl)])`, a combination production
+   never constructs). Both fail this question on the same line, because
+   both are configurations only the test itself builds, not something a
+   real caller ever hands it. "Was handed X" is not a witness for "used X"
+   (#3859), and #3850 landed a field that was required, populated, tested,
+   and read by nobody — the honest answer to "who would miss it" was
+   already "nobody."
 4. **Would it stay green having never run?** skip / collection error / zero
    collected all wear green's colour. Name what a missing optional dependency
    silently skips — CI has no `effects` extra, so #3796's file skips whole and
@@ -164,7 +180,7 @@ So each question has a blocking answer, not just an answer:
 |---|---|
 | 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
 | 2 | yes — the same expression is on both sides |
-| 3 | yes — it stays green with the mechanism removed, unless it names the reject-side test that proves the mechanism can fail |
+| 3 | **nobody**, or only a configuration this test itself constructed |
 | 4 | it would be green having never run, **and the PR does not say so** |
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
 | 6 | the declared Tier is not the one question 1 named |
@@ -174,20 +190,17 @@ often correct (an optional extra), and what makes it a defect is a green nobody
 qualified. 5 has no such carve-out — "it is small today" is a measurement of
 today, and the runaway that started this was small until it wasn't.
 
-**3's exception, precisely.** An accept-side test (a false-positive control —
-"this shape must NOT trip the gate") is *supposed* to stay green with the
-mechanism removed; that's what makes it accept-side. But self-declaring that
-in a docstring is not sufficient on its own — a suite of nothing but
-accept-side tests would all pass this exception, all stay green, with the
-gate itself dead. The docstring must *name the reject-side test that proves
-the gate can fail* — self-declaration plus a pointer to its actual contrast,
-not self-declaration alone. One sentence carries both: "Accept-side: a
-mirrors-src directory must NOT trip the gate (the reject side is
-`test_…` below)." Don't reduce this to a fixed phrase ("accept-side / control")
-— naming *what* it contrasts against is what satisfies the pointer, and a
-boilerplate phrase with no name satisfies neither. The reject-side test does
-not have to live in the same file (a gate built across separate files, e.g.
-the `#3885` migration-diff-shape gate, still qualifies).
+**3 needs no accept-side exception.** An accept-side test ("this shape must
+NOT trip the gate") is not a special case of question 3 — it has its own
+job, catching over-firing, and its consumer is the gate's own users, who
+would be wrongly blocked without it. Asked "who would miss this test," an
+accept-side test answers the same way any other real test does: the
+operators the gate would have false-positived against. No carve-out is
+needed because question 3 was never the wrong question for it — question 3
+in its earlier phrasing ("would it stay green with the mechanism dead?")
+was the wrong question for it, since an accept-side test is *supposed* to
+stay green with the gate's deny-firing mechanism removed. Asking who'd miss
+it instead of whether it's green resolves this without a special case.
 
 **Reviewer's note, on the PR:** record the answers per test before merging. A
 lead-coder merge train refuses any PR touching `tests/` without one — the promise
