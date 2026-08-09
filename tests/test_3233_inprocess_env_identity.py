@@ -24,7 +24,9 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._support.paths import REPO_ROOT
+
+_REPO_ROOT = REPO_ROOT
 _SCRIPT = _REPO_ROOT / "scripts" / "verify_env_identity.py"
 
 

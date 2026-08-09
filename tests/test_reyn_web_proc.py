@@ -15,7 +15,9 @@ import sys
 import time
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "_reyn_web_proc.py"
+from tests._support.paths import REPO_ROOT
+
+SCRIPT = REPO_ROOT / "scripts" / "_reyn_web_proc.py"
 
 
 def _alive(pid: int) -> bool:

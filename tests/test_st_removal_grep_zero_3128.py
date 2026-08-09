@@ -42,7 +42,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._support.paths import REPO_ROOT
+
 THIS_FILE = Path(__file__).resolve()
 
 # Split so this file's own bytes never contain the literal symbol strings

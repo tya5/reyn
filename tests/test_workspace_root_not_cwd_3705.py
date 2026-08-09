@@ -22,8 +22,9 @@ from pathlib import Path
 
 from reyn.runtime.agent import Agent
 from reyn.runtime.services.recovery import default_snapshot_path
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO_ROOT
 _SRC_ROOT = _REPO_ROOT / "src"
 
 # ---------------------------------------------------------------------------

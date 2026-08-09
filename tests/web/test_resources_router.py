@@ -26,9 +26,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 # Same path-bootstrap pattern as tests/web/test_smoke.py — keep the
 # worktree src ahead of any editable-install collision.
-_WORKTREE_SRC = Path(__file__).parent.parent.parent / "src"
+_WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 

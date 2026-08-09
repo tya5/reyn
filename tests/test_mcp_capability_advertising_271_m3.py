@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 pytest.importorskip("mcp", reason="MCP SDK not installed")
 
 
@@ -69,7 +71,7 @@ def test_no_notify_changed_calls_in_mcp_server_source() -> None:
     in the declaration is honest).
     """
     src_path = (  # #1682: impl moved to reyn/mcp/server.py (old path = shim)
-        Path(__file__).parent.parent
+        REPO_ROOT
         / "src" / "reyn" / "mcp" / "server.py"
     )
     src = src_path.read_text(encoding="utf-8")
@@ -154,7 +156,7 @@ def test_cancellation_wire_exists_in_call_tool_handler() -> None:
     # now a re-export shim). This source-grep test reads the impl FILE, so it must
     # point at the new path.
     src_path = (
-        Path(__file__).parent.parent
+        REPO_ROOT
         / "src" / "reyn" / "mcp" / "server.py"
     )
     tree = ast.parse(src_path.read_text(encoding="utf-8"))

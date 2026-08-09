@@ -88,8 +88,9 @@ from tests._support.builtin_skill_tool_names import (
     qualified_tool_calls_referenced,
     real_catalog_tool_names,
 )
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = REPO_ROOT
 _PLUGIN_DIR = _REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag"
 _SKILL_NAME = "build-and-query-rag-corpus"
 _SKILL_DIR = _PLUGIN_DIR / "skills" / _SKILL_NAME

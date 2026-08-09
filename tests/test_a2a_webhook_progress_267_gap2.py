@@ -42,6 +42,7 @@ pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missin
 
 from reyn.core.events.events import EventLog  # noqa: E402
 from reyn.schemas.models import Event  # noqa: E402
+from tests._support.paths import REPO_ROOT
 
 
 class _FakeRunRegistry:
@@ -350,7 +351,7 @@ def test_handle_async_mode_attaches_bridge_around_send_to_agent_impl() -> None:
     from pathlib import Path
 
     src_path = (
-        Path(__file__).parent.parent
+        REPO_ROOT
         / "src" / "reyn" / "interfaces" / "web" / "routers" / "a2a.py"
     )
     tree = ast.parse(src_path.read_text(encoding="utf-8"))

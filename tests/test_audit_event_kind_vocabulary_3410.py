@@ -48,8 +48,9 @@ from reyn.core.events.event_schema import (
     KIND_EMIT_SEAMS,
     DynamicEmitSite,
 )
+from tests._support.paths import REPO_ROOT
 
-_REPO = Path(__file__).resolve().parents[1]
+_REPO = REPO_ROOT
 _SRC = _REPO / "src" / "reyn"
 _EVENTS_REFERENCE = _REPO / "docs" / "reference" / "runtime" / "events.md"
 _EVENTS_CONCEPT = _REPO / "docs" / "concepts" / "runtime" / "events.md"

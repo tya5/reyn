@@ -17,12 +17,12 @@ from reyn.dev.dogfood.coverage import (
     parse_feature_map,
 )
 from reyn.dev.dogfood.scenarios import Scenario, ScenarioSet
+from tests._support.paths import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-REPO_ROOT = Path(__file__).parent.parent
 FEATURE_MAP_PATH = REPO_ROOT / "docs" / "feature-map.md"
 
 

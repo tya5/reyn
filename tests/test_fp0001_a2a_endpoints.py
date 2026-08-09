@@ -27,7 +27,9 @@ from pathlib import Path
 import pytest
 
 # Ensure the worktree src is importable.
-_WORKTREE_SRC = Path(__file__).parent.parent / "src"
+from tests._support.paths import REPO_ROOT
+
+_WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 

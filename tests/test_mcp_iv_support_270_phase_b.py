@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 pytest.importorskip("mcp", reason="MCP SDK not installed")
 
 
@@ -328,7 +330,7 @@ def test_iv_input_required_capability_backed_by_in_source_wire() -> None:
     ``answer_intervention`` tool dispatch. Pin both wires.
     """
     src_path = (  # #1682: impl moved to reyn/mcp/server.py (old path = shim)
-        Path(__file__).parent.parent
+        REPO_ROOT
         / "src" / "reyn" / "mcp" / "server.py"
     )
     src = src_path.read_text(encoding="utf-8")

@@ -26,7 +26,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+from tests._support.paths import REPO_ROOT
+
+_SRC = REPO_ROOT / "src" / "reyn"
 _FACTORY_REL = "runtime/router_op_context.py"
 
 

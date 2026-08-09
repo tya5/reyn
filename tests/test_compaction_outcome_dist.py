@@ -12,7 +12,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "compaction_outcome_dist.py"
+from tests._support.paths import REPO_ROOT
+
+SCRIPT = REPO_ROOT / "scripts" / "compaction_outcome_dist.py"
 
 
 def _run(args: list[str]) -> tuple[str, int]:

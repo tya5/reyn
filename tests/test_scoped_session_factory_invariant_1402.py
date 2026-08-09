@@ -38,8 +38,9 @@ from pathlib import Path
 
 from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.scoped_session_factory import build_scoped_chat_session
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+_SRC = REPO_ROOT / "src" / "reyn"
 
 # The ONE module allowed to construct Session directly.
 _FACTORY_REL = "runtime/scoped_session_factory.py"

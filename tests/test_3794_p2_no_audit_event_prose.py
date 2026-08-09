@@ -31,7 +31,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._support.paths import REPO_ROOT
+
 EXCLUDED_DIR_NAMES = {".venv", "site", ".git", "__pycache__"}
 # Dated dogfood/investigation logs — historical statements, exempt (see
 # module docstring).

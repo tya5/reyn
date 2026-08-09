@@ -28,9 +28,10 @@ import yaml
 
 from reyn.tools.types import ToolContext
 from reyn.tools.universal_catalog import CATEGORIES, LIST_ACTIONS
+from tests._support.paths import REPO_ROOT
 
 _MANIFEST_PATH = (
-    Path(__file__).parent.parent
+    REPO_ROOT
     / "tests" / "data" / "embedding_bench" / "manifest.yaml"
 )
 _ALLOWED_AXES = {"precision", "call_rate"}

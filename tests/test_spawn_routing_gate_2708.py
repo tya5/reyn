@@ -32,8 +32,9 @@ from reyn.runtime.spawn_routing import (
     _REVIEWED_SELF_BOUND_SPAWN_SITES,
     ReviewedNA,
 )
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+_SRC = REPO_ROOT / "src" / "reyn"
 
 # The three spawn seams whose calls must declare a routing decision. ``spawn_session_recorded`` /
 # ``spawn_ephemeral_session`` are unambiguous names; ``spawn_session`` collides with

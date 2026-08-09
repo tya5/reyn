@@ -19,8 +19,10 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 # Ensure the worktree src is importable (mirrors test_smoke.py).
-_WORKTREE_SRC = Path(__file__).parent.parent.parent / "src"
+_WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 

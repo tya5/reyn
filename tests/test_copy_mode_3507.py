@@ -29,6 +29,7 @@ from reyn.interfaces.inline.textual_chat.gutter import _MARK_RAIL
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.paths import REPO_ROOT
 
 
 class _Transport(ClientTransport):
@@ -168,7 +169,7 @@ def _binding_surfaces() -> "dict[str, list[str]]":
     import ast
     import pathlib
 
-    package = pathlib.Path(__file__).resolve().parents[1] / (
+    package = REPO_ROOT / (
         "src/reyn/interfaces/inline/textual_chat"
     )
     surfaces: dict[str, list[str]] = {}

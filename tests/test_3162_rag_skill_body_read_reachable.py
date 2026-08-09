@@ -41,8 +41,9 @@ from reyn.core.op_runtime.plugin_install import plugins_root
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp, PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = REPO_ROOT
 _REAL_SKILL_DIR = (
     _REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag" / "skills"
     / "build-and-query-rag-corpus"

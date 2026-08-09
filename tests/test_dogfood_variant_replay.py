@@ -30,7 +30,9 @@ import pytest
 
 # scripts/ is not on sys.path during normal test discovery; add it
 # lazily so the script module is importable without restructuring.
-_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+from tests._support.paths import REPO_ROOT
+
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 

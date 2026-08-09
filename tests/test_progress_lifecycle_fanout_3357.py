@@ -33,8 +33,9 @@ from reyn.core.events.progress_lifecycle import (
     PROGRESS_LIFECYCLE_EVENTS,
     format_progress_message,
 )
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+_SRC = REPO_ROOT / "src" / "reyn"
 # The declaration module names every kind in prose. An AST walk already ignores
 # prose, so this exclusion is belt-and-braces: it also rules out a future
 # illustrative ``emit(...)`` inside the declaration vouching for its own member.

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+from tests._support.paths import REPO_ROOT
+
+_SRC = REPO_ROOT / "src" / "reyn"
 
 # The consolidated AG-UI UI transport surface. The invariant is that none of
 # these drain a Session outbox directly — they subscribe to the OutboxHub.

@@ -15,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parent.parent
+from tests._support.paths import REPO_ROOT
+
+ROOT = REPO_ROOT
 
 # Tracked config files that must NOT use any hardcoded <provider>/gemini- string.
 # Class-ref shorthands (e.g. gemini-flash-lite) are the correct form.

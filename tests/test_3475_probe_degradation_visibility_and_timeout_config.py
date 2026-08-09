@@ -58,8 +58,9 @@ from reyn.core.events.event_schema import AUDIT_EVENT_KINDS
 from reyn.core.events.state_log import StateLog
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
+from tests._support.paths import REPO_ROOT
 
-_REPO = Path(__file__).resolve().parents[1]
+_REPO = REPO_ROOT
 _ROUTER_HOST_ADAPTER = _REPO / "src" / "reyn" / "runtime" / "services" / "router_host_adapter.py"
 _MCP_CLI = _REPO / "src" / "reyn" / "interfaces" / "cli" / "commands" / "mcp.py"
 _CHAT_CONFIG = _REPO / "src" / "reyn" / "config" / "chat.py"

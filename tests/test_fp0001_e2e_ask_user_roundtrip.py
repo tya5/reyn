@@ -41,12 +41,13 @@ from pathlib import Path
 import pytest
 
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Path setup: ensure tests can import from src/
 # ---------------------------------------------------------------------------
 
-_WORKTREE_SRC = Path(__file__).parent.parent / "src"
+_WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 

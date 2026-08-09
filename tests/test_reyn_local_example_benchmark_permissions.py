@@ -28,8 +28,9 @@ from pathlib import Path
 import pytest
 
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.paths import REPO_ROOT
 
-_EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "reyn.local.yaml.example"
+_EXAMPLE_PATH = REPO_ROOT / "reyn.local.yaml.example"
 
 
 def _out_of_zone_path(tmp_path: Path) -> str:

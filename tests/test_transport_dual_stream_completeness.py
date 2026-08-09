@@ -19,9 +19,10 @@ from pathlib import Path
 
 from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
 from reyn.interfaces.transport.frames import forwarded_frame_kinds
+from tests._support.paths import REPO_ROOT
 
 _RENDERER = (
-    Path(__file__).resolve().parents[1]
+    REPO_ROOT
     / "src" / "reyn" / "interfaces" / "repl" / "renderer.py"
 )
 

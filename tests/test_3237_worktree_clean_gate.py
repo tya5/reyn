@@ -37,7 +37,9 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+from tests._support.paths import REPO_ROOT
+
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 
 def _import_cleanup_module():

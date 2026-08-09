@@ -55,8 +55,9 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO_ROOT
 
 
 # ── real seam impls (no mocks) ────────────────────────────────────────────────

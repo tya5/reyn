@@ -43,7 +43,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-_SRC = Path(__file__).parent.parent / "src"
+from tests._support.paths import REPO_ROOT
+
+_SRC = REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
@@ -59,7 +61,7 @@ from reyn.builtin.registry import (
 from reyn.config.loader import _merge
 from reyn.core.op_runtime.context import OpContext, provenance_from_ctx
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = REPO_ROOT
 
 
 class _StubWorkspace:

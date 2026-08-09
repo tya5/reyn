@@ -28,6 +28,7 @@ from reyn.dev.dogfood import (
     ScenarioSet,
     load_scenario_set,
 )
+from tests._support.paths import REPO_ROOT
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -133,7 +134,7 @@ def test_long_session_v1_loads(tmp_path: Path) -> None:
     this file have expected blocks and some don't — both shapes must load.
     """
     long_session_path = (
-        Path(__file__).parent.parent / "dogfood" / "scenarios" / "long_session_v1.yaml"
+        REPO_ROOT / "dogfood" / "scenarios" / "long_session_v1.yaml"
     )
     ss = load_scenario_set(long_session_path)
     assert isinstance(ss, ScenarioSet)
