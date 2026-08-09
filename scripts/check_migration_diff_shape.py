@@ -38,15 +38,17 @@ so it is never subject to that limit. This gate does not need to raise it.
 
 This gate is INACTIVE — exits 0 immediately, checks nothing — unless the
 diff shows real evidence of a tests/ migration: a pure (``R100``) rename
-under ``tests/``, OR a brand-new ``.py`` file landing inside a ``tests/``
-SUBDIRECTORY (see :func:`is_new_file_in_tests_subdir`). A PR with neither
-signal is not a migration PR, whatever it claims to be (a label, a branch
-name, a PR-body declaration): the whole audit this session has been
-running finds that exact "declaration ≠ reality" shape everywhere else
-(Tier labels no one earned, "falsify done" claims that were only reasoned
-through, a hand-editable baseline) and a self-declared "this is a
-migration PR" signal would just be one more instance of it. So the diff's
-own content is the only signal read.
+under ``tests/``, OR a brand-new ``.py`` file APPEARING inside a ``tests/``
+subdirectory WHILE a ``.py`` DISAPPEARS from somewhere else under
+``tests/`` (see :func:`gate_is_active`) — "appeared alone" is NOT enough
+(see the twice-corrected account below); a PR with neither signal is not a
+migration PR, whatever it claims to be (a label, a branch name, a PR-body
+declaration): the whole audit this session has been running finds that
+exact "declaration ≠ reality" shape everywhere else (Tier labels no one
+earned, "falsify done" claims that were only reasoned through, a
+hand-editable baseline) and a self-declared "this is a migration PR"
+signal would just be one more instance of it. So the diff's own content is
+the only signal read.
 
 ★ Corrected in review, not assumed correct from the design description:
 this module's FIRST version claimed "a 'migration' whose renames
@@ -141,19 +143,12 @@ def is_tests_rename(line: str) -> bool:
 
 def is_new_file_in_tests_subdir(line: str) -> bool:
     """Whether *line* is a brand-new ``.py`` file landing inside a
-    ``tests/`` SUBDIRECTORY (``tests/<pkg>/...``, not a direct child) — the
-    OTHER activation signal, and the fix to a real gap found in this gate's
-    own first version (#3885 review, lead-coder + this author both
-    transcribed an unverified claim that Stage 0's ratchet would catch this
-    shape on its own — checked directly and it does not:
-    ``flat_tests_ratchet.measured_flat_files()`` globs ``tests/*.py``
-    NON-recursively, by its own docstring's own words, so a file already
-    landed in a subdirectory is invisible to it). A fully-rewritten "move"
-    (git's ``-M100%`` failing to detect ANY rename because every byte
-    changed) produces exactly this shape: a new ``A`` line under
-    ``tests/<pkg>/``, with no matching rename anywhere — this is what makes
-    that case activate the gate, where :func:`is_tests_rename` alone would
-    have missed it entirely."""
+    ``tests/`` SUBDIRECTORY (``tests/<pkg>/...``, not a direct child) — HALF
+    of the second activation signal (see :func:`gate_is_active`; the other
+    half, :func:`is_tests_deletion`, is required TOO — "appeared" alone
+    matches an ordinary new-test-addition PR just as well as a
+    fully-rewritten move, and this gate rejected its OWN introducing PR
+    (which only adds a test file) before that was caught)."""
     parts = line.split("\t")
     if parts[0] != "A" or len(parts) != 2:
         return False
@@ -168,6 +163,15 @@ def is_new_file_in_tests_subdir(line: str) -> bool:
     return path.count("/") >= 2 and path.startswith("tests/")
 
 
+def is_tests_deletion(line: str) -> bool:
+    """Whether *line* deletes a ``.py`` file somewhere under ``tests/`` —
+    paired with :func:`is_new_file_in_tests_subdir` to distinguish "a file
+    MOVED (appeared here, disappeared there)" from "a file was simply
+    ADDED" (see :func:`gate_is_active`'s second signal)."""
+    parts = line.split("\t")
+    return parts[0] == "D" and len(parts) == 2 and parts[1].startswith("tests/") and parts[1].endswith(".py")
+
+
 def gate_is_active(lines: "list[str]") -> bool:
     """The gate applies ONLY to a PR whose diff shows REAL evidence of a
     tests/ migration — never a label, a branch-name convention, or any
@@ -178,19 +182,31 @@ def gate_is_active(lines: "list[str]") -> bool:
     shape). Two signals, either one activates:
 
     - :func:`is_tests_rename` — a pure R100 rename under ``tests/``.
-    - :func:`is_new_file_in_tests_subdir` — a brand-new ``.py`` landing in a
-      ``tests/`` SUBDIRECTORY, which is what a FULLY-rewritten "move" (zero
-      bytes shared, so ``-M100%`` detects no rename at all) looks like —
-      without this second signal, that exact shape passed both this gate
-      (inactive, no rename) AND Stage 0's ratchet (non-recursive glob, blind
-      to subdirectories) untouched. Found and fixed in review, not assumed
-      correct from the design description (see module's own account of the
-      mistake).
+    - :func:`is_new_file_in_tests_subdir` **AND** :func:`is_tests_deletion`
+      TOGETHER — a brand-new ``.py`` appearing in a ``tests/`` subdirectory
+      while a ``.py`` disappears from somewhere under ``tests/``, which is
+      what a FULLY-rewritten "move" (zero bytes shared, so ``-M100%``
+      detects no rename at all) looks like: appear here, disappear there.
+
+      ★ Corrected TWICE in review, both times found by actually running the
+      gate rather than by reading the design: the first version of this
+      signal was "new file in a subdirectory" ALONE — which activated on
+      THIS VERY PR (adding a genuinely new test file, no deletion anywhere)
+      and made the gate reject its own introducing PR (CI failure,
+      lead-coder's finding, not a design read). "Appeared" alone cannot
+      distinguish a migration from an ordinary new-test-addition; only
+      "appeared AND something disappeared" can — the same shape the
+      R100-rename signal already captures for the simple case, generalized
+      to the fully-rewritten one.
 
     No signal anywhere → this PR isn't touching tests/'s Stage-1 migration
     at all, whatever it claims to be, and an ordinary Q3/Q4 assert-repair PR
-    passes through untouched."""
-    return any(is_tests_rename(line) or is_new_file_in_tests_subdir(line) for line in lines)
+    OR a plain new-test-addition PR (like this one) passes through
+    untouched."""
+    has_rename = any(is_tests_rename(line) for line in lines)
+    has_new_subdir_file = any(is_new_file_in_tests_subdir(line) for line in lines)
+    has_deletion = any(is_tests_deletion(line) for line in lines)
+    return has_rename or (has_new_subdir_file and has_deletion)
 
 
 def _in_scope(line: str) -> bool:

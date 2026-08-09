@@ -223,6 +223,27 @@ def test_r099_line_is_rejected_by_the_parser_directly(_repo: Path) -> None:
 # ── gate_is_active — #3885 review correction, the fix to the scope gap ──────
 
 
+def test_a_plain_new_test_file_in_a_subdir_leaves_the_gate_inactive(_repo: Path) -> None:
+    """Tier 2: THE deadlock this gate hit on its OWN introducing PR
+    (lead-coder's finding via real CI failure, not a design read — this
+    file itself is a brand-new .py in tests/scripts/, no deletion anywhere,
+    and the gate rejected its own PR before this fix). A plain new-test
+    addition in a subdirectory — appeared, nothing disappeared — must NOT
+    activate the gate; only "appeared AND something disappeared" (a real
+    move) does."""
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    (core / "test_new.py").write_text("def test_x(): pass\n", encoding="utf-8")
+    _commit_all(_repo, "add a genuinely new test file in a subdirectory")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert not gate_is_active(lines), (
+        "a plain new test file in a subdirectory (no deletion anywhere) "
+        "incorrectly activated the gate — this is the exact shape that "
+        "made the gate reject its own introducing PR"
+    )
+
+
 def test_a_pure_content_edit_leaves_the_gate_inactive(_repo: Path) -> None:
     """Tier 2: the fix itself — an ordinary in-place content edit (a Q3/Q4
     assert repair, a bug fix), with NO rename anywhere in the diff, must
