@@ -19,11 +19,17 @@ but a wrong one is still a lie). What changed is the CLASS of growth:
 
 Still unbounded in principle (read enough distinct paths, this grows
 forever) — the bound is on WORK done (each entry costs a real file read +
-permission gate), not on how much an agent can emit. The tests below make
-this falsifiable rather than asserted:
+permission gate), not on how much an agent can emit. Three tests below,
+not all of them falsifying the mechanism the same way:
 
   1. Non-read events, however many, leave the derived state at size 0.
+     ``0`` is also what a DEAD fold produces, so this test alone cannot
+     distinguish "the fold works" from "the fold is gone" — it's the
+     false-positive-immune control (real strip-falsify below still
+     leaves it green), not a witness that the mechanism is live.
   2. Repeated reads of the SAME path leave it at size 1 (not N).
+  3. A full read followed by a truncated read on the same path stays
+     ``full`` (sticky full).
 
 Real ``EventLog`` throughout (no mocks) — ``ingested_path_count`` is the
 public witness (CLAUDE.md: no private-state assertions), not a read of the
@@ -38,11 +44,11 @@ same expression both sides), and a real strip of the production fold block
 in ``events.py`` leaves it GREEN (it asserts what the hand-written stub
 does, not what production does with the fold removed) — the opposite of
 what "STRIP-FALSIFY" in its name claimed. The real strip-falsify for tests
-1 and 2 above is executed and recorded in the PR body, not encoded as a
-test: deleting the fold block in ``EventLog.emit()`` turns both RED
-(confirmed via a positive control — ``grep -c '_ingested\\[path\\]'
-src/reyn/core/events/events.py`` → 0 after the strip), then the tree is
-restored.
+2 and 3 above is executed and recorded in the PR body, not encoded as a
+test: deleting the fold block in ``EventLog.emit()`` turns both RED while
+test 1 stays green (confirmed via a positive control — ``grep -c
+'_ingested\\[path\\]' src/reyn/core/events/events.py`` → 0 after the
+strip), then the tree is restored.
 """
 from __future__ import annotations
 
