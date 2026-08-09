@@ -146,3 +146,63 @@ def test_router_adapter_factory_resolves_concrete_policy():
     pol = adapter.make_router_op_context().default_sandbox_policy
     assert pol is not None
     assert pol["network"] is DEFAULT_SANDBOX_NETWORK
+
+
+# ── (D) #3907① — exec.py's minimal-synthesis path also resolves a concrete
+# default_sandbox_policy (was None → the same op-fields fallback gap (B) above
+# closed, but for the ONE remaining OpContext-building call site that had no
+# op_context_factory to delegate to at all) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_minimal_synthesis_path_enforces_the_floor_not_the_op_default(
+    tmp_path,
+) -> None:
+    """Tier 2: #3907① — NOT just "the field got filled" (lead-coder's explicit
+    correction: filled is not a witness that it's ENFORCED). Drives the REAL
+    minimal-synthesis code path (a ToolContext with router_state=None, forcing
+    op_context_from_tool_context to skip op_context_factory entirely) through
+    the REAL op_runtime handler, and asserts the EMITTED event's enforced
+    ``network`` value — mirroring test_handler_event_shows_enforced_policy_network
+    above, the same "enforced, not requested" witness shape.
+
+    Before #3907①: ctx.default_sandbox_policy stayed None on this path, so the
+    handler fell back to SandboxedExecIROp's own raw field default
+    (network=False) — DIFFERENT from every other OpContext-building path in
+    the codebase, which resolves through resolve_sandbox_policy's floor
+    (network=True, owner decision 2026-06-05). The op itself requests nothing
+    (bare argv) — if the fix did nothing, the enforced value would still read
+    False (the op-fallback default), indistinguishable from a no-op fill."""
+    from reyn.core.events.events import EventLog
+    from reyn.data.workspace.workspace import Workspace
+    from reyn.tools.exec import op_context_from_tool_context
+    from reyn.tools.types import ToolContext
+
+    events = EventLog()
+    ws = Workspace(events=events, base_dir=tmp_path)
+    tool_ctx = ToolContext(
+        events=events,
+        permission_resolver=None,
+        workspace=ws,
+        caller_kind="router",
+        router_state=None,  # forces the minimal-synthesis branch — no factory to delegate to
+    )
+
+    legacy_ctx = await op_context_from_tool_context(tool_ctx)
+    assert legacy_ctx.default_sandbox_policy is not None, (
+        "ctx.default_sandbox_policy is still None on the minimal-synthesis "
+        "path — the fix did not take effect"
+    )
+
+    from reyn.core.op_runtime.sandboxed_exec import handle
+    from reyn.schemas.models import SandboxedExecIROp
+
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
+    await handle(op, legacy_ctx)
+    started = [e for e in events.all() if e.type == "sandboxed_exec_started"]
+    (ev,) = started
+    assert ev.data["network"] is True, (
+        "the minimal-synthesis path enforced the op's own raw default "
+        "(network=False) instead of the floor (network=True) — the fix did "
+        "not change what the handler actually uses, only that a field is set"
+    )
