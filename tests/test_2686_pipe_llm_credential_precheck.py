@@ -1,15 +1,18 @@
-"""Tier 2: #2686/#2708 — an LLM-less ``reyn pipe run`` is never rejected for
-missing creds.
+"""Tier 2: #2686/#2708/#3905 — an LLM-less ``reyn pipe run`` is never rejected
+for missing creds.
 
-Since #2708 P3.2b the missing-cred pre-check moved OFF ``reyn pipe run``'s
-per-surface startup gate and ONTO the single LLM funnel (``recorded_acompletion``,
-tested in ``test_2708_cred_check_chokepoint.py``). The #2686 false-positive-zero
-property is therefore now STRUCTURAL: an LLM-less (transform/tool-only) pipeline
-never reaches the funnel, so it can never be rejected for a missing provider
-key. ``run_run`` on a transform-only pipeline runs to completion even with every
-provider key unset (the reverted #2685 regression, pinned dead — now by
-construction, not a hand-maintained guard). A "not registered" name still
-surfaces its own resolution error.
+Since #2708 P3.2b there is no per-surface startup credential gate on
+``reyn pipe run`` — any missing-cred rejection could only ever happen inside
+the single LLM funnel (``recorded_acompletion``). #3905 removed even that
+funnel-level pre-check (an unnecessary hardcode, owner ruling) — a missing
+key now surfaces litellm's own typed exception unmodified, on the first LLM
+call. The #2686 false-positive-zero property is STRUCTURAL either way: an
+LLM-less (transform/tool-only) pipeline never touches the funnel at all, so
+it can never be rejected for a missing provider key, with or without a
+pre-check there. ``run_run`` on a transform-only pipeline runs to completion
+even with every provider key unset (the reverted #2685 regression, pinned
+dead — by construction, not a hand-maintained guard). A "not registered"
+name still surfaces its own resolution error.
 
 Real dataclasses / real ``PipelineRegistry`` / real ``load_config`` / real
 ``run_run`` — no mocks.

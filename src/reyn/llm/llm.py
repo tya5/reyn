@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple, TypeVar, Unio
 
 logger = logging.getLogger(__name__)
 from reyn.core.turn_scope import get_active_turn_chain_id
-from reyn.llm.credentials import check_model_credentials
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
@@ -2048,18 +2047,17 @@ async def recorded_acompletion(
     # #309: per-class routing (api_base/provider) wins; None → global proxy_kwargs().
     extra = routing if routing is not None else proxy_kwargs()
 
-    # #2708 P3.2b: the ONE credential pre-check, at the single LLM funnel. Every
-    # surface (CLI / web / dogfood / agent-step spawn / pipeline
-    # driver) funnels here, so a friendly missing-cred error is universal BY
-    # CONSTRUCTION — no per-surface startup gate to hand-wire or let drift. The
-    # effective ``api_base`` (per-class routing OR global proxy) → skip (proxy
-    # handles auth), preserving the narrow-by-design contract EXACTLY. An
-    # LLM-less run never reaches here, so it can never be rejected for missing
-    # creds (#2686 false-positive-zero, now structural). Fires before litellm is
-    # touched, so no network call is wasted on a knowably-uncredentialled model.
-    _cred_miss = check_model_credentials(model=model, api_base=extra.get("api_base"))
-    if _cred_miss is not None:
-        raise _cred_miss
+    # #3905: the #2708 P3.2b credential pre-check (_PROVIDER_ENV_VARS + a typed
+    # MissingCredentialsError) was removed. It could only ever cover a fixed
+    # enumeration of providers — owner ruling: an unnecessary hardcode reyn had
+    # no business maintaining, since litellm ALREADY raises a typed exception
+    # naming the provider AND the exact env var to set (verified: neither
+    # provider name nor variable name needed re-deriving; measured directly
+    # that litellm's own message for openai/anthropic missing-key cases already
+    # names the specific env var). litellm's own exception now propagates
+    # unmodified — no network call was ever saved by the old pre-check either
+    # (litellm validates before touching the network on the providers
+    # measured), so nothing is lost by letting litellm raise it.
     # Strip the provider prefix ONLY when routing to an api_base endpoint
     # (OpenAI-compatible proxy expects a bare model + custom_llm_provider). A
     # direct-provider route (provider set, no api_base) keeps the prefix so
