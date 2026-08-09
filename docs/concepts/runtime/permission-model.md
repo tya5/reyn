@@ -500,6 +500,17 @@ allows(axis, value) = all(layer.allows(axis, value) for layer in layers)
 
 `SandboxLayer`, `ProfileLayer`, and `ContextualLayer` are **restrict-only**: they can narrow a permission, but cannot re-grant something the `AgentLayer` denied. This is a structural property of the conjunction (`all(...)`) — no layer's `False` can be overridden by any other layer.
 
+**`write_paths`/`read_paths: []` means opposite things on the two enforcement
+paths that consume the same `SandboxPolicy` field.** In [`sandboxed_exec`'s
+kernel backends](sandbox.md) (Seatbelt/Landlock), an empty list is the tight
+floor — it denies everything on that axis. In `SandboxLayer` here (the gate
+feeding `require_file_read`/`require_file_write`), an empty list means "no
+restriction declared on this axis" (⊤) — it imposes nothing, passing the
+decision through to whatever the other layers already resolved.
+`write_paths: []` does **not** block a config-authored file write the way it
+blocks a subprocess's kernel-level write; the two mechanisms only look
+identical because they share one config field name.
+
 ### One spec, two binding adapters (#2074)
 
 The two narrowing layers are **two bindings of one primitive**: both read a
