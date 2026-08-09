@@ -19,18 +19,30 @@ but a wrong one is still a lie). What changed is the CLASS of growth:
 
 Still unbounded in principle (read enough distinct paths, this grows
 forever) — the bound is on WORK done (each entry costs a real file read +
-permission gate), not on how much an agent can emit. Three tests below make
+permission gate), not on how much an agent can emit. The tests below make
 this falsifiable rather than asserted:
 
   1. Non-read events, however many, leave the derived state at size 0.
   2. Repeated reads of the SAME path leave it at size 1 (not N).
-  3. Removing the fold (the mechanism) makes both 1 and 2 fail — the direct
-     strip-falsify the growth-class claim needs, so this file doesn't stay
-     green with the mechanism dead.
 
 Real ``EventLog`` throughout (no mocks) — ``ingested_path_count`` is the
 public witness (CLAUDE.md: no private-state assertions), not a read of the
 private ``_ingested`` dict.
+
+A fourth test, ``test_removing_the_fold_breaks_both_size_claims``, was
+removed (#3908, architect co-vet on #3868 comment 5229519141): it built a
+hand-written ``_NoFoldEventLog`` subclass whose ``emit()`` skips the fold,
+then asserted that stub's own behavior back — a transcribed implementation
+(CLAUDE.md's six-question review, Q1 "none": reyn's own trivia; Q2 "yes":
+same expression both sides), and a real strip of the production fold block
+in ``events.py`` leaves it GREEN (it asserts what the hand-written stub
+does, not what production does with the fold removed) — the opposite of
+what "STRIP-FALSIFY" in its name claimed. The real strip-falsify for tests
+1 and 2 above is executed and recorded in the PR body, not encoded as a
+test: deleting the fold block in ``EventLog.emit()`` turns both RED
+(confirmed via a positive control — ``grep -c '_ingested\\[path\\]'
+src/reyn/core/events/events.py`` → 0 after the strip), then the tree is
+restored.
 """
 from __future__ import annotations
 
@@ -84,44 +96,3 @@ def test_sticky_full_survives_a_later_truncated_read() -> None:
 
     assert log.compute_ingested("/repo/big.txt", "/repo/big.txt") == "full"
     assert log.ingested_path_count == 1
-
-
-def test_removing_the_fold_breaks_both_size_claims() -> None:
-    """Tier 1: STRIP-FALSIFY — with the emit()-time fold removed (simulated
-    by constructing an EventLog whose emit() never populates ``_ingested``,
-    the same class shape a future refactor accidentally deleting the fold
-    would produce), both prior claims go false: the "same path stays at 1"
-    test would instead see 0 (nothing tracked at all), proving those tests
-    exercise the real mechanism and are not vacuously true.
-    """
-
-    class _NoFoldEventLog(EventLog):
-        """A real EventLog subclass whose emit() skips the #3868 fold —
-        not a mock of EventLog, a genuine (if deliberately broken) instance
-        with the SAME public surface, so this drives the same code paths
-        the tests above do."""
-
-        def emit(self, type: str, **data):  # noqa: A002 - matches base signature
-            # Bypass EventLog.emit entirely so the fold never runs, while
-            # still producing a real Event and appending to `_events` (the
-            # rest of the class's own invariants).
-            from reyn.schemas.models import Event
-
-            event = Event(type=type, data=data)
-            self._events.append(event)
-            for sub in self._subscribers:
-                sub(event)
-            return event
-
-    log = _NoFoldEventLog()
-    for _ in range(200):
-        _emit_read(log, "/repo/README.md")
-
-    assert log.ingested_path_count == 0, (
-        "with the fold removed, ingested_path_count is non-zero — this test "
-        "no longer falsifies the mechanism"
-    )
-    assert log.compute_ingested("/repo/README.md", "/repo/README.md") == "none", (
-        "with the fold removed, compute_ingested still reports the read — "
-        "the fold is not what drives this claim after all"
-    )
