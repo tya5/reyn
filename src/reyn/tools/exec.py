@@ -89,6 +89,8 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         return legacy_ctx
 
     # Minimal synthesis path (= test sites / narrow callers).
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
     return OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
@@ -110,6 +112,17 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         caller="direct",
         parent_run_id=None,
         sandbox_config=sandbox_config,
+        # #3907①: this path had no access to reyn.yaml sandbox.policy at all
+        # (no `rs`/op_context_factory here to read it through), so
+        # ctx.default_sandbox_policy stayed None — the op_runtime handler's
+        # only fallback then is `SandboxedExecIROp`'s own raw op-field
+        # defaults (op_runtime/sandboxed_exec.py:69-74), a DIFFERENT
+        # computation than every other op path, which resolves through this
+        # SAME floor. resolve_sandbox_policy(None) applies the floor (no
+        # operator config to merge here — there's genuinely nothing to read
+        # it from on this path) rather than leaving this one path uniquely
+        # computed from op fields alone.
+        default_sandbox_policy=resolve_sandbox_policy(None),
     )
 
 
