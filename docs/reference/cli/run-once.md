@@ -32,7 +32,6 @@ The prompt is read from stdin in full (not line by line).
 | Flag | Description |
 |------|-------------|
 | `--max-iterations N` | Per-message tool-call budget for the autonomous loop. Default `80` — higher than interactive chat so the agent can iterate explore → edit → verify to completion. |
-| `--grant-file-write` | Grant `file.read` + `file.write` at the resolver layer so the non-interactive agent edits its working tree without a prompt. `file.write` is scoped to the zone root (`#3925`) — a permission-side concept, not a sandbox one: the permission layer does not consult the sandbox (`#3901` PR-B ③ retired that coupling). Same as `reyn chat --grant-file-write` — see [Protect credentials from sandboxed commands](../../guide/for-users/protect-credentials-in-shell-commands.md). |
 | `--exclude-tools NAMES` | Comma-separated tool names to hide from the agent's LLM-visible catalog (e.g. `web_search,web_fetch`). Same as `reyn chat --exclude-tools`. |
 | `--exclude-categories NAMES` | Comma-separated catalog category names to hide at the catalog source (e.g. `reyn_repo` when the agent's own source is irrelevant to the task). Same as `reyn chat --exclude-categories`. |
 
@@ -57,10 +56,12 @@ Run the default agent on a piped prompt:
 echo "Summarize the README and list open TODOs" | reyn run-once
 ```
 
-Drive a named agent that may edit its working tree:
+Drive a named agent that may edit its working tree — declare the grant in
+`reyn.yaml` (`#3924` removed the `--grant-file-write` flag; see
+[`reyn chat`'s options](chat.md#options) for the config form):
 
 ```bash
-cat task.md | reyn run-once coder --grant-file-write
+cat task.md | reyn run-once coder
 ```
 
 Hide web tools and the Reyn-source category for an external-repo task:

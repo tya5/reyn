@@ -23,6 +23,8 @@ import argparse
 import io
 from pathlib import Path
 
+import pytest
+
 from reyn.interfaces.cli.commands.chat import _reset_project_state, register
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,21 @@ def test_no_restore_flag_parses():
     parser = _make_parser_with_chat()
     args = parser.parse_args(["chat", "--no-restore"])
     assert args.no_restore is True
+
+
+def test_grant_file_write_flag_removed():
+    """Tier 2: #3924 deletion-witness — --grant-file-write is no longer a
+    registered 'reyn chat' flag (owner ruling: per-invocation permission
+    flags don't scope well in a multi-agent system; measured zero real call
+    sites outside its own tests, #3924). Formerly
+    test_chat_grant_file_write_187.py::test_chat_parser_exposes_grant_file_write_flag
+    (that file's remaining tests — the resolver-level "allow config permits
+    a write"/"empty config denies a write" claims — are covered generically
+    elsewhere, independent of any chat flag: see
+    test_require_file_jit_ask_1505.py::test_file_write_bus_none_denies_outside_zone)."""
+    parser = _make_parser_with_chat()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["chat", "--grant-file-write"])
 
 
 def test_reset_flag_parses():

@@ -87,22 +87,12 @@ def register(sub) -> None:
     )
     # #1401: scoped capabilities for the A2A server path — symmetric with
     # `reyn chat`. Lets a headless `reyn web` (the faithful SWE-eval A2A host)
-    # run agent file/exec ops in a per-instance container, scope out tools (e.g.
-    # web for faithful eval), and grant repo file-write. Threaded as the
-    # env-backend INSTANCE (no env-var rebuild) via web/deps; see run().
+    # run agent file/exec ops in a per-instance container and scope out tools
+    # (e.g. web for faithful eval). Threaded as the env-backend INSTANCE (no
+    # env-var rebuild) via web/deps; see run(). #3924 removed the
+    # --grant-file-write flag this section used to also register — file
+    # access now flows from reyn.yaml's own permissions: section only.
     register_env_backend_args(p)  # --env-backend / --container
-    p.add_argument(
-        "--grant-file-write",
-        action="store_true",
-        default=False,
-        dest="grant_file_write",
-        help=(
-            "agent に file.read/write を resolver 層で許可。"
-            "file.write は zone root にスコープされる(#3925)。"
-            " headless/scripted SWE で repo を編集させる場合に有効化 "
-            "(`reyn chat --grant-file-write` と同等)。"
-        ),
-    )
     p.add_argument(
         "--exclude-tools",
         dest="exclude_tools",
@@ -146,21 +136,20 @@ def register(sub) -> None:
 
 
 def _apply_cli_scoped_overrides(args: argparse.Namespace) -> None:
-    """#1401: build the env-backend INSTANCE (CLI process) + thread it, the
-    workspace dirs, exclude-tools, and the file-write grant to the A2A session
-    factory via web/deps' module-global holder. No-op when no scoped flag is
-    set (a plain `reyn web` stays byte-identical).
+    """#1401: build the env-backend INSTANCE (CLI process) + thread it and
+    exclude-tools to the A2A session factory via web/deps' module-global
+    holder. No-op when no scoped flag is set (a plain `reyn web` stays
+    byte-identical). #3924 removed the file-write grant this used to also
+    thread — file access flows from reyn.yaml's own permissions: section only.
 
     Detects scoped intent from the args BEFORE ``build_environment_backend``
     (which may LAUNCH a container) so the --reload guard fires without side
     effects. --reload spawns a worker subprocess the parent's module-global
     cannot reach (silent no-op) → fail loud instead.
     """
-    grant = bool(getattr(args, "grant_file_write", False))
     exclude_raw = getattr(args, "exclude_tools", None)
     scoped_intent = (
         getattr(args, "env_backend", "host") != "host"
-        or grant
         or bool(exclude_raw)
     )
     if not scoped_intent:
@@ -168,7 +157,7 @@ def _apply_cli_scoped_overrides(args: argparse.Namespace) -> None:
     if getattr(args, "reload", False):
         print(
             "Error: --reload is incompatible with the scoped capability flags "
-            "(--env-backend=docker / --grant-file-write / --exclude-tools). The "
+            "(--env-backend=docker / --exclude-tools). The "
             "uvicorn reload worker is a subprocess the CLI-set overrides cannot "
             "reach (silent no-op). Run without --reload for a scoped server.",
             file=sys.stderr,
@@ -190,7 +179,6 @@ def _apply_cli_scoped_overrides(args: argparse.Namespace) -> None:
             workspace_base_dir=wb,
             workspace_state_dir=ws,
             exclude_tools=exclude_tools,
-            grant_file_write=grant,
         )
     )
 

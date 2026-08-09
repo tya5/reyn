@@ -6,8 +6,10 @@ reply, then exit. Conceptually distinct from interactive `reyn chat`: a one-shot
 batch entry for programmatic / eval use (the SWE-bench runner pipes the whole
 task as one message).
 
-Reuses `reyn chat`'s scoped session construction (grant / exclude-tools /
-env-backend / registry) by delegating to ``chat.run`` with ``once=True`` — the
+Reuses `reyn chat`'s scoped session construction (exclude-tools / env-backend /
+registry — #3924 removed the CLI-level file-write grant flag; that capability
+now flows from `reyn.yaml`'s own `permissions:` section) by delegating to
+``chat.run`` with ``once=True`` — the
 construction path is shared, only the final drive differs (``send_to_agent_impl``
 instead of the line-by-line REPL). This is why the line-fragmentation bug (the
 REPL read stdin a line at a time) does not recur here, and why the scoped
@@ -40,15 +42,6 @@ def register(sub) -> None:
     )
     # Shared scoped surface — identical flags/help to `reyn chat` / `reyn run`.
     register_env_backend_args(p)
-    p.add_argument(
-        "--grant-file-write", dest="grant_file_write", action="store_true",
-        default=False,
-        help=(
-            "Grant file.read+file.write at the resolver layer (the non-interactive "
-            "agent edits its working tree without a prompt), file.write scoped to "
-            "the zone root (#3925). Same as `reyn chat --grant-file-write`."
-        ),
-    )
     p.add_argument(
         "--exclude-tools", dest="exclude_tools", default=None, metavar="NAMES",
         help=(

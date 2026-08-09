@@ -7,9 +7,11 @@ passed RAW to ``require_file_write``; the gate's SandboxLayer resolved it with
 ``Path(path).resolve()`` against the HOST process cwd — not /testbed — so it fell
 outside the sandbox ``write_paths`` cap (``[/testbed]``) and was DENIED, even
 though ``Workspace.write_file`` resolves the same path against /testbed and lands
-it there. ``--grant-file-write`` (config file.write=allow) already bypasses the
-AgentLayer zone, so the SandboxLayer ∩ on the relative-vs-cwd mismatch was the
-real denier (NOT the project_root zone anchor).
+it there. A ``file.write=allow`` config permission (#3924: this used to be
+what ``--grant-file-write`` injected, now written directly in reyn.yaml)
+already bypasses the AgentLayer zone, so the SandboxLayer ∩ on the
+relative-vs-cwd mismatch was the real denier (NOT the project_root zone
+anchor).
 
 The fix resolves the path against ``ctx.workspace.base_dir`` before the gate, so
 the permission check sees the SAME absolute target the write/read will hit. These
@@ -40,7 +42,8 @@ from reyn.security.permissions.permissions import PermissionDecl, PermissionReso
 
 def _ctx(tmp_path: Path, base_dir: Path, *, write_cap: Path) -> OpContext:
     """An OpContext mirroring the run-once-in-container scoping: workspace rooted
-    on a non-cwd base_dir, config file.write/read=allow (--grant-file-write),
+    on a non-cwd base_dir, config file.write/read=allow (#3924: an operator's
+    reyn.yaml permissions declaration, not a CLI flag anymore),
     project_root on the HOST, and a sandbox capping write paths to the
     container repo. #3901 PR-B ③ retired FILE_READ from SandboxLayer's
     permission-∩ projection, so this ctx no longer carries a read cap — see
