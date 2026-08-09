@@ -19,8 +19,12 @@ NOT a pytest file, matching the sibling live-smoke script's own reasoning:
 loading a real default-deny seccomp filter is irrevocable for the rest of
 the process, so the probe forks a fresh subprocess. This script is a
 ONE-SHOT measurement (#3869 asked to measure before deciding scope, not to
-ship a new permanent gate) — see the PR body for whether it stays wired
-into CI or is removed after the result is recorded.
+ship a new permanent gate) — it ran once as a temporary extra step in
+`sandbox-linux-live-x86_64.yml` (PR #3980), the result (3/3 passed: a
+Landlock+seccomp-restricted child CAN rewrite both its argv and its
+PR_SET_NAME) was recorded on #3869, and the CI step was then removed —
+this file is kept as a standalone script for a future rerun (e.g. after a
+sandbox-layer change) rather than deleted, but is not itself a gate.
 """
 from __future__ import annotations
 
