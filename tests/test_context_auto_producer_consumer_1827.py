@@ -13,12 +13,12 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from reyn.security.permissions.effective import tool_contextually_denied
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 from tests._support.untrusted_narrowing import narrowing_on
 

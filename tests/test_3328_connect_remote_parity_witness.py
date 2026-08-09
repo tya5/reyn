@@ -63,7 +63,6 @@ import sys
 
 import pytest
 import uvicorn
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from fastapi import FastAPI
 
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
@@ -78,6 +77,7 @@ from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 
 # ── shared harness: a REAL bound server + REAL registry ─────────────────────

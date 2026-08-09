@@ -24,7 +24,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from _async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
@@ -38,6 +37,7 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 
 # ---------------------------------------------------------------------------
 # Helpers
