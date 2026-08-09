@@ -338,7 +338,6 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["python3", "-c", "print(1)"],
-        timeout_seconds=30,
     )
 
     await execute_op(op, ctx)

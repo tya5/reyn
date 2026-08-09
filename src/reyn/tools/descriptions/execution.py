@@ -33,17 +33,15 @@ exec_ = ToolDescription(
     ),
     text=(
         "Execute a command in a sandboxed environment (FP-0017). The sandbox "
-        "policy (network access + filesystem scope) is the OPERATOR's, resolved "
-        "by the OS — it is not chosen here. "
-        "argv: command and arguments (argv[0] is the executable). "
-        "timeout_seconds: wall-clock time limit in seconds (default 60)."
+        "policy (network access + filesystem scope + wall-clock timeout) is "
+        "the OPERATOR's, resolved by the OS — it is not chosen here. "
+        "argv: command and arguments (argv[0] is the executable)."
     ),
     ja=(
         "サンドボックス環境内でコマンドを実行する（FP-0017）。サンドボックス"
-        "ポリシー（ネットワークアクセス・ファイルシステムスコープ）は"
-        "オペレーターのものとして OS が解決する（ここで選択するものでは"
-        "ない）。argv: コマンドと引数、timeout_seconds: 秒単位のタイムアウト"
-        "（デフォルト60）。"
+        "ポリシー（ネットワークアクセス・ファイルシステムスコープ・タイムアウト"
+        "秒数）はオペレーターのものとして OS が解決する（ここで選択するもので"
+        "はない）。argv: コマンドと引数。"
     ),
 )
 
@@ -53,11 +51,12 @@ ALL: dict[str, ToolDescription] = {
 
 
 # ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
-
-_timeout_seconds_desc = ParamDescription(
-    text="Wall-clock time limit in seconds (default 60).",
-    ja="実時間タイムアウト秒数（デフォルト 60）。",
-)
+#
+# #3962: the "timeout_seconds" entry this dict used to carry was removed
+# along with the tool parameter it described — the wall-clock cap was never
+# actually settable via the op on the real path (ctx.default_sandbox_policy's
+# own timeout_seconds always governed), so the LLM-facing parameter and its
+# description were pure advertised-but-ignored surface.
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
     "exec": {
@@ -65,6 +64,5 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text="Command and arguments; argv[0] is the executable.",
             ja="コマンドと引数。argv[0] が実行ファイル。",
         ),
-        "timeout_seconds": _timeout_seconds_desc,
     },
 }

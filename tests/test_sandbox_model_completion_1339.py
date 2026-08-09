@@ -80,15 +80,21 @@ def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
 
 
 def test_tool_schema_is_argv_only():
-    """Tier 2: #1339 —the exec TOOL exposes only argv + timeout — the
-    LLM cannot set network / fs scope (those are operator-or-default)."""
+    """Tier 2: #1339 — the exec TOOL exposes only argv — the LLM cannot set
+    network / fs scope / timeout (those are operator-or-default).
+
+    #3962: `timeout_seconds` dropped out of this schema too — it was the
+    same defect class as the other removed fields (LLM-advertised, silently
+    ignored on the real path), just missed by #3907's own sweep since a
+    wall-clock cap isn't a permission axis."""
     from reyn.tools.exec import _EXEC_DESCRIPTION, _EXEC_PARAMETERS
 
     props = set(_EXEC_PARAMETERS["properties"])
-    assert props == {"argv", "timeout_seconds"}
+    assert props == {"argv"}
     for removed in (
         "network", "write_paths", "allow_subprocess", "deny_subprocess",
         "env_deny_names", "read_deny_paths", "write_deny_paths",
+        "timeout_seconds",
     ):
         assert removed not in props
     # the description frames the policy as the OPERATOR's (not a settable param)
