@@ -160,6 +160,17 @@ async def _measure_subscription(client: MCPClient, cell: dict) -> None:
         await client.unsubscribe_resource("resource://pid")
     except Exception as exc:
         cell["reyn_feature"]["subscription"] = _classify_error(exc)
+        if type(exc).__name__ == "MCPCapabilityError":
+            # lead-coder's #3971 review note: this is a detection of the
+            # SERVER not advertising the resources.subscribe sub-capability
+            # (MCPClient's own gate firing correctly), not a reyn defect —
+            # spelled out here so a reader of the matrix doesn't misread
+            # "error" as "reyn is broken".
+            cell["notes"].append(
+                "subscription: MCPCapabilityError = the server does not "
+                "advertise resources.subscribe (MCPClient's capability gate "
+                "working as intended, not a reyn defect)"
+            )
 
 
 async def _measure_reconnect_stdio(config: dict, cell: dict) -> None:

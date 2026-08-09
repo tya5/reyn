@@ -29,7 +29,7 @@ Every cell is one of `ok` / `error:<ExceptionType>` / `not_measurable` (with the
 | reconnect | ok |
 
 - **teardown**: clean
-- **notes**: logging: MCPClient has no representative public call for this capability (architect #3698 design §3); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo)
+- **notes**: logging: MCPClient has no representative public call for this capability (architect #3698 design §3); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect)
 
 ## http
 
@@ -55,7 +55,7 @@ Every cell is one of `ok` / `error:<ExceptionType>` / `not_measurable` (with the
 | reconnect | ok |
 
 - **teardown**: not_measurable
-- **notes**: logging: MCPClient has no representative public call for this capability (architect #3698 design §3); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); teardown: http has no child process of its own to leak
+- **notes**: logging: MCPClient has no representative public call for this capability (architect #3698 design §3); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect); teardown: http has no child process of its own to leak
 
 ## sse
 
@@ -81,4 +81,4 @@ Every cell is one of `ok` / `error:<ExceptionType>` / `not_measurable` (with the
 | reconnect | ok |
 
 - **teardown**: not_measurable
-- **notes**: logging: MCPClient has no representative public call for this capability (architect #3698 design §3); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); teardown: sse has no child process of its own to leak
+- **notes**: logging: MCPClient has no representative public call for this capability (architect #3698 design §3); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect); teardown: sse has no child process of its own to leak
