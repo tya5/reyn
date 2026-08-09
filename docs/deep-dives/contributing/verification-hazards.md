@@ -553,7 +553,14 @@ source tree, not `reyn`'s — rather than widening the pattern.
 searched>`" — an unscoped N reads as total. Before trusting a 0 or a small
 N, name every location the defect COULD live (adjacent files in the same
 subsystem, a dependency's own source, a sibling directory) and confirm each
-was actually searched, not just the one that felt likely.
+was actually searched, not just the one that felt likely. Concretely for a
+consumer sweep of `src/` construction sites: the population is `src/` /
+`tests/` / `scripts/`, not just the first two — `scripts/` runs CI-only
+probes that import `src/` without being called either "implementation" or
+"test," which is exactly why a sweep worded as "across src and tests" keeps
+skipping it (three independent same-night sessions, 2026-08-09, each
+scoped a sweep to src+tests, and each hit the same `scripts/` file in CI —
+the miss was never a bad regex, only ever the file-set).
 
 ## 18. A claim's subject can fail to hold up three different ways — existence, identity, and effect need different detection
 
