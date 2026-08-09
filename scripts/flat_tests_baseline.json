@@ -4,7 +4,6 @@
   "test_0060_d5c_error_rail.py",
   "test_0060_d5d_doc_ref_registry_gate.py",
   "test_0060_f3b_sibling_builtins.py",
-  "test_0060_phase1_f3a_builtin_tier.py",
   "test_0060_phase1_layer_a.py",
   "test_0060_phase2_f3b_builtin_content.py",
   "test_0061_repo_self_access_parity.py",
