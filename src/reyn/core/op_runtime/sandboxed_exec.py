@@ -67,32 +67,19 @@ async def handle(
     # name-based factory cannot build, without the handler knowing the caller.
     backend = resolve_backend(ctx.sandbox_backend, ctx.sandbox_config)
     # #1326: the agent-level (operator) sandbox policy (reyn.yaml sandbox.policy,
-    # resolved onto the ctx) WINS over the op's own fields — so the policy is
-    # deterministic and the LLM cannot override it. Falls back to the op-level
-    # fields when no agent policy is set (unchanged behavior).
-    if ctx.default_sandbox_policy is not None:
-        policy = SandboxPolicy(**ctx.default_sandbox_policy)
-    else:
-        # #3901 PR-B: `op` (SandboxedExecIROp) and `SandboxPolicy` are
-        # DIFFERENT vocabularies now, not a naming accident — op is what the
-        # LLM requests ("let me do X", allow_*), policy is what the
-        # operator forbids ("don't let it Y", deny_*). Direct field-by-field
-        # translation here (not a shared conversion layer: this is the
-        # ONLY production construction site — #3907 tracks these op fields
-        # having zero real producers; every setter found was a test
-        # constructing the op directly). `op.read_paths` has no policy
-        # counterpart (removed #3901 PR-B ④, broad-read realignment made it
-        # dead everywhere); `op.env_passthrough` has no direct translation
-        # (an allow-list of names vs `env_deny_names`' a deny-list means
-        # "block nothing extra" IS its empty default, so an empty
-        # `env_passthrough` — the only value #3907 found ever produced —
-        # needs no translation at all).
-        policy = SandboxPolicy(
-            network=op.network,
-            write_paths=list(op.write_paths),
-            deny_subprocess=not op.allow_subprocess,
-            timeout_seconds=op.timeout_seconds,
-        )
+    # resolved onto the ctx) is the ONLY source of the enforced policy — the
+    # LLM cannot set it via the op (#3907 deleted the 5 op-level policy fields
+    # this used to fall back to: #3907① measured every context-building path
+    # resolves a concrete `ctx.default_sandbox_policy` — never `None` — so the
+    # op-fields fallback branch this comment used to describe was dead code no
+    # test could witness without bypassing the real op constructor).
+    assert ctx.default_sandbox_policy is not None, (
+        "sandboxed_exec: ctx.default_sandbox_policy is None — every real "
+        "context-building path resolves a concrete policy (#1339/#3907①); "
+        "this op no longer carries policy fields to fall back to, so a "
+        "None here is a caller bug, not a recoverable state"
+    )
+    policy = SandboxPolicy(**ctx.default_sandbox_policy)
 
     # Anchor the working directory to the run's workspace base_dir — parity with
     # the legacy `shell` op (FP-0008 PR-I). Without this, repo-relative `git` /
