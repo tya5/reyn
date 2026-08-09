@@ -27,7 +27,7 @@ assignment of a plain async function onto `router_host.mcp_list_tools`) — not 
 The single most important property asserted here is NOT "the mechanism ran" — it is what
 the operator/LLM actually receives: the literal audit-event payload
 (`event.type`, `event.data["server"]`, `event.data["reason"]`) an operator reading
-`.reyn/events` (or `router_host.events.all()`, its in-memory mirror) would see, and the
+`.reyn/events` would see, and the
 literal wall-clock behaviour change (timeout fires or doesn't) a non-default config value
 produces. #3512's strip-D arm went GREEN because every witness there was "a function was
 called", never "the string a consumer reads" — this file assigns the audit-event's own
