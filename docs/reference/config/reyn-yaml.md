@@ -419,6 +419,7 @@ chat:
   gutters:
     left: true            # TUI left gutter (state marker, 2 cols) shown at start
     right: true           # TUI right gutter (elapsed/tokens, 12 cols) shown at start
+  neutralize_body: false  # opt-in ESC/OSC strip on agent-reply/tool-result body text
 ```
 
 ### `chat.render_mode`
@@ -456,6 +457,22 @@ so these keys are the setting to change for a lasting preference. Hiding a
 gutter hands its whole column back to the conversation body (an 80-column
 terminal's body goes 66 → 78 columns with the right gutter hidden, → 80 with
 both).
+
+### `chat.neutralize_body`
+
+Opt-in ESC/OSC-control-sequence strip on the agent-reply / tool-result **body**
+text (#3318). Off by default — reyn's stated policy is "UX/predictability over
+security, security is opt-in". LLM-derived choice labels and intervention
+prompts are **always** neutralized regardless of this flag (#3302, a separate,
+unconditional display-boundary fix); this flag widens the same terminal
+neutralizer (`core/present/guard.get_neutralizer("terminal")`, ESC/control
+strip) to the conversation body content itself, where a raw ESC/OSC sequence
+from tool output or an untrusted model reply could otherwise reach the
+terminal on both the TUI conversation pane and the plain (`--cui`) renderer.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `neutralize_body` | bool | `false` | Strip ESC/control sequences from agent-reply and tool-result body text before rendering. |
 
 ### `chat.reasoning` fields
 

@@ -469,6 +469,15 @@
 #     left: true              # left state-marker gutter (2 cols) shown at start
 #     right: true             # right elapsed/turn-token gutter (12 cols) at start
 
+# chat.neutralize_body: opt-in ESC/OSC-control-sequence strip on the
+# agent-reply / tool-result BODY text (#3318). Off by default — "UX/
+# predictability over security, security is opt-in". LLM-derived choice
+# labels and intervention prompts are ALWAYS neutralized regardless of this
+# flag (#3302); this widens the same terminal neutralizer to conversation
+# body content, where a raw ESC/OSC sequence from tool output or an
+# untrusted model reply could otherwise reach the terminal.
+#   neutralize_body: false
+
 
 # -----------------------------------------------------------------------------
 # events: audit-log rotation policy. Chat events land under
