@@ -2756,6 +2756,8 @@ class TextualChatApp(App):
         # #3712: an entry just arrived. Counted HERE, by the thing that
         # produced it — not reconstructed later from two reads of the model.
         self._note_entry_landed()
+        if kind == "presentation":
+            self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
             self._present_intervention(msg, entry)
         else:
@@ -3062,6 +3064,38 @@ class TextualChatApp(App):
             self._flow.animate_entry(entry, 1.0 / self.RUNNING_BODY_FPS, lambda e: e.update())
         except Exception:
             logger.exception("textual chat: could not start running-tool indicator")
+
+    def _begin_image_resolutions(
+        self, entry: "Entry[OutboxMessage]", msg: "OutboxMessage"
+    ) -> None:
+        """Kick a background fetch (#3846 ②) for every `image` component's
+        `src` in a freshly-arrived ``kind="presentation"`` entry.
+
+        Scans ``msg.meta["nodes"]`` (the `present`-op render model) for
+        ``component == "image"`` nodes, delegating the actual cache/fetch/
+        redraw-on-completion machinery to :meth:`ReynPresenter.
+        begin_image_resolution` — this method's own job is only "detect that
+        a new frame needs resolving, and hand the presenter the Entry it
+        will call ``.update()`` on once settled" (the presenter has no
+        reference to any Entry/FlowView on its own; the app owns those).
+        Fully guarded, same rationale as :meth:`_begin_running_indicator`:
+        a broken image render must never break the frame pump."""
+        try:
+            nodes = (msg.meta or {}).get("nodes") or []
+            allowed = list(
+                getattr(getattr(self._config, "chat", None), "image_url_schemes", None)
+                or []
+            ) or None
+            for node in nodes:
+                if not isinstance(node, dict) or node.get("component") != "image":
+                    continue
+                src = node.get("src")
+                if isinstance(src, str) and src:
+                    self._presenter.begin_image_resolution(
+                        entry, src, allowed_schemes=allowed
+                    )
+        except Exception:
+            logger.exception("textual chat: could not start image resolution")
 
     def _seed_queue_view(self) -> None:
         """Seed :attr:`_queue_view` from a fresh read-model snapshot — called

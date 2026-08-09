@@ -478,6 +478,14 @@
 # untrusted model reply could otherwise reach the terminal.
 #   neutralize_body: false
 
+# chat.image_url_schemes: opt-in narrowing of which URL schemes `present`'s
+# `image` component will fetch (#3846). Default [] = unrestricted (both
+# http and https are fetched) — owner ruling: "even without the bytes, the
+# record of what was presented is enough". Set to restrict to a subset,
+# e.g. ["https"] to reject plain http. Any scheme outside {http, https} is
+# always rejected regardless of this list (nothing else is fetchable).
+#   image_url_schemes: []
+
 
 # -----------------------------------------------------------------------------
 # events: audit-log rotation policy. Chat events land under
