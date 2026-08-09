@@ -19,6 +19,7 @@ from scripts.check_migration_diff_shape import (
     blob_at_head,
     diff_name_status,
     gate_is_active,
+    has_matching_basename_rewrite_pair,
     is_tests_copy,
     offending_lines,
 )
@@ -502,4 +503,96 @@ def test_a_new_test_plus_new_init_py_still_leaves_the_gate_inactive(
         "a genuinely new test file + new __init__.py, with a pre-existing "
         "empty file elsewhere as a possible C-match candidate, incorrectly "
         "activated the gate after #3909/#3913's fix"
+    )
+
+
+# ── #3930 — an unrelated new file + an unrelated deletion is not a move ─────
+# #3929's real CI failure: an unrelated new test file (a brand-new
+# tests/interfaces/ addition) landed in the SAME diff as an unrelated
+# deletion (a wholly separate file's removal elsewhere in tests/), with no
+# relationship between the two beyond both touching tests/. The prior
+# signal (`has_new_subdir_file AND has_deletion`, independent of each
+# other) treated "something appeared AND something disappeared anywhere in
+# tests/" as evidence of a disguised move — which any PR that both adds a
+# new test file and deletes an unrelated one will trip. The fix requires
+# the appeared/disappeared pair to share a BASENAME before treating them as
+# one rewrite-disguised-as-move candidate (`has_matching_basename_rewrite_
+# pair`), since basename equality is the one signal that survives even a
+# 0%-content-overlap disguised move (see the sibling test below) while
+# discriminating it from two unrelated files.
+
+
+def test_an_unrelated_new_file_and_an_unrelated_deletion_leaves_the_gate_inactive(
+    _repo: Path,
+) -> None:
+    """Tier 2: #3930 — the real #3929 CI false positive, reproduced. A new
+    test file appearing in one subdirectory and an unrelated pre-existing
+    file being deleted elsewhere, with DIFFERENT basenames, must not
+    activate the gate — this exact shape wrongly failed #3929's real CI
+    before this fix (measured directly against the real PR diff, not
+    assumed from the design)."""
+    (_repo / "tests" / "test_unrelated_to_delete.py").write_text(
+        "some content nobody moved\n", encoding="utf-8",
+    )
+    _commit_all(_repo, "add a second, unrelated flat test file")
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    (core / "test_brand_new.py").write_text(
+        "a genuinely new test file, unrelated to anything deleted\n",
+        encoding="utf-8",
+    )
+    (_repo / "tests" / "test_unrelated_to_delete.py").unlink()
+    _commit_all(_repo, "add an unrelated new file + delete an unrelated old one")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert not has_matching_basename_rewrite_pair(lines), (
+        "an unrelated new file (test_brand_new.py) and an unrelated "
+        "deletion (test_unrelated_to_delete.py) — different basenames — "
+        "were wrongly paired as a disguised-move candidate"
+    )
+    assert not gate_is_active(lines), (
+        "an unrelated new-file-in-subdir + unrelated deletion elsewhere, "
+        "with no basename relationship, incorrectly activated the gate — "
+        "the exact #3929 false positive this fix closes"
+    )
+
+
+def test_a_same_basename_zero_similarity_disguised_move_still_activates_the_gate(
+    _repo: Path,
+) -> None:
+    """Tier 2: non-vacuity for the test above — the signal's actual
+    purpose (a 0%-content-overlap disguised move, indistinguishable from
+    an unrelated add+delete by content alone) must still be caught via
+    basename equality. Uses fully disjoint random content on both sides
+    (no shared line) so git's own similarity search — measured directly
+    beforehand — reports plain `A`/`D` lines rather than a low-similarity
+    `R` line, exercising `has_matching_basename_rewrite_pair` itself
+    rather than the `is_tests_rename` signal."""
+    import random
+
+    rnd = random.Random(2024)
+    old_lines = [f"old_unique_line_{i}_{rnd.random()}" for i in range(50)]
+    (_repo / "tests" / "test_a.py").write_text("\n".join(old_lines) + "\n", encoding="utf-8")
+    _commit_all(_repo, "replace tests/test_a.py with disjoint content")
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    new_lines = [f"new_unique_line_{i}_{rnd.random()}" for i in range(50)]
+    (core / "test_a.py").write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    (_repo / "tests" / "test_a.py").unlink()
+    _commit_all(_repo, "disguised move: same basename, zero content overlap")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert all(not line.startswith(("R", "C")) for line in lines), (
+        f"fixture assumption broken — expected plain A/D lines, got: {lines!r}"
+    )
+    assert has_matching_basename_rewrite_pair(lines), (
+        "a same-basename, zero-similarity disguised move was not recognized "
+        "as a rewrite-pair candidate"
+    )
+    assert gate_is_active(lines), (
+        "a same-basename disguised move with zero content overlap did not "
+        "activate the gate — the signal's original purpose, which the "
+        "#3930 basename-equality fix must preserve"
     )
