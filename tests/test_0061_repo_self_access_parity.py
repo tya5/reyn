@@ -52,8 +52,9 @@ from reyn.runtime.reyn_repo import (
     resolve_reyn_root,
     safe_resolve_inside,
 )
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = REPO_ROOT
 
 
 # ── 1. SSoT derivation: pyproject.toml force-include matches the Python SSoT ─

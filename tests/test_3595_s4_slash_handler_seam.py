@@ -42,9 +42,10 @@ import pytest
 from reyn.interfaces.slash import SlashContext, reply, reply_error
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
+from tests._support.paths import REPO_ROOT
 from tests._support.slash import RecordingTransport, slash_ctx
 
-_SLASH_DIR = Path(__file__).resolve().parent.parent / "src" / "reyn" / "interfaces" / "slash"
+_SLASH_DIR = REPO_ROOT / "src" / "reyn" / "interfaces" / "slash"
 
 
 # ── the walk ──────────────────────────────────────────────────────────────────

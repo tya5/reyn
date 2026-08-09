@@ -20,7 +20,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from tests._support.paths import REPO_ROOT
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import swe_bench_runner as r  # noqa: E402
 
 _INSTANCE = {

@@ -56,6 +56,7 @@ from reyn.security.permissions.effective import (
 )
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 from tests._support.untrusted_narrowing import narrowing_on
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
@@ -385,7 +386,7 @@ def test_every_production_narrowing_term_carries_an_origin() -> None:
     ``src/`` rather than a regex, so a keyword spelled across lines still counts
     and a mention inside a docstring does not.
     """
-    src = Path(__file__).resolve().parent.parent / "src" / "reyn"
+    src = REPO_ROOT / "src" / "reyn"
     missing: "list[str]" = []
     seen = 0
     for path in src.rglob("*.py"):

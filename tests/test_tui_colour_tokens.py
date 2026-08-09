@@ -22,8 +22,9 @@ import re
 from pathlib import Path
 
 from reyn.interfaces.inline.textual_chat import palette
+from tests._support.paths import REPO_ROOT
 
-_INTERFACES = Path(__file__).resolve().parent.parent / "src" / "reyn" / "interfaces"
+_INTERFACES = REPO_ROOT / "src" / "reyn" / "interfaces"
 
 #: A colour-bearing CSS declaration: the property names that take one, and the
 #: value up to the semicolon. ``border``/``outline`` are included because their

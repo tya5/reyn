@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 
 def _load_audit_module():
     """Import ``scripts/test_tier_audit.py`` as a module without invoking it.
@@ -37,7 +39,7 @@ def _load_audit_module():
     audit self-test ``test_tier_audit_private_state_ast.py``.)
     """
     import sys
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = REPO_ROOT
     script = repo_root / "scripts" / "test_tier_audit.py"
     spec = importlib.util.spec_from_file_location("_audit_tier_audit_fmtpin", script)
     assert spec is not None and spec.loader is not None
