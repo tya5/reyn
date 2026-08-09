@@ -47,6 +47,7 @@ from reyn.runtime.session_buses import (
 from reyn.runtime.session_params import PresentationWiring
 from reyn.user_intervention import UserIntervention
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 
 def _scripted_llm():
@@ -124,6 +125,7 @@ async def test_present_op_via_audit_only_sink_fires_audit_event_and_no_orphan() 
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
+    collected = collect_events(events)
     sink = AuditOnlyPresentationConsumer().sink(object())
     ctx = OpContext(
         workspace=Workspace(events=events), events=events, permission_decl=PermissionDecl(),
@@ -135,7 +137,7 @@ async def test_present_op_via_audit_only_sink_fires_audit_event_and_no_orphan() 
     )
     result = await handle(op, ctx)
     assert result["ok"] is True  # present succeeded (not errored/lost)
-    presented = [e for e in events.all() if e.type == "presented"]
+    presented = [e for e in collected if e.type == "presented"]
     assert presented, "the AuditOnly present did NOT emit a 'presented' audit event — trail lost"
     # The sink's own surface is the null/no-op surface — the visible draw reached no orphan queue.
     assert presented[0].data.get("surface") == [sink.surface_name]
@@ -169,6 +171,7 @@ async def test_ask_user_op_via_audit_only_bridge_returns_typed_refusal() -> None
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
+    collected = collect_events(events)
     ctx = OpContext(
         workspace=Workspace(events=events), events=events, permission_decl=PermissionDecl(),
         intervention_bus=AuditOnlyInterventionBridge().bus(),
@@ -178,7 +181,7 @@ async def test_ask_user_op_via_audit_only_bridge_returns_typed_refusal() -> None
     assert result["status"] == "refused", "ask_user did not surface the typed refusal"
     assert result["reason"] == NO_SURFACE_REFUSAL_REASON
     assert result["answer"] == ""  # never a fabricated non-empty answer
-    received = [e for e in events.all() if e.type == "user_intervention_received"]
+    received = [e for e in collected if e.type == "user_intervention_received"]
     assert any(e.data.get("refused") is True for e in received), (
         "the refusal was not recorded as refused=True — it looked like a normal empty answer"
     )

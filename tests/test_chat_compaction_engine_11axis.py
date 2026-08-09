@@ -52,6 +52,7 @@ from reyn.services.compaction.engine import (
     trim_head,
     trim_tail,
 )
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -446,11 +447,12 @@ def test_hard_truncate_summary_emits_event_when_truncating() -> None:
     truncates.
     """
     events = EventLog()
+    collected = collect_events(events)
     text = "x" * 400  # 100 tokens
     result = hard_truncate_summary(
         text, body_budget=50, model="", events=events, use_chars4=True
     )
-    emitted = [e for e in events.all() if e.type == "body_summary_hard_truncated"]
+    emitted = [e for e in collected if e.type == "body_summary_hard_truncated"]
     assert emitted, "body_summary_hard_truncated event must be emitted"
     assert emitted[0].data["kept_tokens"] == 50
     assert len(result) < len(text)
@@ -459,9 +461,10 @@ def test_hard_truncate_summary_emits_event_when_truncating() -> None:
 def test_hard_truncate_summary_no_event_when_within_budget() -> None:
     """Tier 2: hard_truncate_summary does NOT emit event when no truncation occurs."""
     events = EventLog()
+    collected = collect_events(events)
     text = "a" * 40  # 10 tokens
     hard_truncate_summary(text, body_budget=100, model="", events=events, use_chars4=True)
-    emitted = [e for e in events.all() if e.type == "body_summary_hard_truncated"]
+    emitted = [e for e in collected if e.type == "body_summary_hard_truncated"]
     assert not emitted
 
 
@@ -475,10 +478,11 @@ def test_trim_head_oversized_turn_event_has_required_fields() -> None:
     kept_tokens, budget_kind fields (Axis 7 spec).
     """
     events = EventLog()
+    collected = collect_events(events)
     turns = [{"role": "user", "text": "x" * 4000, "seq": 42}]
     trim_head(turns, max_tokens=10, model="", use_chars4=True, events=events)
     ev = next(
-        (e for e in events.all() if e.type == "turn_too_large_truncated"), None
+        (e for e in collected if e.type == "turn_too_large_truncated"), None
     )
     assert ev is not None
     assert ev.data["turn_seq"] == 42
@@ -492,10 +496,11 @@ def test_trim_tail_oversized_turn_event_has_required_fields() -> None:
     kept_tokens, budget_kind fields (Axis 7 spec).
     """
     events = EventLog()
+    collected = collect_events(events)
     turns = [{"role": "user", "text": "x" * 4000, "seq": 99}]
     trim_tail(turns, max_tokens=10, model="", use_chars4=True, events=events)
     ev = next(
-        (e for e in events.all() if e.type == "turn_too_large_truncated"), None
+        (e for e in collected if e.type == "turn_too_large_truncated"), None
     )
     assert ev is not None
     assert ev.data["turn_seq"] == 99
@@ -809,6 +814,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
     from reyn.runtime.services.compaction_controller import CompactionController
 
     events = EventLog()
+    collected = collect_events(events)
     engine = _CountingEngine()
 
     # 600 large turns — stays well "over budget"; pre-#1128 this drove a 2nd
@@ -845,7 +851,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
     assert engine.compact_call_count == 1, (
         f"force_compact_now must run exactly one pass, got {engine.compact_call_count}"
     )
-    unrecovered = [e for e in events.all() if e.type == "force_compact_race_unrecovered"]
+    unrecovered = [e for e in collected if e.type == "force_compact_race_unrecovered"]
     assert not unrecovered, (
         "single-pass force_compact_now must not emit force_compact_race_unrecovered"
     )

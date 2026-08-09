@@ -47,6 +47,7 @@ from reyn.services.compaction.engine import (
     _IMAGE_FIXED_TOKEN_COST,
     estimate_tokens_for_any_turn,
 )
+from tests._support.events import collect_events
 
 _MODEL = "gpt-3.5-turbo"
 
@@ -330,6 +331,7 @@ def test_elide_total_advisor_and_reference_three_way_agree():
         ),
     ]
     buf, advisor, events = _make_pair(history, media_store=None)
+    collected = collect_events(events)
 
     wire = buf.build_history()
     assert wire[0]["content"] == [{"type": "text", "text": "look"}], (
@@ -338,7 +340,7 @@ def test_elide_total_advisor_and_reference_three_way_agree():
         "ChatMessage's content"
     )
 
-    elide_events = [e for e in events.all() if e.type == "elide_evaluated"]
+    elide_events = [e for e in collected if e.type == "elide_evaluated"]
     assert elide_events, (
         "build_history must emit its internal elide-threshold total as a "
         "public audit-event — without this, elide's own accounting is "

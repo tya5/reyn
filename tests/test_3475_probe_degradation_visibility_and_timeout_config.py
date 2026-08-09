@@ -57,6 +57,7 @@ from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.event_schema import AUDIT_EVENT_KINDS
 from reyn.core.events.state_log import StateLog
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _REPO = Path(__file__).resolve().parents[1]
 _ROUTER_HOST_ADAPTER = _REPO / "src" / "reyn" / "runtime" / "services" / "router_host_adapter.py"
@@ -183,10 +184,11 @@ async def test_probe_timeout_emits_visible_degradation_event(tmp_path: Path):
         session, server = _make_probe_session(
             tmp_path, mcp_probe_seconds=0.05, probe_cb=_slow_probe,
         )
+        collected = collect_events(session.router_host.events)
         await _drive_first_turn(session)
 
         degradations = [
-            e for e in session.router_host.events.all()
+            e for e in collected
             if e.type == "mcp_tool_probe_degraded"
         ]
         assert len(degradations) >= 1, (
@@ -219,10 +221,11 @@ async def test_probe_exception_emits_visible_degradation_event(tmp_path: Path):
             tmp_path, mcp_probe_seconds=TimeoutConfig().mcp_probe_seconds,
             probe_cb=_broken_probe,
         )
+        collected = collect_events(session.router_host.events)
         await _drive_first_turn(session)
 
         degradations = [
-            e for e in session.router_host.events.all()
+            e for e in collected
             if e.type == "mcp_tool_probe_degraded"
         ]
         assert len(degradations) >= 1

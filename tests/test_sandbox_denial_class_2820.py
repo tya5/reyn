@@ -14,6 +14,7 @@ import pytest
 from reyn.core.offload.canonical import sandboxed_exec_to_canonical
 from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial
+from tests._support.events import collect_events
 
 # The exact stderr the incident produced (bare ``python3`` → pyenv shim → pyenv
 # forks under (deny process-fork)). Captured, not synthesized.
@@ -124,6 +125,7 @@ async def test_handler_surfaces_denial_class_and_argv0_end_to_end():
     from reyn.security.permissions.permissions import PermissionDecl
 
     events = EventLog()
+    collected = collect_events(events)
     workspace = Workspace(events=events)
     ctx = OpContext(
         workspace=workspace,
@@ -143,7 +145,7 @@ async def test_handler_surfaces_denial_class_and_argv0_end_to_end():
     assert result["denial_class"] == DENIAL_FORK
     assert "argv0_resolved" in result  # present (value may be None if python3 off PATH)
 
-    completed = [e for e in events.all() if e.type == "sandboxed_exec_completed"]
+    completed = [e for e in collected if e.type == "sandboxed_exec_completed"]
     assert completed, "sandboxed_exec_completed not emitted"
     assert completed[0].data.get("denial_class") == DENIAL_FORK
     assert "argv0_resolved" in completed[0].data

@@ -22,6 +22,7 @@ from reyn.llm.model_budget import (
     get_max_input_tokens,
     get_max_input_tokens_source,
 )
+from tests._support.events import collect_events
 
 
 def test_known_model_returns_positive_int() -> None:
@@ -41,12 +42,13 @@ def test_unknown_model_returns_fallback() -> None:
 def test_fallback_emits_observability_event() -> None:
     """Tier 2: fallback for an unknown model emits model_budget_fallback event (P6)."""
     events = EventLog()
+    collected = collect_events(events)
     # Use a unique model name to avoid being filtered by the process-global
     # "warned_models" set from other tests — suffix with a unique token.
     model = "unknown/test-only-fallback-event-model-abc123"
     get_max_input_tokens(model, events=events, phase="test_phase", run_id="run-1")
 
-    fallback_events = [e for e in events.all() if e.type == "model_budget_fallback"]
+    fallback_events = [e for e in collected if e.type == "model_budget_fallback"]
     assert len(fallback_events) >= 1
     ev = fallback_events[0]
     assert ev.data["model"] == model
@@ -90,8 +92,9 @@ def test_prefix_strip_resolution_emits_no_fallback_event() -> None:
     if get_max_input_tokens(_BARE) == _FALLBACK_MAX_INPUT_TOKENS:
         pytest.skip(f"litellm catalog lacks {_BARE!r} in this env")
     events = EventLog()
+    collected = collect_events(events)
     get_max_input_tokens(f"openai/{_BARE}", events=events)
-    assert not [e for e in events.all() if e.type == "model_budget_fallback"]
+    assert not [e for e in collected if e.type == "model_budget_fallback"]
 
 
 def test_unknown_prefixed_model_still_falls_back() -> None:
@@ -99,11 +102,12 @@ def test_unknown_prefixed_model_still_falls_back() -> None:
     keeps the 128K fallback — prefix-strip only improves resolution, never hides
     a genuinely-unknown model."""
     events = EventLog()
+    collected = collect_events(events)
     model = "openai/totally-made-up-proxy-model-1162-xyz"
     result = get_max_input_tokens(model, events=events)
     assert result == _FALLBACK_MAX_INPUT_TOKENS
     # the fallback event still fires for the genuinely-unknown model (unchanged).
-    assert [e for e in events.all() if e.type == "model_budget_fallback"]
+    assert [e for e in collected if e.type == "model_budget_fallback"]
 
 
 def test_source_for_cataloged_model_names_litellm() -> None:

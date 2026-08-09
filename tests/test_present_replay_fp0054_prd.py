@@ -20,23 +20,25 @@ from reyn.core.present import load_ref_from_disk, replay_presentation
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import collect_events
 
 
-def _ctx(tmp_path: Path) -> tuple[OpContext, EventLog]:
+def _ctx(tmp_path: Path) -> tuple[OpContext, list]:
     resolver = PermissionResolver(
         config_permissions={}, project_root=tmp_path, interactive=False,
     )
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events, permission_resolver=resolver)
     ctx = OpContext(
         workspace=ws, events=events, permission_decl=PermissionDecl(),
         permission_resolver=resolver, actor="present_replay_test",
     )
-    return ctx, events
+    return ctx, collected
 
 
-def _presented_event(events: EventLog) -> dict:
-    evs = [e for e in events.all() if e.type == "presented"]
+def _presented_event(events: list) -> dict:
+    evs = [e for e in events if e.type == "presented"]
     assert evs, "present emitted no presented event"
     return evs[-1].data
 

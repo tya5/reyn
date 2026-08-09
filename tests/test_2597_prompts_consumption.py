@@ -31,6 +31,7 @@ from reyn.mcp.pool import MCPClientPool
 from reyn.schemas.models import MCPGetPromptIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
+from tests._support.events import collect_events
 
 
 class _UnusedBus(InterventionBus):
@@ -274,6 +275,7 @@ def test_execute_gets_real_prompt_and_emits_events(tmp_path):
     from reyn.core.op_runtime.mcp_get_prompt import _execute
 
     events = EventLog()
+    collected = collect_events(events)
     op = MCPGetPromptIROp(kind="mcp_get_prompt", server="prompts-srv", name=_PROMPT_NAME, arguments={})
 
     async def _it():
@@ -286,7 +288,7 @@ def test_execute_gets_real_prompt_and_emits_events(tmp_path):
     assert result["status"] == "ok"
     assert result["messages"][0]["content"]["text"] == _PROMPT_TEXT
 
-    types_seen = [e.type for e in events.all()]
+    types_seen = [e.type for e in collected]
     assert "mcp_prompt_get" in types_seen
     assert "mcp_prompt_get_completed" in types_seen
     assert "mcp_prompt_get_failed" not in types_seen
@@ -298,6 +300,7 @@ def test_handle_denies_without_permissions_mcp_declared(tmp_path):
     does not declare the server under `mcp`, mirroring the `mcp_read_resource`
     op's own require_mcp gate exactly."""
     events = EventLog()
+    collected = collect_events(events)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=False)
     # No mcp=[...] on the decl — the AgentLayer grant is empty.
     ctx = _make_ctx(tmp_path, events, resolver=resolver, decl=PermissionDecl())
@@ -307,8 +310,8 @@ def test_handle_denies_without_permissions_mcp_declared(tmp_path):
     result = _run(execute_op(op, ctx))
 
     assert result["status"] == "denied"
-    denials = [e for e in events.all() if e.type == "permission_denied"]
-    assert denials, f"expected permission_denied event; got {[e.type for e in events.all()]}"
+    denials = [e for e in collected if e.type == "permission_denied"]
+    assert denials, f"expected permission_denied event; got {[e.type for e in collected]}"
     assert denials[0].data.get("kind") == "mcp_get_prompt"
 
 
@@ -317,6 +320,7 @@ def test_handle_allows_and_gets_when_permissions_mcp_granted(tmp_path):
     `mcp: allow`, so require_mcp passes and the REAL prompt is fetched end-to-end
     through execute_op (permission gate -> gateway -> real subprocess)."""
     events = EventLog()
+    collected = collect_events(events)
     resolver = PermissionResolver(
         config_permissions={"mcp": "allow"}, project_root=tmp_path, interactive=False,
     )
@@ -334,7 +338,7 @@ def test_handle_allows_and_gets_when_permissions_mcp_granted(tmp_path):
     result = _run(_it())
     assert result["status"] == "ok"
     assert result["messages"][0]["content"]["text"] == _PROMPT_TEXT
-    assert not [e for e in events.all() if e.type == "permission_denied"]
+    assert not [e for e in collected if e.type == "permission_denied"]
 
 
 def test_execute_reports_error_for_unconfigured_server(tmp_path):

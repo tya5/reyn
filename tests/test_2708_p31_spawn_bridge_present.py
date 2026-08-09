@@ -42,6 +42,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _MARKER = "REYN2708P31BRIDGEMARKER"
 
@@ -98,7 +99,7 @@ def _presentations(msgs: list) -> list:
 
 
 def _driver_sid_from(events) -> "str | None":
-    for e in events.all():
+    for e in events:
         if e.type == "pipeline_run_attached":
             return e.data.get("driver_sid")
     return None
@@ -116,6 +117,7 @@ async def test_attached_present_reaches_parent_by_construction_single_delivery(
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")
+    collected = collect_events(caller.router_host.events)
 
     outcome = await run_pipeline_attached(
         reg,
@@ -130,7 +132,7 @@ async def test_attached_present_reaches_parent_by_construction_single_delivery(
     )
     assert outcome["status"] == "ok"
 
-    driver_sid = _driver_sid_from(caller.router_host.events)
+    driver_sid = _driver_sid_from(collected)
     assert driver_sid is not None
 
     # Parent surface: exactly one presentation, carrying the marker.
@@ -159,6 +161,7 @@ async def test_attached_present_audit_event_bridged_to_parent_log(
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")
+    collected = collect_events(caller.router_host.events)
 
     await run_pipeline_attached(
         reg,
@@ -171,11 +174,11 @@ async def test_attached_present_audit_event_bridged_to_parent_log(
         tool="run_pipeline",
         caller_events=caller.router_host.events,
     )
-    driver_sid = _driver_sid_from(caller.router_host.events)
+    driver_sid = _driver_sid_from(collected)
     assert driver_sid is not None
 
     bridged = [
-        e for e in caller.router_host.events.all()
+        e for e in collected
         if e.type == "presented" and e.data.get("bridged_from")
     ]
     assert bridged, (
@@ -201,6 +204,7 @@ async def test_detached_present_not_bridged_to_caller(tmp_path: Path, monkeypatc
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     caller = reg.get_or_load("worker")
+    collected = collect_events(caller.router_host.events)
 
     rid = await start_pipeline_run(
         reg,
@@ -222,7 +226,7 @@ async def test_detached_present_not_bridged_to_caller(tmp_path: Path, monkeypatc
     assert read_result(run_dir) is not None, "detached pipeline run did not reach terminal"
 
     bridged = [
-        e for e in caller.router_host.events.all()
+        e for e in collected
         if e.type == "presented" and e.data.get("bridged_from")
     ]
     assert bridged == [], "a detached present was unexpectedly bridged to the caller log"

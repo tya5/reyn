@@ -34,6 +34,7 @@ from reyn.security.secrets.oauth import (
     load_oauth_token,
     save_oauth_token,
 )
+from tests._support.events import collect_events
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,7 @@ async def test_get_valid_token_refreshes_when_expired(oauth_store_path: Path) ->
         )
 
     events = EventLog()
+    collected = collect_events(events)
     client = _mock_transport(_handler)
     try:
         result = await get_valid_token("github", events=events, http_client=client)
@@ -247,7 +249,7 @@ async def test_get_valid_token_refreshes_when_expired(oauth_store_path: Path) ->
     assert not saved.is_expired()
 
     # P6 token_refreshed event emitted
-    emitted = [e for e in events.all() if e.type == "token_refreshed"]
+    emitted = [e for e in collected if e.type == "token_refreshed"]
     assert emitted, "expected at least one token_refreshed event"
     assert emitted[0].data["key"] == "github"
     assert "expires_at" in emitted[0].data
@@ -289,6 +291,7 @@ async def test_refresh_missing_access_token_raises(oauth_store_path: Path) -> No
         return httpx.Response(200, json={"expires_in": 3600})
 
     events = EventLog()
+    collected = collect_events(events)
     client = _mock_transport(_handler)
     try:
         with pytest.raises(OAuthRefreshError, match="missing 'access_token'"):
@@ -296,7 +299,7 @@ async def test_refresh_missing_access_token_raises(oauth_store_path: Path) -> No
     finally:
         await client.aclose()
 
-    failures = [e for e in events.all() if e.type == "token_refresh_failed"]
+    failures = [e for e in collected if e.type == "token_refresh_failed"]
     assert failures, "expected at least one token_refresh_failed event"
     assert failures[0].data["key"] == "github"
     assert failures[0].data["re_auth_required"] is False
@@ -314,6 +317,7 @@ async def test_refresh_400_marks_re_auth_required(oauth_store_path: Path) -> Non
         return httpx.Response(400, json={"error": "invalid_grant"})
 
     events = EventLog()
+    collected = collect_events(events)
     client = _mock_transport(_handler)
     try:
         with pytest.raises(OAuthRefreshError) as exc_info:
@@ -323,7 +327,7 @@ async def test_refresh_400_marks_re_auth_required(oauth_store_path: Path) -> Non
     assert exc_info.value.re_auth_required is True
     assert exc_info.value.status_code == 400
 
-    failures = [e for e in events.all() if e.type == "token_refresh_failed"]
+    failures = [e for e in collected if e.type == "token_refresh_failed"]
     assert failures[0].data["re_auth_required"] is True
 
 

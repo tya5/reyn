@@ -38,6 +38,7 @@ from reyn.core.offload.canonical import (
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
+from tests._support.events import collect_events
 
 get_default_registry()
 
@@ -96,6 +97,7 @@ async def test_unregistered_fallback_emits_event_with_source_id_and_no_body() ->
         }
 
     events = EventLog()
+    collected = collect_events(events)
     pipeline = Pipeline(steps=[ToolStep(name="mystery_tool", args={}, output="r")])
     await PipelineExecutor().run(
         pipeline, None,
@@ -103,13 +105,13 @@ async def test_unregistered_fallback_emits_event_with_source_id_and_no_body() ->
     )
 
     # Exactly one fallback event for the one unregistered tool step (unpack asserts the count).
-    [fallback_event] = [e for e in events.all() if e.type == CANONICAL_FALLBACK_EVENT]
+    [fallback_event] = [e for e in collected if e.type == CANONICAL_FALLBACK_EVENT]
     payload = fallback_event.data
     assert payload["source"] == "an_unregistered_producer_id"
     assert payload["reason"] == "unregistered"
 
     # No result content bytes in ANY event payload — the event carries the source identity only.
-    all_payloads = json.dumps([e.data for e in events.all()])
+    all_payloads = json.dumps([e.data for e in collected])
     assert secret_body not in all_payloads
     assert "content" not in payload  # the raw result field name is not forwarded either
 
@@ -128,12 +130,13 @@ async def test_real_mapper_producer_does_not_emit_fallback_event() -> None:
         }
 
     events = EventLog()
+    collected = collect_events(events)
     pipeline = Pipeline(steps=[ToolStep(name="run_shell", args={}, output="r")])
     await PipelineExecutor().run(
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-f2-mapped", events=events,
     )
 
-    assert not [e for e in events.all() if e.type == CANONICAL_FALLBACK_EVENT], (
+    assert not [e for e in collected if e.type == CANONICAL_FALLBACK_EVENT], (
         "a mapped producer must not emit the fallback audit event"
     )

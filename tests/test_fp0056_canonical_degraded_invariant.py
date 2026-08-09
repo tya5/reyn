@@ -49,6 +49,7 @@ from reyn.core.offload.canonical import (
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
+from tests._support.events import collect_events
 
 get_default_registry()
 
@@ -172,6 +173,7 @@ async def test_empty_mapper_at_call_site_emits_degraded_event_and_warns(
         }
 
     events = EventLog()
+    collected = collect_events(events)
     pipeline = Pipeline(steps=[ToolStep(name="buggy_tool", args={}, output="r")])
     with caplog.at_level(logging.WARNING, logger="reyn.core.pipeline.executor"):
         await PipelineExecutor().run(
@@ -180,12 +182,12 @@ async def test_empty_mapper_at_call_site_emits_degraded_event_and_warns(
         )
 
     # Exactly one degraded event for the one empty-mapping tool step (unpack asserts the count).
-    [degraded] = [e for e in events.all() if e.type == CANONICAL_DEGRADED_EVENT]
+    [degraded] = [e for e in collected if e.type == CANONICAL_DEGRADED_EVENT]
     assert degraded.data["source"] == _EMPTY_PRODUCER_ID
     assert degraded.data["reason"]  # a non-empty reason category
 
     # No result content bytes in ANY event payload — the event carries the source identity only.
-    all_payloads = json.dumps([e.data for e in events.all()])
+    all_payloads = json.dumps([e.data for e in collected])
     assert secret_body not in all_payloads
     assert "content" not in degraded.data
 
@@ -209,12 +211,13 @@ async def test_mapped_producer_with_content_does_not_emit_degraded_event() -> No
         }
 
     events = EventLog()
+    collected = collect_events(events)
     pipeline = Pipeline(steps=[ToolStep(name="run_shell", args={}, output="r")])
     await PipelineExecutor().run(
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-degraded-ok", events=events,
     )
 
-    assert not [e for e in events.all() if e.type == CANONICAL_DEGRADED_EVENT], (
+    assert not [e for e in collected if e.type == CANONICAL_DEGRADED_EVENT], (
         "a producer that surfaced content must not emit the canonical_degraded audit event"
     )

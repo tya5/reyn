@@ -13,8 +13,8 @@ error type + repr, so any future swallowed loop error is primary-evidence
 outbox message still goes out unchanged — the instrument is additive.
 
 The failure is injected with a real async stub (a Fake that raises) — no
-MagicMock — and the assertion reads the public EventLog surface
-(``_audit_events.all()``), not private state.
+MagicMock — and the assertion reads the public EventLog surface via a real
+``add_subscriber`` (``collect_events``), not private state.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import pytest
 
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 
 @pytest.mark.asyncio
@@ -33,6 +34,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
     event log even when the outbox only carries a classified summary.
     """
     s = make_session(agent_name="t")
+    collected = collect_events(s._audit_events)
 
     async def _raise_mid_work(text: str, chain_id: str) -> None:
         # Stand-in for the real mid-work crash (final call_llm raising after
@@ -45,7 +47,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
     await s._handle_inbox_text("hello", chain_id="c-test")
 
     terminated = [
-        e for e in s._audit_events.all()
+        e for e in collected
         if e.type == "router_loop_terminated_by_exception"
     ]
     assert terminated, (

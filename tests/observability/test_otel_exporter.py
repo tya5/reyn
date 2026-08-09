@@ -39,6 +39,7 @@ from reyn.observability.otel_exporter import (
     reset_otel_exporter_singleton,
 )
 from reyn.schemas.models import Event
+from tests._support.events import collect_events
 
 # The OTEL SDK is an OPT-IN dependency (reyn[observability]). CI installs the
 # extra so these tests run with real in-memory OTLP capture; a dev/env without
@@ -194,6 +195,7 @@ def test_sr5_fail_open_export_error_does_not_break_run(tmp_path: Path) -> None:
         otel_logger=None,
     )
     log = EventLog(subscribers=[store, exporter])
+    collected = collect_events(log)
 
     # Emitting through the EventLog must NOT raise even though every span start
     # raises inside the exporter (fail-open swallow).
@@ -206,7 +208,7 @@ def test_sr5_fail_open_export_error_does_not_break_run(tmp_path: Path) -> None:
     for e in _full_run():
         assert e.type in written
     # in-memory EventLog record is complete too
-    assert [ev.type for ev in log.all()] == [e.type for e in _full_run()]
+    assert [ev.type for ev in collected] == [e.type for e in _full_run()]
 
 
 # ── 1b. SR4 recovery-independence gate (inverted truncate-falsify) ────────────

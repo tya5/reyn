@@ -35,6 +35,7 @@ from reyn.tools.action_index import (
     ActionEmbeddingIndex,
     compute_catalog_hash,
 )
+from tests._support.events import collect_events
 
 
 @pytest.fixture(autouse=True)
@@ -469,6 +470,7 @@ def test_build_redacts_secret_in_short_description_before_embed(
     provider-direct redaction bypass this Part A closes."""
     provider = _FakeEmbeddingProvider()
     ctx = _ctx_for(provider, monkeypatch)
+    collected = collect_events(ctx.events)
     idx = ActionEmbeddingIndex()
     secret_desc = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
     _run(idx.build(
@@ -484,4 +486,4 @@ def test_build_redacts_secret_in_short_description_before_embed(
     assert "REDACTED" in embedded_text
     # The seam firing is observable (P6 audit-event trace) on the ctx used
     # for the build.
-    assert any(e.type == "embed_secret_redacted" for e in ctx.events.all())
+    assert any(e.type == "embed_secret_redacted" for e in collected)

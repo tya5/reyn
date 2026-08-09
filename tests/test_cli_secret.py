@@ -27,6 +27,7 @@ from reyn.interfaces.cli.commands.secret import (
     run_set,
 )
 from reyn.security.secrets.store import load_secrets, save_secret
+from tests._support.events import collect_events
 
 # ── helper ────────────────────────────────────────────────────────────────────
 
@@ -112,7 +113,8 @@ def test_run_set_saves_secret_and_emits_event(tmp_path, capsys):
     secrets = tmp_path / "secrets.env"
 
     audit_log = _get_audit_log()
-    before = len(audit_log.all())
+    collected = collect_events(audit_log)
+    before = len(collected)
 
     args = _make_args("REYN_CLI_SET=testval")
     # Monkey-patch the store path by monkeypatching save_secret
@@ -123,7 +125,7 @@ def test_run_set_saves_secret_and_emits_event(tmp_path, capsys):
     # behavior via the store tests.
     run_set(args)
 
-    events = audit_log.all()
+    events = collected
     new_events = events[before:]
     assert any(e.type == "secret_set" and e.data.get("key") == "REYN_CLI_SET" for e in new_events)
     # Value is always masked
@@ -133,12 +135,13 @@ def test_run_set_saves_secret_and_emits_event(tmp_path, capsys):
 def test_run_set_value_masked_in_event():
     """Tier 2: the audit event for secret_set never contains the actual value."""
     audit_log = _get_audit_log()
-    before = len(audit_log.all())
+    collected = collect_events(audit_log)
+    before = len(collected)
 
     args = _make_args("REYN_SET_MASK=supersecret")
     run_set(args)
 
-    events = audit_log.all()
+    events = collected
     new_events = events[before:]
     for e in new_events:
         if e.type == "secret_set":
@@ -170,11 +173,12 @@ def test_run_clear_removes_key_and_emits_event(capsys):
     save_secret("REYN_CLEAR_ME", "to_be_removed")
 
     audit_log = _get_audit_log()
-    before = len(audit_log.all())
+    collected = collect_events(audit_log)
+    before = len(collected)
 
     run_clear(_make_clear_args("REYN_CLEAR_ME"))
 
-    events = audit_log.all()
+    events = collected
     new_events = events[before:]
     assert any(
         e.type == "secret_cleared" and e.data.get("key") == "REYN_CLEAR_ME"
@@ -185,11 +189,12 @@ def test_run_clear_removes_key_and_emits_event(capsys):
 def test_run_clear_missing_key_no_event(capsys):
     """Tier 2: run_clear on a missing key emits no audit event (nothing changed)."""
     audit_log = _get_audit_log()
-    before = len(audit_log.all())
+    collected = collect_events(audit_log)
+    before = len(collected)
 
     run_clear(_make_clear_args("DEFINITELY_NOT_STORED_XYZ_123"))
 
-    events = audit_log.all()
+    events = collected
     new_events = events[before:]
     # No event emitted when key was not found
     assert not any(e.type == "secret_cleared" for e in new_events)
@@ -200,12 +205,13 @@ def test_run_clear_missing_key_no_event(capsys):
 def test_run_rotate_saves_and_emits_rotated_event(capsys):
     """Tier 2: run_rotate saves the new value and emits 'secret_rotated' event."""
     audit_log = _get_audit_log()
-    before = len(audit_log.all())
+    collected = collect_events(audit_log)
+    before = len(collected)
 
     args = _make_args("REYN_ROTATE_KEY=new_rotated_value")
     run_rotate(args)
 
-    events = audit_log.all()
+    events = collected
     new_events = events[before:]
     assert any(
         e.type == "secret_rotated" and e.data.get("key") == "REYN_ROTATE_KEY"
@@ -216,12 +222,13 @@ def test_run_rotate_saves_and_emits_rotated_event(capsys):
 def test_run_rotate_value_masked_in_event():
     """Tier 2: the audit event for secret_rotated never contains the actual value."""
     audit_log = _get_audit_log()
-    before = len(audit_log.all())
+    collected = collect_events(audit_log)
+    before = len(collected)
 
     args = _make_args("REYN_ROTATE_MASK=another_secret")
     run_rotate(args)
 
-    events = audit_log.all()
+    events = collected
     new_events = events[before:]
     for e in new_events:
         if e.type == "secret_rotated":

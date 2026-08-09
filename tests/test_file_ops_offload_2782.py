@@ -55,6 +55,7 @@ from reyn.security.permissions.permissions import PermissionResolver
 from reyn.tools import get_default_registry
 from reyn.tools.dispatch import invoke_tool
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.events import collect_events
 
 
 def _resolver(tmp_path: Path) -> PermissionResolver:
@@ -126,6 +127,7 @@ def test_edit_file_emits_tool_executed_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "c.txt").write_text("one two\n")
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events)
     ctx = ToolContext(
         events=events, permission_resolver=_resolver(tmp_path), workspace=ws,
@@ -133,7 +135,7 @@ def test_edit_file_emits_tool_executed_event(tmp_path, monkeypatch):
     )
     asyncio.run(invoke_tool(get_default_registry(), "edit_file",
                             {"path": "c.txt", "old_string": "one", "new_string": "1"}, ctx))
-    emitted = [e for e in events.all() if e.type == "tool_executed" and e.data.get("op") == "edit_file"]
+    emitted = [e for e in collected if e.type == "tool_executed" and e.data.get("op") == "edit_file"]
     assert emitted, "tool_executed must fire after the offloaded edit, not be lost"
     assert emitted[0].data["replacements"] == 1
     assert not any(e.data.get("replacements") != 1 for e in emitted), "must not emit a duplicate/mismatched event"
@@ -146,6 +148,7 @@ def test_edit_file_validation_error_does_not_emit(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "d.txt").write_text("only this\n")
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events)
     ctx = ToolContext(
         events=events, permission_resolver=_resolver(tmp_path), workspace=ws,
@@ -154,7 +157,7 @@ def test_edit_file_validation_error_does_not_emit(tmp_path, monkeypatch):
     result = asyncio.run(invoke_tool(get_default_registry(), "edit_file",
                                      {"path": "d.txt", "old_string": "nope", "new_string": "x"}, ctx))
     assert result["status"] == "error"
-    assert not any(e.type == "tool_executed" for e in events.all())
+    assert not any(e.type == "tool_executed" for e in collected)
 
 
 def test_grep_files_runs_off_the_main_thread(tmp_path, monkeypatch):

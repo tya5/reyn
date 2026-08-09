@@ -50,6 +50,7 @@ from reyn.user_intervention import (
     UserIntervention,
 )
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 # ── 1. UserIntervention origin_channel_id field ───────────────────────
 
@@ -294,6 +295,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     distinct from the regular ``"user_channel"`` route event.
     """
     session = make_session(agent_name="test")
+    collected = collect_events(session._audit_events)
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -311,7 +313,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     asyncio.run(_drive())
 
     routed_events = [
-        e for e in session._audit_events.to_json()
+        e for e in [ev.model_dump(mode="json") for ev in collected]
         if e.get("type") == "intervention_routed"
     ]
     assert routed_events
@@ -362,6 +364,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
     trail when the iv was actually discarded.
     """
     session = make_session(agent_name="test")
+    collected = collect_events(session._audit_events)
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -382,7 +385,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
     asyncio.run(_drive())
 
     discarded = [
-        e for e in session._audit_events.to_json()
+        e for e in [ev.model_dump(mode="json") for ev in collected]
         if e.get("type") == "pending_intervention_discarded"
     ]
     assert discarded
