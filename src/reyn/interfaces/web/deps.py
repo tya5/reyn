@@ -127,8 +127,12 @@ def _get_perm_resolver():
         # Copy so the #1401 grant setdefault below never mutates the shared config.
         perm_config = dict(getattr(config, "permissions", {}) or {})
         # #1401: --grant-file-write grants file.read/write at the resolver layer
-        # (mirrors `reyn chat`/run.py/eval). Bounded by the sandbox write_paths ∩
-        # the env-backend repo zone. setdefault preserves explicit operator config.
+        # (mirrors `reyn chat`/run.py/eval). write is bounded by the sandbox
+        # write_paths ∩ the env-backend repo zone. read is NOT bounded the same
+        # way: the resolve_sandbox_policy floor never sets read_paths, so
+        # SandboxLayer.FILE_READ resolves to ⊤ (unconstrained) here — this
+        # grant's read reaches anywhere the process can read, not just the
+        # repo zone (#3924). setdefault preserves explicit operator config.
         _ov = get_cli_scoped_overrides()
         if _ov.grant_file_write:
             perm_config.setdefault("file.read", "allow")
