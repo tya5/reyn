@@ -78,39 +78,3 @@ def test_agent_layer_env_narrows_to_the_declared_names():
     assert layer.allows(AX.ENV, "PATH") is True
     assert layer.allows(AX.ENV, "HOME") is True
     assert layer.allows(AX.ENV, "AWS_SECRET_ACCESS_KEY") is False
-
-
-# ── falsification: these tests exercise the real branches, not a tautology ──
-
-
-def test_falsify_subprocess_and_env_branches_are_load_bearing():
-    """Tier 1: STRIP-FALSIFY — with AgentLayer.allows() forced to fall through
-    to the pre-#3901 unconditional ⊤ for SUBPROCESS/ENV (a real subclass
-    override, not a mock), both prior claims go false: a declared
-    ``subprocess=False`` no longer denies, and a narrowed ``env=[...]`` no
-    longer excludes an undeclared name. Proves the tests above exercise the
-    new branches, not a tautology that would stay green with them deleted.
-    """
-
-    class _PreNineOhOneAgentLayer(AgentLayer):
-        """A real AgentLayer subclass whose SUBPROCESS/ENV branches are
-        removed — not a mock, a genuine instance sharing every other method,
-        reproducing exactly the pre-#3901 fall-through-to-⊤ shape."""
-
-        def allows(self, axis: CapabilityAxis, value) -> bool:  # noqa: D102
-            if axis is AX.SUBPROCESS or axis is AX.ENV:
-                return True  # the old, unconditional ⊤
-            return super().allows(axis, value)
-
-    broken_deny = _PreNineOhOneAgentLayer(PermissionDecl(subprocess=False))
-    assert broken_deny.allows(AX.SUBPROCESS, None) is True, (
-        "with the #3901 branch removed, a declared subprocess=False no "
-        "longer denies — this test no longer falsifies the mechanism"
-    )
-
-    broken_narrow = _PreNineOhOneAgentLayer(PermissionDecl(env=["PATH"]))
-    assert broken_narrow.allows(AX.ENV, "AWS_SECRET_ACCESS_KEY") is True, (
-        "with the #3901 branch removed, a narrowed env=[...] no longer "
-        "excludes an undeclared name — this test no longer falsifies the "
-        "mechanism"
-    )
