@@ -21,13 +21,13 @@ from typing import Any
 
 import httpx
 import pytest
-from test_textual_chat_phase4_right_gutter_3283 import QueueTransport
 from textual_flowview import FlowView
 
 from reyn.config.chat import ChatConfig
 from reyn.config.root import ReynConfig
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.textual_chat_test_helpers import QueueTransport
 
 
 class _StreamResp:

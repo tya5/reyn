@@ -22,145 +22,29 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.events import EventLog
-from reyn.llm.model_resolver import ModelResolver
-from reyn.runtime.services import (
-    LiveSessionIdInputs,
-    McpGatewayInputs,
-    MemoryService,
-    PutOutboxInputs,
-    RouterHostAdapter,
-    SendToAgentInputs,
-)
-
-# #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
-# bundled into two frozen, default-free dataclasses. These module-level
-# constants are the "all fields unset" instances this file's tests reuse.
-from tests._support.router_host_adapter import make_op_context_source  # noqa: E402
-
-_EMPTY_OP_CTX = make_op_context_source()
-_EMPTY_MCP_GATEWAY = McpGatewayInputs(
-    mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
-)
-
 from reyn.runtime.services.mcp_cache_file import (
     ToolsAnswered,
     cache_file_path,
     write_cache,
 )
 
-# ---------------------------------------------------------------------------
-# Null callbacks (same shape as in test_mcp_lazy_tools_cache.py)
-# ---------------------------------------------------------------------------
-
-
-async def _null_file_read(path: str) -> dict:
-    return {"content": ""}
-
-
-async def _null_file_write(path: str, content: str) -> dict:
-    return {"path": path, "written": True}
-
-
-async def _null_file_delete(path: str) -> dict:
-    return {"path": path, "deleted": True}
-
-
-async def _null_file_regen(*, path, output_path, entry_template, header) -> dict:
-    return {"path": path, "output_path": output_path, "entries": 0}
-
-
-async def _null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
-    return {}
-
-
-async def _null_send_to_agent(*, to, request, depth, chain_id) -> None:
-    pass
-
-
-async def _null_put_outbox(msg) -> None:
-    pass
-
-
-def _null_append_history(msg) -> None:
-    pass
+# #3879 M4-0: _CountingProbe / _make_adapter (+ the null-callback duplicates
+# they used) moved to tests/_support/mcp_cache_test_helpers.py (byte-identical
+# apart from dropping the leading underscore and reusing router_host_adapter.py's
+# existing null_* callbacks instead of a second copy of the same six) — a
+# module OTHER test files import from cannot migrate as a pure git mv under
+# Stage 1. Aliased back to the original module-local names so everything
+# below is unchanged.
+from tests._support.mcp_cache_test_helpers import (  # noqa: E402
+    CountingProbe as _CountingProbe,
+)
+from tests._support.mcp_cache_test_helpers import (
+    make_mcp_cache_adapter as _make_adapter,
+)
 
 
 async def _null_spawn_plan_task(*, plan_id, runtime, chain_id, parent_chain_id=None) -> None:
     pass
-
-
-# ---------------------------------------------------------------------------
-# Callable probe class (tracks invocations without mocks)
-# ---------------------------------------------------------------------------
-
-
-class _CountingProbe:
-    """Real async callable that records which servers were probed."""
-
-    def __init__(self, tools_by_server: dict[str, list[dict]] | None = None) -> None:
-        self.calls: list[str] = []
-        self._tools = tools_by_server or {}
-
-    async def __call__(self, server_name: str) -> list[dict]:
-        self.calls.append(server_name)
-        return list(self._tools.get(server_name, []))
-
-
-# ---------------------------------------------------------------------------
-# Adapter factory
-# ---------------------------------------------------------------------------
-
-
-def _make_adapter(
-    *,
-    tmp_path: Path,
-    mcp_servers: dict | None,
-    probe: _CountingProbe,
-    state_dir: Path,
-) -> RouterHostAdapter:
-    events = EventLog(subscribers=[])
-    workspace = tmp_path / "agents" / "test-agent"
-    memory = MemoryService(
-        agent_workspace_dir=workspace,
-        events=events,
-        file_write=_null_file_write,
-        file_read=_null_file_read,
-        file_delete=_null_file_delete,
-        file_regenerate_index=_null_file_regen,
-    )
-    adapter = RouterHostAdapter(
-        agent_name="test-agent",
-        agent_role="test",
-        output_language="en",
-        op_context_source=_EMPTY_OP_CTX,
-        permission_resolver=None,
-        mcp_servers=mcp_servers,
-        project_context="",
-        events=events,
-        resolver=ModelResolver({}),
-        memory=memory,
-        journal=None,
-        agent_registry=None,
-        agent_workspace_dir=workspace,
-        mcp_call_tool=_null_mcp_call_tool,
-        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
-        ),
-        put_outbox_inputs=PutOutboxInputs(
-            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
-        ),
-        append_history=_null_append_history,
-        live_session_id_inputs=LiveSessionIdInputs(
-            session_id=None, live_session_id_fn=None,
-        ),
-        state_dir=state_dir,
-    )
-    # #3447: mcp_list_tools is now a real RouterHostAdapter method — see the
-    # same-shaped note in test_mcp_lazy_tools_cache.py's _make_adapter_with_mcp.
-    adapter.mcp_list_tools = probe
-    return adapter
 
 
 # ---------------------------------------------------------------------------

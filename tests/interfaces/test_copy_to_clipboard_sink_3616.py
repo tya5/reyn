@@ -19,7 +19,6 @@ import asyncio
 from typing import AsyncIterator
 
 import pytest
-from test_textual_chat_phase4_right_gutter_3283 import QueueTransport
 from textual.widgets import Input
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
@@ -27,6 +26,7 @@ from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.textual_chat_test_helpers import QueueTransport
 
 
 class _CancelTrackingTransport(ClientTransport):

@@ -286,10 +286,12 @@ async def test_the_recorded_catalog_is_injected_so_a_probe_that_never_answers_is
     same thing more slowly and less certainly; this is the same real-async-
     callable probe seam `test_mcp_cache_warm_start.py` already drives.
     """
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).parent))
-    from test_mcp_cache_warm_start import _CountingProbe, _make_adapter  # noqa: E402
+    from tests._support.mcp_cache_test_helpers import (
+        CountingProbe as _CountingProbe,
+    )
+    from tests._support.mcp_cache_test_helpers import (
+        make_mcp_cache_adapter as _make_adapter,
+    )
 
     state_dir = tmp_path / "state"
     snapshot = {"reyn_markitdown": [{"name": "convert_to_markdown", "description": "d"}]}
