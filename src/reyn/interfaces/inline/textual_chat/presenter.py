@@ -342,12 +342,19 @@ def _running_indicator(msg: "OutboxMessage", now: float) -> Text:
 
 
 def _body_and_background(
-    msg: "OutboxMessage", *, neutralize_body: bool = False
+    msg: "OutboxMessage",
+    *,
+    neutralize_body: bool = False,
+    image_cache: "dict[str, object] | None" = None,
 ) -> "tuple[RenderableType, str | None]":
     """The body renderable + optional full-row background for one display frame.
 
     ``neutralize_body`` (#3318, default off) is forwarded to the shared
     ``_body_renderable`` call below — see its docstring.
+
+    ``image_cache`` (#3846, default None) is forwarded to the ``presentation``
+    kind's ``render_presentation_nodes`` call — see that function's own
+    docstring for why it must stay a pure dict lookup.
 
     Reuses the plain renderer's per-kind body construction (markdown for the
     agent reply, the tool-summary helpers for tool rows, the ``_KIND_LINE`` body
@@ -379,7 +386,7 @@ def _body_and_background(
     meta = msg.meta or {}
     if kind == "presentation":
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
-        return render_presentation_nodes(meta.get("nodes", [])), None
+        return render_presentation_nodes(meta.get("nodes", []), image_cache=image_cache), None
     if meta.get(_PIPELINE_RUN_KEY) is not None:
         return _pipeline_row(meta), None
     # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
@@ -441,6 +448,79 @@ class ReynPresenter:
         # #3318: opt-in body ESC/OSC neutralize (chat.neutralize_body), default
         # off — see _body_and_background/_body_renderable's own docstrings.
         self._neutralize_body = neutralize_body
+        # #3846 ②: settled image `src` resolutions, keyed by src — see
+        # begin_image_resolution's own docstring. A plain dict (present() is
+        # only ever awaited from the app's own single-threaded event loop, so
+        # no lock is needed for this read/write pattern).
+        self._image_cache: "dict[str, object]" = {}
+        self._image_inflight: "set[str]" = set()
+
+    def begin_image_resolution(
+        self,
+        entry: object,
+        src: str,
+        *,
+        allowed_schemes: "list[str] | None" = None,
+    ) -> None:
+        """Kick a background fetch for `src` if it is not already cached or
+        in flight (#3846 ②) — the ONE mutation point for :attr:`_image_cache`.
+
+        Fire-and-forget, mirroring ``TextualChatApp._begin_running_indicator``'s
+        shape (start something async, let it settle in the background) but
+        ONE-SHOT rather than periodic: there is no polling tick here, only a
+        single completion callback (``entry.update()``) once the fetch settles
+        — an image's byte count does not change moment to moment the way a
+        running tool's elapsed time does, so there is nothing to re-tick.
+
+        ``entry`` is untyped here (``object``, not ``Entry[OutboxMessage]``)
+        deliberately: this module must not import ``textual_flowview``'s
+        ``Entry`` at type-check time for a value it only ever calls
+        ``.update()`` on — the caller (``TextualChatApp``, which already
+        depends on flowview) passes the real, correctly-typed object; this
+        module only needs the one method.
+        """
+        if src in self._image_cache or src in self._image_inflight:
+            return
+        import asyncio
+
+        self._image_inflight.add(src)
+        asyncio.create_task(self._resolve_image(entry, src, allowed_schemes))
+
+    async def _resolve_image(
+        self, entry: object, src: str, allowed_schemes: "list[str] | None",
+    ) -> None:
+        from reyn.core.present.image_fetch import (
+            ImageFetchError,
+            ImageResolution,
+            fetch_image_bytes,
+        )
+
+        try:
+            body, content_type = await fetch_image_bytes(
+                src, allowed_schemes=allowed_schemes
+            )
+            self._image_cache[src] = ImageResolution(
+                ok=True, body=body, content_type=content_type
+            )
+        except ImageFetchError as exc:
+            self._image_cache[src] = ImageResolution(ok=False, error=str(exc))
+        except Exception:
+            # Cosmetic (a failed image render must never break the pump) —
+            # same guard shape as _begin_running_indicator's own try/except.
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "textual chat: image resolution crashed for %r", src
+            )
+            self._image_cache[src] = ImageResolution(
+                ok=False, error="internal error resolving the image"
+            )
+        finally:
+            self._image_inflight.discard(src)
+            try:
+                entry.update()  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     def _measure(self, renderable: RenderableType, width: int) -> int:
         self._probe.size = (max(width, 1), 200)
@@ -520,7 +600,7 @@ class ReynPresenter:
         if item.kind == "tool_call_started" and meta.get(_RUNNING_SINCE_KEY) is not None:
             return self._present_running_tool(item, width)
         body, background = _body_and_background(
-            item, neutralize_body=self._neutralize_body
+            item, neutralize_body=self._neutralize_body, image_cache=self._image_cache
         )
         return Presentation(
             height=self._measure(body, width),
