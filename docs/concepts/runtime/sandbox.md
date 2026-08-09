@@ -22,7 +22,12 @@ context-building path already resolves a concrete policy). The policy that
 actually governs a run is never settable via the op — it is always the
 agent-level (operator) `sandbox.policy`, or absent that, the operator's
 compat/strict default; see [Control IR:
-`sandboxed_exec`](../../reference/runtime/control-ir.md#sandboxed_exec).
+`sandboxed_exec`](../../reference/runtime/control-ir.md#sandboxed_exec). The
+op still carries `timeout_seconds` (below) — it is **not** one of the 5
+deleted fields — but it is dead on the real path the same way those 5 were
+before `#3907`: the value that actually governs a run's timeout is
+`ctx.default_sandbox_policy`'s own `timeout_seconds`, not the op's
+(`#3962`, open).
 
 **These are `SandboxPolicy`'s own internal field names — not what an operator
 writes in `reyn.yaml`.** `#3823` layered a separate, decoupled config
