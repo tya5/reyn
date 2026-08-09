@@ -142,7 +142,6 @@ async def test_handler_surfaces_denial_class_and_argv0_end_to_end():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["python3", "-c", "print(2+2)"],
-        timeout_seconds=30,
     )
 
     result = await execute_op(op, ctx)

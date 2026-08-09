@@ -85,12 +85,14 @@ def test_policy_custom_fields():
 # ─── 1b. SandboxedExecIROp no longer carries policy fields (#3907) ───────────
 
 
-def test_op_no_longer_accepts_the_5_deleted_policy_fields():
-    """Tier 2: #3907③ — the deletion-witness lead-coder asked for after
-    architect's #3823 co-vet caught the twin failure mode (a field removed
-    without any test witnessing the removal itself, only the surviving
-    behavior). Asserts the model's OWN field set directly (`model_fields`),
-    not a construction-raises probe — pydantic's v2 default is to silently
+def test_op_no_longer_accepts_the_deleted_policy_fields():
+    """Tier 2: #3907③ (renamed #3962 — the removed-field set grew by one,
+    see below; a name pinning "5" would itself go stale) — the
+    deletion-witness lead-coder asked for after architect's #3823 co-vet
+    caught the twin failure mode (a field removed without any test
+    witnessing the removal itself, only the surviving behavior). Asserts
+    the model's OWN field set directly (`model_fields`), not a
+    construction-raises probe — pydantic's v2 default is to silently
     IGNORE an unrecognized kwarg (verified: passing one does not raise), so
     a construction-time check would pass vacuously whether or not the field
     still existed. This test exists so a FUTURE accidental re-add of one of
@@ -100,11 +102,17 @@ def test_op_no_longer_accepts_the_5_deleted_policy_fields():
     (test_sandbox_model_completion_1339.py) witnesses the TOOL schema
     doesn't expose them; this witnesses the OP model itself doesn't carry
     them — a distinct, deeper layer the tool schema could in principle
-    diverge from."""
+    diverge from.
+
+    #3962: `timeout_seconds` joins the removed set — the same defect class
+    as the other 5 (LLM-advertised, silently ignored on the real path), just
+    missed by #3907's own sweep since a wall-clock cap isn't a permission
+    axis."""
     fields = set(SandboxedExecIROp.model_fields)
-    assert fields == {"kind", "argv", "timeout_seconds", "stdin"}
+    assert fields == {"kind", "argv", "stdin"}
     for removed_field in (
-        "network", "read_paths", "write_paths", "allow_subprocess", "env_passthrough",
+        "network", "read_paths", "write_paths", "allow_subprocess",
+        "env_passthrough", "timeout_seconds",
     ):
         assert removed_field not in fields
 
@@ -217,7 +225,6 @@ async def test_dispatch_emits_started_and_completed():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/echo", "hello"],
-        timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
     assert result["status"] == "ok"
@@ -295,7 +302,6 @@ async def test_injected_sandbox_backend_takes_precedence():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/echo", "x"],
-        timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
     # The injected instance ran — not the platform default (e.g. seatbelt here).
@@ -318,7 +324,6 @@ async def test_handler_passes_workspace_base_dir_as_cwd():
     ctx.sandbox_backend = stub
     op = SandboxedExecIROp(
         kind="sandboxed_exec", argv=["/bin/echo", "x"],
-        timeout_seconds=10,
     )
     await execute_op(op, ctx)
     assert stub.received_cwd == str(ctx.workspace.base_dir)
@@ -352,7 +357,6 @@ async def test_default_backend_actually_runs_in_workspace_cwd(tmp_path):
     )
     op = SandboxedExecIROp(
         kind="sandboxed_exec", argv=["/bin/pwd"],
-        timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
     assert result["returncode"] == 0, f"/bin/pwd failed: {result!r}"
@@ -371,7 +375,6 @@ async def test_no_injected_backend_falls_back_to_default():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/echo", "x"],
-        timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
     assert result["backend"] in {"noop", "seatbelt", "landlock"}

@@ -298,10 +298,20 @@ class SandboxedExecIROp(BaseModel):
     fs scope via this tool"). See `docs/reference/runtime/control-ir.md`'s
     `sandboxed_exec` section (kept in sync in this same PR, per CLAUDE.md's
     doc-drift hard rule) for the operator-facing story.
+
+    #3962: `timeout_seconds` — the one field #3907's own sweep left behind —
+    was the SAME defect class, just missed (it wasn't one of the 5 policy
+    fields #3907 scoped to, since a wall-clock cap isn't a permission axis).
+    #3907② deleted the op-fields fallback branch this field used to feed;
+    once that branch was gone the value that actually governs a run's
+    timeout was already only `ctx.default_sandbox_policy`'s own
+    `timeout_seconds` (`SandboxPolicy`) — the op's copy had zero real
+    readers, LLM-advertised and silently ignored, the exact gap #3907
+    closed for the other 5. Removed rather than left as a second
+    advertised-but-ignored knob.
     """
     kind: Literal["sandboxed_exec"]
     argv: list[str]                                      # command + args; argv[0] is the executable
-    timeout_seconds: int = 60                            # wall-clock cap
     stdin: bytes | None = None                           # #2593: bytes written to the process's stdin, if any
 
 

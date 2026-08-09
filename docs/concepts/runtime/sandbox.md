@@ -14,20 +14,18 @@ The sandbox complements the [permission model](../runtime/permission-model.md): 
 
 Defined in `src/reyn/security/sandbox/policy.py` — the dataclass every backend
 (`Seatbelt`/`Landlock`/`Noop`) actually receives. The `sandboxed_exec` Control
-IR op carries **no policy fields at all** (`#3907` deleted the 5 it used to
-have — `network`/`read_paths`/`write_paths`/`allow_subprocess`/
-`env_passthrough` — measured to have zero real producers; the op-fields
-fallback path they fed was itself unreachable in production, since every
-context-building path already resolves a concrete policy). The policy that
-actually governs a run is never settable via the op — it is always the
-agent-level (operator) `sandbox.policy`, or absent that, the operator's
-compat/strict default; see [Control IR:
-`sandboxed_exec`](../../reference/runtime/control-ir.md#sandboxed_exec). The
-op still carries `timeout_seconds` (below) — it is **not** one of the 5
-deleted fields — but it is dead on the real path the same way those 5 were
-before `#3907`: the value that actually governs a run's timeout is
-`ctx.default_sandbox_policy`'s own `timeout_seconds`, not the op's
-(`#3962`, open).
+IR op carries **no policy fields at all, and no `timeout_seconds`** (`#3907`
+deleted the 5 policy fields it used to have — `network`/`read_paths`/
+`write_paths`/`allow_subprocess`/`env_passthrough` — measured to have zero
+real producers; the op-fields fallback path they fed was itself unreachable
+in production, since every context-building path already resolves a concrete
+policy. `#3962` deleted `timeout_seconds` for the same reason — it wasn't one
+of the 5 #3907 scoped to, since a wall-clock cap isn't a permission axis, so
+it survived that sweep dead one issue longer). The policy that actually
+governs a run — including its timeout — is never settable via the op; it is
+always the agent-level (operator) `sandbox.policy`, or absent that, the
+operator's compat/strict default; see [Control IR:
+`sandboxed_exec`](../../reference/runtime/control-ir.md#sandboxed_exec).
 
 **These are `SandboxPolicy`'s own internal field names — not what an operator
 writes in `reyn.yaml`.** `#3823` layered a separate, decoupled config

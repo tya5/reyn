@@ -30,14 +30,18 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 _EXEC_DESCRIPTION = _execution_descriptions.exec_.text
 
 
-# #1339 / sandbox-model completion: the tool exposes ONLY argv (+ timeout). The
+# #1339 / sandbox-model completion: the tool exposes ONLY argv. The
 # sandbox policy (network / write_paths / deny_subprocess / env_deny_names —
 # vocabulary renamed to deny-lists, #3901 PR-B ④) is operator-or-default,
 # resolved onto the OpContext — the LLM cannot set it via the tool. (The
 # SandboxedExecIROp type keeps its OWN, older allow_-prefixed fields — #3901
 # PR-B deliberately did not rename those; op and policy are different
 # vocabularies now, not mirrors of one another — only this tool surface is
-# trimmed.)
+# trimmed.) #3962: `timeout_seconds` used to be exposed here too, but the
+# wall-clock cap that actually governs a run was already
+# `ctx.default_sandbox_policy`'s own `timeout_seconds`, never the op's — the
+# same advertised-but-ignored gap #3907 closed for the 5 policy fields, just
+# missed by that sweep since a timeout isn't a permission axis.
 _EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -45,10 +49,6 @@ _EXEC_PARAMETERS: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
             "description": _execution_descriptions.PARAMS["exec"]["argv"].text,
-        },
-        "timeout_seconds": {
-            "type": "integer",
-            "description": _execution_descriptions.PARAMS["exec"]["timeout_seconds"].text,
         },
     },
     "required": ["argv"],
@@ -142,15 +142,15 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
     from reyn.schemas.models import SandboxedExecIROp
 
-    # #1339 / sandbox-model completion: the LLM supplies only argv (+ timeout).
-    # The op's policy fields keep their defaults here — the effective sandbox
-    # policy is operator-or-default, resolved onto the OpContext
+    # #1339 / sandbox-model completion: the LLM supplies only argv. The op's
+    # policy fields keep their defaults here — the effective sandbox policy
+    # is operator-or-default, resolved onto the OpContext
     # (ctx.default_sandbox_policy), which the op_runtime handler applies over the
-    # op fields. The LLM cannot set network / fs scope via this tool.
+    # op fields. The LLM cannot set network / fs scope — or, since #3962,
+    # timeout — via this tool.
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=args["argv"],
-        timeout_seconds=int(args.get("timeout_seconds", 60)),
     )
     legacy_ctx = await op_context_from_tool_context(ctx)
     return await handle_sandboxed_exec(op=op, ctx=legacy_ctx)

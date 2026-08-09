@@ -358,28 +358,32 @@ The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exe
 {
   "kind": "sandboxed_exec",
   "argv": ["echo", "hello"],
-  "timeout_seconds": 60,
   "stdin": null
 }
 ```
 
 Fields:
 - `argv` (required) — command + arguments. `argv[0]` is the executable.
-- `timeout_seconds` (optional, default `60`) — wall-clock cap.
 - `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (a pipeline `tool` step can thread the previous step's pipe-data here as JSON via `args: {argv: [...], stdin_pipe: !expr pipe}` — see [Pipeline DSL](pipeline-dsl.md#tool)).
 
-**No policy fields** (`network` / `read_paths` / `write_paths` / `allow_subprocess` /
-`env_passthrough` — removed #3907): the sandbox policy that actually governs a run
+**No policy fields, and no `timeout_seconds`** (`network` / `read_paths` /
+`write_paths` / `allow_subprocess` / `env_passthrough` — removed #3907;
+`timeout_seconds` — removed #3962, same defect class one field late): the
+sandbox policy — including the wall-clock timeout — that actually governs a run
 is **never** settable via this op. It is the agent-level (operator) `sandbox.policy`
 (`reyn.yaml`, resolved through `resolve_sandbox_policy` — see the
 [`sandbox` config block](../config/reyn-yaml.md#sandbox-block)) or, absent that, the
 operator's compat/strict default — either way a value the LLM cannot see or widen
 (#1326/#1339: the operator-or-default policy always wins over anything an op
-requests). The op used to carry these 5 fields as a fallback source when no
-operator policy was resolved; #3907① measured that path is unreachable in
-production (every context-building path resolves a concrete policy), so the
-fields were pure LLM-facing surface with no effect — deleted rather than left as
-an advertised-but-ignored knob.
+requests). The op used to carry the 5 policy fields (and, until #3962,
+`timeout_seconds`) as a fallback source when no operator policy was resolved;
+#3907① measured that path is unreachable in production (every context-building
+path resolves a concrete policy), so the fields were pure LLM-facing surface
+with no effect — deleted rather than left as an advertised-but-ignored knob.
+`timeout_seconds` wasn't one of the 5 #3907① scoped to (a wall-clock cap isn't
+a permission axis), so it survived that sweep and stayed dead one issue longer;
+`ctx.default_sandbox_policy`'s own `timeout_seconds` (`SandboxPolicy`) is what
+actually governs a run's timeout, same as it always was.
 
 **Backend selection**: `get_default_backend()` chooses per platform. On macOS < 26, `SeatbeltBackend` (sandbox-exec SBPL). On Linux ≥ 5.13 with the `sandbox-linux` extra installed, `LandlockBackend` (+ optional seccomp-BPF stack). On other platforms or when the chosen backend is unavailable, falls back to `NoopBackend` (audit-only, no enforcement) — emits a one-line WARN on first use. Override via `reyn.yaml` `sandbox.backend` (`auto` | `seatbelt` | `landlock` | `noop`) and `sandbox.on_unsupported` (`warn` | `error` | `ignore`).
 
