@@ -27,7 +27,7 @@ jobs:
       # real default-deny seccomp filter is irrevocable for the process that does
       # it, which is the wrong shape for pytest's shared session). The cost of
       # that correct decision is that the enforcement arms of
-      # tests/test_landlock_exec_shim_1344e.py skip in EVERY job we have — and a
+      # tests/security/test_landlock_exec_shim_1344e.py skip in EVERY job we have — and a
       # skip is green. Until this job, the only host that had ever witnessed a
       # Linux deny was one maintainer's colima VM, run by hand. One host is not a
       # gate.
@@ -78,7 +78,7 @@ jobs:
       # what skipped and why, so "what ran" stays legible rather than being
       # inferred from a pass count.
       - name: Shim enforcement tests (supplementary — the gate above is the gate)
-        run: python -m pytest tests/test_landlock_exec_shim_1344e.py -v -rs --timeout=120
+        run: python -m pytest tests/security/test_landlock_exec_shim_1344e.py -v -rs --timeout=120
 
       # #3030: the network-deny falsification (the exact allow_subprocess=True
       # condition that used to leak network), the io_uring completeness probe
