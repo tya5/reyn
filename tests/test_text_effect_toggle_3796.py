@@ -125,28 +125,24 @@ async def test_the_feed_is_intact_after_the_effect() -> None:
             f"output that landed under the overlay was lost, not hidden: {after}"
         )
 
-
-
-@requires_tte
-@pytest.mark.asyncio
-async def test_an_empty_screen_is_a_no_op_not_a_crash() -> None:
-    """Tier 2: the key on a fresh, empty conversation does nothing — and
-    specifically does not raise.
-
-    Not an exotic case: an empty viewport is blank rows, which join to
-    ``"\n\n\n..."``, and TTE raises ``ValueError`` on input that is non-empty
-    but carries no non-whitespace character (measured: ``""`` is accepted,
-    ``"\n\n\n"`` and ``"   "`` are not). The first thing an operator can do in
-    a new session is press the key, so this was the first thing that crashed.
-
-    A no-op is the truthful outcome rather than a fallback banner: the effect
-    acts on what is on screen, and an empty screen has nothing to act on.
-    """
-    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.action_toggle_text_effect()  # must not raise
-        await pilot.pause()
-        assert not app.query_one(FlowView).overlay_active, (
-            "an empty screen started an overlay with nothing to animate"
-        )
+# The blank-screen no-op test that used to live here (#3796) is deleted, not
+# repaired, following the 0.16.1 pin bump that broke its premise (#3866 review).
+#
+# What it asserted — "a fresh session does not crash the key" — is real, but
+# already covered by a DIFFERENT test for a DIFFERENT reason: falsifying the
+# early `if not art.strip(): return` guard (removing it entirely) still did not
+# crash, because #3866's retry+fallback logic (test_every_attempt_failing_
+# hands_back_a_held_legible_screen, in test_text_effect_cache_3860.py) already
+# handles "every pool attempt fails" generally, blank input included. The early
+# guard is a skip-3-wasted-attempts optimization, not a distinct safety
+# contract — testing it separately was redundant.
+#
+# A second version of this test asserted the OPPOSITE: that a fresh session's
+# welcome placeholder ("reyn / Type a message to start / …") IS something the
+# effect animates. That one does not survive CLAUDE.md's six questions either,
+# for a sharper reason: reyn's own frame_factory does nothing with `covered`'s
+# CONTENT (it joins whatever it is handed) — whether the welcome text shows up
+# in `covered` at all is entirely flowview's capture behaviour, not reyn's. A
+# test that only fails when a THIRD PARTY changes what it reports is pinning
+# that party's property under reyn's name (Q1) — if flowview's capture shape
+# moves again, this would blame reyn for something reyn never touched.
