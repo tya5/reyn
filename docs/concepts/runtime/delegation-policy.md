@@ -40,10 +40,18 @@ from `_FLOORED_DENY_CLASSES`):
 
 | Class | Denied tools | Rationale |
 |-------|-------------|-----------|
-| `re-delegation` | `delegate_to_agent`, `delegate_to_agent` | Prevent unlimited spawning chains from an unbound delegate |
-| `exec` | `exec`, `exec` | Execution requires explicit operator authorization |
+| `re-delegation` | `delegate_to_agent` | Prevent unlimited spawning chains from an unbound delegate |
+| `exec` | `exec` | Execution requires explicit operator authorization |
 | `mcp-install` | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` | MCP server installation is a high-privilege, operator-controlled action |
+| `skill-install` | `skill_install_local`, `skill_install_source` | Registering skills from untrusted content is a persistence vector (#2548); mirrors `mcp-install` |
+| `pipeline-install` | `pipeline_install_local`, `pipeline_install_source` | Registering pipelines from untrusted content — same persistence vector as `skill-install` |
+| `spawn` | `session_spawn`, `agent_spawn`, `topology_create` | Unbounded sub-session/agent spawn is a DoS vector (#2103); peer of `re-delegation` |
+| `pipeline-run` | `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`, `run_pipeline_inline_async` | Launching a pipeline is spawn-adjacent — peer of `spawn` |
 | `memory-write` | `remember_shared`, `remember_agent`, `forget_memory` | Persistence from an unbound delegate requires deliberate opt-in |
+
+(#3429 removed the second, catalog-qualified spelling every tool used to also
+carry — each denied tool above is now the tool's one and only invocable
+name, with no per-class alias expansion step.)
 
 The floor is overridable: an operator file
 `.reyn/capability_profiles/_delegate.yaml` replaces the built-in profile. A
@@ -99,15 +107,17 @@ target — it is not flagged, avoiding a false HIGH exit.
 
 | Finding | Severity | Condition |
 |---------|----------|-----------|
-| Bound profile re-grants a class | HIGH | `re-delegation` or `exec` class permitted |
+| Bound profile re-grants a class | HIGH | `re-delegation`, `exec`, `mcp-install`, `skill-install`, `pipeline-install`, `spawn`, or `pipeline-run` class permitted |
 | Bound profile re-grants a class | MED | `memory-write` or `destructive-fs` class permitted |
 | `_delegate.yaml` re-grants a class | HIGH / MED | Same class-to-severity mapping |
 | Posture nudge | INFO | `capability_default=inherit` while any topology has a delegation edge |
 
-The `destructive-fs` class (`delete_file`, `delete_file`) is **audit-only** —
-it is not on the runtime `_delegate` floor because it is already gated by the
-FILE_WRITE permission system. The audit surfaces it as a re-grant judgment for
-delegate-reachable roles.
+The `destructive-fs` class (`delete_file`) is **audit-only** — it is not on
+the runtime `_delegate` floor because it is already gated by the FILE_WRITE
+permission system. The audit surfaces it as a re-grant judgment for
+delegate-reachable roles. It is the one deliberate audit ⊋ floor delta — every
+other audit class below is single-sourced from the same `_FLOORED_DENY_CLASSES`
+the runtime floor uses, so the audit and the floor cannot drift apart.
 
 **Exit behavior**: `reyn audit` exits non-zero only on a HIGH finding — CI-safe
 (a HIGH blocks a deploy; MED and INFO are informational).
@@ -116,11 +126,15 @@ delegate-reachable roles.
 
 | Class | Severity | Tools |
 |-------|----------|-------|
-| `re-delegation` | HIGH | `delegate_to_agent`, `delegate_to_agent` |
-| `exec` | HIGH | `exec`, `exec` |
+| `re-delegation` | HIGH | `delegate_to_agent` |
+| `exec` | HIGH | `exec` |
 | `mcp-install` | HIGH | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` |
+| `skill-install` | HIGH | `skill_install_local`, `skill_install_source` |
+| `pipeline-install` | HIGH | `pipeline_install_local`, `pipeline_install_source` |
+| `spawn` | HIGH | `session_spawn`, `agent_spawn`, `topology_create` |
+| `pipeline-run` | HIGH | `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`, `run_pipeline_inline_async` |
 | `memory-write` | MED | `remember_shared`, `remember_agent`, `forget_memory` |
-| `destructive-fs` | MED | `delete_file`, `delete_file` (audit-only, not on runtime floor) |
+| `destructive-fs` | MED | `delete_file` (audit-only, not on runtime floor) |
 
 ### Usage
 
