@@ -48,21 +48,20 @@ class EventLog:
         agent_id: str | None = None,
         run_id: str | None = None,
     ) -> None:
-        self._events: list[Event] = []
         # #3868 PR-1: a folded derived state for `present`'s "was this ref
         # already read this session?" question (source.py's compute_ingested),
-        # built incrementally in emit() instead of re-scanned from `_events`
-        # on every present call. Keyed on the read's own `path`; "full" is
-        # STICKY — a later truncated read on the same path never downgrades
-        # it, because the operator (or a prior full read) already saw the
-        # whole thing. This is NOT a bounded cache: `_events` still holds
-        # everything (PR-1 keeps both so existing `.all()`/`.to_json()`
-        # consumers stay green while callers migrate — PR-2/PR-3 retire
-        # them). What changed is the GROWTH CLASS this dict is subject to:
-        # O(distinct paths ever read), not O(every event ever emitted) —
-        # see compute_ingested's docstring for why that is still unbounded
-        # in principle but bounded by real work (a file read + permission
-        # gate) rather than by talk.
+        # built incrementally in emit() instead of re-scanned from an
+        # unbounded full-history list on every present call. Keyed on the
+        # read's own `path`; "full" is STICKY — a later truncated read on the
+        # same path never downgrades it, because the operator (or a prior
+        # full read) already saw the whole thing. What changed is the GROWTH
+        # CLASS this dict is subject to: O(distinct paths ever read), not
+        # O(every event ever emitted) — see compute_ingested's docstring for
+        # why that is still unbounded in principle but bounded by real work
+        # (a file read + permission gate) rather than by talk. #3868 PR-3:
+        # the unbounded `_events` full-history list this fold replaced is
+        # gone — `all()`/`to_json()` (its only readers) retired in PR-2's
+        # collect_events() migration first.
         self._ingested: dict[str, str] = {}
         self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
         # FP-0016 Component E: agent_id is auto-injected into every event
@@ -139,9 +138,8 @@ class EventLog:
         if self._run_id and "run_id" not in data:
             data = {**data, "run_id": self._run_id}
         event = Event(type=type, data=data)
-        self._events.append(event)
         # #3868 PR-1: fold this event's contribution to `_ingested` at emit
-        # time (a dict update) instead of re-scanning `_events` at every
+        # time (a dict update) instead of re-scanning full history at every
         # `present` call (was O(session length) per call, source.py:154).
         # Early-return on the common case (not a read) first — `emit` is a
         # hot path (every op, every tool call) and this only has work to do
@@ -167,7 +165,7 @@ class EventLog:
         """``ingested`` ∈ ``{none, partial, full}`` for a present ``data_ref``
         (#3868 PR-1) — an O(1) lookup into the state :meth:`emit` folds
         incrementally, replacing source.py's former O(session length) scan
-        over ``all()``.
+        over the full event history.
 
         Checked under BOTH keys a caller might resolve a ref by (the raw
         ``data_ref`` and its ``resolved`` form — source.py's own pre-existing
@@ -196,12 +194,6 @@ class EventLog:
         if a == "partial" or b == "partial":
             return "partial"
         return "none"
-
-    def all(self) -> list[Event]:
-        return list(self._events)
-
-    def to_json(self) -> list[dict]:
-        return [e.model_dump(mode="json") for e in self._events]
 
 
 def _find_reyn_dir(start: Path) -> Path | None:
