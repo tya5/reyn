@@ -1,0 +1,15 @@
+[
+  "_support",
+  "chat",
+  "cli",
+  "core",
+  "data",
+  "fixtures",
+  "gateway",
+  "observability",
+  "plugins",
+  "scaffold",
+  "scripts",
+  "tools",
+  "web"
+]

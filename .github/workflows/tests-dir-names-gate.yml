@@ -1,0 +1,44 @@
+name: tests-dir-names gate
+
+# #3879 shadow+vocabulary gate. PERMANENT (unlike migration-diff-shape-gate.yml):
+# the shadow check is a standing import-machinery invariant that matters
+# forever, and the vocabulary check (a NEW tests/<name>/ must mirror a real
+# src/reyn/<name>/ package or be `repo`) is not Stage-1-specific either — a
+# future PR could add a wrong-vocabulary directory long after Stage 1 lands.
+# Same permanent-ratchet shape as flat-tests-ratchet.yml, not
+# migration-diff-shape-gate.yml's triggered_by/removed_by lifespan.
+#
+# Needs full git history (fetch-depth: 0) only for --check-growth's diff
+# against the merge-base — see scripts/check_tests_dir_names.py's module
+# docstring for what SHADOW and VOCABULARY each check and why.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+      - "src/reyn/**"
+      - "scripts/tests_dir_names_baseline.json"
+
+permissions:
+  contents: read
+
+jobs:
+  tests-dir-names:
+    name: tests-dir-names gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_tests_dir_names.py is stdlib-only (argparse / ast /
+      # subprocess). No pip install needed.
+      - name: Check tests/ directory names (shadow + vocabulary)
+        run: |
+          python scripts/check_tests_dir_names.py --check-growth "origin/${{ github.base_ref }}"
