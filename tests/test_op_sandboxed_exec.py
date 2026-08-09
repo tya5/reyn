@@ -82,6 +82,33 @@ def test_policy_custom_fields():
     assert p.timeout_seconds == 5
 
 
+# ─── 1b. SandboxedExecIROp no longer carries policy fields (#3907) ───────────
+
+
+def test_op_no_longer_accepts_the_5_deleted_policy_fields():
+    """Tier 2: #3907③ — the deletion-witness lead-coder asked for after
+    architect's #3823 co-vet caught the twin failure mode (a field removed
+    without any test witnessing the removal itself, only the surviving
+    behavior). Asserts the model's OWN field set directly (`model_fields`),
+    not a construction-raises probe — pydantic's v2 default is to silently
+    IGNORE an unrecognized kwarg (verified: passing one does not raise), so
+    a construction-time check would pass vacuously whether or not the field
+    still existed. This test exists so a FUTURE accidental re-add of one of
+    these fields (e.g. a merge conflict resolved the wrong way) fails LOUDLY
+    here instead of silently reopening the advertised-but-ignored Tool
+    Contract gap #3907 closed. `test_tool_schema_is_argv_only`
+    (test_sandbox_model_completion_1339.py) witnesses the TOOL schema
+    doesn't expose them; this witnesses the OP model itself doesn't carry
+    them — a distinct, deeper layer the tool schema could in principle
+    diverge from."""
+    fields = set(SandboxedExecIROp.model_fields)
+    assert fields == {"kind", "argv", "timeout_seconds", "stdin"}
+    for removed_field in (
+        "network", "read_paths", "write_paths", "allow_subprocess", "env_passthrough",
+    ):
+        assert removed_field not in fields
+
+
 # ─── 2. NoopBackend ──────────────────────────────────────────────────────────
 
 
@@ -166,6 +193,11 @@ def _make_ctx() -> tuple[OpContext, EventLog]:
         events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=None,
+        # #3907: op no longer carries policy fields — a concrete policy is
+        # required (the handler asserts non-None), mirroring what a real
+        # context-building path always resolves. This file's own tests are
+        # about dispatch/timeout/backend-injection/cwd, not policy content.
+        default_sandbox_policy={},
     )
     return ctx, events
 
@@ -185,7 +217,6 @@ async def test_dispatch_emits_started_and_completed():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/echo", "hello"],
-        env_passthrough=["PATH"],
         timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
@@ -202,13 +233,30 @@ async def test_dispatch_emits_started_and_completed():
 
 @pytest.mark.asyncio
 async def test_dispatch_timeout_status():
-    """Tier 2: sandboxed_exec dispatch surfaces timeout as status='timeout'."""
-    ctx, _events = _make_ctx()
+    """Tier 2: sandboxed_exec dispatch surfaces timeout as status='timeout'.
+
+    #3907: the timeout cap that actually governs a run is
+    ``ctx.default_sandbox_policy``'s own ``timeout_seconds`` — NOT the op's
+    (this was already true before #3907② on the real, ctx.default_sandbox_policy-set
+    path; #3907② only deleted the fallback branch that was the sole place the
+    op field was ever read, on a `None`-policy path #3907① established is
+    unreachable in production. Found while updating this exact test: setting
+    it via the op silently did nothing once the fallback was gone — same
+    "LLM sets it, has zero effect" defect class #3907 tracks for the other 5
+    fields, reported to lead-coder as a separate finding rather than folded
+    silently into this PR's scope)."""
+    events = EventLog()
+    ws = Workspace(events=events)
+    ctx = OpContext(
+        workspace=ws,
+        events=events,
+        permission_decl=PermissionDecl(),
+        permission_resolver=None,
+        default_sandbox_policy={"timeout_seconds": 1},
+    )
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/sleep", "5"],
-        env_passthrough=["PATH"],
-        timeout_seconds=1,
     )
     result = await execute_op(op, ctx)
     # returncode -1 surfaces as either "timeout" status; the handler maps -1 -> "timeout".
@@ -247,7 +295,6 @@ async def test_injected_sandbox_backend_takes_precedence():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/echo", "x"],
-        env_passthrough=["PATH"],
         timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
@@ -271,7 +318,7 @@ async def test_handler_passes_workspace_base_dir_as_cwd():
     ctx.sandbox_backend = stub
     op = SandboxedExecIROp(
         kind="sandboxed_exec", argv=["/bin/echo", "x"],
-        env_passthrough=["PATH"], timeout_seconds=10,
+        timeout_seconds=10,
     )
     await execute_op(op, ctx)
     assert stub.received_cwd == str(ctx.workspace.base_dir)
@@ -296,14 +343,16 @@ async def test_default_backend_actually_runs_in_workspace_cwd(tmp_path):
     ctx = OpContext(
         workspace=ws, events=events,
         permission_decl=PermissionDecl(), permission_resolver=None,
+        # #3907: op no longer carries policy fields — a concrete policy is
+        # required. Read has no allowlist concept at all (#1199 broad-read
+        # realignment; this test's OLD `read_paths=` kwarg was already inert
+        # before #3907 — the pre-#3907 op-fields fallback branch never read
+        # it either, only network/write_paths/allow_subprocess/timeout).
+        default_sandbox_policy={},
     )
-    # Grant read on the cwd: a deny-default backend (seatbelt) otherwise blocks
-    # /bin/pwd from stat-ing its own working directory. This mirrors the
-    # permissive policy a repo-exec phase must declare for git/pytest.
     op = SandboxedExecIROp(
         kind="sandboxed_exec", argv=["/bin/pwd"],
-        read_paths=[str(tmp_path)],
-        env_passthrough=["PATH"], timeout_seconds=10,
+        timeout_seconds=10,
     )
     result = await execute_op(op, ctx)
     assert result["returncode"] == 0, f"/bin/pwd failed: {result!r}"
@@ -322,7 +371,6 @@ async def test_no_injected_backend_falls_back_to_default():
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/echo", "x"],
-        env_passthrough=["PATH"],
         timeout_seconds=10,
     )
     result = await execute_op(op, ctx)

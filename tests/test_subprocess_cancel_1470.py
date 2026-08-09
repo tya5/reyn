@@ -245,12 +245,14 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
         permission_decl=PermissionDecl(),
         sandbox_backend=NoopBackend(),
         cancel_event=cancel_event,
+        # #3907: op no longer carries policy fields — a concrete policy is
+        # required. This test's own axis is cancellation, not policy content.
+        default_sandbox_policy={},
     )
 
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/sleep", "60"],
-        env_passthrough=["PATH"],
         timeout_seconds=30,
     )
 

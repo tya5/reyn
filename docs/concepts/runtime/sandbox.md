@@ -13,12 +13,31 @@ The sandbox complements the [permission model](../runtime/permission-model.md): 
 ## `SandboxPolicy` field reference
 
 Defined in `src/reyn/security/sandbox/policy.py` — the dataclass every backend
-(`Seatbelt`/`Landlock`/`Noop`) actually receives. Distinct from the
-`sandboxed_exec` Control IR op's own fields (`argv`, `network`,
-`allow_subprocess`, …, defined on `SandboxedExecIROp`): the op is the LLM/skill
--facing envelope and deliberately kept its older, `allow_`-prefixed vocabulary
-(#3901 — the two are not mirrors of one another; `reyn/core/op_runtime/
-sandboxed_exec.py` converts one into the other).
+(`Seatbelt`/`Landlock`/`Noop`) actually receives. The `sandboxed_exec` Control
+IR op carries **no policy fields at all** (`#3907` deleted the 5 it used to
+have — `network`/`read_paths`/`write_paths`/`allow_subprocess`/
+`env_passthrough` — measured to have zero real producers; the op-fields
+fallback path they fed was itself unreachable in production, since every
+context-building path already resolves a concrete policy). The policy that
+actually governs a run is never settable via the op — it is always the
+agent-level (operator) `sandbox.policy`, or absent that, the operator's
+compat/strict default; see [Control IR:
+`sandboxed_exec`](../../reference/runtime/control-ir.md#sandboxed_exec). The
+op still carries `timeout_seconds` (below) — it is **not** one of the 5
+deleted fields — but it is dead on the real path the same way those 5 were
+before `#3907`: the value that actually governs a run's timeout is
+`ctx.default_sandbox_policy`'s own `timeout_seconds`, not the op's
+(`#3962`, open).
+
+**These are `SandboxPolicy`'s own internal field names — not what an operator
+writes in `reyn.yaml`.** `#3823` layered a separate, decoupled config
+vocabulary on top (`allow_write_paths` / `deny_read_paths` / `deny_write_paths`
+/ `subprocess` / `allow_env_names` / `deny_env_names`), translated into the
+internal names below by `_translate_sandbox_policy_config` before construction
+— see [`reyn.yaml` § `sandbox.policy` sub-keys](../../reference/config/reyn-yaml.md#sandbox-block)
+or [Configure the sandbox](../../guide/for-users/configure-sandbox.md) for the
+vocabulary you actually write. This table is the internal reference for
+reading `policy.py` itself.
 
 Every field except `write_paths` defaults to full compat (owner ruling B,
 #3901): the sandbox's job is bounding what happens *behind* a permitted
@@ -98,6 +117,26 @@ The registry also records `witness_strength` per backend — network's deny leg 
 
 **macOS 26.3+ and `SeatbeltBackend`**: `sandbox-exec` remains shipped in macOS 26.3. An SBPL profile that includes `(import "bsd.sb")` and `(allow process-exec*)` is sufficient for the backend to function. See the FP-0017 post-dogfood fix landing notes (commit `b477508`) for details.
 
+### Deny-list visibility: `sandbox_axis_unenforced` — scope, not a general enforcement-gap report
+
+A configured `read_deny_paths`/`write_deny_paths` entry is silently
+unenforced on Landlock (allowlist-only — see the field reference above).
+`unenforced_axes()` (`policy.py`) makes that ONE gap observable: when it
+resolves against a deny-list-incapable backend, a `sandbox_axis_unenforced`
+audit-event fires (paired with a WARN log, `#3949`), naming the axis and why
+(`#3823` §4③).
+
+**This is deny-list visibility only, not a general "does this backend
+enforce everything configured" report (`#3951`).** A backend that simply
+does not enforce an axis at all — measured today for the Docker launch
+backend, which enforces none of `write_paths`/`network`/`subprocess` —
+produces no `sandbox_axis_unenforced` event and no WARN, because it isn't in
+the deny-list-incapable set `unenforced_axes()` checks. A clean/absent
+report from this mechanism does not mean every configured axis is being
+enforced; it means Landlock's specific deny-list limitation didn't fire on
+this call. Whether to extend coverage to Docker's own enforcement gap is
+tracked in `#3951`, undecided as of this writing.
+
 ## `reyn.yaml` configuration
 
 ```yaml
@@ -114,7 +153,7 @@ sandbox:
 
 Sandbox configuration is **operator-level** — set in `reyn.yaml` or via CLI flags, not per-workflow or per-phase. See [`reyn.yaml` reference → `sandbox:`](../../reference/config/reyn-yaml.md) for the full config schema.
 
-> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase workflow declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection for the `network`/`subprocess`/`env` axes (it wins over op-declared fields, so a workflow or the LLM cannot widen it) — `write_paths` (and the read/write deny-lists) do NOT participate in that intersection, since they are values an operator cannot know in advance and the kernel backend consumes them directly (#3901 PR-B ③); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
+> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase workflow declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection for the `network`/`subprocess`/`env` axes (it wins over op-declared fields, so a workflow or the LLM cannot widen it) — `allow_write_paths` (and the read/write deny-lists) do NOT participate in that intersection, since they are values an operator cannot know in advance and the kernel backend consumes them directly (#3901 PR-B ③); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
 
 ## See also
 

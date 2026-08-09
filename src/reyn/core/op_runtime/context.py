@@ -211,9 +211,13 @@ class OpContext:
 
     # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy (dict of
     # SandboxPolicy kwargs) declared in the phase frontmatter. When set, the
-    # sandboxed_exec handler builds the policy from this (phase-default WINS over
-    # the op's own fields) so a phase declares the policy once + the LLM cannot
-    # override it (deterministic + P8-clean). None → use the op-level fields.
+    # sandboxed_exec handler builds the policy from this — the ONLY source of
+    # the enforced policy (deterministic + P8-clean; #3907 deleted the op's
+    # own policy fields, which the LLM could set but which never won anyway).
+    # `sandboxed_exec` requires this to be concrete (#1339/#3907① — every real
+    # context-building path resolves one); `None` is still meaningful for the
+    # file/http gates' SandboxLayer ∩ (`sandbox_policy_from_ctx`), where it
+    # means "non-sandboxed caller, layer stays ⊤".
     default_sandbox_policy: dict | None = None
 
     # Issue #364: declarative cap on binary media size (= images from
