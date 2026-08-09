@@ -89,6 +89,19 @@ def test_strict_mode_default_yields_to_an_explicit_operator_allow() -> None:
     rewriting it to ``if True`` still passes every test that existed before
     this one.
 
+    ⚠️ ``if key not in explicit: -> if True:`` (#3957's own originally-named
+    falsify target) is NOT a working falsify recipe for the two tests below
+    either — it is a NO-OP against the current code, verified directly: the
+    unconditional ``floor.update(explicit)`` right after the strict loop
+    already makes ``explicit`` win regardless of that inner ``if``, so both
+    new tests stay green under that exact mutation. The recipe that DOES
+    isolate each test: (1) strict leg — move ``floor.update(explicit)`` to
+    run BEFORE the strict-mode loop instead of after, with the loop then
+    unconditionally overwriting; (2) compat leg — scope
+    ``floor.update(explicit)`` inside the ``if mode == "strict":`` block so
+    an explicit write is silently dropped under compat. Each isolates to
+    exactly the one test naming that leg.
+
     strict leg: an operator who explicitly writes ``network: true`` under
     ``mode: strict`` gets network ON — the strict default (off) applies only
     to axes the operator left UNSET, never overriding an axis they wrote."""
