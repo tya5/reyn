@@ -410,6 +410,34 @@ _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
 _SANDBOX_MODES = {"compat", "strict", "custom"}
 DEFAULT_SANDBOX_MODE = "compat"
 
+# #3901 PR-B ④: SandboxPolicy field renames, keyed by the OLD name an operator
+# might still write in reyn.yaml. Every entry names the new key AND, for the
+# two renames whose value sense inverts, says so explicitly — a rename that
+# silently swapped `allow_subprocess: false` for `deny_subprocess: false`
+# would keep the config valid while reversing the operator's actual intent,
+# which is worse than refusing it outright.
+_RENAMED_SANDBOX_POLICY_KEYS: dict[str, str] = {
+    "allow_subprocess": (
+        "'allow_subprocess' was renamed to 'deny_subprocess' — the VALUE "
+        "INVERTS: `allow_subprocess: false` is now `deny_subprocess: true` "
+        "(and `allow_subprocess: true`, the old default, is now "
+        "`deny_subprocess: false`, the new default)."
+    ),
+    "env_passthrough": (
+        "'env_passthrough' was renamed to 'env_deny_names' and changed from "
+        "an ALLOW-list to a DENY-list (owner ruling: full env compat by "
+        "default). `env_passthrough: []` (pass nothing extra) is no longer "
+        "expressible as an empty list — the new default (env_deny_names "
+        "omitted) passes EVERYTHING; to keep specific names blocked, list "
+        "them in env_deny_names instead."
+    ),
+    "read_paths": (
+        "'read_paths' was removed — every sandbox backend already ignored it "
+        "(the #1199 broad-read realignment made reads unconditional); there "
+        "is no replacement field."
+    ),
+}
+
 
 @dataclass
 class SandboxConfig:
@@ -449,8 +477,11 @@ class SandboxConfig:
         policy:
             The agent-level (operator) sandbox policy: a mapping of
             ``SandboxPolicy`` kwargs (``network`` / ``write_paths`` /
-            ``read_deny_paths`` / ``read_paths`` / ``allow_subprocess`` /
-            ``env_passthrough`` / ``timeout_seconds``). When set it is the
+            ``read_deny_paths`` / ``write_deny_paths`` / ``deny_subprocess`` /
+            ``env_deny_names`` / ``timeout_seconds`` — #3901 PR-B ④ renamed
+            this vocabulary to deny-lists throughout; see
+            :data:`_RENAMED_SANDBOX_POLICY_KEYS` for the old-key error an
+            operator on a pre-#3901 config sees). When set it is the
             deterministic policy the OS
             applies to sandboxed ops + the SandboxLayer of the permission ∩ —
             WINNING over op-declared fields (the LLM cannot widen it). ``None``
@@ -508,6 +539,19 @@ class SandboxConfig:
                 raise ValueError(
                     f"sandbox.policy must be a mapping, got {type(self.policy).__name__}"
                 )
+            # #3901 PR-B ④: reyn.yaml is the operator's own face onto this
+            # vocabulary (config/infra.py's SandboxPolicy(**self.policy) is a
+            # direct transcription BY DESIGN, not a defect to hide behind a
+            # conversion layer — the operator's keys and the implementation's
+            # keys are meant to be the same keys). A bare TypeError from the
+            # dataclass constructor ("unexpected keyword argument
+            # 'allow_subprocess'") would say nothing about WHERE the new name
+            # is or that the VALUE inverts for the renamed bool field — silently
+            # accepting the old key and misreading its sense would be worse
+            # than failing, so this is named explicitly before the generic path.
+            for old_key, guidance in _RENAMED_SANDBOX_POLICY_KEYS.items():
+                if old_key in self.policy:
+                    raise ValueError(f"sandbox.policy is invalid: {guidance}")
             try:
                 SandboxPolicy(**self.policy)
             except TypeError as exc:

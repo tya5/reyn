@@ -41,14 +41,14 @@ the filesystem — whether the file exists — not the exit code, because the fi
 the security property and the exit code is only a backend's report of it.
 
 **Two axes, two probes, because one policy cannot express both (#2983 stage 2).**
-The write probe must set ``allow_subprocess=True`` to isolate its axis from the
-syscall layer; the subprocess probe must set it to ``False``, because that flag
+The write probe must set ``deny_subprocess=False`` to isolate its axis from the
+syscall layer; the subprocess probe must set it to ``True``, because that flag
 IS its subject. The policies contradict, so a single launch cannot witness both
 and :func:`probe_subprocess_enforcement` is a second probe rather than another
 assertion inside the first. It matters that it exists at all: the write boundary
 is Landlock's (or Seatbelt's file rules), so a host where the seccomp filter
 never loads — #2962, exactly — passes the write probe green. Until stage 2 a
-passing ``available()`` said nothing whatsoever about ``allow_subprocess``, while
+passing ``available()`` said nothing whatsoever about ``deny_subprocess``, while
 ``configure-sandbox.md`` told operators it was enforced.
 
 **A third probe exists, added for #3030, but is deliberately NOT folded into
@@ -57,9 +57,9 @@ network gate the same way — a socket-create attempted under ``network=False``
 MUST be refused, with the same positive-control / non-networking-control /
 deny three-arm shape as the subprocess probe. It closes the gap #3030 found:
 the network gate lived inside the SAME seccomp filter the subprocess axis does,
-and that filter used to be skipped entirely whenever ``allow_subprocess`` was
-True — the stdio-MCP default — so neither ``probe_enforcement`` nor
-``probe_subprocess_enforcement`` (both of which pass ``allow_subprocess=True``
+and that filter used to be skipped entirely whenever ``deny_subprocess`` was
+False — the stdio-MCP default — so neither ``probe_enforcement`` nor
+``probe_subprocess_enforcement`` (both of which pass ``deny_subprocess=False``
 to isolate their own axis) had ever exercised it.
 
 It stays OUT of :func:`enforcement_self_test` — the function every real backend
@@ -208,14 +208,16 @@ def probe_enforcement(backend: "SandboxBackend") -> str | None:
     try:
         # A fixed synthetic policy (never the operator's): write is granted to
         # `granted` and nowhere else, so a write into `denied` MUST be refused by
-        # any backend that enforces at all. network/allow_subprocess are left ON
-        # and the deny-list empty so this probe isolates the write axis — it is
-        # not a test of those layers, and must not fail because of them.
+        # any backend that enforces at all. network is left ON and spawning
+        # left UNDENIED (network=True, deny_subprocess=False, #3901 PR-B ④
+        # rename) and the deny-list empty so this probe isolates the write
+        # axis — it is not a test of those layers, and must not fail because
+        # of them.
         policy = SandboxPolicy(
             write_paths=[str(granted)],
             read_deny_paths=[],
             network=True,
-            allow_subprocess=True,
+            deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
 
@@ -252,7 +254,7 @@ def probe_enforcement(backend: "SandboxBackend") -> str | None:
 
 def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
     """Witness whether *backend* actually denies process spawning under
-    ``allow_subprocess=False`` — the axis ``configure-sandbox.md`` attributes to
+    ``deny_subprocess=True`` — the axis ``configure-sandbox.md`` attributes to
     seccomp-BPF on Linux and to ``(deny process-fork)`` on macOS (#2983 stage 2).
 
     Returns ``None`` when the spawn was refused, else an operator-readable reason.
@@ -260,7 +262,7 @@ def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
 
     Separate from :func:`probe_enforcement` because the two policies contradict —
     see the module docstring. This is the probe that makes ``available() == True``
-    say anything at all about ``allow_subprocess``: the write probe is satisfied
+    say anything at all about ``deny_subprocess``: the write probe is satisfied
     by Landlock alone, so a host whose seccomp filter never loads passes it.
 
     **Three launches, because two different lies are available here.** The oracle
@@ -269,17 +271,17 @@ def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
     EPERM on ``utimensat``, so it reports failure on a write that happened. An
     exit-code oracle would read that as a deny.
 
-    1. ``allow_subprocess=True`` + a forking command must CREATE its marker —
+    1. ``deny_subprocess=False`` + a forking command must CREATE its marker —
        the positive control of #3016: if the probe cannot watch a spawn succeed,
        the same marker's absence under a deny proves nothing.
-    2. ``allow_subprocess=False`` + a NON-forking command must still create its
+    2. ``deny_subprocess=True`` + a NON-forking command must still create its
        marker. This control is specific to this axis and load-bearing: the
        mechanism under test is a default-deny syscall filter, and the first one
        reyn ever loaded killed ``/bin/echo`` outright (#2962). Without this arm a
        filter that refuses EVERYTHING is indistinguishable from one that refuses
        exactly ``fork`` — both leave no marker — and we would report the broadest
        possible breakage as enforcement.
-    3. Only then the deny: ``allow_subprocess=False`` + the forking command must
+    3. Only then the deny: ``deny_subprocess=True`` + the forking command must
        NOT create its marker. Arms 2 and 3 differ in nothing but the fork, so the
        absence is attributable to the fork rather than to a wrap that is simply
        dead under this policy.
@@ -291,21 +293,22 @@ def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
         return (
             "the subprocess-enforcement probe needs 'sh', 'touch' and 'cat' on "
             "PATH and did not find them all, so it could not be run — this "
-            "backend's allow_subprocess enforcement is unwitnessed, not confirmed"
+            "backend's deny_subprocess enforcement is unwitnessed, not confirmed"
         )
 
     granted = Path(tempfile.mkdtemp(prefix="reyn-sandbox-selftest-spawn-")).resolve()
     try:
-        def _policy(allow_subprocess: bool) -> SandboxPolicy:
+        def _policy(deny_subprocess: bool) -> SandboxPolicy:
             # Fixed and synthetic, like the write probe's: write is GRANTED to
             # `granted` throughout, so nothing here turns on a filesystem deny —
-            # the only variable across the three arms is allow_subprocess (and,
-            # in arm 2, whether the command forks at all).
+            # the only variable across the three arms is deny_subprocess (#3901
+            # PR-B ④ rename; same axis, inverted sense) and, in arm 2, whether
+            # the command forks at all.
             return SandboxPolicy(
                 write_paths=[str(granted)],
                 read_deny_paths=[],
                 network=True,
-                allow_subprocess=allow_subprocess,
+                deny_subprocess=deny_subprocess,
                 timeout_seconds=_PROBE_TIMEOUT_SECONDS,
             )
 
@@ -324,43 +327,43 @@ def probe_subprocess_enforcement(backend: "SandboxBackend") -> str | None:
         # 1. Positive control — a spawn this probe is ALLOWED to make happens.
         control = granted / "control-spawn"
         created, detail = _attempt_create(
-            backend, _policy(True), control, _forking_argv(control)
+            backend, _policy(False), control, _forking_argv(control)
         )
         if not created:
             return (
                 f"the subprocess-enforcement probe could not establish a positive "
                 f"control: a command that forks — permitted here by "
-                f"allow_subprocess=True — did not produce {control} ({detail}). "
+                f"deny_subprocess=False — did not produce {control} ({detail}). "
                 f"The probe cannot observe a spawn through this backend at all, so "
-                f"a missing marker under allow_subprocess=False would prove "
+                f"a missing marker under deny_subprocess=True would prove "
                 f"nothing; treating enforcement as unwitnessed"
             )
 
         # 2. The deny policy must still be able to run a command at all.
         alive = granted / "control-nofork"
         created, detail = _attempt_create(
-            backend, _policy(False), alive, [touch, str(alive)]
+            backend, _policy(True), alive, [touch, str(alive)]
         )
         if not created:
             return (
-                f"under allow_subprocess=False this backend could not run even a "
+                f"under deny_subprocess=True this backend could not run even a "
                 f"NON-forking command: {alive} — a path this policy GRANTS — was "
                 f"not written ({detail}). Something in this policy's wrap is "
                 f"failing wholesale rather than denying process creation "
                 f"specifically, so a denied spawn cannot be attributed to the "
-                f"allow_subprocess gate; treating enforcement as unwitnessed"
+                f"deny_subprocess gate; treating enforcement as unwitnessed"
             )
 
         # 3. The deny — the actual claim under test.
         spawned = granted / "spawned"
         created, detail = _attempt_create(
-            backend, _policy(False), spawned, _forking_argv(spawned)
+            backend, _policy(True), spawned, _forking_argv(spawned)
         )
         if created:
             return (
                 f"no subprocess deny fired: a command that must fork to run wrote "
-                f"{spawned} even though the policy set allow_subprocess=False "
-                f"({detail}). The backend reports allow_subprocess as enforced "
+                f"{spawned} even though the policy set deny_subprocess=True "
+                f"({detail}). The backend reports deny_subprocess as enforced "
                 f"while sandboxed code can still spawn arbitrary processes — the "
                 f"syscall layer (seccomp-BPF on Linux, (deny process-fork) on "
                 f"macOS) is not active"
@@ -408,12 +411,12 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
     third-party address, and not a same-process ``listen()`` denial leaking
     into the result.
 
-    **``allow_subprocess=True`` throughout — deliberately, unlike the write
+    **``deny_subprocess=False`` throughout — deliberately, unlike the write
     probe's isolation choice.** #3030 is specifically the discovery that
-    ``network=False`` was silently unenforced whenever ``allow_subprocess`` was
-    True (the stdio-MCP default), because the whole seccomp filter — network
+    ``network=False`` was silently unenforced whenever ``deny_subprocess`` was
+    False (the stdio-MCP default), because the whole seccomp filter — network
     gate included — used to be skipped in that case. Probing with
-    ``allow_subprocess=False`` would not exercise the condition that was
+    ``deny_subprocess=True`` would not exercise the condition that was
     actually broken.
 
     Three launches, same shape as :func:`probe_subprocess_enforcement` and for
@@ -454,7 +457,7 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
                 write_paths=[str(granted)],
                 read_deny_paths=[],
                 network=network,
-                allow_subprocess=True,  # the exact #3030 condition
+                deny_subprocess=False,  # the exact #3030 condition
                 timeout_seconds=_PROBE_TIMEOUT_SECONDS,
             )
 
@@ -489,7 +492,7 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
         created, detail = _attempt_create(backend, _policy(False), alive, [touch, str(alive)])
         if not created:
             return (
-                f"under network=False (allow_subprocess=True) this backend "
+                f"under network=False (deny_subprocess=False) this backend "
                 f"could not run even a NON-networking command: {alive} — a path "
                 f"this policy GRANTS — was not written ({detail}). Something in "
                 f"this policy's wrap is failing wholesale rather than denying "
@@ -509,7 +512,7 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
                 f"listener wrote {escaped} even though the policy set "
                 f"network=False ({detail}). The backend reports network as "
                 f"enforced while sandboxed code can still dial a peer — the "
-                f"exact #3030 condition (allow_subprocess=True skipped the "
+                f"exact #3030 condition (deny_subprocess=False skipped the "
                 f"whole syscall filter, network gate included)"
             )
 

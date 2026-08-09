@@ -106,19 +106,20 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     which is why ``execve``/``execveat`` are baseline-allowed (denying them would
     kill the shim before it could exec the target at all, #2962).
 
-    ALWAYS loads, regardless of ``policy.allow_subprocess`` (#3030 fix). It used
-    to early-return when ``allow_subprocess`` was True, on the rationale that "the
-    syscall-reduction layer exists to deny process creation, so an explicitly
-    subprocess-permitting policy has nothing for it to add". That was measurably
-    false: the same filter also carries the NETWORK gate
+    ALWAYS loads, regardless of ``policy.deny_subprocess`` (#3030 fix; field
+    renamed #3901 PR-B ④). It used to early-return when ``deny_subprocess`` was
+    False, on the rationale that "the syscall-reduction layer exists to deny
+    process creation, so an explicitly subprocess-permitting policy has nothing
+    for it to add". That was measurably false: the same filter also carries the
+    NETWORK gate
     (``_NETWORK_SYSCALLS`` are allowlisted only when ``policy.network``), and
     skipping the whole filter dropped that gate too — measured on Linux 6.8, a
     real outbound connect+send SUCCEEDED under ``network=False,
-    allow_subprocess=True``, which is the stdio-MCP default (every stdio MCP
+    deny_subprocess=False``, which is the stdio-MCP default (every stdio MCP
     server was reachable on Linux regardless of its ``network: false`` config).
 
     The fix is the seccomp **allowlist**, not a denylist: ``_build_syscall_allowlist``
-    already adds ``_SUBPROCESS_SYSCALLS`` when ``policy.allow_subprocess`` and
+    already adds ``_SUBPROCESS_SYSCALLS`` when not ``policy.deny_subprocess`` and
     ``_NETWORK_SYSCALLS`` when ``policy.network``, so a subprocess-permitting
     policy still gets exactly the syscalls it asked for — nothing more. Every
     syscall NOT named (``io_uring_setup``, ``socketcall``, future network syscalls
@@ -126,7 +127,7 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     allowlist closes this class of gap and a denylist mirroring
     ``_NETWORK_SYSCALLS`` would not (io_uring never calls ``socket``/``connect``
     as syscalls, so a denylist naming only those would let `IORING_OP_CONNECT`
-    through). This DOES put every ``allow_subprocess: True`` MCP server under a
+    through). This DOES put every ``deny_subprocess: False`` MCP server under a
     default-deny syscall filter for the first time — the #2962 correctness risk
     (its first live load killed ``/bin/echo``) — mitigated by the allowlist
     already being live-validated for ordinary MCP-server workloads (see
@@ -155,7 +156,7 @@ def _apply_landlock(policy: SandboxPolicy) -> None:
        filter never loads, and the shim's seccomp step enforces nothing (#3020).
        Called UNCONDITIONALLY now (#3030): ``_apply_seccomp`` below always loads
        the filter, so this must always run first, not only when
-       ``allow_subprocess`` is False. The shim is ALWAYS a fresh process, so it
+       ``deny_subprocess`` is True. The shim is ALWAYS a fresh process, so it
        can never inherit the import from a parent the way ``LandlockBackend.run``'s
        child accidentally could.
     2. ``ruleset.apply()`` — irrevocable, survives the ``execvp`` in

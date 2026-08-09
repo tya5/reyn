@@ -816,7 +816,7 @@ hooks:
 | `exec_capture` | list[string] | _none_ | An argv whose **stdout is a single JSON object** `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required), pushed via the same path as `template_push`. Renamed from `shell_push` in #3226 Phase 4 — argv-list-only, same clean break as `exec`. stdout must be pure JSON (logs → stderr). Sandbox-gated + consent-allowlisted. Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push (fail-safe). |
 | `subprocess` | bool | `false` (the floor) | **`exec` / `exec_capture` only** — may this hook's argv spawn child processes? Declaring it on another scheme is a `HookConfigError` (a silently-ignored security field would read as an applied restriction that was never applied), as is a non-bool value. Omitting the key keeps the `false` floor; only an explicit `true`/`false` is your expressed will. Set `true` when the command forks: a bare command that resolves to a version-manager shim (`pyenv`/`asdf`/`mise`) or a spawn-based launcher (`npx`/`uvx`) forks **internally**, so it is denied under the default even though the command itself never forks — the symptom is an opaque `fork: Operation not permitted` (now logged with `denial_class=fork_denied` naming it an environment/config problem). Using an absolute path to the real binary is the alternative. Unlike a stdio [MCP server's `subprocess:`](#mcp-servers) (default `true` — such a server *forks to exist*), a hook's fork need depends on your own command, so there is no safe blanket default: the judgment is per hook. Note the agent's own `hooks_add` tool can only create `template_push` hooks, so `exec`/`exec_capture` (renamed from `shell_exec`/`shell_push` in #3226 Phase 4) — and this knob — remain operator-owned. |
 | `network` | bool | `false` (the floor) | **`exec` / `exec_capture` only** — may this hook's argv reach the network? Same rules as `subprocess` above: declaring it on another scheme or giving it a non-bool value is a `HookConfigError`, and omitting it keeps the `false` floor (only an explicit `true`/`false` is your expressed will). Set `true` for a hook that posts to an API or pulls from a registry. Note that the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) does **not** grant this — see the boundary note under that block. |
-| `write_paths` | list[string] | `[]` (the floor) | **`exec` / `exec_capture` only** — filesystem paths this hook's argv may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A grant does not defeat the sensitive-read deny-list — the deny wins over an overlapping grant (#2978), exactly as on the op path. Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
+| `write_paths` | list[string] | `[]` (the floor) | **`exec` / `exec_capture` only** — filesystem paths this hook's argv may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A hook shell's floor carries no sensitive-read deny-list by default (#3901 — `read_deny_paths`'s dataclass default is now empty; the MCP server default is a deliberate opt-in exception, not the hook floor). Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 
 **`wake` / `push_when` truthiness, and why a typo fails differently
@@ -964,30 +964,40 @@ sandbox:
   on_unsupported: warn   # warn | error | ignore
   policy:                # optional — the agent-level (operator) sandbox policy
     network: true
-    read_paths: ["/"]
     write_paths: ["{{workspace}}", "/tmp"]
-    allow_subprocess: true
-    env_passthrough: ["PATH", "HOME"]
+    deny_subprocess: false
+    env_deny_names: []
     timeout_seconds: 600
 ```
 
-> ℹ️ **A `read_deny_paths` entry always wins over an overlapping `write_paths` grant.**
-> On the Seatbelt backend the `read_deny_paths` deny rules are emitted **after** the
+> ℹ️ **Every axis except `write_paths` defaults to full compat** (owner ruling,
+> #3901): `network`/`deny_subprocess`/`read_deny_paths`/`write_deny_paths`/
+> `env_deny_names` all start at "nothing extra restricted" — the sandbox's job is
+> bounding what happens **behind** a permitted action, not re-deciding what the
+> launching shell could already do. `write_paths` is the one field that stays
+> closed by default: it is the operator-unknowable value ("this op needs this
+> directory") the kernel backend consumes directly, so there is no safe compat
+> default to fall back to.
+>
+> **A `write_deny_paths` entry always wins over an overlapping `write_paths`
+> grant** (and `read_deny_paths` likewise over the broad read surface,
+> independently — the two axes are separate fields, each denying only its own
+> axis, #3901). On the Seatbelt backend the deny rules are emitted **after** the
 > `write_paths` allow rules, and SBPL is last-match-wins — so a broad `write_paths`
-> entry (e.g. `~`, `$HOME`, `/`) that engulfs a credential path listed in
-> `read_deny_paths` (`~/.ssh`, `~/.aws`, `~/.gnupg`, etc.) does **not** open that path:
-> the deny still applies to **both read and write** there, and the OS emits a
-> `sandbox_policy_narrowed` audit-event so the narrowing is visible (#2978). This is
-> the design rule: the default deny-list is a floor a broad write grant cannot pierce.
-> If you genuinely need to write under a denied prefix, remove that entry from
-> `read_deny_paths` explicitly — an operator owns `read_deny_paths` and can narrow it.
-> Still scope `write_paths` to the narrowest directories the process actually needs.
+> entry (e.g. `~`, `$HOME`, `/`) that engulfs a path listed in `write_deny_paths`
+> does **not** open it for writing, and the OS emits a `sandbox_policy_narrowed`
+> audit-event so the narrowing is visible (#2978). If you want a credential
+> location (`~/.ssh`, `~/.aws`, `~/.gnupg`, etc.) protected, list it explicitly in
+> `read_deny_paths` (and `write_deny_paths` if you also want the write axis
+> covered) — unlike before #3901, this is no longer a default; an operator who
+> wants it back opts in. Still scope `write_paths` to the narrowest directories
+> the process actually needs.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `backend` | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
 | `on_unsupported` | string | `warn` | Policy when **no OS sandbox backend is available** — whether an explicit `backend` was forced-but-unavailable, `backend: auto` found no platform backend (the auto path honors this too), OR the selected backend **failed its enforcement self-test** (it is present but did not deny — such a backend is treated exactly like an absent one). `warn` logs a WARNING at selection and falls back to `noop` (default — not silent). `error` raises `RuntimeError` (**fail-closed** — refuse to run AI-generated code unsandboxed; set this where enforcement is required, and it works with the default `backend: auto` and against a present-but-inert backend). `ignore` silently falls back. |
-| `policy` | map | _none_ | **Agent-level (operator) sandbox policy.** When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates — **winning over** op-declared fields, so a skill or the LLM cannot widen it. Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern. See sub-keys below. |
+| `policy` | map | _none_ | **Agent-level (operator) sandbox policy.** When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates, on the `network`/`subprocess`/`env` axes — **winning over** op-declared fields, so a skill or the LLM cannot widen it. `write_paths` (and the read/write deny-lists) do NOT participate in that intersection: an operator cannot know in advance what directory an op needs, so the kernel backend consumes them directly (#3901 PR-B ③). Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern. See sub-keys below. |
 
 ### `sandbox.policy` sub-keys
 
@@ -995,12 +1005,12 @@ When `sandbox.policy` is present, these mirror the `SandboxPolicy` fields. Unkno
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `network` | bool | `DEFAULT_SANDBOX_NETWORK` (currently `true`) | Allow outbound network from the sandboxed process. The primary exfiltration gate. When omitted from an explicit `sandbox.policy` block it inherits the single-source floor `DEFAULT_SANDBOX_NETWORK` (currently `true`) — **NOT** the `SandboxPolicy` dataclass default of `false`. A partial policy is merged onto that floor (#2964), so omitting `network` leaves the network ON; set `network: false` explicitly to isolate the process. |
-| `write_paths` | list[string] | `[]` | Filesystem paths the process may write (tight guard). Write implies read for these paths. A `read_deny_paths` entry that overlaps a `write_paths` grant still wins (deny-always-wins, #2978) — so a broad `write_paths` does not re-open a denied credential path. `~` is expanded. |
-| `read_deny_paths` | list[string] | `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc` | Sensitive paths to DENY from the broad read surface (defense-in-depth) — defaults to these 7 OS-level credential locations when omitted from an explicit `sandbox.policy` block (`SandboxPolicy.read_deny_paths`'s dataclass default), NOT an empty list. Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock, which has no read-deny primitive). A `write_paths` entry that overlaps or is a superset of any of these does **not** defeat the deny — the deny always wins on Seatbelt (#2978), and a `sandbox_policy_narrowed` audit-event records the narrowing. |
-| `read_paths` | list[string] | `[]` | **Legacy.** Formerly the strict read allowlist. Reads are broad by default under the current scoping model; this field now documents intended read targets only. |
-| `allow_subprocess` | bool | `true` | Whether the process may spawn children. Enforced — denies `process-fork` when off. |
-| `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. `PATH` is always passed through. |
+| `network` | bool | `true` (compat, #3901) | Allow outbound network from the sandboxed process. Still participates in the permission intersection alongside `deny_subprocess`/`env_deny_names` (an operator-declared value, not a workspace floor) — a config-allowed host is still denied under `network: false` (bypass-prevention, #1199 S3.1c-2). Set `network: false` explicitly to isolate the process. |
+| `write_paths` | list[string] | `[]` | Filesystem paths the process may write (tight guard) — the one field that stays closed by default (operator-unknowable value, no compat floor). Write implies read for these paths. A `write_deny_paths` entry that overlaps a `write_paths` grant still wins (deny-always-wins, #2978). `~` is expanded. |
+| `read_deny_paths` | list[string] | `[]` (compat, #3901) | Sensitive paths to DENY from the broad read surface (defense-in-depth, **opt-in**) — empty by default; before #3901 this defaulted to 7 OS-level credential locations (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`), now an operator sets that list explicitly to get it back. Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock, which has no read-deny primitive). Denies ONLY the read axis — see `write_deny_paths` for the write axis (#3901 split the two; before this they were coupled as an undocumented Seatbelt side-effect of `read_deny_paths`). |
+| `write_deny_paths` | list[string] | `[]` | The write axis's own deny-list (#3901), mirroring `read_deny_paths`. A `write_paths` entry that overlaps or is a superset of any entry here does **not** defeat the deny — the deny always wins on Seatbelt (#2978), and a `sandbox_policy_narrowed` audit-event records the narrowing. Denies ONLY the write axis. |
+| `deny_subprocess` | bool | `false` (compat) | Whether the process may **NOT** spawn children — the deny-list-shaped inverse of the pre-#3901 `allow_subprocess` (owner decision 2026-07-22, #3202: a UX-blocking axis is opt-in restricted, not deny-by-default). Set `deny_subprocess: true` to deny `process-fork`; enforced. |
+| `env_deny_names` | list[string] | `[]` (compat, #3901) | Env-var names to WITHHOLD from the sandboxed process — the deny-list-shaped inverse of the pre-#3901 `env_passthrough` allowlist. Empty (the default) means the WHOLE environment passes through, same trust level as the launching shell; list a name here to withhold it specifically. |
 | `timeout_seconds` | int | `60` | Wall-clock cap enforced by the backend. |
 
 > ⚠️ **`sandbox.policy` does not apply to shell hooks.** It governs sandboxed ops and

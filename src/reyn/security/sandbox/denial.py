@@ -1,7 +1,7 @@
 """Pure classification of a sandbox denial from a finished result (#2820, part B).
 
 A sandbox that enforces ``(deny process-fork)`` (macOS seatbelt / Linux seccomp,
-whenever ``SandboxPolicy.allow_subprocess`` is False) makes a *bare-command* exec
+whenever ``SandboxPolicy.deny_subprocess`` is True) makes a *bare-command* exec
 fail at the LAUNCHER layer rather than in the workload: a bare ``python3`` on
 PATH resolves to a version-manager shim (``~/.pyenv/shims/python3`` → ``pyenv
 exec ...``) or a spawn-based launcher (``npx`` / ``uvx``) whose own internal

@@ -321,7 +321,7 @@ _SPAWN_CONTRACT = AxisContract(
     name="spawn",
     deny_probe=_spawn_deny_probe,
     # Explicitly empty: spawn has no deliberate hole either — every fork
-    # under allow_subprocess=False is denied with no carve-out. Stated here,
+    # under deny_subprocess=True is denied with no carve-out. Stated here,
     # not left implicit (same reasoning as the write axis above).
     exceptions=(),
     workload_test_id=(

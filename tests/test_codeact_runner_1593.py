@@ -187,7 +187,9 @@ async def test_seatbelt_real_runner_round_trip() -> None:
         code=code,
         dispatch=dispatch,
         sandbox_backend=backend,
-        sandbox_policy={"network": False, "env_passthrough": ["PATH"]},
+        # #3901 PR-B ④: env is compat by default (env_deny_names empty), so
+        # PATH needs no explicit passthrough declaration anymore.
+        sandbox_policy={"network": False},
         timeout=30,
     )
     assert out["ok"] is True, out
@@ -222,7 +224,7 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     monkeypatch.setattr(backend, "available", lambda: True)
     runner = CodeActRunner()
     base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
-    sandbox_policy = {"network": False, "env_passthrough": ["PATH"]}
+    sandbox_policy = {"network": False}
 
     argv, cleanup, error, resolved_policy = runner._resolve_sandbox_spawn(
         base_argv, backend, sandbox_policy, 30.0, False,
@@ -231,12 +233,16 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     assert argv is not None
     assert cleanup is not None
     assert resolved_policy is not None
-    assert "PYTHONPATH" in resolved_policy.env_passthrough  # #3822: forced on every path
+    # #3901 PR-B ④: PYTHONPATH is no longer forced into a policy field — it
+    # reaches the harness subprocess via the env-compat default instead (see
+    # _harness_subprocess_env's own tests). What's still pinned here is that
+    # nothing DENIES it.
+    assert "PYTHONPATH" not in resolved_policy.env_deny_names
 
     # Same shape as a direct wrap_command() call: sandbox-exec -f <profile> <base_argv>.
     # The profile PATH differs (each call gets its own fresh temp file), so compare
     # everything else — the exact same code path codeact now runs.
-    direct = backend.wrap_command(base_argv, SandboxPolicy(network=False, env_passthrough=["PATH"], timeout_seconds=30.0))
+    direct = backend.wrap_command(base_argv, SandboxPolicy(network=False, timeout_seconds=30.0))
     assert argv[0] == direct.argv[0] == "sandbox-exec"
     assert argv[1] == direct.argv[1] == "-f"
     assert argv[3:] == direct.argv[3:] == base_argv
@@ -267,7 +273,7 @@ def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
     monkeypatch.setattr(backend, "available", lambda: True)
     runner = CodeActRunner()
     base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
-    sandbox_policy = {"network": False, "env_passthrough": ["PATH"]}
+    sandbox_policy = {"network": False}
 
     argv, cleanup, error, resolved_policy = runner._resolve_sandbox_spawn(
         base_argv, backend, sandbox_policy, 30.0, False,
@@ -275,24 +281,29 @@ def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
     assert error is None
     assert cleanup is None  # Landlock owns no cleanup resource (no temp file)
     assert resolved_policy is not None
-    assert "PYTHONPATH" in resolved_policy.env_passthrough  # #3822: forced on every path
+    # #3901 PR-B ④: PYTHONPATH is no longer forced into a policy field — it
+    # reaches the harness subprocess via the env-compat default instead.
+    assert "PYTHONPATH" not in resolved_policy.env_deny_names
 
-    # #3822: codeact's resolved policy forces PYTHONPATH into env_passthrough
-    # on every path, so the equivalent direct call must declare it too — this
-    # is comparing against the SAME policy codeact actually resolved, not the
-    # caller-supplied one, per resolved_policy.env_passthrough above.
+    # codeact's resolved policy is exactly what `_resolve_sandbox_spawn` built
+    # from `sandbox_policy` above (no forced field), so the equivalent direct
+    # call uses the SAME construction — this is comparing against the policy
+    # codeact actually resolved, not a caller-embellished one.
     direct = backend.wrap_command(
         base_argv,
-        SandboxPolicy(network=False, env_passthrough=["PATH", "PYTHONPATH"], timeout_seconds=30.0),
+        SandboxPolicy(network=False, timeout_seconds=30.0),
     )
     assert argv == direct.argv  # byte-identical — same deterministic build
 
 
-def test_unsandboxed_escape_still_resolves_a_policy_with_pythonpath() -> None:
-    """Tier 2: #3822 env — the ``allow_unsandboxed`` test-only escape (no real
-    backend) still returns a resolved ``SandboxPolicy`` with ``PYTHONPATH`` in
-    ``env_passthrough``, matching the sandboxed branches. Strip the forced
-    ``env_passthrough=["PYTHONPATH"]`` on this branch and this goes RED."""
+def test_unsandboxed_escape_still_resolves_a_policy_that_passes_pythonpath() -> None:
+    """Tier 2: #3822/#3901 env — the ``allow_unsandboxed`` test-only escape (no
+    real backend) still resolves a ``SandboxPolicy`` that, run through
+    ``_harness_subprocess_env``, ends up with PYTHONPATH set — matching the
+    sandboxed branches. #3901 PR-B ④: PYTHONPATH is no longer forced into a
+    policy field (the env-compat default passes it through on its own); what
+    is still pinned is that the bare-default policy this branch resolves
+    denies nothing that would block it."""
     runner = CodeActRunner()
     base_argv = [runner.python_executable, "-m", "reyn.core.kernel._codeact_harness"]
 
@@ -302,7 +313,11 @@ def test_unsandboxed_escape_still_resolves_a_policy_with_pythonpath() -> None:
     assert error is None
     assert argv == base_argv
     assert resolved_policy is not None
-    assert "PYTHONPATH" in resolved_policy.env_passthrough
+    assert "PYTHONPATH" not in resolved_policy.env_deny_names
+
+    from reyn.core.kernel.codeact_runner import _harness_subprocess_env
+
+    assert "PYTHONPATH" in _harness_subprocess_env(resolved_policy)
 
 
 # ── #1609: harness subprocess PYTHONPATH propagation (multi-worktree drift) ───
@@ -321,7 +336,7 @@ def test_harness_subprocess_env_prepends_reyn_tree() -> None:
     from reyn.security.sandbox import SandboxPolicy
 
     tree = str(Path(reyn.__file__).resolve().parent.parent)
-    env = _harness_subprocess_env(SandboxPolicy(env_passthrough=["PYTHONPATH"]))
+    env = _harness_subprocess_env(SandboxPolicy())
     assert env["PYTHONPATH"].split(os.pathsep)[0] == tree  # parent tree resolved first
 
 
@@ -334,63 +349,77 @@ def test_harness_subprocess_env_preserves_existing_pythonpath(monkeypatch) -> No
     from reyn.core.kernel.codeact_runner import _harness_subprocess_env
     from reyn.security.sandbox import SandboxPolicy
 
-    parts = _harness_subprocess_env(
-        SandboxPolicy(env_passthrough=["PYTHONPATH"])
-    )["PYTHONPATH"].split(os.pathsep)
+    parts = _harness_subprocess_env(SandboxPolicy())["PYTHONPATH"].split(os.pathsep)
     assert "/some/existing/path" in parts
     assert parts[-1] == "/some/existing/path"  # appended after the prepended tree
 
 
-def test_harness_subprocess_env_does_not_leak_arbitrary_parent_vars(monkeypatch) -> None:
-    """Tier 2: #3822 env — a parent env var NOT in the policy allowlist / standard
-    network set does NOT reach the harness subprocess.
+def test_harness_subprocess_env_goes_through_the_shared_chokepoint(monkeypatch) -> None:
+    """Tier 2: #3822 env — the harness subprocess env is built by
+    ``resolve_passthrough_env`` (the SAME chokepoint every other sandboxed
+    launch route uses), not a bespoke copy.
 
-    CodeAct runs model-authored code; before this fix ``_harness_subprocess_env``
-    did ``dict(os.environ)`` — every parent env var, secrets included, reached the
-    snippet's process regardless of the policy CodeAct was given. Strip the
-    ``resolve_passthrough_env`` call (put back a bare ``dict(os.environ)``) and
-    this goes RED, because the marker below is not in ``STANDARD_NETWORK_ENV_NAMES``
-    or the policy's ``env_passthrough``.
-    """
+    #3901 PR-B ④ (owner ruling B, full compat) changed WHAT that chokepoint
+    does (deny-list, empty = pass everything) but not THAT
+    ``_harness_subprocess_env`` goes through it — before #3822's fix,
+    ``_harness_subprocess_env`` did a bespoke ``dict(os.environ)`` that bypassed
+    the chokepoint entirely; strip the ``resolve_passthrough_env`` call and
+    this test's positive-and-negative pair below stops moving together (the
+    denied name would leak too, since a bespoke copy has no deny mechanism at
+    all)."""
     import os
 
     from reyn.core.kernel.codeact_runner import _harness_subprocess_env
     from reyn.security.sandbox import SandboxPolicy
 
-    monkeypatch.setenv("REYN_3822_TEST_SECRET_MARKER", "should-not-leak")
-    env = _harness_subprocess_env(SandboxPolicy(env_passthrough=["PYTHONPATH"]))
-    assert "REYN_3822_TEST_SECRET_MARKER" not in env, (
-        "an arbitrary parent env var reached the CodeAct harness subprocess — "
-        "the allowlist chokepoint was bypassed"
+    monkeypatch.setenv("REYN_3901_TEST_PASSES_THROUGH", "compat-default")
+    monkeypatch.setenv("REYN_3901_TEST_DENIED", "should-not-leak")
+    env = _harness_subprocess_env(
+        SandboxPolicy(env_deny_names=["REYN_3901_TEST_DENIED"])
+    )
+    assert env.get("REYN_3901_TEST_PASSES_THROUGH") == "compat-default", (
+        "an undeclared parent env var did not reach the CodeAct harness "
+        "subprocess under the compat default — the chokepoint's own default "
+        "changed to a deny-list under #3901"
+    )
+    assert "REYN_3901_TEST_DENIED" not in env, (
+        "an explicitly-denied parent env var reached the CodeAct harness "
+        "subprocess — the allowlist chokepoint was bypassed"
     )
     assert "PYTHONPATH" in env  # #1609 still holds through the allowlist
 
 
 @pytest.mark.asyncio
-async def test_codeact_snippet_cannot_read_an_unpassthroughed_parent_env_var(monkeypatch) -> None:
+async def test_codeact_snippet_env_goes_through_the_real_run_call_path(monkeypatch) -> None:
     """Tier 2: #3822 env — end-to-end, through the REAL ``run()`` call path
     (not just the ``_harness_subprocess_env`` unit above): a real snippet's
-    ``os.environ`` genuinely does not contain a parent-only marker.
+    ``os.environ`` reflects the SAME chokepoint the unit test pins, not a
+    bespoke copy that could drift from it on this path specifically.
 
     This is the seam lead-coder flagged (#3834/#3835/#3837 pattern): the
     IMPLEMENTED side of a fix needs its own witness, not just the incidental
-    side. Strip the fix (revert ``_harness_subprocess_env`` to
-    ``dict(os.environ)``) and this goes RED for the stated reason — the real
-    snippet, in a real subprocess, would then read the marker back.
+    side. #3901 PR-B ④ (owner ruling B, full compat) flipped what the
+    chokepoint does BY DEFAULT (an undeclared var now passes through) but not
+    THAT this path uses it — ``run()`` has no ``sandbox_policy`` parameter to
+    thread an ``env_deny_names`` entry through in the ``allow_unsandboxed``
+    escape, so this witnesses the positive (passes-through) side; the deny
+    leg is covered by the unit test above, which calls
+    ``_harness_subprocess_env`` directly with an explicit deny.
     """
     async def dispatch(name: str, args: dict) -> dict:  # pragma: no cover - unused
         return {"status": "ok", "data": {}}
 
-    monkeypatch.setenv("REYN_3822_TEST_SECRET_MARKER", "should-not-leak")
-    code = "import os\nresult = os.environ.get('REYN_3822_TEST_SECRET_MARKER', 'ABSENT')"
+    monkeypatch.setenv("REYN_3822_TEST_MARKER", "compat-default")
+    code = "import os\nresult = os.environ.get('REYN_3822_TEST_MARKER', 'ABSENT')"
     out = await CodeActRunner().run(
         code=code, dispatch=dispatch, allow_unsandboxed=True,
         allowed_modules=["os"], timeout=30.0,
     )
     assert out["ok"] is True, out
-    assert out["result"] == "ABSENT", (
-        "the CodeAct snippet read a parent-only env var — the allowlist "
-        "chokepoint was bypassed on the real run() call path"
+    assert out["result"] == "compat-default", (
+        "the CodeAct snippet did not see an undeclared parent env var under "
+        "the compat default — the real run() call path diverged from the "
+        "_harness_subprocess_env unit above"
     )
 
 

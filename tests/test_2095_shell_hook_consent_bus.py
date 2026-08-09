@@ -58,7 +58,7 @@ class _RecordingBus:
 
 
 def _policy() -> SandboxPolicy:
-    return SandboxPolicy(network=False, allow_subprocess=False, timeout_seconds=10)
+    return SandboxPolicy(network=False, deny_subprocess=True, timeout_seconds=10)
 
 
 def _marker_argv(marker: Path) -> list[str]:

@@ -4,46 +4,53 @@ The policy is data only: declared in the agent profile (= FP-0017) and passed by
 to a SandboxBackend. P3/P7-aligned — the policy is mechanism-agnostic; backend
 selection lives in `reyn.security.sandbox.backend.get_default_backend()`.
 
-Scoping model (#1199 realignment, per-axis):
-    write   — tight workspace-allowlist (``write_paths``) = the hard guard.
-    network — allowlist-CAPABLE (the backend can express a network deny),
-              but the DEFAULT is ON, not off — owner decision 2026-06-05
-              (see :data:`DEFAULT_SANDBOX_NETWORK`). An operator who wants
-              isolation sets it off via ``reyn.yaml sandbox.policy``.
-    exec    — controlled (``allow_subprocess``).
-    read    — **broad-allow by default**. The strict read-allowlist was
-              abolished in favor of a defense-in-depth deny-list — this is
-              independent of the network default above (both were true
-              when the axis was tight-by-default; only the network default
-              itself changed).
+Scoping model (#1199 realignment, per-axis; #3901 PR-B ④ compat-default ruling
+layered on top — see the ``SandboxPolicy`` class docstring for the full
+rationale):
+    write   — tight workspace-allowlist (``write_paths``) = the hard guard,
+              the one axis that stays closed by default (operator-unknowable).
+    network — compat (default open) — owner decision 2026-06-05 established
+              this at the ``resolve_sandbox_policy`` floor (see
+              :data:`DEFAULT_SANDBOX_NETWORK`), and #3901's later full-compat
+              ruling extends the same posture to every other axis: the
+              sandbox no longer re-decides what the launching shell could
+              already do; an operator who wants isolation sets it off
+              explicitly.
+    exec    — compat (``deny_subprocess`` defaults False = spawning allowed).
+    read    — **broad-allow by default**, unchanged since #1199: the strict
+              read-allowlist was abolished, and a ``read_deny_paths``
+              defense-in-depth carve-out is available (now empty by default,
+              per the owner's #3901 compat ruling) for an operator who wants
+              specific credential locations denied.
 
-★ CORRECTED (#3905 follow-up, found by owner spotting the mismatch, not a
-design read): this section previously said "network — tight (default off /
+★ #3905: this section previously said "network — tight (default off /
 allowlist)", which was true of #1199's ORIGINAL design but went stale when
-the owner later flipped the RESOLVED default to ON (2026-06-05) without
-updating this docstring. The dataclass's own field default carried the
-SAME staleness — see :data:`DEFAULT_SANDBOX_NETWORK`, the single source
-both now read from.
+the owner flipped the RESOLVED default to ON (2026-06-05) without updating
+this docstring — the dataclass's own field default carried the SAME
+staleness until #3905 aligned it with :data:`DEFAULT_SANDBOX_NETWORK`, the
+single source both now read from (#3901 PR-B ④ then generalised that
+single-source, compat-by-default posture to every other axis).
 
 Fields:
     network: allow outbound network access from the sandboxed process.
         Defaults to :data:`DEFAULT_SANDBOX_NETWORK` (True) — see that
         constant's own docstring for the owner decision and rationale.
-    read_paths: legacy read-allowlist. Under the broad-read scoping model it
-        no longer restricts reads (reads are broad by default); retained for
-        backward compatibility and as documentation of intended read targets.
     write_paths: filesystem paths the process may write (write implies read).
         ``~`` is expanded (see :func:`expand_policy_path`).
     read_deny_paths: sensitive paths to DENY from the broad read surface
-        (defense-in-depth). Enforced where the backend can express a
+        (defense-in-depth, opt-in). Enforced where the backend can express a
         deny-after-allow rule (Seatbelt / SBPL); NOT enforceable on
         allowlist-only backends (Landlock), which rely on the network gate.
-        Defaults to OS-level credential locations; ``~`` is expanded.
-    allow_subprocess: whether the process may spawn children. Defaults to
-        True (owner decision, 2026-07-22, #3202) — see the field's own
-        docstring comment for rationale; an explicit False at any call site
-        still denies.
-    env_passthrough: env-var names that pass through to the sandboxed process
+        Empty by default (#3901 PR-B ④); ``~`` is expanded.
+    write_deny_paths: the write axis's own deny-list (#3901 PR-B ④), mirroring
+        ``read_deny_paths``. Empty by default; ``~`` is expanded.
+    deny_subprocess: whether the process may NOT spawn children. Defaults to
+        False = spawning allowed (owner decision, 2026-07-22, #3202, restated
+        as a deny-list-shaped bool by #3901 PR-B ④) — an explicit True at any
+        call site still denies.
+    env_deny_names: env-var names to withhold from the sandboxed process
+        (#3901 PR-B ④, a deny-list — empty means the whole environment passes
+        through, same trust level as the launching shell).
     timeout_seconds: wall-clock cap (enforced by the backend)
     max_output_bytes: per-stream cap (bytes) on captured stdout/stderr — output
         beyond it is drained-and-discarded (the ``truncated`` flag is set) so a
@@ -105,25 +112,22 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
     """Build the env dict every sandbox backend passes to a spawned child
     (#3075 fix 5 — the shared chokepoint all three backends call).
 
-    ``policy.env_passthrough`` ∪ the standard proxy/CA env
-    (:data:`reyn._network.STANDARD_NETWORK_ENV_NAMES`) — the sandbox forwards
-    the standard set to EVERY sandboxed child by default, generalising the
-    git-clone-specific forwarding that used to live only in
-    ``skill_install.py`` (#3075's sharpest symptom: git-clone conformed,
-    its sibling uvx/npx subprocess did not). This is additive only — an
-    operator-declared ``env_passthrough`` entry is still honoured, and no
-    secret-bearing var is ever added here (the standard set is a curated,
-    known-non-secret allowlist: proxy URLs + CA bundle *paths*, not
-    credentials — the CA bundle *file* was already broad-read-floor
-    readable; only the env var pointing at it was missing before #3075).
+    #3901 PR-B ④ (owner ruling B, full compat): the WHOLE of ``os.environ``
+    passes through MINUS ``policy.env_deny_names`` — a real behavior change
+    from the prior allow-list shape (``policy.env_passthrough`` ∪ the
+    standard proxy/CA set only). Before this: a sandboxed child could NOT
+    see ``OPENAI_API_KEY``-shaped vars unless an operator explicitly
+    declared them. After: it can, unless explicitly denied — "the same
+    trust level as running the command in your own shell" (#3901's
+    guiding UX principle), the same one #3202 already applied to
+    ``allow_subprocess``/``network``, now extended to env by the owner's
+    full-compat ruling rather than left as a partial application.
 
     PATH fallback is applied by each backend after calling this (preserves the
     existing "PATH always available" behaviour independent of this set).
     """
-    from reyn._network import STANDARD_NETWORK_ENV_NAMES
-
-    names = set(policy.env_passthrough) | set(STANDARD_NETWORK_ENV_NAMES)
-    return {name: os.environ[name] for name in names if name in os.environ}
+    deny = set(policy.env_deny_names)
+    return {name: value for name, value in os.environ.items() if name not in deny}
 
 
 # The network default lives in ONE place so the owner can flip it trivially
@@ -139,38 +143,94 @@ DEFAULT_SANDBOX_NETWORK: bool = True
 
 @dataclass
 class SandboxPolicy:
-    """Declarative sandbox policy. See module docstring for field semantics."""
+    """Declarative sandbox policy. See module docstring for field semantics.
 
+    #3901 PR-B ④: every axis's DEFAULT is now compat (owner ruling B,
+    2026-08-09 — "seatbelt for a shell that already has the keys" is not the
+    model; the sandbox's job is bounding what happens BEHIND a permitted
+    action, not re-deciding what the launching shell could already do).
+    ``network`` already was compat by owner decision 2026-06-05 (#3905
+    aligned its declared default with that decision); #3901 extends the
+    same posture to every other axis below.
+    Fields are named as DENY-LISTS throughout (restrict-only, #1199) rather
+    than allow-lists, because a compat-default axis's natural expression is
+    "empty = nothing extra denied" — an allow-list's empty state is
+    ambiguous between "nothing permitted" and "no restriction declared"
+    (#3899's `write_paths`/`SandboxLayer` two-machines-one-field defect was
+    exactly this ambiguity, at the layer this dataclass feeds). The one
+    exception is ``write_paths``, kept as an allow-list DELIBERATELY: it is
+    the operator-unknowable value (#3901 §1: "this op needs this directory"
+    — the operator cannot express what they don't know) the kernel backend
+    (Seatbelt/Landlock) consumes directly to build the actual confinement
+    rule; #3901 PR-B ③ already removed it from the permission ∩ (it no
+    longer double-duties as a permission-narrowing value), so its allow-list
+    shape here does not reintroduce the ambiguity that broke.
+    """
+
+    # ``DEFAULT_SANDBOX_NETWORK`` (above) is the single source both this
+    # dataclass default and the agent-level ``resolve_sandbox_policy`` floor
+    # read from (owner decision 2026-06-05, #3905 aligned the two after they
+    # drifted). #3901 PR-B ④ generalises that same compat-by-default posture
+    # to every other axis below.
     network: bool = DEFAULT_SANDBOX_NETWORK
-    read_paths: list[str] = field(default_factory=list)
+    # #3901 PR-B ④: read_paths removed — #1199's broad-read realignment
+    # already made every kernel backend ignore it (Seatbelt: unconditional
+    # ``(allow file-read*)``; Landlock: reads are never gated), and PR-B ③
+    # removed the sole remaining consumer (SandboxLayer's permission-∩
+    # projection). A field nothing reads is worse than no field: it invites
+    # an operator to believe writing it does something.
     write_paths: list[str] = field(default_factory=list)
-    read_deny_paths: list[str] = field(
-        default_factory=lambda: list(DEFAULT_SENSITIVE_READ_DENY)
-    )
-    # Owner policy (decided 2026-07-22, #3202): a setting that BLOCKS ORDINARY
-    # UX must not deny by default. Security for a UX-blocking axis (spawning a
-    # child process) is opt-in via an explicit ``allow_subprocess=False``, not
-    # deny-by-default — anything the reyn-launching shell can already do, the
-    # sandbox must not silently refuse (the concrete trigger: a corporate-
-    # proxy/sandbox host denying plugin-install's pip (materialise) under the
-    # old False floor). ``read_deny_paths`` stays deny-by-default because it
-    # gates secret exposure, not developer UX — do not read this flip as
-    # license to loosen that axis. ``network`` is NOT deny-by-default either
-    # (see :data:`DEFAULT_SANDBOX_NETWORK` — corrected #3905, this comment
-    # previously grouped it with ``read_deny_paths`` as staying tight, which
-    # was already stale by the time it was read). An explicit
-    # ``allow_subprocess=False`` at any call site is unaffected (explicit
-    # writes always win over the floor — #2964).
-    allow_subprocess: bool = True
-    env_passthrough: list[str] = field(default_factory=list)
+    # #3901 PR-B ④ (owner ruling B): compat default — was
+    # ``DEFAULT_SENSITIVE_READ_DENY``, now empty. #3202's credential-axis
+    # carve-out ("read_deny_paths / network stay deny-by-default because
+    # they gate secret exposure, not developer UX") is EXPLICITLY
+    # overridden by the owner's full-compat ruling on #3901 (network's
+    # default flips to open, env_passthrough — see below — to permissive);
+    # read_deny_paths follows the same ruling rather than being a
+    # remaining island of the old policy. An operator who wants the old
+    # credential-path defense-in-depth sets ``read_deny_paths`` explicitly
+    # (or the presets #3901 leaves for a future ``sandbox.mode`` — #3823).
+    read_deny_paths: list[str] = field(default_factory=list)
+    # #3901 PR-B ④: new. The write-axis's own deny-list, mirroring
+    # ``read_deny_paths`` — Seatbelt previously derived a write-deny
+    # side-effect FROM ``read_deny_paths`` (seatbelt.py; an accident #3901
+    # promotes to an explicit, cross-backend-consistent axis) and Landlock
+    # never enforced it at all (a same-policy-different-meaning-per-OS gap
+    # #3901 closes by giving both backends one real field to read).
+    write_deny_paths: list[str] = field(default_factory=list)
+    # #3901 PR-B ④: renamed from ``allow_subprocess`` (was: True = compat).
+    # Same compat-by-default semantics, restated as a deny-list-shaped bool
+    # for consistency with every other axis's post-#3901 vocabulary — an
+    # explicit ``deny_subprocess=True`` at any call site still wins (#2964's
+    # explicit-beats-floor rule is unaffected by the rename).
+    deny_subprocess: bool = False
+    # #3901 PR-B ④ (owner ruling B): renamed from ``env_passthrough``
+    # (an ALLOW-list, empty = pass nothing but the standard network set —
+    # see the former ``resolve_passthrough_env`` docstring). Now a
+    # DENY-list, empty = pass everything (full compat: a child inherits the
+    # same environment — API keys included — the launching shell already
+    # had). This is a real behavior change, not a rename: before this
+    # field existed, ``OPENAI_API_KEY``-shaped vars did NOT reach a
+    # sandboxed child; after, they do by default. An operator who wants
+    # the old narrow passthrough sets ``env_deny_names`` to block specific
+    # names, or (#3823, future) selects a stricter ``sandbox.mode``.
+    env_deny_names: list[str] = field(default_factory=list)
     timeout_seconds: int = 60
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 
 
 def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
-    """Return ``(write_path, deny_path)`` pairs where a ``read_deny_paths`` entry
+    """Return ``(write_path, deny_path)`` pairs where a ``write_deny_paths`` entry
     overlaps a ``write_paths`` grant — i.e. where the deny-always-wins rule
     (#2978) actually NARROWS a grant the operator/caller declared.
+
+    #3901 PR-B ④: checks ``write_deny_paths`` (the write axis's OWN deny-list),
+    not ``read_deny_paths``. Before PR-B, Seatbelt derived a write-deny
+    side-effect FROM ``read_deny_paths`` (denying a credential path's read
+    happened to also deny writing to it) while Landlock never enforced that
+    side-effect at all — the same policy meant different things per OS. PR-B
+    gives both backends one real, explicit field to read for write-denial;
+    this function follows that field, not the accident it replaces.
 
     Pure function of the policy (no I/O, no events) so it is trivially testable
     and can be called from any layer that has an events sink. The op handler
@@ -182,7 +242,7 @@ def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
     semantics the Seatbelt backend enforces (a deny on ``~/.ssh`` narrows a
     write grant on ``~``; a deny on ``~/.ssh`` also fully nullifies an explicit
     write grant on ``~/.ssh/x`` — both are reported so the operator can widen
-    ``read_deny_paths`` if the write was intended). Paths are ``~``-expanded and
+    ``write_deny_paths`` if the write was intended). Paths are ``~``-expanded and
     resolved to match what the backend compares.
     """
     writes = [
@@ -191,7 +251,7 @@ def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
     ]
     denies = [
         (raw, expand_policy_path(raw).resolve(strict=False))
-        for raw in policy.read_deny_paths
+        for raw in policy.write_deny_paths
     ]
     narrowed: list[tuple[str, str]] = []
     for w_raw, w in writes:
@@ -199,6 +259,41 @@ def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
             if w == d or w.is_relative_to(d) or d.is_relative_to(w):
                 narrowed.append((w_raw, d_raw))
     return narrowed
+
+
+#: Backend names that cannot express a read/write deny-list at all (#3901 §4③):
+#: Landlock is allowlist-only (LSM path-beneath grants; you cannot carve a
+#: subpath out of an allowed parent — landlock.py's own module docstring),
+#: so a configured ``read_deny_paths``/``write_deny_paths`` is silently
+#: unenforced there, unlike Seatbelt's deny-after-allow SBPL rules. This is a
+#: structural backend limitation, not a bug to fix — see the module docstring.
+_DENY_LIST_INCAPABLE_BACKENDS: frozenset[str] = frozenset({"landlock"})
+
+
+def unenforced_axes(backend_name: str, policy: SandboxPolicy) -> list[str]:
+    """Return the policy axis names *configured* but *structurally unenforceable*
+    on ``backend_name`` — the visibility mechanism #3901 §4③ names for a backend
+    capability gap that cannot be fixed (Landlock's LSM constraint), only made
+    observable.
+
+    Pure function of the policy + backend name (no I/O, no events) — same shape
+    as :func:`deny_narrowed_write_grants` — so a caller with an events sink emits
+    a ``sandbox_axis_unenforced`` audit-event when this is non-empty. Landlock is
+    the only backend in this set today; Seatbelt enforces both deny-lists via
+    SBPL deny-after-allow, so it never appears here. Deliberately NOT wired into
+    ``enforcement_self_test`` (CLAUDE.md hard rule: that function is the
+    PRODUCTION gate, blast radius every sandboxed op on every host, deny-leg ×
+    write/spawn axes only — this is audit visibility for a DECLARED gap, not a
+    self-test probe).
+    """
+    if backend_name not in _DENY_LIST_INCAPABLE_BACKENDS:
+        return []
+    axes: list[str] = []
+    if policy.read_deny_paths:
+        axes.append("read_deny_paths")
+    if policy.write_deny_paths:
+        axes.append("write_deny_paths")
+    return axes
 
 
 # ── default sandbox policy resolution (#1339 / sandbox-model completion) ──────
@@ -210,16 +305,21 @@ def resolve_sandbox_policy(
 
     The concrete DEFAULT is a **floor** (never None) so the op_runtime handler
     always applies an operator-or-default policy and the LLM-supplied op fields
-    are never used as the sandbox policy (closes #1339). The floor = broad-read
-    (no read_paths) + the sensitive deny-list + ``network`` from
-    :data:`DEFAULT_SANDBOX_NETWORK` + ``write_paths`` tight to the workspace
-    (the caller-supplied ``write_paths`` = "this op needs this directory", a
-    value the operator cannot know).
+    are never used as the sandbox policy (closes #1339). The floor = ``network``
+    from :data:`DEFAULT_SANDBOX_NETWORK` + ``write_paths`` tight to the
+    workspace (the caller-supplied ``write_paths`` = "this op needs this
+    directory", a value the operator cannot know — #3901 PR-B ①②: this stays
+    a SandboxPolicy floor rather than a permission value for exactly that
+    reason). #3901 PR-B ④ (owner ruling B): every other axis's default is now
+    ``SandboxPolicy``'s own dataclass default (compat) — this floor no longer
+    overrides ``read_deny_paths`` to :data:`DEFAULT_SENSITIVE_READ_DENY`; an
+    operator who wants that defense-in-depth back sets ``read_deny_paths``
+    explicitly.
 
     An operator-declared ``reyn.yaml sandbox.policy`` mapping is **merged onto
     the floor**, not substituted wholesale (#2964). Only the fields the operator
     actually wrote override the floor; fields they omitted keep the floor value
-    — so writing ``allow_subprocess: false`` alone no longer silently drops the
+    — so writing ``deny_subprocess: true`` alone no longer silently drops the
     caller's ``write_paths`` (workspace write access). This is the owner design
     principle: *the default is the floor an operator ADDS to; only an explicit
     write is the operator's expressed will.*
@@ -234,7 +334,6 @@ def resolve_sandbox_policy(
     floor: dict = {
         "network": DEFAULT_SANDBOX_NETWORK,
         "write_paths": list(write_paths or []),
-        "read_deny_paths": list(DEFAULT_SENSITIVE_READ_DENY),
     }
     if config_policy is not None:
         floor.update(config_policy)

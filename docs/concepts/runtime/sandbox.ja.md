@@ -12,15 +12,18 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 
 ## `SandboxPolicy` フィールドリファレンス
 
-`src/reyn/security/sandbox/policy.py` で定義。`sandboxed_exec` Control IR op のフィールドとして渡されます。
+`src/reyn/security/sandbox/policy.py` で定義 — 各バックエンド（Seatbelt/Landlock/Noop）が実際に受け取る dataclass。`sandboxed_exec` Control IR op 自身のフィールド（`argv`、`network`、`allow_subprocess`、… `SandboxedExecIROp` 定義）とは別物です — op は LLM/skill 向けの envelope で、意図的に旧来の `allow_` プレフィックス語彙のまま据え置かれています（#3901 — 両者はミラーではない。`reyn/core/op_runtime/sandboxed_exec.py` が一方を他方へ変換します）。
+
+`write_paths` を除く全フィールドが完全 compat（owner ruling B、#3901）をデフォルトとします — サンドボックスの役割は許可された操作の裏側を bound することであり、起動元シェルが既にできることを再決定することではありません。
 
 | フィールド | 型 | デフォルト | 意味 |
 |---|---|---|---|
-| `network` | `bool` | `false` | アウトバウンドネットワーク接続を許可 |
-| `read_paths` | `list[str]` | `[]` | サブプロセスが読み取り可能なファイルシステムパス（glob パターンおよび `{{workspace}}` テンプレート可） |
-| `write_paths` | `list[str]` | `[]` | サブプロセスが書き込み可能なファイルシステムパス（厳密なガード）。書き込みは読み取りを含む。`~` は展開される。 |
-| `allow_subprocess` | `bool` | `true` | サンドボックス対象プロセスが子プロセスを生成することを許可。Linux (seccomp) / macOS (Seatbelt) で適用（off の時 `process-fork` を deny、対象自身の exec は `process-exec*` で動作）。 |
-| `env_passthrough` | `list[str]` | `[]` | サブプロセスに引き渡す環境変数名（それ以外はすべて除去） |
+| `network` | `bool` | `true`（compat） | アウトバウンドネットワーク接続を許可。主要な外部流出ゲート — #3901 ③ では退役していない（下の2つのパス軸とは異なり）operator が明示宣言する permission-∩ 軸で、config で allow された host でも `network: false` の下では拒否される。 |
+| `write_paths` | `list[str]` | `[]` | サブプロセスが書き込み可能なファイルシステムパス（厳密なガード）— デフォルトで閉じている唯一のフィールド（カーネルバックエンドが直接消費する、オペレーターが事前に知り得ない値のため）。書き込みは読み取りを含む。`~` は展開される。 |
+| `read_deny_paths` | `list[str]` | `[]`（compat） | 広読み込みサーフェスから拒否する機密パス（多層防御、**opt-in**）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。#3901 以前は OS レベルの機密パス7件（`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gcloud`、`~/.kube`、`~/.docker/config.json`、`~/.netrc`）がデフォルトだった — オペレーター（や MCP client のような、信頼できない第三者コードを実行する呼び出し元）が明示的に設定してその保護を戻します。読み込み軸のみ deny。 |
+| `write_deny_paths` | `list[str]` | `[]` | 書き込み軸専用の deny リスト（#3901）、`read_deny_paths` と対をなす。#3901 以前は Seatbelt が `read_deny_paths` の未文書化の副作用として書き込みも deny していたが、Landlock はその副作用を再現しておらず OS ごとに同一ポリシーの意味が違っていた — このフィールドが両バックエンドの読む real field を1つにしてそのギャップを閉じます。書き込み軸のみ deny。 |
+| `deny_subprocess` | `bool` | `false`（compat） | サンドボックス対象プロセスの子プロセス生成を deny — #3901 以前の `allow_subprocess` の deny-list 形の逆。Linux (seccomp) / macOS (Seatbelt: `true` の時 `process-fork` を deny、対象自身の exec は `process-exec*` で動作) で適用。 |
+| `env_deny_names` | `list[str]` | `[]`（compat） | サブプロセスへ引き渡さない環境変数名 — #3901 以前の `env_passthrough` allowlist の deny-list 形の逆。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味する。 |
 | `timeout_seconds` | `int` | `60` | ウォールクロック上限（超過時にプロセスを強制終了） |
 
 ## バックエンド選択テーブル
@@ -39,17 +42,17 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 
 ### 封じ込め self-test
 
-バックエンドが選択されるのは、それが**このマシンで実際に deny を発火した**場合のみです — **主張している全ての軸で**。解決時に Reyn はそのバックエンド自身の wrap 経由で短いサブプロセスを起動し、実在するバックエンドなら必ず拒否すべき2つを試みます: `write_paths` の外への書き込みと、`allow_subprocess: false` 下でのプロセス spawn です。どちらかが成功してしまえば、そのバックエンドは主張どおりには封じ込めていない ∴ `sandbox.on_unsupported` が「バックエンドが存在しない」場合と同様に適用されます。
+バックエンドが選択されるのは、それが**このマシンで実際に deny を発火した**場合のみです — **主張している全ての軸で**。解決時に Reyn はそのバックエンド自身の wrap 経由で短いサブプロセスを起動し、実在するバックエンドなら必ず拒否すべき2つを試みます: `write_paths` の外への書き込みと、`deny_subprocess: true` 下でのプロセス spawn です。どちらかが成功してしまえば、そのバックエンドは主張どおりには封じ込めていない ∴ `sandbox.on_unsupported` が「バックエンドが存在しない」場合と同様に適用されます。
 
 これが在るのは、**「機構が在る」と「機構が効く」が別の主張**であり、これまで前者しか検査されていなかったからです。バックエンドは、存在し import でき、それでいて完全に不活性であり得ます ∴ 存在だけを問う検査は、何も強制されていない状態で通ります。self-test は後者を、その主張を語っている当のホスト上で問います。
 
 コストは1プロセスあたり probe 2回（短いサブプロセスが数個、数十ミリ秒）でバックエンド名に対してキャッシュされます。実際に real backend を解決する run だけが払い、sandbox に触れない run は払いません。chat 起動経路にも乗りません。
 
-**なぜ probe が2つで、assertion 1つ増ではないか**: 2つの軸は**矛盾する policy を要求します** — write probe は syscall 層から自軸を隔離するために `allow_subprocess: true` を設定し、spawn probe はそのフラグ自体が主題なので `false` を要求します ∴ 1回の launch で両方は witness できません。そして2つの**検査**は独立に落ちます: Linux では write 境界は Landlock、spawn ゲートは seccomp ∴ filter が死んでいても path rule は動きます。write だけの検査は、そのホストを「封じ込め済み」と報告します。
+**なぜ probe が2つで、assertion 1つ増ではないか**: 2つの軸は**矛盾する policy を要求します** — write probe は syscall 層から自軸を隔離するために `deny_subprocess: false` を設定し、spawn probe はそのフラグ自体が主題なので `true` を要求します ∴ 1回の launch で両方は witness できません。そして2つの**検査**は独立に落ちます: Linux では write 境界は Landlock、spawn ゲートは seccomp ∴ filter が死んでいても path rule は動きます。write だけの検査は、そのホストを「封じ込め済み」と報告します。
 
 **なぜ「通った方だけ残す」ではなく両方必須か**: **検査は分解できますが、保護は分解できません。** Landlock は通常の write を govern しますが **`chmod` 権限を一切持たず**、path ベースの `truncate` も handled set の外です ∴ **seccomp が無ければ、どちらも無統治**です。**Linux 6.8 で実測**（Landlock 発効・filter 不在）: `write_paths` 外のファイルへの `open()` は拒否され、**同じファイルへの `os.truncate()` は成功して中身を消しました**。それらの syscall を拒否しているのは、**allowlist に載せないことによる default-deny filter** です（`backends/seccomp.py` の `_EXCLUDED_UNGOVERNABLE` 参照）。∴ **Landlock-without-seccomp は「弱い sandbox」ではなく「首尾一貫しない sandbox」**であり、spawn probe が **filter が load したこと自体を witness する**ことで、その穴を閉じ続けます。
 
-各 probe は deny の前に **positive control** を確立します: policy が *許可している* 操作が実際に起きたことを観測できなければ、通過ではなく「未 witness」と報告します。これが無ければ、何も実行しなかった wrap もまた禁じられたファイルを残さない ∴ 「何も起きなかった」が「deny が発火した」と全く同じに読めてしまいます。spawn probe は control をもう1つ持ちます（`allow_subprocess: false` 下で fork *しない* コマンドは動き続けねばならない）— その機構が default-deny の syscall filter であり、**全てを拒否する filter**と**`fork` だけを拒否する filter**は、それが無ければ判別不能だからです。
+各 probe は deny の前に **positive control** を確立します: policy が *許可している* 操作が実際に起きたことを観測できなければ、通過ではなく「未 witness」と報告します。これが無ければ、何も実行しなかった wrap もまた禁じられたファイルを残さない ∴ 「何も起きなかった」が「deny が発火した」と全く同じに読めてしまいます。spawn probe は control をもう1つ持ちます（`deny_subprocess: true` 下で fork *しない* コマンドは動き続けねばならない）— その機構が default-deny の syscall filter であり、**全てを拒否する filter**と**`fork` だけを拒否する filter**は、それが無ければ判別不能だからです。
 
 **覆っていない範囲**: probe が witness するのはファイルシステムの書き込み境界と、プロセス spawn ゲートで、いずれも command-level の wrap 経由です。ネットワークゲート、`read_deny_paths`、one-shot `run()` 経路の別の preexec ruleset を exercise するものではありません。通過したバックエンドは **deny を2つ発火した** — 主張するすべての deny の証明ではありません。
 

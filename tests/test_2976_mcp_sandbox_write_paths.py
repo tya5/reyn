@@ -170,7 +170,7 @@ def test_tilde_write_grant_actually_permits_the_write(tmp_path):
     try:
         wrapped = backend.wrap_command(
             ["/usr/bin/touch", str(probe)],
-            SandboxPolicy(write_paths=[f"~/{target_dir.name}"], allow_subprocess=True),
+            SandboxPolicy(write_paths=[f"~/{target_dir.name}"], deny_subprocess=False),
         )
         try:
             result = subprocess.run(wrapped.argv, capture_output=True, timeout=30)

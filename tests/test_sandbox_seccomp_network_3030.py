@@ -1,4 +1,4 @@
-"""Tier 2c: seccomp allowlist closes the network gate for allow_subprocess=True
+"""Tier 2c: seccomp allowlist closes the network gate for deny_subprocess=False
 (#3030 fix).
 
 ``network: false`` used to be silently unenforced whenever ``allow_subprocess:
@@ -9,7 +9,7 @@ seams (``landlock.py``'s ``_child_preexec`` / ``landlock_exec.py``'s
 ``allow_subprocess`` was True, and the network gate (``_NETWORK_SYSCALLS``,
 allowlisted only when ``policy.network``) lived inside that same filter —
 measured on Linux 6.8: a real outbound ``connect()``+``send()`` SUCCEEDED under
-``network=False, allow_subprocess=True``.
+``network=False, deny_subprocess=False``.
 
 Three independent design directions were considered before landing here (issue
 #3030 / architect co-vet history):
@@ -113,7 +113,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
     tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: the shim denies connect() under ``network=False,
-    allow_subprocess=True`` — the exact policy #3030 measured as broken.
+    deny_subprocess=False`` — the exact policy #3030 measured as broken.
 
     Updated for #3060: ``socket``/``bind`` moved to the always-allowed set (a
     surgical fix for a benign, loopback-only urllib3 IPv6-support probe that
@@ -155,7 +155,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
                 write_paths=[str(granted)],
                 read_deny_paths=[],
                 network=network,
-                allow_subprocess=True,  # the exact #3030 condition (stdio-MCP default)
+                deny_subprocess=False,  # the exact #3030 condition (stdio-MCP default)
             )
 
         def connect_argv(marker: Path) -> list[str]:
@@ -181,7 +181,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
         alive = granted / "control-nonet"
         proc = _shim_run(out_of_process_reyn, policy(False), [touch, str(alive)])
         assert alive.exists(), (
-            f"under network=False, allow_subprocess=True the shim could not run "
+            f"under network=False, deny_subprocess=False the shim could not run "
             f"even a NON-networking command — it is failing wholesale, not denying "
             f"connect() specifically (rc={proc.returncode}, stderr={proc.stderr[:300]!r})"
         )
@@ -191,7 +191,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
         proc = _shim_run(out_of_process_reyn, policy(False), connect_argv(escape))
         assert not escape.exists(), (
             f"no network deny fired: connect() succeeded under network=False, "
-            f"allow_subprocess=True — the exact #3030 condition (rc={proc.returncode}, "
+            f"deny_subprocess=False — the exact #3030 condition (rc={proc.returncode}, "
             f"stderr={proc.stderr[:300]!r})"
         )
     finally:
@@ -201,7 +201,7 @@ def test_shim_denies_outbound_connect_when_network_false_and_subprocess_allowed(
 @requires_landlock
 def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path, out_of_process_reyn: str) -> None:
     """Tier 2c: #3060 — socket() and a LOOPBACK bind() both succeed through the
-    shim even under ``network=False, allow_subprocess=True``, the exact
+    shim even under ``network=False, deny_subprocess=False``, the exact
     condition under which urllib3's import-time IPv6-support probe
     (``socket()`` then ``bind(("::1", 0))``, never a ``connect()``) used to be
     refused as collateral damage of the network gate.
@@ -217,7 +217,7 @@ def test_shim_allows_socket_and_bind_when_network_false(tmp_path: Path, out_of_p
         write_paths=[str(granted)],
         read_deny_paths=[],
         network=False,
-        allow_subprocess=True,
+        deny_subprocess=False,
     )
     marker = granted / "bind-ok"
     code = (
@@ -260,7 +260,7 @@ def test_shim_allows_null_addr_socketpair_sendto_recvfrom_when_network_false(
         write_paths=[str(granted)],
         read_deny_paths=[],
         network=False,
-        allow_subprocess=True,
+        deny_subprocess=False,
     )
     marker = granted / "socketpair-ok"
     code = (
@@ -311,7 +311,7 @@ def test_shim_denies_addressed_sendto_when_network_false(
         write_paths=[str(granted)],
         read_deny_paths=[],
         network=False,
-        allow_subprocess=True,
+        deny_subprocess=False,
     )
     marker = granted / "addressed-sendto-happened"
     code = (
@@ -376,14 +376,14 @@ def test_shim_denies_io_uring_setup_unconditionally(
     considered and rejected) would have missed, since io_uring's opcodes never
     call ``socket``/``connect`` as syscalls.
 
-    Uses the most PERMISSIVE policy (network=True, allow_subprocess=True) to
+    Uses the most PERMISSIVE policy (network=True, deny_subprocess=False) to
     show the deny is not an artifact of either axis being off — bounded by
     construction (unnamed => refused), not by naming io_uring specifically.
     """
     granted = tmp_path / "granted"
     granted.mkdir()
     policy = SandboxPolicy(
-        write_paths=[str(granted)], read_deny_paths=[], network=True, allow_subprocess=True,
+        write_paths=[str(granted)], read_deny_paths=[], network=True, deny_subprocess=False,
     )
     proc = _shim_run(out_of_process_reyn, policy, [sys.executable, "-c", _IO_URING_PROBE_SRC])
     assert "URING_ERR errno=" in proc.stdout, (

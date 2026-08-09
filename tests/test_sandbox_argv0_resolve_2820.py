@@ -7,7 +7,7 @@ a pyenv/rbenv shim resolved via its ``versions/<v>/bin`` tree, an attacker-craft
 version string rejected (never a traversal or an exec), asdf/mise shims fail open
 WITHOUT the manager being invoked (closing the mise config-exec surface,
 CVE-2026-33646), and — the load-bearing invariant — resolution does NOT weaken
-the sandbox policy (``allow_subprocess`` stays False).
+the sandbox policy (``deny_subprocess`` stays True).
 
 The security regression guard (``test_crafted_cwd_config_has_no_parent_side_effect``)
 exercises the INVOKE side-effect the block was about, not just the return value:
@@ -283,7 +283,7 @@ class _CapturingBackend:
 
     def __init__(self) -> None:
         self.seen_argv: list[str] | None = None
-        self.seen_allow_subprocess: bool | None = None
+        self.seen_deny_subprocess: bool | None = None
 
     def available(self) -> bool:
         return True
@@ -297,14 +297,14 @@ class _CapturingBackend:
         from reyn.security.sandbox.backend import SandboxResult
 
         self.seen_argv = list(argv)
-        self.seen_allow_subprocess = policy.allow_subprocess
+        self.seen_deny_subprocess = policy.deny_subprocess
         return SandboxResult(returncode=0, stdout=b"ok\n", stderr=b"")
 
 
 @pytest.mark.asyncio
 async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_path: Path, monkeypatch):
     """Tier 2: the handler runs the RESOLVED argv0 (shim stripped) AND the sandbox
-    policy is unchanged — allow_subprocess stays False. Stripping the shim must
+    policy is unchanged — deny_subprocess stays True. Stripping the shim must
     never be a backdoor to spawning; the (deny process-fork) boundary holds."""
     from reyn.core.events.events import EventLog
     from reyn.core.op_runtime import execute_op
@@ -343,7 +343,7 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     assert backend.seen_argv[0] == str(real)
     assert backend.seen_argv[1:] == ["-c", "print(1)"]
     # INVARIANT: the boundary was not weakened by the substitution
-    assert backend.seen_allow_subprocess is False
+    assert backend.seen_deny_subprocess is True
 
     started = [e for e in events.all() if e.type == "sandboxed_exec_started"]
     assert started and started[0].data.get("argv") == ["python3", "-c", "print(1)"]

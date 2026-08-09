@@ -59,10 +59,12 @@ def _harness_subprocess_env(policy: "SandboxPolicy") -> dict[str, str]:
     way. (The codeact harness interpreter is always the host
     ``sys.executable`` — #1663; it does NOT honor ``REYN_HARNESS_PYTHON``
     (unlike the preprocessor harness), so this PYTHONPATH propagation pairs
-    with that host interpreter.) ``policy.env_passthrough`` MUST already
-    contain ``"PYTHONPATH"`` for the "preserve an existing PYTHONPATH" half of
-    this to work — ``_resolve_sandbox_spawn`` forces it on every path, the
-    same way it force-sets ``timeout_seconds``.
+    with that host interpreter.) PYTHONPATH passes through by the env-compat
+    default (#3901 PR-B ④, owner ruling B) — ``_resolve_sandbox_spawn`` no
+    longer needs to force it into an allowlist (there is no longer an
+    allowlist for it to be missing from); it still force-sets
+    ``timeout_seconds`` and refuses to spawn if an operator has explicitly
+    denied PYTHONPATH via ``env_deny_names``.
 
     PATH is added after the allowlist call by the same convention every
     backend follows (``resolve_passthrough_env``'s own docstring: "PATH
@@ -291,10 +293,15 @@ class CodeActRunner:
           ``wrap_command`` is a passthrough (no isolation), so it is deliberately
           excluded here — CodeAct must never silently run unsandboxed.
 
-        ``PYTHONPATH`` is forced into ``env_passthrough`` on every path (#1609's
-        multi-worktree fix, rewritten in policy vocabulary rather than as a second,
-        parallel decision) — the harness subprocess otherwise cannot resolve the
-        parent's reyn tree.
+        ``PYTHONPATH`` reaches the harness subprocess without any forcing
+        (#3901 PR-B ④: env is full-compat by default, owner ruling B — the
+        #1609 multi-worktree fix this forced ``env_passthrough`` to solve no
+        longer needs solving, since a compat default already passes
+        PYTHONPATH through). If an operator EXPLICITLY denies ``PYTHONPATH``
+        via ``env_deny_names``, this refuses to spawn rather than silently
+        overriding that declared will — CodeAct's structural need for the
+        name does not entitle it to win over an operator's own deny (#3901
+        Q2: "a deny that loses to an allow is not a deny" cuts both ways).
         """
         from reyn.security.sandbox import SandboxPolicy  # noqa: PLC0415
 
@@ -303,7 +310,7 @@ class CodeActRunner:
 
         if sandbox_backend is None or name in (None, "noop") or not available:
             if allow_unsandboxed:
-                return base_argv, None, None, SandboxPolicy(env_passthrough=["PYTHONPATH"])
+                return base_argv, None, None, SandboxPolicy()
             return None, None, (
                 "CodeAct requires an available OS sandbox backend (Seatbelt / "
                 "Landlock); none available — refusing to run unsandboxed (fail-closed)."
@@ -311,9 +318,15 @@ class CodeActRunner:
 
         policy_dict = dict(sandbox_policy or {})
         policy_dict["timeout_seconds"] = timeout
-        policy_dict["env_passthrough"] = sorted(
-            set(policy_dict.get("env_passthrough", [])) | {"PYTHONPATH"}
-        )
+        # #3901 PR-B ④: PYTHONPATH passes by the env-compat default — no
+        # forcing needed. But do not silently strip an operator's explicit
+        # deny of it either; refuse loudly and name why (Q2).
+        if "PYTHONPATH" in policy_dict.get("env_deny_names", []):
+            return None, None, (
+                "CodeAct cannot run: the sandbox policy denies PYTHONPATH, "
+                "which the CodeAct subprocess needs to resolve the reyn "
+                "tree. Remove it from env_deny_names, or disable CodeAct."
+            ), None
         policy = SandboxPolicy(**policy_dict)
 
         try:

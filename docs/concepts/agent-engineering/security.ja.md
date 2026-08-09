@@ -30,7 +30,7 @@ declared capability → 使用時点での JIT prompt(起動時ではない)
 
 ### `sandboxed_exec` — typed で per-axis な `SandboxPolicy`
 
-サブプロセス実行は `SandboxPolicy` でゲートされ、各 axis は意図的に非対称で、実際に安全性を買う厳しさにそれぞれ設定されています: `write_paths` はタイトな allowlist(プロセスが永続化できるものへのハードガード)、`network` はデフォルト off(流出ゲート)、`allow_subprocess` は子プロセス生成を制限し、`read` はデフォルトで broad-allow に加えオプションのセンシティブパス deny-list(`read_deny_paths`)を持ちます — 厳格な read-allowlist モデルは廃止されました。流出を実際に止めているのは read サーフェスではなく network ゲートだからです。enforcement はプラットフォームごとにバックエンドが選択されます(macOS では Seatbelt、Linux では Landlock + seccomp-BPF、どちらも使えない場合は audit-only の `NoopBackend` フォールバック)。
+サブプロセス実行は `SandboxPolicy` でゲートされ、各 axis は意図的に非対称です: `write_paths` はタイトな allowlist(プロセスが永続化できるものへのハードガード — デフォルトで閉じている唯一の軸、オペレーターが事前に知り得ない値のため)、`network`/`deny_subprocess`/`env_deny_names` はデフォルトで完全 compat(owner ruling、#3901 — サンドボックスの役割は許可された操作の裏側を bound することであり、起動元シェルが既にできることを再決定することではない。ただし `network` は operator が明示宣言する値なので、下の2つのパス軸とは異なり permission 交差に引き続き参加する)、`read` はデフォルトで broad-allow に加えオプションの opt-in センシティブパス deny-list(`read_deny_paths`、明示設定しない限り空)を持ちます — 厳格な read-allowlist モデルは廃止されました。流出を実際に止めているのは read サーフェスではなく network ゲートだからです。enforcement はプラットフォームごとにバックエンドが選択されます(macOS では Seatbelt、Linux では Landlock + seccomp-BPF、どちらも使えない場合は audit-only の `NoopBackend` フォールバック)。
 
 ### 非インタラクティブな承認(run-once、CI)
 

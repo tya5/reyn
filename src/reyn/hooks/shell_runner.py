@@ -518,17 +518,18 @@ async def run_shell_hook(
     # per-hook knobs (``subprocess:`` / ``network:`` / ``write_paths:``). None
     # (omitted) keeps the floor — today's behaviour, byte-identical for every
     # hook that predates the knobs; only an explicit operator value moves an
-    # axis. (read_deny_paths is NOT set here on purpose: SandboxPolicy's own
-    # default_factory already supplies DEFAULT_SENSITIVE_READ_DENY, so the
-    # sensitive-file deny-list applies to hook shells too — verified, not
-    # assumed.)
+    # axis. (#3901 PR-B ④: read_deny_paths is NOT set here — SandboxPolicy's
+    # own dataclass default is now an empty list (owner ruling B, full
+    # compat), so this floor no longer carries the sensitive-file deny-list
+    # by default; an operator who wants it back sets it explicitly, same as
+    # everywhere else post-#3901.)
     policy: SandboxPolicy
     if sandbox_policy is not None:
         policy = sandbox_policy
     else:
         policy = _SandboxPolicy(
             network=bool(network) if network is not None else False,
-            allow_subprocess=bool(allow_subprocess) if allow_subprocess is not None else False,
+            deny_subprocess=not allow_subprocess if allow_subprocess is not None else True,
             write_paths=list(write_paths) if write_paths is not None else [],
             timeout_seconds=timeout_seconds,
         )

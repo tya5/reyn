@@ -9,7 +9,7 @@ Three groups, and the third is the one that matters:
   - the refuse-to-run guarantee where Landlock is ABSENT (so the shim never
     execs the target unrestricted = no silent escape);
   - **real enforcement, where Landlock is PRESENT** — the shim actually denies a
-    write outside ``write_paths`` and a fork under ``allow_subprocess=False``.
+    write outside ``write_paths`` and a fork under ``deny_subprocess=True``.
 
 That third group exists because its absence is what #2980 was. Every test here
 used to be in the first two groups, and #2980's own title names the consequence:
@@ -85,11 +85,11 @@ def test_policy_json_roundtrips_all_fields():
     enforces the operator's policy, not a lossy subset)."""
     pol = SandboxPolicy(
         network=True,
-        read_paths=["/r"],
         write_paths=["/w"],
         read_deny_paths=["~/.ssh"],
-        allow_subprocess=True,
-        env_passthrough=["PATH", "HOME"],
+        write_deny_paths=["~/.aws"],
+        deny_subprocess=False,
+        env_deny_names=["SECRET_TOKEN"],
         timeout_seconds=42,
     )
     assert _policy_from_json(_policy_to_json(pol)) == pol
@@ -200,7 +200,7 @@ def test_shim_denies_a_write_outside_write_paths(
     denied.mkdir()
     policy = SandboxPolicy(
         write_paths=[str(granted)], read_deny_paths=[], network=True,
-        allow_subprocess=True,  # isolate the write axis from the syscall layer
+        deny_subprocess=False,  # isolate the write axis from the syscall layer
     )
 
     control = granted / "control"
@@ -221,7 +221,7 @@ def test_shim_denies_a_write_outside_write_paths(
 
 
 @requires_landlock
-def test_shim_denies_a_fork_when_allow_subprocess_is_false(
+def test_shim_denies_a_fork_when_deny_subprocess_is_true(
     tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2c: the shim's seccomp filter LOADS and denies process creation —
@@ -230,12 +230,12 @@ def test_shim_denies_a_fork_when_allow_subprocess_is_false(
     Three arms, because two different lies are available (mirrors
     ``self_test.probe_subprocess_enforcement``, whose reasoning this follows):
 
-    1. a fork under ``allow_subprocess=True`` must succeed — else the probe
+    1. a fork under ``deny_subprocess=False`` must succeed — else the probe
        cannot see a spawn at all;
-    2. a NON-forking command under ``allow_subprocess=False`` must still run —
+    2. a NON-forking command under ``deny_subprocess=True`` must still run —
        else a filter refusing EVERYTHING (#2962, which killed /bin/echo) is
        indistinguishable from one refusing exactly ``fork``;
-    3. only then: the fork under ``allow_subprocess=False`` must not happen.
+    3. only then: the fork under ``deny_subprocess=True`` must not happen.
 
     Arms 2 and 3 differ in nothing but the fork, so arm 3's absent marker is
     attributable to the fork rather than to a wrap that is simply dead.
@@ -249,10 +249,10 @@ def test_shim_denies_a_fork_when_allow_subprocess_is_false(
     granted = tmp_path / "granted"
     granted.mkdir()
 
-    def policy(allow_subprocess: bool) -> SandboxPolicy:
+    def policy(deny_subprocess: bool) -> SandboxPolicy:
         return SandboxPolicy(
             write_paths=[str(granted)], read_deny_paths=[], network=True,
-            allow_subprocess=allow_subprocess,
+            deny_subprocess=deny_subprocess,
         )
 
     def forking(marker: Path) -> list[str]:
@@ -260,16 +260,16 @@ def test_shim_denies_a_fork_when_allow_subprocess_is_false(
                           f"| {shlex.quote(cat)}"]
 
     control = granted / "control-spawn"
-    _shim_run(out_of_process_reyn, policy(True), forking(control))
+    _shim_run(out_of_process_reyn, policy(False), forking(control))
     assert control.exists(), (
-        "the shim could not spawn even with allow_subprocess=True, so a missing "
+        "the shim could not spawn even with deny_subprocess=False, so a missing "
         "marker under False would prove nothing"
     )
 
     alive = granted / "control-nofork"
-    proc = _shim_run(out_of_process_reyn, policy(False), [touch, str(alive)])
+    proc = _shim_run(out_of_process_reyn, policy(True), [touch, str(alive)])
     assert alive.exists(), (
-        f"under allow_subprocess=False the shim could not run even a NON-forking "
+        f"under deny_subprocess=True the shim could not run even a NON-forking "
         f"command — it is failing wholesale rather than denying process creation "
         f"(rc={proc.returncode}, stderr={proc.stderr[:300]!r}). This is what "
         f"#3020 looked like: pyseccomp's import, deferred until after Landlock "
@@ -277,9 +277,9 @@ def test_shim_denies_a_fork_when_allow_subprocess_is_false(
     )
 
     spawned = granted / "spawned"
-    proc = _shim_run(out_of_process_reyn, policy(False), forking(spawned))
+    proc = _shim_run(out_of_process_reyn, policy(True), forking(spawned))
     assert not spawned.exists(), (
         f"no subprocess deny fired: a command that must fork to run wrote "
-        f"{spawned} under allow_subprocess=False — the seccomp filter is not "
+        f"{spawned} under deny_subprocess=True — the seccomp filter is not "
         f"active (rc={proc.returncode}, stderr={proc.stderr[:300]!r})"
     )

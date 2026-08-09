@@ -55,9 +55,17 @@ from typing import Mapping
 # shell's sandbox for the same axis. The three axes an operator owns per-site
 # (the same triad a stdio MCP server exposes). A field absent from this map has
 # no per-hook equivalent and is not part of the per-site sandbox surface.
+#
+# #3901 PR-B ④: only the LEFT side (the ``SandboxPolicy`` field name) follows
+# the rename — ``deny_subprocess`` replaces ``allow_subprocess``. The RIGHT
+# side (``"subprocess"``, the per-hook YAML key an operator writes) stays put
+# deliberately: it names the AXIS ("this hook's process-spawn behavior"), not
+# a direction ("allow" or "deny") — the same reasoning that keeps a hook's own
+# ``subprocess: true/false`` value un-inverted even though the policy field
+# behind it inverted.
 HOOK_SANDBOX_SCOPE: tuple[tuple[str, str], ...] = (
     ("network", "network"),
-    ("allow_subprocess", "subprocess"),
+    ("deny_subprocess", "subprocess"),
     ("write_paths", "write_paths"),
 )
 

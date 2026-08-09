@@ -151,11 +151,15 @@ def test_unapplied_fields_reports_only_what_the_operator_left_silent():
     """Tier 1: the pure boundary function — an agent-level field is reported iff
     the operator wrote it AND the hook did not re-declare that axis. Key PRESENCE
     is the test, so an explicitly-declared floor value still counts as written."""
-    config_policy = {"network": True, "allow_subprocess": True, "write_paths": ["/tmp/x"]}
+    # #3901 PR-B ④: the reyn.yaml key follows the SandboxPolicy field rename —
+    # ``deny_subprocess`` replaces ``allow_subprocess`` (Q3: reyn.yaml keys
+    # rename, no compat translation layer). Key PRESENCE is what this test
+    # exercises, so the bool value carries no meaning here.
+    config_policy = {"network": True, "deny_subprocess": True, "write_paths": ["/tmp/x"]}
 
     assert unapplied_policy_fields(config_policy, {}) == [
         ("network", "network"),
-        ("allow_subprocess", "subprocess"),
+        ("deny_subprocess", "subprocess"),
         ("write_paths", "write_paths"),
     ]
     assert unapplied_policy_fields(config_policy, {"network": True, "subprocess": False}) == [
@@ -209,9 +213,10 @@ async def test_omitted_knobs_keep_the_floor(monkeypatch):
 
     policy = _policy_for(backend, "floor")
     assert policy.network is False
-    assert policy.allow_subprocess is False
+    assert policy.deny_subprocess is True
     assert policy.write_paths == []
-    assert policy.read_deny_paths  # the sensitive-file deny-list still applies
+    # #3901 PR-B ④: read_deny_paths is no longer part of this floor — its
+    # dataclass default is now empty (owner ruling B, full compat).
 
 
 @pytest.mark.asyncio
@@ -273,7 +278,11 @@ async def test_ignored_agent_policy_is_refused_out_loud_not_dropped(monkeypatch)
     await _dispatch(
         [{"on": "turn_end", "name": "silent-hook", "exec": ["echo", "silent"]}],
         backend,
-        config_policy={"network": True, "allow_subprocess": True, "write_paths": ["/tmp/op"]},
+        # #3901 PR-B ④: deny_subprocess=False is the operator wanting subprocess
+        # ALLOWED — the same "wrote a grant, hook floor denies it" shape the old
+        # allow_subprocess=True/effective-False pair exercised, on the renamed
+        # (and inverted) field.
+        config_policy={"network": True, "deny_subprocess": False, "write_paths": ["/tmp/op"]},
         events=events,
     )
 
@@ -283,7 +292,7 @@ async def test_ignored_agent_policy_is_refused_out_loud_not_dropped(monkeypatch)
     # ... but the operator can now learn every axis of it, and where to say it.
     assert {f: (d["hook_key"], d["configured"], d["effective"]) for f, d in refused.items()} == {
         "network": ("network", True, False),
-        "allow_subprocess": ("subprocess", True, False),
+        "deny_subprocess": ("subprocess", False, True),
         "write_paths": ("write_paths", ["/tmp/op"], []),
     }
     assert all(d["hook"] == "silent-hook" for d in refused.values())
@@ -310,14 +319,14 @@ async def test_explicit_per_hook_value_is_a_decision_and_silences_the_refusal(mo
             "write_paths": [],       # explicit empty grant, contradicting the agent-level one
         }],
         backend,
-        config_policy={"network": True, "allow_subprocess": True, "write_paths": ["/tmp/op"]},
+        config_policy={"network": True, "deny_subprocess": False, "write_paths": ["/tmp/op"]},
         events=events,
     )
 
     assert _not_applied(events) == {}
     policy = _policy_for(backend, "decided")
     assert policy.network is False        # the HOOK's word wins at the hook site
-    assert policy.allow_subprocess is True
+    assert policy.deny_subprocess is False
 
 
 @pytest.mark.asyncio

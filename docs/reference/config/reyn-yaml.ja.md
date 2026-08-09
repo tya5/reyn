@@ -445,28 +445,36 @@ sandbox:
   on_unsupported: warn   # warn | error | ignore
   policy:                # オプション — agent-level（オペレータ）サンドボックスポリシー
     network: true
-    read_paths: ["/"]
     write_paths: ["{{workspace}}", "/tmp"]
-    allow_subprocess: true
-    env_passthrough: ["PATH", "HOME"]
+    deny_subprocess: false
+    env_deny_names: []
     timeout_seconds: 600
 ```
 
-> ℹ️ **`read_deny_paths` のエントリは、重なる `write_paths` の許可より常に優先されます。**
-> Seatbelt バックエンドでは `read_deny_paths` の deny ルールが `write_paths` の allow ルールの
-> **後に** emit され、SBPL は last-match-wins のため、credential パス（`~/.ssh`・`~/.aws`・
-> `~/.gnupg` 等）を包含する広い `write_paths`（`~`・`$HOME`・`/`）を書いても、そのパスは開き
-> ません — deny は**読み取り・書き込みの両方**に効き続け、OS は `sandbox_policy_narrowed`
-> audit-event を出して縮小を可視化します（#2978）。設計則: デフォルトの deny-list は、広い
-> write 許可が貫けない床（floor）です。denied プレフィックス配下に本当に書き込む必要がある場合は、
-> `read_deny_paths` から該当エントリを明示的に外してください（`read_deny_paths` はオペレーター
-> 所有で、縮小できます）。それでも `write_paths` は最小限のディレクトリに絞ってください。
+> ℹ️ **`write_paths` を除く全軸が完全 compat をデフォルトとします**（owner ruling、#3901）:
+> `network`/`deny_subprocess`/`read_deny_paths`/`write_deny_paths`/`env_deny_names` はすべて
+> 「追加制限なし」から始まります — サンドボックスの役割は許可された操作の**裏側**を bound する
+> ことであり、起動元シェルが既にできることを再決定することではありません。`write_paths` だけは
+> デフォルトで閉じています: これはカーネルバックエンドが直接消費する、オペレーターが事前に
+> 知り得ない値（「この op はこのディレクトリが必要」）なので、安全な compat デフォルトが
+> ありません。
+>
+> **`write_deny_paths` のエントリは、重なる `write_paths` の許可より常に優先されます**
+> （`read_deny_paths` も広い読み込みサーフェスに対して同様に、独立して — 2つの軸は別フィールド
+> で、それぞれ自分の軸のみを deny します、#3901）。Seatbelt バックエンドでは deny ルールが
+> `write_paths` の allow ルールの**後に** emit され、SBPL は last-match-wins のため、
+> `write_deny_paths` に列挙したパスを包含する広い `write_paths`（`~`・`$HOME`・`/`）を書いても、
+> そのパスは書き込み用には開きません。OS は `sandbox_policy_narrowed` audit-event を出して
+> 縮小を可視化します（#2978）。credential 位置（`~/.ssh`・`~/.aws`・`~/.gnupg` 等）を保護したい
+> 場合は `read_deny_paths` に明示的に列挙してください（両軸で保護したい場合は `write_deny_paths`
+> にも）— #3901 以前と異なり、これはもうデフォルトではありません。オペレーターが opt-in する
+> 値です。それでも `write_paths` は最小限のディレクトリに絞ってください。
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `backend` | 文字列 | `auto` | 強制バックエンド。`auto` は OS が選択: macOS < 26 → `seatbelt`（sandbox-exec SBPL）、Linux ≥ 5.13 かつ `sandbox-linux` extra インストール済み → `landlock`（+ オプションの seccomp-BPF）、その他 → `noop`（監査のみ、強制なし）。明示的な値で特定バックエンドを強制できます。 |
 | `on_unsupported` | 文字列 | `warn` | 使用可能な OS サンドボックスバックエンドが無い場合のポリシー — 要求バックエンドがこのプラットフォームで利用不可の場合に加え、選択されたバックエンドが**封じ込め self-test に失敗した場合**（= 存在するが deny を発火しない。そのバックエンドは「存在しない」場合とまったく同じに扱われる）も含む。`warn` は WARNING をログに記録して `noop` にフォールバック。`error` は `RuntimeError` を発生（強制が必須な本番環境のフェイルファスト。存在するが不活性なバックエンドに対しても効く）。`ignore` はサイレントにフォールバック。 |
-| `policy` | マップ | _なし_ | **agent-level（オペレータ）サンドボックスポリシー**。設定すると、サンドボックス op に適用される決定的ポリシーになり、かつ OS の in-process file/http ゲートの permission 積（`∩`）の `SandboxLayer` に畳み込まれます — op 宣言のフィールドに **優先（WINS）** するため、スキルや LLM が緩めることはできません。省略時（デフォルト）は **agent-level の制限なし**: `SandboxLayer` は恒等（`⊤`）のままで op レベルのフィールドが従来通り支配します。サンドボックス認可はオペレータ/run の関心事です。サブキーは以下参照。 |
+| `policy` | マップ | _なし_ | **agent-level（オペレータ）サンドボックスポリシー**。設定すると、サンドボックス op に適用される決定的ポリシーになり、かつ `network`/`subprocess`/`env` 軸について OS の in-process file/http ゲートの permission 積（`∩`）の `SandboxLayer` に畳み込まれます — op 宣言のフィールドに **優先（WINS）** するため、スキルや LLM が緩めることはできません。`write_paths`（および read/write deny リスト）はこの交差に**参加しません** — op が必要とするディレクトリはオペレーターが事前に知り得ない値なので、カーネルバックエンドが直接消費します（#3901 PR-B ③）。省略時（デフォルト）は **agent-level の制限なし**: `SandboxLayer` は恒等（`⊤`）のままで op レベルのフィールドが従来通り支配します。サンドボックス認可はオペレータ/run の関心事です。サブキーは以下参照。 |
 
 ### `sandbox.policy` サブキー
 
@@ -474,12 +482,12 @@ sandbox:
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `network` | bool | `DEFAULT_SANDBOX_NETWORK`（現在 `true`） | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート。`sandbox.policy` 明示ブロックでこのキーを省略した場合、single-source の床 `DEFAULT_SANDBOX_NETWORK`（現在 `true`）を継承する — `SandboxPolicy` の dataclass デフォルトの `false` **ではない**。部分的な policy はこの床にマージされる（#2964）ため、`network` を省略するとネットワークは ON のまま。隔離するには `network: false` を明示すること。 |
-| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）。書き込みは読み取りを含む。`write_paths` の許可と重なる `read_deny_paths` エントリは常に優先される（deny-always-wins、#2978）— ∴ 広い `write_paths` でも denied な credential パスは開かない。`~` は展開される。 |
-| `read_deny_paths` | list[文字列] | `~/.ssh`・`~/.aws`・`~/.gnupg`・`~/.config/gcloud`・`~/.kube`・`~/.docker/config.json`・`~/.netrc` | 広読み込みサーフェスから拒否する機密パス（多層防御）— `sandbox.policy` 明示ブロックでこのキーを省略した場合、空リストではなくこの7つの OS レベル credential パス（`SandboxPolicy.read_deny_paths` の dataclass デフォルト）がデフォルトになります。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock、read-deny プリミティブが無い）では非対応。`write_paths` のエントリがこれらと重なる・包含する場合でも deny を無効化しない — Seatbelt 上では deny が常に勝ち（#2978）、`sandbox_policy_narrowed` audit-event が縮小を記録します。 |
-| `read_paths` | list[文字列] | `[]` | **レガシー。** かつての厳密な読み込み許可リスト。現在のスコーピングモデルでは読み込みはデフォルトで広許可のため、このフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
-| `allow_subprocess` | bool | `true` | 子プロセスの spawn を許可するか。適用（enforced）— off の時 `process-fork` を deny。 |
-| `env_passthrough` | list[文字列] | `[]` | サンドボックスプロセスへ通過させる環境変数名。`PATH` は常に通過します。 |
+| `network` | bool | `true`（compat） | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート — `deny_subprocess`/`env_deny_names` と並んで permission 交差に引き続き参加する（下の path 軸とは異なり operator が明示宣言する値なので）。config で allow された host でも `network: false` の下では拒否されます。 |
+| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）— デフォルトで閉じている唯一のフィールド（オペレーターが事前に知り得ない値のため、安全な compat 床が無い）。書き込みは読み取りを含む。`~` は展開される。 |
+| `read_deny_paths` | list[文字列] | `[]`（compat） | 広読み込みサーフェスから拒否する機密パス（多層防御、**opt-in**）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock、read-deny プリミティブが無い）では非対応。#3901 以前は OS レベルの機密パス7件がデフォルトだった — その保護を戻すには明示的に設定します。読み込み軸のみを deny — 書き込み軸は `write_deny_paths` を参照。 |
+| `write_deny_paths` | list[文字列] | `[]` | 書き込み軸専用の deny リスト（#3901）、`read_deny_paths` と対をなす。`write_paths` のエントリがこれらと重なる・包含する場合でも deny を無効化しない — Seatbelt 上では deny が常に勝ち（#2978）、`sandbox_policy_narrowed` audit-event が縮小を記録します。書き込み軸のみを deny。 |
+| `deny_subprocess` | bool | `false`（compat） | 子プロセスの spawn を deny するか — #3901 以前の `allow_subprocess` の deny-list 形の逆（owner decision 2026-07-22, #3202: UX-blocking な軸は deny-by-default ではなく opt-in restrict）。適用（enforced）— on の時 `process-fork` を deny。 |
+| `env_deny_names` | list[文字列] | `[]`（compat） | サンドボックスプロセスへ引き渡さない環境変数名 — #3901 以前の `env_passthrough` allowlist の deny-list 形の逆。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味します。 |
 | `timeout_seconds` | int | `60` | バックエンドが強制する実時間上限。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。

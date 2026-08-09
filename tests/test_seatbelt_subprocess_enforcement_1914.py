@@ -1,8 +1,8 @@
-"""Tier 2: Seatbelt enforces allow_subprocess (was advisory-only) — #1914.
+"""Tier 2: Seatbelt enforces deny_subprocess (was advisory-only) — #1914.
 
 Before #1914 the SBPL profile emitted ``(allow process-fork)`` unconditionally, so
-``allow_subprocess=False`` was advisory on macOS (subprocess spawn still worked).
-The fix gates ``(allow process-fork)`` on ``policy.allow_subprocess``; ``process-exec*``
+``deny_subprocess=True`` was advisory on macOS (subprocess spawn still worked).
+The fix gates ``(allow process-fork)`` on ``policy.deny_subprocess``; ``process-exec*``
 stays always-allowed (sandbox-exec needs it to execvp the target). Empirically
 (sandbox-exec probe, py3.9/3.12 + sh/bash/node) the interpreter + threading run
 fine without process-fork — only child spawning (which needs fork) is denied.
@@ -29,19 +29,19 @@ from reyn.security.sandbox.policy import SandboxPolicy
 # ── structural (CI-safe) ─────────────────────────────────────────────────────
 
 def test_profile_denies_process_fork_when_subprocess_disallowed():
-    """Tier 2: allow_subprocess=False → explicit (deny process-fork). The bsd.sb
+    """Tier 2: deny_subprocess=True → explicit (deny process-fork). The bsd.sb
     base GRANTS fork, so a last-match-wins deny is required to override it (mere
     omission is insufficient); (allow process-exec*) stays for the initial exec."""
-    profile = _build_sbpl_profile(SandboxPolicy(allow_subprocess=False))
+    profile = _build_sbpl_profile(SandboxPolicy(deny_subprocess=True))
     assert "(deny process-fork)" in profile
     assert "(allow process-fork)" not in profile
     assert "(allow process-exec*)" in profile
 
 
 def test_profile_allows_process_fork_when_subprocess_allowed():
-    """Tier 2: allow_subprocess=True → (allow process-fork) emitted (spawning
+    """Tier 2: deny_subprocess=False → (allow process-fork) emitted (spawning
     permitted), no (deny process-fork), process-exec* present."""
-    profile = _build_sbpl_profile(SandboxPolicy(allow_subprocess=True))
+    profile = _build_sbpl_profile(SandboxPolicy(deny_subprocess=False))
     assert "(allow process-fork)" in profile
     assert "(deny process-fork)" not in profile
     assert "(allow process-exec*)" in profile
@@ -52,8 +52,8 @@ def test_profile_allows_process_fork_when_subprocess_allowed():
 @pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
 @pytest.mark.asyncio
 async def test_seatbelt_blocks_child_spawn_when_subprocess_disallowed():
-    """Tier 2: with allow_subprocess=False the sandboxed process cannot spawn a
-    child (fork denied); with allow_subprocess=True it can. The target shell runs
+    """Tier 2: with deny_subprocess=True the sandboxed process cannot spawn a
+    child (fork denied); with deny_subprocess=False it can. The target shell runs
     either way (its own exec is governed by process-exec*, not fork)."""
     backend = SeatbeltBackend()
     if not backend.available():
@@ -64,15 +64,15 @@ async def test_seatbelt_blocks_child_spawn_when_subprocess_disallowed():
     spawn_cmd = ["/bin/sh", "-c", "/bin/echo SPAWNED_CHILD | /bin/cat"]
 
     denied = await backend.run(
-        spawn_cmd, SandboxPolicy(allow_subprocess=False, timeout_seconds=10)
+        spawn_cmd, SandboxPolicy(deny_subprocess=True, timeout_seconds=10)
     )
     assert b"SPAWNED_CHILD" not in denied.stdout, (
-        f"child spawn must be blocked when allow_subprocess=False (stdout={denied.stdout!r})"
+        f"child spawn must be blocked when deny_subprocess=True (stdout={denied.stdout!r})"
     )
 
     allowed = await backend.run(
-        spawn_cmd, SandboxPolicy(allow_subprocess=True, timeout_seconds=10)
+        spawn_cmd, SandboxPolicy(deny_subprocess=False, timeout_seconds=10)
     )
     assert b"SPAWNED_CHILD" in allowed.stdout, (
-        f"child spawn must work when allow_subprocess=True (stdout={allowed.stdout!r})"
+        f"child spawn must work when deny_subprocess=False (stdout={allowed.stdout!r})"
     )

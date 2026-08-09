@@ -12,16 +12,26 @@ The sandbox complements the [permission model](../runtime/permission-model.md): 
 
 ## `SandboxPolicy` field reference
 
-Defined in `src/reyn/security/sandbox/policy.py`. Passed as fields on a `sandboxed_exec` Control IR op.
+Defined in `src/reyn/security/sandbox/policy.py` — the dataclass every backend
+(`Seatbelt`/`Landlock`/`Noop`) actually receives. Distinct from the
+`sandboxed_exec` Control IR op's own fields (`argv`, `network`,
+`allow_subprocess`, …, defined on `SandboxedExecIROp`): the op is the LLM/skill
+-facing envelope and deliberately kept its older, `allow_`-prefixed vocabulary
+(#3901 — the two are not mirrors of one another; `reyn/core/op_runtime/
+sandboxed_exec.py` converts one into the other).
+
+Every field except `write_paths` defaults to full compat (owner ruling B,
+#3901): the sandbox's job is bounding what happens *behind* a permitted
+action, not re-deciding what the launching shell could already do.
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
-| `network` | `bool` | `false` | Allow outbound network connections. The primary exfiltration gate. |
-| `write_paths` | `list[str]` | `[]` | Filesystem paths the subprocess may write (tight guard). Write implies read. `~` is expanded. |
-| `read_deny_paths` | `list[str]` | [OS credential paths] | Sensitive paths denied from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt). Default: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`. |
-| `read_paths` | `list[str]` | `[]` | **Legacy** — formerly the read allowlist. Under the current broad-read model reads are not restricted to this list; retained for backward compatibility and as documentation of intended read targets. |
-| `allow_subprocess` | `bool` | `true` | Allow the sandboxed process to spawn child processes. Enforced on Linux (seccomp) and macOS (Seatbelt: `process-fork` denied when off; the target's own exec still works via `process-exec*`). |
-| `env_passthrough` | `list[str]` | `[]` | Environment variable names passed through to the subprocess (all others are stripped). `PATH` is always passed. |
+| `network` | `bool` | `true` (compat) | Allow outbound network connections. The primary exfiltration gate — still an operator-declared permission-∩ axis (not retired by #3901 ③, unlike the two path axes below): a config-allowed host is still denied under `network: false`. |
+| `write_paths` | `list[str]` | `[]` | Filesystem paths the subprocess may write (tight guard) — the one field that stays closed by default (an operator-unknowable value the kernel backend consumes directly; no compat floor makes sense for it). Write implies read. `~` is expanded. |
+| `read_deny_paths` | `list[str]` | `[]` (compat) | Sensitive paths denied from the broad read surface (defense-in-depth, **opt-in**). Enforced only on backends that support deny-after-allow (Seatbelt). Before #3901 this defaulted to 7 OS-level credential paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`) — an operator (or a caller like the MCP client, which runs untrusted third-party code) now sets that list explicitly to get it back. Denies only the READ axis. |
+| `write_deny_paths` | `list[str]` | `[]` | The write axis's own deny-list (#3901), mirroring `read_deny_paths`. Before #3901, Seatbelt denied writes as an undocumented side-effect of `read_deny_paths`; Landlock never replicated that side-effect, so the same policy meant different things per OS — this field closes that gap with one real field both backends read. Denies only the WRITE axis. |
+| `deny_subprocess` | `bool` | `false` (compat) | Deny the sandboxed process from spawning children — the deny-list-shaped inverse of the pre-#3901 `allow_subprocess`. Enforced on Linux (seccomp) and macOS (Seatbelt: `process-fork` denied when `true`; the target's own exec still works via `process-exec*`). |
+| `env_deny_names` | `list[str]` | `[]` (compat) | Environment variable names WITHHELD from the subprocess — the deny-list-shaped inverse of the pre-#3901 `env_passthrough` allowlist. Empty (the default) means the WHOLE environment passes through, the same trust level as the launching shell. |
 | `timeout_seconds` | `int` | `60` | Wall-clock limit; process is killed on expiry. |
 
 ## Backend selection table
@@ -40,7 +50,7 @@ When `NoopBackend` is used, Reyn logs a one-line `WARN` on first invocation. Set
 
 ### The enforcement self-test
 
-A backend is selected only if it **fired a real deny on this machine**, on every axis it claims. At resolution Reyn launches short subprocesses through the backend's own wrap and attempts two things every real backend must refuse: a write to a path outside `write_paths`, and a process spawn under `allow_subprocess: false`. If either succeeds, the backend does not enforce what it advertises, and `sandbox.on_unsupported` applies as though the backend were absent.
+A backend is selected only if it **fired a real deny on this machine**, on every axis it claims. At resolution Reyn launches short subprocesses through the backend's own wrap and attempts two things every real backend must refuse: a write to a path outside `write_paths`, and a process spawn under `deny_subprocess: true`. If either succeeds, the backend does not enforce what it advertises, and `sandbox.on_unsupported` applies as though the backend were absent.
 
 This exists because "the mechanism is installed" and "the mechanism works" are different claims, and only the first was ever checked. A backend can be present, importable, and completely inert — so a check that asks only whether it is present will pass while nothing is enforced. The self-test asks the second question, on the host that makes the claim.
 
@@ -51,11 +61,11 @@ Two properties follow, and both matter more than the check itself:
 
 The self-test costs two probes (a handful of short subprocess launches, tens of milliseconds) per process, cached against the backend. It is paid only by a run that resolves a real backend — a run that never touches the sandbox never pays it, and it is not on the chat startup path.
 
-**Why two probes and not one assertion.** The axes need contradictory policies — the write probe sets `allow_subprocess: true` to isolate its axis from the syscall layer, and the spawn probe sets it to `false` because that flag is its subject — so no single launch can witness both. The two **checks** also fail independently: on Linux the write boundary is Landlock's and the spawn gate is seccomp's, so the filter can be dead while path rules work. A write-only check reports that host as sandboxed.
+**Why two probes and not one assertion.** The axes need contradictory policies — the write probe sets `deny_subprocess: false` to isolate its axis from the syscall layer, and the spawn probe sets it to `true` because that flag is its subject — so no single launch can witness both. The two **checks** also fail independently: on Linux the write boundary is Landlock's and the spawn gate is seccomp's, so the filter can be dead while path rules work. A write-only check reports that host as sandboxed.
 
 **Why both must pass, rather than keeping whichever one does.** The checks decompose; the protection does not. Landlock governs ordinary writes but has no `chmod` right at all, and path-based `truncate` is outside the handled set — so with seccomp absent, both are ungoverned. Measured on Linux 6.8, Landlock enforcing, filter absent: `open()` on a file outside `write_paths` was refused, while `os.truncate()` on that same file **succeeded and emptied it**. What refuses those syscalls is the default-deny filter, by omitting them from its allowlist (see `_EXCLUDED_UNGOVERNABLE` in `backends/seccomp.py`). Landlock-without-seccomp is therefore not a weaker sandbox but an incoherent one, and the spawn probe — by witnessing that the filter **loaded at all** — is what keeps that hole closed.
 
-Each probe establishes a **positive control** before its deny: an action the policy *grants* must be seen to happen, or the probe reports the backend as unwitnessed rather than passing it. Without that, a wrap that ran nothing at all leaves no forbidden file either, and "nothing happened" reads exactly like "the deny fired". The spawn probe carries a second control — under `allow_subprocess: false`, a *non*-forking command must still run — because its mechanism is a default-deny syscall filter, and a filter that refuses everything and one that refuses exactly `fork` are otherwise indistinguishable.
+Each probe establishes a **positive control** before its deny: an action the policy *grants* must be seen to happen, or the probe reports the backend as unwitnessed rather than passing it. Without that, a wrap that ran nothing at all leaves no forbidden file either, and "nothing happened" reads exactly like "the deny fired". The spawn probe carries a second control — under `deny_subprocess: true`, a *non*-forking command must still run — because its mechanism is a default-deny syscall filter, and a filter that refuses everything and one that refuses exactly `fork` are otherwise indistinguishable.
 
 **What it does not cover.** The probes witness the filesystem write boundary and the process-spawn gate, both through the command-level wrap. They do not exercise the network gate, `read_deny_paths`, or the one-shot `run()` path's separate preexec ruleset. A backend that passes has fired two denies — not proof of every deny it claims.
 
@@ -104,7 +114,7 @@ sandbox:
 
 Sandbox configuration is **operator-level** — set in `reyn.yaml` or via CLI flags, not per-workflow or per-phase. See [`reyn.yaml` reference → `sandbox:`](../../reference/config/reyn-yaml.md) for the full config schema.
 
-> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase workflow declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection (it wins over op-declared fields, so a workflow or the LLM cannot widen it); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
+> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase workflow declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection for the `network`/`subprocess`/`env` axes (it wins over op-declared fields, so a workflow or the LLM cannot widen it) — `write_paths` (and the read/write deny-lists) do NOT participate in that intersection, since they are values an operator cannot know in advance and the kernel backend consumes them directly (#3901 PR-B ③); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
 
 ## See also
 

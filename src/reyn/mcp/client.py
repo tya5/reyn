@@ -1448,14 +1448,21 @@ class MCPClient:
         cache/state directories, and a write grant is also a READ re-allow. As
         of #2978 the Seatbelt backend emits ``read_deny_paths`` AFTER the write
         grants (SBPL is last-match-wins), so a broad write grant no longer
-        nullifies the sensitive-read deny-list — the deny wins for both read and
-        write and a ``sandbox_policy_narrowed`` audit-event is recorded. The
-        shipped defaults are nonetheless kept mechanically disjoint from every
-        path in ``DEFAULT_SENSITIVE_READ_DENY`` (pinned by a falsification test)
-        so an MCP server never trips that narrowing in the first place.
+        nullifies the sensitive-read deny-list — the read deny wins and a
+        ``sandbox_policy_narrowed`` audit-event is recorded. (#3901 PR-B ④:
+        ``read_deny_paths`` and ``write_deny_paths`` are now separate fields —
+        an operator wanting the write axis ALSO protected sets
+        ``write_deny_paths``, previously an undocumented side-effect of
+        ``read_deny_paths`` on Seatbelt only.) The shipped defaults are
+        nonetheless kept mechanically disjoint from every path in
+        ``DEFAULT_SENSITIVE_READ_DENY`` (pinned by a falsification test) so an
+        MCP server never trips that narrowing in the first place.
         """
         from reyn.security.sandbox import SandboxPolicy
-        from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+        from reyn.security.sandbox.policy import (
+            DEFAULT_SANDBOX_NETWORK,
+            DEFAULT_SENSITIVE_READ_DENY,
+        )
 
         cwd = self._config.get("cwd") or os.getcwd()
         declared = self._config.get("write_paths")
@@ -1466,11 +1473,20 @@ class MCPClient:
             extra = _default_runtime_write_paths(self._config.get("command") or "")
         return SandboxPolicy(
             network=bool(self._config.get("network", DEFAULT_SANDBOX_NETWORK)),
-            allow_subprocess=bool(self._config.get("subprocess", True)),
+            deny_subprocess=not bool(self._config.get("subprocess", True)),
             # ``~`` in an operator-declared or default path is expanded by the
             # backend (expand_policy_path) — NOT here, so every backend applies
             # one shared contract instead of each caller pre-expanding (#2976).
             write_paths=[cwd, *extra],
+            # #3901 PR-B ④ (owner ruling B): SandboxPolicy's own dataclass
+            # default for read_deny_paths is now empty (full compat) — but an
+            # MCP server is untrusted THIRD-PARTY code, not an operator-typed
+            # command, so this builder opts back into the credential-path
+            # defense-in-depth explicitly rather than inheriting the compat
+            # floor. This is the "read broad + the default sensitive deny-list"
+            # this method's own docstring promises; before this line it was
+            # true only because the dataclass default carried it for free.
+            read_deny_paths=list(DEFAULT_SENSITIVE_READ_DENY),
         )
 
     def _sandbox_wrap_stdio(self, command: str, args: list[str]) -> "tuple[str, list[str]]":

@@ -40,7 +40,7 @@ def test_resolve_backend_falls_back_to_the_factory_when_none_given():
 async def test_run_and_classify_returns_a_normal_result_with_no_denial():
     """Tier 2: a real, successful run classifies to denial_class=None."""
     backend = NoopBackend()
-    policy = SandboxPolicy(allow_subprocess=True)
+    policy = SandboxPolicy(deny_subprocess=False)
     launched = await run_and_classify(
         backend, [sys.executable, "-c", "print('ok')"], policy,
     )
@@ -65,7 +65,7 @@ async def test_run_and_classify_classifies_a_real_fork_denial_signature():
     from reyn.security.sandbox.denial import DENIAL_FORK
 
     backend = NoopBackend()
-    policy = SandboxPolicy(allow_subprocess=True)
+    policy = SandboxPolicy(deny_subprocess=False)
     script = (
         "import sys; "
         "sys.stderr.write('pyenv: fork: Operation not permitted\\n'); "

@@ -13,8 +13,16 @@ real denier (NOT the project_root zone anchor).
 
 The fix resolves the path against ``ctx.workspace.base_dir`` before the gate, so
 the permission check sees the SAME absolute target the write/read will hit. These
-tests pin the round-trip (granted AND lands), the load-bearing sandbox cap
-(falsification), and read/write symmetry — with real instances (no mocks).
+tests pin the round-trip (granted AND lands) and read/write symmetry — with real
+instances (no mocks).
+
+#3901 PR-B ③ retired FILE_READ/FILE_WRITE from SandboxLayer's permission-∩
+projection (an operator cannot know a sandbox's path floor, so it is no
+longer treated as permission) — this module's original sandbox-cap
+falsification test relied on that intersection and was removed accordingly
+(a comment marks where it lived and why); the round-trip / write-lands
+assertions below are unaffected, since they never depended on a sandbox
+denial to pass.
 """
 from __future__ import annotations
 
@@ -30,11 +38,13 @@ from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 
-def _ctx(tmp_path: Path, base_dir: Path, *, write_cap: Path, read_cap: Path) -> OpContext:
+def _ctx(tmp_path: Path, base_dir: Path, *, write_cap: Path) -> OpContext:
     """An OpContext mirroring the run-once-in-container scoping: workspace rooted
     on a non-cwd base_dir, config file.write/read=allow (--grant-file-write),
-    project_root on the HOST, and a sandbox capping paths to the container repo.
-    """
+    project_root on the HOST, and a sandbox capping write paths to the
+    container repo. #3901 PR-B ③ retired FILE_READ from SandboxLayer's
+    permission-∩ projection, so this ctx no longer carries a read cap — see
+    test_b3_relative_read_resolves_against_base_dir's own docstring."""
     events = EventLog()
     ws = Workspace(events, base_dir=base_dir, state_dir=tmp_path / "state")
     resolver = PermissionResolver(
@@ -47,7 +57,6 @@ def _ctx(tmp_path: Path, base_dir: Path, *, write_cap: Path, read_cap: Path) -> 
         permission_resolver=resolver,
         default_sandbox_policy={
             "write_paths": [str(write_cap)],
-            "read_paths": [str(read_cap)],
             "network": False,
         },
     )
@@ -57,14 +66,16 @@ def _ctx(tmp_path: Path, base_dir: Path, *, write_cap: Path, read_cap: Path) -> 
 async def test_b3_relative_write_resolves_against_base_dir_and_lands(tmp_path):
     """Tier 2: a relative repo write under a non-cwd base_dir is GRANTED and lands (#187 B3).
 
-    Pre-fix the raw relative path resolved against host cwd → outside the
-    sandbox write_paths=[base_dir] cap → denied. Resolving against base_dir
-    first makes the gate check /testbed/astropy/... — granted — and the write
-    lands under base_dir (round-trip / write-lands, the #1410 lesson).
-    """
+    Pre-fix the raw relative path resolved against host cwd, landing outside
+    the workspace base_dir. Resolving against base_dir first makes the write
+    target /testbed/astropy/... and land there (round-trip / write-lands, the
+    #1410 lesson) — independent of whether a sandbox cap is in play (#3901
+    PR-B ③ retired FILE_WRITE from SandboxLayer's permission-∩, so a
+    resolution bug here can no longer be caught by a sandbox denial; the
+    write-lands assertion is what still catches it)."""
     testbed = tmp_path / "testbed"
     (testbed / "astropy" / "io").mkdir(parents=True)
-    ctx = _ctx(tmp_path, testbed, write_cap=testbed, read_cap=testbed)
+    ctx = _ctx(tmp_path, testbed, write_cap=testbed)
 
     op = FileIROp(kind="file", op="write", path="astropy/io/html.py", content="X = 1\n")
     res = await handle(op, ctx)
@@ -74,31 +85,28 @@ async def test_b3_relative_write_resolves_against_base_dir_and_lands(tmp_path):
     assert (testbed / "astropy" / "io" / "html.py").read_text() == "X = 1\n"
 
 
-@pytest.mark.asyncio
-async def test_b3_sandbox_write_cap_still_load_bearing(tmp_path):
-    """Tier 2: ★falsification — when the sandbox write cap does NOT cover the
-    base_dir, the same relative write is DENIED. Proves the resolution targets
-    base_dir (not a trivially-always-grant) and the SandboxLayer ∩ is intact.
-    """
-    testbed = tmp_path / "testbed"
-    (testbed / "astropy" / "io").mkdir(parents=True)
-    elsewhere = tmp_path / "elsewhere"  # cap excludes the workspace base_dir
-    ctx = _ctx(tmp_path, testbed, write_cap=elsewhere, read_cap=testbed)
-
-    op = FileIROp(kind="file", op="write", path="astropy/io/html.py", content="X = 1\n")
-    with pytest.raises(PermissionError):
-        await handle(op, ctx)
+# #3901 PR-B ③ retired FILE_WRITE from SandboxLayer's permission-∩ projection
+# (an operator cannot know a sandbox's path floor, so it is no longer treated
+# as permission — lead-coder confirmed this stays retired, #3901 thread,
+# distinct from the NETWORK_HOST ruling). The falsification this file used to
+# carry here (`test_b3_sandbox_write_cap_still_load_bearing`: an out-of-cap
+# sandbox write_paths DENIES the write) pinned a guarantee SandboxLayer no
+# longer provides — this ctx's ``config_permissions={"file.write": "allow"}``
+# means AgentLayer would not deny it either, so there is no live mechanism
+# left to falsify against. Deleted rather than left to rot RED for a reason
+# unrelated to what it claimed to test (six-questions: "should this test
+# exist" resolves to no, not "repair it").
 
 
 @pytest.mark.asyncio
 async def test_b3_relative_read_resolves_against_base_dir(tmp_path):
-    """Tier 2: read/write symmetry — a relative read under a tight read_paths cap
-    on the base_dir is GRANTED (the read gate also resolves against base_dir).
-    """
+    """Tier 2: read/write symmetry — a relative read under a non-cwd base_dir
+    is GRANTED and reads the file actually under base_dir (the read gate also
+    resolves against base_dir, not host cwd)."""
     testbed = tmp_path / "testbed"
     (testbed / "astropy").mkdir(parents=True)
     (testbed / "astropy" / "io.py").write_text("data = 2\n")
-    ctx = _ctx(tmp_path, testbed, write_cap=testbed, read_cap=testbed)
+    ctx = _ctx(tmp_path, testbed, write_cap=testbed)
 
     op = FileIROp(kind="file", op="read", path="astropy/io.py")
     res = await handle(op, ctx)

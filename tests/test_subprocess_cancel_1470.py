@@ -20,7 +20,7 @@ from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.noop_backend import NoopBackend
 from reyn.security.sandbox.policy import SandboxPolicy
 
-_POLICY = SandboxPolicy(env_passthrough=["PATH"], timeout_seconds=30)
+_POLICY = SandboxPolicy(timeout_seconds=30)
 
 
 # ── 1 Popen-equivalence (cancel_event=None) ──────────────────────────────────

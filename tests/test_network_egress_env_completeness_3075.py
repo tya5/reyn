@@ -326,30 +326,38 @@ def test_sandbox_child_env_includes_standard_set_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: the sandbox forwards the standard proxy/CA env to EVERY spawned
-    child by default (#3075 fix 5) — even when the caller's own
-    ``env_passthrough`` allowlist is empty (the git-clone-only forwarding this
-    generalises always listed its vars explicitly)."""
+    child by default (#3075 fix 5) — even under a bare policy with no
+    declarations at all.
+
+    #3901 PR-B ④ (owner ruling B, full compat) subsumed this property rather
+    than removing it: ``resolve_passthrough_env`` no longer curates a
+    standard proxy/CA set specially — the WHOLE environment passes through
+    unless ``env_deny_names`` denies it, so the standard set (a subset of
+    "everything") is forwarded as a corollary, not a special case."""
     monkeypatch.setenv("HTTP_PROXY", SENTINEL_PROXY)
     monkeypatch.setenv("SSL_CERT_FILE", SENTINEL_CA)
     from reyn.security.sandbox.policy import SandboxPolicy, resolve_passthrough_env
 
-    policy = SandboxPolicy(env_passthrough=[])
+    policy = SandboxPolicy()
     env = resolve_passthrough_env(policy)
     assert env.get("HTTP_PROXY") == SENTINEL_PROXY
     assert env.get("SSL_CERT_FILE") == SENTINEL_CA
 
 
-def test_sandbox_child_env_still_honours_explicit_passthrough(
+def test_sandbox_child_env_deny_list_narrows_the_full_passthrough(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: additive, not a replacement — an operator-declared
-    env_passthrough entry is still forwarded alongside the standard set."""
-    monkeypatch.setenv("MY_CUSTOM_VAR", "keep-me")
+    """Tier 2: #3901 PR-B ④'s own opt-out leg — an operator-declared
+    ``env_deny_names`` entry is withheld while an undeclared var (the standard
+    proxy/CA set included) still passes through the full-compat default."""
+    monkeypatch.setenv("MY_SECRET_VAR", "withhold-me")
+    monkeypatch.setenv("HTTP_PROXY", SENTINEL_PROXY)
     from reyn.security.sandbox.policy import SandboxPolicy, resolve_passthrough_env
 
-    policy = SandboxPolicy(env_passthrough=["MY_CUSTOM_VAR"])
+    policy = SandboxPolicy(env_deny_names=["MY_SECRET_VAR"])
     env = resolve_passthrough_env(policy)
-    assert env.get("MY_CUSTOM_VAR") == "keep-me"
+    assert "MY_SECRET_VAR" not in env
+    assert env.get("HTTP_PROXY") == SENTINEL_PROXY
 
 
 def test_noop_backend_and_seatbelt_and_landlock_share_the_chokepoint() -> None:

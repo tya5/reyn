@@ -58,7 +58,8 @@ class CapabilityAxis(Enum):
     ENV = "env"
     # #3198: skill-load ``${env:VAR}`` expansion allowlist — DISTINCT from
     # ``ENV`` above (that axis gates which env-var NAMES pass THROUGH to a
-    # sandboxed subprocess via ``SandboxPolicy.env_passthrough``; this axis
+    # sandboxed subprocess — ``SandboxPolicy.env_deny_names``, #3901 PR-B ④
+    # renamed the sandbox side of this to a deny-list; this axis
     # gates whether a SKILL.md body may read a name FROM os.environ into
     # the LLM's context at all). Same vocabulary, deliberately different
     # capability — conflating them would let a subprocess env-passthrough
@@ -188,18 +189,57 @@ class AgentLayer:
             # through to "unconstrained", since that would restore the
             # pre-#3198 unconditional os.environ read).
             return value in d.env_expand or "*" in d.env_expand or self._approved(axis, value)
-        # ENV / SUBPROCESS / PYTHON(removed) / SKILL(removed): the decl does not constrain → ⊤.
-        # (#1352-L3: the shell-permission SUBPROCESS gate was retired with the
-        # shell op; subprocess is now bounded by SandboxLayer.allow_subprocess
-        # at the sandboxed_exec seam, not the AgentLayer.)
+        if axis is CapabilityAxis.SUBPROCESS:
+            # #3901 PR-B ①: the actor's OWN declared intent — "may this
+            # agent launch a subprocess at all". Compat default (True):
+            # d.subprocess defaults to True, so an actor with no opinion
+            # is unconstrained here (⊤) and the decision falls to
+            # SandboxLayer's own (also compat-default) deny_subprocess.
+            return bool(d.subprocess)
+        if axis is CapabilityAxis.ENV:
+            # #3901 PR-B ①: the actor's declared env-var-name allowlist for
+            # subprocess passthrough. Compat: an empty/unset decl.env is ⊤
+            # (unconstrained) here, NOT deny — this axis's restriction comes
+            # from SandboxLayer.env_deny_names (a BLOCKLIST), not from this
+            # allowlist being populated. Declaring specific names here
+            # narrows what THIS actor may pass through even before sandbox's
+            # deny-list is consulted (the ∩ still applies both ways).
+            return not d.env or value in d.env
+        # PYTHON(removed) / SKILL(removed): the decl does not constrain → ⊤.
         return True
 
 
 class SandboxLayer:
-    """The RESTRICT layer: ``SandboxPolicy`` runtime caps. An empty path/host list
-    means the policy declares no restriction on that axis (⊤) — restrict-only:
-    a policy narrows only by listing. ``network``/``allow_subprocess`` are the
-    degenerate 2-element lattice (False = ⊥ denies the whole axis)."""
+    """The RESTRICT layer for the axes ``SandboxPolicy`` actually gates in
+    the permission ∩ (#3901 PR-B ③): SUBPROCESS, ENV, and NETWORK_HOST — values
+    an operator declares AS permission (#3901 PR-B ①, ``PermissionDecl.subprocess``
+    / ``.env``; ``network`` via ``reyn.yaml sandbox.policy``) but that ALSO
+    need a runtime floor an operator's decl cannot override downward (mirrors
+    AgentLayer ∩ SandboxLayer's existing shape for every other axis).
+
+    FILE_READ / FILE_WRITE no longer participate here (#3901 PR-B ③, owner's
+    split: sandbox's job is bounding what happens BEHIND a permitted action,
+    using values — like the workspace floor ``resolve_sandbox_policy``
+    builds — the OPERATOR CANNOT KNOW and therefore cannot express as
+    permission; #3901 §1). ``SandboxPolicy`` STILL enforces these two at the
+    kernel-backend level (Seatbelt/Landlock read ``policy.write_paths``
+    directly to build the actual SBPL/LSM rules) — what changed is that a
+    kernel-enforced restriction on these two axes no longer ALSO narrows the
+    permission ⋂ an operator's own decl computes.
+
+    NETWORK_HOST is explicitly NOT in that retirement (lead-coder ruling,
+    #3901 thread, superseding an earlier draft that grouped it with the two
+    above): ``network`` is a value an operator writes directly into
+    ``reyn.yaml sandbox.policy``, not a workspace floor they cannot know — the
+    same shape as SUBPROCESS/ENV, not the same shape as the path caps.
+    ``docs/concepts/architecture/sandbox-vs-permission.md`` and
+    ``docs/concepts/runtime/sandbox.md`` both document network as the
+    permission-∩-participating exfiltration gate; retiring it would falsify
+    both docs in the same PR that claims to keep them in sync.
+
+    An empty deny-list means the policy declares no restriction on that axis
+    (⊤) — restrict-only, matching the rest of this model: a policy narrows
+    only by listing what it denies."""
 
     def __init__(self, policy: "SandboxPolicy | None") -> None:
         self._policy = policy
@@ -208,21 +248,23 @@ class SandboxLayer:
         p = self._policy
         if p is None:
             return True  # no sandbox layer → unrestricted
-        if axis is CapabilityAxis.FILE_READ:
-            return not p.read_paths or any(
-                _path_under(str(value), root) for root in p.read_paths
-            )
-        if axis is CapabilityAxis.FILE_WRITE:
-            return not p.write_paths or any(
-                _path_under(str(value), root) for root in p.write_paths
-            )
-        if axis is CapabilityAxis.NETWORK_HOST:
-            return bool(p.network)
         if axis is CapabilityAxis.SUBPROCESS:
-            return bool(p.allow_subprocess)
+            # #3901 PR-B ④: deny_subprocess (renamed from allow_subprocess,
+            # inverted sense) — False (compat default) means unconstrained.
+            return not p.deny_subprocess
         if axis is CapabilityAxis.ENV:
-            return not p.env_passthrough or value in p.env_passthrough
-        # MCP / SKILL(removed) / SECRET_WRITE / PYTHON(removed): sandbox does not constrain → ⊤.
+            # #3901 PR-B ④: env_deny_names (renamed from env_passthrough,
+            # inverted from an allow-list to a deny-list) — an empty/unset
+            # deny-list is ⊤ (compat: nothing extra denied), narrowed only
+            # by what is explicitly listed.
+            return value not in p.env_deny_names
+        if axis is CapabilityAxis.NETWORK_HOST:
+            # Unchanged from pre-#3901: network is an operator-declared value
+            # (not a workspace floor), so it stays in the permission ∩.
+            return bool(p.network)
+        # FILE_READ / FILE_WRITE (#3901 PR-B ③) / MCP / SKILL(removed) /
+        # SECRET_WRITE / PYTHON(removed): sandbox no longer constrains the
+        # permission ∩ on these axes → ⊤.
         return True
 
 
