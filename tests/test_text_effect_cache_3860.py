@@ -324,3 +324,118 @@ def test_a_slow_failure_still_recovers_and_still_falls_back_cleanly() -> None:
     assert elapsed > 0.3 * (text_effect.MAX_BUILD_ATTEMPTS - 1), (
         f"only {elapsed:.2f}s elapsed — the pool did not actually retry"
     )
+
+
+@requires_tte
+def test_every_tte_effect_is_offered() -> None:
+    """Tier 2: #3882 — the rotation is all of TerminalTextEffects' effects, not
+    a curated subset.
+
+    Compared against the LIBRARY'S OWN package listing rather than a literal
+    count or a hardcoded name list — pinning "37" or the 37 names would be
+    pinning the third party's current inventory under reyn's name (CLAUDE.md
+    Q1); what reyn actually promises is "whatever TTE ships, all of it".
+    """
+    import inspect
+    import pkgutil
+
+    import terminaltexteffects.effects as tte_effects
+
+    module_names = {name for _, name, _ in pkgutil.iter_modules(tte_effects.__path__)}
+    offered = text_effect.effect_classes()
+    assert len(offered) == len(module_names), (
+        f"{len(offered)} effects offered but the library ships "
+        f"{len(module_names)} modules"
+    )
+    # Every offered class is a real TTE effect (not, say, the same class
+    # twice) — each one's defining module is one of the library's own.
+    offered_modules = {cls.__module__.rsplit(".", 1)[-1] for cls in offered}
+    assert offered_modules == module_names, (
+        f"mismatch: offered {offered_modules - module_names}, "
+        f"missing {module_names - offered_modules}"
+    )
+    assert len(offered) == len(set(offered)), "an effect class is repeated"
+
+
+class _TaggedFrame:
+    """A cheap stand-in for a cached ``Text`` frame — only identity matters to
+    :func:`text_effect._play`, which never inspects a frame's content."""
+
+    def __init__(self, index: int) -> None:
+        self.index = index
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _TaggedFrame) and self.index == other.index
+
+    def __hash__(self) -> int:
+        return hash(self.index)
+
+    def __repr__(self) -> str:
+        return f"F{self.index}"
+
+
+def test_play_leaves_a_short_cache_untouched() -> None:
+    """Tier 2: an effect whose whole cycle already fits under
+    ``TARGET_CYCLE_SECONDS`` at ``DEFAULT_FPS`` plays every cached frame on
+    its forward leg — the stride is a correction for the long tail, not a
+    general thinning. Read off :func:`_play`'s own output (the public
+    contract), not the private stride helper's return value in isolation.
+    """
+    at_the_limit = text_effect.TARGET_CYCLE_SECONDS * text_effect.DEFAULT_FPS
+    frames = [_TaggedFrame(i) for i in range(at_the_limit)]
+
+    played = text_effect._play(frames)
+    forward_leg: list = []
+    prev_index = -1
+    for frame in played:
+        if frame.index < prev_index:
+            break
+        forward_leg.append(frame)
+        prev_index = frame.index
+
+    assert forward_leg == frames, (
+        "a cache within the target cycle length was thinned — it should not be"
+    )
+
+
+def test_forward_stride_brings_a_long_cache_under_the_target() -> None:
+    """Tier 1: a cache longer than the target cycle gets a stride that
+    actually lands it under the target — not merely a stride greater than 1."""
+    target_frames = text_effect.TARGET_CYCLE_SECONDS * text_effect.DEFAULT_FPS
+    for frame_count in (target_frames + 1, target_frames * 2, 1658):  # 1658: swarm, #3860
+        stride = text_effect._forward_stride(frame_count)
+        assert stride > 1, f"{frame_count} frames exceeds the target but got stride 1"
+        shown = -(-frame_count // stride)  # ceil(frame_count / stride)
+        assert shown <= target_frames, (
+            f"{frame_count} frames at stride {stride} still shows {shown} "
+            f"— over the {target_frames}-frame target"
+        )
+
+
+def test_play_thins_the_forward_leg_to_what_the_stride_selected() -> None:
+    """Tier 2: :func:`text_effect._play` actually applies the stride — not
+    just that :func:`_forward_stride` computes one correctly in isolation.
+
+    Drives ``_play`` directly with a synthetic cache long enough to trigger a
+    stride, and reads off the first full forward leg by watching for the
+    frame index to drop (the start of the rewind leg) — the contract under
+    test is "what _play emits", not "what _forward_stride returns".
+    """
+    target_frames = text_effect.TARGET_CYCLE_SECONDS * text_effect.DEFAULT_FPS
+    frame_count = target_frames + 5
+    frames = [_TaggedFrame(i) for i in range(frame_count)]
+    stride = text_effect._forward_stride(frame_count)
+    assert stride > 1, "test setup did not actually trigger a stride"
+
+    played = text_effect._play(frames)
+    forward_leg: list = []
+    prev_index = -1
+    for frame in played:
+        if frame.index < prev_index:
+            break  # the rewind leg started; the forward leg is complete
+        forward_leg.append(frame)
+        prev_index = frame.index
+
+    assert forward_leg == frames[::stride], (
+        "the forward leg played is not the strided subset _forward_stride selected"
+    )

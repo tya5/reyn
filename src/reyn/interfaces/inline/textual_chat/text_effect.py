@@ -32,57 +32,62 @@ same frames and writes nothing (0 bytes captured).
 
 Which effects
 -------------
-Twelve of TerminalTextEffects' thirty-seven, chosen by measurement rather than
-taste (#3860 — the operator's 「ちょっと種類が少なく感じる」). Every one of the
-thirty-seven resolves back to the text it was given, so that is not the filter;
-two other properties are:
+All thirty-seven of TerminalTextEffects' effects (#3882 — the operator's
+「全種対応」, following #3860's measurement of all 37, which found every one
+resolves back to the text it was given: 0 exclusions on that ground).
 
-- **p90 >= 12 fps.** An effect whose slow tenth cannot make the interval hitches
-  visibly at :data:`DEFAULT_FPS`.
-- **<= 25 seconds per cycle.** ``loop=True`` picks a fresh effect only at the END
-  of a cycle, so a long effect does not merely take longer — it *suppresses the
-  variety*, which is the thing the operator noticed.
+#3860 also excluded 25 of the 37 on two OTHER grounds — "SLOW" (p90 < 12 fps)
+and "LONG" (> 25s per cycle at the then-default 10 fps) — and both were sound
+at the time but rested on a premise #3876 removed: that measurement priced
+PER-FRAME GENERATION, paid on the UI thread once per tick. #3876 moved
+generation to a background thread, done once per effect before playback starts
+(:class:`_CacheBuilder`); what a playback tick now costs is a lookup into the
+finished list plus a render of an already-built :class:`~rich.text.Text` —
+the SAME cost regardless of which effect built it. Re-measured directly
+(#3882, this cache's own frames, not synthetic ones): ``overflow``/``sweep``/
+``matrix`` — 1860's three "SLOW" effects — render at 112-118 sustainable fps,
+statistically indistinguishable from ``beams``/``rain``/``slide``. **SLOW is
+retired as a category**; it measured a cost this design no longer pays.
 
-``beams`` was in the original three and fails both (10.5 fps, 29 seconds). It is
-worth naming why that mattered more than the count: a third of the rotation was
-spending half a minute on one effect, so the *felt* variety was below three even
-before the list grew.
+LONG still exists, but as pure frame-count now, uncoupled from render cost —
+so it can be corrected by choosing *which frames to show* instead of by
+excluding the effect. See "Frame rate" below.
 
-Deliberately a flat list. The operator has not seen these yet, and narrowing it
-after they do should be a deletion, not a redesign.
+Deliberately a flat list, same as when it was twelve. The operator has not
+narrowed it since seeing it grow to twelve, and narrowing it after seeing 37
+should still be a deletion, not a redesign.
 
-**Nothing in the test suite enforces those two criteria**, and that is on
-purpose: both are wall-clock figures, so pinning them would fail on a slower CI
-host for a reason that has nothing to do with reyn. Measured (#3860) — adding a
-93-second effect back to this list leaves the suite green. What the suite does
-hold is the property the rest of the design rests on: every member resolves the
-covered text back. Anyone adding to this list is choosing the speed and the
-length themselves, with the numbers on #3860 as the reference.
+**Nothing in the test suite enforces the render-cost or cycle-length
+figures**, and that is on purpose: both are wall-clock, so pinning them would
+fail on a slower CI host for a reason that has nothing to do with reyn. What
+the suite does hold is the property the rest of the design rests on: every
+member resolves the covered text back, and :data:`_forward_stride` computes a
+correct (not merely plausible) stride for any frame count.
 
 Frame rate
 ----------
-:data:`DEFAULT_FPS` is 10, not the 30 the upstream example uses. Measured on
-macOS at 100x24, per frame (generation + ``Text.from_ansi`` + Rich render), as a
-distribution rather than a mean — the cost changes over an effect's life, so a
-mean says more about how many frames were sampled than about the effect:
+:data:`DEFAULT_FPS` is 20 (#3882, raised from #3860's 10) — matching, not
+coincidentally, the fps upstream's own ``examples/screensaver.py`` converged
+to independently once IT also moved to a cached, pre-built frame list (its
+own commit message: 「TTE の毎フレーム計算が loop-bound のため」20 fps —
+the same generation-cost constraint #3876 removed here). Re-measured
+render-only cost (post-cache, this design's own frames, not upstream's):
+median ~7-8ms, p90 ~8.5ms across every effect sampled including the three
+former "SLOW" ones — a 110+ fps ceiling with 5x headroom over 20. 20, not
+higher, because the headroom is LOCAL-machine, capture-only measurement: ssh
+and a real terminal's differential-update write are unmeasured (same gap
+#3860 left open), and upstream's own number is the one data point that
+crossed that gap and is still available to lean on.
 
-    effect   median    p90      sustainable fps (median / p90)
-    beams    41.7ms   109.1ms          24.0 / 9.2
-    rain     18.4ms    25.2ms          54.4 / 39.7
-    slide    52.1ms   188.9ms          19.2 / 5.3
-
-**30 fps is not reached by any of the three, even at their median.** Shipping a
-default the machine cannot deliver is the kind of unpredictability the operator
-rejects elsewhere, so the default is one the machine can hold.
-
-10 is NOT "no dropped frames" — slide's slowest tenth needs ~5 fps, and a
-default that slow is not worth looking at. What 10 buys is: every effect's
-MEDIAN frame is comfortably inside the interval, so the drops are a hitch in the
-slowest tenth rather than the steady state.
-
-Not measured: over ssh (the byte counts above are raw frame sizes, not what a
-terminal's differential update actually sends), and anything on Windows/git-bash
-— which is where the operator runs reyn.
+Even at 20 fps a raw frame count turns into a long cycle for the ANIMATION-
+heavy effects (``swarm`` 1658 frames = 83s at 20 fps). :data:`_forward_stride`
+brings each effect's cycle under :data:`TARGET_CYCLE_SECONDS` by SKIPPING
+frames on the forward leg — the same idea :data:`REVERSE_STRIDE` already uses
+for the rewind leg, computed per effect from its own cached frame count
+rather than pinned as one constant, because the 37 effects' frame counts span
+25 to ~1700. A stride is not a fps increase: it costs nothing extra per tick
+(still one lookup, one render, at :data:`DEFAULT_FPS`), it just plays fewer of
+the cached frames each cycle — the same trade the rewind leg already makes.
 """
 from __future__ import annotations
 
@@ -95,10 +100,17 @@ if TYPE_CHECKING:
 
     from rich.console import RenderableType
 
-#: Frames per second for the overlay. See the module docstring for the
-#: measurement this is chosen from — it is deliberately below the upstream
-#: example's 30, which no measured effect reaches.
-DEFAULT_FPS = 10
+#: Frames per second for the overlay. See the module docstring ("Frame rate")
+#: for the post-cache measurement this is chosen from.
+DEFAULT_FPS = 20
+
+#: The per-cycle ceiling :data:`_forward_stride` normalizes toward. See the
+#: module docstring ("Which effects") — #3860 excluded anything over 25s at
+#: the OLD 10 fps default; this is the new target at the new default, chosen
+#: to keep even the longest cached effect (``swarm``, 1658 frames) under a
+#: 2x stride rather than needing an aggressive one that would visibly thin
+#: the motion.
+TARGET_CYCLE_SECONDS = 45
 
 #: How many frames one cycle of the waiting pulse takes. At :data:`DEFAULT_FPS`
 #: that is a one-second breath — and it is also the interval at which the cache
@@ -277,8 +289,9 @@ class _CacheBuilder:
 
 
 def effect_classes() -> list:
-    """The effects the key rotates through — twelve, chosen by measurement
-    (#3860; the criteria are in the module docstring).
+    """The effects the key rotates through — all thirty-seven TerminalTextEffects
+    ships (#3882; the criteria and #3860's earlier twelve-effect history are in
+    the module docstring's "Which effects").
 
     A function rather than a module constant so the optional dependency stays
     optional: importing the classes at module scope would make an absent
@@ -290,50 +303,130 @@ def effect_classes() -> list:
     random draw happens to produce.
     """
     from terminaltexteffects.effects import (
+        effect_beams,
+        effect_binarypath,
+        effect_blackhole,
+        effect_bouncyballs,
+        effect_bubbles,
+        effect_burn,
+        effect_colorshift,
+        effect_crumble,
+        effect_decrypt,
+        effect_errorcorrect,
         effect_expand,
+        effect_fireworks,
         effect_highlight,
+        effect_laseretch,
+        effect_matrix,
         effect_middleout,
+        effect_orbittingvolley,
+        effect_overflow,
         effect_pour,
         effect_print,
         effect_rain,
         effect_random_sequence,
+        effect_rings,
         effect_scattered,
         effect_slice,
         effect_slide,
         effect_smoke,
+        effect_spotlights,
+        effect_spray,
+        effect_swarm,
+        effect_sweep,
+        effect_synthgrid,
+        effect_thunderstorm,
+        effect_unstable,
+        effect_vhstape,
+        effect_waves,
         effect_wipe,
     )
 
     return [
+        effect_beams.Beams,
+        effect_binarypath.BinaryPath,
+        effect_blackhole.Blackhole,
+        effect_bouncyballs.BouncyBalls,
+        effect_bubbles.Bubbles,
+        effect_burn.Burn,
+        effect_colorshift.ColorShift,
+        effect_crumble.Crumble,
+        effect_decrypt.Decrypt,
+        effect_errorcorrect.ErrorCorrect,
         effect_expand.Expand,
+        effect_fireworks.Fireworks,
         effect_highlight.Highlight,
+        effect_laseretch.LaserEtch,
+        effect_matrix.Matrix,
         effect_middleout.MiddleOut,
+        effect_orbittingvolley.OrbittingVolley,
+        effect_overflow.Overflow,
         effect_pour.Pour,
         effect_print.Print,
         effect_rain.Rain,
         effect_random_sequence.RandomSequence,
+        effect_rings.Rings,
         effect_scattered.Scattered,
         effect_slice.Slice,
         effect_slide.Slide,
         effect_smoke.Smoke,
+        effect_spotlights.Spotlights,
+        effect_spray.Spray,
+        effect_swarm.Swarm,
+        effect_sweep.Sweep,
+        effect_synthgrid.SynthGrid,
+        effect_thunderstorm.Thunderstorm,
+        effect_unstable.Unstable,
+        effect_vhstape.VHSTape,
+        effect_waves.Waves,
         effect_wipe.Wipe,
     ]
+
+
+def _forward_stride(frame_count: int) -> int:
+    """How many cached frames :func:`_play` advances per forward-leg tick.
+
+    Mirrors :data:`REVERSE_STRIDE`'s idea — skip cached frames rather than
+    raise the tick rate — but computed PER EFFECT from its own frame count,
+    because the 37 effects span 25 to ~1700 frames (#3860) and one constant
+    stride would either barely touch the short effects or leave the longest
+    ones far over :data:`TARGET_CYCLE_SECONDS`.
+
+    ``1`` (every frame shown) unless the effect's raw cycle at
+    :data:`DEFAULT_FPS` would exceed the target — so short effects are
+    completely unaffected, and only the handful of very long ones are
+    thinned, by the smallest integer stride that brings them under the
+    target.
+    """
+    target_frames = TARGET_CYCLE_SECONDS * DEFAULT_FPS
+    if frame_count <= target_frames:
+        return 1
+    return -(-frame_count // target_frames)  # ceil division, no float rounding
 
 
 def _play(frames: list):
     """Forward, then rewind, forever — the operator's shape for the loop.
 
-    Rewinding by STEPPING through the cache (:data:`REVERSE_STRIDE`) rather than
-    by raising the frame rate. Both look like a fast rewind; only one keeps a
-    tick at one lookup, and the rate is what this whole change is buying back.
+    The forward leg is thinned by :func:`_forward_stride` before either leg
+    runs, so what gets rewound is what was just shown forward — a rewind over
+    frames the operator never saw forward would read as a jump, not a rewind.
+    Short effects (stride 1) are unaffected; this only touches the handful
+    whose raw cache is longer than :data:`TARGET_CYCLE_SECONDS` can hold.
+
+    Rewinding by STEPPING through the (already-thinned) cache
+    (:data:`REVERSE_STRIDE`) rather than by raising the frame rate. Both look
+    like a fast rewind; only one keeps a tick at one lookup, and the rate is
+    what this whole design is buying back.
 
     Both ends are trimmed by one frame per pass so the extremes are not held for
     two ticks — a repeated first/last frame reads as a stall in an animation
     that is otherwise always moving.
     """
+    stride = _forward_stride(len(frames))
+    shown = frames[::stride] if stride > 1 else frames
     while True:
-        yield from frames
-        yield from frames[-2::-REVERSE_STRIDE]
+        yield from shown
+        yield from shown[-2::-REVERSE_STRIDE]
 
 
 def frame_factory(
