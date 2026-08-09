@@ -29,6 +29,7 @@ from reyn.mcp.connection_service import MCPConnectionService
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _SUPPORT_DIR = Path(__file__).parent / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
@@ -117,6 +118,7 @@ async def test_real_mcp_push_fires_configured_hook_into_session_inbox(tmp_path):
         },
     ]
     session = _make_session(tmp_path, hooks_config=hooks_config)
+    collected = collect_events(session._audit_events)
     try:
         client = await session._mcp_connection_service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
         await client.subscribe_resource(_URI)
@@ -127,7 +129,7 @@ async def test_real_mcp_push_fires_configured_hook_into_session_inbox(tmp_path):
         # The EventLog side (②b, unchanged) still fires — confirms the receive-loop
         # actually processed the push before we assert on the NEW hook side.
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in session._audit_events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in collected)
         )
 
         # #2608 H1: the hook side — the templated push landed in the (public) inbox.
@@ -149,6 +151,7 @@ async def test_no_configured_hook_leaves_hook_side_a_pure_noop(tmp_path):
     is the byte-identical-to-today behavior the H1 design requires when no such
     hook is configured for the session."""
     session = _make_session(tmp_path, hooks_config=None)
+    collected = collect_events(session._audit_events)
     try:
         client = await session._mcp_connection_service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
         await client.subscribe_resource(_URI)
@@ -157,7 +160,7 @@ async def test_no_configured_hook_leaves_hook_side_a_pure_noop(tmp_path):
         assert result["isError"] is False
 
         await _wait_for(
-            lambda: any(e.type == "mcp_resource_updated" for e in session._audit_events.all())
+            lambda: any(e.type == "mcp_resource_updated" for e in collected)
         )
         # Give the (no-op) hook dispatch a fair chance to have run before asserting
         # the negative — the drain task still runs, HookDispatcher.dispatch() is

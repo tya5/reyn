@@ -31,6 +31,7 @@ from reyn.services.compaction.engine import (
     HistoryChunkToCompact,
     estimate_tokens,
 )
+from tests._support.events import collect_events
 
 _MODEL = "gpt-4o"
 
@@ -41,13 +42,14 @@ def _resp(content: str) -> SimpleNamespace:
     )
 
 
-def _engine(passes: int = 1) -> tuple[CompactionEngine, EventLog]:
+def _engine(passes: int = 1) -> tuple[CompactionEngine, list]:
     events = EventLog()
+    collected = collect_events(events)
     cfg = CompactionConfig(use_chars4_estimate=True, resummarize_passes=passes)
-    return CompactionEngine(_MODEL, events, cfg), events
+    return CompactionEngine(_MODEL, events, cfg), collected
 
 
-def _run(monkeypatch, engine, events, *, compaction_arc: str, resummarize_arc: str):
+def _run(monkeypatch, engine, collected, *, compaction_arc: str, resummarize_arc: str):
     """Monkeypatch litellm.acompletion to script both calls; run compact once."""
     calls = {"compaction": 0, "resummarize": 0}
 
@@ -71,15 +73,15 @@ def _run(monkeypatch, engine, events, *, compaction_arc: str, resummarize_arc: s
         section_token_caps={},
     )
     summary = asyncio.run(engine.compact(chunk))
-    return summary, calls, [e.type for e in events.all()]
+    return summary, calls, [e.type for e in collected]
 
 
 def test_t1_fit_no_resummarize(monkeypatch) -> None:
     """Tier 2: a topic_arc within body_budget is unchanged — no re-summarize, no event."""
-    engine, events = _engine()
+    engine, collected = _engine()
     bb = engine.budgets.body_budget
     arc = "x " * (bb // 2)  # ~bb/2 tokens (chars//4 of "x " repeats) — fits
-    summary, calls, types = _run(monkeypatch, engine, events, compaction_arc=arc, resummarize_arc="short")
+    summary, calls, types = _run(monkeypatch, engine, collected, compaction_arc=arc, resummarize_arc="short")
     assert calls["resummarize"] == 0, "T1 fit must not invoke the re-summarize LLM"
     assert "summary_resummarized" not in types
     assert estimate_tokens(summary.topic_arc, _MODEL, use_chars4=True) <= bb
@@ -87,11 +89,11 @@ def test_t1_fit_no_resummarize(monkeypatch) -> None:
 
 def test_t2_resummarize_fits(monkeypatch) -> None:
     """Tier 2: an overshooting topic_arc is re-summarized (event emitted) and fits."""
-    engine, events = _engine()
+    engine, collected = _engine()
     bb = engine.budgets.body_budget
     big = "word " * (bb * 4)            # ~4·bb tokens — overshoot
     small = "compressed summary " * (bb // 8)  # fits under bb
-    summary, calls, types = _run(monkeypatch, engine, events, compaction_arc=big, resummarize_arc=small)
+    summary, calls, types = _run(monkeypatch, engine, collected, compaction_arc=big, resummarize_arc=small)
     assert calls["resummarize"] == 1, "T2 must invoke the re-summarize LLM once"
     assert "summary_resummarized" in types
     # T2 result fit → no hard-truncate needed.
@@ -105,11 +107,11 @@ def test_t3_floor_when_resummarize_still_overshoots(monkeypatch) -> None:
     The deterministic bound `topic_arc ≤ body_budget` holds even when the LLM
     re-summary itself overshoots — the dead-end-free guarantee is never violated.
     """
-    engine, events = _engine()
+    engine, collected = _engine()
     bb = engine.budgets.body_budget
     big = "word " * (bb * 4)             # overshoot
     still_big = "still too long " * (bb * 2)  # re-summary ALSO overshoots
-    summary, calls, types = _run(monkeypatch, engine, events, compaction_arc=big, resummarize_arc=still_big)
+    summary, calls, types = _run(monkeypatch, engine, collected, compaction_arc=big, resummarize_arc=still_big)
     assert calls["resummarize"] == 1
     assert "summary_resummarized" in types
     assert "body_summary_hard_truncated" in types, "T3 floor must fire when T2 overshoots"
@@ -120,10 +122,10 @@ def test_t3_floor_when_resummarize_still_overshoots(monkeypatch) -> None:
 
 def test_passes_zero_skips_resummarize(monkeypatch) -> None:
     """Tier 2: resummarize_passes=0 skips T2 (straight to the T3 floor = pre-#271)."""
-    engine, events = _engine(passes=0)
+    engine, collected = _engine(passes=0)
     bb = engine.budgets.body_budget
     big = "word " * (bb * 4)
-    summary, calls, types = _run(monkeypatch, engine, events, compaction_arc=big, resummarize_arc="short")
+    summary, calls, types = _run(monkeypatch, engine, collected, compaction_arc=big, resummarize_arc="short")
     assert calls["resummarize"] == 0, "passes=0 must not invoke re-summarize"
     assert "summary_resummarized" not in types
     assert "body_summary_hard_truncated" in types  # T3 floor still bounds it

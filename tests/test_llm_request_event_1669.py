@@ -31,6 +31,7 @@ from reyn.core.events.events import (
     set_llm_request_event_log,
 )
 from reyn.llm.llm import _redact_llm_request_params, recorded_acompletion
+from tests._support.events import collect_events
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +72,7 @@ def test_event_emitted_with_non_message_params(monkeypatch) -> None:
     `llm_request` event carrying model / purpose / the non-message params (proves
     the ContextVar read propagates into the call — lead's propagation verify)."""
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     _call(
@@ -80,9 +82,9 @@ def test_event_emitted_with_non_message_params(monkeypatch) -> None:
         extra_body={"thinking": {"budget": 1024}},
     )
 
-    kinds = [e.type for e in log.all()]
+    kinds = [e.type for e in collected]
     assert kinds == ["llm_request"], f"expected exactly one llm_request; got {kinds}"
-    data = log.all()[0].data
+    data = collected[0].data
     assert data["model"] == "gpt-5.4"
     assert data["purpose"] == "main"
     assert data["params"]["reasoning_effort"] == "low"
@@ -96,11 +98,12 @@ def test_event_excludes_messages(monkeypatch) -> None:
     """Tier 2: #1669 — the event NEVER carries `messages` (owner: 'メッセージ以外').
     The secret message body must not leak anywhere in the event data."""
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     _call(monkeypatch, temperature=0.1)
 
-    data = log.all()[0].data
+    data = collected[0].data
     assert "messages" not in data
     assert "messages" not in data["params"]
     assert "secret message body" not in repr(data)
@@ -109,12 +112,13 @@ def test_event_excludes_messages(monkeypatch) -> None:
 def test_event_tools_count_not_array(monkeypatch) -> None:
     """Tier 2: #1669 — `tools` is surfaced as a count, never the (large) array."""
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     tools = [{"type": "function", "function": {"name": f"t{i}"}} for i in range(18)]
     _call(monkeypatch, tools=tools, temperature=0.0)
 
-    data = log.all()[0].data
+    data = collected[0].data
     assert data["tools_count"] == 18
     assert "tools" not in data["params"], "the tools array must not be in the event"
 
@@ -122,11 +126,12 @@ def test_event_tools_count_not_array(monkeypatch) -> None:
 def test_event_redacts_secret_fields(monkeypatch) -> None:
     """Tier 2: #1669 — secret-like params (api_key / authorization) are redacted."""
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     _call(monkeypatch, api_key="sk-super-secret", authorization="Bearer tok-123")
 
-    params = log.all()[0].data["params"]
+    params = collected[0].data["params"]
     assert params["api_key"] == "***REDACTED***"
     assert params["authorization"] == "***REDACTED***"
     assert "sk-super-secret" not in repr(params)

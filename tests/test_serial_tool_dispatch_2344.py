@@ -22,6 +22,7 @@ import pytest
 from reyn.core.dispatch.dispatcher import DispatchContext, dispatch_tool
 from reyn.core.events.events import EventLog
 from reyn.runtime.router_loop import RouterLoop
+from tests._support.events import collect_events
 from tests._support.router_loop import FakeRouterHost
 
 
@@ -114,6 +115,7 @@ class _RealEventDispatchLoop(RouterLoop):
         super().__init__(*a, **k)
         self.shared: dict = {"written": False}
         self.event_log = EventLog()
+        self.event_log_collected = collect_events(self.event_log)
 
     async def _dispatch_resolved(
         self, name: str, args: dict, *, raw_name: "str | None" = None,
@@ -132,10 +134,11 @@ class _RealEventDispatchLoop(RouterLoop):
         return await dispatch_tool(name=name, args=args, ctx=dctx, invoker=_invoker)
 
 
-def _tool_event_seq(event_log: EventLog) -> list[tuple[str, str]]:
+def _tool_event_seq(collected: list) -> list[tuple[str, str]]:
     """The (type, tool) sequence from the REAL EventLog's append-order replay source
-    (``all()`` — the same list ``to_json()`` and every append-order consumer iterate)."""
-    return [(e.type, e.data.get("tool")) for e in event_log.all()
+    (the live ``collect_events`` list — the same append order ``to_json()`` and every
+    append-order consumer iterate)."""
+    return [(e.type, e.data.get("tool")) for e in collected
             if e.type in ("tool_called", "tool_returned")]
 
 
@@ -153,7 +156,7 @@ async def test_audit_event_order_is_declaration_order_contiguous(tmp_path):
     loop = _RealEventDispatchLoop(host=FakeRouterHost(), chain_id="chain-2344", max_iterations=5)
     await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
 
-    assert _tool_event_seq(loop.event_log) == [
+    assert _tool_event_seq(loop.event_log_collected) == [
         ("tool_called", "write"), ("tool_returned", "write"),
         ("tool_called", "read"), ("tool_returned", "read"),
     ], "real EventLog must append the audit events in contiguous declaration order"
@@ -173,7 +176,7 @@ async def test_replay_reproduces_declaration_order(tmp_path):
     await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
 
     # replay = iterate the real EventLog in append order (P6 replay semantics for the audit log).
-    log = _tool_event_seq(loop.event_log)
+    log = _tool_event_seq(loop.event_log_collected)
     boundary = log.index(("tool_called", "read"))  # the tool-call boundary cut
     assert log[:boundary] == [("tool_called", "write"), ("tool_returned", "write")], \
         "the pre-cut prefix replays exactly the completed first call (no straddle)"

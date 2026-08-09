@@ -11,7 +11,8 @@ that ``web_fetch_failed`` was emitted would go RED — only ``web_fetch_started`
 would appear in the event log.
 
 Real components:
-- Real ``EventLog`` (public ``.all()`` API — not private state).
+- Real ``EventLog`` observed via ``collect_events`` (a real ``add_subscriber``
+  collector — not private state).
 - Real ``OpContext`` wired with real ``PermissionResolver`` (permission_resolver=None
   skips the per-host gate; the handler reaches the httpx layer and the fake
   transport raises the expected exception).
@@ -34,6 +35,7 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.web import handle_web_fetch
 from reyn.schemas.models import WebFetchIROp
+from tests._support.events import collect_events
 
 
 def _make_ctx(events: EventLog) -> Any:
@@ -107,13 +109,14 @@ class _RequestErrorStreamCtx:
 def test_failed_web_fetch_timeout_emits_web_fetch_failed(monkeypatch) -> None:
     """Tier 2: a timed-out web_fetch emits a terminal web_fetch_failed event.
 
-    Falsification: without the fix, EventLog.all() would contain only
+    Falsification: without the fix, the collected events would contain only
     ``web_fetch_started`` and NO ``web_fetch_failed`` — the assertion on
     the failed-event types list would be empty → RED.
     """
     monkeypatch.setattr(httpx, "AsyncClient", _TimeoutClient)
 
     events = EventLog()
+    collected = collect_events(events)
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
@@ -121,13 +124,13 @@ def test_failed_web_fetch_timeout_emits_web_fetch_failed(monkeypatch) -> None:
     assert result["status"] == "timeout"
     assert result["kind"] == "web_fetch"
 
-    emitted_types = [e.type for e in events.all()]
+    emitted_types = [e.type for e in collected]
 
     # started MUST be present (regression guard)
     assert "web_fetch_started" in emitted_types
 
     # terminal failed event MUST be present — this is the new invariant
-    failed_events = [e for e in events.all() if e.type == "web_fetch_failed"]
+    failed_events = [e for e in collected if e.type == "web_fetch_failed"]
     assert failed_events, (
         "Expected a web_fetch_failed terminal event but none was emitted. "
         f"Emitted: {emitted_types}"
@@ -149,10 +152,11 @@ def test_failed_web_fetch_timeout_no_completed_event(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _TimeoutClient)
 
     events = EventLog()
+    collected = collect_events(events)
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
-    emitted_types = [e.type for e in events.all()]
+    emitted_types = [e.type for e in collected]
     assert "web_fetch_completed" not in emitted_types, (
         f"web_fetch_completed must not fire on timeout. Emitted: {emitted_types}"
     )
@@ -170,6 +174,7 @@ def test_failed_web_fetch_request_error_emits_web_fetch_failed(monkeypatch) -> N
     monkeypatch.setattr(httpx, "AsyncClient", _RequestErrorClient)
 
     events = EventLog()
+    collected = collect_events(events)
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     result = asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
@@ -177,10 +182,10 @@ def test_failed_web_fetch_request_error_emits_web_fetch_failed(monkeypatch) -> N
     assert result["status"] == "error"
     assert result["kind"] == "web_fetch"
 
-    emitted_types = [e.type for e in events.all()]
+    emitted_types = [e.type for e in collected]
     assert "web_fetch_started" in emitted_types
 
-    failed_events = [e for e in events.all() if e.type == "web_fetch_failed"]
+    failed_events = [e for e in collected if e.type == "web_fetch_failed"]
     assert failed_events, (
         "Expected a web_fetch_failed terminal event but none was emitted. "
         f"Emitted: {emitted_types}"
@@ -197,10 +202,11 @@ def test_failed_web_fetch_request_error_no_completed_event(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _RequestErrorClient)
 
     events = EventLog()
+    collected = collect_events(events)
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
-    emitted_types = [e.type for e in events.all()]
+    emitted_types = [e.type for e in collected]
     assert "web_fetch_completed" not in emitted_types, (
         f"web_fetch_completed must not fire on RequestError. Emitted: {emitted_types}"
     )
@@ -218,11 +224,11 @@ def test_web_fetch_started_precedes_web_fetch_failed(monkeypatch) -> None:
     monkeypatch.setattr(httpx, "AsyncClient", _TimeoutClient)
 
     events = EventLog()
+    collected = collect_events(events)
     op = WebFetchIROp(kind="web_fetch", url="https://example.com")
     asyncio.run(handle_web_fetch(op=op, ctx=_make_ctx(events)))
 
-    all_events = events.all()
-    types = [e.type for e in all_events]
+    types = [e.type for e in collected]
 
     assert "web_fetch_started" in types
     assert "web_fetch_failed" in types

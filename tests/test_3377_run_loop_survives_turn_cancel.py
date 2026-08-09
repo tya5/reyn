@@ -38,6 +38,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 AGENT = "cancel-survival-agent"
 
@@ -212,6 +213,7 @@ async def test_cancelling_the_session_still_stops_the_loop_and_records_it(
     """
     caplog.set_level(logging.WARNING, logger="reyn.runtime.session")
     session, state_log = _make_session(tmp_path)
+    collected = collect_events(session._audit_events)
     _started, release, seen = _install_hanging_first_turn(session)
     run_task = asyncio.create_task(session.run())
     try:
@@ -231,7 +233,7 @@ async def test_cancelling_the_session_still_stops_the_loop_and_records_it(
         assert session.halted_reason == "cancelled", (
             f"the loop ended without a halt record; got {session.halted_reason!r}"
         )
-        halted = [e for e in session._audit_events.all() if e.type == "session_halted"]
+        halted = [e for e in collected if e.type == "session_halted"]
         (halt_event,) = halted
         assert halt_event.data.get("reason") == "cancelled"
         assert any("cancelled" in m for m in _warnings(caplog))

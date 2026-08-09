@@ -75,12 +75,14 @@ def test_trim_head_single_oversized_turn_emits_event() -> None:
     must not raise.
     """
     from reyn.core.events.events import EventLog
+    from tests._support.events import collect_events
     events = EventLog()
+    collected = collect_events(events)
     # 4000-char turn → ~1000 tokens (chars//4); cap=10
     turns = _turns(["x" * 4000])
     result = trim_head(turns, max_tokens=10, events=events)
     assert len(result) >= 1, "degenerate single-turn must still be included"
-    trunc_events = [e for e in events.all() if e.type == "turn_too_large_truncated"]
+    trunc_events = [e for e in collected if e.type == "turn_too_large_truncated"]
     assert trunc_events, "must emit turn_too_large_truncated for oversized turn"
     assert trunc_events[0].data["budget_kind"] == "head"
 
@@ -123,11 +125,13 @@ def test_trim_tail_single_oversized_turn_emits_event() -> None:
     turn_too_large_truncated is emitted (Axis 7).
     """
     from reyn.core.events.events import EventLog
+    from tests._support.events import collect_events
     events = EventLog()
+    collected = collect_events(events)
     turns = _turns(["x" * 4000])
     result = trim_tail(turns, max_tokens=10, events=events)
     assert len(result) >= 1
-    trunc_events = [e for e in events.all() if e.type == "turn_too_large_truncated"]
+    trunc_events = [e for e in collected if e.type == "turn_too_large_truncated"]
     assert trunc_events
     assert trunc_events[0].data["budget_kind"] == "tail"
 

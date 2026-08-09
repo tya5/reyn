@@ -40,6 +40,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
@@ -113,6 +114,7 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         },
     ]
     session = _make_session(tmp_path, hooks_config=hooks_config)
+    collected = collect_events(session._audit_events)
 
     run_task = asyncio.create_task(session.run())
     try:
@@ -120,7 +122,7 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         await asyncio.sleep(0.1)
         assert session.inbox.empty()
         hook_turns_before = [
-            e for e in session._audit_events.all()
+            e for e in collected
             if e.type == "turn_started" and e.data.get("kind") == "hook"
         ]
         assert hook_turns_before == []
@@ -142,11 +144,11 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         await _wait_for(
             lambda: any(
                 e.type == "turn_started" and e.data.get("kind") == "hook"
-                for e in session._audit_events.all()
+                for e in collected
             )
         )
         (hook_turn_started,) = [
-            e for e in session._audit_events.all()
+            e for e in collected
             if e.type == "turn_started" and e.data.get("kind") == "hook"
         ]
         assert hook_turn_started.data.get("kind") == "hook"
@@ -156,7 +158,7 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         await _wait_for(
             lambda: any(
                 e.type == "turn_settled" and e.data.get("kind") == "hook"
-                for e in session._audit_events.all()
+                for e in collected
             )
         )
 

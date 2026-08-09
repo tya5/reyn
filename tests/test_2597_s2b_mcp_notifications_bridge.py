@@ -28,6 +28,7 @@ from reyn.runtime.services import (
     RouterHostAdapter,
     SendToAgentInputs,
 )
+from tests._support.events import collect_events
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
 # bundled into two frozen, default-free dataclasses. These module-level
@@ -142,6 +143,7 @@ async def test_tool_list_changed_notification_emits_event_and_invalidates_cache(
     FP-0037), so the next ``ensure_mcp_tools_cached()`` re-probes instead of serving
     the now-possibly-stale cached list."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     adapter = _make_adapter(tmp_path=tmp_path, events=events)
 
     service = MCPConnectionService(
@@ -170,7 +172,7 @@ async def test_tool_list_changed_notification_emits_event_and_invalidates_cache(
         while adapter.mcp_tools_cache_snapshot is not None:
             await asyncio.sleep(0.02)
 
-        matching = [e for e in events.all() if e.type == "mcp_tool_list_changed"]
+        matching = [e for e in collected if e.type == "mcp_tool_list_changed"]
         (only_event,) = matching  # exactly one — the single real notification sent
         assert only_event.data.get("server") == "srv"
     finally:
@@ -196,6 +198,7 @@ async def test_progress_notification_not_double_emitted_by_bridge(tmp_path: Path
     ALSO emitting (mirroring ``op_runtime/mcp.py``'s ``_on_progress``), exactly ONE
     ``mcp_progress`` event lands per reported progress step, not two."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
     service = MCPConnectionService(emit_sink=lambda et, **d: events.emit(et, **d))
     try:
         client = await service.get("srv", _CFG)
@@ -213,7 +216,7 @@ async def test_progress_notification_not_double_emitted_by_bridge(tmp_path: Path
         )
         assert result["isError"] is False
 
-        matching = [e for e in events.all() if e.type == "mcp_progress"]
+        matching = [e for e in collected if e.type == "mcp_progress"]
         first_step, second_step = matching  # exactly ONE event per progress step, not two
         assert first_step.data.get("server") == "srv"
         assert second_step.data.get("server") == "srv"
@@ -310,6 +313,7 @@ async def test_tools_cache_invalidate_fault_does_not_block_event_emit(tmp_path: 
     ``mcp_tool_list_changed`` event from still being emitted — the two side effects
     are independent and one failing must not silently swallow the other."""
     events = EventLog(subscribers=[])
+    collected = collect_events(events)
 
     def _boom_invalidate(server: str) -> None:
         raise RuntimeError("cache invalidation exploded")
@@ -323,6 +327,6 @@ async def test_tools_cache_invalidate_fault_does_not_block_event_emit(tmp_path: 
     notification = types.ServerNotification(types.ToolListChangedNotification())
     await handler.dispatch(notification)  # must not raise
 
-    matching = [e for e in events.all() if e.type == "mcp_tool_list_changed"]
+    matching = [e for e in collected if e.type == "mcp_tool_list_changed"]
     (only_event,) = matching  # exactly one — invalidate faulting must not swallow the emit
     assert only_event.data.get("server") == "srv"

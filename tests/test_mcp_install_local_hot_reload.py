@@ -27,6 +27,7 @@ from types import SimpleNamespace
 from reyn.core.events.events import EventLog
 from reyn.runtime.hot_reload import HotReloader
 from reyn.tools.types import ToolContext
+from tests._support.events import collect_events
 
 
 def _ctx(project_root: Path) -> ToolContext:
@@ -83,6 +84,7 @@ def test_local_install_schedules_reload(tmp_path: Path) -> None:
     with the right source via the PUBLIC events log, not a private-state read.
     """
     events = EventLog()
+    collected = collect_events(events)
     reloader = HotReloader(project_root=tmp_path, events=events)
     result = _run_install(reloader, tmp_path)
     assert result["status"] == "ok", f"install failed: {result}"
@@ -91,7 +93,7 @@ def test_local_install_schedules_reload(tmp_path: Path) -> None:
     asyncio.run(reloader.apply_pending())
     # Tuple-unpack: raises ValueError if there isn't EXACTLY one — a
     # behavioural assertion (one reload, not a repeat), not a length pin.
-    (reload_event,) = [e for e in events.all() if e.type == "config_reloaded"]
+    (reload_event,) = [e for e in collected if e.type == "config_reloaded"]
     assert reload_event.data["source"] == "mcp_install_local"
 
 

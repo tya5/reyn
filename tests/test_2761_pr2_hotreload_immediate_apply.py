@@ -47,6 +47,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.permissions import PermissionDecl
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -216,6 +217,7 @@ async def test_apply_now_rejects_malformed_in_set_atomically(tmp_path: Path) -> 
     (cfg / "skills.yaml").write_text("skills: not-a-mapping\n", encoding="utf-8")
     ran, make_seam = _seam_recorder()
     events = EventLog()
+    collected = collect_events(events)
     hr = HotReloader(project_root=tmp_path, events=events)
     hr.register_seam("skills", make_seam("skills"))
 
@@ -223,7 +225,7 @@ async def test_apply_now_rejects_malformed_in_set_atomically(tmp_path: Path) -> 
 
     assert "rejected" in summary
     assert ran == {}, "no seam may run when the IN-set is rejected"
-    assert any(e.type == "config_reload_rejected" for e in events.all())
+    assert any(e.type == "config_reload_rejected" for e in collected)
 
 
 @pytest.mark.asyncio
@@ -232,12 +234,13 @@ async def test_apply_now_emits_config_reloaded_with_source(tmp_path: Path) -> No
     carrying the install source (observability of a mid-turn config change)."""
     _ran, make_seam = _seam_recorder()
     events = EventLog()
+    collected = collect_events(events)
     hr = HotReloader(project_root=tmp_path, events=events)
     hr.register_seam("skills", make_seam("skills"))
 
     await hr.apply_now(source="skill_install")
 
-    sources = [e.data["source"] for e in events.all() if e.type == "config_reloaded"]
+    sources = [e.data["source"] for e in collected if e.type == "config_reloaded"]
     assert sources == ["skill_install"]
 
 

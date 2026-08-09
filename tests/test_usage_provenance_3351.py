@@ -35,6 +35,7 @@ from reyn.core.turn_scope import active_turn
 from reyn.llm.llm import call_llm_tools, recorded_acompletion
 from reyn.llm.pricing import TokenUsage, UsageSource, parse_usage_source
 from reyn.runtime.budget.budget import BudgetLedger, BudgetTracker, CostConfig
+from tests._support.events import collect_events
 
 # Unreachable by any token_counter estimate of the tiny prompt below, so the
 # provider leg cannot pass on an estimate that happens to land nearby.
@@ -218,9 +219,10 @@ def test_the_cost_audit_event_reports_where_the_numbers_came_from(
             _make_streaming_acompletion(provider_reports_usage=reports_usage),
         )
         log = EventLog()
+        collected = collect_events(log)
         set_llm_request_event_log(log)
         _run_turn(tracker, chain_id)
-        event = next(e for e in log.all() if e.type == "llm_response_received")
+        event = next(e for e in collected if e.type == "llm_response_received")
         payload = json.loads(json.dumps(event.data))  # as an audit reader sees it
         missing = required - set(payload)
         assert not missing, f"llm_response_received is missing declared audit fields: {missing}"

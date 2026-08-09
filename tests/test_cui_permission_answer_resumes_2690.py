@@ -52,6 +52,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.security.permissions.permissions import PermissionResolver
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
 
@@ -132,12 +133,12 @@ def _make_session(project_root: Path, *, wal: Path, snap: Path) -> Session:
     return session
 
 
-def _granted_paths(session: Session) -> list[str]:
+def _granted_paths(collected: list) -> list[str]:
     """Paths for which a ``permission_granted`` event fired — the event the
     reporter found MISSING for the hung write."""
     return [
         e.data.get("path")
-        for e in session._audit_events.all()
+        for e in collected
         if e.type == "permission_granted"
     ]
 
@@ -167,6 +168,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
     session = _make_session(
         proj, wal=tmp_path / "state.wal", snap=tmp_path / "snap.json",
     )
+    collected = collect_events(session._audit_events)
     run_task = asyncio.create_task(session.run())
     try:
         await session.submit_user_text("write the file")
@@ -191,7 +193,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
         # The intervention future resolved: nothing pending, and the
         # permission_granted event the reporter found MISSING is now emitted.
         assert session.interventions.head() is None
-        await _poll(lambda: str(out) in _granted_paths(session), task=run_task)
+        await _poll(lambda: str(out) in _granted_paths(collected), task=run_task)
     finally:
         await session.shutdown()
         try:
@@ -223,6 +225,7 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
     session = _make_session(
         proj, wal=tmp_path / "state.wal", snap=tmp_path / "snap.json",
     )
+    collected = collect_events(session._audit_events)
     run_task = asyncio.create_task(session.run())
     try:
         await session.submit_user_text("read the outside file")
@@ -231,7 +234,7 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
 
         await route_input_line(_transport_for(session), "y", None)
 
-        await _poll(lambda: str(outside) in _granted_paths(session), task=run_task)
+        await _poll(lambda: str(outside) in _granted_paths(collected), task=run_task)
         assert session.interventions.head() is None
     finally:
         await session.shutdown()

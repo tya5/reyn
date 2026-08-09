@@ -56,6 +56,7 @@ from reyn.llm.llm import (
     _may_need_responses_endpoint,
     recorded_acompletion,
 )
+from tests._support.events import collect_events
 
 
 @pytest.fixture(autouse=True)
@@ -235,6 +236,7 @@ def test_405_still_captures_raw_via_1676(monkeypatch) -> None:
         raise _FakeProviderError("Method Not Allowed", 405)
     monkeypatch.setattr(litellm, "acompletion", _raise_405)
     log = EventLog()
+    collected = collect_events(log)
     set_llm_request_event_log(log)
 
     with pytest.raises(ResponsesEndpointRequiredError):
@@ -243,5 +245,5 @@ def test_405_still_captures_raw_via_1676(monkeypatch) -> None:
             purpose="main", recorder=None,
             extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
         ))
-    (err,) = [e for e in log.all() if e.type == "llm_request_error"]
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
     assert err.data["status_code"] == 405

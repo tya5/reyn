@@ -19,6 +19,7 @@ from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import ALL_OP_KINDS, OP_KIND_MODEL_MAP, EmbedIROp, Op
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Fake provider (real EmbeddingProvider-protocol instance, not a mock)
@@ -178,6 +179,7 @@ async def test_embed_pre_embed_redaction_seam_fires_on_a_secret(
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     ctx = _make_ctx(tmp_path)
+    collected = collect_events(ctx.events)
     secret_text = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
     op = EmbedIROp(kind="embed", texts=[secret_text, "harmless text"], embedding_model="standard")
     result = await execute_op(op, ctx)
@@ -190,7 +192,7 @@ async def test_embed_pre_embed_redaction_seam_fires_on_a_secret(
     # the harmless text is untouched
     assert fake.received_texts[1] == "harmless text"
     # the seam firing is observable (P6 audit-event trace)
-    assert any(e.type == "embed_secret_redacted" for e in ctx.events.all())
+    assert any(e.type == "embed_secret_redacted" for e in collected)
 
 
 # ---------------------------------------------------------------------------
@@ -222,12 +224,13 @@ async def test_embed_no_redaction_event_when_no_secret_present(
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     ctx = _make_ctx(tmp_path)
+    collected = collect_events(ctx.events)
     op = EmbedIROp(kind="embed", texts=["just some ordinary sentence"], embedding_model="standard")
     result = await execute_op(op, ctx)
 
     assert result.get("status") != "error", result
     assert fake.received_texts == ["just some ordinary sentence"]
-    assert not any(e.type == "embed_secret_redacted" for e in ctx.events.all())
+    assert not any(e.type == "embed_secret_redacted" for e in collected)
 
 
 # ---------------------------------------------------------------------------

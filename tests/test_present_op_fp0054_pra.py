@@ -27,6 +27,7 @@ from reyn.core.present import (
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import collect_events
 
 
 def _resolver(tmp_path: Path, config_permissions: dict | None = None) -> PermissionResolver:
@@ -393,12 +394,13 @@ def test_presented_event_carries_required_fields(tmp_path):
     """Tier 1: the presented (P6) event carries the required audit fields incl.
     surface + OS-computed ingested + the drop list."""
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
     op = PresentIROp(
         kind="present", data_inline={"a": 1},
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
     _run(handle(op, ctx))
-    ev = [e for e in events.all() if e.type == "presented"]
+    ev = [e for e in collected if e.type == "presented"]
     assert ev, "present emitted no presented event"
     d = ev[-1].data
     for field in ("data_ref", "view", "surface", "ingested",
@@ -413,19 +415,20 @@ def test_ingested_is_os_computed_from_prior_read(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "ref.json").write_text(json.dumps({"a": 1}))
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
 
     op = PresentIROp(
         kind="present", data_ref="ref.json",
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
     _run(handle(op, ctx))
-    first = [e for e in events.all() if e.type == "presented"][-1]
+    first = [e for e in collected if e.type == "presented"][-1]
     assert first.data["ingested"] == "none"
 
     # Simulate a prior full read of the ref, then present again → 'full'.
     events.emit("tool_executed", op="read_file", path="ref.json")
     _run(handle(op, ctx))
-    second = [e for e in events.all() if e.type == "presented"][-1]
+    second = [e for e in collected if e.type == "presented"][-1]
     assert second.data["ingested"] == "full"
 
 
@@ -434,13 +437,14 @@ def test_ingested_partial_on_truncated_read(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "ref.json").write_text(json.dumps({"a": 1}))
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
     events.emit("tool_executed", op="read_file", path="ref.json", truncated=True)
     op = PresentIROp(
         kind="present", data_ref="ref.json",
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
     _run(handle(op, ctx))
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in collected if e.type == "presented"][-1]
     assert ev.data["ingested"] == "partial"
 
 
@@ -514,13 +518,14 @@ def test_event_carries_no_content_bytes(tmp_path):
     """Tier 2: the presented event payload carries refs + stats only — the bound
     data values never appear in the audit event (data is durable in the ref)."""
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
     secret_value = "UNIQUE_SENTINEL_CONTENT_9f3a"
     op = PresentIROp(
         kind="present", data_inline={"a": secret_value},
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
     _run(handle(op, ctx))
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in collected if e.type == "presented"][-1]
     serialized = json.dumps(ev.data)
     assert secret_value not in serialized
 
@@ -539,6 +544,7 @@ def test_view_arg_round_trips_against_the_registry(tmp_path):
         {"component": "text", "text": {"$bind": "/a"}},
     ])
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
     ctx.presentation_registry = registry
     op = PresentIROp(kind="present", data_inline={"a": 1}, view="authors")
 
@@ -546,7 +552,7 @@ def test_view_arg_round_trips_against_the_registry(tmp_path):
 
     assert ack["mode"] == "view"
     assert ack["ok"] is True
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in collected if e.type == "presented"][-1]
     assert ev.data["view"] == "authors"
     assert ev.data["mode"] == "view"
 
@@ -556,13 +562,14 @@ def test_inline_blueprint_view_field_is_a_stable_hash(tmp_path):
     identity) is a stable ``blueprint:<hash>`` — never the blueprint bytes
     themselves."""
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
     op = PresentIROp(
         kind="present", data_inline={"a": 1},
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
     ack = _run(handle(op, ctx))
     assert ack["mode"] == "blueprint"
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in collected if e.type == "presented"][-1]
     assert ev.data["view"].startswith("blueprint:")
 
 
@@ -590,6 +597,7 @@ def test_omitting_view_and_blueprint_routes_to_default_viewer(tmp_path):
     the intended rendering, not a fallback — distinct from the all-missed→fallback
     case, which still carries a note)."""
     ctx, events = _ctx(tmp_path, _resolver(tmp_path))
+    collected = collect_events(events)
     renderer = _RecordingRenderer()
     ctx.presentation_renderer = renderer
     op = PresentIROp(kind="present", data_inline={"author": "amy", "title": "hello"})
@@ -608,7 +616,7 @@ def test_omitting_view_and_blueprint_routes_to_default_viewer(tmp_path):
     surfaced = _all_leaf_text(renderer.rendered[-1])
     assert "amy" in surfaced and "hello" in surfaced
 
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in collected if e.type == "presented"][-1]
     assert ev.data["view"] is None
     assert ev.data["mode"] == "default"
 

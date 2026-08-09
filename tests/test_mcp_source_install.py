@@ -189,6 +189,7 @@ from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
 from reyn.schemas.models import MCPInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.events import collect_events
 
 
 class _AutoApproveInterventionBus:
@@ -343,6 +344,7 @@ def test_source_event_includes_source_field(tmp_path, monkeypatch):
     decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
+    collected = collect_events(ctx.events)
 
     source_spec = "npm:@modelcontextprotocol/server-filesystem"
     op = MCPInstallIROp(
@@ -355,7 +357,7 @@ def test_source_event_includes_source_field(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
     _run(mcp_install_handle(op, ctx))
 
-    events = ctx.events.all()
+    events = collected
     install_events = [e for e in events if e.type == "mcp_server_installed"]
     assert install_events, "Expected mcp_server_installed event"
     evt = install_events[0]

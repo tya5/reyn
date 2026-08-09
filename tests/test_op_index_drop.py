@@ -20,6 +20,7 @@ from reyn.data.index.source_manifest import SourceEntry, get_source_manifest
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import IndexDropIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -145,6 +146,7 @@ async def test_drop_emits_p6_event(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         await _seed(tmp_path, "audit_src")
 
         events = EventLog()
+        collected = collect_events(events)
         ws = Workspace(events=events)
         resolver = _resolver(tmp_path, config={"index_drop": "allow"})
         ctx = OpContext(
@@ -158,8 +160,8 @@ async def test_drop_emits_p6_event(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         op = IndexDropIROp(kind="index_drop", source="audit_src")
         await execute_op(op, ctx)
 
-        # Verify event was emitted (EventLog.all() returns Event objects with .type)
-        event_types = [e.type for e in events.all()]
+        # Verify event was emitted (collect_events() returns Event objects with .type)
+        event_types = [e.type for e in collected]
         assert "index_dropped" in event_types
     finally:
         os.environ.pop("REYN_INDEX_DROP_AUTO_APPROVE", None)

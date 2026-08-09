@@ -14,7 +14,8 @@ Additional P6 invariants:
 Design note:
   - ``execute_op`` catches PermissionError from handlers and emits
     ``permission_denied`` (kind, path, reason) before returning status="denied".
-  - ``EventLog.all()`` is the public observation surface (P6).
+  - ``collect_events`` (a real ``add_subscriber`` collector) is the public
+    observation surface (P6).
   - File existence / absence on ``tmp_path`` is the public workspace
     observation surface (P5).
   - No unittest.mock, no private-state assertions.
@@ -30,6 +31,7 @@ from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import collect_events
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -110,6 +112,7 @@ def test_permission_denied_emits_p6_event(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     events = EventLog()
+    collected = collect_events(events)
     resolver = _make_resolver(tmp_path)
     ctx = _make_ctx(tmp_path, events, resolver=resolver)
 
@@ -118,9 +121,9 @@ def test_permission_denied_emits_p6_event(tmp_path, monkeypatch):
 
     _run(execute_op(op, ctx))
 
-    denial_events = [e for e in events.all() if e.type == "permission_denied"]
+    denial_events = [e for e in collected if e.type == "permission_denied"]
     assert denial_events, (
-        f"expected at least one permission_denied event; got: {[e.type for e in events.all()]}"
+        f"expected at least one permission_denied event; got: {[e.type for e in collected]}"
     )
 
 
@@ -135,6 +138,7 @@ def test_permission_denied_event_carries_op_kind(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     events = EventLog()
+    collected = collect_events(events)
     resolver = _make_resolver(tmp_path)
     ctx = _make_ctx(tmp_path, events, resolver=resolver)
 
@@ -143,7 +147,7 @@ def test_permission_denied_event_carries_op_kind(tmp_path, monkeypatch):
 
     _run(execute_op(op, ctx))
 
-    denial_events = [e for e in events.all() if e.type == "permission_denied"]
+    denial_events = [e for e in collected if e.type == "permission_denied"]
     assert denial_events, "permission_denied event must be emitted"
     assert denial_events[0].data.get("kind") == "file", (
         f"expected kind='file' in event data, got: {denial_events[0].data}"
@@ -162,6 +166,7 @@ def test_permission_allow_then_deny_only_first_executes(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     events = EventLog()
+    collected = collect_events(events)
     # Config grants write everywhere — but absolute external paths are still
     # blocked by Workspace._resolve_write (absolute path check).
     # Use config-allowed write for CWD, default-denied for outside.
@@ -186,13 +191,13 @@ def test_permission_allow_then_deny_only_first_executes(tmp_path, monkeypatch):
     assert not denied_target.exists(), "second (denied) op must not create file"
 
     # P6: at least one denial event (second op was denied)
-    denial_events = [e for e in events.all() if e.type == "permission_denied"]
+    denial_events = [e for e in collected if e.type == "permission_denied"]
     assert denial_events, (
-        f"expected permission_denied event for second op; got: {[e.type for e in events.all()]}"
+        f"expected permission_denied event for second op; got: {[e.type for e in collected]}"
     )
 
     # P6: first op emitted a tool_executed event (audit of successful execution)
-    executed_events = [e for e in events.all() if e.type == "tool_executed"]
+    executed_events = [e for e in collected if e.type == "tool_executed"]
     assert len(executed_events) >= 1, (
         "first allowed op must emit a tool_executed event (P6 audit truth)"
     )
@@ -209,6 +214,7 @@ def test_permission_denied_read_emits_p6_event(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     events = EventLog()
+    collected = collect_events(events)
     resolver = _make_resolver(tmp_path)
     ctx = _make_ctx(tmp_path, events, resolver=resolver)
 
@@ -219,9 +225,9 @@ def test_permission_denied_read_emits_p6_event(tmp_path, monkeypatch):
 
     assert result["status"] == "denied"
 
-    denial_events = [e for e in events.all() if e.type == "permission_denied"]
+    denial_events = [e for e in collected if e.type == "permission_denied"]
     assert denial_events, (
-        f"denied read must emit permission_denied event; got: {[e.type for e in events.all()]}"
+        f"denied read must emit permission_denied event; got: {[e.type for e in collected]}"
     )
     assert denial_events[0].data.get("kind") == "file"
 
@@ -237,6 +243,7 @@ def test_allowed_op_emits_no_denial_event(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     events = EventLog()
+    collected = collect_events(events)
     resolver = _make_resolver(tmp_path)
     ctx = _make_ctx(tmp_path, events, resolver=resolver)
 
@@ -247,7 +254,7 @@ def test_allowed_op_emits_no_denial_event(tmp_path, monkeypatch):
 
     assert result["status"] == "ok"
 
-    denial_events = [e for e in events.all() if e.type == "permission_denied"]
+    denial_events = [e for e in collected if e.type == "permission_denied"]
     assert not denial_events, (
         f"successful op must emit no permission_denied events; got: {denial_events}"
     )

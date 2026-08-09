@@ -1,16 +1,12 @@
-"""Tier 2: the dedicated `load_skill` op (FP-0066 P0, #3247) — extracted OUT
-of `file.read`'s former `is_skill_body_path` special-case.
+"""Tier 2: the dedicated `load_skill` op (FP-0066 P0, #3247) — the current
+home for `file.handle` + `FileIROp` SKILL.md integration coverage
+(#3196/#3198 provenance + allowlist witnesses): these tests construct
+`LoadSkillIROp` and call `reyn.core.op_runtime.load_skill.handle` directly.
+The pure-function tests (`load_skill_body` / `is_skill_body_path` /
+`resolve_plugin_root`) live in `tests/plugins/test_skill_load.py` — a
+separate module, unaffected by which op handles the SKILL.md-path case.
 
-Moved here from `tests/plugins/test_skill_load.py`'s integration section
-(the `file.handle` + `FileIROp` tests, #3196/#3198 provenance + allowlist
-witnesses) — those tests now construct `LoadSkillIROp` and call
-`reyn.core.op_runtime.load_skill.handle` directly instead. The pure-function
-tests (`load_skill_body` / `is_skill_body_path` / `resolve_plugin_root`)
-stayed in `tests/plugins/test_skill_load.py` unchanged — this extraction
-did not touch those functions' own signatures or behavior, only WHO calls
-them.
-
-Also pins the STRIP-FALSIFY half of the extraction (#3247): a `file.read` of
+Also pins the STRIP-FALSIFY half of `load_skill`'s design (#3247): a `file.read` of
 a `SKILL.md` path — even a REGISTERED one — is now a PLAIN read, byte-
 identical, no expansion, no `skill_body_loaded` event. This is the structural
 proof that the responsibility actually LEFT `file.py`, not just that
@@ -34,6 +30,7 @@ from reyn.data.skills.registry import SkillEntry
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp, LoadSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import collect_events
 
 
 def _run(coro):
@@ -68,7 +65,7 @@ def _make_ctx(
     return ctx, events
 
 
-def _assert_not_expanded(result: dict, events: EventLog, monkeypatch) -> None:
+def _assert_not_expanded(result: dict, collected: list, monkeypatch) -> None:
     """Shared negative-witness assertion: the RAW token survives (never
     blanked, never resolved), and no skill_body_loaded event fires."""
     monkeypatch.setenv(_SENTINEL_ENV_VAR, _SENTINEL_ENV_VALUE)
@@ -78,7 +75,7 @@ def _assert_not_expanded(result: dict, events: EventLog, monkeypatch) -> None:
         "survive UNEXPANDED"
     )
     assert _SENTINEL_ENV_VALUE not in result["content"]
-    assert not [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert not [e for e in collected if e.type == "skill_body_loaded"]
 
 
 @pytest.mark.parametrize(
@@ -102,10 +99,11 @@ def test_load_skill_does_not_expand_unregistered_skill_md(tmp_path, monkeypatch,
     skill_path.write_text(_SENTINEL_BODY, encoding="utf-8")
     rel_path = str(skill_path.relative_to(project_root))
     ctx, events = _make_ctx(project_root)  # available_skills=None -- nothing registered
+    collected = collect_events(events)
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
 
-    _assert_not_expanded(result, events, monkeypatch)
+    _assert_not_expanded(result, collected, monkeypatch)
 
 
 def test_load_skill_does_not_expand_unregistered_plugin_root(tmp_path, monkeypatch):
@@ -130,6 +128,7 @@ def test_load_skill_does_not_expand_unregistered_plugin_root(tmp_path, monkeypat
     project_root = tmp_path / "project-root-real"
     project_root.mkdir()
     events = EventLog()
+    collected = collect_events(events)
     resolver = PermissionResolver(
         config_permissions={}, project_root=project_root, interactive=False,
     )
@@ -148,7 +147,7 @@ def test_load_skill_does_not_expand_unregistered_plugin_root(tmp_path, monkeypat
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=str(skill_path)), ctx))
 
-    _assert_not_expanded(result, events, monkeypatch)
+    _assert_not_expanded(result, collected, monkeypatch)
 
 
 def test_load_skill_expands_config_registered_skill_md(tmp_path, monkeypatch):
@@ -166,13 +165,14 @@ def test_load_skill_expands_config_registered_skill_md(tmp_path, monkeypatch):
     rel_path = str(skill_path.relative_to(project_root))
     entry = SkillEntry(name="greeter", description="d", path=rel_path)
     ctx, events = _make_ctx(project_root, available_skills=[entry])
+    collected = collect_events(events)
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
 
     assert result["status"] == "ok", result
     assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
 
-    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    skill_load_events = [e for e in collected if e.type == "skill_body_loaded"]
     assert skill_load_events, "expected a skill_body_loaded audit-event to be emitted"
     event = next(e for e in skill_load_events if e.data["path"] == rel_path)
     assert event.data["provenance"] == "config_entry"
@@ -196,6 +196,7 @@ def test_load_skill_config_registered_skill_md_env_denied_by_default(tmp_path, m
     rel_path = str(skill_path.relative_to(project_root))
     entry = SkillEntry(name="greeter", description="d", path=rel_path)
     ctx, events = _make_ctx(project_root, available_skills=[entry], env_expand=())
+    collected = collect_events(events)
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
 
@@ -203,7 +204,7 @@ def test_load_skill_config_registered_skill_md_env_denied_by_default(tmp_path, m
     assert f"secret=${{env:{_SENTINEL_ENV_VAR}}}" in result["content"]
     assert _SENTINEL_ENV_VALUE not in result["content"]
 
-    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    skill_load_events = [e for e in collected if e.type == "skill_body_loaded"]
     event = next(e for e in skill_load_events if e.data["path"] == rel_path)
     assert event.data["provenance"] == "config_entry"  # provenance gate still passed
     assert event.data["env_tokens_expanded"] == 0
@@ -234,12 +235,13 @@ def test_load_skill_symlink_judged_by_resolved_target_not_literal_path(tmp_path,
     rel_symlink_path = str(symlink_path.relative_to(project_root))
 
     ctx, events = _make_ctx(project_root, available_skills=[entry])
+    collected = collect_events(events)
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_symlink_path), ctx))
 
     assert result["status"] == "ok", result
     assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
-    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    skill_load_events = [e for e in collected if e.type == "skill_body_loaded"]
     assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
 
 
@@ -255,6 +257,7 @@ def test_load_skill_dotdot_path_judged_by_resolved_target(tmp_path, monkeypatch)
     rel_path = str(skill_path.relative_to(project_root))
     entry = SkillEntry(name="greeter", description="d", path=rel_path)
     ctx, events = _make_ctx(project_root, available_skills=[entry])
+    collected = collect_events(events)
 
     dotdot_path = "skills/other-skill-name/../greeter/SKILL.md"
 
@@ -262,7 +265,7 @@ def test_load_skill_dotdot_path_judged_by_resolved_target(tmp_path, monkeypatch)
 
     assert result["status"] == "ok", result
     assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
-    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    skill_load_events = [e for e in collected if e.type == "skill_body_loaded"]
     assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
 
 
@@ -291,6 +294,7 @@ def test_load_skill_resolves_path_exactly_once_per_call(tmp_path, monkeypatch):
     rel_path = str(skill_path.relative_to(project_root))
     entry = SkillEntry(name="greeter", description="d", path=rel_path)
     ctx, events = _make_ctx(project_root, available_skills=[entry])
+    collected = collect_events(events)
 
     calls: list[str] = []
     real_resolve_path_for_gate = load_skill_module.resolve_path_for_gate
@@ -308,7 +312,7 @@ def test_load_skill_resolves_path_exactly_once_per_call(tmp_path, monkeypatch):
         f"expected `op.path` to be resolved exactly ONCE (for {rel_path!r}) "
         f"for this load, got these resolve call(s): {calls!r}"
     )
-    skill_load_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    skill_load_events = [e for e in collected if e.type == "skill_body_loaded"]
     assert any(e.data["provenance"] == "config_entry" for e in skill_load_events)
 
 
@@ -323,12 +327,13 @@ def test_load_skill_does_not_expand_non_skill_md_file(tmp_path):
     other_path = project_root / "notes.md"
     other_path.write_text("Project: ${REYN_PROJECT_DIR}\n", encoding="utf-8")
     ctx, events = _make_ctx(project_root)
+    collected = collect_events(events)
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="notes.md"), ctx))
 
     assert result["status"] == "ok", result
     assert "Project: ${REYN_PROJECT_DIR}" in result["content"]
-    assert not [e for e in events.all() if e.type == "skill_body_loaded"]
+    assert not [e for e in collected if e.type == "skill_body_loaded"]
 
 
 def test_plugin_install_bakes_plugin_root_load_skill_resolves_the_rest(tmp_path, monkeypatch):
@@ -373,6 +378,7 @@ def test_plugin_install_bakes_plugin_root_load_skill_resolves_the_rest(tmp_path,
             str(project_root / ".reyn" / "config" / cfg), "test", "file.write",
         )
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(
         events=events, base_dir=project_root,
         permission_resolver=resolver, actor="test",
@@ -410,7 +416,7 @@ def test_plugin_install_bakes_plugin_root_load_skill_resolves_the_rest(tmp_path,
     assert f"skill={skill_path.parent.resolve()}" in content
     assert f"project={project_root.resolve()}" in content
     assert "${REYN_SKILL_DIR}" not in content
-    plugin_events = [e for e in events.all() if e.type == "skill_body_loaded"]
+    plugin_events = [e for e in collected if e.type == "skill_body_loaded"]
     assert any(e.data.get("provenance") == "plugin" for e in plugin_events)
     assert "${REYN_PROJECT_DIR}" not in content
 
@@ -434,6 +440,7 @@ def test_file_read_never_expands_a_skill_md_even_when_registered(tmp_path, monke
     rel_path = str(skill_path.relative_to(project_root))
     entry = SkillEntry(name="greeter", description="d", path=rel_path)
     ctx, events = _make_ctx(project_root, available_skills=[entry])
+    collected = collect_events(events)
 
     result = _run(file_handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
 
@@ -443,7 +450,7 @@ def test_file_read_never_expands_a_skill_md_even_when_registered(tmp_path, monke
         "expansion pass moved to load_skill and must not run here"
     )
     assert _SENTINEL_ENV_VALUE not in result["content"]
-    assert not [e for e in events.all() if e.type == "skill_body_loaded"], (
+    assert not [e for e in collected if e.type == "skill_body_loaded"], (
         "file.read must never emit skill_body_loaded -- that responsibility "
         "belongs exclusively to the load_skill op now"
     )

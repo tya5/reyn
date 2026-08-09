@@ -31,6 +31,7 @@ from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
 from reyn.schemas.models import MCPInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
+from tests._support.events import collect_events
 
 # ---------------------------------------------------------------------------
 # Fixtures: fake server.json responses
@@ -373,6 +374,7 @@ def test_secret_value_not_in_event(tmp_path, monkeypatch):
     decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
+    collected = collect_events(ctx.events)
 
     op = MCPInstallIROp(
         kind="mcp_install",
@@ -384,7 +386,7 @@ def test_secret_value_not_in_event(tmp_path, monkeypatch):
     with _patch_registry_get(_SECRET_SERVER_RESPONSE):
         _run(mcp_install_handle(op, ctx))
 
-    events = ctx.events.all()
+    events = collected
     install_events = [e for e in events if e.type == "mcp_server_installed"]
     assert install_events, "Expected mcp_server_installed event"
 
@@ -466,6 +468,7 @@ def test_event_emitted_on_success(tmp_path, monkeypatch):
     decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
+    collected = collect_events(ctx.events)
 
     op = MCPInstallIROp(
         kind="mcp_install",
@@ -478,7 +481,7 @@ def test_event_emitted_on_success(tmp_path, monkeypatch):
 
     assert result["status"] == "ok"
 
-    events = ctx.events.all()
+    events = collected
     install_events = [e for e in events if e.type == "mcp_server_installed"]
     assert install_events, "expected mcp_server_installed event"
 

@@ -35,6 +35,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import ALL_OP_KINDS, PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 # A named template (operator config) whose value is a blueprint — the same
 # declarative component tree an inline blueprint is.
@@ -77,6 +78,7 @@ def _ctx(
     renderer: "_RecordingRenderer | None" = None,
 ) -> tuple[OpContext, EventLog]:
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events, permission_resolver=_resolver(tmp_path))
     ctx = OpContext(
         workspace=ws,
@@ -87,7 +89,7 @@ def _ctx(
         presentation_registry=registry,
         presentation_renderer=renderer,
     )
-    return ctx, events
+    return ctx, collected
 
 
 def _run(coro):
@@ -214,7 +216,7 @@ def test_registered_template_records_name_in_presented_event(tmp_path: Path) -> 
     registry = build_presentation_registry({"entries": {"authors": {"blueprint": _AUTHORS_TEMPLATE}}})
     ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
     _run(handle(PresentIROp(kind="present", data_inline=data, view="authors"), ctx))
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in events if e.type == "presented"][-1]
     assert ev.data["view"] == "authors"
     assert ev.data["bindings_resolved"] >= 1
 
@@ -243,7 +245,7 @@ def test_unknown_template_falls_to_generic_viewer_not_error(tmp_path: Path) -> N
     surfaced = _all_leaf_text(renderer.rendered[-1])
     assert "amy" in surfaced and "hello" in surfaced
     # And the presented event still fired (audit-first).
-    assert [e for e in events.all() if e.type == "presented"]
+    assert [e for e in events if e.type == "presented"]
 
 
 def test_all_bindings_miss_template_falls_to_fallback_viewer(tmp_path: Path) -> None:
@@ -458,16 +460,16 @@ def test_fallback_event_carries_no_content_bytes(tmp_path: Path) -> None:
     ctx, events = _ctx(tmp_path, registry=registry, renderer=_RecordingRenderer())
     _run(handle(PresentIROp(
         kind="present", data_inline={"note": secret}, view="does_not_exist"), ctx))
-    ev = [e for e in events.all() if e.type == "presented"][-1]
+    ev = [e for e in events if e.type == "presented"][-1]
     assert secret not in json.dumps(ev.data)
 
 
 # ── Tier 2 (#2671): fallback_stage disambiguates the audit record ─────────────
 
 
-def _presented(events: EventLog) -> dict:
+def _presented(events: list) -> dict:
     """The newest `presented` event's data payload."""
-    return [e for e in events.all() if e.type == "presented"][-1].data
+    return [e for e in events if e.type == "presented"][-1].data
 
 
 def test_literal_only_view_records_null_fallback_stage(tmp_path: Path) -> None:

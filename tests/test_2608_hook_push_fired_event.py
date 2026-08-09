@@ -22,6 +22,7 @@ from reyn.core.events.events import EventLog
 from reyn.hooks.dispatcher import HookDispatcher
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import HookDef, PushBlock
+from tests._support.events import collect_events
 
 
 class _Recorder:
@@ -50,13 +51,14 @@ async def test_template_push_wake_true_emits_hook_push_fired():
     """Tier 2: an E (wake=true) template_push fire emits `hook_push_fired` with
     hook_name/point/wake/target_session metadata — NO message body (secrets-safe)."""
     log = EventLog()
+    collected = collect_events(log)
     hook = HookDef(name="my-hook", on="turn_end",
                     template_push=PushBlock(message="secret payload text", wake=True))
     disp = _dispatcher([hook], log)
 
     await disp.dispatch("turn_end", {})
 
-    (fired_event,) = [e for e in log.all() if e.type == "hook_push_fired"]
+    (fired_event,) = [e for e in collected if e.type == "hook_push_fired"]
     data = fired_event.data
     assert data["hook_name"] == "my-hook"
     assert data["point"] == "turn_end"
@@ -70,13 +72,14 @@ async def test_template_push_wake_false_also_emits_hook_push_fired():
     """Tier 2: a C (wake=false) ride-along push ALSO fires the event — every push
     path (not just E) is now observable, closing the gap for BOTH."""
     log = EventLog()
+    collected = collect_events(log)
     hook = HookDef(name="ctx-hook", on="turn_start",
                     template_push=PushBlock(message="note", wake=False))
     disp = _dispatcher([hook], log)
 
     await disp.dispatch("turn_start", {})
 
-    (fired_event,) = [e for e in log.all() if e.type == "hook_push_fired"]
+    (fired_event,) = [e for e in collected if e.type == "hook_push_fired"]
     assert fired_event.data["wake"] is False
 
 
@@ -85,13 +88,14 @@ async def test_push_when_false_does_not_emit():
     """Tier 2: a conditional push that resolves to push_when=False never fires —
     no event either (mirrors: nothing was pushed, so nothing to report as fired)."""
     log = EventLog()
+    collected = collect_events(log)
     hook = HookDef(name="skipped", on="turn_end",
                     template_push=PushBlock(message="x", push_when="false"))
     disp = _dispatcher([hook], log)
 
     await disp.dispatch("turn_end", {})
 
-    assert [e for e in log.all() if e.type == "hook_push_fired"] == []
+    assert [e for e in collected if e.type == "hook_push_fired"] == []
 
 
 @pytest.mark.asyncio
@@ -115,6 +119,7 @@ async def test_shell_exec_hook_still_emits_hook_shell_executed_not_push_fired():
     that event is a PUSH-fire signal only, distinct from the pre-existing
     hook_shell_executed (run-side) signal."""
     log = EventLog()
+    collected = collect_events(log)
     hook = HookDef(name="shell-h", on="session_start", exec=("true",))
     disp = HookDispatcher(
         HookRegistry([hook]),
@@ -126,4 +131,4 @@ async def test_shell_exec_hook_still_emits_hook_shell_executed_not_push_fired():
 
     await disp.dispatch("session_start", {})
 
-    assert [e for e in log.all() if e.type == "hook_push_fired"] == []
+    assert [e for e in collected if e.type == "hook_push_fired"] == []
