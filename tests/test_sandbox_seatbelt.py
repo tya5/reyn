@@ -11,7 +11,7 @@ from reyn.security.sandbox.backends.seatbelt import (
     _build_sbpl_profile,
     _sbpl_quote,
 )
-from reyn.security.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.policy import SandboxPolicy, expand_policy_path
 
 # ─── 1. Availability ──────────────────────────────────────────────────────────
 
@@ -112,6 +112,69 @@ def test_sbpl_profile_write_paths_imply_read():
     assert f"(allow file-write* (subpath \"{resolved}\"))" in profile
     # write_paths must also emit a file-read* rule for the same path.
     assert f"(allow file-read* (subpath \"{resolved}\"))" in profile
+
+
+def test_sbpl_profile_write_paths_expands_tilde():
+    """Tier 2: a ``~``-relative ``write_paths`` entry expands to an absolute
+    path in the emitted SBPL string.
+
+    #3881 ① — CI-safe structural twin of
+    ``test_2976_mcp_sandbox_write_paths.py::test_tilde_write_grant_actually_permits_the_write``,
+    which needs a real macOS kernel and stays darwin-only.
+
+    A ``~``-relative ``write_paths`` entry must appear in the SBPL string
+    ALREADY EXPANDED to an absolute path — the #2976 bug class this pins is
+    a construction bug (reyn's own ``expand_policy_path`` call being
+    skipped/removed), not a kernel-enforcement question: an unexpanded ``~``
+    would literally emit ``(subpath ".../~/target")`` (a path under the
+    CURRENT working directory named literally ``~``, never a real
+    directory), which is verifiable as a plain string fact with no
+    sandbox-exec involved. Whether the kernel actually HONOURS the
+    (correctly expanded) grant remains the darwin-only test's own job — this
+    test cannot and does not claim to answer that."""
+    import os
+    from pathlib import Path
+
+    raw = "~/reyn_2976_probe_dir"
+    resolved = str(expand_policy_path(raw).resolve(strict=False))
+    policy = SandboxPolicy(write_paths=[raw])
+    profile = _build_sbpl_profile(policy)
+    assert f'(allow file-write* (subpath "{resolved}"))' in profile
+    # The un-expanded literal form (what a regressed expand_policy_path call
+    # would emit) must NOT appear — this is the actual bug #2976 hit.
+    literal = str(Path(os.getcwd()) / raw)
+    assert f'(subpath "{literal}")' not in profile
+
+
+def test_sbpl_profile_write_deny_paths_after_broad_write_allow():
+    """Tier 2: a ``write_deny_paths`` entry emits its deny line AFTER the
+    broader ``write_paths`` grant that engulfs it.
+
+    #3881 ① — CI-safe structural twin of
+    ``test_2978_deny_always_wins.py::test_deny_wins_over_overlapping_write_grant_read_and_write``,
+    which needs a real macOS kernel and stays darwin-only.
+
+    Mirrors ``test_sbpl_profile_read_deny_paths_after_broad_allow`` above,
+    but for the WRITE axis: a ``write_deny_paths`` entry engulfed by a
+    broader ``write_paths`` grant must emit its ``(deny file-write* ...)``
+    line AFTER the write grant's own ``(allow file-write* ...)`` line, so
+    SBPL's last-match-wins semantics let the deny win. This axis had no
+    structural (order-only) coverage before — only the read axis did — even
+    though #2978's own darwin-only test exercises both axes together.
+    Whether last-match-wins is ACTUALLY how the macOS SBPL engine resolves
+    overlapping rules is #2978's own darwin-only test's job, not this one's
+    — this test only pins reyn's own emission ORDER."""
+    write_raw = "/tmp/y"
+    deny_raw = "/tmp/y/secret"
+    write_resolved = str(expand_policy_path(write_raw).resolve(strict=False))
+    deny_resolved = str(expand_policy_path(deny_raw).resolve(strict=False))
+    policy = SandboxPolicy(write_paths=[write_raw], write_deny_paths=[deny_raw])
+    profile = _build_sbpl_profile(policy)
+    write_rule = f'(allow file-write* (subpath "{write_resolved}"))'
+    deny_rule = f'(deny file-write* (subpath "{deny_resolved}"))'
+    assert write_rule in profile
+    assert deny_rule in profile
+    assert profile.index(write_rule) < profile.index(deny_rule)
 
 
 def test_sbpl_profile_network_allow():
