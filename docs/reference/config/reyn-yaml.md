@@ -819,6 +819,20 @@ hooks:
 | `write_paths` | list[string] | `[]` (the floor) | **`exec` / `exec_capture` only** — filesystem paths this hook's argv may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A grant does not defeat the sensitive-read deny-list — the deny wins over an overlapping grant (#2978), exactly as on the op path. Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 
+**`wake` / `push_when` truthiness, and why a typo fails differently
+depending on the field.** A rendered `wake`/`push_when`/`session` string
+is converted to bool by case-insensitive lookup: `true`/`1`/`yes`/`on` →
+`True`; `false`/`0`/`no`/`off`/empty-string → `False`. Any other value is a
+render error. `message` uses strict undefined-variable checking — a
+typo'd variable name raises, and the whole push is skipped (loud
+failure); `wake`, `push_when`, and `session` use silent checking — a
+typo'd variable there renders as an empty string, which resolves to
+`False`/`None` (quiet, fail-safe: don't wake, don't push, or fall back to
+the current session on a broken condition). Any render failure at all —
+bad Jinja2 syntax, an unrecognised truthiness string, or `message`'s
+strict-undefined error — is caught: the push is skipped
+(`push_when=False`) and logged at WARNING, never crashes the turn.
+
 ## `composers` block
 
 Event correlation (Hook-Event Redesign Phase 4b/5, proposal
