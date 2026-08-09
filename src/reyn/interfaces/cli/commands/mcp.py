@@ -417,9 +417,10 @@ def run_serve(args: argparse.Namespace) -> None:
     project_root = _anchor_project_root(args)
 
     session_cfg = InvocationContext.from_args(args)
-    # #2708 P3.2b: missing-cred pre-check moved onto the single LLM funnel
-    # (``recorded_acompletion``) — no per-surface startup gate. It surfaces as a
-    # typed ``MissingCredentialsError`` through this command's error boundary.
+    # #3905: no per-surface startup credential check here. A missing-
+    # credentials run surfaces litellm's own typed exception unmodified on
+    # the first LLM call (the #2708 P3.2b funnel-level pre-check that used to
+    # wrap it was removed — an unnecessary hardcode, owner ruling).
     model, _ = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
     safety = session_cfg.safety_for(args)

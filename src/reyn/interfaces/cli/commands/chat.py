@@ -555,10 +555,11 @@ def _run(args: argparse.Namespace) -> None:
 
     with _startup_stage("config"):
         session_cfg = InvocationContext.from_args(args)
-    # #2708 P3.2b: the missing-cred pre-check moved OFF this per-surface startup
-    # gate and ONTO the single LLM funnel (``recorded_acompletion``). It now
-    # fires on the FIRST LLM call (early for any LLM run) and surfaces as a typed
-    # ``MissingCredentialsError`` rendered by the CLI error boundary (main()).
+    # #3905: no per-surface startup credential check here (never was, since
+    # #2708 P3.2b moved it onto the single LLM funnel) — and #3905 removed
+    # that funnel-level pre-check too (an unnecessary hardcode, owner ruling).
+    # A missing-credentials run now surfaces litellm's own typed exception
+    # unmodified on the first LLM call.
     # ``model`` (= tier key like "standard" / "strong") drives Session's
     # ModelResolver. ``resolved_model`` (= the litellm string like
     # "openai/gemini-2.5-flash-lite") is what the header should surface so

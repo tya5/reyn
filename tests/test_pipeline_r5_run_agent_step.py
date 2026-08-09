@@ -38,7 +38,6 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.schema import SchemaRegistry
-from reyn.llm.credentials import MissingCredentialsError
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.errors import AgentStepError
@@ -79,8 +78,8 @@ class _RaisingAgentReply:
     """#2732: a real ``_llm_caller``-shaped callable (same typed signature as
     ``_ScriptedAgentReply`` — a signature drift raises ``TypeError`` here
     exactly as in production) that raises instead of returning, standing in
-    for the ``call_llm`` chokepoint failing (e.g. ``MissingCredentialsError``
-    or any other router-loop exception) — the class of failure
+    for the ``call_llm`` chokepoint failing (e.g. a litellm credential/
+    provider exception or any other router-loop exception) — the class of failure
     ``session.py``'s catch-all ``except Exception`` at the bottom of
     ``_handle_user_message`` swallows."""
 
@@ -318,9 +317,7 @@ async def test_run_agent_step_llm_exception_raises_agent_step_error(tmp_path: Pa
     with ``test_run_agent_step_interactive_llm_exception_renders_not_raises``
     below — together they guard the ``if self._ephemeral:`` conditional
     gate in ``session.py``."""
-    original = MissingCredentialsError(
-        model="gpt-4", provider="openai", env_var="OPENAI_API_KEY",
-    )
+    original = RuntimeError("simulated call_llm chokepoint failure")
     scripted = _RaisingAgentReply(original)
     reg = _registry(tmp_path, scripted)
 
@@ -351,9 +348,7 @@ async def test_run_agent_step_interactive_llm_exception_renders_not_raises(tmp_p
     fixture would defeat the point of testing production code)."""
     from reyn.llm.model_resolver import ModelResolver
 
-    original = MissingCredentialsError(
-        model="gpt-4", provider="openai", env_var="OPENAI_API_KEY",
-    )
+    original = RuntimeError("simulated call_llm chokepoint failure")
     scripted = _RaisingAgentReply(original)
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})
