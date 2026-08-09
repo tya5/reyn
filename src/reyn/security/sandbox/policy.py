@@ -6,17 +6,29 @@ selection lives in `reyn.security.sandbox.backend.get_default_backend()`.
 
 Scoping model (#1199 realignment, per-axis):
     write   — tight workspace-allowlist (``write_paths``) = the hard guard.
-    network — tight (default off / allowlist) = the exfiltration gate.
+    network — allowlist-CAPABLE (the backend can express a network deny),
+              but the DEFAULT is ON, not off — owner decision 2026-06-05
+              (see :data:`DEFAULT_SANDBOX_NETWORK`). An operator who wants
+              isolation sets it off via ``reyn.yaml sandbox.policy``.
     exec    — controlled (``allow_subprocess``).
     read    — **broad-allow by default**. The strict read-allowlist was
-              abolished: the network gate (off by default) blocks
-              exfiltration, so a broad read surface is safe and avoids the
-              system-path enumeration that broke Landlock on Linux. A
-              defense-in-depth ``read_deny_paths`` carves out sensitive
-              credential locations where the backend can express it.
+              abolished in favor of a defense-in-depth deny-list — this is
+              independent of the network default above (both were true
+              when the axis was tight-by-default; only the network default
+              itself changed).
+
+★ CORRECTED (#3905 follow-up, found by owner spotting the mismatch, not a
+design read): this section previously said "network — tight (default off /
+allowlist)", which was true of #1199's ORIGINAL design but went stale when
+the owner later flipped the RESOLVED default to ON (2026-06-05) without
+updating this docstring. The dataclass's own field default carried the
+SAME staleness — see :data:`DEFAULT_SANDBOX_NETWORK`, the single source
+both now read from.
 
 Fields:
-    network: allow outbound network access from the sandboxed process
+    network: allow outbound network access from the sandboxed process.
+        Defaults to :data:`DEFAULT_SANDBOX_NETWORK` (True) — see that
+        constant's own docstring for the owner decision and rationale.
     read_paths: legacy read-allowlist. Under the broad-read scoping model it
         no longer restricts reads (reads are broad by default); retained for
         backward compatibility and as documentation of intended read targets.
@@ -114,11 +126,22 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
+# The network default lives in ONE place so the owner can flip it trivially
+# (no hardcode scatter — #3905: this used to ALSO be hardcoded separately as
+# the SandboxPolicy dataclass field's own default, which drifted out of sync
+# with this constant when the owner changed it and nobody noticed until the
+# mismatch itself derailed a design discussion). Owner decision 2026-06-05:
+# default ON (the operator, not the LLM, owns the policy; an operator who
+# wants isolation sets it off via reyn.yaml sandbox.policy). Used by the
+# dataclass default below, the chat factories, and MCP wrap.
+DEFAULT_SANDBOX_NETWORK: bool = True
+
+
 @dataclass
 class SandboxPolicy:
     """Declarative sandbox policy. See module docstring for field semantics."""
 
-    network: bool = False
+    network: bool = DEFAULT_SANDBOX_NETWORK
     read_paths: list[str] = field(default_factory=list)
     write_paths: list[str] = field(default_factory=list)
     read_deny_paths: list[str] = field(
@@ -130,10 +153,12 @@ class SandboxPolicy:
     # deny-by-default — anything the reyn-launching shell can already do, the
     # sandbox must not silently refuse (the concrete trigger: a corporate-
     # proxy/sandbox host denying plugin-install's pip (materialise) under the
-    # old False floor). This is DELIBERATELY NOT the same policy as #3196-style
-    # credential/exfiltration axes (``read_deny_paths``, ``network``) — those
-    # stay deny-by-default because they gate secret exposure, not developer
-    # UX; do not read this flip as license to loosen those. An explicit
+    # old False floor). ``read_deny_paths`` stays deny-by-default because it
+    # gates secret exposure, not developer UX — do not read this flip as
+    # license to loosen that axis. ``network`` is NOT deny-by-default either
+    # (see :data:`DEFAULT_SANDBOX_NETWORK` — corrected #3905, this comment
+    # previously grouped it with ``read_deny_paths`` as staying tight, which
+    # was already stale by the time it was read). An explicit
     # ``allow_subprocess=False`` at any call site is unaffected (explicit
     # writes always win over the floor — #2964).
     allow_subprocess: bool = True
@@ -178,13 +203,6 @@ def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
 
 # ── default sandbox policy resolution (#1339 / sandbox-model completion) ──────
 #
-# The network default lives in ONE place so the owner can flip it trivially
-# (no hardcode scatter). Owner decision 2026-06-05: default ON (the operator,
-# not the LLM, owns the policy; an operator who wants isolation sets it off via
-# reyn.yaml sandbox.policy). Used by both the chat factories and MCP wrap.
-DEFAULT_SANDBOX_NETWORK: bool = True
-
-
 def resolve_sandbox_policy(
     config_policy: dict | None, *, write_paths: list[str] | None = None
 ) -> dict:

@@ -65,14 +65,20 @@ def test_syscall_allowlist_includes_baseline() -> None:
 
 def test_syscall_allowlist_no_network_by_default() -> None:
     """Tier 2: egress-capable network syscalls absent when policy.network is
-    False (default). `socket`/`bind` are deliberately excluded from this
-    assertion — #3060 made them unconditional (see
+    False. `socket`/`bind` are deliberately excluded from this assertion —
+    #3060 made them unconditional (see
     test_syscall_allowlist_socket_and_bind_always_allowed below); neither one
     alone can move a byte, so their presence here does not weaken the
-    network=False guarantee this test protects."""
+    network=False guarantee this test protects.
+
+    ``network=False`` is passed EXPLICITLY (#3905) — the dataclass's own
+    bare default is no longer False (owner decision 2026-06-05, network
+    defaults ON), so relying on a bare ``SandboxPolicy()`` here would test
+    "what the default happens to be today" rather than the actual claim
+    this test makes ("network syscalls are absent when network is off")."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    result = _build_syscall_allowlist(SandboxPolicy())
+    result = _build_syscall_allowlist(SandboxPolicy(network=False))
     assert "connect" not in result
     assert "sendto" not in result
     assert "sendmsg" not in result
@@ -304,8 +310,12 @@ def test_syscall_allowlist_includes_async_runtime_and_durability_primitives() ->
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     # Present regardless of policy — an async runtime needs these to start under
-    # the most restrictive policy (network off, subprocess off).
-    result = _build_syscall_allowlist(SandboxPolicy())
+    # the most restrictive policy (network off, subprocess off). network=False
+    # passed EXPLICITLY (#3905) — the dataclass's bare default is no longer
+    # network-off (owner decision 2026-06-05), so the later "connect must stay
+    # absent" assertion below needs an actually-restrictive policy, not
+    # whatever the default happens to be today.
+    result = _build_syscall_allowlist(SandboxPolicy(network=False))
     for name in (
         # event-loop startup (round 1)
         "socketpair",
