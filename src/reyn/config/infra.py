@@ -397,17 +397,19 @@ class EventsConfig:
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
 _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
-# #3823 ②: compat / strict / custom — NOT "off" (owner ruling: "off" is
-# expressible as custom-with-everything-allowed, so it does not need its own
-# enum member). Schema only, as of this field's introduction: nothing in the
-# op-dispatch path reads `mode` yet — resolving it into an actual SandboxPolicy
-# is blocked on a separate design question (SandboxPolicy.write_paths is a
-# closed-enumeration/whitelist field by construction — empty means "deny all
-# writes", not "allow all" — so compat's write axis cannot be expressed with
-# today's field shape; #3823 comment thread has the open question). Adding
-# the validated enum here is safe and mode-independent regardless of how that
-# resolves.
-_SANDBOX_MODES = {"compat", "strict", "custom"}
+# #3823 ①②: compat / strict — NOT "custom" (owner ruling, 2026-08-09:
+# "custom" was never a third DIRECTION, it was the symptom of mode and
+# `policy:` not having a defined composition rule; #3823's settled design —
+# mode decides only the DEFAULT for an axis the operator left unset, while
+# allow_X/deny_X (or the bare bool) are ALWAYS writable regardless of mode —
+# removes the need for a third value: "the operator writes both direction
+# and content" is just "the operator writes allow_X/deny_X explicitly",
+# already true under either compat or strict). NOT "off" either (owner
+# ruling: "off" is expressible as compat with every axis's allow_X/deny_X
+# left at the compat default, so it does not need its own enum member).
+# strict is now WIRED (resolve_sandbox_policy, security/sandbox/policy.py) —
+# see that module for the resolution algorithm.
+_SANDBOX_MODES = {"compat", "strict"}
 DEFAULT_SANDBOX_MODE = "compat"
 
 # #3901 PR-B ④: SandboxPolicy field renames, keyed by the OLD name an operator
@@ -418,18 +420,50 @@ DEFAULT_SANDBOX_MODE = "compat"
 # which is worse than refusing it outright.
 _RENAMED_SANDBOX_POLICY_KEYS: dict[str, str] = {
     "allow_subprocess": (
-        "'allow_subprocess' was renamed to 'deny_subprocess' — the VALUE "
-        "INVERTS: `allow_subprocess: false` is now `deny_subprocess: true` "
-        "(and `allow_subprocess: true`, the old default, is now "
-        "`deny_subprocess: false`, the new default)."
+        "'allow_subprocess' was renamed to 'subprocess' (#3823; it passed "
+        "through 'deny_subprocess' in between, #3901) — same positive sense "
+        "as this original name: `subprocess: true` = allowed (the default)."
+    ),
+    # #3823: the #3901-era internal-vocabulary names, now superseded by the
+    # config-facing vocabulary a `sandbox.policy:` block actually accepts
+    # (SandboxPolicy's OWN field names are unchanged — see
+    # security/sandbox/policy.py's _translate_sandbox_policy_config — only
+    # what an operator WRITES in reyn.yaml changed).
+    "deny_subprocess": (
+        "'deny_subprocess' was renamed to 'subprocess' (#3823) — the VALUE "
+        "INVERTS BACK: `deny_subprocess: true` is now `subprocess: false`, "
+        "and `deny_subprocess: false` (the old default) is now "
+        "`subprocess: true` (still the default)."
+    ),
+    "write_paths": (
+        "'write_paths' was renamed to 'allow_write_paths' (#3823) — same "
+        "meaning, no value change."
+    ),
+    "read_deny_paths": (
+        "'read_deny_paths' was renamed to 'deny_read_paths' (#3823, "
+        "word-order fix — <direction>_<axis>_<unit>) — same meaning, no "
+        "value change."
+    ),
+    "write_deny_paths": (
+        "'write_deny_paths' was renamed to 'deny_write_paths' (#3823, "
+        "word-order fix) — same meaning, no value change."
+    ),
+    "env_deny_names": (
+        "'env_deny_names' was renamed to 'deny_env_names' (#3823, "
+        "word-order fix) — same meaning, no value change. A new "
+        "'allow_env_names' key is also now available (SWITCHES the env axis "
+        "to allow-list semantics — see security/sandbox/policy.py's "
+        "resolve_passthrough_env)."
     ),
     "env_passthrough": (
-        "'env_passthrough' was renamed to 'env_deny_names' and changed from "
-        "an ALLOW-list to a DENY-list (owner ruling: full env compat by "
+        "'env_passthrough' was renamed to 'deny_env_names' (it passed "
+        "through 'env_deny_names' in between, #3901) and changed from an "
+        "ALLOW-list to a DENY-list (owner ruling: full env compat by "
         "default). `env_passthrough: []` (pass nothing extra) is no longer "
-        "expressible as an empty list — the new default (env_deny_names "
+        "expressible as an empty list — the new default (deny_env_names "
         "omitted) passes EVERYTHING; to keep specific names blocked, list "
-        "them in env_deny_names instead."
+        "them in deny_env_names instead, or use the new 'allow_env_names' "
+        "key for allow-list semantics."
     ),
     "read_paths": (
         "'read_paths' was removed — every sandbox backend already ignored it "
@@ -457,31 +491,49 @@ class SandboxConfig:
             production environments). ``'ignore'`` silently falls back.
             Allowed: ``{'warn', 'error', 'ignore'}``.
         mode:
-            #3823 ②: which enumeration DIRECTION the resolved policy uses.
-            ``'compat'`` (default, owner-ruled "A" — a literal empty
-            deny-list, nothing blocked by default; audit/events/timeout/
-            cancel-teardown still apply). ``'strict'`` — an explicit
-            allow-list (today's ``SandboxPolicy`` defaults / the pre-#3823
-            behavior). ``'custom'`` — the operator writes both the direction
-            and the content via ``policy`` below. Declared in the enum
-            (``{'compat', 'strict', 'custom'}``) but ``'strict'``/``'custom'``
-            currently RAISE at construction (``ValueError``, "not implemented
-            yet") rather than being silently accepted-and-ignored — resolving
-            ``mode`` into an actual policy is not wired anywhere yet (see the
-            module-level note on :data:`_SANDBOX_MODES`), and accepting a
-            value that changes nothing would be a silent lie to an operator
-            who wrote it expecting containment. Only ``'compat'`` (the
-            unchanged, already-real default) validates today; the PR that
-            wires ``'strict'``/``'custom'`` removes this guard in the same
-            diff as the tests proving the wiring works.
+            #3823: which DEFAULT the resolved policy uses for an axis the
+            operator left UNSET in ``policy`` below — never a direction the
+            operator already wrote explicitly (``allow_X``/``deny_X``, or a
+            bare bool axis, are ALWAYS honoured regardless of ``mode``; the
+            operator's own explicit write is never second-guessed by this
+            knob). ``'compat'`` (default) — every axis defaults to permitted
+            (network on, subprocess on, nothing extra denied on read/write,
+            everything passed through on env) — audit/events/timeout/
+            cancel-teardown still apply regardless. ``'strict'`` — every axis
+            EXCEPT write defaults to denied (network off, subprocess off,
+            nothing passed through on env); write's default is UNAFFECTED by
+            mode — it stays the caller-supplied workspace floor (an
+            operator-unknowable value per-op, #3901 PR-B ①②; only an
+            explicit ``allow_write_paths``/``deny_write_paths`` narrows it
+            further). read has no mode-based default at all — there is no
+            ``allow_read_paths`` concept (#1199 removed it from reyn's model
+            entirely), so ``strict`` cannot narrow reads any tighter than
+            ``compat`` already leaves them; only an explicit
+            ``deny_read_paths`` narrows either mode. Allowed:
+            ``{'compat', 'strict'}`` — not ``'custom'`` (owner ruling,
+            2026-08-09: was never a third DIRECTION, it was the unresolved
+            composition rule between ``mode`` and ``policy`` — #3823's rule
+            above removes the need for it) and not ``'off'`` (expressible as
+            ``'compat'`` with every axis left at its compat default).
+            Resolution lives in
+            :func:`reyn.security.sandbox.policy.resolve_sandbox_policy`.
         policy:
-            The agent-level (operator) sandbox policy: a mapping of
-            ``SandboxPolicy`` kwargs (``network`` / ``write_paths`` /
-            ``read_deny_paths`` / ``write_deny_paths`` / ``deny_subprocess`` /
-            ``env_deny_names`` / ``timeout_seconds`` — #3901 PR-B ④ renamed
-            this vocabulary to deny-lists throughout; see
-            :data:`_RENAMED_SANDBOX_POLICY_KEYS` for the old-key error an
-            operator on a pre-#3901 config sees). When set it is the
+            The agent-level (operator) sandbox policy, in the CONFIG-facing
+            vocabulary (#3823): ``network`` (bool) / ``subprocess`` (bool,
+            positive framing — ``true`` = allowed) / ``allow_write_paths`` /
+            ``deny_write_paths`` / ``deny_read_paths`` / ``allow_env_names``
+            / ``deny_env_names`` / ``timeout_seconds`` / ``max_output_bytes``
+            — ``<direction>_<axis>_<unit>`` word order for a path/name-set
+            axis, bare ``<axis>`` for a bool (tool-naming.md R1's word
+            order, generalised). This vocabulary is DECOUPLED from
+            ``SandboxPolicy``'s own internal field names (#3823; was a
+            direct 1:1 transcription under #3901 PR-B ④ — see
+            :func:`reyn.security.sandbox.policy._translate_sandbox_policy_config`
+            for the translation and why the coupling, not the rename cost,
+            was the thing to fix) — see :data:`_RENAMED_SANDBOX_POLICY_KEYS`
+            for the old-key error an operator on a pre-#3823 (or pre-#3901)
+            config sees; an unknown key not in either vocabulary raises,
+            never resolves to "no restriction" silently. When set it is the
             deterministic policy the OS
             applies to sandboxed ops + the SandboxLayer of the permission ∩ —
             WINNING over op-declared fields (the LLM cannot widen it). ``None``
@@ -512,49 +564,39 @@ class SandboxConfig:
             raise ValueError(
                 f"sandbox.mode {self.mode!r} is not one of {sorted(_SANDBOX_MODES)}"
             )
-        if self.mode != "compat":
-            raise ValueError(
-                f"sandbox.mode {self.mode!r} is not implemented yet (#3823 ②) — "
-                "only 'compat' (the current, unchanged default behavior) is "
-                "accepted until strict/custom are wired into policy resolution"
-            )
-        # #3823 ②: strict/custom are declared in the enum but not yet WIRED
-        # into any resolved-policy behavior (see the module-level note on
-        # _SANDBOX_MODES). Accepting them silently here would be a lie to the
-        # operator, not a "written but unread" internal field like #3850's
-        # WrappedCommand.env before its callers consumed it — an operator who
-        # writes `mode: strict` forms a real expectation (containment is now
-        # enforced) that nothing currently honours; the config would validate
-        # and do nothing, silently staying compat underneath. Fail loudly
-        # instead. The PR that wires strict/custom into actual policy
-        # resolution removes this guard IN THE SAME DIFF as the tests proving
-        # the wiring works — so "wired but unread" cannot happen here the way
-        # it did for the internal field.
         if self.policy is not None:
-            # Fail-fast on a malformed operator policy: construct a SandboxPolicy
-            # to validate the keys (unknown key → TypeError → clear ValueError).
-            from reyn.security.sandbox.policy import SandboxPolicy
+            # Fail-fast on a malformed operator policy: translate + construct
+            # a SandboxPolicy to validate the keys (an unknown key raises a
+            # clear ValueError — see _translate_sandbox_policy_config's own
+            # docstring for why this must be an explicit raise, never a
+            # silent drop).
+            from reyn.security.sandbox.policy import (
+                SandboxPolicy,
+                _translate_sandbox_policy_config,
+            )
 
             if not isinstance(self.policy, dict):
                 raise ValueError(
                     f"sandbox.policy must be a mapping, got {type(self.policy).__name__}"
                 )
-            # #3901 PR-B ④: reyn.yaml is the operator's own face onto this
-            # vocabulary (config/infra.py's SandboxPolicy(**self.policy) is a
-            # direct transcription BY DESIGN, not a defect to hide behind a
-            # conversion layer — the operator's keys and the implementation's
-            # keys are meant to be the same keys). A bare TypeError from the
-            # dataclass constructor ("unexpected keyword argument
-            # 'allow_subprocess'") would say nothing about WHERE the new name
-            # is or that the VALUE inverts for the renamed bool field — silently
-            # accepting the old key and misreading its sense would be worse
-            # than failing, so this is named explicitly before the generic path.
+            # #3823: reyn.yaml's config vocabulary is now DECOUPLED from
+            # SandboxPolicy's internal field names (was: a direct
+            # transcription by design, #3901 PR-B ④ — see
+            # _translate_sandbox_policy_config's own docstring for why that
+            # coupling was the thing to fix, not the 700+ call-site rename
+            # the coupling would otherwise have forced). A renamed-key guard
+            # still runs FIRST and separately from the translation layer's
+            # own "unknown key" error, because a rename can carry a VALUE
+            # inversion (deny_subprocess -> subprocess) the generic "unknown
+            # key" message cannot explain — silently mis-translating an old
+            # key's value would be worse than refusing it outright.
             for old_key, guidance in _RENAMED_SANDBOX_POLICY_KEYS.items():
                 if old_key in self.policy:
                     raise ValueError(f"sandbox.policy is invalid: {guidance}")
             try:
-                SandboxPolicy(**self.policy)
-            except TypeError as exc:
+                translated = _translate_sandbox_policy_config(self.policy)
+                SandboxPolicy(**translated)
+            except (TypeError, ValueError) as exc:
                 raise ValueError(f"sandbox.policy is invalid: {exc}") from exc
 
 

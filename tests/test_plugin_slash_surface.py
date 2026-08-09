@@ -254,12 +254,13 @@ async def test_slash_local_install_real_stack(tmp_path, monkeypatch) -> None:
         interactive=False,
     )
     from reyn.config.infra import SandboxConfig
-    # Explicit write_paths REPLACE (not union with) the floor's workspace-only
-    # default ("wrote it" semantics, #2964) — so both the plugin global-copy
-    # root AND the project workspace must be listed for the full install
-    # (copy + .reyn/config/skills.yaml registration) to succeed.
+    # Explicit allow_write_paths REPLACE (not union with) the floor's
+    # workspace-only default ("wrote it" semantics, #2964) — so both the
+    # plugin global-copy root AND the project workspace must be listed for
+    # the full install (copy + .reyn/config/skills.yaml registration) to
+    # succeed.
     sandbox_config = SandboxConfig(policy={
-        "write_paths": [str(home / ".reyn" / "plugins"), str(project)],
+        "allow_write_paths": [str(home / ".reyn" / "plugins"), str(project)],
     })
     session = _make_session(
         project, permission_resolver=perm_resolver, sandbox_config=sandbox_config,

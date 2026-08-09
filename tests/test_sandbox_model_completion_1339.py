@@ -48,10 +48,11 @@ def test_resolve_merges_operator_config_onto_floor():
     floor, not substituted wholesale. Only the fields the operator wrote override;
     omitted fields keep the floor (so writing one field never silently drops the
     caller's write_paths)."""
-    # operator wrote deny_subprocess only (#3901 PR-B ④: reyn.yaml key follows
-    # the SandboxPolicy field rename, no compat translation layer, Q3) —
+    # operator wrote subprocess only (#3823: config vocabulary, decoupled
+    # from the internal SandboxPolicy field name/sense — subprocess=False
+    # means denied, translated internally to deny_subprocess=True) —
     # write_paths (caller) must survive (the #2964 silent-drop bug).
-    merged = resolve_sandbox_policy({"deny_subprocess": True}, write_paths=["/ws"])
+    merged = resolve_sandbox_policy({"subprocess": False}, write_paths=["/ws"])
     assert merged["deny_subprocess"] is True          # operator field applied
     assert merged["write_paths"] == ["/ws"]           # caller value SURVIVES (was dropped)
     assert merged["network"] is DEFAULT_SANDBOX_NETWORK
@@ -65,11 +66,11 @@ def test_resolve_operator_written_field_overrides_floor():
 
 
 def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
-    """Tier 2: #2964 —an operator's EXPLICIT `write_paths: []` is honored (the
-    operator deliberately granted nothing), distinct from OMITTING write_paths
+    """Tier 2: #2964 —an operator's EXPLICIT `allow_write_paths: []` is honored
+    (the operator deliberately granted nothing), distinct from OMITTING it
     (which keeps the caller's value). dict-key presence expresses the
     explicit-empty-vs-omitted distinction the merge hinges on."""
-    explicit_empty = resolve_sandbox_policy({"write_paths": []}, write_paths=["/ws"])
+    explicit_empty = resolve_sandbox_policy({"allow_write_paths": []}, write_paths=["/ws"])
     omitted = resolve_sandbox_policy({"network": False}, write_paths=["/ws"])
     assert explicit_empty["write_paths"] == []        # deliberate empty grant respected
     assert omitted["write_paths"] == ["/ws"]          # omission keeps the floor

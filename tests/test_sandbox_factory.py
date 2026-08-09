@@ -34,32 +34,57 @@ def test_default_config_values():
 
 
 def test_config_rejects_invalid_mode():
-    """Tier 2: #3823 ② — SandboxConfig with unknown mode raises ValueError listing
-    the allowed set. "off" is deliberately NOT allowed — the owner ruling dropped
-    it (expressible as custom-with-everything-allowed instead)."""
+    """Tier 2: #3823 — SandboxConfig with unknown mode raises ValueError listing
+    the allowed set. Neither "off" nor "custom" are allowed — owner ruling:
+    "off" is expressible as 'compat' with every axis at its compat default;
+    "custom" was never a third DIRECTION, it was the symptom of mode and
+    policy: not having a defined composition rule (#3823's resolution
+    algorithm — mode decides only the default for an axis left unset —
+    removes the need for it)."""
     with pytest.raises(ValueError, match="sandbox.mode") as exc_info:
         SandboxConfig(mode="off")
     msg = str(exc_info.value)
     assert "off" in msg
-    for allowed in ("compat", "strict", "custom"):
+    for allowed in ("compat", "strict"):
         assert allowed in msg
+    assert "custom" not in msg
 
 
 def test_config_accepts_compat_mode():
-    """Tier 2: #3823 ② — 'compat' round-trips byte-identical (no normalization)."""
+    """Tier 2: #3823 — 'compat' round-trips byte-identical (no normalization)."""
     assert SandboxConfig(mode="compat").mode == "compat"
 
 
-def test_config_refuses_unwired_modes_rather_than_silently_ignoring_them():
-    """Tier 2: #3823 ② — strict/custom are declared in the enum but NOT wired
-    into any resolved-policy behavior yet, so accepting them would silently
-    lie to an operator who believes containment is now enforced (lead-coder's
-    finding, distinguished from #3850's internal-field "written but unread"
-    case: an operator forms a real expectation from config, unlike a private
-    field only code reads). Must fail loudly, not validate-and-ignore."""
-    for mode in ("strict", "custom"):
-        with pytest.raises(ValueError, match="not implemented yet"):
-            SandboxConfig(mode=mode)
+def test_config_accepts_strict_mode_and_resolves_it() -> None:
+    """Tier 2: #3823 — 'strict' is now WIRED (was: raised "not implemented
+    yet" — the earlier #3823 ② stub). Real end-to-end: a SandboxConfig with
+    mode='strict' validates, AND resolve_sandbox_policy actually applies the
+    strict defaults (network off, subprocess denied, env allow-list empty) —
+    not just "the enum accepts the string"."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(mode="strict")
+    assert cfg.mode == "strict"
+
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=["/repo"], mode=cfg.mode)
+    assert resolved["network"] is False
+    assert resolved["deny_subprocess"] is True
+    assert resolved["allow_env_names"] == []
+    # write is UNAFFECTED by mode — stays the caller-supplied floor, not
+    # emptied (lead-coder's #3823 co-vet correction: zeroing it would also
+    # block writing to the op's own workspace).
+    assert resolved["write_paths"] == ["/repo"]
+
+
+def test_config_rejects_an_unknown_policy_key_rather_than_dropping_it() -> None:
+    """Tier 2: #3823 — the config-vocabulary translation layer must FAIL LOUD
+    on a key it does not recognize, not silently drop it. lead-coder's
+    explicit requirement: for a security deny-list, a dropped-not-rejected
+    unknown key (e.g. a typo'd `deny_subprocess` under the new vocabulary)
+    reads as "nothing to deny" — a fail-OPEN regression. This asserts the
+    load FAILS (ValueError), not that some default gets returned."""
+    with pytest.raises(ValueError, match="unknown_totally_made_up_key"):
+        SandboxConfig(policy={"unknown_totally_made_up_key": True})
 
 
 def test_yaml_parse_defaults_mode_to_compat_when_absent():
@@ -81,15 +106,16 @@ def test_yaml_parse_honors_an_explicit_compat_mode():
     assert cfg.mode == "compat"
 
 
-def test_yaml_parse_propagates_the_not_implemented_refusal_for_strict():
-    """Tier 2: #3823 ② — an operator writing `sandbox: {mode: strict}` in
-    reyn.yaml today gets a loud, real config-load error, not a silently
-    accepted-and-ignored value. Same discriminator as the dataclass-level
-    test above, exercised through the actual YAML-parse seam."""
+def test_yaml_parse_honors_an_explicit_strict_mode():
+    """Tier 2: #3823 — an operator-declared `sandbox: {mode: strict}` parses
+    through the real reyn.yaml -> SandboxConfig seam (was: raised "not
+    implemented yet" through this exact seam — #3823's own prior test).
+    strict is now real, exercised through the actual YAML-parse path, not
+    just the dataclass directly."""
     from reyn.config.infra import _build_sandbox_config
 
-    with pytest.raises(ValueError, match="not implemented yet"):
-        _build_sandbox_config({"mode": "strict"})
+    cfg = _build_sandbox_config({"mode": "strict"})
+    assert cfg.mode == "strict"
 
 
 def test_config_rejects_invalid_backend():
