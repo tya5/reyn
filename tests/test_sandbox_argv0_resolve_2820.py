@@ -329,12 +329,15 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
         events=events,
         permission_decl=PermissionDecl(),
         sandbox_backend=backend,
+        # #3907: the fork-deny intent moves here — the op no longer carries
+        # policy fields (deleted; they were never real-producer-reachable),
+        # so "the workload must stay unable to fork" is expressed the same
+        # way a real operator/factory would: the agent-level policy.
+        default_sandbox_policy={"deny_subprocess": True},
     )
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["python3", "-c", "print(1)"],
-        allow_subprocess=False,  # the workload must stay unable to fork
-        env_passthrough=["PATH"],
         timeout_seconds=30,
     )
 

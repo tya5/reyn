@@ -283,16 +283,24 @@ class SandboxedExecIROp(BaseModel):
     (= no enforcement). Future waves add SeatbeltBackend (macOS) and
     LandlockBackend (Linux).
 
-    Policy fields mirror `reyn.security.sandbox.policy.SandboxPolicy` (= the dataclass
-    the backend ultimately receives).
+    #3907: this op used to carry 5 sandbox-policy fields (`network` /
+    `read_paths` / `write_paths` / `allow_subprocess` / `env_passthrough`) —
+    removed. #1339 made the agent-level (operator) `sandbox.policy` win
+    deterministically over anything the op requests, and #3907① measured that
+    every context-building path resolves a concrete policy (never `None`), so
+    those fields had zero real producers left: the one production
+    construction site (`tools/exec.py`) never set them, and every remaining
+    setter was a test constructing the op directly to exercise the (now
+    dead) op-fields fallback in the handler. An unused field on an internal
+    dataclass merely confuses a reader; an unused field on an op envelope is
+    worse — it is advertised to and settable by the LLM, and silently does
+    nothing (`exec.py`'s own tool description: "the LLM cannot set network /
+    fs scope via this tool"). See `docs/reference/runtime/control-ir.md`'s
+    `sandboxed_exec` section (kept in sync in this same PR, per CLAUDE.md's
+    doc-drift hard rule) for the operator-facing story.
     """
     kind: Literal["sandboxed_exec"]
     argv: list[str]                                      # command + args; argv[0] is the executable
-    network: bool = False                                # allow outbound network
-    read_paths: list[str] = Field(default_factory=list)  # readable filesystem paths
-    write_paths: list[str] = Field(default_factory=list) # writable filesystem paths
-    allow_subprocess: bool = False                       # may spawn children
-    env_passthrough: list[str] = Field(default_factory=list)  # env-var allowlist
     timeout_seconds: int = 60                            # wall-clock cap
     stdin: bytes | None = None                           # #2593: bytes written to the process's stdin, if any
 

@@ -358,11 +358,6 @@ The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exe
 {
   "kind": "sandboxed_exec",
   "argv": ["echo", "hello"],
-  "network": false,
-  "read_paths": ["{{workspace}}"],
-  "write_paths": ["{{workspace}}/output"],
-  "allow_subprocess": false,
-  "env_passthrough": ["PATH"],
   "timeout_seconds": 60,
   "stdin": null
 }
@@ -370,13 +365,21 @@ The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exe
 
 Fields:
 - `argv` (required) — command + arguments. `argv[0]` is the executable.
-- `network` (optional, default `false`) — allow outbound network.
-- `read_paths` (optional) — filesystem paths the process may read (glob patterns OK).
-- `write_paths` (optional) — filesystem paths the process may write.
-- `allow_subprocess` (optional, default `true`) — may spawn children.
-- `env_passthrough` (optional) — env-var names that pass through (others are stripped).
 - `timeout_seconds` (optional, default `60`) — wall-clock cap.
 - `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (a pipeline `tool` step can thread the previous step's pipe-data here as JSON via `args: {argv: [...], stdin_pipe: !expr pipe}` — see [Pipeline DSL](pipeline-dsl.md#tool)).
+
+**No policy fields** (`network` / `read_paths` / `write_paths` / `allow_subprocess` /
+`env_passthrough` — removed #3907): the sandbox policy that actually governs a run
+is **never** settable via this op. It is the agent-level (operator) `sandbox.policy`
+(`reyn.yaml`, resolved through `resolve_sandbox_policy` — see the
+[`sandbox` config block](../config/reyn-yaml.md#sandbox-block)) or, absent that, the
+operator's compat/strict default — either way a value the LLM cannot see or widen
+(#1326/#1339: the operator-or-default policy always wins over anything an op
+requests). The op used to carry these 5 fields as a fallback source when no
+operator policy was resolved; #3907① measured that path is unreachable in
+production (every context-building path resolves a concrete policy), so the
+fields were pure LLM-facing surface with no effect — deleted rather than left as
+an advertised-but-ignored knob.
 
 **Backend selection**: `get_default_backend()` chooses per platform. On macOS < 26, `SeatbeltBackend` (sandbox-exec SBPL). On Linux ≥ 5.13 with the `sandbox-linux` extra installed, `LandlockBackend` (+ optional seccomp-BPF stack). On other platforms or when the chosen backend is unavailable, falls back to `NoopBackend` (audit-only, no enforcement) — emits a one-line WARN on first use. Override via `reyn.yaml` `sandbox.backend` (`auto` | `seatbelt` | `landlock` | `noop`) and `sandbox.on_unsupported` (`warn` | `error` | `ignore`).
 
