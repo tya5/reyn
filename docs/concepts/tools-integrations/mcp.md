@@ -152,9 +152,9 @@ A server can ask the user a flat/primitive-schema question through reyn's own co
 - **Semantics**: a timeout returns `cancel`; an explicit human decline, an `auto_decline`-configured server, or a headless context (no live listener) all return `decline`.
 - **Audit records field *keys* only, never values.** The `mcp_elicitation_requested`/`_answered`/`_timed_out`/`_auto_declined` events carry only the requested schema's property names (e.g. `field_keys: ["reason", "priority"]`) — never the human's typed answer.
 
-## Transport choice (stdio vs HTTP)
+## Transport choice (stdio vs HTTP vs SSE)
 
-Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE transport is reserved for a future release.
+Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints, or the streaming SSE variant.
 
 | Transport | When | How reyn launches it |
 |-----------|------|----------------------|
