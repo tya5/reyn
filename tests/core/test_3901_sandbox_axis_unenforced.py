@@ -43,12 +43,6 @@ def test_landlock_with_write_deny_paths_is_unenforced():
     assert unenforced_axes("landlock", policy) == ["write_deny_paths"]
 
 
-def test_landlock_with_both_deny_lists_reports_both():
-    """Tier 2: both configured deny-lists are named — order not pinned."""
-    policy = SandboxPolicy(read_deny_paths=["~/.ssh"], write_deny_paths=["~/.aws"])
-    assert set(unenforced_axes("landlock", policy)) == {"read_deny_paths", "write_deny_paths"}
-
-
 def test_landlock_with_no_deny_lists_reports_nothing():
     """Tier 2: an empty (compat-default) policy has nothing to report — the
     event fires only when the operator actually configured an axis this

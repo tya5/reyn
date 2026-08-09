@@ -3,8 +3,17 @@
 S3.1a builds the model + projections; it is UNWIRED (the live PermissionResolver
 gates are unchanged — byte-identical). These tests pin the structural invariant
 the model exists to guarantee: effective = ⋂ layers, restrict-only, grant-back
-forbidden — including the ★non-negotiable falsification (removing a layer from
-the ∩ re-grants a denied capability → over-grant).
+forbidden.
+
+#3901 owner correction: a prior version of this file also asserted the ∩
+arithmetic itself — dropping a layer from ``EffectivePermission([...])`` and
+checking the remainder re-grants what the dropped layer denied. That is a
+property of ``all(...)`` over a Python list, not a reyn contract, and the
+construction it exercised (``EffectivePermission([AgentLayer(decl)])`` with no
+SandboxLayer) is not one production ever builds. Removed rather than kept
+axis-swapped to survive #3901 PR-B ③'s retirement of FILE_READ/FILE_WRITE/
+NETWORK_HOST from SandboxLayer's projection — the axis swap preserved the
+test, not a tested contract.
 """
 from __future__ import annotations
 
@@ -46,50 +55,6 @@ def test_capability_permitted_iff_all_layers_permit() -> None:
         decl=decl, sandbox_policy=SandboxPolicy(deny_subprocess=True)
     )
     assert eff2.allows(AX.SUBPROCESS, None) is False
-
-
-# ── ★the non-negotiable falsification ─────────────────────────────────────────
-
-
-def test_falsification_removing_a_layer_regrants_a_denied_capability() -> None:
-    """Tier 2: (★required) a layer's deny CANNOT be re-granted downstream — and
-    removing that layer from the ∩ makes the over-grant possible, proving the
-    deny is load-bearing (restrict-only is a structural property of ⋂).
-
-    subprocess: agent has no opinion (compat, ⊤), sandbox denies spawning →
-    effective denies. Drop the sandbox layer → spawning is re-granted
-    (over-grant) → FAIL-shape.
-
-    #3901 PR-B ③ retired NETWORK_HOST/FILE_READ/FILE_WRITE from
-    SandboxLayer's projection (owner's split: sandbox no longer participates
-    in the permission ∩ for values an operator cannot know, like the
-    workspace-confinement floor — see policy.py's own docstring). SUBPROCESS
-    is one of the two axes (with ENV) that still does, so it is the witness
-    here now; this is the SAME property on a DIFFERENT still-live axis, not a
-    weaker one — SandboxLayer.allows() still has a real deny to falsify."""
-    decl = PermissionDecl()  # compat: no opinion on SUBPROCESS (⊤)
-    sandbox = SandboxPolicy(deny_subprocess=True)  # sandbox denies spawning
-
-    full = EffectivePermission.of(decl=decl, sandbox_policy=sandbox)
-    assert full.allows(AX.SUBPROCESS, None) is False  # ∩ denies
-
-    # FALSIFICATION: drop the denying layer from the ∩ → the deny is re-granted.
-    without_sandbox = EffectivePermission([AgentLayer(decl)])
-    assert without_sandbox.allows(AX.SUBPROCESS, None) is True  # over-grant
-
-    # Same shape for a profile deny (mcp allowlist):
-    # The agent declares "blocked_srv" (grants it); the profile allows only "allowed_srv".
-    # Full ∩: AgentLayer grants + ProfileLayer narrows → blocked_srv denied.
-    # Without ProfileLayer: AgentLayer grant stands → blocked_srv re-granted (over-grant).
-    prof = AgentProfile(name="a", allowed_mcp=["allowed_srv"])
-    declared_mcp = PermissionDecl(mcp=["blocked_srv", "allowed_srv"])  # agent grants both
-    eff = EffectivePermission(
-        [AgentLayer(declared_mcp), ProfileLayer(prof.default_profile())]
-    )
-    assert eff.allows(AX.MCP, "blocked_srv") is False
-    assert EffectivePermission([AgentLayer(declared_mcp)]).allows(
-        AX.MCP, "blocked_srv"
-    ) is True  # remove profile layer → re-granted
 
 
 # ── zone is the agent-layer baseline (∪), not a separate ∩ restrictor ─────────
