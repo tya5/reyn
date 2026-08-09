@@ -88,7 +88,7 @@ restriction: op-level fields govern, and the SandboxLayer is unrestricted.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `network` | bool | `false` | Allow outbound network. The primary exfiltration gate. |
+| `network` | bool | `true` (owner decision, 2026-06-05) | Allow outbound network. Set `network: false` explicitly to close it. |
 | `write_paths` | list of paths | `[]` | Paths the process may write (tight guard). Write implies read — a path listed here is also re-opened for *reading* even if `read_deny_paths` would deny it, so grant specific directories rather than `~`. `~` is expanded. |
 | `read_deny_paths` | list of paths | `[]` | Sensitive paths to deny from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt); not enforceable on Landlock. |
 | `read_paths` | list of paths | `[]` | Legacy — formerly the strict read allowlist. Reads are broad by default; this field now documents intended read targets only. |
@@ -100,12 +100,16 @@ restriction: op-level fields govern, and the SandboxLayer is unrestricted.
 
 ### Scoping model
 
-reyn uses a **broad-read, tight-write, network-gated** model:
+reyn uses a **broad-read, tight-write, network-open-by-default** model:
 
 - **Reads are broad.** The process can read most of the filesystem. System-path
   enumeration for dylib loading works without enumeration in policy.
-- **Network is the exfiltration gate.** With `network: false` (the default),
-  the process can read broadly but cannot send data out.
+- **Network is open by default.** `network` defaults to `true` (owner decision,
+  2026-06-05) — a sandboxed process can reach the network unless you set
+  `network: false` explicitly. This follows reyn's standing UX-over-security
+  posture: security mechanisms here are opt-in, not opt-out — see [Protect
+  credentials from sandboxed commands](protect-credentials-in-shell-commands.md)
+  for what this means for a command that can read a secret.
 - **Writes are tight.** Only paths in `write_paths` are writable.
 - **`read_deny_paths` is defense-in-depth.** Carves out sensitive locations from
   the broad read surface where the backend can express a deny-after-allow rule.
