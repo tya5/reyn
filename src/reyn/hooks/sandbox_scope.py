@@ -50,25 +50,63 @@ value. That is the point: contradiction is a decision, silence is not.
 """
 from __future__ import annotations
 
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
-# Agent-level ``sandbox.policy`` field → the per-hook key that reaches a hook
-# shell's sandbox for the same axis. The three axes an operator owns per-site
-# (the same triad a stdio MCP server exposes). A field absent from this map has
-# no per-hook equivalent and is not part of the per-site sandbox surface.
+if TYPE_CHECKING:
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+# Agent-level ``sandbox.policy`` CONFIG-vocabulary key (#3823 — what an
+# operator actually writes in reyn.yaml) → the per-hook key that reaches a
+# hook shell's sandbox for the same axis. The three axes an operator owns
+# per-site (the same triad a stdio MCP server exposes). A field absent from
+# this map has no per-hook equivalent and is not part of the per-site
+# sandbox surface.
 #
-# #3901 PR-B ④: only the LEFT side (the ``SandboxPolicy`` field name) follows
-# the rename — ``deny_subprocess`` replaces ``allow_subprocess``. The RIGHT
-# side (``"subprocess"``, the per-hook YAML key an operator writes) stays put
-# deliberately: it names the AXIS ("this hook's process-spawn behavior"), not
-# a direction ("allow" or "deny") — the same reasoning that keeps a hook's own
-# ``subprocess: true/false`` value un-inverted even though the policy field
-# behind it inverted.
+# #3823: both sides now use the SAME positive-framing name for the
+# subprocess axis (``"subprocess"``, ``true`` = allowed) — #3823's config
+# vocabulary renamed the LEFT side from the #3901-era ``deny_subprocess``
+# (inverted sense) back to a bare axis name matching the RIGHT side's
+# per-hook key, which was ALREADY positive-framed and never inverted (a hook
+# author writes ``subprocess: true/false`` directly, unaffected by whichever
+# name/sense the agent-level config field used underneath). See
+# :data:`_CONFIG_FIELD_TO_POLICY_ATTR` for where the LEFT side's config name
+# still diverges from the internal ``SandboxPolicy`` attribute name/sense
+# (only ``subprocess``, which reads ``deny_subprocess`` inverted) — the
+# internal dataclass fields themselves are UNCHANGED by #3823 (see
+# ``security/sandbox/policy.py``'s ``_translate_sandbox_policy_config``).
 HOOK_SANDBOX_SCOPE: tuple[tuple[str, str], ...] = (
     ("network", "network"),
-    ("deny_subprocess", "subprocess"),
-    ("write_paths", "write_paths"),
+    ("subprocess", "subprocess"),
+    ("allow_write_paths", "write_paths"),
 )
+
+#: #3823: CONFIG-vocabulary field name (the LEFT column of
+#: :data:`HOOK_SANDBOX_SCOPE`, i.e. a ``SandboxConfig.policy`` dict key) →
+#: the internal ``SandboxPolicy`` attribute :func:`effective_policy_value`
+#: reads the EFFECTIVE (resolved, hook-floor) value from. Only ``subprocess``
+#: diverges in both name AND sense from its config-facing key — see
+#: :func:`effective_policy_value`.
+_CONFIG_FIELD_TO_POLICY_ATTR: dict[str, str] = {
+    "network": "network",
+    "subprocess": "deny_subprocess",
+    "allow_write_paths": "write_paths",
+}
+
+
+def effective_policy_value(policy: "SandboxPolicy", config_field: str) -> object:
+    """The EFFECTIVE (resolved) value of *config_field* (a
+    :data:`HOOK_SANDBOX_SCOPE` LEFT-column config key) on *policy* — the
+    value the hook actually ran with, in the SAME sense the config key uses
+    (so the report never mixes a positive-framed config key with a negated
+    internal value). ``subprocess`` is the one axis where the internal
+    ``SandboxPolicy.deny_subprocess`` attribute both names AND senses
+    differently from the config-facing ``subprocess`` key — inverted here so
+    a caller never has to remember which of the two axes needs it."""
+    attr = _CONFIG_FIELD_TO_POLICY_ATTR[config_field]
+    value = getattr(policy, attr)
+    if config_field == "subprocess":
+        return not value
+    return value
 
 
 def unapplied_policy_fields(

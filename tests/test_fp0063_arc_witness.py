@@ -511,11 +511,14 @@ def _build_registry(tmp_path: Path, project_root: Path):
     sandbox_config = SandboxConfig(
         policy={
             "network": False,
-            "write_paths": [str(plugins_root()), str(project_root)],
-            # #3901 PR-B ④: reyn.yaml key follows the SandboxPolicy field
-            # rename, no compat translation layer (Q3) — deny_subprocess=True
-            # is the same restriction the old allow_subprocess=False wrote.
-            "deny_subprocess": True,
+            "allow_write_paths": [str(plugins_root()), str(project_root)],
+            # #3823: reyn.yaml's config vocabulary is decoupled from
+            # SandboxPolicy's internal field names (was: a direct
+            # transcription, #3901 PR-B ④) — subprocess=False is the
+            # positive-framed config key, translated internally to
+            # deny_subprocess=True (see policy.py's
+            # _translate_sandbox_policy_config).
+            "subprocess": False,
         },
     )
 

@@ -123,10 +123,23 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
     ``allow_subprocess``/``network``, now extended to env by the owner's
     full-compat ruling rather than left as a partial application.
 
+    #3823: when ``policy.allow_env_names`` is not ``None``, the axis SWITCHES
+    to allow-list semantics — only those names pass through, still with
+    ``env_deny_names`` intersected on top (deny always wins, same rule as
+    every other axis: an operator who both allows and denies the same name
+    gets the deny). ``None`` (the default; unaffected by this switch) keeps
+    the deny-list-only behavior above.
+
     PATH fallback is applied by each backend after calling this (preserves the
     existing "PATH always available" behaviour independent of this set).
     """
     deny = set(policy.env_deny_names)
+    if policy.allow_env_names is not None:
+        allow = set(policy.allow_env_names)
+        return {
+            name: value for name, value in os.environ.items()
+            if name in allow and name not in deny
+        }
     return {name: value for name, value in os.environ.items() if name not in deny}
 
 
@@ -215,6 +228,13 @@ class SandboxPolicy:
     # the old narrow passthrough sets ``env_deny_names`` to block specific
     # names, or (#3823, future) selects a stricter ``sandbox.mode``.
     env_deny_names: list[str] = field(default_factory=list)
+    # #3823: new — a genuine allow-list capability, not a rename. A
+    # deny-list-only env axis cannot express "nothing except these N names"
+    # without enumerating the entire universe of possible env vars, which
+    # `sandbox.mode: strict` needs to say "pass nothing through by default".
+    # ``None`` (default) keeps the deny-list-only behavior above unchanged;
+    # see :func:`resolve_passthrough_env`.
+    allow_env_names: "list[str] | None" = None
     timeout_seconds: int = 60
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 
@@ -327,10 +347,96 @@ def unenforced_axis_reason(backend_name: str) -> str:
     )
 
 
+#: #3823: an operator-facing ``sandbox.policy`` CONFIG-vocabulary key →
+#: the internal ``SandboxPolicy`` field name it resolves to. This is the
+#: decoupling point: the config vocabulary (``<direction>_<axis>_<unit>`` /
+#: bare bool axis, tool-naming.md R1 word order) and ``SandboxPolicy``'s own
+#: dataclass field names/senses are DIFFERENT vocabularies now, translated
+#: explicitly here rather than the same vocabulary transcribed 1:1 via
+#: ``**`` unpacking (the #3901 PR-B ④ shape this supersedes) — see
+#: :func:`_translate_sandbox_policy_config`. Only ``"subprocess"`` diverges
+#: in SENSE (inverted) as well as name; every other key is a pure rename.
+_SANDBOX_POLICY_CONFIG_KEY_TO_FIELD: dict[str, str] = {
+    "network": "network",
+    "subprocess": "deny_subprocess",  # value inverts — see _translate below
+    "allow_write_paths": "write_paths",
+    "deny_write_paths": "write_deny_paths",
+    "deny_read_paths": "read_deny_paths",
+    "allow_env_names": "allow_env_names",
+    "deny_env_names": "env_deny_names",
+    "timeout_seconds": "timeout_seconds",
+    "max_output_bytes": "max_output_bytes",
+}
+
+#: The full config-vocabulary key set — the allowlist
+#: :func:`_translate_sandbox_policy_config` fails loudly against.
+_SANDBOX_POLICY_CONFIG_KEYS: frozenset[str] = frozenset(
+    _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD
+)
+
+
+def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
+    """Translate an operator-written ``sandbox.policy`` dict (config
+    vocabulary: ``allow_write_paths`` / ``deny_read_paths`` /
+    ``deny_write_paths`` / ``subprocess`` / ``allow_env_names`` /
+    ``deny_env_names`` / ``network`` / ``timeout_seconds`` /
+    ``max_output_bytes`` — #3823's ``<direction>_<axis>_<unit>`` word order,
+    a bool axis using the bare axis name) into ``SandboxPolicy`` constructor
+    kwargs (the #3916 internal deny-vocabulary shape, unchanged).
+
+    #3823 (lead-coder review): an operator typo must fail LOUDLY, not
+    silently resolve to "no restriction" — ``SandboxPolicy(**config_dict)``
+    used to get "unknown key -> TypeError" FOR FREE from ``**`` unpacking
+    (config vocabulary WAS the internal signature); a naive ``dict.get``-
+    shaped translation would silently drop an unknown/misspelled key instead,
+    which for a security-relevant deny-list means the typo reads as "nothing
+    to deny" — a fail-OPEN regression, the one direction a sandbox translation
+    layer must never take. So this function re-derives that same strictness
+    explicitly: an unknown key raises, it is never dropped.
+    """
+    if config_policy is None:
+        return {}
+    unknown = set(config_policy) - _SANDBOX_POLICY_CONFIG_KEYS
+    if unknown:
+        raise ValueError(
+            f"sandbox.policy: unknown key(s) {sorted(unknown)} — allowed: "
+            f"{sorted(_SANDBOX_POLICY_CONFIG_KEYS)}"
+        )
+    out: dict = {}
+    for key, value in config_policy.items():
+        field_name = _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD[key]
+        if key == "subprocess":
+            out[field_name] = not value
+        else:
+            out[field_name] = value
+    return out
+
+
+#: #3823 ①: the per-axis DEFAULT ``sandbox.mode: strict`` applies for a
+#: config-vocabulary key the operator left unset. Keyed by INTERNAL
+#: ``SandboxPolicy`` field name (the same vocabulary :func:`resolve_sandbox_policy`
+#: merges onto) — deliberately excludes ``write_paths``: write's default is
+#: the caller-supplied workspace floor regardless of mode (an
+#: operator-unknowable per-op value, #3901 PR-B ①②; lead-coder's correction —
+#: "strict = nothing allowed" is right for network/subprocess/env, wrong for
+#: write, which would also block writing to the op's own workspace). ``read``
+#: has no mode-based default at all — there is no ``allow_read_paths``
+#: concept (#1199 removed it entirely); only an explicit ``deny_read_paths``
+#: narrows either mode.
+_SANDBOX_STRICT_MODE_DEFAULTS: dict[str, object] = {
+    "network": False,
+    "deny_subprocess": True,
+    "allow_env_names": [],
+}
+
+
 # ── default sandbox policy resolution (#1339 / sandbox-model completion) ──────
 #
 def resolve_sandbox_policy(
-    config_policy: dict | None, *, write_paths: list[str] | None = None
+    config_policy: dict | None,
+    *,
+    write_paths: list[str] | None = None,
+    mode: str = "compat",
 ) -> dict:
     """Resolve the effective agent-level sandbox policy as a dict.
 
@@ -341,31 +447,41 @@ def resolve_sandbox_policy(
     workspace (the caller-supplied ``write_paths`` = "this op needs this
     directory", a value the operator cannot know — #3901 PR-B ①②: this stays
     a SandboxPolicy floor rather than a permission value for exactly that
-    reason). #3901 PR-B ④ (owner ruling B): every other axis's default is now
-    ``SandboxPolicy``'s own dataclass default (compat) — this floor no longer
-    overrides ``read_deny_paths`` to :data:`DEFAULT_SENSITIVE_READ_DENY`; an
-    operator who wants that defense-in-depth back sets ``read_deny_paths``
-    explicitly.
+    reason).
 
-    An operator-declared ``reyn.yaml sandbox.policy`` mapping is **merged onto
-    the floor**, not substituted wholesale (#2964). Only the fields the operator
-    actually wrote override the floor; fields they omitted keep the floor value
-    — so writing ``deny_subprocess: true`` alone no longer silently drops the
-    caller's ``write_paths`` (workspace write access). This is the owner design
-    principle: *the default is the floor an operator ADDS to; only an explicit
-    write is the operator's expressed will.*
+    #3823 ①: ``mode`` decides the default for a config-vocabulary key the
+    operator left UNSET — ``'compat'`` (default) leaves every axis at
+    ``SandboxPolicy``'s own compat dataclass default; ``'strict'`` applies
+    :data:`_SANDBOX_STRICT_MODE_DEFAULTS` for every key the operator did NOT
+    explicitly write. Either way, an explicit operator write ALWAYS wins over
+    the mode-derived default — mode never second-guesses an explicit
+    ``allow_X``/``deny_X`` or bare-bool write (#2964's explicit-beats-floor
+    rule, now generalised to mode as well as the caller floor).
 
-    "Wrote it" is expressed by dict-key presence: ``write_paths: []`` is an
-    explicit empty grant (respected — the caller's write_paths are overridden by
-    the operator's deliberate empty list), whereas OMITTING ``write_paths``
-    keeps the floor's caller-supplied value. dict semantics make the
-    "explicit-empty vs omitted" distinction the whole fix hinges on directly
-    representable — no separate sentinel is needed.
+    An operator-declared ``reyn.yaml sandbox.policy`` mapping (config
+    vocabulary — #3823) is **merged onto the floor**, not substituted
+    wholesale (#2964). Only the fields the operator actually wrote override
+    the floor; fields they omitted keep the floor value (or the mode-derived
+    default) — so writing ``subprocess: false`` alone no longer silently
+    drops the caller's ``write_paths`` (workspace write access). This is the
+    owner design principle: *the default is the floor an operator ADDS to;
+    only an explicit write is the operator's expressed will.*
+
+    "Wrote it" is expressed by dict-key presence: ``allow_write_paths: []`` is
+    an explicit empty grant (respected — the caller's write_paths are
+    overridden by the operator's deliberate empty list), whereas OMITTING
+    ``allow_write_paths`` keeps the floor's caller-supplied value. dict
+    semantics make the "explicit-empty vs omitted" distinction the whole fix
+    hinges on directly representable — no separate sentinel is needed.
     """
     floor: dict = {
         "network": DEFAULT_SANDBOX_NETWORK,
         "write_paths": list(write_paths or []),
     }
-    if config_policy is not None:
-        floor.update(config_policy)
+    explicit = _translate_sandbox_policy_config(config_policy)
+    if mode == "strict":
+        for key, value in _SANDBOX_STRICT_MODE_DEFAULTS.items():
+            if key not in explicit:
+                floor[key] = value
+    floor.update(explicit)
     return floor

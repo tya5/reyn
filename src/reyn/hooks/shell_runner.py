@@ -325,6 +325,7 @@ def _report_unapplied_agent_policy(
     ran under. Best-effort throughout — reporting must never break the hook run.
     """
     from reyn.hooks.sandbox_scope import (  # noqa: PLC0415 — keep import cost off the no-policy path
+        effective_policy_value,
         unapplied_policy_fields,
         unapplied_policy_message,
     )
@@ -340,7 +341,7 @@ def _report_unapplied_agent_policy(
             policy_field=policy_field,
             hook_key=hook_key,
             configured=config_policy[policy_field],
-            effective=getattr(policy, policy_field),
+            effective=effective_policy_value(policy, policy_field),
         )
         _log.warning("shell-hook: %s", message)
         if emit_event is None:
@@ -352,7 +353,7 @@ def _report_unapplied_agent_policy(
                 policy_field=policy_field,
                 hook_key=hook_key,
                 configured=config_policy[policy_field],
-                effective=getattr(policy, policy_field),
+                effective=effective_policy_value(policy, policy_field),
             )
         except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
             _log.debug("shell-hook: emit_event failed for %r: %s", hook_label, exc)
