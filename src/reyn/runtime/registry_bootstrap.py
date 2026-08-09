@@ -151,9 +151,14 @@ def build_agent_registry_from_project(
     # posture). Only grant file.read/file.write when the caller explicitly
     # opts in (mirrors `reyn chat --grant-file-write` exactly) — NEVER
     # blanket-grant http.get (see docstring).
+    # #3925: file.write is scoped to the zone root (ZoneRoot, via
+    # "<zone-root>") — was `allow` (unrestricted). This factory passes
+    # sandbox_backend=None explicitly (see below), so pre-#3925 the grant
+    # was genuinely unrestricted, not merely broad: no sandbox floor of any
+    # kind applied on this axis at this call site.
     if grant_file_write:
         perm_config.setdefault("file.read", "allow")
-        perm_config.setdefault("file.write", "allow")
+        perm_config.setdefault("file.write", ["<zone-root>"])
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,
