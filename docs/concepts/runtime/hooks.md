@@ -468,6 +468,12 @@ after each turn:
 If no hooks are configured or none match the current lifecycle point, the loop
 is byte-identical to a hooks-free session. Zero overhead on the happy path.
 
+**A slash command typed while waiting for a `wake: true` trigger does not
+consume the staged `wake: false` context.** Slash commands are handled
+entirely client-side (#3595 S5) and never enter the turn machinery that
+drains staged hook messages, so they structurally cannot swallow context
+meant for the eventual triggered turn — the staged messages survive intact.
+
 ## Fidelity
 
 Pushes are **new** attributed `[hook:name]` system messages added to the
@@ -582,7 +588,9 @@ refused, never silently dropped.
 - **Non-interactive** (`reyn run`, `mcp-serve`, headless) — falls back to the pre-bus behavior: TTY stdin prompt when available, or refused when stdin is not a TTY.
 - **Allowlist hit** — any command already in the allowlist runs silently without a prompt (auto-approved on all surfaces).
 
-Consent is fail-closed throughout: if the sandbox backend cannot be confirmed, the hook is refused rather than run unsandboxed.
+Consent is fail-closed throughout: if the sandbox backend cannot be confirmed, the hook is refused rather than run unsandboxed. An unanswered/empty consent-bus response (e.g. an intervention parked stalled because its origin channel closed) also fails closed — the hook is skipped, not run and not left hanging.
+
+**`REYN_ACCEPT_HOOKS=1` short-circuits the whole consent flow above**, including the bus path — the hook runs and the bus is never consulted, taking precedence even over an attached listener. This is the CI/automation escape hatch for environments where no operator is present to answer a prompt.
 
 **`has_active_listener` is re-checked on every dispatch, not cached (`#2095`).** Listeners attach and detach over a session's lifetime — a TUI mount, an A2A request window opening and closing — independently of when the `HookDispatcher` was constructed. Checking the listener state once at construction and caching the routing decision would let a later dispatch route a consent prompt to a listener that has since detached (a hang, or a silently dropped prompt) instead of correctly falling through to the non-interactive path (`REYN_ACCEPT_HOOKS` / fail-closed, or the `reyn run` stdin prompt on a TTY). The consent-bus wiring at this call site is byte-identical to the pre-`#2095` fallback matrix in every case EXCEPT that the routing decision (bus vs `None`) is now made per-dispatch against live listener state rather than frozen at construction — the per-dispatch check itself lives in the dispatcher, not at this construction site.
 
