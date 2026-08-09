@@ -264,11 +264,13 @@ def test_urllib_ssl_verify_false_emits_audit_event(monkeypatch: pytest.MonkeyPat
     from reyn._network import reset_ssl_verify_disabled_latch_for_tests
     from reyn._ssrf_pin import _build_ca_ssl_context
     from reyn.core.events.events import EventLog
+    from tests._support.events import collect_events
 
     reset_ssl_verify_disabled_latch_for_tests()
     events = EventLog()
+    collected = collect_events(events)
     _build_ca_ssl_context(events=events, egress="urllib_test")
-    matches = [e for e in events.all() if e.type == "network_ssl_verify_disabled"]
+    matches = [e for e in collected if e.type == "network_ssl_verify_disabled"]
     assert matches
     assert matches[0].data.get("egress") == "urllib_test"
     reset_ssl_verify_disabled_latch_for_tests()
@@ -388,18 +390,20 @@ def test_verify_false_emits_audit_event_once() -> None:
         reset_ssl_verify_disabled_latch_for_tests,
     )
     from reyn.core.events.events import EventLog
+    from tests._support.events import collect_events
 
     reset_ssl_verify_disabled_latch_for_tests()
     events = EventLog()
+    collected = collect_events(events)
     c1 = build_sync_http_client(verify=False, events=events, egress="test_once")
     c1.close()
-    after_first = [e for e in events.all() if e.type == "network_ssl_verify_disabled"]
+    after_first = [e for e in collected if e.type == "network_ssl_verify_disabled"]
     assert after_first, "expected one network_ssl_verify_disabled event after the first verify=False construction"
     assert after_first[0].data.get("egress") == "test_once"
 
     c2 = build_sync_http_client(verify=False, events=events, egress="test_once")
     c2.close()
-    after_second = [e for e in events.all() if e.type == "network_ssl_verify_disabled"]
+    after_second = [e for e in collected if e.type == "network_ssl_verify_disabled"]
     # Latched: the second verify=False construction for the SAME egress must not
     # add a second event — the audit trail stays exactly what it was.
     assert after_second == after_first
@@ -414,12 +418,14 @@ def test_verify_true_never_emits_the_audit_event() -> None:
         reset_ssl_verify_disabled_latch_for_tests,
     )
     from reyn.core.events.events import EventLog
+    from tests._support.events import collect_events
 
     reset_ssl_verify_disabled_latch_for_tests()
     events = EventLog()
+    collected = collect_events(events)
     c = build_sync_http_client(verify=True, events=events, egress="test_true")
     c.close()
-    assert not [e for e in events.all() if e.type == "network_ssl_verify_disabled"]
+    assert not [e for e in collected if e.type == "network_ssl_verify_disabled"]
 
 
 # ── structural gate: no raw httpx.Client/AsyncClient bypass ────────────────

@@ -312,6 +312,7 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
+    from tests._support.events import collect_events
 
     root, real = _pyenv_layout(tmp_path, "3.12.7")
     (tmp_path / ".python-version").write_text("3.12.7\n")
@@ -320,6 +321,7 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     monkeypatch.setenv("PATH", f"{root / 'shims'}:{os.environ.get('PATH', '')}")
 
     events = EventLog()
+    collected = collect_events(events)
     workspace = Workspace(events=events, base_dir=tmp_path)
     backend = _CapturingBackend()
     ctx = OpContext(
@@ -345,6 +347,6 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     # INVARIANT: the boundary was not weakened by the substitution
     assert backend.seen_deny_subprocess is True
 
-    started = [e for e in events.all() if e.type == "sandboxed_exec_started"]
+    started = [e for e in collected if e.type == "sandboxed_exec_started"]
     assert started and started[0].data.get("argv") == ["python3", "-c", "print(1)"]
     assert started[0].data.get("argv0_resolved") == str(real)

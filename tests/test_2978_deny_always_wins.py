@@ -185,8 +185,10 @@ async def test_narrowing_emits_audit_event_through_real_op_dispatch(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
+    from tests._support.events import collect_events
 
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events)
     secret = tmp_path / "secret"
     secret.write_text("x")
@@ -206,7 +208,7 @@ async def test_narrowing_emits_audit_event_through_real_op_dispatch(tmp_path):
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
 
-    narrowed = [e for e in events.all() if e.type == "sandbox_policy_narrowed"]
+    narrowed = [e for e in collected if e.type == "sandbox_policy_narrowed"]
     assert narrowed, "expected a sandbox_policy_narrowed audit-event when a deny wins"
     pairs = [p for e in narrowed for p in e.data["narrowed"]]
     assert {"write_path": str(tmp_path), "deny_path": str(secret)} in pairs
@@ -222,8 +224,10 @@ async def test_no_narrowing_no_audit_event(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
+    from tests._support.events import collect_events
 
     events = EventLog()
+    collected = collect_events(events)
     ws = Workspace(events=events)
     ctx = OpContext(
         workspace=ws,
@@ -238,4 +242,4 @@ async def test_no_narrowing_no_audit_event(tmp_path):
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
 
-    assert [e for e in events.all() if e.type == "sandbox_policy_narrowed"] == []
+    assert [e for e in collected if e.type == "sandbox_policy_narrowed"] == []
