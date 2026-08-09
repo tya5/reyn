@@ -278,6 +278,41 @@ attaches: still write the integration test for *whether reyn is using the
 dependency correctly* — that's the ✓ column above, not excluded by this
 rule.
 
+**The discriminator has three answers, not two.** "Delete" and "keep" are
+not the only outcomes — a test can fail the discriminator (the value it
+reads IS a third party's) while still protecting something real that
+belongs to reyn, because the assert is checking the wrong thing to say so.
+
+```
+assert tabs_bar.region.height == 2
+```
+
+The discriminator says third-party (Textual's own default Tabs height,
+not reyn's), and grepping reyn's layout code for the literal `2` finds
+nothing either — by the rule above, this looks like CONTRIVED. But a
+CSS comment next to the widget records a real incident (#3311): a
+`height: auto` was mistakenly added, expanding the tabs bar to the
+whole ~30-line TTY in production; `widget-state` assertions didn't
+catch it, which is why the test reads `Widget.region` directly. **Delete
+would remove a witness for a real regression reyn already had once.**
+
+The fix is neither delete nor keep as-is — **rewrite what it names**:
+
+```
+✗ "Textual's Tabs defaults to height 2"        — a third party's default
+✓ "reyn does not impose a height override on the tabs bar" — reyn's own
+  promise, anchored at #3311, and true regardless of what Textual's own
+  default happens to be
+```
+
+Reading a third party's value is not automatically CONTRIVED — the value
+being read and the contract being protected are different questions.
+Before deleting a test whose discriminator answer is "third-party," spend
+one look at what it was written to prevent (docstring, an adjacent
+comment, the anchor issue's body). If that was a reyn regression, the
+contract is reyn's; only the assert's current *shape* pins the wrong
+side of the boundary.
+
 ---
 
 ## Decision flow
