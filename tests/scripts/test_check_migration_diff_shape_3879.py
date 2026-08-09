@@ -19,6 +19,7 @@ from scripts.check_migration_diff_shape import (
     blob_at_head,
     diff_name_status,
     gate_is_active,
+    is_tests_copy,
     offending_lines,
 )
 
@@ -62,12 +63,20 @@ def test_pure_rename_is_clean(_repo: Path) -> None:
 def test_rewrite_disguised_as_a_move_is_caught(_repo: Path) -> None:
     """Tier 2: THE gate's whole reason to exist — owner's exact scenario.
     An agent told to "move" the file instead deletes the old one and writes
-    a new file at the destination with ONE extra line. `git diff -M100%`
-    reports this as separate A/D lines (verified: NOT a lower-similarity
-    Rxxx — confirmed directly in the module docstring's own measurement),
-    and the gate must ACTIVATE on this shape (no rename exists — only
-    `is_new_file_in_tests_subdir` catches it, per the #3885 review fix) and
-    flag both lines as offenders.
+    a new file at the destination with ONE extra line.
+
+    ★ The exact diff SHAPE this produces changed under #3909's own
+    falsify-verification, caught by this very test going red after that
+    change (not assumed from the design): with the ``-M100%``-only gate
+    (pre-#3909), this reported as separate ``A``/``D`` lines. Adding ``-C
+    --find-copies-harder`` (needed for #3909's copy-left-behind detection)
+    makes git's broadened similarity search classify this as a LOW-similarity
+    RENAME instead (``R075`` measured for this exact tiny fixture — the
+    percentage itself is not asserted below, since it is a function of file
+    size/content and would be a brittle pin; only that it is a non-100
+    rename line touching both paths). Either shape must still be rejected —
+    :func:`offending_lines` only ever allows similarity ``"100"``, so this
+    remains caught either way, just via a different line shape.
 
     ★ Checking activation explicitly, not just calling offending_lines()
     directly, closes a real gap this session's own falsify-verification
@@ -88,11 +97,14 @@ def test_rewrite_disguised_as_a_move_is_caught(_repo: Path) -> None:
         "ratchet caught before the fix"
     )
     offenders = offending_lines(lines, root=_repo)
-    assert "A\ttests/core/test_a.py" in offenders, (
-        f"the new (rewritten) file's A line was not flagged: {offenders!r}"
-    )
-    assert "D\ttests/test_a.py" in offenders, (
-        f"the deleted old file's D line was not flagged: {offenders!r}"
+    matching = [
+        line for line in offenders
+        if line.startswith("R") and not line.startswith("R100\t")
+        and "tests/test_a.py" in line and "tests/core/test_a.py" in line
+    ]
+    assert matching, (
+        f"no non-100-similarity rename line referencing both the old and "
+        f"new path was flagged as an offender: {offenders!r}"
     )
 
 
@@ -298,3 +310,196 @@ def test_blob_at_head_returns_none_for_a_missing_path(_repo: Path) -> None:
     only for an __init__.py-shaped A line, but the helper itself must not
     crash on a path that does not exist at HEAD."""
     assert blob_at_head("tests/does_not_exist/__init__.py", root=_repo) is None
+
+
+# ── #3909 — copy without deleting the original ──────────────────────────────
+# architect's measurement (issue #3879 comment 5229557446): a copy to the
+# destination that leaves the original file in place activated NEITHER prior
+# signal (no R100 rename — nothing was deleted for git to pair against; no
+# new-subdir-file+deletion pair either, by construction). Both this gate's
+# activation AND its rejection needed a third signal. Falsify-verified
+# directly against a real repo BEFORE writing these tests (not assumed from
+# the design): a real `cp` + `git add` (no `rm`) genuinely reports
+# `C100 <old> <new>` under `-C --find-copies-harder`, and a genuine unrelated
+# `git mv` in the SAME diff still reports plain `R100` — the two are not
+# confused with each other in a mixed batch (see module docstring).
+
+
+def test_copy_without_deleting_the_original_is_caught(_repo: Path) -> None:
+    """Tier 2: THE hole #3909 exists to close — copying the file to the
+    destination without deleting the original passed silently before this
+    fix (gate_is_active stayed False, offending_lines was never even
+    called)."""
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    (core / "test_a.py").write_text("line1\nline2\nline3\n", encoding="utf-8")
+    # Deliberately NOT `git mv` / no deletion of tests/test_a.py — the
+    # original stays, exactly the bug shape.
+    _commit_all(_repo, "copy without deleting the original")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert gate_is_active(lines), (
+        "a copy-without-delete did not activate the gate — the exact hole "
+        "#3909 exists to close"
+    )
+    offenders = offending_lines(lines, root=_repo)
+    assert any(line.startswith("C") for line in offenders), (
+        f"no C (copy) line was flagged as an offender: {offenders}"
+    )
+
+
+def test_is_tests_copy_requires_a_tests_path() -> None:
+    """Tier 2: non-vacuity — a copy entirely OUTSIDE tests/ is not this
+    gate's concern (mirrors the existing outside-tests exclusion for
+    renames). The SOURCE side specifically must be under tests/ — a copy
+    whose source is OUTSIDE tests/ (#3913's false-positive shape) does not
+    count, even though the DESTINATION is under tests/."""
+    assert is_tests_copy("C100\tscripts/old.py\tscripts/new.py") is False
+    assert is_tests_copy("C100\ttests/old.py\ttests/new.py") is True
+    assert is_tests_copy("C100\tsrc/reyn/data/pipelines/old.py\ttests/new.py") is False
+
+
+def test_is_tests_copy_excludes_init_py_destinations() -> None:
+    """Tier 2: #3913 — a C-status match landing on an __init__.py
+    destination is never a real activation signal, regardless of source.
+    An empty __init__.py is trivially "100% similar" to every OTHER empty
+    file in the tree, so -C --find-copies-harder can match a brand-new,
+    legitimate tests/<pkg>/__init__.py against some unrelated empty file
+    ANYWHERE (real repro: src/reyn/data/pipelines/__init__.py) — that
+    shape is already legitimately handled elsewhere (the empty-content
+    check), not by this activation signal."""
+    assert is_tests_copy("C100\tsrc/reyn/data/pipelines/__init__.py\ttests/runtime/__init__.py") is False
+    assert is_tests_copy("C100\ttests/other/__init__.py\ttests/runtime/__init__.py") is False
+
+
+def test_a_pure_copy_left_behind_scenario_alone_is_correctly_isolated(
+    _repo: Path,
+) -> None:
+    """Tier 2: lead-coder's required pre-check (a) — a mixed batch where
+    ONE file is a genuine `git mv` and a SEPARATE, content-DISTINCT file is
+    copied-without-deleting must flag only the copy, not the legitimate
+    move. Content must be genuinely distinct (not merely a second copy of
+    the same fixture) — falsify-verification found git's copy/rename
+    matcher picks ANY same-content deleted file as a source when multiple
+    candidates share content, which would confound this test if both
+    fixture files were identical."""
+    (_repo / "tests" / "test_b.py").write_text(
+        "distinct line one\ndistinct line two\ndistinct line three\n",
+        encoding="utf-8",
+    )
+    _commit_all(_repo, "add a second, content-distinct file")
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a_moved.py"],
+        cwd=_repo, check=True,
+    )
+    (core / "test_b_copy.py").write_text(
+        "distinct line one\ndistinct line two\ndistinct line three\n",
+        encoding="utf-8",
+    )
+    # tests/test_b.py is NOT deleted — the copy-left-behind half of this
+    # mixed batch.
+    _commit_all(_repo, "real move + separate copy-left-behind")
+
+    lines = diff_name_status("HEAD~2", root=_repo)
+    offenders = offending_lines(lines, root=_repo)
+    offender_text = "\n".join(offenders)
+    assert "test_a_moved.py" not in offender_text, (
+        f"the legitimate git-mv was wrongly flagged: {offenders}"
+    )
+    assert any("test_b_copy.py" in line for line in offenders), (
+        f"the copy-left-behind was not flagged: {offenders}"
+    )
+
+
+def test_a_new_package_init_py_matching_an_unrelated_empty_file_is_allowed(
+    _repo: Path,
+) -> None:
+    """Tier 2: #3913 — the REAL reproduction lead-coder ran against the
+    actual repo (issue #3879, PR #3913 review): a legitimate Stage-1
+    migration PR (a real git-mv rename, activating the gate) that ALSO
+    creates a brand-new tests/<pkg>/__init__.py must not be rejected just
+    because that empty __init__.py happens to -C-match some UNRELATED
+    empty file elsewhere in the tree. An unrelated empty file (mirroring
+    src/reyn/data/pipelines/__init__.py in the real repro) is added to the
+    fixture repo specifically so `-C --find-copies-harder` has a same-
+    content candidate to (wrongly, pre-fix) match against."""
+    (_repo / "unrelated").mkdir()
+    (_repo / "unrelated" / "__init__.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "add an unrelated empty __init__.py elsewhere in the tree")
+
+    # The migration PR's diff must be measured from THIS commit as base —
+    # the unrelated file needs to exist in the diff's BASE state (like
+    # src/reyn/data/pipelines/__init__.py already sitting on main before
+    # the real migration PR opened), not appear WITHIN the diffed range
+    # itself. Falsify-verified this distinction directly: diffing from two
+    # commits back (spanning both this commit and the next) made the
+    # unrelated file ALSO look newly-added within the diff, and git's
+    # copy matcher then reported plain `A` lines for both files instead of
+    # the real `C100` match — silently making this test vacuous. Confirmed
+    # against a real throwaway repo before fixing.
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=_repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a.py"],
+        cwd=_repo, check=True,
+    )
+    (core / "__init__.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "real move + new package __init__.py")
+
+    lines = diff_name_status(base, root=_repo)
+    assert gate_is_active(lines), "the real git-mv rename should activate the gate"
+    offenders = offending_lines(lines, root=_repo)
+    assert offenders == [], (
+        f"a legitimate new empty __init__.py, C-matched against an "
+        f"unrelated empty file, was wrongly flagged: {offenders}"
+    )
+
+
+def test_a_new_test_plus_new_init_py_still_leaves_the_gate_inactive(
+    _repo: Path,
+) -> None:
+    """Tier 2: lead-coder's required pre-check (b) — the #3885 deadlock
+    scenario (a brand-new test file + a brand-new empty __init__.py, no
+    deletion) must STILL leave the gate inactive after #3909's fix.
+
+    ★ Corrected in review (lead-coder, #3913 follow-up): the first version
+    of this fixture had NO pre-existing empty file anywhere in the tree, so
+    the new __init__.py had no possible C-match candidate at all — it
+    always fell back to a plain `A` line REGARDLESS of whether #3913's
+    fix (condition ②: dest is not `__init__.py`) was present or stripped,
+    the same "docstring claims a witness the fixture doesn't actually
+    exercise" gap this PR's own reproduction fixture
+    (``test_a_new_package_init_py_matching_an_unrelated_empty_file_is_allowed``)
+    is built specifically to catch. Verified directly (a throwaway repo,
+    not assumed): with no pre-existing empty file, this exact scenario's
+    diff reports `A tests/newpkg/__init__.py` / `A tests/newpkg/test_new.py`
+    — never a `C` line — so condition ② was never exercised here. Fixed by
+    adding a pre-existing empty file to the fixture (mirroring lead-coder's
+    own real-repo reproduction 1:1), which DOES give the new __init__.py a
+    same-content match, making this test a genuine test of condition ②
+    rather than a vacuous one."""
+    (_repo / "unrelated_elsewhere.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "add a pre-existing empty file elsewhere in the tree")
+
+    newpkg = _repo / "tests" / "newpkg"
+    newpkg.mkdir()
+    (newpkg / "test_new.py").write_text(
+        "brand new content shared with nothing else in the tree\n",
+        encoding="utf-8",
+    )
+    (newpkg / "__init__.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "new test file + new empty __init__.py, both genuinely new")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert not gate_is_active(lines), (
+        "a genuinely new test file + new __init__.py, with a pre-existing "
+        "empty file elsewhere as a possible C-match candidate, incorrectly "
+        "activated the gate after #3909/#3913's fix"
+    )

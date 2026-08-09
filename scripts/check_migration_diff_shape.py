@@ -78,9 +78,36 @@ the gate meant to guard against exactly that shape.
   this — not re-forbidden here).
 
 Everything else UNDER ``tests/`` (or the baseline file) — any other
-``A``/``M``/``D``, or a rename below 100% similarity — fails the gate. A
-change entirely OUTSIDE ``tests/`` and not the baseline is left alone (not
-this gate's concern, whatever else may check it).
+``A``/``M``/``D``, a rename below 100% similarity (which, with ``-C
+--find-copies-harder`` added for #3909, is what a rewrite-disguised-as-a-move
+now reports as — ``R099``, not the plain ``A``/``D`` pair an ``-M100%``-only
+diff would show — still rejected the same way, only similarity ``"100"`` is
+ever allowed), or any ``C`` (copy) line — fails the gate. A change entirely
+OUTSIDE ``tests/`` and not the baseline is left alone (not this gate's
+concern, whatever else may check it).
+
+## #3909 — the hole this gate had: copy without deleting the original
+
+architect measured three real diff shapes against the ``-M100%``-only
+version of this gate (issue #3879 comment 5229557446): a proper
+``git mv`` passes, a rewrite-with-the-original-deleted is caught (the ``A``
++ ``D`` pair), but a rewrite that COPIES to the destination and leaves the
+original in place passes silently — nothing was deleted for either
+activation signal to react to, so ``gate_is_active`` stayed ``False`` and
+the copy was never even evaluated. The failure shape is the worst kind:
+the same test content exists at two paths, both green, and nothing says
+which one is canonical.
+
+A "total ``tests/`` ``.py`` count is unchanged" gate — the first shape
+considered — was rejected: it also fires on the single most common
+operation in this repo, adding an ordinary new test (issue #3909 body has
+the measured table). The chosen fix instead detects the property that
+actually distinguishes a copy-left-behind from an ordinary new test: git's
+own ``-C --find-copies-harder`` already computes "this new file's content
+matches an existing file elsewhere in the tree" — an ordinary new test
+shares no content with anything, so it never gets a ``C`` line; a
+copy-left-behind always does. See :func:`is_tests_copy` and
+:func:`gate_is_active`'s third signal.
 
 ## Lifespan — this gate is temporary, unlike Stage 0's ratchet
 
@@ -106,13 +133,29 @@ _INIT_SUFFIX = "__init__.py"
 
 
 def diff_name_status(base: str, root: Path = _ROOT) -> "list[str]":
-    """Raw ``git diff -M100% --name-status <base>...HEAD`` lines.
+    """Raw ``git diff -M100% -C --find-copies-harder --name-status
+    <base>...HEAD`` lines.
 
-    Three-dot (``base...HEAD``, merge-base diff) — the same comparison
-    GitHub's own PR diff view uses, so this gate agrees with what a reviewer
-    actually sees, not with whatever line HEAD happens to have crossed."""
+    ``-C --find-copies-harder`` (added for #3909) does not change how ``①``
+    a proper move or ``②`` a rewrite-disguised-as-a-move are classified —
+    verified directly (a real throwaway repo, not assumed): a pure
+    ``git mv`` still reports plain ``R100``, and a 1-line-appended "rewrite
+    disguised as a move, original deleted" still reports as a rename
+    (``R099``, not the ``-M100%``-only run's ``A``/``D`` pair — a real
+    behavior shift, but harmless: ``offending_lines`` only ever allowed
+    ``similarity == "100"``, so an ``R099`` line still falls through to
+    "offender" exactly as its old ``A``/``D`` shape did). What ``-C`` adds
+    is detecting ``③`` — a copy that leaves the ORIGINAL file in place
+    (``C100  <old>  <new>``), invisible to ``-M100%`` alone since nothing
+    was deleted for it to pair against. Three-dot (``base...HEAD``,
+    merge-base diff) — the same comparison GitHub's own PR diff view uses,
+    so this gate agrees with what a reviewer actually sees, not with
+    whatever line HEAD happens to have crossed."""
     proc = subprocess.run(
-        ["git", "diff", "-M100%", "--name-status", f"{base}...HEAD"],
+        [
+            "git", "diff", "-M100%", "-C", "--find-copies-harder",
+            "--name-status", f"{base}...HEAD",
+        ],
         cwd=root, capture_output=True, text=True, check=True,
     )
     return [line for line in proc.stdout.splitlines() if line]
@@ -131,14 +174,28 @@ def blob_at_head(path: str, root: Path = _ROOT) -> "bytes | None":
 
 
 def is_tests_rename(line: str) -> bool:
-    """Whether *line* is a pure (R100) rename whose NEW path lands under
-    ``tests/`` — one of the two activation signals for the whole gate (see
-    :func:`gate_is_active`)."""
+    """Whether *line* is ANY rename (any similarity — not just R100) whose
+    NEW path lands under ``tests/`` — one of the activation signals for the
+    whole gate (see :func:`gate_is_active`).
+
+    ★ Widened from "R100 only" to "any similarity" during #3909's own
+    falsify-verification: adding ``-C --find-copies-harder`` to
+    :func:`diff_name_status` (needed to detect #3909's copy-left-behind
+    hole) has a side effect nobody predicted from the design alone — git's
+    broadened similarity search now classifies a rewrite-disguised-as-move
+    (one appended line, original deleted) as a LOW-similarity rename
+    (``R075`` in one measured case), not the ``A``/``D`` pair the
+    ``-M100%``-only gate used to see. An activation check requiring
+    ``similarity == "100"`` never sees that line at all — a genuine
+    regression this test file's own falsify-verification caught (a
+    pre-existing test started failing after #3909's diff-command change,
+    not a hypothetical). Activation only needs to know "a rename touched
+    tests/" — whether it's ALLOWED (only similarity ``"100"`` is) remains
+    :func:`offending_lines`'s job, unaffected by this widening."""
     parts = line.split("\t")
     if not parts[0].startswith("R"):
         return False
-    similarity = parts[0][1:]
-    return similarity == "100" and len(parts) == 3 and parts[2].startswith("tests/")
+    return len(parts) == 3 and parts[2].startswith("tests/")
 
 
 def is_new_file_in_tests_subdir(line: str) -> bool:
@@ -163,6 +220,48 @@ def is_new_file_in_tests_subdir(line: str) -> bool:
     return path.count("/") >= 2 and path.startswith("tests/")
 
 
+def is_tests_copy(line: str) -> bool:
+    """Whether *line* is a ``C`` (copy) status line touching ``tests/`` on
+    either side — the third activation signal, for #3909's remaining hole:
+    "copy the file to the destination, but forget to delete the original"
+    passes ``is_tests_rename`` (no ``R`` line — nothing was deleted for git
+    to pair against) AND ``is_new_file_in_tests_subdir`` + ``is_tests_deletion``
+    together (no ``D`` line either, by construction — that's the whole bug).
+    Verified directly (real throwaway repo): with ``-C --find-copies-harder``
+    added to :func:`diff_name_status`, this exact scenario reports as
+    ``C100  <old>  <new>``, and a genuine, unrelated ``git mv`` elsewhere in
+    the SAME diff still reports plain ``R100`` — the two are not confused
+    with each other in a mixed batch.
+
+    ★ Corrected in review (lead-coder, reproduced against the REAL repo, not
+    a design read — see PR #3913): the first version matched ``C`` on
+    EITHER side (``parts[1] OR parts[2]``) and didn't exclude
+    ``__init__.py``. A brand-new, EMPTY ``tests/<pkg>/__init__.py`` — the
+    exact shape a legitimate Stage-1 migration PR creates for every new
+    destination package — is trivially "100% similar" to every OTHER
+    empty ``__init__.py`` anywhere in the tree (empty files are all
+    byte-identical to each other), so ``-C --find-copies-harder`` matched
+    it against some UNRELATED empty ``__init__.py`` elsewhere (e.g.
+    ``src/reyn/data/pipelines/__init__.py``) and reported ``C100`` — this
+    gate rejecting its own legitimate migration operation, the same shape
+    #3885 already had to fix once. Two conditions now required together:
+
+    - the SOURCE (old) path specifically must be under ``tests/`` — a
+      match whose source is OUTSIDE ``tests/`` (an unrelated empty file
+      elsewhere in the repo) is not a real "copied from a tests/ file"
+      scenario, just an empty-content coincidence.
+    - the destination is NOT an ``__init__.py`` — that shape is already
+      legitimately handled by :func:`offending_lines`'s own empty-content
+      check (:data:`_INIT_SUFFIX`), which is unaffected by this change."""
+    parts = line.split("\t")
+    if not parts[0].startswith("C") or len(parts) != 3:
+        return False
+    old_path, new_path = parts[1], parts[2]
+    if new_path.endswith("/" + _INIT_SUFFIX) or new_path == _INIT_SUFFIX:
+        return False
+    return old_path.startswith("tests/")
+
+
 def is_tests_deletion(line: str) -> bool:
     """Whether *line* deletes a ``.py`` file somewhere under ``tests/`` —
     paired with :func:`is_new_file_in_tests_subdir` to distinguish "a file
@@ -179,9 +278,12 @@ def gate_is_active(lines: "list[str]") -> bool:
     review correction: a self-declared signal is exactly the
     declaration-vs-reality gap this whole audit exists to close — Tier
     labels, "falsify done" claims, hand-edited baselines, all the same
-    shape). Two signals, either one activates:
+    shape). Three signals, any one activates:
 
-    - :func:`is_tests_rename` — a pure R100 rename under ``tests/``.
+    - :func:`is_tests_rename` — ANY rename (R100 or a lower-similarity
+      inexact rename) under ``tests/`` — only pure R100 is ALLOWED, but any
+      similarity ACTIVATES the gate (widened for #3909, see the function's
+      own docstring).
     - :func:`is_new_file_in_tests_subdir` **AND** :func:`is_tests_deletion`
       TOGETHER — a brand-new ``.py`` appearing in a ``tests/`` subdirectory
       while a ``.py`` disappears from somewhere under ``tests/``, which is
@@ -198,6 +300,17 @@ def gate_is_active(lines: "list[str]") -> bool:
       "appeared AND something disappeared" can — the same shape the
       R100-rename signal already captures for the simple case, generalized
       to the fully-rewritten one.
+    - :func:`is_tests_copy` — a ``C`` status line under ``tests/`` (#3909):
+      the file was COPIED to the destination but the ORIGINAL was never
+      deleted. This needs no AND-partner the way the subdir-file signal
+      does — a copy that keeps the original cannot masquerade as an
+      ordinary new-test-addition PR the way a bare "new file appeared"
+      can, because ``git`` itself already found a same-content SOURCE
+      file elsewhere in the tree (an ordinary new test, by construction,
+      shares no content with anything else — see #3909's issue body for
+      why a "total .py count is unchanged" invariant was considered and
+      rejected: it would also reject the single most common operation in
+      this repo, adding an ordinary new test).
 
     No signal anywhere → this PR isn't touching tests/'s Stage-1 migration
     at all, whatever it claims to be, and an ordinary Q3/Q4 assert-repair PR
@@ -206,7 +319,8 @@ def gate_is_active(lines: "list[str]") -> bool:
     has_rename = any(is_tests_rename(line) for line in lines)
     has_new_subdir_file = any(is_new_file_in_tests_subdir(line) for line in lines)
     has_deletion = any(is_tests_deletion(line) for line in lines)
-    return has_rename or (has_new_subdir_file and has_deletion)
+    has_copy = any(is_tests_copy(line) for line in lines)
+    return has_rename or (has_new_subdir_file and has_deletion) or has_copy
 
 
 def _in_scope(line: str) -> bool:
@@ -254,6 +368,24 @@ def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
             continue
 
         if status == "M" and len(parts) == 2 and parts[1] in _ALLOWED_MODIFIED_PATHS:
+            continue
+
+        if status.startswith("C") and len(parts) == 3:
+            # A `C` (copy) match onto an EMPTY __init__.py is the same
+            # false-positive :func:`is_tests_copy` excludes from
+            # activation (#3913): an empty new __init__.py is trivially
+            # "100% similar" to every OTHER empty file anywhere in the
+            # tree, so -C --find-copies-harder can match it against an
+            # unrelated empty file even when a REAL rename elsewhere in
+            # the same diff already activated the gate. Same allowance as
+            # the `A`-status empty-__init__.py case above, content
+            # verified the same way — not just the path.
+            new_path = parts[2]
+            if new_path.endswith("/" + _INIT_SUFFIX) or new_path == _INIT_SUFFIX:
+                content = blob_at_head(new_path, root)
+                if content == b"":
+                    continue
+            offenders.append(line)
             continue
 
         offenders.append(line)
