@@ -97,8 +97,8 @@ def register(sub) -> None:
         default=False,
         dest="grant_file_write",
         help=(
-            "agent に file.read/write を resolver 層で許可 "
-            "(sandbox write_paths ∩ env-backend repo zone で bound)。"
+            "agent に file.read/write を resolver 層で許可。"
+            "file.write は zone root にスコープされる(#3925)。"
             " headless/scripted SWE で repo を編集させる場合に有効化 "
             "(`reyn chat --grant-file-write` と同等)。"
         ),

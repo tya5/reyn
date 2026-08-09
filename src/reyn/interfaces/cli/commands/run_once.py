@@ -45,8 +45,8 @@ def register(sub) -> None:
         default=False,
         help=(
             "Grant file.read+file.write at the resolver layer (the non-interactive "
-            "agent edits its working tree without a prompt; bounded by the sandbox "
-            "write-paths ∩). Same as `reyn chat --grant-file-write`."
+            "agent edits its working tree without a prompt), file.write scoped to "
+            "the zone root (#3925). Same as `reyn chat --grant-file-write`."
         ),
     )
     p.add_argument(
