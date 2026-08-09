@@ -17,6 +17,7 @@ import pytest
 from reyn.config.loader import load_hot_reload_config
 from reyn.core.events.events import EventLog
 from reyn.runtime.hot_reload import HotReloader
+from tests._support.events import collect_events
 
 # ── SAFETY: the IN-set boundary (the OUT-set is never read) ──────────────────
 
@@ -54,10 +55,11 @@ async def test_nothing_pending_is_noop(tmp_path: Path) -> None:
     """Tier 2: apply_pending with no scheduled reload returns None + emits nothing
     (zero-overhead happy path)."""
     events = EventLog()
+    collected = collect_events(events)
     hr = HotReloader(project_root=tmp_path, events=events)
     assert hr.pending is False
     assert await hr.apply_pending() is None
-    assert [e.type for e in events.all()] == []
+    assert [e.type for e in collected] == []
 
 
 @pytest.mark.asyncio
@@ -65,6 +67,7 @@ async def test_request_then_apply_emits_event_and_clears(tmp_path: Path) -> None
     """Tier 2: request_reload schedules; apply_pending re-reads the IN-set, emits the
     config_reloaded P6 event (review-focus b), and clears pending."""
     events = EventLog()
+    collected = collect_events(events)
     hr = HotReloader(project_root=tmp_path, events=events)
     hr.request_reload(source="operator")
     assert hr.pending is True
@@ -73,7 +76,7 @@ async def test_request_then_apply_emits_event_and_clears(tmp_path: Path) -> None
     assert summary is not None and summary["source"] == "operator"
     assert hr.pending is False
     reloaded_sources = [
-        e.data["source"] for e in events.all() if e.type == "config_reloaded"
+        e.data["source"] for e in collected if e.type == "config_reloaded"
     ]
     assert reloaded_sources == ["operator"]  # exactly one reload, by the operator
 
@@ -83,6 +86,7 @@ async def test_idempotent_within_turn(tmp_path: Path) -> None:
     """Tier 2: multiple requests before a boundary collapse into ONE apply (1 turn =
     1 config snapshot); the last source wins."""
     events = EventLog()
+    collected = collect_events(events)
     hr = HotReloader(project_root=tmp_path, events=events)
     hr.request_reload(source="a")
     hr.request_reload(source="b")
@@ -91,7 +95,7 @@ async def test_idempotent_within_turn(tmp_path: Path) -> None:
     assert await hr.apply_pending() is None  # only one apply
     # collapsed into a single apply (one event), last source wins
     assert [
-        e.data["source"] for e in events.all() if e.type == "config_reloaded"
+        e.data["source"] for e in collected if e.type == "config_reloaded"
     ] == ["b"]
 
 
