@@ -20,8 +20,8 @@ from pathlib import Path
 
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import catalog_entries
+from tests._support.paths import REPO_ROOT
 
-REPO_ROOT = Path(__file__).parent.parent.parent
 BUILTIN_DIR = REPO_ROOT / "src" / "reyn" / "builtin"
 
 
