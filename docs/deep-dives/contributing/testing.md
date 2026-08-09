@@ -581,24 +581,31 @@ ever run the production code it claims to falsify? A genuine instance that
 never calls the real method under test fails that bar exactly like a mock
 does, for an unrelated reason a mock's own ban never named.
 
-**Why this is the natural landing spot for question ③ above.** The old
-phrasing — "would it stay green with the mechanism dead?" — asks you to
-imagine a dead mechanism, which you can always construct *inside the test
-itself*. Once you've built one there, the test can assert against it
-forever without ever touching the real code path. The rephrased question —
-name the production `file:line` and show the RED you actually watched it
-produce — cannot be answered by a stub, because a stub is not a production
-line. The honest answer to the new question has nowhere to live but the PR
-body (a file:line plus an observed RED is not a docstring assertion), which
-is also where `#3910`'s own writeup already put it — the fix here is making
-that the question's natural landing spot, not the exception the previous
-phrasing needed hunting down.
+**Why "would it stay green with the mechanism dead?" invited this.** That
+phrasing asks you to imagine a dead mechanism, and imagining one is
+something you can always do *inside the test itself* — build a stub, break
+one branch by hand, assert the stub does what you just wrote it to do. The
+question CLAUDE.md's six questions now asks instead — **who would miss
+this test if it were gone?** — cannot be answered by imagining anything: a
+stub or a hand-assembled collaborator list is a configuration only the
+test itself builds, so the honest answer to "who relies on this" is
+nobody. Owner's framing (2026-08-09): a test review should not ask
+questions execution already answers for free — "does this assert
+currently fire" is exactly that, which is what made the file:line/RED
+phrasing tried here first the wrong fix too: it still asked about
+*execution*, only moved the record of it from the test to the PR body.
+"Who would miss it" asks about *existence*, which review — not
+execution — is the only thing that can answer.
 
-**The alternative**: strip the real mechanism (comment it out, invert the
-real condition, delete the real branch), run the test, watch it go RED,
-restore the mechanism, and record the file:line plus what you saw in the
-PR body. That's the only thing that actually witnesses the mechanism is
-load-bearing — no construction inside the test can substitute for it.
+**The conclusion, once you can name the shape: delete the test.** A test
+whose only defensible witness is its own hand-built double is not a test
+of the mechanism it claims to falsify — it is a test of the double, and
+the double is not load-bearing to anyone. There is no version of this
+shape worth keeping "if only it ran the real strip" — a strip-falsify that
+actually exercises the mechanism does not need this shape at all (see
+[the prerequisite every tier shares](#the-prerequisite-every-tier-shares):
+a claim needs an anchor outside the test, and a stub the test built for
+itself is not one).
 
 ### When a Fake is justified — and what it requires
 
