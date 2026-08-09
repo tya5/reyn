@@ -167,13 +167,13 @@ def _write_reyn_yaml(tmp_path: Path, *, permissions: dict | None = None) -> None
         for key, value in permissions.items():
             lines.append(f'  "{key}": {value!r}' if isinstance(value, str) else f'  "{key}": {value}')
     (tmp_path / "reyn.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    # deps._load_config / _get_project_root are process-global lru_caches
-    # (unlike the holder, which cli_scoped_overrides resets on its own) — a
-    # reyn.yaml rewrite mid-test is invisible to _get_perm_resolver() unless
-    # these are cleared too, the same class of staleness this test module's
-    # own R1 section exists to avoid.
-    deps._load_config.cache_clear()
-    deps._get_project_root.cache_clear()
+    # #3974: deps._load_config / _get_project_root are process-global
+    # lru_caches — set_cli_scoped_overrides / cli_scoped_overrides now
+    # clear them as part of "reset" (previously only perm_resolver/registry
+    # were reset, which is the exact staleness this test module's R1
+    # section originally worked around with its own manual cache_clear()
+    # calls here). No manual clear needed anymore: _web_can_write's own
+    # cli_scoped_overrides(...) entry clears the caches for us.
 
 
 async def _web_can_write(target: str, sandbox: "SandboxPolicy", *, ws) -> bool:
