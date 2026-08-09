@@ -404,6 +404,23 @@ These rules then keep multi-session work coherent:
    to add it as `- [ ] 🔴 <point>` (append, don't remove the author's own
    items) and does not merge while it's unchecked; the author checks it off
    once addressed, in the same PR body, with the fixing commit noted.
+8. **A PR touching `tests/` does not self-merge until a reviewer's
+   TESTS-READ note lands on the PR.** "A lead-coder merge train refuses
+   any PR touching `tests/` without one" (Test review, above) describes
+   what *that train's own script* does — it is not a rule that reaches a
+   session merging directly. `#3916` (75 files, 31 under `tests/`) merged
+   with no TESTS-READ ever posted: not blocked, not late — the gate
+   the sentence implied was never wired to that path at all, the same
+   declared-vs-actual gap this file has been naming all session, this
+   time in its own PR-workflow section. The content was sound (confirmed
+   post-hoc) and the author was not at fault — "resume" was said without
+   the caveat that merge still waits on TESTS-READ, an omission on the
+   reviewer's side, not a violation on the implementer's. No CI gate: a
+   check for "a comment containing a fixed string exists" makes passing
+   the check the goal (an empty TESTS-READ satisfies it) — the same shape
+   already closed elsewhere in this file. A doc line is the proportionate
+   fix; only a human reading the PR before merging can tell a real
+   TESTS-READ from an empty one.
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
