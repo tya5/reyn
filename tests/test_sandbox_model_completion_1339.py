@@ -169,9 +169,9 @@ def test_chat_session_factory_resolves_concrete_policy(tmp_path):
 def test_router_adapter_factory_resolves_concrete_policy():
     """Tier 2: #1339 reproduce-first —the RouterHostAdapter router OpContext also
     carries a concrete default_sandbox_policy (wire-full-path — both factories)."""
-    from test_router_host_adapter_invariants import _make_adapter
+    from tests._support.router_host_adapter import make_adapter
 
-    adapter = _make_adapter()
+    adapter = make_adapter()
     pol = adapter.make_router_op_context().default_sandbox_policy
     assert pol is not None
     assert pol["network"] is DEFAULT_SANDBOX_NETWORK

@@ -48,11 +48,6 @@ policy.
 from __future__ import annotations
 
 import pytest
-from test_textual_chat_phase4_right_gutter_3283 import (  # noqa: E402 — sibling test module
-    QueueTransport,
-    _started,
-    _WidthRecordingPresenter,
-)
 from textual.app import App
 from textual.screen import Screen
 from textual.widgets import OptionList, TextArea
@@ -73,6 +68,15 @@ from reyn.interfaces.inline.textual_chat.completion import CompletionPopup
 from reyn.interfaces.inline.textual_chat.gutter import RIGHT_GUTTER_WIDTH
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
+from tests._support.textual_chat_test_helpers import (  # noqa: E402
+    QueueTransport,
+)
+from tests._support.textual_chat_test_helpers import (
+    WidthRecordingPresenter as _WidthRecordingPresenter,
+)
+from tests._support.textual_chat_test_helpers import (
+    started as _started,
+)
 
 #: The two keys under test, and the action each is expected to run.
 LEFT_KEY = "ctrl+g"

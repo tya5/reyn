@@ -24,7 +24,6 @@ import io
 import pytest
 from rich.console import Console
 from rich.text import Text
-from test_textual_chat_phase4_right_gutter_3283 import QueueTransport
 
 from reyn.config.chat import ChatConfig, _build_chat_config
 from reyn.config.root import ReynConfig
@@ -40,6 +39,7 @@ from reyn.interfaces.repl.renderer import (
     format_inline_message,
 )
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.textual_chat_test_helpers import QueueTransport
 
 _RAW_ESC = "\x1bdanger\x1b[31m"  # a bare ESC + a CSI (color) sequence
 

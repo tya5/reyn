@@ -74,11 +74,20 @@ from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
 
-
-def _started(op_id: str, tool: str = "grep") -> OutboxMessage:
-    return OutboxMessage(
-        kind="tool_call_started", text=tool, meta={"tool": tool, "op_id": op_id, "args": {}}
-    )
+# #3879 M4-0: QueueTransport / _started / _WidthRecordingPresenter moved to
+# tests/_support/textual_chat_test_helpers.py (byte-identical) — other test
+# modules import them from here, which the Stage-1 migration gate cannot
+# tolerate once this file moves. Aliased back to the original module-local
+# names so everything below is unchanged.
+from tests._support.textual_chat_test_helpers import (  # noqa: E402
+    QueueTransport,
+)
+from tests._support.textual_chat_test_helpers import (
+    WidthRecordingPresenter as _WidthRecordingPresenter,
+)
+from tests._support.textual_chat_test_helpers import (
+    started as _started,
+)
 
 
 def _completed(op_id: str, tool: str = "grep") -> OutboxMessage:
