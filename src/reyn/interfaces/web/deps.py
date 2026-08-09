@@ -217,14 +217,41 @@ class CliScopedOverrides:
 _cli_scoped: "CliScopedOverrides | None" = None
 
 
+def _clear_module_lru_caches() -> None:
+    """Clear every ``@lru_cache``d module-level singleton in this module —
+    enumerated (``dir(module)`` + ``hasattr(..., "cache_clear")``), never
+    hand-named (#3974: the defect this fixes was exactly a hand-named reset
+    silently drifting out of sync with the caches that actually needed
+    clearing — ``_load_config``/``_get_project_root`` were added after
+    ``set_cli_scoped_overrides`` already existed, and nothing forced the
+    two to stay in sync). A future ``@lru_cache`` added to this module is
+    covered automatically; the reset never needs a second edit."""
+    import sys
+    module = sys.modules[__name__]
+    for name in dir(module):
+        member = getattr(module, name, None)
+        cache_clear = getattr(member, "cache_clear", None)
+        if callable(cache_clear):
+            cache_clear()
+
+
 def set_cli_scoped_overrides(overrides: "CliScopedOverrides | None") -> None:
     """Set/clear the CLI-scoped overrides. `reyn web` run() calls this ONCE
-    before uvicorn.run (no-reload). Resetting the cached lazy singletons here
-    keeps the next perm-resolver / registry build pick the new overrides up."""
+    before uvicorn.run (no-reload). Resets EVERY cached lazy singleton in
+    this module (#3974) — not just perm_resolver/registry — so "reset"
+    means what it says: the next read of anything this module caches
+    (config, project root, perm resolver, registry) reflects the current
+    on-disk state, not a stale value from before the reset. Production
+    impact is a no-op either way (nothing is cached yet at `reyn web`
+    startup, the only non-test caller); test isolation is the actual
+    beneficiary — a test no longer needs its own ad-hoc
+    ``deps._load_config.cache_clear()`` call to see a ``reyn.yaml`` it just
+    rewrote."""
     global _cli_scoped, _perm_resolver, _registry
     _cli_scoped = overrides
     _perm_resolver = None
     _registry = None
+    _clear_module_lru_caches()
 
 
 def get_cli_scoped_overrides() -> "CliScopedOverrides":
@@ -234,7 +261,11 @@ def get_cli_scoped_overrides() -> "CliScopedOverrides":
 @contextmanager
 def cli_scoped_overrides(overrides: "CliScopedOverrides"):
     """Test isolation: apply the overrides for the block, restore after
-    (incl. the cached perm-resolver / registry singletons)."""
+    (incl. the cached perm-resolver / registry / config / project-root
+    singletons — #3974: the restore-on-exit path gets the SAME reset
+    ``set_cli_scoped_overrides`` applies on enter, so a config change made
+    INSIDE the block doesn't leak its cached read to whatever runs after
+    this block exits)."""
     global _cli_scoped, _perm_resolver, _registry
     prev = (_cli_scoped, _perm_resolver, _registry)
     set_cli_scoped_overrides(overrides)
@@ -242,6 +273,7 @@ def cli_scoped_overrides(overrides: "CliScopedOverrides"):
         yield
     finally:
         _cli_scoped, _perm_resolver, _registry = prev
+        _clear_module_lru_caches()
 
 
 # ---------------------------------------------------------------------------
