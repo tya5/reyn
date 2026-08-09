@@ -22,11 +22,11 @@ did or didn't mean to expose. **Protecting a credential from a sandboxed
 command is your responsibility, exercised at the point you write the
 command** — not something the sandbox does for you underneath.
 
-## Network is already open by default
+## Network and environment variables are both open by default
 
 `network` in `sandbox.policy` defaults to `true` (owner decision,
-2026-06-05) — a sandboxed child process can already reach the network the
-same way your own shell can, unless you set `network: false` for it:
+2026-06-05) — a sandboxed child process can reach the network the same
+way your own shell can, unless you set `network: false` for it:
 
 ```yaml
 sandbox:
@@ -34,22 +34,23 @@ sandbox:
     network: false
 ```
 
-## Environment variables are currently a curated allowlist — and that's changing
+A sandboxed command's environment is, by the same posture, your shell's
+full environment — not a curated subset. There is no allowlist to opt
+into: every variable your shell has set is visible to the command unless
+you explicitly deny specific names via `env_deny_names`
+(`#3901` PR-B ④ — the whole environment passes through by default, same
+trust level as the launching shell):
 
-Today, a sandboxed command's environment carries only `sandbox.policy`'s
-declared `env_passthrough` entries plus a small curated set of non-secret
-proxy/CA variables — not your shell's full environment. A command reading
-`OPENAI_API_KEY` or a similar credential var does **not** see it by
-default today, unless you've explicitly added that name to
-`env_passthrough`.
+```yaml
+sandbox:
+  policy:
+    env_deny_names:
+      - OPENAI_API_KEY
+```
 
-**This default is planned to change** (design settled in `#3901`): the
-env axis is moving to the same opt-out posture `network` already has —
-passed through unless you explicitly deny it. Once that ships, the same
-shell-level trust this page asks for on network already applies to
-environment variables too, with no further warning at the point it
-happens. Write commands today as if that's already the case, so the
-change doesn't catch you by surprise.
+Both defaults follow the same design choice this page opened with:
+reyn's sandbox re-decides nothing the launching shell could already do,
+unless you tell it to.
 
 ## The command's stdout becomes the agent's context
 
