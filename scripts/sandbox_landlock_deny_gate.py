@@ -111,9 +111,9 @@ _DENY_ARMS = ("write", "spawn", "network")
 
 _ARM_DESCRIPTION = {
     "write": "a write outside write_paths is REFUSED (Landlock's filesystem boundary)",
-    "spawn": "a fork under allow_subprocess=False is REFUSED (the seccomp filter loaded)",
+    "spawn": "a fork under deny_subprocess=True is REFUSED (the seccomp filter loaded)",
     "network": (
-        "under network=False, allow_subprocess=True: connect() is REFUSED, a "
+        "under network=False, deny_subprocess=False: connect() is REFUSED, a "
         "connected-socketpair self-pipe (NULL-addr sendto/recvfrom) SURVIVES, "
         "and an ADDRESSED sendto (real UDP egress) is REFUSED "
         "(#3030: the seccomp filter used to be skipped entirely in this exact "
