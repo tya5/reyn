@@ -1,0 +1,86 @@
+[
+  {
+    "transport": "stdio",
+    "server": "tests/_support/mcp_fastmcp_echo_server.py",
+    "dep_version": "fastmcp 3.4.2, mcp-sdk 1.26.0",
+    "negotiated": "2025-11-25",
+    "lifecycle": "legacy-initialize",
+    "advertised": [
+      "logging",
+      "prompts",
+      "resources",
+      "tools"
+    ],
+    "implemented": {
+      "tools": "ok",
+      "resources": "ok",
+      "prompts": "ok",
+      "logging": "not_measurable",
+      "completions": "not_measurable"
+    },
+    "reyn_feature": {
+      "progress": "ok",
+      "elicitation": "not_measurable",
+      "subscription": "error:MCPCapabilityError",
+      "reconnect": "ok"
+    },
+    "teardown": "clean",
+    "notes": "logging: MCPClient has no representative public call for this capability (architect #3698 design \u00a73); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect)"
+  },
+  {
+    "transport": "http",
+    "server": "tests/_support/mcp_fastmcp_echo_server.py",
+    "dep_version": "fastmcp 3.4.2, mcp-sdk 1.26.0",
+    "negotiated": "2025-11-25",
+    "lifecycle": "legacy-initialize",
+    "advertised": [
+      "logging",
+      "prompts",
+      "resources",
+      "tools"
+    ],
+    "implemented": {
+      "tools": "ok",
+      "resources": "ok",
+      "prompts": "ok",
+      "logging": "not_measurable",
+      "completions": "not_measurable"
+    },
+    "reyn_feature": {
+      "progress": "ok",
+      "elicitation": "not_measurable",
+      "subscription": "error:MCPCapabilityError",
+      "reconnect": "ok"
+    },
+    "teardown": "not_measurable",
+    "notes": "logging: MCPClient has no representative public call for this capability (architect #3698 design \u00a73); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect); teardown: http has no child process of its own to leak"
+  },
+  {
+    "transport": "sse",
+    "server": "tests/_support/mcp_fastmcp_echo_server.py",
+    "dep_version": "fastmcp 3.4.2, mcp-sdk 1.26.0",
+    "negotiated": "2025-11-25",
+    "lifecycle": "legacy-initialize",
+    "advertised": [
+      "logging",
+      "prompts",
+      "resources",
+      "tools"
+    ],
+    "implemented": {
+      "tools": "ok",
+      "resources": "ok",
+      "prompts": "ok",
+      "logging": "not_measurable",
+      "completions": "not_measurable"
+    },
+    "reyn_feature": {
+      "progress": "ok",
+      "elicitation": "not_measurable",
+      "subscription": "error:MCPCapabilityError",
+      "reconnect": "ok"
+    },
+    "teardown": "not_measurable",
+    "notes": "logging: MCPClient has no representative public call for this capability (architect #3698 design \u00a73); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect); teardown: sse has no child process of its own to leak"
+  }
+]
