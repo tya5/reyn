@@ -49,6 +49,21 @@ class EventLog:
         run_id: str | None = None,
     ) -> None:
         self._events: list[Event] = []
+        # #3868 PR-1: a folded derived state for `present`'s "was this ref
+        # already read this session?" question (source.py's compute_ingested),
+        # built incrementally in emit() instead of re-scanned from `_events`
+        # on every present call. Keyed on the read's own `path`; "full" is
+        # STICKY — a later truncated read on the same path never downgrades
+        # it, because the operator (or a prior full read) already saw the
+        # whole thing. This is NOT a bounded cache: `_events` still holds
+        # everything (PR-1 keeps both so existing `.all()`/`.to_json()`
+        # consumers stay green while callers migrate — PR-2/PR-3 retire
+        # them). What changed is the GROWTH CLASS this dict is subject to:
+        # O(distinct paths ever read), not O(every event ever emitted) —
+        # see compute_ingested's docstring for why that is still unbounded
+        # in principle but bounded by real work (a file read + permission
+        # gate) rather than by talk.
+        self._ingested: dict[str, str] = {}
         self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
         # FP-0016 Component E: agent_id is auto-injected into every event
         # payload when set. None preserves prior behaviour for callers
@@ -64,6 +79,18 @@ class EventLog:
     @property
     def subscribers(self) -> list[Callable[[Event], None]]:
         return self._subscribers
+
+    @property
+    def ingested_path_count(self) -> int:
+        """How many DISTINCT paths :meth:`compute_ingested`'s derived state
+        currently tracks (#3868 PR-1) — the public witness for its growth
+        class: this grows with the number of unique paths ever read, never
+        with the number of events emitted (a non-read event, or a REPEAT
+        read of an already-tracked path, leaves this unchanged). Exists so
+        that claim is testable without reading the private ``_ingested``
+        dict directly.
+        """
+        return len(self._ingested)
 
     @property
     def agent_id(self) -> str | None:
@@ -113,9 +140,62 @@ class EventLog:
             data = {**data, "run_id": self._run_id}
         event = Event(type=type, data=data)
         self._events.append(event)
+        # #3868 PR-1: fold this event's contribution to `_ingested` at emit
+        # time (a dict update) instead of re-scanning `_events` at every
+        # `present` call (was O(session length) per call, source.py:154).
+        # Early-return on the common case (not a read) first — `emit` is a
+        # hot path (every op, every tool call) and this only has work to do
+        # for a specific op kind.
+        if type == "tool_executed":
+            op = data.get("op")
+            if op in ("read_file", "read"):
+                path = data.get("path")
+                if path is not None:
+                    if data.get("truncated"):
+                        # Sticky full: a later partial read on a path already
+                        # seen in full does not downgrade it — the operator
+                        # (or a prior read) already has the whole thing.
+                        if self._ingested.get(path) != "full":
+                            self._ingested[path] = "partial"
+                    else:
+                        self._ingested[path] = "full"
         for sub in self._subscribers:
             sub(event)
         return event
+
+    def compute_ingested(self, data_ref: str, resolved: str) -> str:
+        """``ingested`` ∈ ``{none, partial, full}`` for a present ``data_ref``
+        (#3868 PR-1) — an O(1) lookup into the state :meth:`emit` folds
+        incrementally, replacing source.py's former O(session length) scan
+        over ``all()``.
+
+        Checked under BOTH keys a caller might resolve a ref by (the raw
+        ``data_ref`` and its ``resolved`` form — source.py's own pre-existing
+        two-key check, unchanged here), with ``full`` winning if the two keys
+        disagree.
+
+        Blindness is an audit annotation, not a permission mode: this
+        reports whether a prior ``read_file`` on this ref appears earlier in
+        the session — never LLM-self-reported.
+
+        Still unbounded in principle (read enough distinct paths and this
+        dict grows without limit) — NOT bounded to a fixed size, deliberately:
+        a ``deque(maxlen=N)``-style cap would make an old path's entry
+        silently vanish, and a caller re-presenting that ref would then see
+        ``none`` instead of ``full`` — a false "you haven't read this yet"
+        for a ref that WAS fully read, which is worse than the unbounded
+        growth it would avoid. What bounds it in practice is that every
+        entry costs a real ``file.read`` (I/O + the permission gate) to
+        create — growth is bounded by actual work done, not by how much an
+        agent can emit.
+        """
+        a = self._ingested.get(data_ref)
+        b = self._ingested.get(resolved)
+        if a == "full" or b == "full":
+            return "full"
+        if a == "partial" or b == "partial":
+            return "partial"
+        return "none"
 
     def all(self) -> list[Event]:
         return list(self._events)
