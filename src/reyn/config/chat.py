@@ -654,12 +654,24 @@ class ChatConfig:
     neutralizer to the conversation body text, where a raw ESC/OSC sequence
     from tool output or an untrusted model reply could otherwise reach the
     terminal.
+
+    ``image_url_schemes`` (#3846, owner ruling C): opt-in narrowing of which
+    URL schemes ``present``'s ``image`` component will fetch — default empty
+    (unrestricted: both ``http`` and ``https`` are fetched, the owner's
+    stated default: "even without the bytes, the record of what was
+    presented is enough"). A non-empty list restricts to exactly those
+    schemes (e.g. ``["https"]`` to reject plain ``http``); any scheme outside
+    ``{"http", "https"}`` is always rejected regardless of this setting (an
+    httpx client cannot fetch anything else). Same rationale as
+    ``neutralize_body`` for living under ``chat:`` rather than ``safety:`` —
+    this is a display-boundary narrowing, not a stop condition.
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     render_mode: Literal["alt-screen", "inline", "plain", "auto"] = "alt-screen"
     gutters: GutterConfig = field(default_factory=GutterConfig)
     neutralize_body: bool = False
+    image_url_schemes: "list[str]" = field(default_factory=list)
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -714,11 +726,16 @@ def _build_chat_config(raw: object) -> ChatConfig:
     gutters = _build_gutter_config(raw.get("gutters"))
     # #3318: so does the opt-in body-neutralize flag (default False/compat).
     neutralize_body = bool(raw.get("neutralize_body", ChatConfig().neutralize_body))
+    # #3846: so does the opt-in image-src scheme allowlist (default []/unrestricted).
+    raw_schemes = raw.get("image_url_schemes")
+    image_url_schemes = (
+        [str(s) for s in raw_schemes] if isinstance(raw_schemes, list) else []
+    )
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]
             reasoning=reasoning, render_mode=render_mode, gutters=gutters,
-            neutralize_body=neutralize_body,
+            neutralize_body=neutralize_body, image_url_schemes=image_url_schemes,
         )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
@@ -799,6 +816,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
     return ChatConfig(
         compaction=compaction, reasoning=reasoning, render_mode=render_mode,  # type: ignore[arg-type]
         gutters=gutters, neutralize_body=neutralize_body,
+        image_url_schemes=image_url_schemes,
     )
 
 

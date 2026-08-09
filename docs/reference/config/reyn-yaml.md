@@ -420,6 +420,7 @@ chat:
     left: true            # TUI left gutter (state marker, 2 cols) shown at start
     right: true           # TUI right gutter (elapsed/tokens, 12 cols) shown at start
   neutralize_body: false  # opt-in ESC/OSC strip on agent-reply/tool-result body text
+  image_url_schemes: []   # opt-in scheme allowlist for present's image src fetch
 ```
 
 ### `chat.render_mode`
@@ -473,6 +474,25 @@ terminal on both the TUI conversation pane and the plain (`--cui`) renderer.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `neutralize_body` | bool | `false` | Strip ESC/control sequences from agent-reply and tool-result body text before rendering. |
+
+### `chat.image_url_schemes`
+
+Opt-in narrowing of which URL schemes `present`'s `image` component will
+fetch (#3846, owner ruling C). Default `[]` — unrestricted, both `http` and
+`https` are fetched — the owner's stated rationale: "even without the bytes,
+the record of what was presented is enough" (the value is the audit record
+that an image was presented, not reyn proxying/verifying the bytes). Set to a
+non-empty list to restrict to exactly those schemes, e.g. `["https"]` to
+reject plain `http`. Any scheme outside `{http, https}` is always rejected
+regardless of this setting — nothing else is fetchable through an `httpx`
+client. `src` is written by the model (`present`'s blueprint is LLM-authored),
+so the fetch always routes through the SSRF-pinned client
+(`_network.py`'s `build_async_http_client(pin_ssrf=True)`) unconditionally,
+independent of this scheme setting.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `image_url_schemes` | list[str] | `[]` | Restrict `present`'s image-src fetch to these schemes; empty = unrestricted (http + https). |
 
 ### `chat.reasoning` fields
 

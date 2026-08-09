@@ -91,7 +91,7 @@ def _render_code_or_diff(node: dict, *, lexer: str) -> "Any":
     return Syntax(node.get("text", ""), lexer, word_wrap=True, background_color="default")
 
 
-def _render_node(node: dict) -> "Any":
+def _render_node(node: dict, image_cache: "dict[str, Any] | None" = None) -> "Any":
     from rich.markdown import Markdown
     from rich.text import Text
 
@@ -112,20 +112,58 @@ def _render_node(node: dict) -> "Any":
     if component == "list":
         return _render_list(node)
     if component == "image":
-        alt = node.get("alt") or node.get("src") or ""
-        return Text(f"[image: {alt}]", style="dim")
+        return _render_image(node, image_cache)
     # Unregistered/future component — never crash the render loop over one bad node.
     return Text(f"<unsupported present component {component!r}>", style="dim")
 
 
-def render_presentation_nodes(nodes: list[dict]) -> "Any":
+def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
+    """The `image` component (#3846 ②) — a PURE dict lookup, never a fetch.
+
+    `image_cache` (an app-owned `dict[str, ImageResolution]`, see
+    `core/present/image_fetch.py`) is populated ELSEWHERE, by a resolution
+    stage kicked off when the frame first arrives (`TextualChatApp.
+    _begin_image_resolutions` -> `ReynPresenter.begin_image_resolution`) —
+    this module's own docstring bans doing that fetch here (the "Pure: ...
+    No I/O" invariant). `image_cache=None` (every non-TUI caller — plain
+    ``ConsoleChatRenderer``, `reyn pipe`'s `StdoutPresentationRenderer`, and
+    every existing test that calls this function without the new kwarg) gets
+    the pre-#3846 `[image: alt]` text, byte-identical — no resolution stage
+    exists on those surfaces yet (#3846 ③ tracks plain's own sync-fetch
+    follow-up; ③ tracks real pixel rendering, a separate deps decision)."""
+    from rich.text import Text
+
+    alt = node.get("alt") or ""
+    src = node.get("src") or ""
+    label = alt or src
+    if image_cache is None or not isinstance(src, str) or src not in image_cache:
+        return Text(f"[image: {label}]", style="dim")
+    res = image_cache[src]
+    if res.ok:
+        # V1 renders a LOADED status line, not real pixels (#3846 ③, a
+        # separate textual-image/pillow-deps decision) — see this
+        # function's own docstring for why that split is deliberate.
+        return Text(
+            f"[image loaded: {label} — {len(res.body)} bytes, "
+            f"{res.content_type or 'unknown type'}]",
+            style="dim",
+        )
+    return Text(f"[image failed: {label} — {res.error}]", style="dim")
+
+
+def render_presentation_nodes(
+    nodes: list[dict], *, image_cache: "dict[str, Any] | None" = None
+) -> "Any":
     """Convert a `ResolvedPresentation.nodes` render model into ONE Rich renderable
     (a `Group` of per-node renderables) — the one-shot inline block `present` prints
     to the conversation scrollback. See module docstring for the markup-inert
-    invariant every branch here must preserve."""
+    invariant every branch here must preserve.
+
+    `image_cache` (#3846 ②, default None) is forwarded to the `image`
+    component branch — see :func:`_render_image`."""
     from rich.console import Group
 
-    return Group(*[_render_node(node) for node in nodes])
+    return Group(*[_render_node(node, image_cache) for node in nodes])
 
 
 class StdoutPresentationRenderer:
