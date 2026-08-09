@@ -152,6 +152,26 @@ scopes is ADDITIVE, not override — see the 3/4-layer COMBINE above.
 The tool is write-gated: the calling workflow must declare `hooks_add` in
 `permissions.tool`, and the capability profile `tool_deny` can deny it.
 
+**Which reloader instance gets triggered.** Separately from which *file*
+`hooks_add` writes to (above), the reload it schedules always runs on the
+*calling session's own* `HotReloader` (threaded via `ToolContext.hot_reloader`)
+— never a process-wide "last constructed session" fallback. This differs from
+cron's own reload path, which does use that fallback (see its own caveat
+elsewhere in this doc); in a multi-agent setup, agent A calling `hooks_add`
+reloads A, regardless of which session was constructed most recently.
+
+**Validates before writing, not just before applying.** An invalid hook body
+(e.g. an unrecognised `on:` value) is rejected with nothing written to disk —
+this is a separate check from the reload-time "Validate-before-apply" safety
+story below, which guards a persisted-but-malformed file; this one guards the
+write itself.
+
+**Re-adding an identical hook is a no-op**, not an accumulating duplicate —
+an exception to the general "idempotency is the caller's responsibility"
+posture (see [reliability engineering](../agent-engineering/reliability-engineering.md)):
+`hooks_add` compares the new hook against existing entries and skips the
+write on an exact match.
+
 ## Safety story
 
 Hot-reload is safe-by-construction through five layers:
