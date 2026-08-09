@@ -947,12 +947,14 @@
 # sandbox:
 #   backend: auto
 #   on_unsupported: warn
-#   mode: compat
+#   mode: compat            # compat | strict — see #3823: mode sets only the
+#                            # default for an axis left unset below; an
+#                            # explicit key here always wins over mode.
 #   policy:
 #     network: true
-#     write_paths: ["{{workspace}}", "/tmp"]
-#     deny_subprocess: false
-#     env_deny_names: []
+#     subprocess: true
+#     allow_write_paths: ["{{workspace}}", "/tmp"]
+#     deny_env_names: []
 #     timeout_seconds: 600
 
 

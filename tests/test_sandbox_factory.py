@@ -87,6 +87,27 @@ def test_config_rejects_an_unknown_policy_key_rather_than_dropping_it() -> None:
         SandboxConfig(policy={"unknown_totally_made_up_key": True})
 
 
+def test_config_guides_an_old_internal_vocabulary_key_by_name_not_as_unknown() -> None:
+    """Tier 2: #3823 — an operator on a pre-#3823 (or pre-#3901) config who
+    still writes an OLD internal-vocabulary key (`write_paths`, the pre-#3823
+    name for `allow_write_paths`) gets the RENAMED-KEY guidance naming the
+    new key, not the generic "unknown key" message — `_RENAMED_SANDBOX_POLICY_KEYS`
+    is checked BEFORE the generic unknown-key path specifically because a
+    rename can carry a value inversion (`deny_subprocess` -> `subprocess`)
+    the generic message cannot explain. This is a real witness for
+    `_RENAMED_SANDBOX_POLICY_KEYS` — no prior test constructed a
+    `SandboxConfig(policy=...)` with an old key at all, so a wrong/stale
+    entry in that map (or the ordering silently regressing to the generic
+    unknown-key path) stayed green with nothing catching it."""
+    with pytest.raises(ValueError) as exc_info:
+        SandboxConfig(policy={"write_paths": ["/x"]})
+    msg = str(exc_info.value)
+    assert "allow_write_paths" in msg, (
+        f"expected the renamed-key guidance naming 'allow_write_paths', got: {msg!r}"
+    )
+    assert "unknown key" not in msg.lower()
+
+
 def test_yaml_parse_defaults_mode_to_compat_when_absent():
     """Tier 2: #3823 ② — a `sandbox:` YAML block that omits `mode` parses to
     the compat default, not an error or a None. Real parser, not a hand-built
