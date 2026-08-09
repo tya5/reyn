@@ -404,6 +404,22 @@ These rules then keep multi-session work coherent:
    to add it as `- [ ] 🔴 <point>` (append, don't remove the author's own
    items) and does not merge while it's unchecked; the author checks it off
    once addressed, in the same PR body, with the fixing commit noted.
+   **Rule 4 applies to this edit too** — a reviewer's appended text lands
+   on the same PR body surface rule 4 governs, and `check_pr_closing_intent.py`
+   deliberately strips backticks before matching (the criterion is *use vs
+   mention*, not "is it fenced"), so pointing out that a PR wrongly wrote
+   `Closes #X` by quoting `` `Closes #X` `` in your own blocking item still
+   trips the gate — the correct PR being blocked over how the correction
+   was phrased (#3559's shape again: the disciplined party pays). Point at
+   the problem without writing the keyword next to the number — name which
+   line has it wrong, or say "uses the closing keyword" without the keyword
+   itself; a literal `<!-- closing-check: discussing #N -->` comment is the
+   last resort when the keyword must appear verbatim. **This applies when
+   handing someone else phrasing to use, too, not only when writing your
+   own PR body** — a brief, a dispatch message, or a review request that
+   pairs the keyword with a number gets copied faithfully by whoever
+   receives it, and the trap fires on THEIR PR, not the sender's. Check
+   phrasing you're about to hand off the same way you'd check your own.
 8. **A PR touching `tests/` does not self-merge until a reviewer's
    TESTS-READ note lands on the PR.** "A lead-coder merge train refuses
    any PR touching `tests/` without one" (Test review, above) describes
