@@ -207,10 +207,11 @@ async def test_no_injection_when_queue_is_empty() -> None:
 import re
 from pathlib import Path
 
+from tests._support.paths import REPO_ROOT
 from tests._support.router_host_adapter import make_adapter
 
 _ROUTER_LOOP_SRC = (
-    Path(__file__).resolve().parents[1] / "src" / "reyn" / "runtime" / "router_loop.py"
+    REPO_ROOT / "src" / "reyn" / "runtime" / "router_loop.py"
 ).read_text()
 
 

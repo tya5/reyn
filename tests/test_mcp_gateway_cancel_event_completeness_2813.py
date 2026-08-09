@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests._support.paths import REPO_ROOT
+
 # One-shot, non-interactive CLI commands — no per-turn cancel_event exists to pass.
 _ALLOWED = {"interfaces/cli/commands/mcp.py"}
 
@@ -59,7 +61,7 @@ def test_every_mcpgateway_construction_passes_cancel_event():
     op_runtime/ or runtime/ omits cancel_event= — the same structural-gate shape
     as test_2421_mcp_seam_completeness.py, applied to the #2813 cancel-race
     contract instead of the transport-construction contract."""
-    root = Path(__file__).resolve().parents[1] / "src" / "reyn"
+    root = REPO_ROOT / "src" / "reyn"
     scoped_dirs = [root / "core" / "op_runtime", root / "runtime"]
     offenders: list[str] = []
     for scoped in scoped_dirs:

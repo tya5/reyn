@@ -38,8 +38,9 @@ from reyn.runtime.session_pure import (
     new_chain_id,
     render_summary_for_storage,
 )
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO_ROOT
 
 
 def test_new_chain_id_is_a_pure_function_no_self():

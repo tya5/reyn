@@ -29,8 +29,9 @@ from reyn.runtime.outbox import (
     VOCABULARY,
     OutboxMessage,
 )
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+_SRC = REPO_ROOT / "src" / "reyn"
 
 
 def test_construction_accepts_every_vocabulary_kind() -> None:

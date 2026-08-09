@@ -14,7 +14,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "dogfood_trace.py"
+from tests._support.paths import REPO_ROOT
+
+SCRIPT = REPO_ROOT / "scripts" / "dogfood_trace.py"
 
 # ---------------------------------------------------------------------------
 # Helpers

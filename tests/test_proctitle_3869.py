@@ -14,6 +14,7 @@ import sys
 import textwrap
 
 from reyn.runtime.proctitle import format_title, set_process_title
+from tests._support.paths import REPO_ROOT
 
 
 def test_title_is_the_subcommand_and_nothing_else():
@@ -55,7 +56,7 @@ def test_ps_reports_the_new_name_for_a_live_process():
             capture_output=True, text=True, check=True,
         ).stdout.strip())
         """
-    ).format(src=str(__import__("pathlib").Path(__file__).resolve().parents[1] / "src"))
+    ).format(src=str(REPO_ROOT / "src"))
 
     out = subprocess.run(
         [sys.executable, "-c", child], capture_output=True, text=True, check=True

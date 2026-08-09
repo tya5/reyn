@@ -23,7 +23,9 @@ from typing import Any
 
 import pytest
 
-_SCRIPTS_DIR = _Path(__file__).parent.parent / "scripts"
+from tests._support.paths import REPO_ROOT
+
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 
 def _import_replay():

@@ -42,8 +42,9 @@ from reyn.interfaces.web.deps import (
 )
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.sandbox.policy import SandboxPolicy
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+_SRC = REPO_ROOT / "src" / "reyn"
 
 
 def _ns(**kw) -> argparse.Namespace:

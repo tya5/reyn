@@ -35,8 +35,9 @@ import re
 from pathlib import Path
 
 from reyn.tools import get_default_registry
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+_SRC = REPO_ROOT / "src" / "reyn"
 
 # ``(?<!NOT )`` keeps a NEGATED claim ("NOT LLM-callable ...") from being read as
 # an assertion — the correction #3548 lands uses exactly that wording, so without

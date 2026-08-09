@@ -47,8 +47,9 @@ from reyn.interfaces.slash import REGISTRY, SlashCommand, SlashRegistry
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO_ROOT
 
 # A real-shaped status snapshot (ONLY keys ``interfaces/inline/app.py:_snapshot``
 # actually produces — no invented field). Reused across the wiring tests.

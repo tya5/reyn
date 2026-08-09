@@ -32,8 +32,8 @@ from pathlib import Path
 
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
+from tests._support.paths import REPO_ROOT
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_DIR_NAMES = {".venv", "site", ".git", "__pycache__"}
 SELF_PATH = Path(__file__).resolve()
 

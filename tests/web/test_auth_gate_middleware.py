@@ -24,7 +24,9 @@ from pathlib import Path
 # Ensure the worktree src is importable even when the main-tree src appears
 # earlier on sys.path (editable-install collision) — mirrors the sibling
 # route-mount tests so the fully-mounted worktree app is the one under test.
-_WORKTREE_SRC = Path(__file__).parent.parent.parent / "src"
+from tests._support.paths import REPO_ROOT
+
+_WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 

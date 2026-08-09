@@ -19,7 +19,9 @@ from pathlib import Path
 
 import pytest
 
-_SRC = Path(__file__).parent.parent / "src"
+from tests._support.paths import REPO_ROOT
+
+_SRC = REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 

@@ -20,7 +20,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "reyn"
+from tests._support.paths import REPO_ROOT
+
+_SRC = REPO_ROOT / "src" / "reyn"
 
 # The writer surface the client must not import directly. ``runtime.outbox`` (the
 # display DTO) and ``interfaces.repl.renderer`` are display types, NOT this set.

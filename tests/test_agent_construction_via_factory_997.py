@@ -26,7 +26,9 @@ from __future__ import annotations
 import ast
 import pathlib
 
-_SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "reyn"
+from tests._support.paths import REPO_ROOT
+
+_SRC = REPO_ROOT / "src" / "reyn"
 
 # Parent-propagation exemptions (paths relative to src/reyn). These construct an
 # Agent from an already-wired parent context, not a fresh config — from_config

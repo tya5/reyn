@@ -69,8 +69,9 @@ import re
 from pathlib import Path
 
 from reyn.config.config_schema import walk_config_schema
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = REPO_ROOT
 _EXAMPLE = _REPO_ROOT / "reyn.local.yaml.example"
 _DOCS = _REPO_ROOT / "docs" / "reference" / "config" / "reyn-yaml.md"
 

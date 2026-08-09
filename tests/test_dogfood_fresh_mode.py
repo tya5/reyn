@@ -21,11 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "dogfood_fresh_reset.sh"
+SCRIPT = REPO_ROOT / "scripts" / "dogfood_fresh_reset.sh"
 
 
 # ---------------------------------------------------------------------------

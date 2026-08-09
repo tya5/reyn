@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests._support.paths import REPO_ROOT
+
 # The seam: the pool constructs clients; client.py defines the class (+ docstring examples).
 _ALLOWED = {"mcp/pool.py", "mcp/client.py", "mcp/connection_service.py"}
 # ``MCPClient(`` construction — the paren distinguishes it from the ``MCPClientPool`` /
@@ -27,7 +29,7 @@ def test_no_direct_mcpclient_construction_outside_seam():
     the contain-all boundary + task-affine/reconnect lifecycle (the sibling-sweep-miss class that
     caused the list-path crash). RED if a direct construction reappears anywhere in src outside the
     pool/client/connection-service seam."""
-    src = Path(__file__).resolve().parents[1] / "src" / "reyn"
+    src = REPO_ROOT / "src" / "reyn"
     offenders: list[str] = []
     for py in src.rglob("*.py"):
         rel = py.relative_to(src).as_posix()

@@ -67,8 +67,9 @@ from reyn.prompt.router_frame import (
 )
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = REPO_ROOT
 _CHEAT_SHEET_PATH = Path(BUILTIN_SKILLS["reyn-cheat-sheet"]["path"])
 _FLAGSHIP_PIPELINE_PATH = Path(BUILTIN_PIPELINES["flagship"]["path"])
 

@@ -155,6 +155,7 @@ from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
 _DENIED_TOOL = "p3546_denied_step"
 
@@ -780,7 +781,7 @@ _SITE_PARENT_LAYERS: "dict[tuple[str, str], _SiteDeclaration]" = {
 }
 
 
-_SRC = Path(__file__).resolve().parents[1] / "src"
+_SRC = REPO_ROOT / "src"
 
 
 @dataclass(frozen=True)

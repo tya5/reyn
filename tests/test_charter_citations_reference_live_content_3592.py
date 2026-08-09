@@ -27,7 +27,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parents[1]
+from tests._support.paths import REPO_ROOT
+
+_REPO = REPO_ROOT
 _CHARTER = _REPO / "docs" / "concepts" / "architecture" / "charter.md"
 _FEATURE_MAP = _REPO / "docs" / "feature-map.md"
 

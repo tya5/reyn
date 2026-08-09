@@ -19,11 +19,13 @@ from typing import Any
 
 import pytest
 
+from tests._support.paths import REPO_ROOT
+
 # ---------------------------------------------------------------------------
 # Import the module under test (not on sys.path by default)
 # ---------------------------------------------------------------------------
 
-_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 
 def _import_detect() -> Any:

@@ -19,8 +19,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests._support.paths import REPO_ROOT
+
 _DOGFOOD = (
-    Path(__file__).resolve().parents[1]
+    REPO_ROOT
     / "src" / "reyn" / "interfaces" / "cli" / "commands" / "dogfood.py"
 )
 

@@ -25,8 +25,9 @@ import pytest
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
+from tests._support.paths import REPO_ROOT
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "dogfood_trace.py"
+SCRIPT = REPO_ROOT / "scripts" / "dogfood_trace.py"
 
 
 def _run(args: list[str]) -> tuple[str, int]:

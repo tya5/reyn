@@ -21,9 +21,10 @@ from pathlib import Path
 from reyn.interfaces.transport.agui.protocol import _encode_display
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.paths import REPO_ROOT
 
 _INDEX_HTML = (
-    Path(__file__).resolve().parents[1]
+    REPO_ROOT
     / "src" / "reyn" / "interfaces" / "web" / "openui" / "static" / "index.html"
 )
 

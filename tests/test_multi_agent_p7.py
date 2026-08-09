@@ -42,6 +42,7 @@ from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.session import Session
 from reyn.runtime.topology import Topology
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
@@ -255,7 +256,7 @@ def _read_source(repo_root: Path, rel_path: str) -> str:
 def _repo_root() -> Path:
     """Locate the repo root from the test file's location."""
     # tests/ sits one level below the repo root.
-    return Path(__file__).parent.parent
+    return REPO_ROOT
 
 
 def test_os_topology_dispatch_has_no_skill_specific_strings():

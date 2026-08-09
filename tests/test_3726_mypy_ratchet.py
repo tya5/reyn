@@ -20,7 +20,9 @@ import json
 import sys
 from pathlib import Path
 
-_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "mypy_ratchet.py"
+from tests._support.paths import REPO_ROOT
+
+_SCRIPT = REPO_ROOT / "scripts" / "mypy_ratchet.py"
 
 
 def _load():

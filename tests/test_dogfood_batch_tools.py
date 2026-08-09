@@ -30,7 +30,9 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+from tests._support.paths import REPO_ROOT
+
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
@@ -43,7 +45,6 @@ from dogfood_aggregate import (  # noqa: E402
 from dogfood_batch_config import load_batch_config  # noqa: E402
 from dogfood_batch_dispatch import render_worker_prompt  # noqa: E402
 
-REPO_ROOT = Path(__file__).parent.parent
 B43_JOURNAL = (
     REPO_ROOT
     / "docs/deep-dives/journal/dogfood/2026-05-20-batch-43-post-empty-stop-retry"
