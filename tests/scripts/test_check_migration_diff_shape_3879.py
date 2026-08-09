@@ -467,11 +467,27 @@ def test_a_new_test_plus_new_init_py_still_leaves_the_gate_inactive(
 ) -> None:
     """Tier 2: lead-coder's required pre-check (b) — the #3885 deadlock
     scenario (a brand-new test file + a brand-new empty __init__.py, no
-    deletion, no pre-existing file with matching content) must STILL leave
-    the gate inactive after #3909's fix. A genuinely new test shares no
-    content with anything already in the tree, so -C finds no copy source
-    for it — unlike the copy-left-behind scenario above, where the content
-    DOES already exist elsewhere."""
+    deletion) must STILL leave the gate inactive after #3909's fix.
+
+    ★ Corrected in review (lead-coder, #3913 follow-up): the first version
+    of this fixture had NO pre-existing empty file anywhere in the tree, so
+    the new __init__.py had no possible C-match candidate at all — it
+    always fell back to a plain `A` line REGARDLESS of whether #3913's
+    fix (condition ②: dest is not `__init__.py`) was present or stripped,
+    the same "docstring claims a witness the fixture doesn't actually
+    exercise" gap this PR's own reproduction fixture
+    (``test_a_new_package_init_py_matching_an_unrelated_empty_file_is_allowed``)
+    is built specifically to catch. Verified directly (a throwaway repo,
+    not assumed): with no pre-existing empty file, this exact scenario's
+    diff reports `A tests/newpkg/__init__.py` / `A tests/newpkg/test_new.py`
+    — never a `C` line — so condition ② was never exercised here. Fixed by
+    adding a pre-existing empty file to the fixture (mirroring lead-coder's
+    own real-repo reproduction 1:1), which DOES give the new __init__.py a
+    same-content match, making this test a genuine test of condition ②
+    rather than a vacuous one."""
+    (_repo / "unrelated_elsewhere.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "add a pre-existing empty file elsewhere in the tree")
+
     newpkg = _repo / "tests" / "newpkg"
     newpkg.mkdir()
     (newpkg / "test_new.py").write_text(
@@ -483,6 +499,7 @@ def test_a_new_test_plus_new_init_py_still_leaves_the_gate_inactive(
 
     lines = diff_name_status("HEAD~1", root=_repo)
     assert not gate_is_active(lines), (
-        "a genuinely new test file + new __init__.py (no matching content "
-        "anywhere else) incorrectly activated the gate after #3909's fix"
+        "a genuinely new test file + new __init__.py, with a pre-existing "
+        "empty file elsewhere as a possible C-match candidate, incorrectly "
+        "activated the gate after #3909/#3913's fix"
     )
