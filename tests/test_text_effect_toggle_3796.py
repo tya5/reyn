@@ -125,6 +125,97 @@ async def test_the_feed_is_intact_after_the_effect() -> None:
             f"output that landed under the overlay was lost, not hidden: {after}"
         )
 
+@requires_tte
+@pytest.mark.asyncio
+async def test_any_key_dismisses_the_overlay_regardless_of_composer_focus() -> None:
+    """Tier 2: pressing an ARBITRARY key (not the ctrl+l that started it) ends
+    the overlay while the composer — not the flow view — holds focus, the
+    default focus target during a normal turn.
+
+    Reasoning for why this must be App.on_event and not a composer-local key
+    handler: the composer's own Input widget consumes printable keys itself
+    (typing), so a per-widget dismiss hook there would only see keys the
+    Input doesn't already claim — App.on_event sees every key BEFORE that
+    bubble starts, for whichever widget currently has focus."""
+    from reyn.runtime.outbox import OutboxMessage
+
+    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(OutboxMessage(kind="agent", text="something to dissolve"))
+        await pilot.pause()
+
+        app.action_toggle_text_effect()
+        await pilot.pause()
+        assert app.query_one(FlowView).overlay_active, "the key did not start an overlay"
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert not app.query_one(FlowView).overlay_active, (
+            "an arbitrary key while the composer held focus left the overlay up"
+        )
+
+
+@requires_tte
+@pytest.mark.asyncio
+async def test_escape_dismisses_the_overlay_even_with_the_flow_view_focused() -> None:
+    """Tier 2: Escape dismisses the overlay even when the FLOW VIEW itself has
+    focus — the harder case, since FlowView's own BINDINGS bind escape to
+    ``cursor_cancel`` and would otherwise resolve first, before any handler
+    placed on a widget ever saw the event. App.on_event intercepts BEFORE
+    Textual's normal focus-bubble dispatch, which is why this still works."""
+    from reyn.runtime.outbox import OutboxMessage
+
+    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(OutboxMessage(kind="agent", text="something to dissolve"))
+        await pilot.pause()
+
+        app.action_toggle_text_effect()
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+        assert flow.overlay_active, "the key did not start an overlay"
+
+        flow.focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not flow.overlay_active, (
+            "escape left the overlay up while the flow view held focus"
+        )
+
+
+@requires_tte
+@pytest.mark.asyncio
+async def test_a_scroll_event_dismisses_the_overlay() -> None:
+    """Tier 2: a mouse-scroll event dismisses the overlay too — the same
+    "anything else the reader does" contract as an arbitrary key press,
+    covering the non-key input class App.on_event also intercepts."""
+    from textual import events
+
+    from reyn.runtime.outbox import OutboxMessage
+
+    app = TextualChatApp(transport=ScriptedTransport([]), read_model=_PickerReadModel())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(OutboxMessage(kind="agent", text="something to dissolve"))
+        await pilot.pause()
+
+        app.action_toggle_text_effect()
+        await pilot.pause()
+        flow = app.query_one(FlowView)
+        assert flow.overlay_active, "the key did not start an overlay"
+
+        app.post_message(
+            events.MouseScrollDown(
+                flow, flow.region.offset, 0, 0, 0, False, False, False, False
+            )
+        )
+        await pilot.pause()
+        assert not flow.overlay_active, "a scroll event left the overlay up"
+
+
 # The blank-screen no-op test that used to live here (#3796) is deleted, not
 # repaired, following the 0.16.1 pin bump that broke its premise (#3866 review).
 #

@@ -2064,6 +2064,40 @@ class TextualChatApp(App):
             )
         )
 
+    async def on_event(self, event: events.Event) -> None:
+        """Any key press or scroll dismisses an active text-effect overlay.
+
+        The overlay (:meth:`action_toggle_text_effect`) is a full-viewport
+        joke painted OVER the flow view; it should end the instant the reader
+        does anything else, not only on the exact key (ctrl+l) that started
+        it. Intercepted here, at the App's own ``on_event`` — BEFORE Textual's
+        normal focus-bubble dispatch — so it fires regardless of which widget
+        currently holds focus (composer, flow view, a drawer picker). A
+        per-widget ``on_key`` override would only see keys that widget's own
+        bubble reaches (composer's Input consumes printable keys itself), and
+        the flow view's OWN ``BINDINGS`` (``escape`` → ``cursor_cancel``,
+        arrow keys → scroll) would resolve BEFORE the event ever reached a
+        handler placed there — this is the one spot that sees the raw event
+        first, for every focus target, with no separate hook per widget.
+
+        The dismissing press is consumed and does nothing else: Escape while
+        the joke plays closes the joke, not the joke AND cancel a text
+        selection; a scroll dismisses it without also moving the flow view.
+        """
+        if isinstance(event, (events.Key, events.MouseScrollDown, events.MouseScrollUp)):
+            # ``self._flow`` is created lazily in ``compose()``, not
+            # ``__init__`` — ``on_event`` fires for every event from the
+            # app's own startup/shutdown lifecycle too (Mount, Unmount, …),
+            # some of which can arrive before compose has run. ``getattr``
+            # rather than a bare attribute access so a Key/Scroll event in
+            # that window is a no-op, not a crash.
+            flow = getattr(self, "_flow", None)
+            if flow is not None and flow.overlay_active:
+                flow.stop_overlay()
+                event.stop()
+                return
+        await super().on_event(event)
+
     async def on_key(self, event) -> None:
         # #3476 ⑥: 'r' while the cursor has focus is a keyboard shortcut for
         # typing bare ``/rewind`` + Enter — routed through the exact same
