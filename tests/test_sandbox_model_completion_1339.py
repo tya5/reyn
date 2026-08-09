@@ -106,9 +106,22 @@ def test_tool_schema_is_argv_only():
 
 @pytest.mark.asyncio
 async def test_handler_event_shows_enforced_policy_network(tmp_path):
-    """Tier 2: #1339 —op requests network=True but the ctx policy is network=False;
-    the started event must report the ENFORCED value (False), and the run must
-    actually use the policy (not the op's request)."""
+    """Tier 2: #1339 — the started event's network field reflects
+    ctx.default_sandbox_policy (the ENFORCED, operator-or-default policy),
+    not some other source (a hardcoded default, a raw-dict passthrough
+    bypassing SandboxPolicy's own construction, …).
+
+    #3968: this test used to also construct the op with `network=True` to
+    demonstrate "the op's own request is overridden" — #3907 deleted that
+    field from the op entirely (zero real producers, #3907①'s own
+    measurement), so passing it is now a silently-ignored no-op (pydantic
+    v2 default) rather than a real request being overridden. The op no
+    longer has any lever to request a network posture at all — that half
+    of the original claim is structurally covered by #3907's own
+    deletion-witness (test_op_sandboxed_exec.py::test_op_no_longer_
+    accepts_the_5_deleted_policy_fields), not by constructing an op field
+    that no longer exists here. What survives and is unique to THIS test:
+    the emitted event actually carries the configured policy value."""
     from reyn.core.events.events import EventLog
     from reyn.core.op_runtime.context import OpContext
     from reyn.core.op_runtime.sandboxed_exec import handle
@@ -127,13 +140,11 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
         permission_resolver=None,
         default_sandbox_policy={"network": False},  # operator policy: network OFF
     )
-    op = SandboxedExecIROp(
-        kind="sandboxed_exec", argv=["/bin/echo", "x"], network=True,  # op REQUESTS network
-    )
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
     await handle(op, ctx)
     started = [e for e in collected if e.type == "sandboxed_exec_started"]
     (ev,) = started
-    assert ev.data["network"] is False  # enforced policy, NOT op.network=True
+    assert ev.data["network"] is False  # reflects the configured policy
 
 
 # ── (B) chat factories resolve a concrete default_sandbox_policy (#1339 root) ──
