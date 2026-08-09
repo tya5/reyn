@@ -133,7 +133,7 @@ def _run_child_preexec_probe(workdir: str, ruleset: object | None) -> None:
     # probe's own "defend (must be refused): subprocess spawn / os.fork" arms
     # below are specifically about the OPT-OUT leg, so they must not silently
     # start passing-by-accident once the default itself grants subprocess.
-    policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=False)
+    policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=False, network=False)
 
     def _popen(argv: list[str], **kw: object) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -246,7 +246,7 @@ print("workload-ok")
     # filter, since it is irrevocable and survives fork+exec. A separate policy
     # (allow_subprocess=True) drives this probe: the `policy` object above is
     # deliberately allow_subprocess=False for the deny arms further down.
-    subprocess_pipe_policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=True)
+    subprocess_pipe_policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=True, network=False)
 
     def _popen_subprocess_allowed(argv: list[str]) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -402,9 +402,10 @@ import sys
 sys.path.insert(0, {os.getcwd()!r})
 from reyn.security.sandbox.landlock_exec import _apply_seccomp
 from reyn.security.sandbox.policy import SandboxPolicy
-# allow_subprocess=False explicitly (#3202 default flip) — this probe's
-# "defend (must be refused): subprocess spawn" arm below is the opt-out leg.
-_apply_seccomp(SandboxPolicy(write_paths=[{workdir!r}], allow_subprocess=False))
+# allow_subprocess=False, network=False explicitly (#3202 / #3905 default
+# flips) — this probe's "defend (must be refused): subprocess spawn" arm
+# below is the opt-out leg, and network must stay the tight leg too.
+_apply_seccomp(SandboxPolicy(write_paths=[{workdir!r}], allow_subprocess=False, network=False))
 {code_after_apply}
 """
         return subprocess.run(
@@ -480,7 +481,7 @@ def _validate_shim_entry_point(workdir: str) -> None:
     # allow_subprocess=True: this probe is about the entry point being reachable
     # at all, not about the fork gate (the self-test's spawn probe owns that).
     policy_arg = _policy_to_json(
-        SandboxPolicy(write_paths=[workdir], allow_subprocess=True)
+        SandboxPolicy(write_paths=[workdir], allow_subprocess=True, network=False)
     )
     shim_probe = f"""
 import sys
@@ -526,7 +527,7 @@ def _validate_denial_classification(workdir: str) -> None:
     # allow_subprocess=False explicitly (#3202 default flip): this probe's whole
     # point is that a REFUSED fork classifies as DENIAL_FORK, so the fork must
     # actually be denied here rather than accidentally allowed by the default.
-    policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=False)
+    policy = SandboxPolicy(write_paths=[workdir], allow_subprocess=False, network=False)
     shapes = {
         "ls / | wc -l": "ls / | wc -l",
         "ls /; echo done": "ls /; echo done",
