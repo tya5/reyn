@@ -347,6 +347,17 @@ async def _check4_events_log() -> None:
             captured_events.append({"type": ev.type, "data": ev.data})
 
         ev_log = EventLog(subscribers=[_capture])
+        # #3868 PR-2: EventLog.all() is being removed (a full-history read is
+        # no longer a real production API — see events.py's module
+        # docstring). Collect via a second subscriber instead, mirroring the
+        # real EventStore-as-subscriber mechanism, so real Event objects
+        # (not the plain dicts _capture keeps) are available for the
+        # EventStore round-trip check below. Added BEFORE any emit() this
+        # script cares about, same requirement as tests/_support/events.py's
+        # collect_events (not duplicated here — scripts/ cannot import
+        # tests/_support, a test-only module).
+        raw_events: list = []
+        ev_log.add_subscriber(raw_events.append)
 
         # Emit the same event the kernel emits on each LLM call
         ev_log.emit("llm_called", phase="check", model="gemini-2.5-flash")
@@ -371,7 +382,7 @@ async def _check4_events_log() -> None:
         from reyn.core.events.event_store import EventStore
         tmp_dir = Path(tempfile.mkdtemp(prefix="spike_preflight_events_"))
         store = EventStore(tmp_dir)
-        for ev_raw in ev_log.all():
+        for ev_raw in raw_events:
             store.write(ev_raw)
 
         read_back = list(store.iter_all())
