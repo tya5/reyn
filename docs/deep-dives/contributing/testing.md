@@ -555,6 +555,51 @@ asserts on the resolved instance (`loop.router_model`, …) rather than raw
 constructor kwargs. It is the seam analogue of the rule above: adapt to the
 contract, don't bypass it.
 
+### The strip-falsify mimicry
+
+Two independent sessions, one hour apart, wrote the same shape (`#3902`'s
+`_NoFoldEventLog`, `#3916`'s `_PreNineOhOneAgentLayer`):
+
+1. Subclass the production class; override the method under test with a
+   hand-written body that breaks the one branch being checked.
+2. Assert the subclass behaves the way it was just written to behave.
+3. Call it a strip-falsify — a proof the mechanism is load-bearing.
+
+It proves nothing: the production method never runs. Deleting the real
+mechanism entirely leaves this test exactly as green as it started, because
+the test was never exercising the real thing — it was exercising a stand-in
+whose behavior the test's own author dictated one line above the assert.
+Both authors even wrote the disclaimer the [Mock vs Fake](#mock-vs-fake)
+section asks for — `#3902`: *"not a mock of EventLog, a genuine (if
+deliberately broken) instance"*; `#3916`: *"not a mock, a genuine instance
+sharing every other method"* — and both are correct: neither is a mock.
+**That's exactly why this recurs.** The Fake ban's own reason (a mock's
+signature can drift silently from the real API) doesn't apply to a real
+subclass with one overridden method, so avoiding a mock reads as clearing
+the bar. It doesn't — the bar these tests miss is different: does the test
+ever run the production code it claims to falsify? A genuine instance that
+never calls the real method under test fails that bar exactly like a mock
+does, for an unrelated reason a mock's own ban never named.
+
+**Why this is the natural landing spot for question ③ above.** The old
+phrasing — "would it stay green with the mechanism dead?" — asks you to
+imagine a dead mechanism, which you can always construct *inside the test
+itself*. Once you've built one there, the test can assert against it
+forever without ever touching the real code path. The rephrased question —
+name the production `file:line` and show the RED you actually watched it
+produce — cannot be answered by a stub, because a stub is not a production
+line. The honest answer to the new question has nowhere to live but the PR
+body (a file:line plus an observed RED is not a docstring assertion), which
+is also where `#3910`'s own writeup already put it — the fix here is making
+that the question's natural landing spot, not the exception the previous
+phrasing needed hunting down.
+
+**The alternative**: strip the real mechanism (comment it out, invert the
+real condition, delete the real branch), run the test, watch it go RED,
+restore the mechanism, and record the file:line plus what you saw in the
+PR body. That's the only thing that actually witnesses the mechanism is
+load-bearing — no construction inside the test can substitute for it.
+
 ### When a Fake is justified — and what it requires
 
 Everything above states when a Fake is FORBIDDEN (the real collaborator is
