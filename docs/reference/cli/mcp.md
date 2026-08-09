@@ -130,7 +130,7 @@ Supported source schemes:
 | `npm:<package>[@version]` | `npm:@modelcontextprotocol/server-filesystem` | `command: npx, args: ["-y", "<package>"]` |
 | `pypi:<package>[==version]` | `pypi:mcp-server-fetch` | `command: uvx, args: ["<package>"]` |
 | `docker:<image>[:tag]` | `docker:mcp/playwright:latest` | `command: docker, args: ["run", "--rm", "-i", "<image>"]` |
-| `https://github.com/<owner>/<repo>[/...]` | `https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem` | Heuristic: known repos resolve to `@scope/<package>` npm packages; unknown repos write the config without a `command`, surfacing as a clear failure at runtime rather than a silent bad install. |
+| `https://github.com/<owner>/<repo>[/...]` | `https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem` | Heuristic: known repos resolve to `@scope/<package>` npm packages; an unknown repo returns `status: error` immediately — nothing is written to `mcp.yaml` — naming the URL and suggesting an explicit `npm:` / `pypi:` / `docker:` prefix or `mcp_install_local`. |
 
 `<SERVER_ID>` and `--source` are mutually exclusive.
 
