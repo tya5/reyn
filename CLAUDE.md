@@ -164,7 +164,7 @@ So each question has a blocking answer, not just an answer:
 |---|---|
 | 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
 | 2 | yes — the same expression is on both sides |
-| 3 | yes — it stays green with the mechanism removed |
+| 3 | yes — it stays green with the mechanism removed, unless it names the reject-side test that proves the mechanism can fail |
 | 4 | it would be green having never run, **and the PR does not say so** |
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
 | 6 | the declared Tier is not the one question 1 named |
@@ -173,6 +173,21 @@ So each question has a blocking answer, not just an answer:
 often correct (an optional extra), and what makes it a defect is a green nobody
 qualified. 5 has no such carve-out — "it is small today" is a measurement of
 today, and the runaway that started this was small until it wasn't.
+
+**3's exception, precisely.** An accept-side test (a false-positive control —
+"this shape must NOT trip the gate") is *supposed* to stay green with the
+mechanism removed; that's what makes it accept-side. But self-declaring that
+in a docstring is not sufficient on its own — a suite of nothing but
+accept-side tests would all pass this exception, all stay green, with the
+gate itself dead. The docstring must *name the reject-side test that proves
+the gate can fail* — self-declaration plus a pointer to its actual contrast,
+not self-declaration alone. One sentence carries both: "Accept-side: a
+mirrors-src directory must NOT trip the gate (the reject side is
+`test_…` below)." Don't reduce this to a fixed phrase ("accept-side / control")
+— naming *what* it contrasts against is what satisfies the pointer, and a
+boilerplate phrase with no name satisfies neither. The reject-side test does
+not have to live in the same file (a gate built across separate files, e.g.
+the `#3885` migration-diff-shape gate, still qualifies).
 
 **Reviewer's note, on the PR:** record the answers per test before merging. A
 lead-coder merge train refuses any PR touching `tests/` without one — the promise
