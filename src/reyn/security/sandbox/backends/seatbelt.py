@@ -91,7 +91,7 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
     # process-exec*). Linux-parity with the seccomp gate; verified via sandbox-exec
     # (py3.9/3.12 + sh pipeline). The prior "fork needed for runtime bootstrap"
     # rationale was incorrect.
-    if policy.allow_subprocess:
+    if not policy.deny_subprocess:
         lines.append("(allow process-fork)")
     else:
         lines.append("(deny process-fork)")
@@ -123,21 +123,27 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
     # write_paths grants above — so an operator's deny of a credential path
     # ALWAYS wins over a broad write grant that would otherwise engulf it
     # (#2978). This is the owner rule: "a deny that loses to an allow is not a
-    # deny." Previously the write re-allow was placed after the deny-list, so
-    # ``write_paths=[$HOME]`` silently nullified the ``~/.ssh`` etc. denies —
-    # ``~/.ssh`` became both readable AND writable. Both axes are denied here
-    # (not just file-read*): a write grant makes an engulfed credential path
-    # WRITABLE too, so denying only reads would leave ``touch ~/.ssh/x``
-    # succeeding. An operator who genuinely needs to write under a denied prefix
-    # narrows ``read_deny_paths`` explicitly; the op handler emits a
-    # ``sandbox_policy_narrowed`` audit-event whenever a deny wins here, so the
-    # narrowing is observable rather than silent.
+    # deny."
+    #
+    # #3901 PR-B ④: read_deny_paths and write_deny_paths are now separate,
+    # explicit fields — each denies only its own axis. Before PR-B,
+    # read_deny_paths ALSO emitted a file-write* deny as an (undocumented)
+    # side-effect (Landlock never replicated that side-effect at all, so the
+    # SAME policy meant different things per OS — closed by giving both axes
+    # their own real field on both backends). An operator who wants a path
+    # denied on BOTH axes now lists it in both fields.
     if policy.read_deny_paths:
         lines.append("")
-        lines.append("; — sensitive deny-list (defense-in-depth, deny always wins) —")
+        lines.append("; — read deny-list (defense-in-depth, deny always wins) —")
         for raw in policy.read_deny_paths:
             resolved = str(expand_policy_path(raw).resolve(strict=False))
             lines.append(f"(deny file-read* (subpath {_sbpl_quote(resolved)}))")
+
+    if policy.write_deny_paths:
+        lines.append("")
+        lines.append("; — write deny-list (defense-in-depth, deny always wins) —")
+        for raw in policy.write_deny_paths:
+            resolved = str(expand_policy_path(raw).resolve(strict=False))
             lines.append(f"(deny file-write* (subpath {_sbpl_quote(resolved)}))")
 
     # Always-allowed loopback bind (#3060), independent of `policy.network`.
@@ -165,10 +171,11 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         lines.append("; — network —")
         lines.append("(allow network*)")
 
-    # process-fork is gated on policy.allow_subprocess above (#1914), so
-    # allow_subprocess=False is ENFORCED, not advisory: spawning a child needs
-    # fork(); the interpreter is exec'd by sandbox-exec via process-exec* and
-    # does not itself need fork to run. Matches the Linux seccomp enforcement.
+    # process-fork is gated on policy.deny_subprocess above (#1914, renamed
+    # #3901 PR-B ④), so deny_subprocess=True is ENFORCED, not advisory:
+    # spawning a child needs fork(); the interpreter is exec'd by
+    # sandbox-exec via process-exec* and does not itself need fork to run.
+    # Matches the Linux seccomp enforcement.
 
     return "\n".join(lines) + "\n"
 
@@ -213,7 +220,7 @@ class SeatbeltBackend:
     def self_test(self) -> str | None:
         """Witness real denies through ``sandbox-exec`` (#2983): None when a write
         outside ``write_paths`` was refused AND a spawn under
-        ``allow_subprocess=False`` was refused, else the reason one was not.
+        ``deny_subprocess=True`` was refused, else the reason one was not.
         Cached per process; see ``reyn.security.sandbox.self_test``.
 
         The second axis is this profile's ``(deny process-fork)`` (#1914) — the

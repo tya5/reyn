@@ -1,6 +1,6 @@
 """Tier 1/2: #2827 part 2 — the operator's per-hook ``subprocess:`` sandbox knob.
 
-The gap: ``hooks/shell_runner.py`` hardcoded ``allow_subprocess=False`` in the
+The gap: ``hooks/shell_runner.py`` hardcoded ``deny_subprocess=True`` in the
 default policy it builds, and NO production caller ever passed ``sandbox_policy``
 (the dispatcher doesn't), so the floor was unconditional and **unconfigurable** —
 an operator whose hook command forks (``git``/``npm``/a pyenv-shimmed bare
@@ -142,23 +142,27 @@ async def test_operator_subprocess_true_reaches_the_sandbox_policy(monkeypatch):
         [{"on": "turn_end", "exec": ["echo", "hi"], "subprocess": True}], backend
     )
 
-    assert _policy_for(backend, "hi").allow_subprocess is True
+    assert _policy_for(backend, "hi").deny_subprocess is False
 
 
 @pytest.mark.asyncio
 async def test_omitted_subprocess_keeps_the_false_floor(monkeypatch):
-    """Tier 2: omitting the knob keeps allow_subprocess False — the pre-#2827
-    behaviour is preserved for every existing hook (no silent loosening)."""
+    """Tier 2: omitting the knob keeps deny_subprocess True (= no fork) — the
+    pre-#2827 behaviour is preserved for every existing hook (no silent
+    loosening)."""
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     backend = _RecordingBackend()
 
     await _dispatch([{"on": "turn_end", "exec": ["echo", "hi"]}], backend)
 
     policy = _policy_for(backend, "hi")
-    assert policy.allow_subprocess is False
-    # the floor's OTHER bounds are untouched by the knob
+    assert policy.deny_subprocess is True
+    # the floor's OTHER bound (network) is untouched by the knob.
+    # #3901 PR-B ④: read_deny_paths is no longer part of this floor — its
+    # dataclass default is now empty (owner ruling B, full compat), so this
+    # hook path carries no sensitive-file deny-list unless an operator sets
+    # one explicitly (see shell_runner.py's own comment at the build site).
     assert policy.network is False
-    assert policy.read_deny_paths  # the sensitive-file deny-list still applies
 
 
 @pytest.mark.asyncio
@@ -183,7 +187,7 @@ async def test_subprocess_is_per_hook_not_a_global_flip(monkeypatch):
     )
 
     # the mapping IS the assertion: every hook's own declaration, side by side.
-    by_cmd = {argv[-1]: policy.allow_subprocess for argv, policy in backend.calls}
+    by_cmd = {argv[-1]: not policy.deny_subprocess for argv, policy in backend.calls}
     assert by_cmd == {"forker": True, "pure": False, "hardened": False}
 
 
@@ -199,4 +203,4 @@ async def test_shell_push_sibling_honours_the_same_knob(monkeypatch):
         [{"on": "turn_end", "exec_capture": ["echo", "{}"], "subprocess": True}], backend
     )
 
-    assert _policy_for(backend, "{}").allow_subprocess is True
+    assert _policy_for(backend, "{}").deny_subprocess is False

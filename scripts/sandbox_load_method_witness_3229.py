@@ -254,7 +254,7 @@ def _write_axis_ld_linux(ld_linux: str, backend) -> None:
     denied = Path(tempfile.mkdtemp(prefix="reyn-sandbox-loadwitness-w-deny-")).resolve()
     try:
         policy = SandboxPolicy(
-            write_paths=[str(granted)], network=False, allow_subprocess=True,
+            write_paths=[str(granted)], network=False, deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
         # ld-linux directly on argv[0], /bin/sh as its target — the loader
@@ -305,11 +305,11 @@ def _network_axis_ld_linux(ld_linux: str, backend) -> None:
             )
 
         policy_on = SandboxPolicy(
-            write_paths=[str(granted)], network=True, allow_subprocess=True,
+            write_paths=[str(granted)], network=True, deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
         policy_off = SandboxPolicy(
-            write_paths=[str(granted)], network=False, allow_subprocess=True,
+            write_paths=[str(granted)], network=False, deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
 
@@ -347,7 +347,7 @@ def _write_axis_mmap(backend) -> None:
     denied = Path(tempfile.mkdtemp(prefix="reyn-sandbox-loadwitness-mw-deny-")).resolve()
     try:
         policy = SandboxPolicy(
-            write_paths=[str(granted)], network=False, allow_subprocess=True,
+            write_paths=[str(granted)], network=False, deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
         control = granted / "control"
@@ -388,11 +388,11 @@ def _network_axis_mmap(backend) -> None:
         port = listener.getsockname()[1]
 
         policy_on = SandboxPolicy(
-            write_paths=[str(granted)], network=True, allow_subprocess=True,
+            write_paths=[str(granted)], network=True, deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
         policy_off = SandboxPolicy(
-            write_paths=[str(granted)], network=False, allow_subprocess=True,
+            write_paths=[str(granted)], network=False, deny_subprocess=False,
             timeout_seconds=_PROBE_TIMEOUT_SECONDS,
         )
 

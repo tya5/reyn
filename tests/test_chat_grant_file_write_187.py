@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant — `reyn chat --grant-file-write` resolver ∩ sandbox grant.
+"""Tier 2: OS invariant — `reyn chat --grant-file-write` resolver grant.
 
 #187: solving SWE with the general agent (RouterLoop / `reyn chat`) in a
 non-interactive / scripted container run needs the agent to edit the repo
@@ -7,16 +7,23 @@ working tree without a permission prompt. `reyn chat` gained a scoped
 
 Unlike `reyn run` (where the skill declares `file.read`), a chat agent has NO
 skill, so the chat flag grants BOTH `file.read` AND `file.write` (the eval
-swe_bench path, eval_benchmark.py:742, does the same). The SandboxLayer (∩)
-bounds the write to the env-backend's `write_paths` (= the repo working tree), so
-the blanket resolver `allow` is scoped to the working tree, NOT global.
+swe_bench path, eval_benchmark.py:742, does the same).
 
-Pins with a REAL PermissionResolver + real SandboxPolicy (never a None resolver,
-per the enforcement-test rule):
+#3901 PR-B ③ (owner ruling B, #3916): FILE_WRITE no longer participates in
+SandboxLayer's permission-∩ projection — an operator cannot know a sandbox's
+path floor, so it is not treated as a permission input. This grant has no
+scope of its own at the permission layer; scope is a #3925 concern on the
+permission side (not yet built), and any sandbox-backend enforcement (e.g.
+Landlock/seatbelt denying a write outside its own configured paths) is a
+SEPARATE, backend-level mechanism this test does not exercise. Do not write
+"the sandbox narrows it" here again — that conflation is exactly what PR-B
+retired.
+
+Pins with a REAL PermissionResolver (never a None resolver, per the
+enforcement-test rule):
   - chat grant injects file.read AND file.write = 'allow';
-  - grant + sandbox[repo] → an in-repo write is ALLOWED;
-  - the SAME grant → a write OUTSIDE the sandbox zone is DENIED (∩ scopes it);
-  - WITHOUT the grant → an in-repo write is DENIED (the prompt-less default);
+  - grant → a write is ALLOWED (no scope check at this layer);
+  - WITHOUT the grant → the same write is DENIED (the prompt-less default);
   - `reyn chat` exposes `--grant-file-write` (dest=grant_file_write).
 """
 from __future__ import annotations
@@ -52,6 +59,9 @@ def _resolver(*, granted: bool) -> PermissionResolver:
 
 
 async def _can_write(resolver: PermissionResolver, path: str) -> bool:
+    # A real sandbox_policy is threaded through, same as a live caller would —
+    # proving the grant's outcome does NOT depend on it (FILE_WRITE is ⊤ on
+    # SandboxLayer post-PR-B ③, not merely untested here).
     sandbox = SandboxPolicy(write_paths=[_REPO])
     try:
         await resolver.require_file_write(_DECL, path, "default", sandbox_policy=sandbox)
@@ -70,16 +80,8 @@ def test_chat_grant_injects_read_and_write() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_grant_allows_in_repo_write() -> None:
-    """Tier 2: chat grant + sandbox[repo] → an in-repo write is allowed (agent edits)."""
+    """Tier 2: chat grant → an in-repo write is allowed (agent edits)."""
     assert await _can_write(_resolver(granted=True), f"{_REPO}/astropy/io/ascii/html.py") is True
-
-
-@pytest.mark.asyncio
-async def test_chat_grant_still_denies_outside_sandbox_zone() -> None:
-    """Tier 2: the SandboxLayer ∩ scopes the chat grant — a write OUTSIDE write_paths
-    (e.g. /etc) is DENIED even with the resolver grant (scope from the sandbox, not
-    the blanket resolver allow). Same safety as `reyn run --grant-file-write`."""
-    assert await _can_write(_resolver(granted=True), "/etc/passwd") is False
 
 
 @pytest.mark.asyncio

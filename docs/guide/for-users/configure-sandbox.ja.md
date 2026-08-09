@@ -55,7 +55,7 @@ Reyn はバックエンドを選択する際、まずそれが**あなたのマ�
 
 ## エージェントレベルのサンドボックスポリシーの設定
 
-`sandbox.policy` により、オペレーターが決定論的なサンドボックスポリシーを宣言できます。設定されている場合、すべての `sandboxed_exec` op **と** パーミッション交差の `SandboxLayer` に適用されます — スキルや LLM はこれを広げることができません。
+`sandbox.policy` により、オペレーターが決定論的なサンドボックスポリシーを宣言できます。設定されている場合、すべての `sandboxed_exec` op **と** `network`/`subprocess`/`env` 軸に関してパーミッション交差の `SandboxLayer` に適用されます — スキルや LLM はこれを広げることができません。`write_paths`（および read/write deny リスト）はこの交差に**参加しません** — op が必要とするディレクトリはオペレーターが事前に知り得ない値なので、パーミッション ∩ ではなくカーネルバックエンドが直接消費します（#3901）。
 
 ```yaml
 sandbox:
@@ -74,26 +74,28 @@ sandbox:
 
 ### ポリシーフィールド
 
+`write_paths` を除く全フィールドが完全 compat（#3901 owner ruling）をデフォルトとします — サンドボックスの役割は許可された操作の**裏側**を bound することであり、起動元シェルが既にできることを再決定することではありません。
+
 | フィールド | 型 | デフォルト | 意味 |
 |---|---|---|---|
-| `network` | bool | `false` | アウトバウンドネットワークを許可。主要な外部流出ゲート。 |
-| `write_paths` | パスのリスト | `[]` | プロセスが書き込めるパス（厳密なガード）。書き込みは読み取りを含む — ここに挙げたパスは `read_deny_paths` が deny していても*読み取り*が再開されるため、`~` ではなく具体的なディレクトリを許可すること。`~` は展開される。 |
-| `read_deny_paths` | パスのリスト | `[]` | 広読み込みサーフェスから拒否する機密パス（多層防御）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。Landlock では非対応。 |
-| `read_paths` | パスのリスト | `[]` | レガシー — かつての厳密な読み込み許可リスト。現在、読み込みはデフォルトで広許可のためこのフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
-| `allow_subprocess` | bool | `true` | 子プロセスの生成を許可。Linux (seccomp) / macOS (Seatbelt) ともに適用。 |
-| `env_passthrough` | 文字列のリスト | `[]` | プロセスに引き渡す環境変数名。`PATH` は常に引き渡されます。 |
+| `network` | bool | `true`（compat） | アウトバウンドネットワークを許可。主要な外部流出ゲート — config で allow された host であっても `network: false` の下では拒否されます。 |
+| `write_paths` | パスのリスト | `[]` | プロセスが書き込めるパス（厳密なガード）— デフォルトで閉じている唯一のフィールド。書き込みは読み取りを含む — ここに挙げたパスは `read_deny_paths` が deny していても*読み取り*が再開されるため、`~` ではなく具体的なディレクトリを許可すること。`~` は展開される。 |
+| `read_deny_paths` | パスのリスト | `[]`（compat） | 広読み込みサーフェスから拒否する機密パス（多層防御、**opt-in**）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。Landlock では非対応。#3901 以前は OS レベルの機密パス7件がデフォルトだった — その保護を戻すには明示的に設定する。読み込み軸のみを deny する — 書き込み軸は `write_deny_paths` を参照。 |
+| `write_deny_paths` | パスのリスト | `[]` | 書き込み軸専用の deny リスト（#3901）、`read_deny_paths` と対をなす。書き込み軸のみを deny する — #3901 以前は `read_deny_paths` が Seatbelt 上で（未文書化の副作用として）書き込みも deny していたが、その結合は解消された。両軸で保護したい場合は両方のフィールドに列挙する。 |
+| `deny_subprocess` | bool | `false`（compat） | 子プロセスの生成を deny。Linux (seccomp) / macOS (Seatbelt) ともに適用。 |
+| `env_deny_names` | 文字列のリスト | `[]`（compat） | プロセスに引き渡さない環境変数名。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味します。 |
 | `timeout_seconds` | int | `60` | ウォールクロック制限。期限超過でプロセスを終了。 |
 
-**`allow_subprocess: false` は、exec を一切必要としない workload にとって最も安価で最も予測可能な hardening です。** 設定は単一の boolean で、その効果は全面的かつ即時です — 子プロセス生成が完全に拒否され、後から状態がずれて驚くことはありません。exec が本当に必要な workload（ビルドステップ、CLI ラッパー等）にはこの設定は向きません — その場合はサンドボックス境界と、exec のたびに残る監査証跡（`sandboxed_exec_started`/`_completed`/`_cancelled` が `argv` を記録します — [Reference: events](../../reference/runtime/events.md) 参照）で bound されます。
+**`deny_subprocess: true` は、exec を一切必要としない workload にとって最も安価で最も予測可能な hardening です。** 設定は単一の boolean で、その効果は全面的かつ即時です — 子プロセス生成が完全に拒否され、後から状態がずれて驚くことはありません。exec が本当に必要な workload（ビルドステップ、CLI ラッパー等）にはこの設定は向きません — その場合はサンドボックス境界と、exec のたびに残る監査証跡（`sandboxed_exec_started`/`_completed`/`_cancelled` が `argv` を記録します — [Reference: events](../../reference/runtime/events.md) 参照）で bound されます。
 
 ### スコーピングモデル
 
 reyn は**広読み込み・厳密書き込み・ネットワークゲート**モデルを採用しています:
 
 - **読み込みは広許可。** プロセスはファイルシステムの大部分を読み取れます。ポリシーに列挙しなくても dylib 読み込み用のシステムパスが機能します。
-- **ネットワークが外部流出ゲート。** `network: false`（デフォルト）により、プロセスは広く読み取れますがデータを送信できません。
-- **書き込みは厳密。** `write_paths` に記載されたパスのみ書き込み可能。
-- **`read_deny_paths` は多層防御。** バックエンドが deny-after-allow を表現できる場合に、広読み込みサーフェスから機密箇所を除外します。
+- **ネットワークはデフォルトで compat**（#3901 owner ruling B）— サンドボックスは起動元シェルが既に到達できるものを再決定しません。プロセスを分離するには `network: false` を明示的に設定してください。設定すれば広く読み取れますがデータは送信できません。
+- **書き込みは厳密。** `write_paths` に記載されたパスのみ書き込み可能 — デフォルトで閉じている唯一の軸（オペレーターが事前に知り得ない値）。
+- **`read_deny_paths`/`write_deny_paths` は多層防御、opt-in。** バックエンドが deny-after-allow を表現できる場合に、広い読み書きサーフェスから機密箇所を除外します。デフォルトは空（何も除外されない）。
 
 ## バックエンド別の動作
 
@@ -106,7 +108,8 @@ SBPL deny-default プロファイルを使った `sandbox-exec` を使用。macO
 | `write_paths` | 適用 |
 | `network` | 適用。`network` の値に関わらず、loopback 限定の `network-bind`（`localhost:*`）は常に許可される（Landlock の `socket`/`bind` の例外と同じ理由、[#3060](https://github.com/tya5/reyn/issues/3060)）— `network-outbound`/`network-inbound` は引き続き `network` でゲートされる。 |
 | `read_deny_paths` | **適用** — SBPL deny-after-allow |
-| `allow_subprocess` | **適用** — off の時 `process-fork` を deny（対象自身の exec は `process-exec*` で動作） |
+| `write_deny_paths` | **適用** — SBPL deny-after-allow、`read_deny_paths` とは独立（#3901: 各軸をそれぞれ独立に deny） |
+| `deny_subprocess` | **適用** — on の時 `process-fork` を deny（対象自身の exec は `process-exec*` で動作） |
 | `timeout_seconds` | 適用 |
 
 ### Landlock（Linux）
@@ -116,9 +119,10 @@ Linux Landlock LSM のパス以下許可リストルールを使用。
 | フィールド | 適用 |
 |---|---|
 | `write_paths` | 適用 — path-beneath 書き込みルール |
-| `network` | **無条件に適用**（[#3030](https://github.com/tya5/reyn/issues/3030) で修正済み）。Landlock 自体はどのカーネルでもネットワークを制限しない（pin された `landlock` パッケージがネットワークルール API を持たない）ため、deny は seccomp-BPF のデフォルト拒否**アローリスト**だけが担う — 名前に無い syscall（`network: false` 時の `connect`/`sendmsg`/`accept`/`listen` を含め、さらに syscall 名の denylist では表現できない `io_uring_setup`/`io_uring_enter` も無条件に）は全て拒否される。このフィルタは以前 `allow_subprocess: true`（stdio MCP の既定）で丸ごとスキップされ、ネットワークゲートも道連れになっていたが、今は無条件にロードされるため `network: false` は `allow_subprocess` の値に関わらず適用される。`network` の値に関わらず常に許可される例外は2つ（[#3060](https://github.com/tya5/reyn/issues/3060)）: **(1)** `socket`/`bind` — どちらか単独ではバイトの送受信は発生せず、よく使われる HTTP クライアント依存の import 時 IPv6 対応プローブ（`::1` のポート 0 に `bind` するだけで `connect` はしない）が巻き添えで拒否されていた副作用を解消するため; **(2)** `sendto`/`recvfrom` で**アドレス引数が NULL のとき** — CPython asyncio のイベントループが自身を起こすための connected な AF_UNIX socketpair（`send`/`recv` が NULL アドレスの `sendto`/`recvfrom` syscall に落ちる）で、これを丸ごと拒否すると全ての stdio MCP server のループが pump できず server が 0 バイトしか返せなくなっていた。実際にピアへダイヤルするには引き続き `connect`（拒否）が必要で、`sendto` の**アドレス付き**形（`sendto(fd, …, &sockaddr, …)` = 実 UDP egress）はアドレスが非 NULL ゆえ同じ条件で拒否される。 |
-| `read_deny_paths` | **非対応** — Landlock は許可リストのみで、許可した親から子パスを除外できない。ネットワークゲート（上の `network` 行を参照）が代償の外部流出制御であり、#3030 以降は `allow_subprocess` の値に関わらず適用される。秘密を読めるプロセスの封じ込めをこのプラットフォームに依存しないこと — ネットワーク拒否は持ち出しを止めるだけ。 |
-| `allow_subprocess` | 利用可能な場合 seccomp-BPF で適用 |
+| `network` | **無条件に適用**（[#3030](https://github.com/tya5/reyn/issues/3030) で修正済み）。Landlock 自体はどのカーネルでもネットワークを制限しない（pin された `landlock` パッケージがネットワークルール API を持たない）ため、deny は seccomp-BPF のデフォルト拒否**アローリスト**だけが担う — 名前に無い syscall（`network: false` 時の `connect`/`sendmsg`/`accept`/`listen` を含め、さらに syscall 名の denylist では表現できない `io_uring_setup`/`io_uring_enter` も無条件に）は全て拒否される。このフィルタは以前 `deny_subprocess` が off（`false`、stdio MCP の既定）のとき丸ごとスキップされ、ネットワークゲートも道連れになっていたが、今は無条件にロードされるため `network: false` は `deny_subprocess` の値に関わらず適用される。`network` の値に関わらず常に許可される例外は2つ（[#3060](https://github.com/tya5/reyn/issues/3060)）: **(1)** `socket`/`bind` — どちらか単独ではバイトの送受信は発生せず、よく使われる HTTP クライアント依存の import 時 IPv6 対応プローブ（`::1` のポート 0 に `bind` するだけで `connect` はしない）が巻き添えで拒否されていた副作用を解消するため; **(2)** `sendto`/`recvfrom` で**アドレス引数が NULL のとき** — CPython asyncio のイベントループが自身を起こすための connected な AF_UNIX socketpair（`send`/`recv` が NULL アドレスの `sendto`/`recvfrom` syscall に落ちる）で、これを丸ごと拒否すると全ての stdio MCP server のループが pump できず server が 0 バイトしか返せなくなっていた。実際にピアへダイヤルするには引き続き `connect`（拒否）が必要で、`sendto` の**アドレス付き**形（`sendto(fd, …, &sockaddr, …)` = 実 UDP egress）はアドレスが非 NULL ゆえ同じ条件で拒否される。 |
+| `read_deny_paths` | **非対応** — Landlock は許可リストのみで、許可した親から子パスを除外できない。ネットワークゲート（上の `network` 行を参照）が代償の外部流出制御であり、#3030 以降は `deny_subprocess` の値に関わらず適用される。秘密を読めるプロセスの封じ込めをこのプラットフォームに依存しないこと — ネットワーク拒否は持ち出しを止めるだけ。 |
+| `write_deny_paths` | **非対応** — `read_deny_paths` と同じ許可リストのみの制約 |
+| `deny_subprocess` | 利用可能な場合 seccomp-BPF で適用 |
 | `timeout_seconds` | 適用 |
 
 ### Noop

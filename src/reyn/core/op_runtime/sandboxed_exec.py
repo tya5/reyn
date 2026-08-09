@@ -19,7 +19,7 @@ from typing import Literal
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy
 from reyn.security.sandbox.launcher import resolve_backend, run_and_classify
-from reyn.security.sandbox.policy import deny_narrowed_write_grants
+from reyn.security.sandbox.policy import deny_narrowed_write_grants, unenforced_axes
 from reyn.security.sandbox.resolve import resolve_real_executable
 
 from . import register
@@ -66,12 +66,24 @@ async def handle(
     if ctx.default_sandbox_policy is not None:
         policy = SandboxPolicy(**ctx.default_sandbox_policy)
     else:
+        # #3901 PR-B: `op` (SandboxedExecIROp) and `SandboxPolicy` are
+        # DIFFERENT vocabularies now, not a naming accident — op is what the
+        # LLM requests ("let me do X", allow_*), policy is what the
+        # operator forbids ("don't let it Y", deny_*). Direct field-by-field
+        # translation here (not a shared conversion layer: this is the
+        # ONLY production construction site — #3907 tracks these op fields
+        # having zero real producers; every setter found was a test
+        # constructing the op directly). `op.read_paths` has no policy
+        # counterpart (removed #3901 PR-B ④, broad-read realignment made it
+        # dead everywhere); `op.env_passthrough` has no direct translation
+        # (an allow-list of names vs `env_deny_names`' a deny-list means
+        # "block nothing extra" IS its empty default, so an empty
+        # `env_passthrough` — the only value #3907 found ever produced —
+        # needs no translation at all).
         policy = SandboxPolicy(
             network=op.network,
-            read_paths=list(op.read_paths),
             write_paths=list(op.write_paths),
-            allow_subprocess=op.allow_subprocess,
-            env_passthrough=list(op.env_passthrough),
+            deny_subprocess=not op.allow_subprocess,
             timeout_seconds=op.timeout_seconds,
         )
 
@@ -109,16 +121,22 @@ async def handle(
         backend=backend.name,
         timeout_seconds=policy.timeout_seconds,
         network=policy.network,
-        allow_subprocess=policy.allow_subprocess,
+        # #3901 PR-B ④: field renamed (allow_subprocess -> deny_subprocess,
+        # inverted sense) — this event's data key follows the policy's own
+        # field name, not a fixed audit-event kind (no AUDIT_EVENT_KINDS
+        # three-point-set implication; the kind itself is unchanged).
+        deny_subprocess=policy.deny_subprocess,
     )
 
-    # #2978: deny-always-wins — when a read_deny_paths entry overlaps a
-    # write_paths grant, the backend now lets the deny win (a credential path
-    # engulfed by a broad write grant stays denied for BOTH read and write). Emit
-    # an audit-event so the narrowing is observable, not silent. This is the
-    # LLM-reachable path (op-authored / operator-resolved write_paths reach here
-    # via ctx.default_sandbox_policy); the enforcement itself lives at the
-    # Seatbelt emit chokepoint, so every policy-construction path is covered.
+    # #2978: deny-always-wins — when a write_deny_paths entry overlaps a
+    # write_paths grant (field renamed #3901 PR-B ④: this used to check
+    # read_deny_paths, an undocumented Seatbelt side-effect closed by giving
+    # write its own explicit deny-list), the backend now lets the deny win.
+    # Emit an audit-event so the narrowing is observable, not silent. This is
+    # the LLM-reachable path (op-authored / operator-resolved write_paths
+    # reach here via ctx.default_sandbox_policy); the enforcement itself
+    # lives at the Seatbelt emit chokepoint, so every policy-construction
+    # path is covered.
     narrowed = deny_narrowed_write_grants(policy)
     if narrowed:
         ctx.events.emit(
@@ -127,6 +145,20 @@ async def handle(
             narrowed=[
                 {"write_path": w, "deny_path": d} for w, d in narrowed
             ],
+        )
+
+    # #3901 §4③: the selected backend may not be able to express an axis the
+    # policy configured (Landlock cannot carve a read/write deny-list out of
+    # an allowed parent — a structural LSM constraint, not a bug). Doc-only
+    # visibility reads as "written but nobody checks it" — this makes the gap
+    # an audit-event instead, mirroring sandbox_policy_narrowed's precedent.
+    # Deliberately NOT wired into enforcement_self_test (CLAUDE.md hard rule).
+    unenforced = unenforced_axes(backend.name, policy)
+    if unenforced:
+        ctx.events.emit(
+            "sandbox_axis_unenforced",
+            backend=backend.name,
+            axes=unenforced,
         )
 
     launched = await run_and_classify(

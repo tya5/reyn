@@ -71,12 +71,32 @@ def test_sbpl_profile_read_deny_paths_after_broad_allow():
     assert profile.index("(allow file-read*)") < profile.index(deny_rule)
 
 
-def test_sbpl_profile_default_includes_sensitive_deny():
-    """Tier 2: the default policy carries the OS-level sensitive deny-list, so the
-    broad read surface excludes ~/.ssh etc by default (defense-in-depth)."""
+def test_sbpl_profile_bare_default_carries_no_sensitive_deny():
+    """Tier 2: #3901 PR-B ④ (owner ruling B, full compat) — a bare
+    ``SandboxPolicy()`` no longer carries the OS-level sensitive deny-list;
+    ``read_deny_paths`` defaults to empty. A caller that wants the ~/.ssh-etc
+    defense-in-depth (e.g. the MCP client, which runs untrusted third-party
+    code) sets ``read_deny_paths=list(DEFAULT_SENSITIVE_READ_DENY)``
+    explicitly — see test_sbpl_profile_explicit_sensitive_deny_list below for
+    that opt-in leg."""
     from pathlib import Path
 
     profile = _build_sbpl_profile(SandboxPolicy())
+    ssh_resolved = str(Path("~/.ssh").expanduser().resolve(strict=False))
+    assert f'(deny file-read* (subpath "{ssh_resolved}"))' not in profile
+
+
+def test_sbpl_profile_explicit_sensitive_deny_list():
+    """Tier 2: the opt-in leg — declaring ``read_deny_paths`` explicitly (e.g.
+    with :data:`DEFAULT_SENSITIVE_READ_DENY`) still excludes ~/.ssh etc from
+    the broad read surface (defense-in-depth, now opt-in rather than default)."""
+    from pathlib import Path
+
+    from reyn.security.sandbox.policy import DEFAULT_SENSITIVE_READ_DENY
+
+    profile = _build_sbpl_profile(
+        SandboxPolicy(read_deny_paths=list(DEFAULT_SENSITIVE_READ_DENY))
+    )
     ssh_resolved = str(Path("~/.ssh").expanduser().resolve(strict=False))
     assert f'(deny file-read* (subpath "{ssh_resolved}"))' in profile
 
@@ -140,10 +160,9 @@ async def test_seatbelt_runs_echo_under_sandbox():
     if not backend.available():
         pytest.skip("sandbox-exec not available on this machine")
 
-    policy = SandboxPolicy(
-        read_paths=["/bin", "/usr/lib", "/System/Library"],
-        timeout_seconds=10,
-    )
+    # #3901 PR-B ④: read_paths was removed (dead since #1199's broad-read
+    # realignment — reads are broad by default on Seatbelt too).
+    policy = SandboxPolicy(timeout_seconds=10)
     result = await backend.run(["/bin/echo", "hello"], policy)
     assert result.returncode == 0, f"stderr: {result.stderr!r}"
     assert b"hello" in result.stdout
@@ -157,10 +176,7 @@ async def test_seatbelt_timeout_returns_minus_one():
     if not backend.available():
         pytest.skip("sandbox-exec not available on this machine")
 
-    policy = SandboxPolicy(
-        read_paths=["/bin", "/usr/lib", "/System/Library"],
-        timeout_seconds=1,
-    )
+    policy = SandboxPolicy(timeout_seconds=1)
     result = await backend.run(["/bin/sleep", "5"], policy)
     assert result.returncode == -1
 

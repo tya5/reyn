@@ -42,7 +42,7 @@ A backend from this table is used only if it **passes an enforcement self-test**
 
 ## Reyn checks that your sandbox really sandboxes
 
-When Reyn picks a backend, it first proves the backend works **on your machine**. It launches short subprocesses through that backend and tries two things the policy forbids: writing a file outside the writable paths, and spawning a process while `allow_subprocess` is off. Both must be refused. If either goes through, the backend is not enforcing what it claims, and Reyn treats it exactly as if it were not installed — applying your `on_unsupported` setting.
+When Reyn picks a backend, it first proves the backend works **on your machine**. It launches short subprocesses through that backend and tries two things the policy forbids: writing a file outside the writable paths, and spawning a process with `deny_subprocess` on. Both must be refused. If either goes through, the backend is not enforcing what it claims, and Reyn treats it exactly as if it were not installed — applying your `on_unsupported` setting.
 
 This matters because "the sandbox is installed" and "the sandbox works" are different things. A backend can be present and importable while enforcing nothing at all — right OS, package imports fine, and yet every restriction silently absent. Checking only for presence cannot tell those apart. So Reyn checks the thing you actually care about: whether a forbidden action gets refused.
 
@@ -66,7 +66,11 @@ If you see the warning, your AI code has been running without isolation. The mes
 
 `sandbox.policy` lets the operator declare a deterministic, operator-controlled
 sandbox policy. When set, it applies to all `sandboxed_exec` ops **and** to the
-`SandboxLayer` of the permission intersection — a workflow or the LLM cannot widen it.
+`SandboxLayer` of the permission intersection for the `network`/`subprocess`/`env`
+axes — a workflow or the LLM cannot widen it. `write_paths` (and the read/write
+deny-lists) do NOT participate in that intersection: they are values an operator
+cannot know in advance (the op declares what directory it needs), so the kernel
+backend consumes them directly rather than through the permission ∩ (#3901).
 
 ```yaml
 sandbox:
@@ -86,17 +90,21 @@ restriction: op-level fields govern, and the SandboxLayer is unrestricted.
 
 ### Policy fields
 
+Every field except `write_paths` defaults to full compat (owner ruling, #3901):
+the sandbox's job is bounding what happens *behind* a permitted action, not
+re-deciding what the launching shell could already do.
+
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `network` | bool | `true` (owner decision, 2026-06-05) | Allow outbound network. Set `network: false` explicitly to close it. |
-| `write_paths` | list of paths | `[]` | Paths the process may write (tight guard). Write implies read — a path listed here is also re-opened for *reading* even if `read_deny_paths` would deny it, so grant specific directories rather than `~`. `~` is expanded. |
-| `read_deny_paths` | list of paths | `[]` | Sensitive paths to deny from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt); not enforceable on Landlock. |
-| `read_paths` | list of paths | `[]` | Legacy — formerly the strict read allowlist. Reads are broad by default; this field now documents intended read targets only. |
-| `allow_subprocess` | bool | `true` | Allow child-process spawning. Enforced on Linux (seccomp) and macOS (Seatbelt). |
-| `env_passthrough` | list of strings | `[]` | Env vars passed through to the process. `PATH` is always passed. |
+| `network` | bool | `true` (owner decision, 2026-06-05; reaffirmed as full compat by #3901 owner ruling B) | Allow outbound network. The primary exfiltration gate — a config-allowed host is still denied under `network: false`. Set `network: false` explicitly to close it. |
+| `write_paths` | list of paths | `[]` | Paths the process may write (tight guard) — the one field that stays closed by default (an operator-unknowable value, #3901). Write implies read — a path listed here is also re-opened for *reading* even if `read_deny_paths` would deny it, so grant specific directories rather than `~`. `~` is expanded. |
+| `read_deny_paths` | list of paths | `[]` (compat) | Sensitive paths to deny from the broad read surface (defense-in-depth, **opt-in**). Enforced only on backends that support deny-after-allow (Seatbelt); not enforceable on Landlock. Before #3901 this defaulted to 7 OS-level credential paths — set it explicitly to get that protection back. Denies only the READ axis; see `write_deny_paths` for the write axis. |
+| `write_deny_paths` | list of paths | `[]` | The write axis's own deny-list (#3901), mirroring `read_deny_paths`. Denies only the WRITE axis — before #3901 a `read_deny_paths` entry also (undocumentedly) denied writes on Seatbelt; that coupling is gone, so list a path in both fields if you want it protected on both axes. |
+| `deny_subprocess` | bool | `false` (compat) | Deny child-process spawning. Enforced on Linux (seccomp) and macOS (Seatbelt). |
+| `env_deny_names` | list of strings | `[]` (compat) | Env vars WITHHELD from the process. Empty (the default) means the whole environment passes through, same trust level as the launching shell. |
 | `timeout_seconds` | int | `60` | Wall-clock limit; process is killed on expiry. |
 
-**`allow_subprocess: false` is the cheapest, most predictable hardening available for a workload that never needs to spawn anything.** It is a single boolean, and its effect is total and immediate: child-process spawning is denied outright, with no partial states to reason about later. If your workload genuinely needs to exec (a build step, a CLI wrapper), this setting isn't for you — you're bound instead by the sandbox boundary plus the audit trail every exec leaves (`sandboxed_exec_started`/`_completed`/`_cancelled` record the `argv` — see [Reference: events](../../reference/runtime/events.md)).
+**`deny_subprocess: true` is the cheapest, most predictable hardening available for a workload that never needs to spawn anything.** It is a single boolean, and its effect is total and immediate: child-process spawning is denied outright, with no partial states to reason about later. If your workload genuinely needs to exec (a build step, a CLI wrapper), this setting isn't for you — you're bound instead by the sandbox boundary plus the audit trail every exec leaves (`sandboxed_exec_started`/`_completed`/`_cancelled` record the `argv` — see [Reference: events](../../reference/runtime/events.md)).
 
 ### Scoping model
 
@@ -105,14 +113,17 @@ reyn uses a **broad-read, tight-write, network-open-by-default** model:
 - **Reads are broad.** The process can read most of the filesystem. System-path
   enumeration for dylib loading works without enumeration in policy.
 - **Network is open by default.** `network` defaults to `true` (owner decision,
-  2026-06-05) — a sandboxed process can reach the network unless you set
-  `network: false` explicitly. This follows reyn's standing UX-over-security
+  2026-06-05; reaffirmed as full compat across every non-`write_paths` axis by
+  #3901 owner ruling B) — a sandboxed process can reach the network unless you
+  set `network: false` explicitly. This follows reyn's standing UX-over-security
   posture: security mechanisms here are opt-in, not opt-out — see [Protect
   credentials from sandboxed commands](protect-credentials-in-shell-commands.md)
   for what this means for a command that can read a secret.
-- **Writes are tight.** Only paths in `write_paths` are writable.
-- **`read_deny_paths` is defense-in-depth.** Carves out sensitive locations from
-  the broad read surface where the backend can express a deny-after-allow rule.
+- **Writes are tight.** Only paths in `write_paths` are writable — the one axis
+  that stays closed by default (an operator-unknowable value, #3901).
+- **`read_deny_paths`/`write_deny_paths` are defense-in-depth, opt-in.** Carve out
+  sensitive locations from the broad read/write surface where the backend can
+  express a deny-after-allow rule; empty (nothing carved out) by default.
 
 ## Per-backend behavior
 
@@ -126,7 +137,8 @@ on macOS.
 | `write_paths` | Enforced |
 | `network` | Enforced. A loopback-only `network-bind` (`localhost:*`) is always allowed regardless of `network`, mirroring Landlock's `socket`/`bind` exception above ([#3060](https://github.com/tya5/reyn/issues/3060)) — `network-outbound`/`network-inbound` stay gated on `network`. |
 | `read_deny_paths` | **Enforced** — SBPL deny-after-allow |
-| `allow_subprocess` | **Enforced** — denies `process-fork` when off; the target's own exec still works via `process-exec*` |
+| `write_deny_paths` | **Enforced** — SBPL deny-after-allow, independent of `read_deny_paths` (#3901: each denies only its own axis) |
+| `deny_subprocess` | **Enforced** — denies `process-fork` when on; the target's own exec still works via `process-exec*` |
 | `timeout_seconds` | Enforced |
 
 ### Landlock (Linux)
@@ -136,9 +148,10 @@ Uses the Linux Landlock LSM with path-beneath allowlist rules.
 | Field | Enforcement |
 |---|---|
 | `write_paths` | Enforced — path-beneath write rules |
-| `network` | **Enforced, unconditionally** ([#3030](https://github.com/tya5/reyn/issues/3030) fixed). Landlock itself never restricts network on any kernel: the pinned `landlock` package exposes no network-rule API, so the deny is carried entirely by a seccomp-BPF default-deny **allowlist** — every syscall not named (including `connect`/`sendmsg`/`accept`/`listen` when `network: false`, and unconditionally io_uring's `io_uring_setup`/`io_uring_enter`, which a syscall-name denylist cannot express) is refused. This filter used to be skipped ENTIRELY whenever `allow_subprocess: true` — the stdio MCP default — which silently dropped the network gate along with it; it now loads unconditionally, so `network: false` is enforced regardless of `allow_subprocess`. Two exceptions, always allowed regardless of `network` ([#3060](https://github.com/tya5/reyn/issues/3060)): **(1)** `socket`/`bind` — neither one alone transmits or receives a byte, and a benign import-time IPv6-support probe in a common HTTP-client dependency (`bind`s to `::1` on port 0 and never `connect`s) used to be refused as collateral damage; **(2)** `sendto`/`recvfrom` **when their address argument is NULL** — the connected AF_UNIX socketpair CPython's asyncio event loop uses to wake itself (`send`/`recv` lower to `sendto`/`recvfrom` with a NULL address), whose wholesale denial left every stdio MCP server's loop unable to pump, so the server served 0 bytes. Dialing an actual peer still requires `connect` (denied), and the **addressed** form of `sendto` (`sendto(fd, …, &sockaddr, …)` — real UDP egress) has a non-NULL address and stays denied by that same condition. |
-| `read_deny_paths` | **Not enforced** — Landlock is allowlist-only and cannot carve a subpath out of an allowed parent. The network gate (see the `network` row) is the compensating exfiltration control, and — since #3030 — applies regardless of `allow_subprocess`. Do not rely on this platform to contain a process that can read a secret; network denial only stops it leaving. |
-| `allow_subprocess` | **Enforced** — seccomp-BPF refuses `fork`/`clone`. Landlock is not selected unless the self-test witnesses this deny on your host, so this is a checked claim rather than a hope that `pyseccomp` is installed and loading |
+| `network` | **Enforced, unconditionally** ([#3030](https://github.com/tya5/reyn/issues/3030) fixed). Landlock itself never restricts network on any kernel: the pinned `landlock` package exposes no network-rule API, so the deny is carried entirely by a seccomp-BPF default-deny **allowlist** — every syscall not named (including `connect`/`sendmsg`/`accept`/`listen` when `network: false`, and unconditionally io_uring's `io_uring_setup`/`io_uring_enter`, which a syscall-name denylist cannot express) is refused. This filter used to be skipped ENTIRELY whenever `deny_subprocess` was off (`false`) — the stdio MCP default — which silently dropped the network gate along with it; it now loads unconditionally, so `network: false` is enforced regardless of `deny_subprocess`. Two exceptions, always allowed regardless of `network` ([#3060](https://github.com/tya5/reyn/issues/3060)): **(1)** `socket`/`bind` — neither one alone transmits or receives a byte, and a benign import-time IPv6-support probe in a common HTTP-client dependency (`bind`s to `::1` on port 0 and never `connect`s) used to be refused as collateral damage; **(2)** `sendto`/`recvfrom` **when their address argument is NULL** — the connected AF_UNIX socketpair CPython's asyncio event loop uses to wake itself (`send`/`recv` lower to `sendto`/`recvfrom` with a NULL address), whose wholesale denial left every stdio MCP server's loop unable to pump, so the server served 0 bytes. Dialing an actual peer still requires `connect` (denied), and the **addressed** form of `sendto` (`sendto(fd, …, &sockaddr, …)` — real UDP egress) has a non-NULL address and stays denied by that same condition. |
+| `read_deny_paths` | **Not enforced** — Landlock is allowlist-only and cannot carve a subpath out of an allowed parent. The network gate (see the `network` row) is the compensating exfiltration control, and — since #3030 — applies regardless of `deny_subprocess`. Do not rely on this platform to contain a process that can read a secret; network denial only stops it leaving. |
+| `write_deny_paths` | **Not enforced** — same allowlist-only limitation as `read_deny_paths` above. |
+| `deny_subprocess` | **Enforced** — seccomp-BPF refuses `fork`/`clone` when on. Landlock is not selected unless the self-test witnesses this deny on your host, so this is a checked claim rather than a hope that `pyseccomp` is installed and loading |
 | `timeout_seconds` | Enforced |
 
 ### Noop

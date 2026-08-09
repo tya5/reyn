@@ -226,6 +226,28 @@ class PermissionDecl:
     # itself grant it the process's environment. Declared via
     # ``permissions: env.expand: [NAME, ...]`` in reyn.yaml.
     env_expand: list[str] = field(default_factory=list)
+    # #3901 PR-B ①: the actor's OWN declared intent for the two axes
+    # permission previously left unconstrained (CapabilityAxis.SUBPROCESS /
+    # ENV — AgentLayer.allows() used to fall through to True for both,
+    # deferring entirely to SandboxLayer). Per the owner's split (#3901):
+    # permission is what the OPERATOR RECOGNIZES and can therefore express as
+    # "let this agent do X" — subprocess launch and which env-var NAMES pass
+    # through to one are both things an operator names when granting an
+    # agent capability, distinct from sandbox's job of bounding what the
+    # agent does NOT get told about. Compat default (True) per owner ruling
+    # #3202/#3901 (agent-decl axes default to what the launching shell could
+    # already do; sandbox's SEPARATE deny-list axes are what narrows this).
+    subprocess: bool = True
+    # DISTINCT from ``env_expand`` above (that axis gates a SKILL.md body
+    # reading a name FROM os.environ into the LLM's context; this axis is
+    # the actor's OWN declared list of env-var names it is permitted to
+    # pass through to a subprocess it launches — same vocabulary,
+    # deliberately different capability, same non-conflation rule
+    # ``env_expand``'s own comment states). Empty = "declares no names" —
+    # per-value ∩ with SandboxPolicy's own (also empty-default, #3901 PR-B
+    # ④) env_deny_names: an operator narrows by adding to EITHER list, an
+    # actor's declaration alone does not widen past sandbox's own deny.
+    env: list[str] = field(default_factory=list)
     # #571 collapse arc Phase 5 NOTE: the four former bool axes —
     # ``mcp_install`` / ``mcp_drop_server`` / ``cron_register`` /
     # ``index_drop`` — have been removed. Each was redundant with the
@@ -357,6 +379,13 @@ class PermissionDecl:
             http_get=cls._parse_host_list(d.get("http.get")),
             secret_write=cls._parse_secret_key_list(d.get("secret.write")),
             env_expand=cls._parse_secret_key_list(d.get("env.expand")),
+            # #3901 PR-B ①: compat default (True) when the key is omitted —
+            # ``d.get("subprocess", True)`` mirrors omitted-key-keeps-the-
+            # default everywhere else in this method (mcp/tool/etc. default
+            # to their field's own empty-list default via _normalize_paths
+            # on None). An explicit ``subprocess: false`` denies.
+            subprocess=bool(d.get("subprocess", True)),
+            env=cls._parse_secret_key_list(d.get("env")),
         )
 
 
@@ -923,8 +952,13 @@ class PermissionResolver:
         user at gate time (bus≠None) instead of hard-denying. bus=None
         (non-interactive / eval) preserves the prior deny behavior.
 
-        #1199 S3.1c-1: decl-less (scope OR approved). #1199 S3.1c-2:
-        SandboxLayer ∩ for sandbox_policy path caps.
+        #1199 S3.1c-1: decl-less (scope OR approved). #3901 PR-B ③: FILE_READ/
+        FILE_WRITE no longer participate in SandboxLayer's permission-∩
+        projection (an operator cannot know a sandbox's path floor, so it is
+        no longer treated as permission) — the ``SandboxLayer(sandbox_policy)``
+        below still joins the ∩ for SUBPROCESS/ENV, but is ⊤ (a no-op) on
+        this axis; ``sandbox_policy`` is kept as a parameter only so callers
+        that pass one for those other axes are unaffected.
         """
         scopes = self.file_scopes()
         # Config-tier deny always wins — it suppresses even the JIT ask.
@@ -997,8 +1031,13 @@ class PermissionResolver:
         user at gate time (bus≠None) instead of hard-denying. bus=None
         (non-interactive / eval) preserves the prior deny behavior.
 
-        #1199 S3.1c-1: decl-less (scope OR approved). #1199 S3.1c-2:
-        SandboxLayer ∩ for sandbox_policy path caps.
+        #1199 S3.1c-1: decl-less (scope OR approved). #3901 PR-B ③: FILE_READ/
+        FILE_WRITE no longer participate in SandboxLayer's permission-∩
+        projection (an operator cannot know a sandbox's path floor, so it is
+        no longer treated as permission) — the ``SandboxLayer(sandbox_policy)``
+        below still joins the ∩ for SUBPROCESS/ENV, but is ⊤ (a no-op) on
+        this axis; ``sandbox_policy`` is kept as a parameter only so callers
+        that pass one for those other axes are unaffected.
         """
         scopes = self.file_scopes()
         # Config-tier deny always wins — it suppresses even the JIT ask.

@@ -3716,7 +3716,12 @@ class RouterLoop:
                 # the right source. Generic catalog (action names), not scheme vocab (P7).
                 "dispatchable_catalog": self._dispatch_catalog or self._catalog,
                 "sandbox_policy": getattr(self.host, "default_sandbox_policy", None)
-                or {"network": False, "allow_subprocess": False, "env_passthrough": ["PATH"]},
+                # #3901 PR-B ④: deny_subprocess=True (renamed, inverted sense)
+                # is the same "no spawning" floor as the prior
+                # allow_subprocess=False. env_deny_names is omitted (empty
+                # default, owner ruling B) — PATH passes by default now,
+                # where the old allow-list had to name it explicitly.
+                or {"network": False, "deny_subprocess": True},
             },
         )
         exec_res = await self._scheme.execute(interp, exec_ctx, ops=self)

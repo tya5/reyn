@@ -115,7 +115,7 @@ async def test_landlock_run_raises_when_unavailable(
 
 @pytest.mark.skipif(sys.platform != "linux", reason="LandlockBackend is Linux-only")
 @pytest.mark.asyncio
-async def test_landlock_runs_echo_with_read_paths() -> None:
+async def test_landlock_runs_echo() -> None:
     """Tier 2: on Linux with landlock installed, a basic echo succeeds (returncode 0)."""
     try:
         import landlock  # noqa: F401
@@ -126,11 +126,13 @@ async def test_landlock_runs_echo_with_read_paths() -> None:
     if not backend.available():
         pytest.skip("LandlockBackend not available on this kernel")
 
+    # #3901 PR-B ④: read_paths was removed (dead since #1199's broad-read
+    # realignment — Landlock never gated reads) and env_passthrough dropped
+    # in favor of the env_deny_names deny-list (compat default: PATH needs no
+    # explicit declaration anymore).
     policy = SandboxPolicy(
-        read_paths=["/bin", "/usr/lib", "/lib"],
         write_paths=[],
         network=False,
-        env_passthrough=["PATH"],
         timeout_seconds=10,
     )
     result = await backend.run(["/bin/echo", "hi"], policy)
@@ -158,10 +160,8 @@ async def test_landlock_blocks_writes_outside_policy() -> None:
     with tempfile.TemporaryDirectory() as restricted_dir:
         target = os.path.join(restricted_dir, "should_fail.txt")
         policy = SandboxPolicy(
-            read_paths=["/bin", "/usr/lib", "/lib"],
             write_paths=[],  # no write paths — kernel should deny
             network=False,
-            env_passthrough=["PATH"],
             timeout_seconds=10,
         )
         # Attempt to write a file outside allowed write_paths.

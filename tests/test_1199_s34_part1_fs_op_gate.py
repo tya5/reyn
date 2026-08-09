@@ -12,6 +12,15 @@
     their OWN real write sites (#2856 Part B — this superseded the #2851/F3
     wrapper pre-flight, which duplicated the same path-check by hand).
 
+#3901 PR-B ③ retired FILE_READ from SandboxLayer's permission-∩ projection
+(an operator cannot know a sandbox's path floor, so it is no longer treated
+as permission), so index_query's require_file_read call still fires but no
+longer narrows on a sandbox read cap specifically — see
+test_index_query_sandbox_policy_does_not_narrow_the_read below. The WRITE
+side (index_drop / index_update / SourceManifest) is unaffected: those self-
+gate `sandbox_write_paths` directly at their own real write sites (below),
+independent of SandboxLayer.
+
 FP-0066 P1c note: the safe-mode `reyn.api.safe.index_update` wrapper this
 file used to also exercise directly (a thin `_set_context`/`index_update_
 async` dispatch onto the SAME op below) was retired as a user-facing
@@ -129,17 +138,24 @@ def _ctx(tmp_path: Path, *, sandbox_policy: dict | None) -> OpContext:
     )
 
 
-def test_index_query_gated_by_sandbox_read_cap(tmp_path: Path, monkeypatch) -> None:
+def test_index_query_sandbox_policy_does_not_narrow_the_read(
+    tmp_path: Path, monkeypatch,
+) -> None:
     """Tier 2: index_query routes through require_file_read with the phase
-    sandbox_policy ∩ — a read_paths cap excluding the index path DENIES the query
-    (the in-zone DB path is narrowed by the sandbox)."""
+    sandbox_policy ∩ — but #3901 PR-B ③ retired FILE_READ from
+    SandboxLayer's permission-∩ projection (an operator cannot know a
+    sandbox's path floor, so it is no longer treated as permission — see
+    effective.py's SandboxLayer docstring), so a sandbox_policy passed
+    alongside a query no longer narrows it on this axis. Before PR-B this
+    test pinned the OPPOSITE claim (a sandbox read-restriction denied the
+    query); that intersection is gone by design, not by regression."""
     from reyn.core.op_runtime.index_query import handle
 
     monkeypatch.chdir(tmp_path)  # so .reyn/index/... is in the default read zone
-    ctx = _ctx(tmp_path, sandbox_policy={"read_paths": ["/sandboxed"]})
+    ctx = _ctx(tmp_path, sandbox_policy={"network": False})
     op = IndexQueryIROp(kind="index_query", source="src", query_vector=[0.1], top_k=1)
-    with pytest.raises(PermissionError):
-        asyncio.run(handle(op, ctx))
+    result = asyncio.run(handle(op, ctx))
+    assert result["mode"] == "fallback"  # no index yet, but NOT denied by the sandbox_policy
 
 
 def test_index_query_no_policy_passes(tmp_path: Path, monkeypatch) -> None:

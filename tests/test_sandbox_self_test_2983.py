@@ -16,7 +16,7 @@ and cannot silently degrade into a skip.
 
 Section 5 is stage 2, and exists because stage 1 could not see the layer #2962
 killed: the write boundary is Landlock's alone, so a seccomp filter that never
-loads leaves the stage-1 probe green while `allow_subprocess` — documented as
+loads leaves the stage-1 probe green while `deny_subprocess` — documented as
 "Enforced" — enforces nothing.
 """
 from __future__ import annotations
@@ -309,7 +309,7 @@ def test_probe_cost_is_bounded_stage1(monkeypatch):
 #
 # Stage 1 witnessed the filesystem write boundary. That boundary is Landlock's
 # (and Seatbelt's file rules') alone, so a host whose seccomp filter never loads
-# — #2962, precisely — passes the stage-1 probe green while `allow_subprocess`
+# — #2962, precisely — passes the stage-1 probe green while `deny_subprocess`
 # enforces nothing. `available()` therefore said nothing about the axis
 # `configure-sandbox.md` told operators was "Enforced". These tests are that
 # axis's witness.
@@ -326,7 +326,7 @@ def test_subprocess_probe_catches_a_backend_that_does_not_enforce():
 
     assert reason is not None, (
         "probe_subprocess_enforcement() reported NoopBackend as enforcing "
-        "allow_subprocess. Noop denies nothing — if the probe cannot catch that, "
+        "deny_subprocess. Noop denies nothing — if the probe cannot catch that, "
         "a passing subprocess self-test means nothing."
     )
     assert "no subprocess deny fired" in reason, (
@@ -336,13 +336,13 @@ def test_subprocess_probe_catches_a_backend_that_does_not_enforce():
 
 
 def test_subprocess_probe_reason_names_the_gate_that_failed():
-    """Tier 2b: the failure reason names `allow_subprocess`, so an operator can
+    """Tier 2b: the failure reason names `deny_subprocess`, so an operator can
     tell WHICH claim their sandbox is not delivering — the write axis and this
     one fail for different reasons and want different fixes."""
     reason = probe_subprocess_enforcement(NoopBackend())
 
     assert reason is not None
-    assert "allow_subprocess" in reason, (
+    assert "deny_subprocess" in reason, (
         f"Expected the reason to identify the policy field whose enforcement was "
         f"not witnessed; got: {reason!r}"
     )
@@ -373,13 +373,13 @@ def test_seatbelt_fires_a_real_subprocess_deny_on_macos():
 @pytest.mark.skipif(sys.platform != "darwin", reason="needs a real enforcing backend")
 def test_write_axis_alone_does_not_witness_the_subprocess_axis():
     """Tier 2b: ★★ the whole stage-2 claim (#3017) — a backend that really
-    enforces writes but silently drops the `allow_subprocess` gate PASSES the
+    enforces writes but silently drops the `deny_subprocess` gate PASSES the
     stage-1 probe and is caught only by stage 2.
 
     This is #2962's shape reproduced as a backend rather than a bug: there, the
     seccomp filter never loaded, Landlock's write rules kept working, and nothing
     noticed. The subject here is a REAL SeatbeltBackend — real profile, real
-    `sandbox-exec` — that merely forwards `allow_subprocess=True` regardless of
+    `sandbox-exec` — that merely forwards `deny_subprocess=False` regardless of
     what it was asked for. No fake mechanism: the only thing removed is the gate
     whose enforcement is in question.
     """
@@ -392,7 +392,7 @@ def test_write_axis_alone_does_not_witness_the_subprocess_axis():
 
         def wrap_command(self, argv, policy):
             return super().wrap_command(
-                argv, dataclasses.replace(policy, allow_subprocess=True)
+                argv, dataclasses.replace(policy, deny_subprocess=False)
             )
 
     backend = _SpawnBlindSeatbelt()
@@ -405,13 +405,13 @@ def test_write_axis_alone_does_not_witness_the_subprocess_axis():
         "no longer demonstrating what it claims."
     )
     assert probe_subprocess_enforcement(backend) is not None, (
-        "a backend that ignores allow_subprocess passed the subprocess probe — "
+        "a backend that ignores deny_subprocess passed the subprocess probe — "
         "the stage-2 axis is not actually being witnessed."
     )
     assert enforcement_self_test(backend) is not None, (
         "enforcement_self_test() passed a backend that enforces writes but lets "
         "sandboxed code spawn arbitrary processes. `available()` would report "
-        "True and configure-sandbox.md would keep claiming allow_subprocess is "
+        "True and configure-sandbox.md would keep claiming deny_subprocess is "
         "enforced — the exact over-claim #3017 names."
     )
 
@@ -438,7 +438,7 @@ def test_subprocess_probe_cost_is_bounded():
 
 
 class _WholesaleDead(NoopBackend):
-    """A backend that runs commands normally, EXCEPT under `allow_subprocess=False`,
+    """A backend that runs commands normally, EXCEPT under `deny_subprocess=True`,
     where its wrap refuses everything — the #2962 shape, as a backend.
 
     A Fake (a real object honouring the real Protocol, built from a real in-repo
@@ -449,7 +449,7 @@ class _WholesaleDead(NoopBackend):
     name = "wholesale-dead"
 
     def wrap_command(self, argv, policy):
-        if policy.allow_subprocess:
+        if not policy.deny_subprocess:
             return super().wrap_command(argv, policy)
         # Refuses the target outright — the "my filter killed /bin/echo" shape.
         return super().wrap_command(["/bin/sh", "-c", "exit 71"], policy)
@@ -460,7 +460,7 @@ def test_a_backend_that_refuses_everything_is_not_reported_as_enforcing():
     policy refuses EVERY command must be reported as unwitnessed, not as enforcing.
 
     This is the test that binds the third arm of the probe. `_WholesaleDead`
-    leaves no marker under `allow_subprocess=False` — exactly like a backend that
+    leaves no marker under `deny_subprocess=True` — exactly like a backend that
     denies `fork` and nothing else — so a probe that only ran a positive control
     and the deny would call it ENFORCING and hand it to callers. That is #2962
     restated: the first seccomp filter reyn ever loaded killed `/bin/echo`, and
@@ -477,7 +477,7 @@ def test_a_backend_that_refuses_everything_is_not_reported_as_enforcing():
 
     assert reason is not None, (
         "probe_subprocess_enforcement() reported a backend that cannot run ANY "
-        "command under allow_subprocess=False as enforcing it. No marker appeared, "
+        "command under deny_subprocess=True as enforcing it. No marker appeared, "
         "but nothing ran either — the probe read wholesale breakage as a deny, "
         "which is precisely the confound the non-forking control exists to remove."
     )
@@ -492,19 +492,19 @@ def test_wholesale_dead_backend_still_passes_the_first_control():
     """Tier 2b: `_WholesaleDead` is a fair test of the SECOND control, not an
     accident of the first.
 
-    If it failed the positive control (`allow_subprocess=True` + a forking
+    If it failed the positive control (`deny_subprocess=False` + a forking
     command), the test above would pass for the wrong reason — reporting
     "unwitnessed" without the second arm ever being consulted. It runs commands
     normally there, so the arm under test is the one that fires.
     """
     backend = _WholesaleDead()
-    policy_permits_spawning = True
+    policy_denies_spawning = False
 
-    # The same wrap the probe's first arm uses: under allow_subprocess=True this
+    # The same wrap the probe's first arm uses: under deny_subprocess=False this
     # backend is an ordinary passthrough, so a spawn genuinely happens.
     wrapped = backend.wrap_command(
         ["/bin/sh", "-c", "exit 0"],
-        SandboxPolicy(allow_subprocess=policy_permits_spawning),
+        SandboxPolicy(deny_subprocess=policy_denies_spawning),
     )
     assert wrapped.argv == ["/bin/sh", "-c", "exit 0"], (
         f"_WholesaleDead must pass commands through untouched when the policy "

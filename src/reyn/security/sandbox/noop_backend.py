@@ -44,8 +44,9 @@ def _reset_warning_for_tests() -> None:
 
 
 def _build_env(policy: SandboxPolicy) -> dict[str, str]:
-    # #3075: resolve_passthrough_env unions policy.env_passthrough with the
-    # standard proxy/CA env (forwarded to every sandboxed child by default).
+    # #3901 PR-B ④: resolve_passthrough_env passes the whole environment
+    # minus policy.env_deny_names (compat default, owner ruling B) — no
+    # longer a curated union with a standard proxy/CA set.
     env = resolve_passthrough_env(policy)
     if "PATH" not in env and "PATH" in os.environ:
         env["PATH"] = os.environ["PATH"]
@@ -55,9 +56,9 @@ def _build_env(policy: SandboxPolicy) -> dict[str, str]:
 class NoopBackend:
     """Always-available passthrough backend.
 
-    Honors `policy.timeout_seconds` (wall-clock cap) and `policy.env_passthrough`
-    (env-var allowlist). All other policy fields are recorded for audit only —
-    NoopBackend does not enforce them.
+    Honors `policy.timeout_seconds` (wall-clock cap) and `policy.env_deny_names`
+    (env-var deny-list, #3901 PR-B ④ renamed). All other policy fields are
+    recorded for audit only — NoopBackend does not enforce them.
 
     #1470: when cancel_event is provided and set, kills the subprocess via
     process-group SIGTERM → SIGKILL and returns SandboxResult(cancelled=True).

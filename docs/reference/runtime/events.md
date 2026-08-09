@@ -184,6 +184,7 @@ router_represent_round
 router_retry_exhausted
 routing_decided
 safety_limit_checkpoint
+sandbox_axis_unenforced
 sandbox_policy_narrowed
 sandbox_policy_not_applied
 sandboxed_exec_cancelled

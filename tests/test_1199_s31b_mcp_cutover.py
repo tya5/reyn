@@ -62,15 +62,19 @@ def test_approval_folded_inside_agent_layer_is_restricted_by_conjunction() -> No
     """Tier 2: (★② grant-back safety) an approval folded INTO the agent layer does
     NOT re-grant what a downstream Sandbox/Profile layer denies — because it's
     inside the ∩, not a top-level `approved OR effective` disjunct. This is the
-    security property the ② correction protects."""
-    out = "/outside/zone/x.txt"
-    approve = lambda axis, value: axis is AX.FILE_WRITE and value == out  # noqa: E731
+    security property the ② correction protects.
+
+    #3901 PR-B ③ (owner ruling B, #3916) retired FILE_WRITE from SandboxLayer's
+    permission-∩ projection, so it can no longer demonstrate the veto here —
+    SUBPROCESS is still a live SandboxLayer-gated axis and exercises the same
+    fold-inside-not-disjunct structure."""
+    approve = lambda axis, _value: axis is AX.SUBPROCESS  # noqa: E731
     agent = AgentLayer(PermissionDecl(), approval_check=approve)
     # the agent layer alone honors the approval
-    assert agent.allows(AX.FILE_WRITE, out) is True
-    # but a sandbox restricting writes to /sandboxed vetoes — the ∩ DENIES.
-    sandbox = SandboxLayer(SandboxPolicy(write_paths=["/sandboxed"]))
-    assert EffectivePermission([agent, sandbox]).allows(AX.FILE_WRITE, out) is False
+    assert agent.allows(AX.SUBPROCESS, None) is True
+    # but a sandbox denying subprocess vetoes — the ∩ DENIES.
+    sandbox = SandboxLayer(SandboxPolicy(deny_subprocess=True))
+    assert EffectivePermission([agent, sandbox]).allows(AX.SUBPROCESS, None) is False
     # (a top-level `approved OR effective` would WRONGLY return True here — the
     # grant-back hole the fold-inside design closes.)
 

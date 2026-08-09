@@ -507,7 +507,7 @@ class DockerEnvironmentBackend:
         and says so rather than pretending to have been witnessed.
 
         The probes attempt a HOST filesystem write outside ``write_paths``, and a
-        HOST process spawn under ``allow_subprocess=False``, and require a refusal
+        HOST process spawn under ``deny_subprocess=True``, and require a refusal
         of each. Neither question translates here: the container itself is the
         isolation boundary, and this backend scopes policy to the fidelity
         boundary rather than enforcing the host-path / host-syscall model the
@@ -543,9 +543,10 @@ class DockerEnvironmentBackend:
         sandboxed workload itself — the workload's actual env comes from the
         container IMAGE's own login-shell activation (conda/nvm/pyenv), a
         deliberate fidelity boundary this class's ``run()`` already documents
-        ("Honors only policy.timeout_seconds"). ``policy.env_passthrough``
-        has no meaning for a host-side ``docker exec`` invocation, so
-        fabricating an allowlisted env here would be inventing a value with
+        ("Honors only policy.timeout_seconds"). ``policy.env_deny_names``
+        (renamed #3901 PR-B ④) has no meaning for a host-side ``docker exec``
+        invocation, so fabricating a filtered env here would be inventing a
+        value with
         nothing to scope. The honest answer for what the HOST ``docker`` CLI
         itself needs (``DOCKER_HOST`` / ``HOME`` / ``PATH`` / docker config
         discovery) is "the same as `run()`'s own runners already assume" —

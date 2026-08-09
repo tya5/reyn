@@ -49,7 +49,7 @@ def _noop_backend() -> NoopBackend:
 
 
 def _policy(timeout: int = 10) -> SandboxPolicy:
-    return SandboxPolicy(network=False, allow_subprocess=False, timeout_seconds=timeout)
+    return SandboxPolicy(network=False, deny_subprocess=True, timeout_seconds=timeout)
 
 
 # ---------------------------------------------------------------------------

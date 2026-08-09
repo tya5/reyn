@@ -38,39 +38,46 @@ def test_policy_defaults():
     """Tier 2: SandboxPolicy() default field values.
 
     ``network`` defaults to True (owner decision 2026-06-05, see
-    ``DEFAULT_SANDBOX_NETWORK`` in ``reyn.security.sandbox.policy``) and
-    ``allow_subprocess`` defaults to True (owner decision 2026-07-22,
-    #3202) — both UX-facing axes are opt-in RESTRICTED via an explicit
-    ``network=False`` / ``allow_subprocess=False``, not deny-by-default.
-    ``read_deny_paths`` is the axis that stays tight-by-default (a
-    non-empty deny-list, asserted elsewhere) — corrected here (#3905) after
-    this assertion pinned a STALE dataclass default (``network is False``)
-    that had drifted out of sync with the actual resolved policy for
-    weeks, undetected because nothing compared the two."""
+    ``DEFAULT_SANDBOX_NETWORK`` in ``reyn.security.sandbox.policy``; #3905
+    aligned the dataclass default with that decision after this assertion
+    pinned a STALE ``network is False`` that had drifted out of sync with
+    the actual resolved policy for weeks, undetected because nothing
+    compared the two). #3901 PR-B ④ (owner ruling B, full compat) then
+    generalised the same posture to every other axis: ``deny_subprocess``
+    False, the two deny-lists (``read_deny_paths``/``write_deny_paths``)
+    empty, and ``env_deny_names`` empty (nothing withheld). ``write_paths``
+    is the one field that still starts closed — it is not a permission-∩
+    axis (an operator cannot know it), so #3202's opt-in-restriction
+    reasoning does not carry over to it; #3901 left it at its pre-existing
+    empty default. ``read_paths`` was retired in the broad-read realignment
+    (#1199) and is no longer a ``SandboxPolicy`` field at all."""
     p = SandboxPolicy()
     assert p.network is True
-    assert p.read_paths == []
     assert p.write_paths == []
-    assert p.allow_subprocess is True
-    assert p.env_passthrough == []
+    assert p.read_deny_paths == []
+    assert p.write_deny_paths == []
+    assert p.deny_subprocess is False
+    assert p.env_deny_names == []
     assert p.timeout_seconds == 60
 
 
 def test_policy_custom_fields():
     """Tier 2: SandboxPolicy accepts custom field values."""
     p = SandboxPolicy(
-        network=True,
-        read_paths=["/tmp"],
+        network=False,
         write_paths=["/var/out"],
-        allow_subprocess=True,
-        env_passthrough=["PATH", "HOME"],
+        read_deny_paths=["~/.ssh"],
+        write_deny_paths=["~/.aws"],
+        deny_subprocess=True,
+        env_deny_names=["SECRET_TOKEN"],
         timeout_seconds=5,
     )
-    assert p.network is True
-    assert p.read_paths == ["/tmp"]
+    assert p.network is False
     assert p.write_paths == ["/var/out"]
-    assert p.allow_subprocess is True
-    assert p.env_passthrough == ["PATH", "HOME"]
+    assert p.read_deny_paths == ["~/.ssh"]
+    assert p.write_deny_paths == ["~/.aws"]
+    assert p.deny_subprocess is True
+    assert p.env_deny_names == ["SECRET_TOKEN"]
     assert p.timeout_seconds == 5
 
 
@@ -107,7 +114,9 @@ def test_get_default_backend_returns_protocol_conformant_backend():
 async def test_noop_run_echo():
     """Tier 2: NoopBackend.run(['echo', 'hi']) returns expected output."""
     backend = NoopBackend()
-    policy = SandboxPolicy(env_passthrough=["PATH"])
+    # #3901 PR-B ④: env is compat by default (env_deny_names empty), so PATH
+    # needs no explicit passthrough declaration anymore.
+    policy = SandboxPolicy()
     result = await backend.run(["echo", "hi"], policy)
     assert isinstance(result, SandboxResult)
     assert result.returncode == 0
@@ -119,7 +128,7 @@ async def test_noop_run_echo():
 async def test_noop_run_timeout():
     """Tier 2: NoopBackend wall-clock timeout returns returncode=-1 + message."""
     backend = NoopBackend()
-    policy = SandboxPolicy(timeout_seconds=1, env_passthrough=["PATH"])
+    policy = SandboxPolicy(timeout_seconds=1)
     result = await backend.run(["sleep", "5"], policy)
     assert result.returncode == -1
     assert b"timed out" in result.stderr.lower() or b"timeout" in result.stderr.lower()
@@ -129,7 +138,7 @@ async def test_noop_run_timeout():
 async def test_noop_run_nonzero_exit():
     """Tier 2: NoopBackend returns non-zero exit code for failing commands."""
     backend = NoopBackend()
-    policy = SandboxPolicy(env_passthrough=["PATH"])
+    policy = SandboxPolicy()
     # `false` exits with status 1 on POSIX
     result = await backend.run(["false"], policy)
     assert result.returncode != 0
@@ -326,7 +335,7 @@ async def test_noop_emits_warning_once(caplog):
     """Tier 2: NoopBackend emits the no-enforcement WARN exactly once per process."""
     _noop_module._reset_warning_for_tests()
     backend = NoopBackend()
-    policy = SandboxPolicy(env_passthrough=["PATH"])
+    policy = SandboxPolicy()
 
     import logging
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.noop_backend"):

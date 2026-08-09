@@ -30,24 +30,30 @@ from tests._support.agent_session import make_session
 
 def test_resolve_returns_default_when_config_none():
     """Tier 2: operator-unset → a concrete default (network=DEFAULT_SANDBOX_NETWORK,
-    write_paths tight, sensitive deny-list) — never None, so op-fields are never used."""
+    write_paths tight) — never None, so op-fields are never used.
+
+    #3901 PR-B ④ (owner ruling B): the floor no longer overrides
+    ``read_deny_paths`` to the sensitive-path default — that key is absent
+    from the floor dict entirely now, so ``SandboxPolicy(**floor)`` falls
+    through to the dataclass's own (now-empty) default. An operator who
+    wants the old defense-in-depth back sets ``read_deny_paths`` explicitly."""
     pol = resolve_sandbox_policy(None, write_paths=["/ws"])
     assert pol["network"] is DEFAULT_SANDBOX_NETWORK
     assert pol["write_paths"] == ["/ws"]
-    assert "~/.ssh" in pol["read_deny_paths"]
+    assert "read_deny_paths" not in pol
 
 
 def test_resolve_merges_operator_config_onto_floor():
     """Tier 2: #2964 —an operator's PARTIAL policy is MERGED onto the default
     floor, not substituted wholesale. Only the fields the operator wrote override;
     omitted fields keep the floor (so writing one field never silently drops the
-    caller's write_paths or the sensitive deny-list)."""
-    # operator wrote allow_subprocess only — write_paths (caller) and read_deny
-    # (floor) must survive (the #2964 silent-drop bug).
-    merged = resolve_sandbox_policy({"allow_subprocess": False}, write_paths=["/ws"])
-    assert merged["allow_subprocess"] is False        # operator field applied
+    caller's write_paths)."""
+    # operator wrote deny_subprocess only (#3901 PR-B ④: reyn.yaml key follows
+    # the SandboxPolicy field rename, no compat translation layer, Q3) —
+    # write_paths (caller) must survive (the #2964 silent-drop bug).
+    merged = resolve_sandbox_policy({"deny_subprocess": True}, write_paths=["/ws"])
+    assert merged["deny_subprocess"] is True          # operator field applied
     assert merged["write_paths"] == ["/ws"]           # caller value SURVIVES (was dropped)
-    assert "~/.ssh" in merged["read_deny_paths"]      # floor deny-list SURVIVES
     assert merged["network"] is DEFAULT_SANDBOX_NETWORK
 
 
@@ -79,7 +85,10 @@ def test_tool_schema_is_argv_only():
 
     props = set(_EXEC_PARAMETERS["properties"])
     assert props == {"argv", "timeout_seconds"}
-    for removed in ("network", "read_paths", "write_paths", "allow_subprocess"):
+    for removed in (
+        "network", "write_paths", "allow_subprocess", "deny_subprocess",
+        "env_deny_names", "read_deny_paths", "write_deny_paths",
+    ):
         assert removed not in props
     # the description frames the policy as the OPERATOR's (not a settable param)
     assert "operator" in _EXEC_DESCRIPTION.lower()

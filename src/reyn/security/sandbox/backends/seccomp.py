@@ -20,13 +20,14 @@ just a hardening surface.
 
 Unconditional load (#3030). Both production callsites (`landlock.py`'s
 `_child_preexec`, `landlock_exec.py`'s `_apply_seccomp`) used to skip this
-filter ENTIRELY whenever `policy.allow_subprocess` was True — the stdio-MCP
-default — which silently dropped the NETWORK gate (`_NETWORK_SYSCALLS` are
-allowlisted only when `policy.network`) along with the syscall-reduction one.
+filter ENTIRELY whenever `policy.deny_subprocess` was False (field renamed
+#3901 PR-B ④) — the stdio-MCP default — which silently dropped the NETWORK
+gate (`_NETWORK_SYSCALLS` are allowlisted only when `policy.network`) along
+with the syscall-reduction one.
 Both callsites now load this filter unconditionally; `_build_syscall_allowlist`
 already adds `_SUBPROCESS_SYSCALLS`/`_NETWORK_SYSCALLS` per-policy, so this was
 a caller-side gate, not a builder change. The practical consequence: every
-`allow_subprocess: True` MCP server (the default) is now under this default-deny
+`deny_subprocess: False` MCP server (the default) is now under this default-deny
 allowlist for the first time, which is exactly the #2962 correctness risk this
 module's validation history above is about — see
 `tests/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
@@ -265,7 +266,7 @@ _BASELINE: list[str] = [
     #   - flock: a BSD advisory lock on an already-open fd (no path, no network).
     "fsync", "fdatasync", "sync_file_range",
     "flock",
-    # Replacing THIS process's image. Baseline — not gated on allow_subprocess.
+    # Replacing THIS process's image. Baseline — not gated on deny_subprocess.
     # Both callsites load the filter in a pre-exec position (LandlockBackend from
     # a preexec_fn, immediately before Popen's execve; landlock_exec from
     # _apply_landlock, immediately before os.execvp). The filter survives execve,
@@ -273,7 +274,7 @@ _BASELINE: list[str] = [
     # starts — i.e. it would deny the sandbox its own reason to exist (#2962).
     # This is NOT a subprocess capability: execve replaces the calling process
     # and spawns nothing. Spawning requires fork/vfork/clone/clone3, which stay
-    # gated on allow_subprocess below.
+    # gated on deny_subprocess below.
     "execve", "execveat",
 ]
 
@@ -360,12 +361,12 @@ _NETWORK_SYSCALLS: list[str] = [
     "getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
 ]
 
-# Syscalls added when policy.allow_subprocess is True. These are the syscalls
+# Syscalls added when policy.deny_subprocess is True. These are the syscalls
 # that CREATE a new process; execve/execveat are baseline (see _BASELINE) because
 # they only replace the current image.
 #
 # Consequence worth knowing: glibc's fork()/posix_spawn() and pthread_create()
-# all route through clone(), so with allow_subprocess=False a target that spawns
+# all route through clone(), so with deny_subprocess=True a target that spawns
 # THREADS is killed too, not just one that spawns processes. That is inherent to
 # gating clone and is unchanged by #2962 — flagged, not silently decided.
 #
@@ -379,7 +380,7 @@ _NETWORK_SYSCALLS: list[str] = [
 # fork, BEFORE the inner execve — so under a loaded filter that dup2 needs to
 # be in the allowlist or the grandchild dies with "cannot duplicate fd —
 # Operation not permitted" before it ever reaches the shell it was asked to
-# run. Measured: fork alone (no dup2) leaves `allow_subprocess=True` able to
+# run. Measured: fork alone (no dup2) leaves `deny_subprocess=False` able to
 # spawn a bare child but unable to capture its output through a pipe — a
 # subprocess capability that is half-alive, not fully denied and not fully
 # granted. dup3 is dup2's variant with an added flags arg (glibc may route
@@ -485,7 +486,7 @@ def load_seccomp_filter(policy: SandboxPolicy) -> None:
 
     Args:
         policy: The declarative sandbox policy governing which capabilities
-            are permitted. `policy.network` and `policy.allow_subprocess`
+            are permitted. `policy.network` and `policy.deny_subprocess`
             control which optional syscall groups are added to the allowlist.
     """
     if not is_available():
@@ -601,7 +602,7 @@ def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:
     Escape-hatch syscalls (ptrace, process_vm_readv, keyctl, modify_ldt,
     request_key, add_key) are never included regardless of policy — refusal is
     the intended outcome. Process CREATION (fork/clone/…) is gated on
-    policy.allow_subprocess; see `_SUBPROCESS_SYSCALLS`.
+    policy.deny_subprocess; see `_SUBPROCESS_SYSCALLS`.
 
     Args:
         policy: The sandbox policy to derive the allowlist from.
@@ -618,7 +619,7 @@ def _build_syscall_allowlist(policy: SandboxPolicy) -> list[str]:
     if policy.network:
         allowed.extend(_NETWORK_SYSCALLS)
 
-    if policy.allow_subprocess:
+    if not policy.deny_subprocess:
         allowed.extend(_SUBPROCESS_SYSCALLS)
 
     return allowed

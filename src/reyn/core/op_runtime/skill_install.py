@@ -259,18 +259,17 @@ async def _shallow_clone(git_url: str, dest: Path, ctx: OpContext) -> str | None
         # process-fork) makes EVERY clone fail with "cannot fork()", not just
         # a hardened corner case. Scoped to this one already-gated operation
         # (require_http_get already ran), not a global relaxation.
-        allow_subprocess=True,
-        # git needs more than PATH to actually work (HOME for ~/.gitconfig,
-        # SSH/proxy/CA vars for non-file:// remotes) — pass these through so
-        # routing the clone through the sandbox abstraction does not itself
-        # break git's normal env-dependent behavior (parity with the
-        # previously-inherited-full-env ``subprocess.run`` call).
-        env_passthrough=[
-            "HOME", "PATH", "GIT_SSH_COMMAND", "SSH_AUTH_SOCK",
-            "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
-            "https_proxy", "http_proxy", "no_proxy",
-            "SSL_CERT_FILE", "SSL_CERT_DIR",
-        ],
+        deny_subprocess=False,
+        # #3901 PR-B ④: the explicit env_passthrough allowlist this policy
+        # used to carry (HOME / PATH / GIT_SSH_COMMAND / proxy+CA vars, so
+        # routing the clone through the sandbox abstraction did not itself
+        # break git's normal env-dependent behavior) is no longer needed —
+        # env is full-compat by default (owner ruling B), so git sees the
+        # whole environment unless an operator explicitly denies a name via
+        # env_deny_names. Front half of the #3901 PR-B Q2 pattern: delete a
+        # "make sure X passes" list that a compat default already satisfies;
+        # do NOT add logic that strips an operator's explicit deny (there is
+        # none here to strip).
     )
     try:
         result = await backend.run(

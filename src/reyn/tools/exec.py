@@ -31,10 +31,13 @@ _EXEC_DESCRIPTION = _execution_descriptions.exec_.text
 
 
 # #1339 / sandbox-model completion: the tool exposes ONLY argv (+ timeout). The
-# sandbox policy (network / read_paths / write_paths / allow_subprocess /
-# env_passthrough) is operator-or-default, resolved onto the OpContext — the LLM
-# cannot set it via the tool. (The SandboxedExecIROp type keeps those fields;
-# only this tool surface is trimmed.)
+# sandbox policy (network / write_paths / deny_subprocess / env_deny_names —
+# vocabulary renamed to deny-lists, #3901 PR-B ④) is operator-or-default,
+# resolved onto the OpContext — the LLM cannot set it via the tool. (The
+# SandboxedExecIROp type keeps its OWN, older allow_-prefixed fields — #3901
+# PR-B deliberately did not rename those; op and policy are different
+# vocabularies now, not mirrors of one another — only this tool surface is
+# trimmed.)
 _EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {

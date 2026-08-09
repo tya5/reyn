@@ -307,11 +307,12 @@ async def test_write_workload_grant_write_succeeds() -> None:
     backend = LandlockBackend()
     with tempfile.TemporaryDirectory() as granted_dir:
         target = _Path(granted_dir) / "granted-write.txt"
+        # #3901 PR-B ④: read_paths removed (dead since #1199's broad-read
+        # realignment) and env_passthrough dropped for the env_deny_names
+        # deny-list (compat default: PATH needs no explicit declaration).
         policy = _Policy(
-            read_paths=["/bin", "/usr/lib", "/lib"],
             write_paths=[granted_dir],
             network=False,
-            env_passthrough=["PATH"],
             timeout_seconds=10,
         )
         result = await backend.run(["/bin/sh", "-c", f"echo ok > {target}"], policy)
@@ -326,7 +327,7 @@ async def test_write_workload_grant_write_succeeds() -> None:
 @pytest.mark.asyncio
 async def test_spawn_workload_permitted_child_process_launches() -> None:
     """Tier 2c: SPAWN axis workload leg — a child process PERMITTED by
-    allow_subprocess=True actually launches and runs through the real
+    deny_subprocess=False actually launches and runs through the real
     Landlock backend (whose preexec also loads the seccomp filter, #2983
     stage 2) — the "reachable for purpose" claim for this axis."""
     import tempfile
@@ -339,11 +340,9 @@ async def test_spawn_workload_permitted_child_process_launches() -> None:
     with tempfile.TemporaryDirectory() as granted_dir:
         marker = _Path(granted_dir) / "spawned"
         policy = _Policy(
-            read_paths=["/bin", "/usr/lib", "/lib"],
             write_paths=[granted_dir],
             network=False,
-            allow_subprocess=True,
-            env_passthrough=["PATH"],
+            deny_subprocess=False,
             timeout_seconds=10,
         )
         # A pipeline, not a bare command, so the shell must fork its

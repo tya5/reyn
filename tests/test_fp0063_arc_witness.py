@@ -512,7 +512,10 @@ def _build_registry(tmp_path: Path, project_root: Path):
         policy={
             "network": False,
             "write_paths": [str(plugins_root()), str(project_root)],
-            "allow_subprocess": False,
+            # #3901 PR-B ④: reyn.yaml key follows the SandboxPolicy field
+            # rename, no compat translation layer (Q3) — deny_subprocess=True
+            # is the same restriction the old allow_subprocess=False wrote.
+            "deny_subprocess": True,
         },
     )
 

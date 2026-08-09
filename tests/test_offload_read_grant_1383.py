@@ -11,7 +11,8 @@ Fix: the offload-emit registers a scoped read-grant on EXACTLY that path
 (`grant_offload_read`), consulted by the read gate. These tests pin:
   - the grant admits the exact path but NOT a sibling (least-privilege),
   - the register→check seam (no grant → still denied = the grant is what passes),
-  - the AgentLayer grant still ∩-intersects the SandboxLayer.
+  - the grant is unaffected by a `sandbox_policy` argument (#3901 PR-B ③
+    retired FILE_READ from the SandboxLayer permission-∩ projection).
 
 #2396 Step 4: the two ``context_builder`` emit points that used to wire
 ``on_offload_ref=r.grant_offload_read`` (``maybe_ref_artifact`` and
@@ -95,17 +96,23 @@ async def test_register_reaches_check_seam(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_offload_grant_still_intersects_sandbox(tmp_path: Path) -> None:
-    """Tier 2c: the AgentLayer offload grant is conjunctive-∩ with the SandboxLayer —
-    a sandbox that restricts reads to other paths still denies the offloaded path."""
+async def test_offload_grant_survives_a_sandbox_policy_argument(tmp_path: Path) -> None:
+    """Tier 2c: the offload grant admits the read regardless of what
+    ``sandbox_policy`` is passed alongside it.
+
+    #3901 PR-B ③ retired FILE_READ from ``SandboxLayer``'s permission-∩
+    projection (an operator cannot know a sandbox's path floor, so it is no
+    longer treated as permission — see effective.py's own docstring); before
+    PR-B this test pinned the OPPOSITE claim (a sandbox read-restriction still
+    denied an offload-granted path). That intersection is gone by design, not
+    by regression — this witnesses the grant is unaffected by whatever
+    ``sandbox_policy`` a caller passes."""
     r, offloaded, _ = _out_of_zone(tmp_path)
     r.grant_offload_read(str(offloaded))
-    # SandboxLayer with a non-empty read allowlist that excludes the offloaded path
-    policy = SandboxPolicy(read_paths=[str(tmp_path / "elsewhere")])
-    with pytest.raises(PermissionError):
-        await r.require_file_read(
-            PermissionDecl(), str(offloaded), "swe_bench", sandbox_policy=policy
-        )
+    policy = SandboxPolicy(write_paths=[str(tmp_path / "elsewhere")])
+    await r.require_file_read(
+        PermissionDecl(), str(offloaded), "swe_bench", sandbox_policy=policy
+    )
 
 
 # ── #1383 follow-up: the Workspace read gate (is_read_allowed) must honor the

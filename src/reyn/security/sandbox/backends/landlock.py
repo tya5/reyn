@@ -186,13 +186,14 @@ def _child_preexec(ruleset: object | None, policy: SandboxPolicy) -> None:
     # code, whose syscalls are filtered too — hence `close_range` in the
     # baseline, which the landlock_exec shim's plain-execvp shape never needs.
     #
-    # ALWAYS loads now, regardless of `policy.allow_subprocess` (#3030 fix). This
-    # gate used to be the SIBLING of `landlock_exec._apply_seccomp`'s old gate,
-    # and carried the same defect: the filter also holds the NETWORK gate, so
-    # skipping it on allow_subprocess=True left `network: false` enforcing
-    # nothing — the stdio-MCP default. `_build_syscall_allowlist` already adds
-    # `_SUBPROCESS_SYSCALLS` when `policy.allow_subprocess`, so an
-    # allow_subprocess=True policy still gets exactly the syscalls it asked for;
+    # ALWAYS loads now, regardless of `policy.deny_subprocess` (#3030 fix; field
+    # renamed #3901 PR-B ④). This gate used to be the SIBLING of
+    # `landlock_exec._apply_seccomp`'s old gate, and carried the same defect:
+    # the filter also holds the NETWORK gate, so skipping it whenever spawning
+    # was not denied left `network: false` enforcing nothing — the stdio-MCP
+    # default (deny_subprocess=False). `_build_syscall_allowlist` already adds
+    # `_SUBPROCESS_SYSCALLS` when `not policy.deny_subprocess`, so a
+    # spawn-permitting policy still gets exactly the syscalls it asked for;
     # loading unconditionally only closes the network (and every other unnamed)
     # gap, it does not narrow what a subprocess-permitting policy is granted.
     #
@@ -243,7 +244,7 @@ def _warn_net_once() -> None:
         "no network-rule API on any kernel ABI (upgrading the kernel does not "
         "change this). The deny is carried entirely by the seccomp-BPF filter's "
         "default-deny, which now loads unconditionally (#3030) regardless of "
-        "allow_subprocess."
+        "deny_subprocess."
     )
 
 
@@ -412,7 +413,7 @@ class LandlockBackend:
         # measured: without this the child died in preexec_fn). The import is
         # inherited across fork, so warming it here is what makes the child's load
         # a pure in-memory operation. Called UNCONDITIONALLY (#3030): the child
-        # now always loads the filter regardless of `policy.allow_subprocess`, so
+        # now always loads the filter regardless of `policy.deny_subprocess`, so
         # this must always warm the import, not only when subprocess is denied.
         preload_native_dependency()
 

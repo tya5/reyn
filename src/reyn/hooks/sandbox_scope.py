@@ -36,11 +36,12 @@ So this module owns the vocabulary of the boundary:
 The mapping is deliberately the same triad an operator already has on a stdio
 MCP server (``network`` / ``subprocess`` / ``write_paths``): the per-site,
 operator-owned sandbox surface. Fields outside it (``read_deny_paths``,
-``read_paths``, ``env_passthrough``, ``timeout_seconds``) are not part of that
-surface on either side of the boundary, so they are not reported here —
-``read_deny_paths`` in particular is *supplied* to hook shells by
-``SandboxPolicy``'s own default factory, so it is not a hole (measured in
-#3003, restated in #3005).
+``write_deny_paths``, ``env_deny_names``, ``timeout_seconds``) are not part of
+that surface on either side of the boundary, so they are not reported here —
+not because a hook shell's floor happens to supply them today (#3901 PR-B ④
+made ``read_deny_paths``'s own default empty, so it no longer does), but
+because they were never part of the per-site vocabulary this module owns in
+the first place.
 
 Declaring the per-hook key — with **either** value — is what makes the
 operator's will explicit at the site that consumes it, which is why a declared
@@ -55,9 +56,17 @@ from typing import Mapping
 # shell's sandbox for the same axis. The three axes an operator owns per-site
 # (the same triad a stdio MCP server exposes). A field absent from this map has
 # no per-hook equivalent and is not part of the per-site sandbox surface.
+#
+# #3901 PR-B ④: only the LEFT side (the ``SandboxPolicy`` field name) follows
+# the rename — ``deny_subprocess`` replaces ``allow_subprocess``. The RIGHT
+# side (``"subprocess"``, the per-hook YAML key an operator writes) stays put
+# deliberately: it names the AXIS ("this hook's process-spawn behavior"), not
+# a direction ("allow" or "deny") — the same reasoning that keeps a hook's own
+# ``subprocess: true/false`` value un-inverted even though the policy field
+# behind it inverted.
 HOOK_SANDBOX_SCOPE: tuple[tuple[str, str], ...] = (
     ("network", "network"),
-    ("allow_subprocess", "subprocess"),
+    ("deny_subprocess", "subprocess"),
     ("write_paths", "write_paths"),
 )
 

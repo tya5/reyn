@@ -63,19 +63,33 @@ def test_syscall_allowlist_includes_baseline() -> None:
         assert name in result, f"Expected baseline syscall {name!r} in allowlist"
 
 
-def test_syscall_allowlist_no_network_by_default() -> None:
-    """Tier 2: egress-capable network syscalls absent when policy.network is
-    False. `socket`/`bind` are deliberately excluded from this assertion —
-    #3060 made them unconditional (see
-    test_syscall_allowlist_socket_and_bind_always_allowed below); neither one
-    alone can move a byte, so their presence here does not weaken the
-    network=False guarantee this test protects.
+def test_syscall_allowlist_network_present_by_default() -> None:
+    """Tier 2: egress-capable network syscalls PRESENT under a bare
+    ``SandboxPolicy()`` (#3901 PR-B ④, owner ruling B, full compat: ``network``
+    now defaults to True — the same opt-in-restriction reasoning #3202 applied
+    to ``deny_subprocess`` is extended to every axis, network included).
+    ``deny_narrowed_write_grants``'s credential-axis carve-out this test used
+    to pin (network stays deny-by-default because it gates exfiltration) is
+    EXPLICITLY overridden by the owner's later, full-compat ruling — see
+    test_syscall_allowlist_no_network_when_explicitly_disabled for the
+    opt-out leg that still works."""
+    from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    ``network=False`` is passed EXPLICITLY (#3905) — the dataclass's own
-    bare default is no longer False (owner decision 2026-06-05, network
-    defaults ON), so relying on a bare ``SandboxPolicy()`` here would test
-    "what the default happens to be today" rather than the actual claim
-    this test makes ("network syscalls are absent when network is off")."""
+    result = _build_syscall_allowlist(SandboxPolicy())
+    for name in ("connect", "sendto", "sendmsg", "accept", "listen"):
+        assert name in result, (
+            f"Network syscall {name!r} must be present under the bare-default "
+            "SandboxPolicy() (network defaults True, #3901 PR-B ④)"
+        )
+
+
+def test_syscall_allowlist_no_network_when_explicitly_disabled() -> None:
+    """Tier 2: the opt-out leg — egress-capable network syscalls absent when
+    the operator explicitly sets ``network=False``. `socket`/`bind` are
+    deliberately excluded from this assertion — #3060 made them unconditional
+    (see test_syscall_allowlist_socket_and_bind_always_allowed below); neither
+    one alone can move a byte, so their presence here does not weaken the
+    network=False guarantee this test protects."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     result = _build_syscall_allowlist(SandboxPolicy(network=False))
@@ -131,8 +145,8 @@ def test_syscall_allowlist_network_when_enabled() -> None:
 
 def test_syscall_allowlist_process_creation_allowed_by_default() -> None:
     """Tier 2: ★ load-bearing — process-CREATION syscalls PRESENT under a bare
-    ``SandboxPolicy()`` (owner decision 2026-07-22, #3202: ``allow_subprocess``
-    defaults to True — a UX-blocking axis is opt-in-restricted, not
+    ``SandboxPolicy()`` (owner decision 2026-07-22, #3202: ``deny_subprocess``
+    defaults to False — a UX-blocking axis is opt-in-restricted, not
     deny-by-default; #3196-style credential/exfiltration axes are unaffected).
 
     Reverting the dataclass default back to False turns this RED by hand (the
@@ -145,36 +159,36 @@ def test_syscall_allowlist_process_creation_allowed_by_default() -> None:
     for name in ("fork", "vfork", "clone", "clone3"):
         assert name in result, (
             f"Process-creation syscall {name!r} must be present under the "
-            "bare-default SandboxPolicy() (allow_subprocess defaults True, #3202)"
+            "bare-default SandboxPolicy() (deny_subprocess defaults False, #3202)"
         )
 
 
 def test_syscall_allowlist_process_creation_when_enabled() -> None:
-    """Tier 2: process-creation syscalls present when policy.allow_subprocess is True
+    """Tier 2: process-creation syscalls present when policy.deny_subprocess is False
     (explicit — same outcome as the default, but pinned independently of it)."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=True))
+    result = _build_syscall_allowlist(SandboxPolicy(deny_subprocess=False))
     assert "fork" in result
     assert "clone" in result
 
 
 def test_syscall_allowlist_no_process_creation_when_explicitly_disabled() -> None:
     """Tier 2: the opt-out leg — process-CREATION syscalls absent when the operator
-    explicitly sets ``allow_subprocess=False`` (#3202: explicit opt-out still denies;
+    explicitly sets ``deny_subprocess=True`` (#3202: explicit opt-out still denies;
     only the OMITTED-field floor changed, not the enforcement of an explicit deny)."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
+    result = _build_syscall_allowlist(SandboxPolicy(deny_subprocess=True))
     for name in ("fork", "vfork", "clone", "clone3"):
         assert name not in result, (
             f"Process-creation syscall {name!r} must be denied when "
-            "allow_subprocess is explicitly set to False"
+            "deny_subprocess is explicitly set to True"
         )
 
 
 def test_syscall_allowlist_includes_dup2_dup3_when_subprocess_allowed() -> None:
-    """Tier 2: dup2/dup3 present alongside fork/clone when allow_subprocess=True
+    """Tier 2: dup2/dup3 present alongside fork/clone when deny_subprocess=False
     (#3207 co-vet). fork/vfork/clone/clone3 alone only let a sandboxed process
     spawn a bare grandchild; the realistic subprocess+pipe-capture shape
     (`subprocess.run([...], capture_output=True)` run FROM INSIDE an
@@ -186,31 +200,31 @@ def test_syscall_allowlist_includes_dup2_dup3_when_subprocess_allowed() -> None:
     capability, not a fully-denied or fully-granted one."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=True))
+    result = _build_syscall_allowlist(SandboxPolicy(deny_subprocess=False))
     for name in ("dup2", "dup3"):
         assert name in result, (
-            f"{name!r} must be present when allow_subprocess=True — without it "
+            f"{name!r} must be present when deny_subprocess=False — without it "
             "subprocess+pipe output capture dies with EPERM even though fork "
             "itself succeeds (#3207)"
         )
 
 
 def test_syscall_allowlist_excludes_dup2_dup3_when_subprocess_disabled() -> None:
-    """Tier 2: the opt-out leg for dup2/dup3 — absent when allow_subprocess=False,
+    """Tier 2: the opt-out leg for dup2/dup3 — absent when deny_subprocess=True,
     same as fork/vfork/clone/clone3 (#3207 co-vet, mirrors
     test_syscall_allowlist_no_process_creation_when_explicitly_disabled)."""
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    result = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
+    result = _build_syscall_allowlist(SandboxPolicy(deny_subprocess=True))
     for name in ("dup2", "dup3"):
         assert name not in result, (
-            f"{name!r} must be denied when allow_subprocess is explicitly set "
+            f"{name!r} must be denied when deny_subprocess is explicitly set "
             "to False — it is part of the subprocess capability, not baseline"
         )
 
 
 def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None:
-    """Tier 2: execve/execveat are allowed even when allow_subprocess is False.
+    """Tier 2: execve/execveat are allowed even when deny_subprocess is True.
 
     Both callsites load the filter in a pre-exec position and the filter survives
     execve, so refusing execve would stop the sandboxed target before it starts —
@@ -220,7 +234,7 @@ def test_syscall_allowlist_always_permits_exec_of_the_sandboxed_target() -> None
     """
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    restrictive = _build_syscall_allowlist(SandboxPolicy(allow_subprocess=False))
+    restrictive = _build_syscall_allowlist(SandboxPolicy(deny_subprocess=True))
     for name in ("execve", "execveat"):
         assert name in restrictive, (
             f"{name!r} must be allowed even under the most restrictive policy, "
@@ -277,7 +291,7 @@ def test_syscall_allowlist_excludes_syscalls_landlock_cannot_govern() -> None:
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     permissive = _build_syscall_allowlist(
-        SandboxPolicy(network=True, allow_subprocess=True)
+        SandboxPolicy(network=True, deny_subprocess=False)
     )
     for name in ("chmod", "fchmod", "fchmodat", "chown", "fchown", "truncate"):
         assert name not in permissive, (
@@ -309,13 +323,15 @@ def test_syscall_allowlist_includes_async_runtime_and_durability_primitives() ->
     """
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
-    # Present regardless of policy — an async runtime needs these to start under
-    # the most restrictive policy (network off, subprocess off). network=False
-    # passed EXPLICITLY (#3905) — the dataclass's bare default is no longer
-    # network-off (owner decision 2026-06-05), so the later "connect must stay
-    # absent" assertion below needs an actually-restrictive policy, not
-    # whatever the default happens to be today.
-    result = _build_syscall_allowlist(SandboxPolicy(network=False))
+    # Present regardless of policy — an async runtime needs these to start even
+    # under the most restrictive policy (network off, subprocess denied).
+    # network=False is explicit here (#3901 PR-B ④ flipped the bare-default to
+    # True, #3905 aligned the dataclass default with the owner's 2026-06-05
+    # decision before that) — this test's own claim ("must stay absent even
+    # though the baseline is generous") needs network off to mean anything;
+    # the assertion below on `connect` would be vacuous under the compat
+    # default.
+    result = _build_syscall_allowlist(SandboxPolicy(network=False, deny_subprocess=True))
     for name in (
         # event-loop startup (round 1)
         "socketpair",
@@ -354,7 +370,7 @@ def test_syscall_allowlist_excludes_escape_hatches() -> None:
     from reyn.security.sandbox.backends.seccomp import _build_syscall_allowlist
 
     # Test with the most permissive policy to confirm exclusion is unconditional.
-    full_policy = SandboxPolicy(network=True, allow_subprocess=True)
+    full_policy = SandboxPolicy(network=True, deny_subprocess=False)
     result = _build_syscall_allowlist(full_policy)
     for name in ("ptrace", "process_vm_readv", "keyctl", "modify_ldt", "request_key"):
         assert name not in result, (
@@ -488,7 +504,7 @@ def test_landlock_child_preexec_invokes_the_seccomp_installer(
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=False))
+        landlock_mod._child_preexec(None, SandboxPolicy(deny_subprocess=True))
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
         "LandlockBackend's preexec_fn never loaded the seccomp filter — the "
@@ -501,14 +517,14 @@ def test_landlock_child_preexec_loads_seccomp_even_when_subprocess_allowed(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Tier 2: LandlockBackend's preexec_fn loads the seccomp filter even when
-    allow_subprocess=True (#3030 fix).
+    deny_subprocess=False (#3030 fix).
 
-    This USED TO be the negative half of the wiring pin — allow_subprocess=True
+    This USED TO be the negative half of the wiring pin — deny_subprocess=False
     removed the seccomp layer entirely, silently dropping the NETWORK gate along
     with the syscall-reduction one (#3030: a real outbound connect+send SUCCEEDED
-    under `network=False, allow_subprocess=True`, the stdio-MCP default). The
+    under `network=False, deny_subprocess=False`, the stdio-MCP default). The
     filter now always loads; `_build_syscall_allowlist` is what actually widens
-    the allowlist for allow_subprocess=True (adding `_SUBPROCESS_SYSCALLS`), not
+    the allowlist for deny_subprocess=False (adding `_SUBPROCESS_SYSCALLS`), not
     a callsite-level skip of the filter itself.
     """
     import reyn.security.sandbox.backends.landlock as landlock_mod
@@ -517,11 +533,11 @@ def test_landlock_child_preexec_loads_seccomp_even_when_subprocess_allowed(
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        landlock_mod._child_preexec(None, SandboxPolicy(allow_subprocess=True))
+        landlock_mod._child_preexec(None, SandboxPolicy(deny_subprocess=False))
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
         "LandlockBackend's preexec_fn skipped the seccomp filter under "
-        "allow_subprocess=True — the #3030 network-gate regression"
+        "deny_subprocess=False — the #3030 network-gate regression"
     )
 
 
@@ -551,7 +567,7 @@ def test_landlock_exec_shim_invokes_the_seccomp_installer(
     monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.backends.seccomp"):
-        shim._apply_seccomp(SandboxPolicy(allow_subprocess=False))
+        shim._apply_seccomp(SandboxPolicy(deny_subprocess=True))
 
     assert any("seccomp" in record.message.lower() for record in caplog.records), (
         "The landlock_exec shim never loaded the seccomp filter — the layer is "
