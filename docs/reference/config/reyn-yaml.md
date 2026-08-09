@@ -962,6 +962,7 @@ policy for `sandboxed_exec` ops + the OS's in-process file/http gates.
 sandbox:
   backend: auto          # auto | seatbelt | landlock | noop
   on_unsupported: warn   # warn | error | ignore
+  mode: compat           # compat (only implemented value today) | strict | custom
   policy:                # optional — the agent-level (operator) sandbox policy
     network: true
     write_paths: ["{{workspace}}", "/tmp"]
@@ -997,6 +998,7 @@ sandbox:
 |-----|------|---------|-------------|
 | `backend` | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
 | `on_unsupported` | string | `warn` | Policy when **no OS sandbox backend is available** — whether an explicit `backend` was forced-but-unavailable, `backend: auto` found no platform backend (the auto path honors this too), OR the selected backend **failed its enforcement self-test** (it is present but did not deny — such a backend is treated exactly like an absent one). `warn` logs a WARNING at selection and falls back to `noop` (default — not silent). `error` raises `RuntimeError` (**fail-closed** — refuse to run AI-generated code unsandboxed; set this where enforcement is required, and it works with the default `backend: auto` and against a present-but-inert backend). `ignore` silently falls back. |
+| `mode` | string | `compat` | #3823 ②: which enumeration DIRECTION the resolved policy uses. `compat` (default) is a literal empty deny-list — nothing blocked by default (audit/events/timeout/cancel-teardown still apply). `strict` would be an explicit allow-list; `custom` would let the operator write both direction and content via `policy` below. Both are declared in the enum but **RAISE at construction** (`ValueError`, "not implemented yet") rather than being silently accepted and ignored — resolving `mode` into an actual policy is not wired anywhere yet. Only `compat` validates today. |
 | `policy` | map | _none_ | **Agent-level (operator) sandbox policy.** When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates, on the `network`/`subprocess`/`env` axes — **winning over** op-declared fields, so a skill or the LLM cannot widen it. `write_paths` (and the read/write deny-lists) do NOT participate in that intersection: an operator cannot know in advance what directory an op needs, so the kernel backend consumes them directly (#3901 PR-B ③). Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern. See sub-keys below. |
 
 ### `sandbox.policy` sub-keys
