@@ -77,6 +77,7 @@ from reyn.runtime.hot_reload import HotReloader, get_active_hot_reloader
 from reyn.runtime.session import Session, _HookEventBundle
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _TIMEOUT = 2.0  # bounds every await so a broken wiring fails RED, never hangs
 
@@ -233,6 +234,7 @@ class TestFamily3HookEventBundleByteIdentical:
         ``emit_event``; that event lands in ``session._audit_events``, observed
         via the EventLog's public ``all()`` read."""
         s = _make_session(tmp_path)
+        collected = collect_events(s._audit_events)
         # Attach ONE never-drained subscriber, then overflow it: HookBus's
         # default subscriber queue is bounded (128), so >128 undrained
         # publishes guarantees at least one drop.
@@ -240,7 +242,7 @@ class TestFamily3HookEventBundleByteIdentical:
         try:
             for i in range(200):
                 s._hook_bus.publish(HookEvent(kind="turn_end", payload={"i": i}))
-            types = [e.type for e in s._audit_events.all()]
+            types = [e.type for e in collected]
             assert "bus_subscriber_dropped" in types
         finally:
             _sub.close()
@@ -255,9 +257,10 @@ class TestFamily3HookEventBundleByteIdentical:
         its ``events`` sink, which lands in ``session._audit_events`` (EventLog
         ``all()``) iff the sink IS that EventLog."""
         s = _make_session(tmp_path)
-        before = len(s._audit_events.all())
+        collected = collect_events(s._audit_events)
+        before = len(collected)
         await s._hot_reloader.apply_all(exclude=frozenset({"cron"}))
-        after = [e.type for e in s._audit_events.all()]
+        after = [e.type for e in collected]
         assert len(after) > before
         assert "config_reloaded" in after
 
