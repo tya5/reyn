@@ -244,7 +244,7 @@ def _warn_net_once() -> None:
         "no network-rule API on any kernel ABI (upgrading the kernel does not "
         "change this). The deny is carried entirely by the seccomp-BPF filter's "
         "default-deny, which now loads unconditionally (#3030) regardless of "
-        "allow_subprocess."
+        "deny_subprocess."
     )
 
 
