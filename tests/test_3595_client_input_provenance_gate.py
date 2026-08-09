@@ -53,8 +53,9 @@ from reyn.runtime.message_bus import MessageBus
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session
 from reyn.runtime.turn_origin import TurnOrigin
+from tests._support.paths import REPO_ROOT
 
-_SRC = Path(__file__).resolve().parent.parent / "src"
+_SRC = REPO_ROOT / "src"
 
 #: The member whose claimants this file enumerates. Named through the type, not
 #: spelled, so a rename of the member moves this gate with it instead of leaving
@@ -401,7 +402,7 @@ def test_asserting_sites_name_a_reason_and_readers_name_theirs() -> None:
     admission that it has none. A named test that does not exist fails here, so a
     rename cannot leave a site silently declared-but-unmeasured.
     """
-    repo = Path(__file__).resolve().parent.parent
+    repo = REPO_ROOT
     for key, decl in sorted(_CLIENT_INPUT_SITES.items()):
         assert decl.role in ("asserts", "reads"), f"{key!r}: unknown role"
         assert decl.reason.strip(), f"{key!r} declares no reason"

@@ -30,7 +30,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+from tests._support.paths import REPO_ROOT
+
+_REPO_ROOT = REPO_ROOT
 
 # ``[text](target)`` — skip absolute URLs, mail links, and pure ``#anchor``
 # references (the latter are test_3126's scope, not this gate's).

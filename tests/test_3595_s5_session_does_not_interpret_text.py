@@ -39,9 +39,10 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 from tests._support.slash import RecordingTransport, drain_display, local_transport
 
-_RUNTIME_DIR = Path(__file__).resolve().parent.parent / "src" / "reyn" / "runtime"
+_RUNTIME_DIR = REPO_ROOT / "src" / "reyn" / "runtime"
 
 
 # ── the structural walk ───────────────────────────────────────────────────────

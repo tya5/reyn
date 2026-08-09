@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 # Make scripts/ importable
-_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+from tests._support.paths import REPO_ROOT
+
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 sys.path.insert(0, str(_SCRIPTS_DIR))
 import rekey_fixtures as rk
 

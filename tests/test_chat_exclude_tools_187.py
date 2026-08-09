@@ -27,6 +27,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from tests._support.paths import REPO_ROOT
+
 
 def _tool(name: str) -> dict:
     """An OpenAI-style tool catalog entry, as RouterLoop builds them."""
@@ -90,9 +92,9 @@ def test_swe_runner_excludes_web_tools_in_chat_path() -> None:
     gold PR. The exec network path is already sandbox-gated off; web_search /
     web_fetch are the only internet→gold surface, so the runner excludes them.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
     src = (
-        Path(__file__).resolve().parent.parent / "scripts" / "swe_bench_runner.py"
+        REPO_ROOT / "scripts" / "swe_bench_runner.py"
     ).read_text(encoding="utf-8")
     assert '"--exclude-tools", "web_search,web_fetch"' in src, (
         "run_reyn_once_in_container must pass --exclude-tools web_search,web_fetch "

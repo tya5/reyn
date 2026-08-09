@@ -19,6 +19,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+from tests._support.paths import REPO_ROOT
+
 
 def _load_module():
     """Import scripts/check_pr_closing_intent.py without a scripts/ package.
@@ -26,7 +28,7 @@ def _load_module():
     scripts/ has no ``__init__.py`` (mirrors the loader idiom used by
     ``tests/test_tier_audit_format_pin.py`` for the sibling audit script).
     """
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = REPO_ROOT
     path = repo_root / "scripts" / "check_pr_closing_intent.py"
     spec = importlib.util.spec_from_file_location("check_pr_closing_intent", path)
     module = importlib.util.module_from_spec(spec)

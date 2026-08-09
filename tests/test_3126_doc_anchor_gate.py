@@ -63,7 +63,9 @@ import pytest
 import yaml
 from markdown.extensions.toc import slugify, unique
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+from tests._support.paths import REPO_ROOT
+
+_REPO_ROOT = REPO_ROOT
 _DOCS = _REPO_ROOT / "docs"
 _SRC = _REPO_ROOT / "src" / "reyn"
 _MKDOCS_CFG = _REPO_ROOT / ".mkdocs" / "mkdocs.yml"

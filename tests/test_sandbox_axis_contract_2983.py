@@ -44,6 +44,7 @@ from reyn.security.sandbox.axis_contract import (
     AxisContract,
     AxisException,
 )
+from tests._support.paths import REPO_ROOT
 
 
 def _landlock_available() -> bool:
@@ -156,7 +157,7 @@ def _resolve_workload_test(workload_test_id: str) -> object:
     by file path is robust to both.
     """
     path, _, func_name = workload_test_id.partition("::")
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = REPO_ROOT
     module_path = repo_root / path
     spec = importlib.util.spec_from_file_location("_workload_module_2983", module_path)
     assert spec is not None and spec.loader is not None

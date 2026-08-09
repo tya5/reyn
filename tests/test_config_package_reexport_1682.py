@@ -14,13 +14,14 @@ import ast
 from pathlib import Path
 
 import reyn.config
+from tests._support.paths import REPO_ROOT
 
 
 def _imported_names() -> set[str]:
     """Every name imported via ``from reyn.config import …`` (exact module, not a
     submodule) across src + tests + scripts. Uses ast so docstring/comment prose
     that merely mentions the phrase is never matched."""
-    root = Path(__file__).resolve().parent.parent  # repo root (has src/ + tests/)
+    root = REPO_ROOT  # repo root (has src/ + tests/)
     names: set[str] = set()
     for sub in ("src", "tests", "scripts"):
         base = root / sub
