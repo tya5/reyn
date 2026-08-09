@@ -35,17 +35,30 @@ sandbox:
 ```
 
 A sandboxed command's environment is, by the same posture, your shell's
-full environment — not a curated subset. There is no allowlist to opt
-into: every variable your shell has set is visible to the command unless
-you explicitly deny specific names via `env_deny_names`
-(`#3901` PR-B ④ — the whole environment passes through by default, same
-trust level as the launching shell):
+full environment — not a curated subset by default. Every variable your
+shell has set is visible to the command unless you explicitly deny
+specific names via `deny_env_names` (`#3901`/`#3823` — the whole
+environment passes through by default, same trust level as the launching
+shell):
 
 ```yaml
 sandbox:
   policy:
-    env_deny_names:
+    deny_env_names:
       - OPENAI_API_KEY
+```
+
+If you'd rather opt IN a short list than deny individual names, set
+`allow_env_names` to a list — this switches the axis to allow-list
+semantics (`#3823`): only the names you list pass through, still
+intersected with `deny_env_names` on top:
+
+```yaml
+sandbox:
+  policy:
+    allow_env_names:
+      - PATH
+      - HOME
 ```
 
 Both defaults follow the same design choice this page opened with:
