@@ -751,6 +751,49 @@ comparison is computable — not as a general claim). A `0` or a clean run
 answers only the one you actually checked; treat an unestablished premise
 as unmeasured, not as confirmed absent.
 
+## 19. Documenting an in-flight mechanism as absent invites a same-night rewrite
+
+2026-08-09: a single false claim (`--grant-file-write` "is bounded by the
+sandbox write-paths") recurred across four faces, discovered one at a time
+rather than enumerated up front — each fix believed it was the last:
+
+```
+① src comment (#3916)         "sandbox bounds it" → "no scope of its own"
+② docs/reference/cli/* (#3938) same claim, same fix
+③ argparse --help text (#3943) same claim, same fix — found only while
+                                re-grepping for ① and ②, not anticipated
+🔴 ④ #3925/#3942 landed        the FIX ITSELF ("no scope … doesn't exist
+                                yet") went stale within the hour — ①②③ all
+                                needed a second edit, to "scoped to the
+                                zone root"
+```
+
+Each individual fix was correct *and verified* at the time it was written —
+this is not §1's "declaration ≠ reality" (nothing was declared falsely) and
+not §17's scope hazard (every face that was searched for was found). The
+failure is temporal: **"doesn't exist yet" is a claim about the state of an
+in-flight mechanism, and an in-flight mechanism's whole point is that its
+state is about to change.** Writing the absence as a bare fact makes the
+doc correct only until the mechanism lands — at which point every site that
+said "doesn't exist yet" needs a second edit, and nothing marks those sites
+as needing one.
+
+**The fix that survives the landing, written once:** name both states in
+the same sentence — *"today X; `#NNNN` will make it Y"* — rather than *"X,
+because Y doesn't exist yet."* The first form is still true the moment
+`#NNNN` lands (the doc now under-describes a shipped improvement instead of
+asserting a false absence); the second form is falsified by the exact event
+it was two paragraphs away from anticipating.
+
+**Apply**: when a fix note or a doc explains the CURRENT state of a
+mechanism that a linked, open issue is actively about to change, write the
+future state alongside the current one, not as a separate follow-up. And
+don't stop counting faces after the first re-grep confirms the fix you
+already made — a claim repeated across N call sites was written by N
+different authors at N different times; assume there's an (N+1)th until a
+grep across the whole tree (§17: `src`/`tests`/`scripts`/`docs`, not just
+the file you started with) comes back empty.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
