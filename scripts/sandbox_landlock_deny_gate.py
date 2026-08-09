@@ -6,7 +6,7 @@ axis, so a user whose sandbox is inert now finds out at backend resolution. That
 closes production. It does not close the repo: the only place a Linux deny has
 ever been *witnessed* is one maintainer's colima VM, run by hand. Every CI job we
 have is blind to it — ``test.yml`` omits the ``sandbox-linux`` extra on purpose,
-so ``tests/test_landlock_exec_shim_1344e.py``'s enforcement group skips in all of
+so ``tests/security/test_landlock_exec_shim_1344e.py``'s enforcement group skips in all of
 them, and a skip is green. A regression that re-breaks enforcement (the #2962
 dead-filter / #2980 fictional-Landlock class, both of which lived for weeks under
 a green suite) would therefore merge, and be found by a *user's* fail-closed
