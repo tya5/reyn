@@ -37,8 +37,9 @@ from reyn.schemas.models import MCPSubscribeResourceIROp, MCPUnsubscribeResource
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 from tests._support.events import collect_events
+from tests._support.paths import REPO_ROOT
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
 

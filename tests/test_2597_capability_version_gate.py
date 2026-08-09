@@ -29,8 +29,9 @@ import pytest
 
 from reyn.mcp.client import MCPClient, MCPError, require_capability
 from reyn.mcp.connection_service import MCPConnectionService
+from tests._support.paths import REPO_ROOT
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
 _TOOLS_ONLY_SERVER = _SUPPORT_DIR / "mcp_paginated_tools_server.py"
 _RESOURCES_SERVER = _SUPPORT_DIR / "mcp_resources_server.py"

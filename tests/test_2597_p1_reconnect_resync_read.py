@@ -29,8 +29,9 @@ from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPError
 from reyn.mcp.connection_service import MCPConnectionService
 from tests._support.events import collect_events
+from tests._support.paths import REPO_ROOT
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _SUBSCRIBABLE_SERVER = _SUPPORT_DIR / "mcp_subscribable_resources_server.py"
 _URI = "resource://counter"
 

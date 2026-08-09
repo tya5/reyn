@@ -17,8 +17,9 @@ from pathlib import Path
 import pytest
 
 from reyn.mcp.client import MCPClient, MCPError, expand_env
+from tests._support.paths import REPO_ROOT
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
 _PAGINATED_SERVER = _SUPPORT_DIR / "mcp_paginated_tools_server.py"
 

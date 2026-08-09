@@ -33,6 +33,7 @@ from tests._support.events import collect_events
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
 # bundled into two frozen, default-free dataclasses. These module-level
 # constants are the "all fields unset" instances this file's tests reuse.
+from tests._support.paths import REPO_ROOT
 from tests._support.router_host_adapter import make_op_context_source  # noqa: E402
 
 _EMPTY_OP_CTX = make_op_context_source()
@@ -41,7 +42,7 @@ _EMPTY_MCP_GATEWAY = McpGatewayInputs(
 )
 
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
 
 _CFG = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}

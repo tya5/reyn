@@ -32,6 +32,7 @@ from reyn.schemas.models import MCPGetPromptIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 from tests._support.events import collect_events
+from tests._support.paths import REPO_ROOT
 
 
 class _UnusedBus(InterventionBus):
@@ -43,7 +44,7 @@ class _UnusedBus(InterventionBus):
     async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
         raise AssertionError(f"intervention bus should not be consulted: {iv}")
 
-_SUPPORT_DIR = Path(__file__).parent / "_support"
+_SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
 _PROMPTS_SERVER = _SUPPORT_DIR / "mcp_prompts_server.py"
 _TOOLS_ONLY_SERVER = _SUPPORT_DIR / "mcp_paginated_tools_server.py"
 _ECHO_SERVER = _SUPPORT_DIR / "mcp_fastmcp_echo_server.py"
