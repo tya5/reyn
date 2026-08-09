@@ -785,7 +785,6 @@
   "test_registry_wal_size_safety_net.py",
   "test_registry_wal_truncate.py",
   "test_registry_wal_truncate_floor_nonblocking.py",
-  "test_rekey_fixtures_tool.py",
   "test_render_template_bounds_config_2679.py",
   "test_render_template_op_fp0055_pr2.py",
   "test_renderer_console_width_2655.py",
