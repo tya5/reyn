@@ -2378,6 +2378,70 @@ class TextualChatApp(App):
             loop=False,
         )
 
+    def copy_to_clipboard(self, text: str) -> None:
+        """#3616②: override ``App.copy_to_clipboard`` so every
+        Textual-originated copy goes through reyn's own local-tool sink
+        instead of the framework default's raw OSC 52 write.
+
+        Textual calls this from exactly 3 places, none of them FlowView's own
+        cursor-based yank (that already routes through :meth:`_write_clipboard`
+        via the ``clipboard=`` constructor seam, ``#3507``/``#3692`` — this
+        override does not change that path, it only stops being a NO-OP for
+        the other 3): ``Screen.action_copy_text`` (the generic mouse-drag
+        text-selection copy, bound to ``ctrl+c``/``super+c``), and
+        ``TextArea``/``Input``'s own copy actions on a text selection inside
+        those widgets. All 3 currently hit the same broken-on-some-terminals
+        OSC 52 path ``#3617`` already fixed for the keyboard yank;
+        redirecting all 3 to the SAME already-proven-correct sink is the
+        identical fix, not a wider blast radius.
+
+        ⚠️ Fixes the SINK only, and — measured after this override was first
+        written — does not by itself close #3616②. Two separate gaps stack
+        on top of it, both traced with real pilot probes rather than assumed:
+
+        1. **Trigger reachability**: reyn's own ``ctrl+c`` binding
+           (``Binding("ctrl+c", "cancel_turn", priority=True)``, ``#3498``,
+           owner decision "interrupt unconditionally") consumes ``ctrl+c``
+           before ``Screen`` ever sees it — with an active Screen-level
+           selection, ``ctrl+c`` calls this method 0 times and
+           ``cancel_inflight`` 1 time; ``super+c`` (Cmd+C) calls this method
+           1 time. The owner's acceptance machine is Windows + git bash,
+           which has no ``super+c`` equivalent.
+        2. **Selection itself (#3972, filed, upstream)**: mouse-drag inside
+           ``FlowView`` — the conversation pane, where the owner's actual
+           copy target lives — does not populate ``Screen.selections`` at
+           all (measured: identical drag on a plain ``Static`` widget DOES
+           select, via ``get_selected_text()``, using Textual's own
+           ``test_selection.py::test_double_width`` incantation; the same
+           drag on ``FlowView`` returns ``None``). So even with (1) solved,
+           ``FlowView.yank()``'s own body
+           (``text = self.screen.get_selected_text() or ""``) has nothing to
+           send for a mouse-only selection — this override's sink is never
+           reached via that path either. #3972 is a ``textual-flowview``
+           (also ``tya5``-owned) integration gap, tracked separately.
+
+        This override still stands on its own: it is unconditionally correct
+        for ``TextArea``/``Input`` copy actions (reyn's own ``SearchBar``
+        query field, ``InterventionPanel``'s free-text ``Input``), which
+        likely DO populate a normal Screen selection (untested here, out of
+        this override's own scope) — landing it now closes that slice
+        without waiting on #3972 or a decision on revisiting #3498.
+
+        Deliberately NOT ``super().copy_to_clipboard(text)`` (which would
+        ALSO fire the OSC 52 write) — dual-writing risks the exact bug this
+        fixes: an async/buffered OSC 52 escape sequence reaching the
+        terminal after pyperclip already set the OS clipboard correctly
+        could overwrite it with the garbled result. ``#3617``'s own
+        keyboard-yank sink didn't dual-write either; matching that
+        precedent. Still sets ``self._clipboard`` directly (Textual's own
+        in-memory bookkeeping ``TextArea``/``Input``'s PASTE actions read
+        via ``self.app.clipboard`` for in-session paste-back, independent
+        of the OS clipboard this method's SINK choice is about) —
+        the one piece of the parent's behavior worth keeping.
+        """
+        self._clipboard = text
+        self._write_clipboard(text)
+
     def _write_clipboard(self, text: str) -> bool:
         """Yank's clipboard sink: reyn's own local tool, result observable.
 
