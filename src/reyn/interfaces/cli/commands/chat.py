@@ -833,7 +833,8 @@ def _run(args: argparse.Namespace) -> None:
         _renderer_is_interactive(
             is_interactive=is_interactive,
             render_mode=session_cfg.config.chat.render_mode,
-        )
+        ),
+        neutralize_body=session_cfg.config.chat.neutralize_body,
     )
 
     async def _restore_and_attach() -> bool:

@@ -152,7 +152,7 @@ class ConsoleChatRenderer(ChatRenderer):
         "trace": "[trace]",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, *, neutralize_body: bool = False) -> None:
         # Tracks whether the last write left a single-line transient on screen
         # that the next write should overwrite.
         self._transient_active = False
@@ -163,6 +163,9 @@ class ConsoleChatRenderer(ChatRenderer):
         # moment it happens, not only on their next submit's raised
         # ``DurabilityHaltError``.
         self._halted_reason: "str | None" = None
+        # #3318: opt-in body ESC/OSC neutralize (chat.neutralize_body), default
+        # off — see format_inline_message/_body_renderable's own docstrings.
+        self._neutralize_body = neutralize_body
 
     def on_audit_event(self, event) -> None:
         etype = event.type
@@ -226,12 +229,22 @@ class ConsoleChatRenderer(ChatRenderer):
             return
         kind_prefix = self._PREFIX.get(msg.kind, "")
         meta_prefix = _meta_prefix(msg.meta)
+        body_text = msg.text
+        if self._neutralize_body:
+            # #3318: this method writes body_text to the terminal RAW (no
+            # markdown/`_body_renderable` pass — this renderer has its own
+            # separate, un-styled write path). `chat.render_mode: plain`
+            # forces this renderer even on a real TTY (#3292, genuine `--cui`
+            # equivalence), so an un-neutralized ESC/OSC sequence here reaches
+            # a live terminal exactly like the TUI presenter's body would.
+            from reyn.core.present.guard import get_neutralizer
+            body_text = get_neutralizer("terminal").neutralize(body_text)[0]
         # Inject meta prefix between kind tag and text so logs read
         # "[trace] [default#abcd] llm_called: ..."
         if kind_prefix:
-            line = f"{kind_prefix} {meta_prefix}{msg.text}\n"
+            line = f"{kind_prefix} {meta_prefix}{body_text}\n"
         else:
-            line = f"{meta_prefix}{msg.text}\n"
+            line = f"{meta_prefix}{body_text}\n"
         self._write(line)
         self._transient_active = msg.kind in _TRANSIENT_KINDS
 
@@ -748,10 +761,41 @@ def _harden_soft_breaks(text: str) -> str:
     return "\n".join(out)
 
 
-def _body_renderable(kind: str, text: str, body_style: str):
-    """The body cell: markdown for agent (LLM) output, a styled Text otherwise."""
+def _body_renderable(
+    kind: str, text: str, body_style: str, *, neutralize_body: bool = False
+):
+    """The body cell: markdown for agent (LLM) output, a styled Text otherwise.
+
+    #3318: ``neutralize_body`` (opt-in, ``chat.neutralize_body: true`` — see
+    :class:`~reyn.config.chat.ChatConfig`) routes ``text`` through the SAME
+    terminal neutralizer the #3302 label-side fix uses
+    (``core/present/guard.get_neutralizer("terminal")``, ESC/control strip)
+    BEFORE this function's own per-kind rendering. The one LIVE production
+    caller of this flag is :class:`ReynPresenter` (the Textual TUI), via
+    :func:`_body_and_background`. ``format_inline_message`` (below) also
+    forwards the flag here, but ``format_inline_message`` itself currently
+    has no live production caller — its only caller, ``InlineChatRenderer``,
+    always defers to the Textual app instead (``uses_app_input() == True``,
+    see that class's own docstring) — so wiring it through was cheap
+    consistency/future-safety, not a second live surface. The actual live
+    plain-renderer path, ``ConsoleChatRenderer.message()``, writes
+    ``msg.text`` RAW (no ``_body_renderable`` pass at all) and is wired to
+    the SAME ``chat.neutralize_body`` flag directly at that call site
+    instead — see its own comment for why. Applied first: only real
+    control bytes are stripped
+    (``\\x00-\\x08``/``\\x0b``/``\\x0c``/``\\x0e-\\x1f``/``\\x7f-\\x9f``),
+    none of which is valid CommonMark syntax, so markdown parsing below sees
+    an equivalent-or-shorter string, never a corrupted one. Off by default —
+    the neutralizer strips only real ESC/control bytes, never any printable
+    character, but changing conversation body BYTES by default is still a
+    fidelity change owner ruling B declined to make unconditional.
+    """
     from rich.markdown import Heading, Markdown
     from rich.text import Text
+
+    if neutralize_body:
+        from reyn.core.present.guard import get_neutralizer
+        text = get_neutralizer("terminal").neutralize(text)[0]
 
     if kind == "agent":
         # rich.Markdown centers H1 by default (LEVEL_ALIGN = {"h1": "center"}).
@@ -799,8 +843,15 @@ def _bold_marked_text(text: str, base_style: str):
     return out
 
 
-def format_inline_message(msg: OutboxMessage):
+def format_inline_message(msg: OutboxMessage, *, neutralize_body: bool = False):
     """Pure formatter: OutboxMessage → a rich renderable (the inline CC-style line).
+
+    ``neutralize_body`` (#3318, default off) is forwarded to
+    :func:`_body_renderable` for the non-``user``/non-``presentation``/
+    non-``intervention-with-nodes`` body path below — see that function's
+    docstring for what it does, why it's opt-in, and (important) why THIS
+    function currently has no live production caller (``InlineChatRenderer``
+    always defers to the Textual app instead).
 
     A 2-cell marker gutter (glyph + space) sits in its own column; the body wraps
     in a second column so multi-line / wrapped output hang-indents under the body
@@ -870,7 +921,10 @@ def format_inline_message(msg: OutboxMessage):
             gutter, f"{gutter_style} {bg}",
             Text(body_text, style=f"{body_style} {bg}"), row_style=bg, expand=True,
         )
-    return _gutter_grid(gutter, gutter_style, _body_renderable(kind, body_text, body_style))
+    return _gutter_grid(
+        gutter, gutter_style,
+        _body_renderable(kind, body_text, body_style, neutralize_body=neutralize_body),
+    )
 
 
 class InlineChatRenderer(ChatRenderer):
@@ -1115,6 +1169,10 @@ class InlineChatRenderer(ChatRenderer):
         # that fallback. Applies to every kind, not just `presentation`'s tables —
         # plain agent replies can carry wide code/diff blocks too (issue #2655).
         self._console.width = _live_terminal_width()
+        # #3318: NOT wired to chat.neutralize_body here — this class's
+        # uses_app_input() is always True, so it never actually reaches this
+        # method in production (see the class docstring); the live plain path
+        # is ConsoleChatRenderer.message() (above), wired separately.
         self._console.print(format_inline_message(msg))
         self._seen_message = True
         self._flush()

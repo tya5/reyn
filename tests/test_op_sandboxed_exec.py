@@ -30,6 +30,7 @@ from reyn.security.sandbox import (
     get_default_backend,
 )
 from reyn.security.sandbox import noop_backend as _noop_module
+from tests._support.events import collect_events
 
 # ─── 1. SandboxPolicy ────────────────────────────────────────────────────────
 
@@ -178,6 +179,7 @@ async def test_dispatch_emits_started_and_completed():
     the recorded backend name matches whatever the factory returned.
     """
     ctx, events = _make_ctx()
+    collected = collect_events(events)
     # /bin/echo for portability — Seatbelt's deny-default profile doesn't
     # implicitly resolve bare names from PATH on first exec.
     op = SandboxedExecIROp(
@@ -193,7 +195,7 @@ async def test_dispatch_emits_started_and_completed():
     assert result["returncode"] == 0
     assert "hello" in result["stdout"]
 
-    event_types = [e.type for e in events.all()]
+    event_types = [e.type for e in collected]
     assert "sandboxed_exec_started" in event_types
     assert "sandboxed_exec_completed" in event_types
 
