@@ -148,24 +148,13 @@ def compute_ingested(ctx: "OpContext", data_ref: str, resolved: str) -> str:
     a prior ``read_file`` on this ref appears earlier in the session — a full
     (untruncated) read → ``full``; only truncated reads → ``partial``; no read →
     ``none``. Never LLM-self-reported.
+
+    #3868 PR-1: delegates to ``EventLog.compute_ingested`` — an O(1) lookup
+    into state ``emit()`` folds incrementally, replacing the O(session
+    length) scan over ``events.all()`` this function used to do itself on
+    every present call. This wrapper stays (rather than callers reaching
+    ``ctx.events.compute_ingested`` directly) so this module's own
+    docstring — the one thing every present-arc caller already reads —
+    keeps naming the contract.
     """
-    saw_full = False
-    saw_partial = False
-    for event in ctx.events.all():
-        if event.type != "tool_executed":
-            continue
-        d = event.data
-        if d.get("op") not in ("read_file", "read"):
-            continue
-        path = d.get("path")
-        if path != data_ref and path != resolved:
-            continue
-        if d.get("truncated"):
-            saw_partial = True
-        else:
-            saw_full = True
-    if saw_full:
-        return "full"
-    if saw_partial:
-        return "partial"
-    return "none"
+    return ctx.events.compute_ingested(data_ref, resolved)
