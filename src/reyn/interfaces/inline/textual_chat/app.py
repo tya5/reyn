@@ -1007,8 +1007,16 @@ class TextualChatApp(App):
         self.conversation: "FlowModel[OutboxMessage]" = FlowModel()
         # One presenter instance the FlowView DRAWS entries with. Injectable
         # (default a fresh one on the app clock) so a test can observe
-        # presentation.
-        self._presenter = presenter or ReynPresenter(clock=self._clock)
+        # presentation. #3318: the default presenter reads chat.neutralize_body
+        # off the injected config (opt-in body ESC/OSC neutralize) — an
+        # explicitly-injected `presenter` (tests, or a future caller) owns its
+        # own flag instead, same as it already owns its own clock.
+        self._presenter = presenter or ReynPresenter(
+            clock=self._clock,
+            neutralize_body=bool(
+                getattr(getattr(config, "chat", None), "neutralize_body", False)
+            ),
+        )
         # Running tool-call entries keyed by op_id (== the dispatcher's
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).

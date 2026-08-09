@@ -642,11 +642,24 @@ class ChatConfig:
     ``auto`` (resolve to alt-screen on a TTY). A non-TTY session always falls
     back to ``plain`` regardless of this value (the interactive Textual drivers
     need a real terminal).
+
+    ``neutralize_body`` (#3318): opt-in ESC/OSC-control-sequence stripping on
+    the agent-reply / tool-result BODY text (owner ruling B — default OFF,
+    "UX/predictability over security, security is opt-in"). This is a
+    DISPLAY-boundary concern (what the terminal renders), not a stop
+    condition, so it lives here rather than under ``safety:`` (the
+    loop/timeout namespace). The label-side neutralization (#3302 —
+    LLM-derived choice labels, intervention prompts) is unconditional and
+    unaffected by this flag; this flag only widens that same terminal
+    neutralizer to the conversation body text, where a raw ESC/OSC sequence
+    from tool output or an untrusted model reply could otherwise reach the
+    terminal.
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     render_mode: Literal["alt-screen", "inline", "plain", "auto"] = "alt-screen"
     gutters: GutterConfig = field(default_factory=GutterConfig)
+    neutralize_body: bool = False
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -699,10 +712,13 @@ def _build_chat_config(raw: object) -> ChatConfig:
     render_mode = _build_render_mode(raw.get("render_mode"))
     # #3352: so do the gutter start-visibility flags.
     gutters = _build_gutter_config(raw.get("gutters"))
+    # #3318: so does the opt-in body-neutralize flag (default False/compat).
+    neutralize_body = bool(raw.get("neutralize_body", ChatConfig().neutralize_body))
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]
             reasoning=reasoning, render_mode=render_mode, gutters=gutters,
+            neutralize_body=neutralize_body,
         )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
@@ -782,7 +798,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
     )
     return ChatConfig(
         compaction=compaction, reasoning=reasoning, render_mode=render_mode,  # type: ignore[arg-type]
-        gutters=gutters,
+        gutters=gutters, neutralize_body=neutralize_body,
     )
 
 
