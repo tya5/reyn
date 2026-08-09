@@ -287,6 +287,13 @@ def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
 #: so a configured ``read_deny_paths``/``write_deny_paths`` is silently
 #: unenforced there, unlike Seatbelt's deny-after-allow SBPL rules. This is a
 #: structural backend limitation, not a bug to fix — see the module docstring.
+#:
+#: #3951: this frozenset — and everything ``unenforced_axes()`` below reports
+#: — covers ONLY the deny-list-incapable-backend gap. It does NOT report a
+#: backend that simply does not enforce an axis at all (e.g. the Docker
+#: launch backend currently enforces none of write_paths/network/subprocess
+#: — measured, #3823 co-vet). A caller reading a clean ``unenforced_axes()``
+#: result must not read it as "this backend enforces everything configured."
 _DENY_LIST_INCAPABLE_BACKENDS: frozenset[str] = frozenset({"landlock"})
 
 
@@ -305,6 +312,12 @@ def unenforced_axes(backend_name: str, policy: SandboxPolicy) -> list[str]:
     PRODUCTION gate, blast radius every sandboxed op on every host, deny-leg ×
     write/spawn axes only — this is audit visibility for a DECLARED gap, not a
     self-test probe).
+
+    #3951: an empty return is NOT a claim that ``backend_name`` enforces every
+    configured axis — it only means this backend isn't in
+    :data:`_DENY_LIST_INCAPABLE_BACKENDS`. A backend that enforces nothing at
+    all for a given axis (the Docker launch backend today, for
+    write_paths/network/subprocess) also returns ``[]`` here, silently.
     """
     if backend_name not in _DENY_LIST_INCAPABLE_BACKENDS:
         return []

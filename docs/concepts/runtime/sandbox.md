@@ -108,6 +108,26 @@ The registry also records `witness_strength` per backend — network's deny leg 
 
 **macOS 26.3+ and `SeatbeltBackend`**: `sandbox-exec` remains shipped in macOS 26.3. An SBPL profile that includes `(import "bsd.sb")` and `(allow process-exec*)` is sufficient for the backend to function. See the FP-0017 post-dogfood fix landing notes (commit `b477508`) for details.
 
+### Deny-list visibility: `sandbox_axis_unenforced` — scope, not a general enforcement-gap report
+
+A configured `read_deny_paths`/`write_deny_paths` entry is silently
+unenforced on Landlock (allowlist-only — see the field reference above).
+`unenforced_axes()` (`policy.py`) makes that ONE gap observable: when it
+resolves against a deny-list-incapable backend, a `sandbox_axis_unenforced`
+audit-event fires (paired with a WARN log, `#3949`), naming the axis and why
+(`#3823` §4③).
+
+**This is deny-list visibility only, not a general "does this backend
+enforce everything configured" report (`#3951`).** A backend that simply
+does not enforce an axis at all — measured today for the Docker launch
+backend, which enforces none of `write_paths`/`network`/`subprocess` —
+produces no `sandbox_axis_unenforced` event and no WARN, because it isn't in
+the deny-list-incapable set `unenforced_axes()` checks. A clean/absent
+report from this mechanism does not mean every configured axis is being
+enforced; it means Landlock's specific deny-list limitation didn't fire on
+this call. Whether to extend coverage to Docker's own enforcement gap is
+tracked in `#3951`, undecided as of this writing.
+
 ## `reyn.yaml` configuration
 
 ```yaml
