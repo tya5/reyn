@@ -18,6 +18,99 @@ If a test cannot articulate which contract or invariant it protects, it is imple
 
 Tests in `tests/` belong to exactly one tier. The tier determines what the test pins, who the audience is, and when the test should change.
 
+### The prerequisite every tier shares
+
+**Owner ruling (2026-08-09).** This was implicit in every tier below since
+the day this document was written, but never stated as its own requirement
+— which is how a test could carry a Tier label without ever being checked
+against it. 79% of this repo's test functions currently declare `Tier 2`;
+that number describes how many tests *typed the label*, not how many meet
+what the label requires. Quoted verbatim, because the point of writing this
+down is to stop the requirement from travelling by word of mouth:
+
+> 「OS 不変条件は振る舞いと契約が前提だよ」
+> ("An OS invariant presupposes a behavior and a contract.")
+>
+> 「必要なのは振る舞いと契約」
+> ("What's required is a behavior or a contract.")
+>
+> 「こじつけた理由しかないなら削除すべき。Tier4 じゃないという判断自体も疑うべき」
+> ("If the only reason is contrived, delete it. Even the judgment that it
+> isn't Tier 4 should be doubted.")
+
+Claiming any tier — 1, 2, or 3 — presupposes two things, in order:
+
+1. **You can name, in one line, the behavior or contract this test
+   protects.** Not "it's reyn's" — reyn's own trivia can be named in one
+   line too, and fits no tier. Not the implementation ("this function is
+   written this way") and not a past bug's fingerprint ("X used to happen").
+2. **What you named exists somewhere other than this test's own
+   docstring.** A doc page, one of the [charter](../../concepts/architecture/charter.md)'s
+   eight lenses, a decision record (an issue or PR body), or a promise made
+   to a user. A reason that lives only inside the test that's supposed to
+   be justified by it is not an anchor — it's the test citing itself.
+
+An issue or PR number passes ② by *shape* whether or not it passes it in
+substance — "an issue exists" is not "an issue decided a behavior." A
+decision record is only a real anchor when what it decided is independent
+of the test that cites it:
+
+> **Discriminator: delete the test. Does the anchor's sentence go false?**
+> No, it still holds → the anchor describes reyn, independent of this test
+> → valid. Yes, it goes false → the anchor was describing *the test*, not
+> reyn → circular, not an anchor.
+
+The shape most likely to pass ② without meeting it: **the issue or PR that
+exists *because* this test was going to be written** — its body argues for
+adding the test, which is the same content as the test's own docstring,
+just filed in a different place. Most likely of all: **the PR that landed
+the test itself** — citing it as the anchor is, almost by construction,
+circular.
+
+```
+✓ "the overlay stays up and readable when the pool is fully dead"   — behavior
+✓ "an audit-event's type is a closed vocabulary"                     — contract
+✓ issue #2074 body: "unify capability narrowing" (decides a behavior,
+  independent of any one test)
+✗ "a TTE effect resolves to its input"                — a third party's promise
+✗ "bug X used to happen here"                          — a past bug's fingerprint
+✗ "this function is written this way"                  — implementation, transcribed
+✗ "PR #1234 body (names this exact test)"     — the PR that landed the test
+✗ "PR #1234 body: rationale for adding this test" — argues for the test,
+  same content as its docstring, filed elsewhere — still circular
+```
+
+**A test that fails this prerequisite was never classified as Tier 4 —
+it never had standing to claim a tier at all.** Tier 4 (below) is a
+considered judgment: this *shape* of test is recognized and excluded on
+purpose. Failing to name an anchor is different — there is nothing yet to
+judge. Say the shape is Tier 4 only once you can name what's missing;
+otherwise the honest state is "not yet classified."
+
+**Tier 2 (OS invariant) is where this bites hardest**, because the
+category's own name reads like permission: almost any assertion about OS
+behavior can be described as "an invariant." But an invariant is, by
+definition, something the OS has promised to always uphold — which means
+it already *is* a contract. If you cannot point to where that promise
+exists outside the test, what you have is not an invariant, and the test
+is not Tier 2 regardless of what its docstring's first line says.
+
+**This is not a new axis alongside `CLAUDE.md`'s "Test review — six
+questions"** — it's a different question, asked before those six. The six
+questions ask whether a test that already claims a tier is *well-formed*
+(does the assert survive a dead mechanism, is it a transcription, does it
+accumulate unboundedly, …). This prerequisite asks whether the test had
+any business claiming a tier in the first place. A test can pass all six
+quality questions and still fail this one — a well-formed assertion about
+something nobody promised is still pinning nothing real.
+
+**The mechanism does not check this today.** `scripts/test_tier_audit.py`
+matches a test's declared Tier line as a *string*
+(`^Tier [123][abc]?:`, case-insensitive) — a docstring that types "Tier 2:"
+passes the audit whether or not the behavior or contract it names exists
+anywhere outside that docstring. Naming an anchor and having one are
+different claims, and only a human reviewer checks the second.
+
 ### Tier 1 — Contract
 
 **Pins**: external boundaries that users / OSS contributors / integration scripts depend on.
@@ -124,12 +217,109 @@ Tests that fall in this list are **not** added to the suite, even when they woul
 - **`unittest.mock` patches of `litellm`** — use the [Fake](#mock-vs-fake) (`LLMReplay`) path instead.
 - **Coverage targets** (e.g. "≥ 80% line coverage"). Coverage is a side-effect, not a goal. We do not gate PRs on it.
 - **TDD by default**. Test-first is appropriate for Tier 2 invariants (where the contract is clear before the implementation). For feature work, "make it work, then guard it" is preferred — premature tests freeze designs that haven't been validated.
+- **A third party's promise, tested as if it were reyn's** — see [Third-party promises are not reyn's to test](#third-party-promises-are-not-reyns-to-test) below.
+
+### Third-party promises are not reyn's to test
+
+**Owner ruling (2026-08-09).** The [prerequisite above](#the-prerequisite-every-tier-shares)
+already excludes a third party's property from the anchor examples (a TTE
+effect resolving to its input is TTE's promise, not reyn's) — but that was
+written down as one example, not as a discriminator, and a rule that only
+exists as an example doesn't transfer: the same shape recurred in the
+sandbox suite (kernel-level SBPL/Landlock deny enforcement) without being
+recognized as the same case, because nothing generalized "TTE" to "any
+dependency reyn doesn't own."
+
+> **外部ライブラリの機能テストを reyn に入れるべきなの？**
+> ("Should a third-party library's own functionality be tested inside
+> reyn?")
+
+**Discriminator: if this assert fails, whose bug is it?**
+
+- Apple's sandbox profile compiler, the Linux kernel, a pinned library →
+  **third-party**. reyn does not carry this test.
+- reyn's own code → reyn's, write it.
+
+**Two boundary shapes get conflated as "one thing" — they aren't:**
+
+```
+✗ THE OTHER SIDE'S PROMISE
+  "the kernel enforces the SBPL/Landlock deny"
+  "reading ~/.ssh is actually refused"
+    ← reyn's own contract is "~/.ssh is in the default policy" —
+      and a string/structural test already verifies that in CI
+
+✓ REYN'S OWN USE OF IT
+  "reyn's policy actually reaches the enforcement point and doesn't fail
+   silently"
+  "the deny leg fires on the real backend and fails on the Noop backend"
+    ← a dead wire looks identical to "denied" on either backend; this is
+      reyn's own self-diagnosis, not the kernel's behavior
+  "a backend that enforces write but ignores allow_subprocess passes
+   Stage 1" (#3017)
+    ← names what reyn's own self-test cannot witness
+```
+
+**The practical tell, before deciding either way**: look for the twin.
+
+```
+🔴 If a CI-running test already asserts the same claim at the
+   string/structural level, its kernel-level twin is almost always
+   THIRD-PARTY — the string-level test is what actually verifies reyn's
+   own contract, and the kernel-level version is re-testing the kernel.
+```
+
+**Industry framing** (the caveat below matters as much as the rule): don't
+test a dependency's own behavior — wrap it in an adapter and test the
+adapter (8th Light, "Unit Testing Code Boundaries" / "Don't Mock What You
+Don't Own"); don't test a framework's internals, the standard library, or
+a third-party library's behavior (TestRail). The caveat every source
+attaches: still write the integration test for *whether reyn is using the
+dependency correctly* — that's the ✓ column above, not excluded by this
+rule.
+
+**The discriminator has three answers, not two.** "Delete" and "keep" are
+not the only outcomes — a test can fail the discriminator (the value it
+reads IS a third party's) while still protecting something real that
+belongs to reyn, because the assert is checking the wrong thing to say so.
+
+```
+assert tabs_bar.region.height == 2
+```
+
+The discriminator says third-party (Textual's own default Tabs height,
+not reyn's), and grepping reyn's layout code for the literal `2` finds
+nothing either — by the rule above, this looks like CONTRIVED. But a
+CSS comment next to the widget records a real incident (#3311): a
+`height: auto` was mistakenly added, expanding the tabs bar to the
+whole ~30-line TTY in production; `widget-state` assertions didn't
+catch it, which is why the test reads `Widget.region` directly. **Delete
+would remove a witness for a real regression reyn already had once.**
+
+The fix is neither delete nor keep as-is — **rewrite what it names**:
+
+```
+✗ "Textual's Tabs defaults to height 2"        — a third party's default
+✓ "reyn does not impose a height override on the tabs bar" — reyn's own
+  promise, anchored at #3311, and true regardless of what Textual's own
+  default happens to be
+```
+
+Reading a third party's value is not automatically CONTRIVED — the value
+being read and the contract being protected are different questions.
+Before deleting a test whose discriminator answer is "third-party," spend
+one look at what it was written to prevent (docstring, an adjacent
+comment, the anchor issue's body). If that was a reyn regression, the
+contract is reyn's; only the assert's current *shape* pins the wrong
+side of the boundary.
 
 ---
 
 ## Decision flow
 
-Before writing a test, answer these questions:
+Before writing a test, answer these questions. Each of Q1's tier answers
+still needs [the prerequisite above](#the-prerequisite-every-tier-shares)
+satisfied — naming a tier here is not itself the anchor.
 
 ```
 Q1. If this breaks, who notices?

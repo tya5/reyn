@@ -98,6 +98,8 @@ This gives a "manager → delegate → synthesize" model: the user sees an inter
 
 This is in-process delegation only. A cross-process external peer that does not echo `from_sid` back degrades to `None` → `main` — a safe fallback (the reply reaches the Agent's main Session rather than being lost silently), not a routing failure.
 
+A different case looks similar but resolves the opposite way: `from_sid` names a real, once-live Session that is simply **no longer loaded** (the spawner Session has since gone away). This is not the "peer never echoed a sid" case above — a sid was named — so the reply is **logged and dropped**, not routed to `main`. Falling back to `main` here would reintroduce the exact misroute `#2130` fixed: an orphaned reply silently landing in the wrong Session's history instead of visibly failing.
+
 There is no dedicated reference doc for the internal `(agent, sid)` A2A routing scheme beyond this section and the code (`_a2a_send_response`) — this section is that scheme's documentation.
 
 ### chain_id

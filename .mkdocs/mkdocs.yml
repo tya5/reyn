@@ -85,6 +85,7 @@ nav:
               - guide/for-users/time-travel.md
               - guide/for-users/manage-permissions.md
               - guide/for-users/configure-sandbox.md
+              - guide/for-users/protect-credentials-in-shell-commands.md
               - guide/for-users/cap-spending.md
           - Files & integrations:
               - guide/for-users/work-with-files.md

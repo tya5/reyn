@@ -53,6 +53,12 @@ All fields are optional; absent or `null` means unrestricted on that axis.
 | `mcp_allow` | `list[str] \| null` | MCP server allow-list. `null` = unconstrained. |
 | `mcp_deny` | `list[str]` | MCP server deny-list. |
 
+A profile YAML left over from before the SKILL axis was removed may still
+carry `skill_allow`/`skill_deny` keys — the loader ignores them silently
+(forward-compat) rather than rejecting the file. There is no warning that
+those keys have stopped doing anything; an old profile file is not a signal
+that skill capability is being narrowed.
+
 ### Axis B — tool narrowing
 
 | Field | Type | Semantics |
@@ -317,14 +323,12 @@ tool_deny:
   - delegate_to_agent
 ```
 
-**Either spelling of a tool works, and denies both.** `delegate_to_agent` and
-`delegate_to_agent` are two names for one operation, and which of them the model
-is currently *shown* varies by [tool-use cell](../tools-integrations/tool-use-schemes.md)
-and host config. A `tool_deny` entry is therefore expanded to **every invocable
-form** of the name before it becomes a gate (`_expand_tool_forms`, deriving from
-the `invoke_action` alias table rather than a hand-kept list), so writing the one
-spelling you happen to see denies the other too. Copying a name out of the
-model's current tool list is safe; it is not a way to deny only one route.
+**Each tool has exactly one invocable name.** #3429 removed the second,
+catalog-qualified spelling every action used to also carry (e.g. a former
+`file__read` alongside `read_file`) — a `tool_deny` entry now denies exactly
+the name it names, with no expansion step. Copying a name out of the model's
+current tool list is safe and complete: there is no other route to the same
+operation under a different spelling to separately deny.
 
 ## See also
 

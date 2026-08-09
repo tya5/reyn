@@ -38,7 +38,7 @@ the current configured value, and which config key to change.
 | Agent hops | `safety.loop.max_agent_hops` | 3 | ✅ | yes |
 | Chain wait | `safety.timeout.chain_seconds` | 60 | ✅ | yes |
 | Router iterations | `safety.loop.max_router_iterations` | 5 | ✅ | partial |
-| LLM call timeout | `safety.timeout.llm_call_seconds` | 60 | ❌ auto-retry/abort | — |
+| LLM call timeout | `safety.timeout.llm_call_seconds` | 60 | ✅ (#2210) | yes |
 | Media cap | `multimodal.max_bytes` | 5 MB | ❌ auto-degrade | — |
 | Summary body cap | `chat.compaction.body_token_cap` | 1500 | ❌ auto-truncate | — |
 
