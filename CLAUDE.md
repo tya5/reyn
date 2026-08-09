@@ -127,7 +127,14 @@ Ask each test in the diff:
    property** (#3872: "a TTE effect resolves to its input" is TTE's promise, not
    reyn's) and **a past bug's fingerprint** (`assert "reyn" not in final`, which
    any *other* wrong string passes). Answering "it's reyn's" is not an answer:
-   reyn's own trivia fits no Tier either.
+   reyn's own trivia fits no Tier either. "Third party's property" is a
+   discriminator, not a TTE-only example — it recurred unrecognized in the
+   sandbox suite (kernel-level SBPL/Landlock deny enforcement) precisely
+   because it had only ever been written down as one case. The general
+   form: *if this assert fails, whose bug is it?* — kernel/library code
+   fails it, reyn's own code doesn't. See `testing.md` § "Third-party
+   promises are not reyn's to test" for the full discriminator and the
+   twin-test tell that flags most kernel-level cases.
 2. **Is it the implementation, transcribed?** If the same expression appears on
    both sides, it can only fail when someone deliberately edits that line — and
    they will edit both. (#3872: `art = "\n".join(covered)` asserted back.)

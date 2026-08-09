@@ -217,6 +217,66 @@ Tests that fall in this list are **not** added to the suite, even when they woul
 - **`unittest.mock` patches of `litellm`** — use the [Fake](#mock-vs-fake) (`LLMReplay`) path instead.
 - **Coverage targets** (e.g. "≥ 80% line coverage"). Coverage is a side-effect, not a goal. We do not gate PRs on it.
 - **TDD by default**. Test-first is appropriate for Tier 2 invariants (where the contract is clear before the implementation). For feature work, "make it work, then guard it" is preferred — premature tests freeze designs that haven't been validated.
+- **A third party's promise, tested as if it were reyn's** — see [Third-party promises are not reyn's to test](#third-party-promises-are-not-reyns-to-test) below.
+
+### Third-party promises are not reyn's to test
+
+**Owner ruling (2026-08-09).** The [prerequisite above](#the-prerequisite-every-tier-shares)
+already excludes a third party's property from the anchor examples (a TTE
+effect resolving to its input is TTE's promise, not reyn's) — but that was
+written down as one example, not as a discriminator, and a rule that only
+exists as an example doesn't transfer: the same shape recurred in the
+sandbox suite (kernel-level SBPL/Landlock deny enforcement) without being
+recognized as the same case, because nothing generalized "TTE" to "any
+dependency reyn doesn't own."
+
+> **外部ライブラリの機能テストを reyn に入れるべきなの？**
+> ("Should a third-party library's own functionality be tested inside
+> reyn?")
+
+**Discriminator: if this assert fails, whose bug is it?**
+
+- Apple's sandbox profile compiler, the Linux kernel, a pinned library →
+  **third-party**. reyn does not carry this test.
+- reyn's own code → reyn's, write it.
+
+**Two boundary shapes get conflated as "one thing" — they aren't:**
+
+```
+✗ THE OTHER SIDE'S PROMISE
+  "the kernel enforces the SBPL/Landlock deny"
+  "reading ~/.ssh is actually refused"
+    ← reyn's own contract is "~/.ssh is in the default policy" —
+      and a string/structural test already verifies that in CI
+
+✓ REYN'S OWN USE OF IT
+  "reyn's policy actually reaches the enforcement point and doesn't fail
+   silently"
+  "the deny leg fires on the real backend and fails on the Noop backend"
+    ← a dead wire looks identical to "denied" on either backend; this is
+      reyn's own self-diagnosis, not the kernel's behavior
+  "a backend that enforces write but ignores allow_subprocess passes
+   Stage 1" (#3017)
+    ← names what reyn's own self-test cannot witness
+```
+
+**The practical tell, before deciding either way**: look for the twin.
+
+```
+🔴 If a CI-running test already asserts the same claim at the
+   string/structural level, its kernel-level twin is almost always
+   THIRD-PARTY — the string-level test is what actually verifies reyn's
+   own contract, and the kernel-level version is re-testing the kernel.
+```
+
+**Industry framing** (the caveat below matters as much as the rule): don't
+test a dependency's own behavior — wrap it in an adapter and test the
+adapter (8th Light, "Unit Testing Code Boundaries" / "Don't Mock What You
+Don't Own"); don't test a framework's internals, the standard library, or
+a third-party library's behavior (TestRail). The caveat every source
+attaches: still write the integration test for *whether reyn is using the
+dependency correctly* — that's the ✓ column above, not excluded by this
+rule.
 
 ---
 
