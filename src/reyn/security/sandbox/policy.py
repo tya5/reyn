@@ -296,6 +296,37 @@ def unenforced_axes(backend_name: str, policy: SandboxPolicy) -> list[str]:
     return axes
 
 
+#: #3823: per-backend prose explaining WHY an axis is unenforced there — the
+#: same 2-value classification (enforced/unenforced) architect and lead-coder
+#: settled on (owner: "reyn が allow_env_names を書けると公開している以上,
+#: Docker で効かないのは backend が強制できない — Landlock の deny と同じ状態"),
+#: only the WORDING differs by backend/reason. Landlock is the only backend
+#: this fires for today (Seatbelt enforces both deny-lists via SBPL
+#: deny-after-allow); the dict stays keyed by backend name (not hardcoded to
+#: one message) so a future backend with a DIFFERENT reason for the same
+#: unenforced state (e.g. a container backend whose image, not reyn, decides
+#: what env reaches the process) gets its own prose without a new axis value.
+_UNENFORCED_AXIS_REASONS: dict[str, str] = {
+    "landlock": (
+        "this backend cannot express a deny-list here — Landlock is an LSM "
+        "allowlist-only constraint (you cannot carve a subpath out of an "
+        "allowed parent)"
+    ),
+}
+
+
+def unenforced_axis_reason(backend_name: str) -> str:
+    """Human-readable reason *backend_name* cannot enforce an axis
+    :func:`unenforced_axes` names — for the audit-event payload and the
+    paired WARN log line (#3823). Falls back to a generic statement for a
+    backend not in :data:`_UNENFORCED_AXIS_REASONS` (defensive; every backend
+    :func:`unenforced_axes` currently classifies as incapable has an entry)."""
+    return _UNENFORCED_AXIS_REASONS.get(
+        backend_name,
+        f"this backend ({backend_name!r}) cannot enforce this axis",
+    )
+
+
 # ── default sandbox policy resolution (#1339 / sandbox-model completion) ──────
 #
 def resolve_sandbox_policy(

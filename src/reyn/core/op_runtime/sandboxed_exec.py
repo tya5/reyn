@@ -13,17 +13,24 @@ Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Literal
 
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy
 from reyn.security.sandbox.launcher import resolve_backend, run_and_classify
-from reyn.security.sandbox.policy import deny_narrowed_write_grants, unenforced_axes
+from reyn.security.sandbox.policy import (
+    deny_narrowed_write_grants,
+    unenforced_axes,
+    unenforced_axis_reason,
+)
 from reyn.security.sandbox.resolve import resolve_real_executable
 
 from . import register
 from .context import OpContext
+
+_logger = logging.getLogger(__name__)
 
 
 async def handle(
@@ -147,18 +154,38 @@ async def handle(
             ],
         )
 
-    # #3901 §4③: the selected backend may not be able to express an axis the
-    # policy configured (Landlock cannot carve a read/write deny-list out of
-    # an allowed parent — a structural LSM constraint, not a bug). Doc-only
-    # visibility reads as "written but nobody checks it" — this makes the gap
-    # an audit-event instead, mirroring sandbox_policy_narrowed's precedent.
-    # Deliberately NOT wired into enforcement_self_test (CLAUDE.md hard rule).
+    # #3901 §4③ / #3823: the selected backend may not be able to express an
+    # axis the policy configured (Landlock cannot carve a read/write deny-list
+    # out of an allowed parent — a structural LSM constraint, not a bug).
+    # Doc-only visibility reads as "written but nobody checks it" — this
+    # makes the gap an audit-event (for later reconstruction) AND a WARN log
+    # line (visible at the moment it happens, the same channel
+    # sandbox.on_unsupported's own WARN already uses for a backend that is
+    # entirely absent — see security/sandbox/__init__.py's _noop_with_policy;
+    # that is a DIFFERENT call site, since it fires at backend SELECTION
+    # time, before a policy's individual axes are even known, whereas this
+    # fires at op DISPATCH time once both the backend and the policy are
+    # resolved — #3823's own "same site?" question, answered: no). Not
+    # `error` — reyn cannot promise a policy is enforced, only report what a
+    # backend actually did with it (owner: "sandbox 抽象は ポリシを 保証できない.
+    # backend が できる 範囲で 保証するしか ない"). Deliberately NOT wired into
+    # enforcement_self_test (CLAUDE.md hard rule).
     unenforced = unenforced_axes(backend.name, policy)
     if unenforced:
+        reason = unenforced_axis_reason(backend.name)
         ctx.events.emit(
             "sandbox_axis_unenforced",
             backend=backend.name,
             axes=unenforced,
+            reason=reason,
+        )
+        _logger.warning(
+            "Sandbox: policy axis(es) %s were configured but the %s backend "
+            "cannot enforce them — %s. The policy was written but not "
+            "applied for these axes.",
+            unenforced,
+            backend.name,
+            reason,
         )
 
     launched = await run_and_classify(
