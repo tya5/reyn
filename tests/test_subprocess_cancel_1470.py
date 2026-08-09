@@ -253,7 +253,6 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=["/bin/sleep", "60"],
-        timeout_seconds=30,
     )
 
     result = await execute_op(op, ctx)
