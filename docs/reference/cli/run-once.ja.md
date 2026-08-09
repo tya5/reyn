@@ -31,7 +31,7 @@ prompt は stdin から全体を（行単位でなく）読みます。
 | フラグ | 説明 |
 |------|------|
 | `--max-iterations N` | 自律ループの 1 メッセージあたり tool-call 予算。デフォルト `80` — 対話 chat より高く、agent が explore → edit → verify を完了まで反復できる。 |
-| `--grant-file-write` | resolver 層で `file.read` + `file.write` を付与し、非対話 agent が prompt なしで working tree を編集できる（sandbox の write-paths で bound）。`reyn chat --grant-file-write` と同じ。 |
+| `--grant-file-write` | resolver 層で `file.read` + `file.write` を付与し、非対話 agent が prompt なしで working tree を編集できる。この付与に範囲(スコープ)は無い — permission 層は sandbox を参照しない(`#3901` PR-B ③ でこの結合は退役)。permission 側でのスコープ付けはまだ存在しない(`#3925` で追跡中)。`reyn chat --grant-file-write` と同じ。 |
 | `--exclude-tools NAMES` | agent の LLM-visible カタログから隠すツール名（カンマ区切り、例 `web_search,web_fetch`）。`reyn chat --exclude-tools` と同じ。 |
 | `--exclude-categories NAMES` | カタログソースで隠すカテゴリ名（カンマ区切り、例: task に Reyn 自身のソースが無関係なら `reyn_repo`）。`reyn chat --exclude-categories` と同じ。 |
 

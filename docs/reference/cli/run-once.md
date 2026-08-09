@@ -32,7 +32,7 @@ The prompt is read from stdin in full (not line by line).
 | Flag | Description |
 |------|-------------|
 | `--max-iterations N` | Per-message tool-call budget for the autonomous loop. Default `80` — higher than interactive chat so the agent can iterate explore → edit → verify to completion. |
-| `--grant-file-write` | Grant `file.read` + `file.write` at the resolver layer so the non-interactive agent edits its working tree without a prompt (bounded by the sandbox write-paths). Same as `reyn chat --grant-file-write`. |
+| `--grant-file-write` | Grant `file.read` + `file.write` at the resolver layer so the non-interactive agent edits its working tree without a prompt. This grant is unscoped — the permission layer does not consult the sandbox (`#3901` PR-B ③ retired that coupling), and permission-side scoping for this grant doesn't exist yet (tracked in `#3925`). Same as `reyn chat --grant-file-write` — see [Protect credentials from sandboxed commands](../../guide/for-users/protect-credentials-in-shell-commands.md). |
 | `--exclude-tools NAMES` | Comma-separated tool names to hide from the agent's LLM-visible catalog (e.g. `web_search,web_fetch`). Same as `reyn chat --exclude-tools`. |
 | `--exclude-categories NAMES` | Comma-separated catalog category names to hide at the catalog source (e.g. `reyn_repo` when the agent's own source is irrelevant to the task). Same as `reyn chat --exclude-categories`. |
 
