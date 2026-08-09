@@ -8,7 +8,7 @@ Every cell is one of `ok` / `error:<ExceptionType>` / `not_measurable` (with the
 ## stdio
 
 - **server**: `tests/_support/mcp_fastmcp_echo_server.py`
-- **dep_version**: fastmcp 3.4.2, mcp-sdk 1.26.0
+- **dep_version**: fastmcp 3.4.5, mcp-sdk 1.26.0
 - **negotiated**: 2025-11-25
 - **lifecycle**: legacy-initialize
 - **advertised**: ['logging', 'prompts', 'resources', 'tools']
@@ -34,7 +34,7 @@ Every cell is one of `ok` / `error:<ExceptionType>` / `not_measurable` (with the
 ## http
 
 - **server**: `tests/_support/mcp_fastmcp_echo_server.py`
-- **dep_version**: fastmcp 3.4.2, mcp-sdk 1.26.0
+- **dep_version**: fastmcp 3.4.5, mcp-sdk 1.26.0
 - **negotiated**: 2025-11-25
 - **lifecycle**: legacy-initialize
 - **advertised**: ['logging', 'prompts', 'resources', 'tools']
@@ -60,7 +60,7 @@ Every cell is one of `ok` / `error:<ExceptionType>` / `not_measurable` (with the
 ## sse
 
 - **server**: `tests/_support/mcp_fastmcp_echo_server.py`
-- **dep_version**: fastmcp 3.4.2, mcp-sdk 1.26.0
+- **dep_version**: fastmcp 3.4.5, mcp-sdk 1.26.0
 - **negotiated**: 2025-11-25
 - **lifecycle**: legacy-initialize
 - **advertised**: ['logging', 'prompts', 'resources', 'tools']
