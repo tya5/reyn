@@ -380,18 +380,46 @@ The execution surfaces that perform side-effects, ordered by enforcement strengt
 
 ### Sandbox scoping model (sandboxed_exec)
 
-The `sandboxed_exec` policy (`SandboxPolicy`) is scoped **per axis**. The axes are deliberately asymmetric — each set to the tightness that actually buys safety:
+The `sandboxed_exec` policy (`SandboxPolicy`) is scoped **per axis**. `write`
+is the one axis that stays closed by default — every other axis defaults to
+full compat (owner ruling B, `#3901` PR-B ④): the sandbox's job is bounding
+what happens *behind* a permitted action, not re-deciding what the launching
+shell could already do. See [Protect credentials from sandboxed
+commands](../../guide/for-users/protect-credentials-in-shell-commands.md) for
+what compat-by-default means for a command that can read a secret.
 
 | Axis | Policy | Rationale |
 |---|---|---|
-| write | tight workspace-allowlist (`write_paths`) | The hard guard — bounds what a process can persist. |
-| network | tight (off by default / allowlist) | The exfiltration gate — a process may read widely but cannot send anything out. |
-| exec | controlled (`deny_subprocess`) | Bounds child-process spawning (enforced on Linux via seccomp, macOS via Seatbelt). |
-| read | **broad-allow by default** + optional sensitive deny-list | The strict read-allowlist was abolished (#1199 realignment). |
+| write | tight workspace-allowlist (`write_paths`), closed by default | The one axis an operator cannot know in advance (a workspace floor value) and therefore cannot express as permission — bounds what a process can persist. |
+| network | open by default (owner decision, 2026-06-05, generalised to full compat by `#3901`) | A sandboxed process reaches the network the same way the launching shell can, unless `network: false` is set explicitly. |
+| exec (`deny_subprocess`) | open by default | Child-process spawning is allowed unless denied explicitly (enforced on Linux via seccomp, macOS via Seatbelt). |
+| env (`env_deny_names`) | open by default | The whole environment passes through, same trust level as the launching shell, unless specific names are denied. |
+| read | **broad-allow by default** + optional sensitive deny-list, empty by default | Unchanged since #1199 — the strict read-allowlist was abolished; `read_deny_paths` is opt-in defense-in-depth, not a default protection. |
 
-**Why broad read is safe.** The network gate, not the read surface, is the exfiltration control. With network off by default a process may read widely but cannot send data out. A broad read surface also removes the system-path enumeration (`/usr`, `/lib`, dyld cache, …) that every binary needs just to load — enumeration that, when missing, broke the Landlock backend on Linux. This matches industry practice: Codex defaults to broad read + network-off on Linux; Claude Code treats read-restriction as secondary ("affects functionality") behind its write / network guards.
+**Why broad read was originally safe, and why that argument no longer
+carries the whole weight.** The original #1199 design reasoned that a
+broad read surface is safe because the network gate — not the read
+surface — is the exfiltration control: with network closed by default, a
+process could read widely but not send anything out. `#3901`'s full-compat
+ruling removed that premise: network (and now env, and subprocess) default
+OPEN, not closed, so "can read but can't send" no longer holds by default.
+The read/write asymmetry itself is unchanged (a broad read surface also
+removes the system-path enumeration every binary needs just to load,
+matching Codex's broad-read/network-off-on-Linux precedent and Claude
+Code's read-restriction-as-secondary posture) — what changed is that
+**reyn no longer promises the exfiltration gate is closed by default**;
+protecting a credential a sandboxed command can read is now the
+operator's own responsibility, exercised explicitly (`network: false`,
+`env_deny_names`, `read_deny_paths`), the same posture `#3901`'s owner
+ruling applies to every non-write axis.
 
-**Defense-in-depth deny-list.** `read_deny_paths` (default: OS-level credential stores — `~/.ssh`, `~/.aws`, `~/.gnupg`, …) carves sensitive locations out of the broad read surface.
+**Defense-in-depth deny-list, opt-in.** `read_deny_paths` (empty by
+default since `#3901`; previously defaulted to OS-level credential
+stores — `~/.ssh`, `~/.aws`, `~/.gnupg`, …) carves sensitive locations out
+of the broad read surface **when an operator sets it**. It is not a
+default protection — see [Configure the
+sandbox](../../guide/for-users/configure-sandbox.md#policy-fields) to set
+it explicitly.
 
 **Residual risk (backend asymmetry).** The deny-list is enforceable only where the backend can express a deny-after-allow rule:
 
@@ -499,17 +527,6 @@ allows(axis, value) = all(layer.allows(axis, value) for layer in layers)
 | **ContextualLayer** | Per-session capability narrowing — delegation / topology / untrusted-auto | Restrict-only |
 
 `SandboxLayer`, `ProfileLayer`, and `ContextualLayer` are **restrict-only**: they can narrow a permission, but cannot re-grant something the `AgentLayer` denied. This is a structural property of the conjunction (`all(...)`) — no layer's `False` can be overridden by any other layer.
-
-**`write_paths`/`read_paths: []` means opposite things on the two enforcement
-paths that consume the same `SandboxPolicy` field.** In [`sandboxed_exec`'s
-kernel backends](sandbox.md) (Seatbelt/Landlock), an empty list is the tight
-floor — it denies everything on that axis. In `SandboxLayer` here (the gate
-feeding `require_file_read`/`require_file_write`), an empty list means "no
-restriction declared on this axis" (⊤) — it imposes nothing, passing the
-decision through to whatever the other layers already resolved.
-`write_paths: []` does **not** block a config-authored file write the way it
-blocks a subprocess's kernel-level write; the two mechanisms only look
-identical because they share one config field name.
 
 ### One spec, two binding adapters (#2074)
 
