@@ -53,3 +53,13 @@ jobs:
       # end-to-end op-path enforcement. See #2982 / #2983.
       - name: Live seccomp-BPF validation (x86_64)
         run: python scripts/sandbox_seccomp_x86_64_live_smoke.py
+
+      # TEMPORARY (#3869): a one-shot measurement, not a permanent gate —
+      # whether a Landlock+seccomp-restricted child can rewrite its own
+      # argv/PR_SET_NAME (child-process naming, the macOS half of #3869 was
+      # already measured via Seatbelt). Reuses this job's already-installed
+      # sandbox-linux extra rather than adding a new workflow. Remove this
+      # step once the CI result is recorded on #3869, unless the answer is
+      # "no" and a standing regression gate is wanted (owner/lead call).
+      - name: One-shot argv/PR_SET_NAME rewrite probe (#3869)
+        run: python scripts/sandbox_argv_rewrite_probe_3869.py
