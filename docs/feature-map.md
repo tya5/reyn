@@ -207,6 +207,13 @@ mindmap
 | `CommittedStep` memo | Replay recorded op results on resume without re-invoking | Skill Resume |
 | World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | Skill Resume |
 
+#### Process identification
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| `reyn:<subcommand>` process title | Every `reyn` CLI invocation retitles its own process (`setproctitle`, a CORE dependency, not an optional extra) to `reyn:<subcommand>` — e.g. `reyn:chat` — after argument parsing, so `ps` / Activity Monitor / `top` can identify a reyn process on a machine that's already misbehaving (#3870, motivated by an unidentifiable ~29 GB `python3.12` process forcing two reboots on 2026-08-09). Only the subcommand goes in the title — workspace paths, session ids, and prompts are all things reyn knows at that point and deliberately excluded, since a process title is world-readable through `ps`. A no-op if `setproctitle` is missing (never blocks startup) | `src/reyn/runtime/proctitle.py` |
+| CodeAct child self-naming (`reyn:codeact`) | The CodeAct child harness (`python -m reyn.core.kernel._codeact_harness`) independently calls the same module to title itself `reyn:codeact`, since it's a genuinely reyn-authored Python entry point reyn controls — unlike `sandboxed_exec`'s arbitrary third-party argv (`git`/`pytest`/whatever the LLM invokes) or MCP server binaries, whose code reyn does not own and so cannot retitle from the inside (#3869/#3981) | `src/reyn/core/kernel/_codeact_harness.py` |
+
 #### Time-Travel / Rewind (Resume)
 
 User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2d) are production. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: [ADR-0038](deep-dives/decisions/0038-user-facing-time-travel-rewind.md).
