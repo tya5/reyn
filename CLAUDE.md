@@ -138,10 +138,20 @@ Ask each test in the diff:
 2. **Is it the implementation, transcribed?** If the same expression appears on
    both sides, it can only fail when someone deliberately edits that line — and
    they will edit both. (#3872: `art = "\n".join(covered)` asserted back.)
-3. **Would it stay green with the mechanism dead?** Assert a value a dead
-   mechanism cannot produce. "Was handed X" is not a witness for "used X"
-   (#3859), and #3850 landed a field that was required, populated, tested, and
-   read by nobody.
+3. **Can you name the production `file:line` that turns this test RED — and
+   have you actually watched it turn red?** Not "a value a dead mechanism
+   cannot produce" in the abstract: a specific line, struck out or inverted,
+   with the RED it produced recorded in the PR body. Asking "would it stay
+   green with the mechanism dead?" invites constructing a dead mechanism
+   *inside the test* to answer it — a hand-written stub that subclasses the
+   production class and breaks one branch, then asserts the stub behaves as
+   written. That stub is not the production line; it never runs the
+   production code at all, so it stays green forever regardless of what
+   happens to the real thing (`#3902`'s `_NoFoldEventLog`, `#3916`'s
+   `_PreNineOhOneAgentLayer` — see `testing.md` § "The strip-falsify
+   mimicry" for why this recurs even from authors who correctly avoided a
+   mock). "Was handed X" is not a witness for "used X" (#3859), and #3850
+   landed a field that was required, populated, tested, and read by nobody.
 4. **Would it stay green having never run?** skip / collection error / zero
    collected all wear green's colour. Name what a missing optional dependency
    silently skips — CI has no `effects` extra, so #3796's file skips whole and
@@ -164,7 +174,7 @@ So each question has a blocking answer, not just an answer:
 |---|---|
 | 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
 | 2 | yes — the same expression is on both sides |
-| 3 | yes — it stays green with the mechanism removed, unless it names the reject-side test that proves the mechanism can fail |
+| 3 | it cannot name an observed production RED — a stub's own scripted behavior is not one — unless it names the reject-side test that proves the mechanism can fail |
 | 4 | it would be green having never run, **and the PR does not say so** |
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
 | 6 | the declared Tier is not the one question 1 named |
