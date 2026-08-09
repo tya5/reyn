@@ -468,6 +468,12 @@ after each turn:
 If no hooks are configured or none match the current lifecycle point, the loop
 is byte-identical to a hooks-free session. Zero overhead on the happy path.
 
+**A slash command typed while waiting for a `wake: true` trigger does not
+consume the staged `wake: false` context.** Slash commands are handled
+entirely client-side (#3595 S5) and never enter the turn machinery that
+drains staged hook messages, so they structurally cannot swallow context
+meant for the eventual triggered turn — the staged messages survive intact.
+
 ## Fidelity
 
 Pushes are **new** attributed `[hook:name]` system messages added to the
