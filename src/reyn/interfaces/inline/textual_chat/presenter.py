@@ -341,8 +341,13 @@ def _running_indicator(msg: "OutboxMessage", now: float) -> Text:
     return Text.assemble((f"{frame} ", _CC_ACCENT), (f"elapsed {elapsed}s", _CC_DIM))
 
 
-def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | None]":
+def _body_and_background(
+    msg: "OutboxMessage", *, neutralize_body: bool = False
+) -> "tuple[RenderableType, str | None]":
     """The body renderable + optional full-row background for one display frame.
+
+    ``neutralize_body`` (#3318, default off) is forwarded to the shared
+    ``_body_renderable`` call below — see its docstring.
 
     Reuses the plain renderer's per-kind body construction (markdown for the
     agent reply, the tool-summary helpers for tool rows, the ``_KIND_LINE`` body
@@ -396,7 +401,9 @@ def _body_and_background(msg: "OutboxMessage") -> "tuple[RenderableType, str | N
         return Text(f"✗ {err}", style=_CC_ERR), _CC_ERR_BG
     line = _KIND_LINE.get(kind)
     body_style = line[2] if line else _CC_TEXT
-    body = _body_renderable(kind, msg.text or " ", body_style)
+    body = _body_renderable(
+        kind, msg.text or " ", body_style, neutralize_body=neutralize_body
+    )
     if kind == "user":
         background = _CC_USER_BG
     elif kind == "error":
@@ -422,10 +429,18 @@ class ReynPresenter:
     deterministically. The completion handler removes the marker, settling the row
     back to its static ``tool(args)`` form."""
 
-    def __init__(self, *, clock: "Callable[[], float]" = time.monotonic) -> None:
+    def __init__(
+        self,
+        *,
+        clock: "Callable[[], float]" = time.monotonic,
+        neutralize_body: bool = False,
+    ) -> None:
         # A private probe console for measuring wrapped height at a given width.
         self._probe = Console()
         self._clock = clock
+        # #3318: opt-in body ESC/OSC neutralize (chat.neutralize_body), default
+        # off — see _body_and_background/_body_renderable's own docstrings.
+        self._neutralize_body = neutralize_body
 
     def _measure(self, renderable: RenderableType, width: int) -> int:
         self._probe.size = (max(width, 1), 200)
@@ -504,7 +519,9 @@ class ReynPresenter:
             return self._present_intervention_pending(item, width)
         if item.kind == "tool_call_started" and meta.get(_RUNNING_SINCE_KEY) is not None:
             return self._present_running_tool(item, width)
-        body, background = _body_and_background(item)
+        body, background = _body_and_background(
+            item, neutralize_body=self._neutralize_body
+        )
         return Presentation(
             height=self._measure(body, width),
             renderable=body,
