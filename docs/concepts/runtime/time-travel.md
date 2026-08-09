@@ -65,6 +65,8 @@ Each checkpoint stores an **AgentSnapshot** — a point-in-time snapshot of the 
 
 The WAL is an **fsync-per-append log**: each entry is durably written via `DurabilityWorker` off the task loop. Task-loop writes are fire-and-forget except `step_started`, which blocks until durable (durable-before-side-effect invariant). Recovery restores to the last durable entry; an un-durable tail at crash is a consistent-prefix loss. Separate from the P6 audit event log — see [Events](events.md) for the WAL vs audit-event distinction.
 
+**Snapshot writes share the WAL's off-loop durability path.** `SnapshotJournal.save()` routes its write+fsync through the same `DurabilityWorker` rather than writing inline on the event loop — a slow snapshot write no longer freezes other sessions or the TUI while it completes. Ordering is the crash-consistency invariant that makes this safe: a snapshot's `applied_seq` is made durable only *after* the WAL entry for that seq is already durable, never before or concurrently — so recovery can never observe a snapshot pointing at a WAL seq that isn't actually on disk.
+
 ### Global single-seq WAL and consistent-cut
 
 All WAL events share a **global single sequence namespace**. A consistent-cut rewind at seq N is well-defined: "the state of every substrate at the moment before seq N+1 was written". The global seq makes the cut precise — there is no per-substrate clock to reconcile.
@@ -87,6 +89,8 @@ The branch registry tracks all fork lineages: when a fork-switch creates a new b
 - If `is_active_seq(seq)` is false (seq is in an abandoned interval): fork-switch — activates the abandoned branch at seq, leaving the current branch tip as a new abandoned interval.
 
 `is_active_seq` is **not** equivalent to `seq ≤ tip` — a seq can be ≤ the current tip but still be in an abandoned interval from a prior rewind. Activeness is derived from the reset-record chain, not from position relative to tip.
+
+**Deferred-purge atomicity (#2125).** Rewinding past a spawned session's spawn point drops that session's on-disk directory as part of reconstruction. The destructive removal is deferred until the as-of-cut reconstruction has actually succeeded — if reconstruction raises partway through, the session directory still exists afterward, not half-torn-down. A failed rewind leaves state intact rather than partially destroyed.
 
 At rewind and fork-switch, the runtime reconstruct honors `is_active` (following the correct fork-lineage path for the target branch).
 

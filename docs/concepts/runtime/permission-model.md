@@ -572,7 +572,7 @@ binding explicitly re-grants within the ⊆-parent envelope.
 
 ### No-escalation-via-spawn: the closed class
 
-Four specific escalation avenues are closed by construction:
+Five specific escalation avenues are closed by construction:
 
 | Escalation avenue | Closed by |
 |---|---|
@@ -580,6 +580,7 @@ Four specific escalation avenues are closed by construction:
 | Rewind drop (lineage lost, constraint lifted) | Lineage is WAL-tracked; rewind reconstruction restores the parent link |
 | Absent parent (parent purged, constraint lifted) | Absent-parent path fails closed — gate treats missing lineage as deny |
 | Name reuse (new agent reuses purged name, fresh identity) | Identity-keyed lineage: the OS key is not the name but an internal ID; a re-used name cannot inherit the prior agent's purged lineage |
+| Absent/malformed bound profile (a `topology_create` member's declared `capability_profile` file is deleted or corrupted, constraint lifted) | Same fail-closed philosophy generalised to the profile-binding path: a **declared-but-unresolvable** binding composes the restrictive `_delegate` floor rather than silently skipping the narrowing. The discriminator is existence-of-declaration — a member with no binding at all stays genuinely unrestricted; only a binding that names a profile that can no longer be read fails closed. |
 
 ### `topology_create` profiles stay inside the envelope
 

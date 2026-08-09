@@ -67,10 +67,25 @@ of this conversation. The spawned session begins immediately; this tool
 returns a spawn-ack rather than waiting for the task to complete (async
 dispatch).
 
+⚠️ **Exclusive-wrapper mode has no catalog route for this tool.** When
+[`action_retrieval.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
+is `true`, `session_spawn`'s individual per-tool entry is stripped (like
+`delegate_to_agent`'s) — but unlike `delegate_to_agent`, which stays
+reachable through the `multi_agent` category's catalog dispatch,
+`session_spawn` has no catalog-channel equivalent today. An operator
+enabling exclusive-wrapper mode loses `session_spawn` reachability
+entirely, with no compensating route.
+
 **`mode`**:
 
 - `ephemeral` — the session auto-vanishes after its task completes. Use
-  for one-shot work where you want no lingering state.
+  for one-shot work where you want no lingering state. "Completes" means
+  no pending work, not merely an empty inbox: if the ephemeral session
+  has itself delegated to a peer and is awaiting that peer's response, a
+  transiently-empty inbox mid-wait does not trigger teardown — vanishing
+  before the response lands would purge the session the reply is
+  addressed to. A spawned session may itself call `session_spawn` again
+  (nesting is supported); its result still routes back correctly.
 - `persistent` — the session stays registered after the task. Use when
   you need to refer back to it or continue work there.
 
@@ -197,6 +212,15 @@ mode-driven framework used by loop and budget caps:
 
 `max_depth` and `max_children` carry separate per-spawner extension keys: an
 operator-approved increase in one does not silently widen the other.
+
+`max_children` counts a parent by **identity, not name**: if a parent is
+purged and its name reused, a pre-purge orphan child does not count against
+the new, same-named parent's budget — the reused name gets its full
+`max_children` allowance, not a reduced one. This is the fan-out-accounting
+counterpart to the identity-keyed lineage rule in
+[permission-model.md § No-escalation-via-spawn](../runtime/permission-model.md#no-escalation-via-spawn-the-closed-class):
+that rule is about capability re-grant after a name reuse, this one is
+about the DoS-bound count.
 
 See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-fields) and
 [safety.on_limit](../../reference/config/reyn-yaml.md#safetyon_limit-fields) for full schema.
