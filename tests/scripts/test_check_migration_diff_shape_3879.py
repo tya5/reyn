@@ -351,9 +351,25 @@ def test_copy_without_deleting_the_original_is_caught(_repo: Path) -> None:
 def test_is_tests_copy_requires_a_tests_path() -> None:
     """Tier 2: non-vacuity — a copy entirely OUTSIDE tests/ is not this
     gate's concern (mirrors the existing outside-tests exclusion for
-    renames)."""
+    renames). The SOURCE side specifically must be under tests/ — a copy
+    whose source is OUTSIDE tests/ (#3913's false-positive shape) does not
+    count, even though the DESTINATION is under tests/."""
     assert is_tests_copy("C100\tscripts/old.py\tscripts/new.py") is False
     assert is_tests_copy("C100\ttests/old.py\ttests/new.py") is True
+    assert is_tests_copy("C100\tsrc/reyn/data/pipelines/old.py\ttests/new.py") is False
+
+
+def test_is_tests_copy_excludes_init_py_destinations() -> None:
+    """Tier 2: #3913 — a C-status match landing on an __init__.py
+    destination is never a real activation signal, regardless of source.
+    An empty __init__.py is trivially "100% similar" to every OTHER empty
+    file in the tree, so -C --find-copies-harder can match a brand-new,
+    legitimate tests/<pkg>/__init__.py against some unrelated empty file
+    ANYWHERE (real repro: src/reyn/data/pipelines/__init__.py) — that
+    shape is already legitimately handled elsewhere (the empty-content
+    check), not by this activation signal."""
+    assert is_tests_copy("C100\tsrc/reyn/data/pipelines/__init__.py\ttests/runtime/__init__.py") is False
+    assert is_tests_copy("C100\ttests/other/__init__.py\ttests/runtime/__init__.py") is False
 
 
 def test_a_pure_copy_left_behind_scenario_alone_is_correctly_isolated(
@@ -395,6 +411,54 @@ def test_a_pure_copy_left_behind_scenario_alone_is_correctly_isolated(
     )
     assert any("test_b_copy.py" in line for line in offenders), (
         f"the copy-left-behind was not flagged: {offenders}"
+    )
+
+
+def test_a_new_package_init_py_matching_an_unrelated_empty_file_is_allowed(
+    _repo: Path,
+) -> None:
+    """Tier 2: #3913 — the REAL reproduction lead-coder ran against the
+    actual repo (issue #3879, PR #3913 review): a legitimate Stage-1
+    migration PR (a real git-mv rename, activating the gate) that ALSO
+    creates a brand-new tests/<pkg>/__init__.py must not be rejected just
+    because that empty __init__.py happens to -C-match some UNRELATED
+    empty file elsewhere in the tree. An unrelated empty file (mirroring
+    src/reyn/data/pipelines/__init__.py in the real repro) is added to the
+    fixture repo specifically so `-C --find-copies-harder` has a same-
+    content candidate to (wrongly, pre-fix) match against."""
+    (_repo / "unrelated").mkdir()
+    (_repo / "unrelated" / "__init__.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "add an unrelated empty __init__.py elsewhere in the tree")
+
+    # The migration PR's diff must be measured from THIS commit as base —
+    # the unrelated file needs to exist in the diff's BASE state (like
+    # src/reyn/data/pipelines/__init__.py already sitting on main before
+    # the real migration PR opened), not appear WITHIN the diffed range
+    # itself. Falsify-verified this distinction directly: diffing from two
+    # commits back (spanning both this commit and the next) made the
+    # unrelated file ALSO look newly-added within the diff, and git's
+    # copy matcher then reported plain `A` lines for both files instead of
+    # the real `C100` match — silently making this test vacuous. Confirmed
+    # against a real throwaway repo before fixing.
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=_repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a.py"],
+        cwd=_repo, check=True,
+    )
+    (core / "__init__.py").write_text("", encoding="utf-8")
+    _commit_all(_repo, "real move + new package __init__.py")
+
+    lines = diff_name_status(base, root=_repo)
+    assert gate_is_active(lines), "the real git-mv rename should activate the gate"
+    offenders = offending_lines(lines, root=_repo)
+    assert offenders == [], (
+        f"a legitimate new empty __init__.py, C-matched against an "
+        f"unrelated empty file, was wrongly flagged: {offenders}"
     )
 
 

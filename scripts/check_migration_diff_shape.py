@@ -231,11 +231,35 @@ def is_tests_copy(line: str) -> bool:
     added to :func:`diff_name_status`, this exact scenario reports as
     ``C100  <old>  <new>``, and a genuine, unrelated ``git mv`` elsewhere in
     the SAME diff still reports plain ``R100`` — the two are not confused
-    with each other in a mixed batch."""
+    with each other in a mixed batch.
+
+    ★ Corrected in review (lead-coder, reproduced against the REAL repo, not
+    a design read — see PR #3913): the first version matched ``C`` on
+    EITHER side (``parts[1] OR parts[2]``) and didn't exclude
+    ``__init__.py``. A brand-new, EMPTY ``tests/<pkg>/__init__.py`` — the
+    exact shape a legitimate Stage-1 migration PR creates for every new
+    destination package — is trivially "100% similar" to every OTHER
+    empty ``__init__.py`` anywhere in the tree (empty files are all
+    byte-identical to each other), so ``-C --find-copies-harder`` matched
+    it against some UNRELATED empty ``__init__.py`` elsewhere (e.g.
+    ``src/reyn/data/pipelines/__init__.py``) and reported ``C100`` — this
+    gate rejecting its own legitimate migration operation, the same shape
+    #3885 already had to fix once. Two conditions now required together:
+
+    - the SOURCE (old) path specifically must be under ``tests/`` — a
+      match whose source is OUTSIDE ``tests/`` (an unrelated empty file
+      elsewhere in the repo) is not a real "copied from a tests/ file"
+      scenario, just an empty-content coincidence.
+    - the destination is NOT an ``__init__.py`` — that shape is already
+      legitimately handled by :func:`offending_lines`'s own empty-content
+      check (:data:`_INIT_SUFFIX`), which is unaffected by this change."""
     parts = line.split("\t")
     if not parts[0].startswith("C") or len(parts) != 3:
         return False
-    return parts[1].startswith("tests/") or parts[2].startswith("tests/")
+    old_path, new_path = parts[1], parts[2]
+    if new_path.endswith("/" + _INIT_SUFFIX) or new_path == _INIT_SUFFIX:
+        return False
+    return old_path.startswith("tests/")
 
 
 def is_tests_deletion(line: str) -> bool:
@@ -344,6 +368,24 @@ def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
             continue
 
         if status == "M" and len(parts) == 2 and parts[1] in _ALLOWED_MODIFIED_PATHS:
+            continue
+
+        if status.startswith("C") and len(parts) == 3:
+            # A `C` (copy) match onto an EMPTY __init__.py is the same
+            # false-positive :func:`is_tests_copy` excludes from
+            # activation (#3913): an empty new __init__.py is trivially
+            # "100% similar" to every OTHER empty file anywhere in the
+            # tree, so -C --find-copies-harder can match it against an
+            # unrelated empty file even when a REAL rename elsewhere in
+            # the same diff already activated the gate. Same allowance as
+            # the `A`-status empty-__init__.py case above, content
+            # verified the same way — not just the path.
+            new_path = parts[2]
+            if new_path.endswith("/" + _INIT_SUFFIX) or new_path == _INIT_SUFFIX:
+                content = blob_at_head(new_path, root)
+                if content == b"":
+                    continue
+            offenders.append(line)
             continue
 
         offenders.append(line)
