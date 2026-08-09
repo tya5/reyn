@@ -36,11 +36,12 @@ So this module owns the vocabulary of the boundary:
 The mapping is deliberately the same triad an operator already has on a stdio
 MCP server (``network`` / ``subprocess`` / ``write_paths``): the per-site,
 operator-owned sandbox surface. Fields outside it (``read_deny_paths``,
-``read_paths``, ``env_passthrough``, ``timeout_seconds``) are not part of that
-surface on either side of the boundary, so they are not reported here —
-``read_deny_paths`` in particular is *supplied* to hook shells by
-``SandboxPolicy``'s own default factory, so it is not a hole (measured in
-#3003, restated in #3005).
+``write_deny_paths``, ``env_deny_names``, ``timeout_seconds``) are not part of
+that surface on either side of the boundary, so they are not reported here —
+not because a hook shell's floor happens to supply them today (#3901 PR-B ④
+made ``read_deny_paths``'s own default empty, so it no longer does), but
+because they were never part of the per-site vocabulary this module owns in
+the first place.
 
 Declaring the per-hook key — with **either** value — is what makes the
 operator's will explicit at the site that consumes it, which is why a declared
