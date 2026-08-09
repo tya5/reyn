@@ -78,8 +78,8 @@ _DOCS = _REPO_ROOT / "docs" / "reference" / "config" / "reyn-yaml.md"
 # "# sandbox:" or "# chat.compaction:" (a dotted sub-path in the header text
 # is allowed — several sections introduce themselves that way). Exactly one
 # optional space after "#" — NOT `\s*` — so a deeply-indented worked-example
-# line inside another section's own comment block (e.g. "#       model: ..."
-# nested three levels under `embedding.classes.local-mini`) is never
+# line inside another section's own comment block (e.g. a per-class "model:"
+# line nested three levels under `embedding.classes.<name>`) is never
 # mistaken for that name's own top-level header.
 _EXAMPLE_HEADER = lambda name: re.compile(  # noqa: E731
     r"^#\s?" + re.escape(name) + r"(\.[a-zA-Z_]+)*:",
