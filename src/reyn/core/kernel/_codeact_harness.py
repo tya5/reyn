@@ -205,6 +205,16 @@ def _write_response(payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    # #3869: name this child the same way reyn's own main process does
+    # (#3870) — the CodeAct harness is a genuinely reyn-authored Python
+    # entry point (unlike sandboxed_exec's arbitrary third-party argv,
+    # which reyn does not control the code of), so the same
+    # setproctitle-based mechanism applies directly. A no-op (returns
+    # False) on a host without setproctitle installed — never an error,
+    # matching proctitle.py's own module docstring.
+    from reyn.runtime.proctitle import set_process_title
+    set_process_title("codeact")
+
     sock: socket.socket | None = None
     channel: "_ControlChannel | None" = None
     try:
