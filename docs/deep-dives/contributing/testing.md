@@ -18,6 +18,99 @@ If a test cannot articulate which contract or invariant it protects, it is imple
 
 Tests in `tests/` belong to exactly one tier. The tier determines what the test pins, who the audience is, and when the test should change.
 
+### The prerequisite every tier shares
+
+**Owner ruling (2026-08-09).** This was implicit in every tier below since
+the day this document was written, but never stated as its own requirement
+— which is how a test could carry a Tier label without ever being checked
+against it. 79% of this repo's test functions currently declare `Tier 2`;
+that number describes how many tests *typed the label*, not how many meet
+what the label requires. Quoted verbatim, because the point of writing this
+down is to stop the requirement from travelling by word of mouth:
+
+> 「OS 不変条件は振る舞いと契約が前提だよ」
+> ("An OS invariant presupposes a behavior and a contract.")
+>
+> 「必要なのは振る舞いと契約」
+> ("What's required is a behavior or a contract.")
+>
+> 「こじつけた理由しかないなら削除すべき。Tier4 じゃないという判断自体も疑うべき」
+> ("If the only reason is contrived, delete it. Even the judgment that it
+> isn't Tier 4 should be doubted.")
+
+Claiming any tier — 1, 2, or 3 — presupposes two things, in order:
+
+1. **You can name, in one line, the behavior or contract this test
+   protects.** Not "it's reyn's" — reyn's own trivia can be named in one
+   line too, and fits no tier. Not the implementation ("this function is
+   written this way") and not a past bug's fingerprint ("X used to happen").
+2. **What you named exists somewhere other than this test's own
+   docstring.** A doc page, one of the [charter](../../concepts/architecture/charter.md)'s
+   eight lenses, a decision record (an issue or PR body), or a promise made
+   to a user. A reason that lives only inside the test that's supposed to
+   be justified by it is not an anchor — it's the test citing itself.
+
+An issue or PR number passes ② by *shape* whether or not it passes it in
+substance — "an issue exists" is not "an issue decided a behavior." A
+decision record is only a real anchor when what it decided is independent
+of the test that cites it:
+
+> **Discriminator: delete the test. Does the anchor's sentence go false?**
+> No, it still holds → the anchor describes reyn, independent of this test
+> → valid. Yes, it goes false → the anchor was describing *the test*, not
+> reyn → circular, not an anchor.
+
+The shape most likely to pass ② without meeting it: **the issue or PR that
+exists *because* this test was going to be written** — its body argues for
+adding the test, which is the same content as the test's own docstring,
+just filed in a different place. Most likely of all: **the PR that landed
+the test itself** — citing it as the anchor is, almost by construction,
+circular.
+
+```
+✓ "the overlay stays up and readable when the pool is fully dead"   — behavior
+✓ "an audit-event's type is a closed vocabulary"                     — contract
+✓ issue #2074 body: "unify capability narrowing" (decides a behavior,
+  independent of any one test)
+✗ "a TTE effect resolves to its input"                — a third party's promise
+✗ "bug X used to happen here"                          — a past bug's fingerprint
+✗ "this function is written this way"                  — implementation, transcribed
+✗ "PR #1234 body (names this exact test)"     — the PR that landed the test
+✗ "PR #1234 body: rationale for adding this test" — argues for the test,
+  same content as its docstring, filed elsewhere — still circular
+```
+
+**A test that fails this prerequisite was never classified as Tier 4 —
+it never had standing to claim a tier at all.** Tier 4 (below) is a
+considered judgment: this *shape* of test is recognized and excluded on
+purpose. Failing to name an anchor is different — there is nothing yet to
+judge. Say the shape is Tier 4 only once you can name what's missing;
+otherwise the honest state is "not yet classified."
+
+**Tier 2 (OS invariant) is where this bites hardest**, because the
+category's own name reads like permission: almost any assertion about OS
+behavior can be described as "an invariant." But an invariant is, by
+definition, something the OS has promised to always uphold — which means
+it already *is* a contract. If you cannot point to where that promise
+exists outside the test, what you have is not an invariant, and the test
+is not Tier 2 regardless of what its docstring's first line says.
+
+**This is not a new axis alongside `CLAUDE.md`'s "Test review — six
+questions"** — it's a different question, asked before those six. The six
+questions ask whether a test that already claims a tier is *well-formed*
+(does the assert survive a dead mechanism, is it a transcription, does it
+accumulate unboundedly, …). This prerequisite asks whether the test had
+any business claiming a tier in the first place. A test can pass all six
+quality questions and still fail this one — a well-formed assertion about
+something nobody promised is still pinning nothing real.
+
+**The mechanism does not check this today.** `scripts/test_tier_audit.py`
+matches a test's declared Tier line as a *string*
+(`^Tier [123][abc]?:`, case-insensitive) — a docstring that types "Tier 2:"
+passes the audit whether or not the behavior or contract it names exists
+anywhere outside that docstring. Naming an anchor and having one are
+different claims, and only a human reviewer checks the second.
+
 ### Tier 1 — Contract
 
 **Pins**: external boundaries that users / OSS contributors / integration scripts depend on.
@@ -129,7 +222,9 @@ Tests that fall in this list are **not** added to the suite, even when they woul
 
 ## Decision flow
 
-Before writing a test, answer these questions:
+Before writing a test, answer these questions. Each of Q1's tier answers
+still needs [the prerequisite above](#the-prerequisite-every-tier-shares)
+satisfied — naming a tier here is not itself the anchor.
 
 ```
 Q1. If this breaks, who notices?

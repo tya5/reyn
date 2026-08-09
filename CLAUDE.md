@@ -103,6 +103,13 @@ Key constraints (full rationale in the doc):
   that lands the refactor**.
 - Each test docstring's first line must declare its Tier:
   `"""Tier 3a: ..."""`.
+- Declaring a Tier presupposes a named behavior/contract that exists
+  **outside** the test's own docstring (a doc, a charter lens, a decision
+  record, a user-visible promise) — not a new axis, the precondition
+  every Tier already carried. See `testing.md` § "The prerequisite every
+  tier shares." Distinct from the six questions below: that section asks
+  whether an already-tiered test is *well-formed*; this asks whether it
+  had standing to claim a tier at all.
 
 ## Test review — six questions, asked of the test's own code
 
@@ -163,6 +170,37 @@ today, and the runaway that started this was small until it wasn't.
 **Reviewer's note, on the PR:** record the answers per test before merging. A
 lead-coder merge train refuses any PR touching `tests/` without one — the promise
 "I will open the tests next time" is exactly the shape this replaces.
+
+**When something forces you to touch a test — a dependency bump, a rebase, a CI
+failure — ask "should this exist" before "how do I make it pass again."** A
+flowview pin bump (0.16.0 → 0.16.1, #3886) broke one test's premise ("a fresh
+session is a blank screen" — it never quite was; reyn's own welcome placeholder
+was always painted, just invisible to the older, narrower capture). The first
+pass **repaired** it: split into a blank-canvas guard test and a positive
+welcome-text test, both green, six questions answered, gates clean. Wrong move —
+caught only because the operator asked "私ならそんなテスト捨てるけどね" (I'd just
+delete that test) after seeing the diff, not because anything in the checklist
+stopped it. Re-applying the six questions with delete as the live option, not
+repair:
+
+- The guard test was redundant — falsifying the guard it protects still didn't
+  crash, because `test_every_attempt_failing_hands_back_a_held_legible_screen`
+  already covers "every attempt fails" generally, blank input included.
+- The welcome-text test pinned a THIRD PARTY's property under reyn's name:
+  `text_effect.py` does nothing with `covered`'s content, so whether the
+  welcome placeholder shows up in `covered` at all is flowview's capture
+  behaviour, not reyn's — Q1's "third party" carve-out, missed because the
+  code on both sides of the assertion was reyn's own call site, not reyn's own
+  logic.
+
+Both deleted. **The failure mode was ORDER, not the checklist's content**: the
+same six questions were applied minutes earlier to the same PR and caught real
+things (#3876's review) — but applied in "does this still pass" order, which
+starts from the code that exists and looks for a way to keep it. Starting from
+"should this test exist at all" is a different search, and repair-mode never
+runs it. A rebase/bump forcing a touch is exactly the moment deletion is
+cheapest — the test is already broken, and "make it green" is not the only
+available action.
 
 ## PR workflow (READ BEFORE OPENING / REVIEWING A PR)
 
