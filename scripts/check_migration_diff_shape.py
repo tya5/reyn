@@ -32,7 +32,27 @@ to the full 1,126-file migration in one commit — an exact-content rename is
 resolved by a blob-hash match BEFORE the expensive similarity search runs,
 so it is never subject to that limit. This gate does not need to raise it.
 
-## Allowed diff lines (everything else is rejected)
+## Activation — the diff decides, never a declaration (lead-coder's #3885
+## review correction, after the first version of this gate fired on EVERY
+## PR touching tests/, including ordinary Q3/Q4 assert-repair PRs)
+
+This gate is INACTIVE — exits 0 immediately, checks nothing — unless the
+diff contains at least one pure (``R100``) rename whose new path lands
+under ``tests/``. A PR with no such rename is not a migration PR, whatever
+it claims to be (a label, a branch name, a PR-body declaration): the whole
+audit this session has been running finds that exact "declaration ≠
+reality" shape everywhere else (Tier labels no one earned, "falsify done"
+claims that were only reasoned through, a hand-editable baseline) and a
+self-declared "this is a migration PR" signal would just be one more
+instance of it. So the diff's own content is the only signal read.
+
+Accepted trade-off: a "migration" whose renames git's ``-M100%`` failed to
+detect at ALL (every file fully rewritten, zero pure renames) makes this
+gate inactive too — but Stage 0's ratchet independently rejects that shape
+as new flat/relocated files it has never seen. The two gates catch it
+between them, neither alone.
+
+## Allowed diff lines, once active (everything else in scope is rejected)
 
 - ``R100  <old>  <new>`` — a pure, byte-identical rename.
 - ``A  tests/<pkg>/__init__.py`` — a NEW, EMPTY package marker (a migration
@@ -42,8 +62,10 @@ so it is never subject to that limit. This gate does not need to raise it.
   SHRINKING as moved names drop out (#3883 already permits and expects
   this — not re-forbidden here).
 
-Everything else — any other ``A``/``M``/``D``, or a rename below 100%
-similarity — fails the gate.
+Everything else UNDER ``tests/`` (or the baseline file) — any other
+``A``/``M``/``D``, or a rename below 100% similarity — fails the gate. A
+change entirely OUTSIDE ``tests/`` and not the baseline is left alone (not
+this gate's concern, whatever else may check it).
 
 ## Lifespan — this gate is temporary, unlike Stage 0's ratchet
 
@@ -93,12 +115,61 @@ def blob_at_head(path: str, root: Path = _ROOT) -> "bytes | None":
     return proc.stdout
 
 
+def is_tests_rename(line: str) -> bool:
+    """Whether *line* is a pure (R100) rename whose NEW path lands under
+    ``tests/`` — the activation signal for the whole gate (see
+    :func:`gate_is_active`)."""
+    parts = line.split("\t")
+    if not parts[0].startswith("R"):
+        return False
+    similarity = parts[0][1:]
+    return similarity == "100" and len(parts) == 3 and parts[2].startswith("tests/")
+
+
+def gate_is_active(lines: "list[str]") -> bool:
+    """The gate applies ONLY to a PR whose diff contains at least one pure
+    rename under ``tests/`` — never to a label, a branch-name convention, or
+    any other DECLARATION of "this is a migration PR" (lead-coder's
+    correction, #3885 review: a self-declared signal is exactly the
+    declaration-vs-reality gap this whole audit exists to close — Tier
+    labels, "falsify done" claims, hand-edited baselines, all the same
+    shape). The diff's own content is the only signal: no ``tests/``
+    rename anywhere → this PR isn't a migration PR, whatever it claims to
+    be, and every OTHER PR touching ``tests/`` (an ordinary Q3/Q4 assert
+    repair, a bug fix) passes through untouched — accepted trade-off (see
+    module docstring): a "migration" whose renames git's ``-M100%`` failed
+    to detect at all (a fully rewritten, byte-different move) makes THIS
+    gate inactive, but Stage 0's ratchet still independently rejects it as
+    a new flat file (or a new file in a package it never asserts anything
+    about) — the two gates catch that shape between them, not either
+    alone."""
+    return any(is_tests_rename(line) for line in lines)
+
+
+def _in_scope(line: str) -> bool:
+    """Whether *line* is something this gate evaluates at all, once active:
+    a path under ``tests/`` (either side of a rename), or the Stage-0
+    baseline file. A completely unrelated change elsewhere in the same PR
+    is left to whatever OTHER gate cares about it — this one only judges
+    the shape of the tests/ move itself."""
+    parts = line.split("\t")
+    paths = parts[1:]
+    if any(p in _ALLOWED_MODIFIED_PATHS for p in paths):
+        return True
+    return any(p.startswith("tests/") for p in paths)
+
+
 def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
-    """Every diff line that is NOT one of the three allowed shapes — the
-    gate's entire decision, isolated from I/O so it is directly testable
-    against a hand-built line list."""
+    """Every in-scope diff line that is NOT one of the three allowed shapes
+    — the gate's entire decision, isolated from I/O so it is directly
+    testable against a hand-built line list. Only called once
+    :func:`gate_is_active` has confirmed this PR is a migration PR at all;
+    an out-of-scope line (outside ``tests/``, not the baseline) is skipped
+    here, not flagged — see :func:`_in_scope`."""
     offenders = []
     for line in lines:
+        if not _in_scope(line):
+            continue
         parts = line.split("\t")
         status = parts[0]
 
@@ -139,6 +210,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
     lines = diff_name_status(args.base)
+
+    if not gate_is_active(lines):
+        print(
+            "OK: gate inactive — this PR's diff contains no pure (R100) "
+            "rename under tests/, so it is not a migration PR (whatever it "
+            "claims to be — the diff's own content is the only signal this "
+            "gate reads)."
+        )
+        return 0
+
     offenders = offending_lines(lines)
 
     if not offenders:

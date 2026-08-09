@@ -13,15 +13,17 @@ name: migration-diff-shape gate
 # not a test-suite gate, and needs full git history (fetch-depth: 0) to
 # diff against the merge-base, unlike test.yml's shallow checkout.
 #
-# ⚠️ KNOWN SCOPE GAP, flagged rather than silently guessed at (see PR body):
-# this triggers on ANY PR touching tests/** or the Stage-0 baseline, not only
-# Stage-1 migration PRs — an ordinary bug-fix PR editing an existing flat
-# test file is indistinguishable, at the diff-shape level, from a migration
-# PR that ISN'T a pure move, so both fail this gate identically. No
-# repo-wide precedent for a narrower per-PR opt-in signal was available at
-# authoring time (label / branch-name convention) — the `paths:` filter
-# below only prunes PRs that don't touch tests/ at all, it does not
-# distinguish "migration" from "ordinary edit" among PRs that do.
+# The `paths:` filter below only prunes PRs that don't touch tests/ at all —
+# it does NOT distinguish a migration PR from an ordinary edit among PRs
+# that do. That distinction is made INSIDE the script, from the diff's own
+# content (at least one pure R100 rename under tests/), never from a label
+# or branch-name declaration — see check_migration_diff_shape.py's module
+# docstring, "Activation" section (lead-coder's #3885 review correction,
+# after an earlier version of this workflow fired on every tests/-touching
+# PR, including ordinary Q3/Q4 assert-repair PRs). A PR with no such rename
+# reaches the script and gets an immediate "gate inactive" pass, not a
+# workflow-level skip — the two look the same in the CI check list, but the
+# distinguishing logic lives in one place (the script), not duplicated here.
 on:
   pull_request:
     paths:

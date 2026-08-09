@@ -18,6 +18,7 @@ import pytest
 from scripts.check_migration_diff_shape import (
     blob_at_head,
     diff_name_status,
+    gate_is_active,
     offending_lines,
 )
 
@@ -140,16 +141,32 @@ def test_baseline_shrink_is_allowed(_repo: Path) -> None:
     assert offending_lines(lines, root=_repo) == []
 
 
-def test_an_unrelated_content_edit_is_rejected(_repo: Path) -> None:
-    """Tier 2: negative control — an ordinary content edit to a file that
-    stays in place (not a move at all) must still be rejected. This is what
-    keeps a migration PR from also carrying an unrelated fix."""
-    (_repo / "tests" / "test_a.py").write_text("line1\nline2\nCHANGED\n", encoding="utf-8")
-    _commit_all(_repo, "unrelated edit")
+def test_a_content_edit_mixed_with_a_real_move_is_rejected(_repo: Path) -> None:
+    """Tier 2: lead-coder's explicit case (#3885 review correction) — once
+    the gate is ACTIVE (a real tests/ rename is present), an UNRELATED
+    content edit riding along in the SAME PR must still be flagged. This is
+    what keeps "migrate this batch" from also smuggling in an unrelated
+    fix, once the gate has something to enforce against at all."""
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    (_repo / "tests" / "test_b.py").write_text("unrelated file\n", encoding="utf-8")
+    _commit_all(_repo, "add a second file to edit later")
+
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a.py"],
+        cwd=_repo, check=True,
+    )
+    (_repo / "tests" / "test_b.py").write_text("unrelated CHANGE\n", encoding="utf-8")
+    _commit_all(_repo, "real move + a smuggled edit")
 
     lines = diff_name_status("HEAD~1", root=_repo)
+    assert gate_is_active(lines), (
+        "test setup did not actually produce a tests/ rename"
+    )
     offenders = offending_lines(lines, root=_repo)
-    assert offenders, "an in-place content edit was not flagged"
+    assert any("test_b.py" in line for line in offenders), (
+        f"the smuggled edit was not flagged once the gate was active: {offenders!r}"
+    )
 
 
 def test_low_similarity_rename_is_rejected(_repo: Path) -> None:
@@ -187,6 +204,58 @@ def test_r099_line_is_rejected_by_the_parser_directly(_repo: Path) -> None:
         ["R099\ttests/test_a.py\ttests/core/test_a.py"], root=_repo,
     )
     assert offenders, "an R099 (not exactly 100%) rename line was not flagged"
+
+
+# ── gate_is_active — #3885 review correction, the fix to the scope gap ──────
+
+
+def test_a_pure_content_edit_leaves_the_gate_inactive(_repo: Path) -> None:
+    """Tier 2: the fix itself — an ordinary in-place content edit (a Q3/Q4
+    assert repair, a bug fix), with NO rename anywhere in the diff, must
+    NOT activate this gate at all. Before this fix, the gate fired on every
+    PR touching tests/, including this exact shape (lead-coder's #3885
+    correction, after flagging the risk pre-merge)."""
+    (_repo / "tests" / "test_a.py").write_text("line1\nline2\nCHANGED\n", encoding="utf-8")
+    _commit_all(_repo, "ordinary edit, no rename")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert not gate_is_active(lines), (
+        "an ordinary content edit with no rename activated the gate"
+    )
+
+
+def test_a_pure_rename_activates_the_gate(_repo: Path) -> None:
+    """Tier 2: non-vacuity for the inactive case above — a REAL tests/
+    rename, alone, does activate it."""
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(
+        ["git", "mv", "tests/test_a.py", "tests/core/test_a.py"],
+        cwd=_repo, check=True,
+    )
+    _commit_all(_repo, "real move")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert gate_is_active(lines), "a real tests/ rename did not activate the gate"
+
+
+def test_a_rename_outside_tests_does_not_activate_the_gate(_repo: Path) -> None:
+    """Tier 2: the activation signal is scoped to tests/ specifically — an
+    unrelated rename elsewhere in the repo (e.g. a scripts/ refactor riding
+    in the same PR, however unlikely) must not turn this gate on."""
+    (_repo / "scripts").mkdir()
+    (_repo / "scripts" / "old_name.py").write_text("x = 1\n", encoding="utf-8")
+    _commit_all(_repo, "add a scripts file")
+    subprocess.run(
+        ["git", "mv", "scripts/old_name.py", "scripts/new_name.py"],
+        cwd=_repo, check=True,
+    )
+    _commit_all(_repo, "rename outside tests/")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    assert not gate_is_active(lines), (
+        "a rename outside tests/ incorrectly activated the gate"
+    )
 
 
 def test_blob_at_head_returns_none_for_a_missing_path(_repo: Path) -> None:
