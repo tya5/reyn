@@ -228,6 +228,77 @@ def test_zone_symbol_resolves_against_the_environment_anchor(tmp_path: Path) -> 
     assert third_at_host.readable(probe) is False
 
 
+# ── #3925 ①-a: the "<zone-root>" spelling on a WRITE-axis list ──────────────
+
+
+def test_zone_root_spelling_scopes_write_to_the_zone(tmp_path: Path) -> None:
+    """Tier 2: #3925 — ``file.write: ["<zone-root>"]`` resolves to the SAME
+    containment :class:`ZoneRoot` gives the READ axis by default (the literal
+    string is the notation ``file_scope.py``'s own docstring already uses to
+    describe :class:`ZoneRoot`'s resolved rendering), not a
+    :class:`LiteralPath` naming a directory that happens to be spelled that
+    way. A path under the zone is writable; a path outside is not — the
+    resolved set is bounded, not the unrestricted ``allow`` form."""
+    zone = tmp_path / "proj"
+    zone.mkdir()
+    resolver = PermissionResolver(
+        {"file.write": ["<zone-root>"]}, project_root=zone,
+    )
+    inside = str(zone / "src" / "a.py")
+    outside = str(tmp_path / "elsewhere" / "b.py")
+    assert _gate_writable(resolver, inside) is True
+    assert _gate_writable(resolver, outside) is False
+
+
+def test_zone_root_spelling_matches_the_read_axis_default_containment(tmp_path: Path) -> None:
+    """Tier 2: #3925 — non-vacuity + cross-axis agreement. The READ axis's
+    schema DEFAULT is ``ZoneRoot()`` (unset config); an EXPLICIT
+    ``file.write: ["<zone-root>"]`` must answer the SAME membership question
+    for the SAME probes — confirming the symbol resolves correctly on the
+    WRITE axis too (previously unmeasured: the WRITE axis's own default is
+    ``ZoneStateDir()``, a different symbol, so nothing exercised ``ZoneRoot``
+    there before this fix)."""
+    zone = tmp_path / "proj"
+    zone.mkdir()
+    probes = [
+        str(zone / "src" / "a.py"),
+        str(zone / "docs" / "b.md"),
+        str(tmp_path / "outside" / "c.py"),
+    ]
+    read_default = resolve_file_scope({}, FileScopeAxis.READ, zone_root=zone)
+    write_zone_root = resolve_file_scope(
+        {"file.write": ["<zone-root>"]}, FileScopeAxis.WRITE, zone_root=zone,
+    )
+    for p in probes:
+        assert read_default.contains(p) is write_zone_root.contains(p)
+    # non-vacuity: the two forms actually disagree with a bare "allow" grant,
+    # which is what #3925 replaces "<zone-root>" as an alternative to.
+    write_allow = resolve_file_scope(
+        {"file.write": "allow"}, FileScopeAxis.WRITE, zone_root=zone,
+    )
+    outside = str(tmp_path / "outside" / "c.py")
+    assert write_allow.contains(outside) is True
+    assert write_zone_root.contains(outside) is False
+
+
+def test_a_literal_path_that_is_not_the_zone_root_spelling_stays_literal(tmp_path: Path) -> None:
+    """Tier 2: #3925 non-vacuity — a directory that merely CONTAINS angle
+    brackets in its name (not the exact "<zone-root>" string) still parses as
+    an ordinary :class:`LiteralPath`, not the symbol. Guards against an
+    over-broad match (e.g. a substring check) silently swallowing an
+    operator's real path."""
+    zone = tmp_path / "proj"
+    weird_dir = zone / "<zone-root>-backup"
+    weird_dir.mkdir(parents=True)
+    scope = resolve_file_scope(
+        {"file.write": [str(weird_dir)]}, FileScopeAxis.WRITE, zone_root=zone,
+    )
+    assert scope.contains(str(weird_dir / "f.txt")) is True
+    # And it does NOT grant the whole zone the way the real symbol would —
+    # a sibling directory stays outside the (literal, narrow) grant.
+    assert scope.contains(str(zone / "other" / "f.txt")) is False
+
+
 # ── ④ the JIT layer is unchanged ─────────────────────────────────────────────
 
 

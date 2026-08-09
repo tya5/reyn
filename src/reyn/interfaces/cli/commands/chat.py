@@ -201,20 +201,26 @@ def register(sub) -> None:
     )
     # #187: scoped file grant for the agent, symmetric with `reyn run
     # --grant-file-write` (run.py:85). Grants file.read/file.write at the
-    # resolver layer; the effective scope is bounded by the sandbox write_paths
-    # ∩ (the env-backend's repo/workspace zone), so a non-interactive / scripted
-    # agent can edit a working tree without a permission prompt but cannot escape
-    # it. General capability (any chat session), not domain-specific — the chat
-    # agent has no explicit `file.read` permission declaration (unlike the old
-    # skill-declared permission model), so the flag grants both read and write
-    # (mirrors the eval path, eval_benchmark.py:742).
+    # resolver layer, file.write scoped to the zone root (#3925: was `allow`
+    # — unrestricted — the pre-#3925 doc claim that this was "bounded by the
+    # sandbox write_paths ∩" stopped being true the moment #3901 PR-B retired
+    # FILE_WRITE from SandboxLayer's permission-∩ projection; measured
+    # directly that this call site passes no sandbox_backend/
+    # default_sandbox_policy of its own, so the grant was genuinely
+    # unrestricted in between #3901 and #3925), so a non-interactive /
+    # scripted agent can edit a working tree without a permission prompt but
+    # cannot escape it. General capability (any chat session), not
+    # domain-specific — the chat agent has no explicit `file.read`
+    # permission declaration (unlike the old skill-declared permission
+    # model), so the flag grants both read and write (mirrors the eval path,
+    # eval_benchmark.py:742).
     p.add_argument(
         "--grant-file-write",
         dest="grant_file_write",
         action="store_true",
         help=(
             "Grant file.read/file.write at the resolver layer for this session, "
-            "scoped to the sandbox write zone. For non-interactive / scripted "
+            "scoped to the zone root. For non-interactive / scripted "
             "agent runs that edit a working tree without a permission prompt."
         ),
     )
@@ -594,18 +600,24 @@ def _run(args: argparse.Namespace) -> None:
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # #187: --grant-file-write grants file.read/write at the resolver layer
     # (mirrors `reyn run` run.py:126 + the eval swe_bench path
-    # eval_benchmark.py:742). This grant has no scope of its own — the
-    # permission layer does not consult the sandbox (#3901 PR-B ③ retired
-    # FILE_READ/FILE_WRITE from SandboxLayer's permission-∩ projection; an
-    # operator cannot know a sandbox's path floor, so it is no longer treated
-    # as permission). Scoping this grant is a #3925 concern on the permission
-    # side, not yet built. Any narrowing a sandbox backend applies at its own
-    # enforcement layer (e.g. Landlock/seatbelt denying a write outside its
-    # own configured paths) is a separate, backend-level mechanism this grant
-    # does not rely on. setdefault preserves any explicit operator setting.
+    # eval_benchmark.py:742). #3925: file.write is scoped to the zone root
+    # (ZoneRoot, via the "<zone-root>" spelling) — the operator's stated
+    # intent ("let this agent write to its working tree") is a permission-
+    # side concept, resolved from the SAME symbol the read axis's own
+    # default already uses, not the unrestricted `allow` form. Before #3925
+    # this WAS effectively unrestricted: the permission layer does not
+    # consult the sandbox (#3901 PR-B ③ retired FILE_READ/FILE_WRITE from
+    # SandboxLayer's permission-∩ projection), and this call site passes no
+    # sandbox_backend/default_sandbox_policy of its own (measured directly),
+    # so between #3901 and #3925 there was no floor on this axis at all —
+    # a real, if narrow-window, over-broad grant this closes. Any narrowing
+    # a sandbox backend applies at its own enforcement layer (e.g. Landlock/
+    # seatbelt denying a write outside its own configured paths) is a
+    # separate, backend-level mechanism this grant does not rely on.
+    # setdefault preserves any explicit operator setting.
     if getattr(args, "grant_file_write", False):
         perm_config.setdefault("file.read", "allow")
-        perm_config.setdefault("file.write", "allow")
+        perm_config.setdefault("file.write", ["<zone-root>"])
     # #187: parse --exclude-tools (comma-separated tool names) → frozenset, threaded
     # to Session → the MAIN RouterLoop's exclude_tools (LLM-visible catalog filter).
     _exclude_tools = frozenset(

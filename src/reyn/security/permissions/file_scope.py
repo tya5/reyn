@@ -176,15 +176,30 @@ def _config_raw_list(config: dict | None, axis: FileScopeAxis) -> object | None:
     return None
 
 
+_ZONE_ROOT_SPELLING = "<zone-root>"
+
+
 def _parse_entries(raw: object) -> tuple[FileScopeEntry, ...]:
     """Parse an operator path list into typed entries (lenient, like the decl
     parser: unusable items are dropped rather than crashing a permissions
-    primitive at load)."""
+    primitive at load).
+
+    #3925: the literal string ``"<zone-root>"`` — the SAME notation this
+    module's own docstring already uses to describe :class:`ZoneRoot`'s
+    resolved rendering (line 24 above) — parses to the symbol itself, not a
+    :class:`LiteralPath` naming a directory that happens to be spelled that
+    way. This is what lets an operator write ``file.write: ["<zone-root>"]``
+    instead of the unrestricted ``allow`` form: a grant scoped to the SAME
+    zone :data:`FILE_SCOPE_SCHEMA` already uses for the read axis's default,
+    resolved per-environment (``ws_base_dir`` under chat/web, ``project_root``
+    elsewhere) rather than a path baked in at config-write time."""
     if not isinstance(raw, list):
         raw = [raw]
     out: list[FileScopeEntry] = []
     for item in raw:
-        if isinstance(item, str) and item:
+        if item == _ZONE_ROOT_SPELLING:
+            out.append(ZoneRoot())
+        elif isinstance(item, str) and item:
             out.append(LiteralPath(path=item))
         elif isinstance(item, dict):
             path = str(item.get("path", ""))
