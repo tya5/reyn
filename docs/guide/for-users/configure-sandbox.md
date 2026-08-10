@@ -174,6 +174,45 @@ Uses the Linux Landlock LSM with path-beneath allowlist rules.
 No containment enforced. Policy fields are recorded in the audit log but have no
 effect. Use only in trusted environments where enforcement is unavailable.
 
+### When Reyn warns that an axis is not enforced — and when it stays quiet
+
+If you configure `deny_read_paths` or `deny_write_paths` and the selected backend
+cannot express them, Reyn says so at dispatch time: a `sandbox_axis_unenforced`
+audit event plus a `WARNING` log line naming the axes, the backend, and the
+reason ("Landlock cannot express a deny-list — LSM allowlist-only constraint").
+The policy is still written to the audit log; it simply was not applied for
+those axes.
+
+**Scope — this warning covers one gap, not every gap.** It fires only for the
+two deny-list fields, and only on a backend that is specifically deny-list
+incapable, which today means Landlock alone. It is not a general "your policy
+was not enforced" check.
+
+🔴 **Silence is therefore not a clean bill of health.** The clearest case is
+Noop: it enforces nothing at all — `allow_write_paths`, `network` and
+`subprocess` are recorded for audit and otherwise ignored — and it emits **no**
+`sandbox_axis_unenforced` warning for any of them, because the check asks
+"can this backend express a deny-list?", not "does this backend enforce what
+you configured?". A quiet run under Noop and a quiet run under Seatbelt look
+identical from this signal alone.
+
+**What to rely on instead:** the per-backend tables above state, field by field,
+what each backend actually enforces. Read the table for the backend you are
+running; treat the warning as a targeted extra notice, not as the answer to
+"was my policy applied?".
+
+Two other mechanisms are easy to mistake for this one, and neither widens it:
+
+- The startup self-test (see [Reyn checks that your sandbox really
+  sandboxes](#reyn-checks-that-your-sandbox-really-sandboxes)) proves the write
+  boundary and the process-spawn gate on your host. It runs at backend
+  *selection*; this warning runs at op *dispatch*, once the policy's individual
+  axes are known.
+- Container (mount) mode below is a **different mechanism**, not one of the
+  backends in this section — the three sandbox backends are Seatbelt, Landlock
+  and Noop. The tables above do not describe container mode, and this warning
+  does not report on it.
+
 ## Run in a container (mount mode)
 
 For the strongest isolation — or to run workflows against a consistent Linux
