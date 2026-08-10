@@ -55,7 +55,7 @@ See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block) for t
 
 ## `safety.loop.max_agent_hops` (integer, default `3`)
 
-Caps how deep an agent-to-agent message chain may traverse before the runtime refuses further sends. Modeled after LangGraph's recursion limit — inherited from the pre-retirement multi-hop model (see the callout above). Today's sole producer always dispatches at `depth=1`, so any positive value keeps agent-to-agent messaging enabled; only `0` (or lower) disables it, by refusing every call outright.
+Caps how deep an agent-to-agent message chain may traverse before the runtime refuses further sends. Modeled after LangGraph's recursion limit — inherited from the pre-retirement multi-hop model (see the callout above). Today's sole producer always dispatches at `depth=1`, so any positive value keeps agent-to-agent messaging enabled; `0` (or lower) stops delivery instead (the call itself still returns a `task_id`, then resolves as a timeout error — see the callout above for the exact shape).
 
 **Depth meaning**:
 
