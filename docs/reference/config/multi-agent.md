@@ -41,8 +41,14 @@ See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block) for t
 > `1`, the setting no longer caps a chain's depth (there is no chain to
 > traverse). Any value `>= 1` (including the default `3`) always passes;
 > `max_agent_hops: 0` (no lower-bound validation exists — it's passed
-> through `int()`) refuses every `run_prompt(async)` call, since `1 > 0`.
-> The setting is effectively an async-dispatch on/off switch today, not a
+> through `int()`) does NOT fail the call itself — `run_prompt_async`
+> registers the chain, arms the timeout, and returns `{"status":
+> "started"}` with a `task_id` BEFORE the depth check runs. The depth
+> check fires one step later, at delivery (`_send_to_agent`), refusing
+> DELIVERY only — the caller has already gotten a successful `task_id`
+> back and the chain then times out under `chain_seconds`, resolving as a
+> synthesized error rather than failing immediately. The setting still
+> guarantees eventual failure at `0`, just not an immediate one — not a
 > depth cap. `chain_seconds` (below) is fully live and unchanged in
 > meaning: a `run_prompt(async)` call that never gets a reply genuinely
 > times out under it.
@@ -60,7 +66,7 @@ Caps how deep an agent-to-agent message chain may traverse before the runtime re
 
 A send with `depth > max_agent_hops` is refused: the originator gets an `error` outbox message ("agent message depth N exceeds limit M; chain refused") and an `agent_message_refused` event is recorded with `reason="max_hop_depth"`. The upstream pending chain stays registered until `chain_seconds` (see below) elapses, at which point it's resolved with a synthesized error response — so a hop refusal mid-tree degrades gracefully rather than hanging.
 
-The default of `3` was sized for `user → A → B → C` (= 3 hops) under the pre-retirement multi-hop model. Today, any value `>= 1` behaves identically (agent-to-agent messaging enabled); raise it above `3` only once a producer exists that can create depth beyond 1. Set it to `0` to disable `run_prompt(async)` dispatch entirely.
+The default of `3` was sized for `user → A → B → C` (= 3 hops) under the pre-retirement multi-hop model. Today, any value `>= 1` behaves identically (agent-to-agent messaging enabled); raise it above `3` only once a producer exists that can create depth beyond 1. `0` does not reject a `run_prompt(async)` call outright — the caller still gets a `task_id` back — but delivery is refused and the chain resolves as a timeout error via `chain_seconds`, so it still guarantees the message never reaches the target, just not synchronously.
 
 ## `safety.timeout.chain_seconds` (float, default `60.0`)
 
