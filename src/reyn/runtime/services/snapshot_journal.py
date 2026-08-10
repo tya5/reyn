@@ -282,10 +282,19 @@ class SnapshotJournal:
         self.save_nowait()
 
     async def record_chain_update(self, *, chain_id: str, fields: dict) -> None:
-        """Append ``chain_update`` to WAL and update waiting_on in snapshot.
+        """Append ``chain_update`` to WAL and mirror every ``fields`` entry
+        into the live in-memory snapshot.
 
-        Mirrors ``Session._record_chain_update``.  ``fields`` must
-        contain at least ``waiting_on: list[str]``.
+        Mirrors ``Session._record_chain_update``. Every key in ``fields``
+        is echoed to ``self._snapshot.pending_chains[chain_id]`` — not just
+        ``waiting_on`` (a pre-#3978-P8 hardcode that silently dropped any
+        OTHER field a caller passed from the live snapshot, even though it
+        DID make it into the WAL event above: ``ChainManager.update()``'s
+        own live ``_chains`` write is already generic over ``**fields``,
+        so this mirror is the one place that wasn't). ``waiting_on``
+        specifically needs list-coercion (sets aren't JSON-serializable);
+        every other field is a plain scalar (``arm_at``, proposal 0067
+        P8) and round-trips as-is.
         """
         if self._state_log is None:
             return
@@ -295,8 +304,8 @@ class SnapshotJournal:
         )
         chain = self._snapshot.pending_chains.get(chain_id)
         if chain is not None:
-            waiting_on = fields.get("waiting_on", [])
-            chain["waiting_on"] = list(waiting_on)
+            for key, value in fields.items():
+                chain[key] = list(value) if key == "waiting_on" else value
         self.save_nowait()
 
     async def record_chain_resolve(self, *, chain_id: str) -> None:
