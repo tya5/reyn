@@ -98,6 +98,8 @@ def _build_handler(
     _state: dict[str, Any] = {
         "delegations": None,
         "agent_replies": None,
+        # Proposal 0067 P1' (#3978): mirrors session.current_task.
+        "current_task": None,
     }
 
     async def _put_outbox(msg: OutboxMessage) -> None:
@@ -172,6 +174,8 @@ def _build_handler(
         set_router_loop_delegations=lambda v: _state.update({"delegations": v}),
         get_router_loop_agent_replies=lambda: _state["agent_replies"],
         set_router_loop_agent_replies=lambda v: _state.update({"agent_replies": v}),
+        get_current_task=lambda: _state["current_task"],
+        set_current_task=lambda v: _state.update({"current_task": v}),
     )
 
     trackers: dict[str, Any] = {

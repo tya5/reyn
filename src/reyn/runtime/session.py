@@ -2498,6 +2498,19 @@ class Session:
         # the zero-residue guarantee robust independent of that assignment.
         self._hook_driven_turns = 0
         self._inflight_wal_tasks.clear()
+        # current_task (proposal 0067 P1', #3978): NOT part of AgentSnapshot
+        # (deliberately volatile, same framing ADR-0040 gives reply_to — "None
+        # after crash"), so a genuine process crash is naturally safe: a
+        # fresh Session() defaults current_task to None and restore_state
+        # never sets it. A REWIND is a different recovery path — the SAME
+        # live Session object survives, so without this explicit clear a
+        # mid-delegation current_task would outlive the rewind and
+        # MessageBus._is_quiescent would report non-quiescent forever for a
+        # delegation the rewound timeline no longer contains (lead-coder
+        # review, #3978: "委譲したまま二度と返らないセッション" — worse than
+        # the bug P1' exists to close). See the paired truncate/rewind-style
+        # falsify test.
+        self.current_task = None
 
     @property
     def pending_user_images(self) -> list[dict]:
@@ -4029,6 +4042,8 @@ class Session:
             # #3792: mid-turn CLIENT_INPUT injection.
             peek_mid_turn_injection=self._peek_mid_turn_injection,
             commit_mid_turn_injection=self._commit_mid_turn_injection,
+            # Proposal 0067 P1' (#3978)
+            mark_task_pending=lambda: setattr(self, "current_task", CurrentTask()),
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
@@ -4393,6 +4408,10 @@ class Session:
             set_router_loop_delegations=lambda v: setattr(self, "_router_loop_delegations", v),
             get_router_loop_agent_replies=lambda: self._router_loop_agent_replies,
             set_router_loop_agent_replies=lambda v: setattr(self, "_router_loop_agent_replies", v),
+            # Proposal 0067 P1' (#3978): same mutable-ref-owned-by-Session
+            # pattern as the two pairs above.
+            get_current_task=lambda: self.current_task,
+            set_current_task=lambda v: setattr(self, "current_task", v),
             # #2103 S1bc-exec: read this session's LIVE sid (spawned sessions are stamped
             # post-construction, so a cached value would be stale) for the responder_sid
             # tag; + the trusted spawned-task lookup for rendering a returning result.

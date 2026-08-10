@@ -622,6 +622,12 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None: ...
 
+    # Proposal 0067 P1' (#3978): mark the session's current_task as
+    # outstanding — called from the async-dispatch block below, right before
+    # the turn exits to let the delegate work. Sync (a plain attribute set,
+    # not an awaited call) — see RouterHostAdapter's implementation.
+    def mark_task_pending(self) -> None: ...
+
     # #2103 S1bc: spawn a fresh-context session under THIS agent for a task.
     # Multi-session hosts (the chat RouterHostAdapter) implement it; others leave
     # it unbound (= hasattr-guarded at caller-state build).
@@ -2253,6 +2259,15 @@ class RouterLoop:
                     if get_dispatch_kind(tc["function"]["name"]) == "async"
                 )
                 if async_count:
+                    # Proposal 0067 P1' (#3978): mark the session's own task
+                    # as still outstanding BEFORE exiting the turn — this is
+                    # exactly the turn-boundary MessageBus.request's
+                    # quiescence check needs to see, so a delegating
+                    # top-level requester keeps waiting for the peer's real
+                    # answer instead of returning this ack as if it were
+                    # final (the bug P1' exists to close; see
+                    # message_bus.py's _is_quiescent).
+                    self.host.mark_task_pending()
                     # B55 R-7 (2026-05-25): non-plan async dispatch (=
                     # delegate_to_agent or other peer-async tools). Mirror
                     # task / plan spawn_ack format: `[task_spawned]

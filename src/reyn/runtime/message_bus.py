@@ -189,8 +189,20 @@ class MessageBus:
 
         Cross-chain note: we do not filter by chain_id here — this is
         intentionally conservative.  See module docstring (ADR-E).
+
+        Proposal 0067 P1' (#3978): ``current_task`` closes exactly the gap
+        this docstring's own promise ("AND no running actions AND no
+        running plans") never checked — a top-level ``dispatch_kind="async"``
+        delegation (e.g. ``delegate_to_agent``) used to end the turn with the
+        inbox empty, so this returned True while the peer's real answer was
+        still outstanding; the caller (this class's own ``request``) would
+        then hand back the "delegated" ack as if it were final. See
+        ``inter_agent_messaging.py``'s ``handle_agent_response`` for where
+        the marker is cleared once the real answer settles.
         """
         if not agent.inbox.empty():
+            return False
+        if agent.current_task is not None:
             return False
         return True
 
