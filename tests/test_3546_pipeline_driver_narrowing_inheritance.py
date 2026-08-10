@@ -1068,7 +1068,6 @@ def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
     ever gets — a stale name (a renamed or deleted test) fails here rather than
     quietly leaving the site unmeasured.
     """
-    tests_root = Path(__file__).resolve().parent
     for (mod, fn), decl in sorted(_SITE_PARENT_LAYERS.items()):
         assert decl.parent_layers.strip(), f"{mod}::{fn} declares no parent layers"
         assert (
@@ -1081,7 +1080,7 @@ def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
         )
         for ref in decl.measured_by:
             path_part, _, test_name = ref.partition("::")
-            path = tests_root.parent / path_part
+            path = REPO_ROOT / path_part
             assert path.is_file(), f"{mod}::{fn} names a missing test file: {ref}"
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             defined = {
