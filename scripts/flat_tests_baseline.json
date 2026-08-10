@@ -1,6 +1,4 @@
 [
-  "_async_wait.py",
-  "conftest.py",
   "test_3546_pipeline_driver_narrowing_inheritance.py",
   "test_3553_agent_step_worker_narrowing_inheritance.py",
   "test_3556_session_spawn_narrowing_inheritance.py",
