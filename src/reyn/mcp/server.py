@@ -67,7 +67,7 @@ _IDLE_GRACE_SECONDS: float = 0.05
 # from ``reyn.runtime.agent_locks`` at the top of this file; A2A traffic
 # reaches this same lock by routing through ``send_to_agent_impl`` below
 # rather than acquiring its own (see that module's docstring for the full
-# rationale, including why a2a.py's own import of it is vestigial).
+# rationale).
 #
 # FP-0013: with MessageBus, the inbox is the serialization point but the
 # lock is retained as a belt-and-suspenders measure during the migration
