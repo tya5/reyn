@@ -89,6 +89,10 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0026](0026-unified-tool-registry.md) | Unified tool registry — single ToolDefinition for router and phase surfaces (Proposed) |
 | [0027](0027-audit-seal-separation.md) | AuditSeal を Events (P6) から分離 — compliance と operational の責務境界 (Proposed) |
+| [0027a](0027a-audit-seal-hash-chain-topology.md) | Hash chain topology for AuditSeal (Proposed, depends on 0027) |
+| [0027b](0027b-audit-seal-config-hash-scope.md) | `config_hash` scope for AuditSeal (Proposed, depends on 0027) |
+| [0027c](0027c-audit-seal-plan-mode-integration.md) | `seal_unit` and plan-mode integration for AuditSeal (Proposed, depends on 0027 + 0023) |
+| [0027d](0027d-audit-seal-writer-failure-semantics.md) | AuditContext writer failure semantics (Proposed, depends on 0027) |
 | [0029](0029-mcp-install-permission.md) | `mcp_install` permission — install-time gating として permission system に追加 (Proposed) |
 | [0030](0030-universal-secret-handling.md) | Universal secret handling — `${VAR}` 全 yaml + `~/.reyn/secrets.env` + `reyn secret` CLI (Proposed) |
 | [0033](0033-rag-extensible-os.md) | RAG-extensible OS — `embed` / `index_*` / `recall` ops + `index_docs` stdlib + `IndexBackend` protocol (**Accepted** 2026-05-10) |
