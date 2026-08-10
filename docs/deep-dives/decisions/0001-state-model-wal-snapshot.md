@@ -92,7 +92,7 @@ Hard invariants:
 - Commit `445292f` (PR21) — initial inbox / chain WAL foundation
 - D-track Part A–C (PR-step-events, PR-state-foundation) — extended WAL
   taxonomy with skill_*, step_*, intervention_* events
-- [docs/en/concepts/runtime/events.md](../concepts/runtime/events.md) — event log + WAL
+- [concepts/runtime/events.md](../../concepts/runtime/events.md) — event log + WAL
   architecture
 - `concepts/skills/skill-resume.md` (removed) —
   user-facing summary

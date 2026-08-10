@@ -18,7 +18,7 @@ engine in at runtime. This guide walks you through that loop.
 1. **Copy the prompt.** Open
    [claude-design-prompt.md](claude-design-prompt.md) (or the bundled
    paste-ready version
-   [tmp/claude-design-prompt-v2.md](../../tmp/claude-design-prompt-v2.md))
+   [tmp/claude-design-prompt-v2.md](../../../../tmp/claude-design-prompt-v2.md))
    and copy the whole thing.
 2. **Edit the brief at the top.** Only the section between the
    🔓 EDITABLE markers — the design brief. Fill in your brand voice,
