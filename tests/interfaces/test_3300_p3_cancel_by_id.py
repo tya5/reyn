@@ -34,7 +34,7 @@ Covers (see the architect's #3300 design-pass comments on the issue):
 Real ``Session``/``StateLog``/``AgentSnapshot`` throughout — no
 ``unittest.mock``. The only "fake" collaborator is the same controllable
 plain-async-function hang ``tests/test_2242_hard_cancel.py`` /
-``tests/test_3300_p2a_queue_state_publish.py`` use for
+``tests/interfaces/test_3300_p2a_queue_state_publish.py`` use for
 ``RouterLoopDriver.run_turn`` (a real method-assignment, not a mock).
 """
 from __future__ import annotations

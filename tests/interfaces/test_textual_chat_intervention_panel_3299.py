@@ -274,7 +274,7 @@ def _pane_ids_in_order(panel: InterventionPanel) -> "list[str]":
 async def _settle_until(pilot, until) -> None:
     """Pump until ``until()`` is true (#3748: unbounded, owner policy).
 
-    Modelled on ``tests/test_textual_chat_copy_rewind_3362.py``'s
+    Modelled on ``tests/interfaces/test_textual_chat_copy_rewind_3362.py``'s
     ``_settle``, and on #3651's rule: wait for a signal, never for a
     wall-clock guess. A hang here surfaces via CI's own kill-switch,
     naming this exact loop -- callers' own assertions still fail for the

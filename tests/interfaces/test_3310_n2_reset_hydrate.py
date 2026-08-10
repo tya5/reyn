@@ -649,7 +649,7 @@ async def test_reset_streaming_replies_stale_chain_id_does_not_finalize_into_gho
 
 
 def _install_hanging_run_turn(session: Session):
-    """Same no-mock seam ``tests/test_3300_p2a_queue_state_publish.py`` uses
+    """Same no-mock seam ``tests/interfaces/test_3300_p2a_queue_state_publish.py`` uses
     (itself mirroring ``tests/test_2242_hard_cancel.py``): a real, plain
     async function method-assigned onto the instance standing in for a
     genuinely in-flight LLM call, so a turn can be held BUSY (never touching
@@ -668,7 +668,7 @@ def _install_hanging_run_turn(session: Session):
 async def _stop_auto_driver(reg: AgentRegistry, name: str) -> None:
     """Cancel the background ``session.run()`` driver ``AgentRegistry.attach``
     booted for ``name`` — the SAME helper
-    ``tests/test_3300_p2a_queue_state_publish.py`` uses, so a test can drive
+    ``tests/interfaces/test_3300_p2a_queue_state_publish.py`` uses, so a test can drive
     ``run_one_iteration()`` manually instead of racing the live loop for
     control over exactly when a submission dispatches vs. stays queued."""
     key = (name, _DEFAULT_SID)

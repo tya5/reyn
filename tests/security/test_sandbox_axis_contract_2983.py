@@ -194,7 +194,7 @@ def test_write_and_spawn_workload_test_ids_resolve_to_real_tests(axis_name: str)
     function in THIS file (added by this PR, see section 5 below) — not a
     stale or typo'd reference."""
     axis = next(a for a in AXIS_REGISTRY if a.name == axis_name)
-    # A pinned `path == "tests/test_sandbox_axis_contract_2983.py"` assert
+    # A pinned `path == "tests/security/test_sandbox_axis_contract_2983.py"` assert
     # used to sit here too — dropped, same class and same reasoning as the
     # network axis's own pin above: this asserts THIS FILE'S OWN path, so an
     # M4 bucket move of this very file would fail here on the side that
