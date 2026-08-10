@@ -131,6 +131,14 @@ class RouterCallerState:
     # support multi-session delivery.
     run_prompt_result_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # Proposal 0067 P4e (#3978): run_prompt(collect="async") dispatch — sends
+    # a prompt to a LIVE peer (agent, session) as an agent_request and
+    # returns a task_id IMMEDIATELY (session_api.run_prompt_async); the reply
+    # arrives later via task_settled, not this call. Bound the same way as
+    # run_prompt_result_fn above (caller's own (agent, sid) pre-bound). None
+    # when the host doesn't support multi-session delivery.
+    run_prompt_async_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

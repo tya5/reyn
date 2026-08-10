@@ -12,18 +12,22 @@ Covers: spawn_agent (#2103 B-tool, renamed from agent_spawn — #4004),
 spawn_session (#2103 S1bc, renamed from session_spawn — #4004),
 create_topology (#2103 C1, renamed from topology_create — #4004),
 send_to_session (proposal 0067 P5, #3978 — new, not a relocation: authored
-directly here), run_prompt (proposal 0067 P4d, #3978). All are router-only
-— org-design / peer-messaging primitives the LLM drives directly.
+directly here), run_prompt (proposal 0067 P4d/P4e, #3978, both
+collect="attached" and collect="async"). All are router-only — org-design
+/ peer-messaging primitives the LLM drives directly.
 
 delegate_to_agent (formerly here, ADR-0026 M4) retired in proposal 0067 P6
-(#3978) — send_to_session (fire-and-forget) and run_prompt (synchronous,
-collect="attached") together cover what it did, minus one gap: no
-fire-and-forget-with-a-later-collected-reply verb exists yet (that is
-run_prompt's own eventual collect="async", deliberately sequenced AFTER P6
-per the proposal's own P4/P6 ordering note, to avoid building a second
-async-collection path P6 would immediately have to fold into the same one
-delegate_to_agent used).
-"""
+(#3978) — send_to_session (fire-and-forget), run_prompt(collect="attached")
+(synchronous), and run_prompt(collect="async") (fire-and-forget with a
+LATER-collected reply, via task_settled) together now cover what it did.
+The async variant was deliberately sequenced AFTER P6 per the proposal's
+own P4/P6 ordering note — P6 retired the TOOL but explicitly left the
+underlying ChainManager register/settle substrate in place for this
+producer to make live again (architect ruling, #3978, 2026-08-10);
+run_prompt(async) registers its own chain directly, per-call, rather than
+reusing delegate_to_agent's old per-turn accumulation wrapper (which was
+never in scope for a plain user-triggered turn anyway — see
+session_api.run_prompt_async's docstring)."""
 from __future__ import annotations
 
 from reyn.tools.descriptions._types import ParamDescription, ToolDescription
@@ -125,29 +129,35 @@ send_to_session = ToolDescription(
 
 run_prompt = ToolDescription(
     tool_name="run_prompt",
-    surfaced="router (gates.router=allow) — proposal 0067 P4d (#3978)",
+    surfaced="router (gates.router=allow) — proposal 0067 P4d/P4e (#3978)",
     purpose=(
         "Send a prompt to a LIVE peer (agent, session) and collect its "
-        "reply in-band, synchronously. Pairs with send_to_session (delivery "
-        "only, no reply)."
+        "reply either in-band (collect=\"attached\") or later as a "
+        "task_settled push (collect=\"async\"). Pairs with send_to_session "
+        "(delivery only, no reply ever collected)."
     ),
     text=(
-        "Run a prompt on a specific session of an agent and wait for its reply "
-        "in-band (collect=\"attached\" — currently the only supported value; an "
-        "async variant that returns a handle immediately is not yet available). "
-        "The target must already be a LIVE session that is not currently "
-        "running its own turn — this does not spawn a session, and refuses "
-        "with a named error if the target is busy. Use send_to_session instead "
-        "if you don't need to wait for a reply."
+        "Run a prompt on a specific session of an agent. collect=\"attached\" "
+        "waits for the reply in-band and returns it directly in this same "
+        "call — the target must already be a LIVE session that is not "
+        "currently running its own turn (does not spawn a session; refuses "
+        "with a named error if the target is busy). collect=\"async\" "
+        "dispatches the prompt and returns a task_id immediately, without "
+        "waiting — the target keeps running its own turn loop untouched, "
+        "and the reply arrives later as a task_settled push (see "
+        "describe_task/list_tasks to check progress in the meantime). Use "
+        "send_to_session instead if you don't need to collect a reply at all."
     ),
     ja=(
-        "指定した (agent, session) にプロンプトを送り、応答を待って同じ場で"
-        "受け取る（collect=\"attached\" — 現時点で対応する唯一の値。即座に"
-        "handle を返す非同期版はまだ利用できない）。対象は既に生きている"
-        "session でなければならず、かつ自分自身のターンを実行中でないこと"
-        "（このツールはセッションを生成しない。対象が busy なら、理由を"
-        "名指しした error を返す）。応答を待つ必要がなければ send_to_session"
-        "を使うこと。"
+        "指定した (agent, session) にプロンプトを送る。collect=\"attached\" は"
+        "応答を待ってこの呼び出しの中で直接受け取る（対象は既に生きている"
+        "session でなければならず、かつ自分自身のターンを実行中でないこと。"
+        "このツールはセッションを生成せず、対象が busy なら理由を名指しした"
+        "error を返す）。collect=\"async\" はプロンプトを送信して即座に"
+        "task_id を返し、待たない — 対象は自分自身のターンループをそのまま"
+        "実行し続け、応答は後で task_settled として届く（進捗確認は"
+        "describe_task/list_tasks を使う）。応答を一切受け取る必要がなければ"
+        "send_to_session を使うこと。"
     ),
 )
 

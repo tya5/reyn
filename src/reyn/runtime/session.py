@@ -4346,6 +4346,11 @@ class Session:
             # tag; + the trusted spawned-task lookup for rendering a returning result.
             session_id_fn=lambda: self._session_id,
             lookup_spawned_task=self.lookup_and_evict_spawned_task,
+            # Proposal 0067 P4e (#3978): task_settled dispatch for a settled
+            # kind="prompt" chain — this module's own "no direct reference
+            # to Session" design constraint means InterAgentMessaging can't
+            # call dispatch_external_event itself, so it's injected here.
+            dispatch_task_settled=self.dispatch_external_event,
         )
         return inter_agent_messaging
 

@@ -1105,3 +1105,118 @@ async def run_prompt_result(
             f"schema: {details}"
         )
     return {"status": "ok", "result": parsed}
+
+
+async def run_prompt_async(
+    registry: "AgentRegistry",
+    *,
+    caller_agent: str,
+    caller_sid: str,
+    target_agent: str,
+    target_session: str,
+    prompt: str,
+) -> dict:
+    """proposal 0067 P4e (#3978): ``run_prompt(collect="async")`` — dispatch
+    ``prompt`` to a LIVE peer ``(target_agent, target_session)`` as an
+    ``agent_request`` (the SAME transport ``delegate_to_agent`` used to
+    call, via ``InterAgentMessaging.send_to_agent``) and return a
+    ``task_id`` IMMEDIATELY — the reply arrives later via ``task_settled``,
+    not in this call.
+
+    Architect ruling (#3978, 2026-08-10, three rounds — reply-routing
+    identity, the register-per-call structural condition, and this
+    function's own shape):
+
+    **Producer identity**: the TOOL (``delegate_to_agent``) retired in P6;
+    the SUBSTRATE (``ChainManager.register()``/``.settle()``, the WAL
+    shape, journal, timeout arming) did not — P6 explicitly left it in
+    place for this function to make live again. ``send_to_agent`` is
+    reused ONLY as delivery transport here, not through its
+    delegation-tracker/finally-block side channel (see the next point).
+
+    **Why this function registers the chain directly, not via the
+    existing ``dispatched``/finally accumulation** (``inter_agent_messaging.py``'s
+    ``_handle_agent_request``/``_resolve_pending_chain``): that wrapper (1)
+    only exists for agent-to-agent turn handling — it is never armed for a
+    plain user-triggered turn, which is where an LLM actually calls
+    ``run_prompt``, and (2) accumulates EVERY ``send_to_agent`` call across
+    a whole turn into ONE chain at its ``finally`` block. Reusing it would
+    let the LLM calling ``run_prompt(collect="async")`` twice in one turn
+    produce a single ``waiting_on={B, C}`` chain tagged ``kind="prompt"`` —
+    a JOIN wearing a TASK's kind, corrupting the |waiting_on| cardinality
+    rule the task vocabulary depends on (architect: |waiting_on| == 1 is a
+    prompt task, >= 2 is a join, by the chain's OWN shape, never by
+    producer). Registering directly here, once per call, satisfies "1 call
+    = 1 chain" STRUCTURALLY — there is no shared per-turn state for a
+    second call to ever collide with, not merely "if careful."
+
+    **task_id ≡ chain_id** (architect's ID-space ruling): no separate id is
+    minted — the registered ``chain_id`` IS the returned ``task_id``,
+    identical to how ``describe_task``/``list_tasks`` already read
+    ``chain.chain_id`` as ``task_id`` for every other task kind.
+
+    **``cancel``**: wraps the TARGET session's ``cancel_inflight()``
+    (fire-and-forget — ``_PendingChain.cancel`` is a synchronous zero-arg
+    hook, ``cancel_inflight`` is async) — ADR-0040 D3 gives a monitor
+    ``cancel_task`` reach on a task; without this the registered handle's
+    ``cancel`` would be ``None`` and ``cancel_task`` would correctly (not
+    falsely) report "cannot cancel," but the task would then be
+    permanently uncancellable, which the ADR does not intend.
+
+    Refusals mirror ``run_prompt(collect="attached")``'s own two ADR-0040
+    D5 refusals (target must be a LIVE session; never spawns one) — this
+    function does NOT need the busy-check/lock/deadlock-timeout machinery
+    ``run_prompt_result`` needs, because it never drives the target
+    inline; the target keeps running its own turn loop untouched."""
+    caller_session = registry.get_session(caller_agent, caller_sid)
+    if caller_session is None:
+        raise RuntimeError(
+            f"run_prompt(collect=\"async\") requires a live caller session "
+            f"({caller_agent!r}, {caller_sid!r}) — mis-wiring."
+        )
+
+    if ":" in target_session:
+        transport, _, native = target_session.partition(":")
+        target = registry.resolve_session(target_agent, transport, native)
+    else:
+        target = registry.get_session(target_agent, target_session)
+    if target is None:
+        return {
+            "status": "error",
+            "kind": "target_session_not_found",
+            "error": (
+                f"no live session ({target_agent!r}, {target_session!r}) — "
+                'run_prompt(collect="async") addresses an already-running '
+                "peer, the same as send_to_session; it does not spawn one."
+            ),
+        }
+
+    import asyncio
+
+    chain_id = new_chain_id()
+
+    def _cancel_hook() -> None:
+        # Fire-and-forget — _PendingChain.cancel is a synchronous zero-arg
+        # hook, cancel_inflight() is async; mirrors run_pipeline_attached's
+        # own cross-session cancel-forward registration.
+        asyncio.ensure_future(target.cancel_inflight())
+
+    await caller_session.chains.register(
+        chain_id=chain_id,
+        depth=1,
+        original_text=prompt,
+        sender=caller_agent,
+        waiting_on={target_agent},
+        requester=Requester(agent_name=caller_agent, session_id=caller_sid),
+        origin_depth=1,
+        kind="prompt",
+        cancel=_cancel_hook,
+    )
+    caller_session.chains.arm_timeout(
+        chain_id, on_fire=caller_session._on_chain_timeout_fire,  # noqa: SLF001 — same shape as InterAgentMessaging's own register()+arm_timeout pairing (chain_manager.py callers)
+    )
+
+    await caller_session._send_to_agent(  # noqa: SLF001 — session_api reaches thin Session delegators the same way run_pipeline_attached's cancel-forward registration already does
+        to=target_agent, request=prompt, depth=1, chain_id=chain_id,
+    )
+    return {"status": "started", "data": {"task_id": chain_id}}
