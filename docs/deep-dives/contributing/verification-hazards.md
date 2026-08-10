@@ -817,6 +817,65 @@ different authors at N different times; assume there's an (N+1)th until a
 grep across the whole tree (§17: `src`/`tests`/`scripts`/`docs`, not just
 the file you started with) comes back empty.
 
+## 20. The enumeration hit and the classification missed — a correct population is not a correct verdict
+
+2026-08-09/10, three sessions independently hit the same shape during the
+same M4 test-migration arc, each getting the POPULATION right and the
+PER-ITEM CLASSIFICATION wrong:
+
+- **e2e-coder (#3976):** an AST scan surfaced a real call site; the session
+  classified it as "correctly uses `default_sandbox_policy`" without
+  reading that SAME call's other kwargs, which carried the actual defect.
+  The hit was found; what it meant was not checked.
+- **lead-coder (#3995→#4002):** the `__file__`-rooted-expression superset
+  was enumerated correctly (every such expression in the tree), but the
+  per-expression verdict used the wrong predicate ("does it leave its own
+  directory") — misclassifying `Path(reyn.__file__)` (a different
+  package's file, not a hazard) as dangerous, and `Path(__file__).parent /
+  "_support"` (one hop, but `_support` doesn't travel with a moved file)
+  as safe.
+- **tui-coder (#4011):** a grep for `"tests/<name>.py"` string literals
+  returned 30+ hits. A SAMPLE of a few were confirmed prose/docstring
+  cross-references, and that verdict was extrapolated to the rest without
+  checking each one — one of the un-sampled hits was actually a
+  `_TCLI = "tests/…py"` registry constant, a programmatic reference, not
+  prose.
+
+**Why the pattern recurs together:** getting the population right is a
+*procedural* improvement (switch grep to an AST scan, take the superset
+instead of a hand-picked list) and it registers consciously as progress.
+Classification has no equivalent shortcut — it can only be done one item
+at a time — so "the count matches" or "the shape looks the same" becomes
+tempting as a stopping point. The sample-then-extrapolate failure is
+specifically MORE likely right after a population is correctly closed, not
+less: the confidence earned from getting the harder procedural step right
+transfers to the easier-feeling classification step, where it doesn't
+belong. This is a different shape than §4's census-vs-structure gap (a
+COUNT that turned out wrong) and different from §13's gate-scope gap (an
+assertion that covers less than it claims) — here the set itself was
+correct throughout, and the verdicts attached to its members were not.
+
+**Apply:**
+- After writing "the population is closed," ask "is the classification
+  closed" as a SEPARATE question — the two are independent claims, and one
+  being true says nothing about the other.
+- If a verdict was reached by sampling N of M hits and extrapolating,
+  write that down as sampling, not as a checked result. Written down, the
+  next reader can challenge it; left implicit, it reads as measurement.
+- Past the point where classifying each hit by hand doesn't scale, hand
+  the classification to a MECHANISM, not a person re-reading faster — the
+  `#4009` migration gate's own "a′" answer is exactly this: instead of
+  inferring whether a moved `__file__` expression is now broken, it
+  re-resolves the expression against the file's real post-move location
+  and checks existence directly, no classification step at all.
+- Every instance above was caught by something OTHER than the sweep that
+  produced the miscount: CI (#3989/#3994), `ruff`'s `I001` surfacing an
+  unusual import (#4011's dotted-form gap), or the referenced side's own
+  test suite (#4011's registry constant). An audit does not reliably find
+  its own blind spot — plan for a second, independent mechanism to catch
+  what the first one's classification step missed, rather than trusting a
+  repeated pass by the same method.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
