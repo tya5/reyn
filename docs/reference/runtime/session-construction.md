@@ -299,7 +299,7 @@ written — not just the one instance: an identity reference can't retarget.
 
 The rationale (git-grep evidence: `_audit_events =` is a single assignment repo-wide, in
 `Session.__init__` only) is machine-checked, not just asserted in the docstring —
-`tests/test_audit_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
+`tests/repo/test_audit_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
 path adds a second assignment site, naming the offending file:line and saying "route this
 through the builder arg instead."
 

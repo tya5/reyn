@@ -119,7 +119,7 @@ next person from "fixing" it back to eager capture.
 A comment may move to a doc only if BOTH hold:
 
 1. **The inline reference names a section or anchor, not a heading's
-   words** — `<doc>.md#<anchor>` form. `tests/test_3126_doc_anchor_gate.py`
+   words** — `<doc>.md#<anchor>` form. `tests/scripts/test_3126_doc_anchor_gate.py`
    (#3126) verifies this exact form against the real slugify function that
    produces the doc's actual anchors, so a wrong or later-removed anchor
    fails CI immediately. **A reference by heading text is NOT gated** — it

@@ -3682,7 +3682,7 @@ class Session:
         captured once cannot retarget: it either keeps pointing at the
         EventLog it was given, or (if that assumption ever breaks) the
         AST single-assignment guard in
-        ``tests/test_audit_events_single_assignment_3408.py`` goes RED first,
+        ``tests/repo/test_audit_events_single_assignment_3408.py`` goes RED first,
         naming the new call site and saying "route this through the builder
         arg, not a rediscovered eager ``self._audit_events``."
 

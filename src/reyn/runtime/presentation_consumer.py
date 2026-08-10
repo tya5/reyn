@@ -22,7 +22,7 @@ This module makes that orphan **impossible by construction**:
   construction to Session init.
 - `OutboxPresentationConsumer.sink()` is the SOLE construction site for
   `OutboxPresentationRenderer` (enforced by the AST guard in
-  `tests/test_present_sink_ast_guard_2708.py`, the #1190/#2683 single-writer model), so a
+  `tests/repo/test_present_sink_ast_guard_2708.py`, the #1190/#2683 single-writer model), so a
   bare/orphan outbox sink cannot be instantiated anywhere in `src/reyn`.
 - A `NullPresentationSink` (documented no-op) is available ONLY through
   `NullPresentationConsumer`, whose surface name must be a member of the reviewed
@@ -100,7 +100,7 @@ class SpawnBridgePresentationConsumer:
     (`session_api.py::run_pipeline_attached`): with the sink inherited, the parent receives
     the present by construction (single delivery), not by a post-hoc copy of the driver's
     drained outbox. It constructs NO `OutboxPresentationRenderer` itself (it delegates), so
-    the #2708 AST guard (`tests/test_present_sink_ast_guard_2708.py`) — which pins
+    the #2708 AST guard (`tests/repo/test_present_sink_ast_guard_2708.py`) — which pins
     `OutboxPresentationConsumer.sink` as the SOLE renderer construction site — is
     unaffected."""
 
