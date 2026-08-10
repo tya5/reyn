@@ -3,7 +3,7 @@ proposal ``docs/deep-dives/proposals/0059-hook-event-redesign.md`` §3.2/§3.3).
 
 reyn's ``HookDispatcher`` (``reyn.hooks.dispatcher``) is the Sync path: an
 awaited, per-hook-isolated, registration-ordered dispatch invoked at each of
-the 10 builtin lifecycle/external points. Before this module reyn had no
+the builtin lifecycle/external points (``ALLOWED_HOOK_POINTS``). Before this module reyn had no
 pub/sub broadcast layer at all (proposal §3.2 reconcile) — this is that layer,
 net-new, and the prerequisite substrate the Composer (Phase 4b) builds on.
 Phase 4a delivers ONLY the Bus; it does not build the Composer, the
