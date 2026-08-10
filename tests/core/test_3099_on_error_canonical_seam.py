@@ -36,7 +36,7 @@ throughout (no mocks) — a dispatch result carrying a genuine
 `_canonical_source: "file"` tag with a `status: "denied"` + `error` shape
 (the EXACT shape `execute_op`'s own `PermissionError` handler produces, and
 the EXACT shape #3098's real end-to-end `glob_files`-against-an-unpermitted-
-folder test (`tests/test_fp0063_p3_rag_pipelines.py::
+folder test (`tests/builtin/test_fp0063_p3_rag_pipelines.py::
 test_ingest_file_discovery_aborts_clean_on_unreadable_input_path`) exercises
 through the real op_runtime chokepoint) drives every test here — no invented
 result shape.

@@ -21,7 +21,7 @@ refresh_mcp_servers()` right after construction (before returning the sid to the
 caller), for every mode — the single funnel all three programmatic-spawn call sites
 share.
 
-Mirrors `tests/test_mcp_hot_reload_2372.py`'s pattern (install to the IN-set, assert
+Mirrors `tests/core/test_mcp_hot_reload_2372.py`'s pattern (install to the IN-set, assert
 via the public `_router_host.get_mcp_servers()` router-facing enumeration) but drives
 it through a REAL `AgentRegistry.spawn_session_recorded` — the actual production
 call path every ephemeral/driver/delegate spawn takes — rather than calling

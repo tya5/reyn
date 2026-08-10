@@ -36,7 +36,7 @@ Policy (docs/deep-dives/contributing/testing.md): real ``Session`` / real
 ``HookDispatcher`` / real ``Composer`` / real ``HookBus`` — no
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``. Only the LLM
 boundary (``session._loop_driver.run_turn``) is replaced with a plain async
-recorder — the SAME substitution ``tests/test_hook_loop_valve_1800_7.py``
+recorder — the SAME substitution ``tests/core/test_hook_loop_valve_1800_7.py``
 (the pre-existing, merged loop-valve Tier-2 suite) already establishes as
 compliant for this exact class of test: the valve/composer/consumer wiring
 under test never touches the LLM boundary, so a recorder proves what ran
@@ -96,7 +96,7 @@ def _make_session(
 def _fake_run_turn(session: Session) -> list[str]:
     """Replace the LLM boundary with a recorder of the per-turn user_text —
     the observable proof of which turns actually ran (mirrors
-    ``tests/test_hook_loop_valve_1800_7.py``)."""
+    ``tests/core/test_hook_loop_valve_1800_7.py``)."""
     ran: list[str] = []
 
     async def _noop(user_text: str, chain_id: str) -> None:
@@ -182,7 +182,7 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
         # One composer + the composed-consumer bridge both subscribe to the
         # SAME per-session HookBus at startup (§3.3 per-Session scope; the
         # bus's public ``subscriber_count`` is the same observable surface
-        # ``tests/test_hook_event_bus_0059_phase4a.py`` already uses for
+        # ``tests/hooks/test_hook_event_bus_0059_phase4a.py`` already uses for
         # wiring-level assertions). Wait for both before dispatching, since
         # ``HookBus.publish`` is broadcast-only (no buffering) — dispatching
         # before a subscriber attaches would silently drop the event.

@@ -23,7 +23,7 @@ time; this module holds the second kind.
 
 ``NOT_A_PRESENTATION`` is not a value of the presentation axis at all, so no
 future cell can register it — the property
-``tests/test_fp0066_p4a_transport_axis_3247.py`` asserts directly, which is what
+``tests/tools/test_fp0066_p4a_transport_axis_3247.py`` asserts directly, which is what
 turns "outside the namespace" from a comment into a checked claim.
 
 **The mark is the point.** A negative example is written exactly like a positive

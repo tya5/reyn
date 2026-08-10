@@ -91,7 +91,7 @@ class _Events:
 
 class _FakeBus:
     """Real RequestBus-compatible Fake that pre-answers with a scripted choice
-    (same pattern as tests/test_require_file_jit_ask_1505.py's _FakeBus — a
+    (same pattern as tests/security/test_require_file_jit_ask_1505.py's _FakeBus — a
     scriptable Fake, not a mock: it implements the real ``request`` surface)."""
 
     def __init__(self, choice: str) -> None:

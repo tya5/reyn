@@ -46,7 +46,7 @@ def _isolate_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ``workspace_root`` override, so the index's on-disk cache defaults to
     ``Path.cwd() / .reyn/cache/index/actions/`` (``action_index.py``'s
     ``__init__``) — CWD-relative, not per-test. Without isolation every
-    such test in this file (and ``tests/test_universal_handlers.py``'s
+    such test in this file (and ``tests/tools/test_universal_handlers.py``'s
     ``test_search_actions_*`` tests) shares ONE physical
     ``index.db``/``catalog_meta.json`` at the real repo root. Under
     ``pytest -n auto`` this is a genuinely concurrent OS-process race: a
@@ -71,7 +71,7 @@ def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
     route the embed call through ``execute_op(EmbedIROp(...), ctx)`` (the
     shared `embed` op) instead of calling a caller-held provider directly —
     tests monkeypatch the op-runtime module's ``get_provider`` (the
-    established convention, see ``tests/test_op_embed.py``) instead of
+    established convention, see ``tests/core/test_op_embed.py``) instead of
     passing the fake provider as a positional argument.
     """
     import reyn.core.op_runtime.embed as _embed_mod

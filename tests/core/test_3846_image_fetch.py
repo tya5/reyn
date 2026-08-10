@@ -3,7 +3,7 @@
 ``pin_ssrf=True`` is unconditional in this module (never a caller choice).
 Its own loopback denial is UNconditional too (`_ssrf_guard._deny_reason`
 checks `ip.is_loopback` before the `allow_private` opt-in even applies), so —
-same as `tests/test_web_fetch_download_cap_1913.py`'s own approach for the
+same as `tests/core/test_web_fetch_download_cap_1913.py`'s own approach for the
 identical reason — a real local `HTTPServer` on 127.0.0.1 is structurally
 unreachable through the pinned transport and cannot serve as "a real
 collaborator" here; there is no real, deterministic remote HTTPS image host
@@ -13,7 +13,7 @@ module calls), not a MagicMock — same idiom the existing web_fetch download-
 cap test already uses for this exact class of problem.
 
 The SSRF-block path itself is `_ssrf_guard`'s own tested contract
-(`tests/test_ssrf_guard_1956.py`) — not re-proven here. What IS tested here
+(`tests/http_safety/test_ssrf_guard_1956.py`) — not re-proven here. What IS tested here
 is `image_fetch`'s OWN logic: scheme gate, allowlist gate, size cap, SSRFBlocked
 wrapping, and that a normal response round-trips (bytes + content-type).
 """

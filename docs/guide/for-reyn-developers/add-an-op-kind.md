@@ -152,7 +152,7 @@ Handler conventions:
   `src/reyn/core/op_runtime/status_classify.py`
   (`KNOWN_SUCCESS_STATUSES` / `KNOWN_PARTIAL_STATUSES` /
   `KNOWN_FAILURE_STATUSES`) **in the same PR** (#3193). This is CI-enforced,
-  not just a convention: `tests/test_3193_op_status_classifier_coverage.py`
+  not just a convention: `tests/core/test_3193_op_status_classifier_coverage.py`
   AST-walks every `op_runtime/*.py` handler for literal `"status": "..."`
   dict entries and fails if any of them is missing from
   `status_classify.py`'s known-status tables — a new status you forget to

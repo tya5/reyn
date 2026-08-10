@@ -57,7 +57,7 @@ from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 # A PID very unlikely to be allocated on any kernel (mirrors the existing
-# precedent in tests/test_action_embedding_index_concurrency.py).
+# precedent in tests/core/test_action_embedding_index_concurrency.py).
 _DEAD_PID = 2**31 - 1
 
 

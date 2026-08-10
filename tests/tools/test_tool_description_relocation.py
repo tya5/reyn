@@ -19,7 +19,7 @@ canonical schema for every later render, of any tool, for any provider).
 
 #3385 then asserted that invariant DIRECTLY — the stronger, policy-compliant
 form — in
-``tests/test_tool_schema_3383_process_history_independence.py``, at all four
+``tests/tools/test_tool_schema_3383_process_history_independence.py``, at all four
 seams a canonical schema can escape by reference (``render_for_router``,
 ``build_tools``, ``describe_action``, the hot-list alias path), plus an AST
 gate forbidding a new shallow-copy call site outside the projection helper.

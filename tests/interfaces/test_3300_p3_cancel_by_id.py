@@ -33,7 +33,7 @@ Covers (see the architect's #3300 design-pass comments on the issue):
 
 Real ``Session``/``StateLog``/``AgentSnapshot`` throughout — no
 ``unittest.mock``. The only "fake" collaborator is the same controllable
-plain-async-function hang ``tests/test_2242_hard_cancel.py`` /
+plain-async-function hang ``tests/core/test_2242_hard_cancel.py`` /
 ``tests/interfaces/test_3300_p2a_queue_state_publish.py`` use for
 ``RouterLoopDriver.run_turn`` (a real method-assignment, not a mock).
 """
@@ -60,7 +60,7 @@ def _make_session(wal: Path, snapshot_path: Path) -> tuple[Session, StateLog]:
 
 
 def _install_hanging_run_turn(session: Session) -> tuple[asyncio.Event, asyncio.Event]:
-    """Same no-mock seam as ``tests/test_2242_hard_cancel.py`` / P2a: a real,
+    """Same no-mock seam as ``tests/core/test_2242_hard_cancel.py`` / P2a: a real,
     plain async function method-assigned onto the instance, standing in for a
     genuinely in-flight LLM call."""
     call_started = asyncio.Event()
@@ -166,7 +166,7 @@ async def test_cancelled_message_survives_wal_truncation_below_its_source_events
     vanishes" but specifically that inbox correctness survives.
 
     ★Strip-falsify (verified manually per repo discipline, mirroring
-    ``tests/test_2884_hook_driven_turns_truncation_falsify.py``): commenting
+    ``tests/core/test_2884_hook_driven_turns_truncation_falsify.py``): commenting
     out the ``self._snapshot.inbox = [...]`` prune line in
     ``SnapshotJournal.cancel_inbox`` (leaving only the WAL ``inbox_cancel``
     tombstone) makes the cancelled item's ``snapshot.inbox`` entry survive

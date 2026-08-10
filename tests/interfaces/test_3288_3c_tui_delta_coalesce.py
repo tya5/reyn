@@ -31,7 +31,7 @@ coalescing ever happened (a correction raised mid-PR after an earlier draft
 of this gate only asserted post-completion).
 
 Real ``TextualChatApp`` + a real minimal ``ClientTransport`` (mirrors
-``tests/test_agent_delta_no_visible_garbage_3288.py``'s ``QueueTransport``
+``tests/interfaces/test_agent_delta_no_visible_garbage_3288.py``'s ``QueueTransport``
 idiom) throughout — no ``unittest.mock``. No widget tree / layout change was
 made in this phase (the consumer reuses the existing ``kind="agent"`` render
 path via ``FlowModel.append`` / ``Entry.set_item``), so no new geometry gate
@@ -56,7 +56,7 @@ from reyn.schemas.models import Event
 
 class _DrivenClock:
     """The app's own ``clock`` injection point, driven instead of slept through
-    (the idiom ``tests/test_stream_spinner_3530.py`` uses for the blink).
+    (the idiom ``tests/interfaces/test_stream_spinner_3530.py`` uses for the blink).
 
     ★Load-bearing since #3570: a streamed reply's entry is repainted at most
     once per ``_STREAM_REPAINT_MIN_INTERVAL`` on THIS clock, so "push two deltas
@@ -84,7 +84,7 @@ class _DrivenClock:
 
 class QueueTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
-    queue (mirrors ``tests/test_agent_delta_no_visible_garbage_3288.py``'s
+    queue (mirrors ``tests/interfaces/test_agent_delta_no_visible_garbage_3288.py``'s
     helper of the same name)."""
 
     def __init__(self) -> None:

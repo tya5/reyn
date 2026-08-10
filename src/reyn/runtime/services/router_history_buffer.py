@@ -493,7 +493,7 @@ class RouterHistoryBuffer:
         # ``effective_trigger`` are the elide/no-elide decision's own inputs
         # — no conversation content — matching the 0059 §5 audit-payload
         # discipline. See the ``elide_evaluated`` witness in
-        # ``tests/test_2957_prb_elide_advisor_token_unification.py`` for why
+        # ``tests/runtime/test_2957_prb_elide_advisor_token_unification.py`` for why
         # exercising this requires an UNRESOLVABLE path-ref image fixture,
         # not an ordinary inline one.
         if self._events is not None:

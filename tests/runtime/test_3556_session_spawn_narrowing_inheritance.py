@@ -57,7 +57,7 @@ because nothing ran would otherwise be indistinguishable from an absence observe
 because the capability was denied.
 
 The completeness half of the gate lives in
-``tests/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is what its
+``tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is what its
 ``_SITE_PARENT_LAYERS`` entry for ``router_host_adapter.spawn_session`` points at, which
 is what turns that entry from an intent record into a behaviour record.
 """

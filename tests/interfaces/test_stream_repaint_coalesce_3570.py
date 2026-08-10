@@ -26,8 +26,8 @@ emitted by the production ``on_content_delta`` wiring
 (``RouterLoop._emit_agent_delta`` → session audit-events → the registry's focus
 listener → the transport queue → the app's frame pump). The LLM call itself is
 the only faked boundary, the established idiom of
-``tests/test_agent_delta_audit_event_3288.py`` and
-``tests/test_3327_answer_bypasses_sentqueue.py``.
+``tests/interfaces/test_agent_delta_audit_event_3288.py`` and
+``tests/interfaces/test_3327_answer_bypasses_sentqueue.py``.
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def _tool_completed(op_id: str) -> OutboxMessage:
 
 class _Clock:
     """The app's OWN injection point (``TextualChatApp(clock=...)``), driven
-    instead of slept through — the idiom ``tests/test_stream_spinner_3530.py``
+    instead of slept through — the idiom ``tests/interfaces/test_stream_spinner_3530.py``
     already uses for the blink. Not a stand-in for a collaborator: the app takes
     a ``Callable[[], float]`` by design and production passes ``time.monotonic``.
     """

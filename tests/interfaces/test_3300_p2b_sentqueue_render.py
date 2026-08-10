@@ -9,7 +9,7 @@ describes for the render side:
 - ``user_submitted`` -> MATERIALIZE: a submitted message appears in the
   sent-queue region (dim, queued) — NOT immediately as a flow entry. This
   REPLACES P1 C's "render the echo directly as a flow entry"
-  (``tests/test_user_submitted_render_3300.py`` retargets its own
+  (``tests/interfaces/test_user_submitted_render_3300.py`` retargets its own
   TextualChatApp assertions to match).
 - ``turn_started(seq, chain_id)`` -> PROMOTE: the matching queued item is
   removed from the sent-queue and appended as a flow entry (the user line) —

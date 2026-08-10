@@ -318,7 +318,7 @@ def test_user_intervention_all_exports_include_new_layer_names() -> None:
     (= dropped from the explicit exports, but the module-level binding
     is retained so external code that imports the legacy name keeps
     working). Verified by the deprecated-alias test in
-    ``tests/test_intervention_legacy_alias_deprecated.py``.
+    ``tests/intervention/test_intervention_legacy_alias_deprecated.py``.
     """
     import reyn.user_intervention as mod
 

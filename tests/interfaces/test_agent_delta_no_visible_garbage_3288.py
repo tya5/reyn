@@ -25,7 +25,7 @@ indistinguishable from that assertion alone. The fix is an ARRIVAL WITNESS
 (positive control) that exercises the EXACT SAME ``push_event`` path the
 delta assertion depends on: push a real ``user_submitted`` + matching
 ``turn_started`` pair FIRST (the proven promote-to-FlowView sequence from
-``tests/test_3300_p2b_sentqueue_render.py::test_turn_started_promotes_matching_item_to_flow_entry``)
+``tests/interfaces/test_3300_p2b_sentqueue_render.py::test_turn_started_promotes_matching_item_to_flow_entry``)
 and assert the FlowView entry count DOES increase — proving this transport +
 pump pair is alive and forwarding EVENT frames — THEN push the delta(s) and
 assert against that KNOWN-alive baseline. (A bare ``user_submitted`` alone
@@ -44,7 +44,7 @@ delivery mechanism, not at the "agent_delta" consumer this file is actually
 about.
 
 Real instances only: a real ``TextualChatApp`` driven via Textual's
-``run_test()`` harness (mirrors ``tests/test_user_submitted_render_3300.py``'s
+``run_test()`` harness (mirrors ``tests/interfaces/test_user_submitted_render_3300.py``'s
 ``QueueTransport`` idiom) and a real ``FlowView`` query — no mocks.
 """
 from __future__ import annotations
@@ -65,7 +65,7 @@ from reyn.schemas.models import Event
 
 class _DrivenClock:
     """The app's own ``clock`` injection point, driven instead of slept through
-    (the idiom ``tests/test_stream_spinner_3530.py`` uses for the blink).
+    (the idiom ``tests/interfaces/test_stream_spinner_3530.py`` uses for the blink).
 
     ★Load-bearing since #3570: a streamed reply's entry is repainted at most
     once per ``_STREAM_REPAINT_MIN_INTERVAL`` on THIS clock, so "push two deltas
@@ -93,8 +93,8 @@ class _DrivenClock:
 
 class QueueTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
-    queue (mirrors ``tests/test_user_submitted_render_3300.py`` /
-    ``tests/test_3300_p2b_sentqueue_render.py``'s helper of the same name) —
+    queue (mirrors ``tests/interfaces/test_user_submitted_render_3300.py`` /
+    ``tests/interfaces/test_3300_p2b_sentqueue_render.py``'s helper of the same name) —
     lets a test push a frame and inspect ``TextualChatApp``'s retained
     conversation model afterward."""
 
@@ -158,7 +158,7 @@ async def _arrival_witness(transport: QueueTransport, pilot, app: TextualChatApp
     ``push_event`` (the SAME EventFrame path the delta assertions below
     depend on) and assert it PROMOTES to a FlowView entry — the proven
     promote sequence from
-    ``tests/test_3300_p2b_sentqueue_render.py::test_turn_started_promotes_matching_item_to_flow_entry``.
+    ``tests/interfaces/test_3300_p2b_sentqueue_render.py::test_turn_started_promotes_matching_item_to_flow_entry``.
     Returns the FlowView entry count AFTER the witness promotion, so callers
     assert subsequent pushes against a KNOWN-alive baseline instead of an
     unverified "before" count. A dead/neutered ``push_event`` makes this

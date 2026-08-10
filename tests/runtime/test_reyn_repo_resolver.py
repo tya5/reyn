@@ -139,7 +139,7 @@ def test_safe_resolve_inside_rejects_non_declared_top_level():
     with pytest.raises(ValueError, match="reachable set"):
         safe_resolve_inside(root, "pyproject.toml")
     with pytest.raises(ValueError, match="reachable set"):
-        safe_resolve_inside(root, "tests/test_reyn_repo_resolver.py")
+        safe_resolve_inside(root, "tests/runtime/test_reyn_repo_resolver.py")
 
 
 # ── list_entries ─────────────────────────────────────────────────────────────

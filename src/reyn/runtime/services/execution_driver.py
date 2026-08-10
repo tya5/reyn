@@ -38,7 +38,7 @@ class ExecutionDriver(Protocol):
 
     Every method signature here must stay in sync with the corresponding
     method on ``RouterLoopDriver``.  Drift is caught by the Tier 2 seam
-    test (``tests/test_execution_driver_seam.py``).
+    test (``tests/runtime/test_execution_driver_seam.py``).
     """
 
     async def run_turn(self, user_text: str, chain_id: str) -> None:

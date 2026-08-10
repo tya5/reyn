@@ -24,8 +24,8 @@ Remaining references:
 | `PermissionResolver.require_web_fetch` | Method, async | **Delete** |
 | Legacy `web.fetch: allow / deny` checks in `require_http_get` (5 sites) | Compat branch | **Delete** |
 | DeprecationWarning + legacy prompt fallback in `require_http_get` no-decl branch | Compat branch | **Delete**; raise immediately instead |
-| `tests/test_permission_prompt_phrasing.py::test_require_web_fetch_prompt_is_natural` | Test | Migrate to test the wildcard prompt instead |
-| `tests/test_web_fetch_unified.py::test_require_web_fetch_config_*` (3 tests) | Tests | Migrate to test `require_http_get` legacy-compat-via-`web.fetch` behaviour (= until removal) → then update to `http.get` semantics |
+| `tests/runtime/test_permission_prompt_phrasing.py::test_require_web_fetch_prompt_is_natural` | Test | Migrate to test the wildcard prompt instead |
+| `tests/security/test_web_fetch_unified.py::test_require_web_fetch_config_*` (3 tests) | Tests | Migrate to test `require_http_get` legacy-compat-via-`web.fetch` behaviour (= until removal) → then update to `http.get` semantics |
 | `dogfood/scripts/verify_permission_prompt_structure.py` | Trace tool | Update to call `require_http_get` |
 | `cli/templates.py:60` template comment | Documentation | Update example to `permissions.http.get: [{host: "*"}]` |
 | `chat/router_loop.py:300` `web.fetch: allow` catalog check | Catalog visibility | Verify whether the check should move to `http.get` config or stay on the legacy key |
@@ -79,14 +79,14 @@ Remaining references:
 
 ### Test migration
 
-1. `tests/test_permission_prompt_phrasing.py::test_require_web_fetch_prompt_is_natural`:
+1. `tests/runtime/test_permission_prompt_phrasing.py::test_require_web_fetch_prompt_is_natural`:
    - Replace with `test_require_http_get_wildcard_prompt_is_natural` (= test the wildcard 4-layer prompt's natural-language phrasing).
 
-2. `tests/test_web_fetch_unified.py`:
+2. `tests/security/test_web_fetch_unified.py`:
    - 3 `test_require_web_fetch_*` tests → 2 of them (config-deny / config-allow) become regression tests for the **decision** whether `web.fetch` config key stays as alias. If kept, test against `require_http_get` directly. If removed, delete the tests.
    - 1 test (`test_router_invoke_action_web_fetch_deny_raises_permission_error`) is already passing post-PR #637 (= deny path still works via `require_http_get`). Verify regex stays correct.
 
-3. `tests/test_permission_collapse_phase3.py`:
+3. `tests/security/test_permission_collapse_phase3.py`:
    - Remove the `test_require_http_get_no_decl_emits_deprecation_warning` test (= behavior being deleted).
    - Remove `test_require_http_get_legacy_web_fetch_allow_pre_approves` if `web.fetch` config alias is also removed.
    - Replace `test_require_http_get_raises_for_undeclared_host` to assert the new immediate-raise behaviour without DeprecationWarning.

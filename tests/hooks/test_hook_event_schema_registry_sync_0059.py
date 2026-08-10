@@ -34,7 +34,7 @@ side effect still runs for real; only the observation is added) since every
 builtin producer, in-process or out-of-process, ultimately calls some
 ``HookDispatcher`` instance's ``dispatch(point, template_vars)``. The LLM
 boundary is the only thing faked (a real async stub, the established idiom
-in ``tests/test_1800_wake_drain.py`` / ``tests/test_2608_run_loop_pickup.py``).
+in ``tests/core/test_1800_wake_drain.py`` / ``tests/llm/test_2608_run_loop_pickup.py``).
 """
 from __future__ import annotations
 

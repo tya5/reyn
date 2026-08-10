@@ -51,7 +51,7 @@ def _scripted_llm():
     # The DETACHED driver's completion posts a ``pipeline_result`` inbox
     # message to the reply-to (caller) session, whose next router turn reaches
     # real litellm.acompletion with no stub wired — same shape as the sibling
-    # stub in tests/test_2103_s1bc_exec_result_routing.py.
+    # stub in tests/runtime/test_2103_s1bc_exec_result_routing.py.
     async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
         return LLMToolCallResult(
             content="ack", tool_calls=[], finish_reason="stop",

@@ -1026,7 +1026,7 @@ class CompactionEngine:
         # passes through unchanged. resolver defaults to an empty passthrough
         # ModelResolver so already-resolved callers/tests need not pass one;
         # every PRODUCTION construction site MUST pass its real resolver
-        # (enforced by tests/test_compaction_resolver_aware_1172.py so a future
+        # (enforced by tests/llm/test_compaction_resolver_aware_1172.py so a future
         # caller cannot reintroduce the unresolved-class leak).
         if resolver is None:
             from reyn.llm.model_resolver import ModelResolver as _MR

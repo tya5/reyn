@@ -188,5 +188,5 @@ def test_search_tool_structure():
     # the two to re-add when FP-0024 is switched back on, and which to re-check
     # first. Read it before reinstating either. Liveness of the kind vocabulary
     # is now a repo-wide gate
-    # (``tests/test_audit_event_kind_vocabulary_3410.py``) rather than a
+    # (``tests/core/test_audit_event_kind_vocabulary_3410.py``) rather than a
     # per-feature spot check that could only ever see the declaration side.

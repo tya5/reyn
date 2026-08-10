@@ -25,7 +25,7 @@ time — this file proves that per surface:
   ``turn_started``. The two TextualChatApp tests below are retargeted to that
   lifecycle (mirrors how #3299 P1's test file retargeted the #3273 chip tests
   to the new panel path); the full materialize/promote/neutralize/live-update
-  gate suite lives in ``tests/test_3300_p2b_sentqueue_render.py``.
+  gate suite lives in ``tests/interfaces/test_3300_p2b_sentqueue_render.py``.
 
 Also covers the cross-cutting invariants the design pass called out:
 ordering (echo precedes the agent's turn) and multi-client (every attached
@@ -383,7 +383,7 @@ async def test_textual_chat_app_materializes_user_submitted_in_sent_queue() -> N
     """Tier 2b: #3300 P2b — a "user_submitted" EVENT frame MATERIALIZES in the
     sent-queue region, NOT as a flow entry (that direct-to-flow behavior was
     P1 C's; P2b replaces it with the sent-queue "upward conveyor" — see
-    ``tests/test_3300_p2b_sentqueue_render.py`` for the full materialize/
+    ``tests/interfaces/test_3300_p2b_sentqueue_render.py`` for the full materialize/
     promote/neutralize/live-update gate suite)."""
     from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 

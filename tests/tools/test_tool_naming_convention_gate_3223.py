@@ -135,7 +135,7 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
 # "no X__X"), its own grandfather set, and its own classifier; the namespace is
 # gone, so the rules that governed it are too. The property that replaces them
 # — that no name anywhere carries the separator — is
-# ``tests/test_no_qualified_tool_names_3429.py``, which derives its subject
+# ``tests/tools/test_no_qualified_tool_names_3429.py``, which derives its subject
 # from the registry rather than from a curated list.
 
 

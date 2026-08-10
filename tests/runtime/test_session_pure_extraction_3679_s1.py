@@ -6,8 +6,8 @@
 Zero behavior change — every existing test that exercised these functions
 through `session.py` still passes UNMODIFIED except for the import line
 itself switching to the new module (the tier's own acceptance condition:
-"only the rename differs" — see `tests/test_force_close_covers_slice_1092.py`
-and `tests/test_retry_loop_chat_wiring_1125.py`, both updated in this same
+"only the rename differs" — see `tests/runtime/test_force_close_covers_slice_1092.py`
+and `tests/runtime/test_retry_loop_chat_wiring_1125.py`, both updated in this same
 PR to import from the new module, no other diff).
 
 Three things pinned here, matching the stage-1 acceptance conditions

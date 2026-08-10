@@ -87,7 +87,7 @@ implements. See ``reyn.dev.testing.replay_stacking`` for the grouping rule
 that lets :meth:`flush` tell "this session re-recorded that exact call under
 a new key" (drop the old one) from "a different call recorded by a sibling
 test sharing this same fixture file" (keep it) — and
-``tests/test_replay_fixture_no_stacking_3634.py`` for the CI gate that fails
+``tests/dev/test_replay_fixture_no_stacking_3634.py`` for the CI gate that fails
 if any committed fixture holds a stacked group anyway.
 
 Sensitive data note

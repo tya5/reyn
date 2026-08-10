@@ -80,6 +80,6 @@ Test coverage: `test_named_skill_direct_invoke_without_list_skills` (Tier 3a) gu
 ## Implementation scope
 
 - `src/reyn/chat/router_system_prompt.py`: +10 lines (ROUTING RULE (ABSOLUTE) block)
-- `tests/test_router_system_prompt.py`: +1 Tier 2 test (`test_v3_absolute_routing_rule_present`)
+- `tests/runtime/test_router_system_prompt.py`: +1 Tier 2 test (`test_v3_absolute_routing_rule_present`)
 - `tests/fixtures/llm/router/*.jsonl`: 6 new fixture entries across 4 files
 - No OS changes, no schema changes (P7-safe)

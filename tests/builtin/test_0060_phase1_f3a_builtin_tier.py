@@ -105,8 +105,8 @@ def _make_ctx(tmp_path: Path, *, turn_origin: "str | None") -> OpContext:
 # F3a shipped all three maps EMPTY (mechanism only); F3b populates all three
 # — this file no longer asserts any of the three maps stay empty, since that
 # was F3a's phase-scoped state, not a permanent one. See
-# tests/test_0060_phase2_f3b_builtin_content.py (core spine) and
-# tests/test_0060_f3b_sibling_builtins.py (this PR's 2 exemplars) for the
+# tests/core/test_0060_phase2_f3b_builtin_content.py (core spine) and
+# tests/core/test_0060_f3b_sibling_builtins.py (this PR's 2 exemplars) for the
 # content-level co-vet pins.
 # ---------------------------------------------------------------------------
 
@@ -235,7 +235,7 @@ def test_pyproject_package_data_repurposed_to_builtin_glob() -> None:
     0061 migrated the build backend setuptools -> Hatchling: the
     equivalent of `[tool.setuptools.package-data]` is now
     `[tool.hatch.build.targets.wheel].artifacts` (see `pyproject.toml` +
-    `tests/test_0061_repo_self_access_parity.py`, which further gates
+    `tests/runtime/test_0061_repo_self_access_parity.py`, which further gates
     the built wheel actually contains these files)."""
     data = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     artifacts = data["tool"]["hatch"]["build"]["targets"]["wheel"]["artifacts"]

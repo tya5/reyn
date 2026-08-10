@@ -92,7 +92,7 @@ def register(kind: str, handler, *, canonical) -> None:
     opt-in, or the provisional ``CANONICAL_TODO`` marker. The declaration is born WITH the op registration (not a
     free-floating ``_MAPPERS`` dict hand-synced elsewhere), so an op kind can never reach the offload
     chokepoint without a declared LLM-visible shape — the structural gap the 2026-07-09 dogfood
-    incident exposed. The coverage gate (``tests/test_fp0056_canonical_coverage_gate.py``) enumerates
+    incident exposed. The coverage gate (``tests/core/test_fp0056_canonical_coverage_gate.py``) enumerates
     every registered kind and asserts the declaration exists."""
     from reyn.core.offload.canonical import declare_canonical
 

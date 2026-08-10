@@ -214,7 +214,7 @@ class SlashCommand:
 `Session`: slash is client-side, so what a handler depends on is the client
 seam (`ClientTransport` — `reply()` writes through `put_display`). The
 `session` field on the context is declared migration residue, enumerated in
-`tests/test_3595_s4_slash_handler_seam.py`, not a supported dependency for a
+`tests/interfaces/test_3595_s4_slash_handler_seam.py`, not a supported dependency for a
 new command.
 
 **Since #3595 S5** the DISPATCH is client-side too:

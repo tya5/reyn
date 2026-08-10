@@ -17,7 +17,7 @@ explicit per-hook value is a decision and therefore silences the refusal.
 
 Real ``load_config`` / ``load_hooks`` / ``HookDispatcher`` / ``run_shell_hook``, and
 a real (non-mock) recording SandboxBackend implementing the actual backend protocol
-— the ``_RecordingBackend`` pattern of tests/test_hook_subprocess_per_site_2827.py.
+— the ``_RecordingBackend`` pattern of tests/hooks/test_hook_subprocess_per_site_2827.py.
 The backend is the enforcement boundary (its own enforcement is #1914/#2820/#2983);
 what is pinned here is the CONTRACT of what reaches it and what the operator is told.
 """

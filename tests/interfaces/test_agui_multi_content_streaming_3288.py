@@ -285,7 +285,7 @@ def _norm(frames) -> "list[tuple]":
     # stops streaming; the client's SSE loop ends on stream close instead).
     # Excluded here so the comparison is about the ③d streaming content, not
     # this pre-existing, already-covered disposition
-    # (``tests/test_agui_control_filter.py``).
+    # (``tests/interfaces/test_agui_control_filter.py``).
     out: list[tuple] = []
     for f in frames:
         if isinstance(f, EventFrame):

@@ -219,7 +219,7 @@ async def send_to_agent_impl(
     - first-party operator surfaces, which pass ``TurnOrigin.CLIENT_INPUT``
       explicitly. ★ Which callers those are, and why each is entitled to that
       claim, is NOT counted here: it is enumerated once, in
-      ``tests/test_3595_client_input_provenance_gate.py``'s allowlist, which is
+      ``tests/runtime/test_3595_client_input_provenance_gate.py``'s allowlist, which is
       a gate rather than prose — this docstring said "Both pass …" while there
       were three such call sites, because a count in prose is a snapshot of
       whoever last read the code.

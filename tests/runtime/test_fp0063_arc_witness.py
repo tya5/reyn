@@ -91,7 +91,7 @@ the one component a schema change is expected to move), so regenerating THIS
 file in place with ``REYN_FP0063_ARC_WITNESS_GENERATE=1`` (no manual delete
 required) now leaves exactly the arc's actual call count (``turn1`` 2 keys,
 ``turn2`` 3), not a reduction in coverage — and
-``tests/test_replay_fixture_no_stacking_3634.py`` is the CI gate that fails if
+``tests/dev/test_replay_fixture_no_stacking_3634.py`` is the CI gate that fails if
 any committed fixture (this one or any other) holds a stacked group anyway.
 
 Why the fixture responses are AUTHORED, not live-recorded (disclosed, not
@@ -235,7 +235,7 @@ if __name__ == "__main__":
 class FakeEmbeddingProvider:
     """Deterministic real EmbeddingProvider -- byte-identical precedent to
     ``test_fp0063_p3_rag_pipelines.py``'s own fixture (mirrors
-    ``tests/test_op_embed.py``): fixed-length vector per text, no real
+    ``tests/core/test_op_embed.py``): fixed-length vector per text, no real
     embedding API call. See that file's docstring for why resolving
     "standard" -> "fake/standard" (not echoing it back) matters."""
 

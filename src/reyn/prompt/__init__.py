@@ -43,7 +43,7 @@ removed once green; Phase 2:
 ``tests/scaffold/test_sp_prompt_package_phase2_byte_identical.py``, likewise
 removed) plus the permanent F1 coverage gate
 (``tests/test_sp_prompt_package_coverage.py``) and CJK-free +
-SP-tool-name-liveness gates (``tests/test_llm_facing_text_english_only.py``,
+SP-tool-name-liveness gates (``tests/tools/test_llm_facing_text_english_only.py``,
 #2860), which continue to scan the assembled agent-facing output
 post-relocation. Phase 3's mid-request-stream nudges (§I-M) are NOT covered by
 the system-prompt golden diff or corpus — each is verified byte-identical at

@@ -451,7 +451,7 @@ or abort. Reyn's responsibility ends at observation.
 
 Implementation: `_is_empty_router_response()` + `_EMPTY_RESPONSE_MSG` dict
 in `src/reyn/chat/router_loop.py`. Tier 2 tests in
-`tests/test_router_empty_response.py` (16 tests).
+`tests/llm/test_router_empty_response.py` (16 tests).
 
 ### Mid term — unchanged (may be deprioritized)
 

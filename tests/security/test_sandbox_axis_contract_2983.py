@@ -172,7 +172,7 @@ def test_network_workload_test_id_resolves_to_a_real_test() -> None:
     function — #3060's real chunker-serving probe, reused rather than
     reimplemented (architect firm), not a stale or typo'd reference."""
     axis = next(a for a in AXIS_REGISTRY if a.name == "network")
-    # A pinned `path == "tests/test_sandbox_seccomp_network_3030.py"` assert
+    # A pinned `path == "tests/security/test_sandbox_seccomp_network_3030.py"` assert
     # used to sit here too — dropped (M4 bucket-migration review): the file
     # is mid-relocation under the M4 test-directory reorg, and a literal
     # `tests/<name>` path is exactly the fragile pattern that arc spends its

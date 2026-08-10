@@ -14,7 +14,7 @@ that keeps the declaration and the code from drifting apart in EITHER direction:
 - **declaration ⊆ emit** — the vocabulary cannot contain a kind no producer
   emits. That is #3357's defect (a subscriber waits forever for a kind nobody
   writes), generalised from the progress fan-out subset
-  (``tests/test_progress_lifecycle_fanout_3357.py``) to the whole namespace.
+  (``tests/interfaces/test_progress_lifecycle_fanout_3357.py``) to the whole namespace.
 - **doc == declaration** — ``docs/reference/runtime/events.md`` carries the
   enumeration an external consumer actually reads, derived from the same source.
 

@@ -14,7 +14,7 @@ close: "place flat" just becomes "place flat AND add a line," and the
 self-reinforcing structure (today's 1,128 flat files exist because nothing
 ever stopped the next one) survives unchanged. So this is a **ratchet**, the
 same skeleton as ``mypy_ratchet.py`` (#3726) and
-``tests/test_3595_s4_slash_handler_seam.py``'s ``_SESSION_RESIDUE``: a
+``tests/interfaces/test_3595_s4_slash_handler_seam.py``'s ``_SESSION_RESIDUE``: a
 committed BASELINE of every flat filename the tree carries TODAY. A flat
 file not in the baseline is new — CI fails, immediately, the same day it
 lands. A baselined name that stops appearing (Stage 1's ``git mv`` moving it

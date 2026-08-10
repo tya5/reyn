@@ -219,7 +219,7 @@ def test_truncate_then_iter_from_returns_only_survivors(tmp_path):
 # NOTE (#3436): the bespoke ``test_removed_skill_wal_kinds_recovery_safe``
 # (the #2507 skill_* removal's write-reject + read-tolerate coverage) was
 # REMOVED here and replaced by the general-form module
-# ``tests/test_3436_unknown_wal_kind_reader_tolerant.py``, which covers "any
+# ``tests/core/test_3436_unknown_wal_kind_reader_tolerant.py``, which covers "any
 # kind absent from WAL_EVENT_KINDS" via a synthetic out-of-vocabulary name
 # instead of hardcoding the skill_* literals. See that module's docstring for
 # the full disposition rationale.

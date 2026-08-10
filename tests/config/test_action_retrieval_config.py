@@ -17,7 +17,7 @@ now the sole path). Tests for that field have been deleted.
 field (on/off + which model, conflated) is retired, clean-break, no alias.
 The on/off decision now lives at ``embedding.enabled: bool`` (default
 False); the model-class field is the (pre-existing) ``embedding.default_class``
-(default "standard"). Its tests live in ``tests/test_embedding_config.py``;
+(default "standard"). Its tests live in ``tests/config/test_embedding_config.py``;
 this file keeps only the ``action_retrieval:`` block's own fields
 (``universal_wrappers_enabled`` / ``hot_list_n`` / ``mode`` / ``hot_list_seed``).
 

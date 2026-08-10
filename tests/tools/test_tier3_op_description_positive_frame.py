@@ -56,7 +56,7 @@ def _assert_no_misleading_caveat(description: str, op_name: str) -> None:
         assert phrase not in description, (
             f"{op_name} description re-introduces the misleading caveat "
             f"phrase {phrase!r} — see "
-            f"tests/test_tier3_op_description_positive_frame.py for the "
+            f"tests/tools/test_tier3_op_description_positive_frame.py for the "
             f"rationale (FP-0008 sandbox_2 2026-05-28 retry precedent)."
         )
 

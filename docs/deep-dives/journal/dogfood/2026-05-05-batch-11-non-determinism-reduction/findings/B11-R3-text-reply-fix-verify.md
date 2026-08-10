@@ -76,7 +76,7 @@ Full test suite: **1011 passed** (1010 baseline + 1 new Tier 3 test), 2 xfailed.
 
 ### Tests Modified
 
-- `tests/test_router_system_prompt.py::TestBehaviourRulesAfterF3F9Fix::test_explicit_skill_name_directs_to_invoke`
+- `tests/runtime/test_router_system_prompt.py::TestBehaviourRulesAfterF3F9Fix::test_explicit_skill_name_directs_to_invoke`
   - Updated assertions to match new text ("invoke_skill directly", "inputs to the skill")
   - Old assertions checked for "list_skills + invoke_skill" and "paraphrasing" (both removed)
 

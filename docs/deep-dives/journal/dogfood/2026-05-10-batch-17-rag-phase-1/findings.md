@@ -216,7 +216,7 @@ UX gap fix B (= cost preflight gate) は 「Phase 1 LLM が abort 出す」 設�
 ### C. Tier 2 / Tier 3 test では integration を捉えられない
 
 Wave 2I の `tests/test_index_docs_skill.py` は skill compilation を test、
-Wave 2H の `tests/test_router_indexed_sources.py` は section injection を test、
+Wave 2H の `tests/runtime/test_router_indexed_sources.py` は section injection を test、
 Wave 2F+G の `tests/test_tool_recall.py` は ToolDefinition shape を test。
 **3 件いずれも単独 layer の contract 検証、 「LLM が tool 見える」 「abort
 emit できる」 の integration 経路は test 不在**。

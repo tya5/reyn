@@ -39,7 +39,7 @@ from reyn.schemas.models import Event
 
 class QueueTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
-    queue (the idiom shared with ``tests/test_3288_3c_tui_delta_coalesce.py``)."""
+    queue (the idiom shared with ``tests/interfaces/test_3288_3c_tui_delta_coalesce.py``)."""
 
     def __init__(self) -> None:
         self._queue: "asyncio.Queue[object]" = asyncio.Queue()

@@ -56,7 +56,7 @@ from typing import Iterator
 import pytest
 
 # `pytester` — a core pytest plugin, not auto-loaded by default — is declared
-# here because tests/test_network_gate_3451.py drives a real, isolated inner
+# here because tests/dev/test_network_gate_3451.py drives a real, isolated inner
 # pytest session against `reyn.dev.testing.network_gate` to exercise its
 # hooks end to end.
 #
@@ -74,7 +74,7 @@ import pytest
 # at that earlier phase (e.g. a decoy `reyn` cached by a stray sitecustomize/
 # .pth, the exact #3233 shape) would raise its OWN raw ImportError and abort
 # before the guard's friendlier "env-identity (in-process, #3233)" message —
-# regression caught by tests/test_3233_inprocess_env_identity.py's decoy
+# regression caught by tests/scripts/test_3233_inprocess_env_identity.py's decoy
 # witness. So THIS conftest imports and calls it lazily, function-body-local,
 # from within its own hooks below (same lazy-import style `_llm_replay`
 # already uses for `LLMReplay`) — strictly after the root guard has run.
@@ -109,7 +109,7 @@ if _REPO_ROOT not in sys.path:
 # A2A and MCP are now secure-default OFF (``reyn.interfaces.web.surfaces`` —
 # opt-in, broad machine-integration ports). Pre-existing A2A/MCP protocol
 # tests across the suite (``tests/web/test_a2a.py``, ``tests/web/test_mcp_sse.py``,
-# ``tests/test_fp0001_a2a_endpoints.py``, ``tests/test_a2a_runentry_task_migration_1981.py``)
+# ``tests/interfaces/test_fp0001_a2a_endpoints.py``, ``tests/test_a2a_runentry_task_migration_1981.py``)
 # exercise those surfaces directly and were written against the previous
 # always-on mount behaviour; they need the surfaces opted back in to keep
 # testing what they test (this is the FP-0058 "consumer audit" for the
@@ -201,7 +201,7 @@ def out_of_process_reyn() -> str:
     Pin the returned path as ``PYTHONPATH`` in the spawn's environment. Note that
     an MCP stdio server needs it threaded through the server's *configured* env:
     the SDK passes a six-key whitelist that drops ``PYTHONPATH``, so inheriting is
-    not enough (``tests/test_fp0063_p3_rag_pipelines.py`` does this).
+    not enough (``tests/builtin/test_fp0063_p3_rag_pipelines.py`` does this).
 
     Requesting the fixture is what makes the dependency a declaration rather than a
     thing each author rediscovers — the pin exists by hand in several files today,
@@ -432,7 +432,7 @@ def _isolate_rich_style_ansi_memo():
     ``Style._make_ansi_codes`` caches a Style's rendered escape in
     ``self._ansi`` and never keys that cache by ``color_system`` (measured on
     rich 15.0.0 — a bug in rich, deliberately NOT reported upstream, see
-    ``tests/test_markdown_palette_gate_3469.py``'s ``_memo_cleared_theme`` for
+    ``tests/interfaces/test_markdown_palette_gate_3469.py``'s ``_memo_cleared_theme`` for
     the owner decision and the runnable "is it still there?" snippet). Because
     ``Style.parse`` AND ``Style._add`` (which ``Style.__add__`` delegates to,
     i.e. the combined style a Console actually renders) are ``lru_cache``d, and
@@ -549,7 +549,7 @@ def pytest_configure(config: pytest.Config) -> None:
     normal place. Without ``trylast`` here, a decoy `reyn` (#3233's exact
     scenario) makes THIS file's import raise a raw ``ModuleNotFoundError``
     before the guard's friendlier diagnostic ever runs — regression caught by
-    ``tests/test_3233_inprocess_env_identity.py``'s decoy witness."""
+    ``tests/scripts/test_3233_inprocess_env_identity.py``'s decoy witness."""
     config.addinivalue_line(
         "markers",
         "replay(fixture): monkeypatch litellm.acompletion AND litellm.aembedding "

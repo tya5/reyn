@@ -42,7 +42,7 @@ AGENT = "alpha"
 def _make_registry(tmp_path: Path, wal: Path) -> AgentRegistry:
     """A fresh registry over the SAME project_root + WAL file simulates a
     process restart: it re-discovers on-disk snapshots and replays the WAL
-    tail (mirrors ``tests/test_multi_session_restore.py``)."""
+    tail (mirrors ``tests/runtime/test_multi_session_restore.py``)."""
     state_log = StateLog(wal)
 
     def _factory(profile: AgentProfile) -> Session:

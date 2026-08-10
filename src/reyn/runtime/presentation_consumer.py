@@ -28,7 +28,7 @@ This module makes that orphan **impossible by construction**:
   `NullPresentationConsumer`, whose surface name must be a member of the reviewed
   `_NA_PRESENTATION_SURFACES` frozenset — a machine surface with no human presentation
   drain (web / mcp / dogfood). A new human surface cannot silently NA-dodge (the ratchet
-  test `tests/test_present_sink_na_ratchet_2708.py` pins the frozenset by equality, the
+  test `tests/runtime/test_present_sink_na_ratchet_2708.py` pins the frozenset by equality, the
   FP-0056 admin-6 model).
 
 P1 is present-sink-specific and byte-identical: it moves WHERE the sink is provided (from

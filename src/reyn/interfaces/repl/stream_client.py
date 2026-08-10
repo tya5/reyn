@@ -237,7 +237,7 @@ async def run_output_loop(
     simultaneously swallowing the OTHER client's line and leaving THIS
     client's own line unswallowed later (the original bug, reintroduced by a
     different route — co-vet finding F1 on #3309; see
-    ``tests/test_stream_client_own_echo_3287.py``
+    ``tests/interfaces/test_stream_client_own_echo_3287.py``
     ``test_same_text_two_clients_does_not_cross_match_by_id``):
 
     - ``own_connection_id`` (F2, checked FIRST): the caller's own

@@ -54,7 +54,7 @@ def _scripted_llm():
     # send_to_agent_impl drives the session's real router turn — with
     # no stub wired, that turn reaches real litellm.acompletion (the short
     # timeout= just raced it, it did not prevent the reach). Same stub shape
-    # as tests/test_2103_s1bc_exec_result_routing.py.
+    # as tests/runtime/test_2103_s1bc_exec_result_routing.py.
     async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
         return LLMToolCallResult(
             content="ack", tool_calls=[], finish_reason="stop",

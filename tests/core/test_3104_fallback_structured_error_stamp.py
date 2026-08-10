@@ -136,7 +136,7 @@ async def test_for_each_on_error_abort_fires_on_structured_passthrough_op_canoni
     NOW fires for a STRUCTURED_PASSTHROUGH op too (before #3104 it silently never did — the exact gap
     #3105's co-vet flagged as required follow-up). A ``for_each`` over ``plugin_install`` calls with a
     declared ``on_error: abort`` aborts the pipeline the same way it already does for a mapped op
-    (mirrors ``tests/test_3099_on_error_canonical_seam.py``'s ``file`` case, but for a passthrough
+    (mirrors ``tests/core/test_3099_on_error_canonical_seam.py``'s ``file`` case, but for a passthrough
     op — end-to-end through the real ``plugin_install`` STRUCTURED_PASSTHROUGH registration)."""
     def _dispatch(name: str, args: dict) -> dict:
         assert name == "plugin_install"

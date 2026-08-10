@@ -36,7 +36,7 @@ lock-free ``BuildFn`` — see ``reyn.tools.action_index``); the
 self-contained-specific coverage this file used to carry (§2's "via BOTH
 shapes" + the freestanding ``_FakeSelfContainedBuilder`` tests) is REMOVED
 — its regression value now lives in
-``tests/test_index_coordinator_3247_p2b.py`` (the equivalence suite +
+``tests/core/test_index_coordinator_3247_p2b.py`` (the equivalence suite +
 mandatory #3270 §5 strip-falsify gates), which exercises the SAME
 production call path (``RouterLoop._ensure_action_index_built``) this file
 already tests.
@@ -54,7 +54,7 @@ No mocks — real ``IndexCoordinator``, real ``SourceManifest``, a real
 from the actual ``.reyn/events`` JSONL files, not asserted against private
 state), a real ``ActionEmbeddingIndex`` + real ``OpContext``; a plain fake
 embedding provider (same established convention as
-``tests/test_action_embedding_index.py`` / ``test_index_coordinator_3247_
+``tests/core/test_action_embedding_index.py`` / ``test_index_coordinator_3247_
 p2a.py``) stands in for the litellm boundary.
 """
 from __future__ import annotations

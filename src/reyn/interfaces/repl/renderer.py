@@ -421,7 +421,7 @@ _CC_ERR_BG = "#3a1c1a"
 # signals state, not decoration. Both chat surfaces consume this: the
 # Textual app pushes it onto its console (``textual_chat/app.py``), and the
 # plain renderers below construct their Consoles with it — one constant, no
-# per-surface drift. ``tests/test_markdown_palette_gate_3469.py`` walks a
+# per-surface drift. ``tests/interfaces/test_markdown_palette_gate_3469.py`` walks a
 # rendered sample and fails if any foreground colour outside the palette
 # reaches the screen, so the NEXT rich default that leaks (a new key, a
 # changed default) goes RED instead of shipping.

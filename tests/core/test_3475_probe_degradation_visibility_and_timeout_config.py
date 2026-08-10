@@ -20,8 +20,8 @@ knob alone lets them fix a problem they cannot notice, the owner required both i
 (see the issue's last two comments — "C対応必須だし、5.0 ハードコードは修正必要").
 
 No unittest.mock/AsyncMock/MagicMock/patch anywhere in this file. The Session-level tests
-use the SAME real-callable-override technique `tests/test_mcp_lazy_tools_cache.py` and
-`tests/test_3475_mcp_probe_priming_all_turn_kinds.py` already use (instance-attribute
+use the SAME real-callable-override technique `tests/core/test_mcp_lazy_tools_cache.py` and
+`tests/runtime/test_3475_mcp_probe_priming_all_turn_kinds.py` already use (instance-attribute
 assignment of a plain async function onto `router_host.mcp_list_tools`) — not a mock.
 
 The single most important property asserted here is NOT "the mechanism ran" — it is what
@@ -94,7 +94,7 @@ def test_mcp_probe_seconds_default_and_nondefault_parse():
 
 def test_mcp_tool_probe_degraded_is_a_declared_kind():
     """Tier 1: the new audit-event kind is in the closed vocabulary (#3410) —
-    tests/test_audit_event_kind_vocabulary_3410.py additionally checks the doc mirror
+    tests/core/test_audit_event_kind_vocabulary_3410.py additionally checks the doc mirror
     and that every declared kind has a real emit site."""
     assert "mcp_tool_probe_degraded" in AUDIT_EVENT_KINDS
 

@@ -86,7 +86,7 @@ truncation having broken recovery outright rather than by the narrowing holding.
 
 The completeness half of the gate — which sites exist, how they are resolved, and
 what each declares — lives in
-``tests/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is what its
+``tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is what its
 ``measured_by`` entries for the ``spawn_session`` sites point at.
 """
 from __future__ import annotations
@@ -125,7 +125,7 @@ _DENIED_TOOL = "write_file"
 class _ScriptedReply:
     """A real ``_llm_caller``-shaped callable answering with one fixed plain-text
     turn — the Tier-2c LLM stand-in this arc's sibling files already use (see
-    ``tests/test_pipeline_r5_run_agent_step.py``), NOT a ``MagicMock``: a signature
+    ``tests/runtime/test_pipeline_r5_run_agent_step.py``), NOT a ``MagicMock``: a signature
     drift in the ``call_llm_tools`` contract raises ``TypeError`` here exactly as it
     would in production.
 
@@ -148,7 +148,7 @@ def _registry(
     tmp_path: Path, scripted: "_ScriptedReply | None" = None, *, agents: "tuple[str, ...]" = ("worker",),
 ) -> AgentRegistry:
     """Real ``AgentRegistry`` + real ``Session`` factory — the harness shape
-    ``tests/test_pipeline_r5_run_agent_step.py`` uses, including the ``holder``
+    ``tests/runtime/test_pipeline_r5_run_agent_step.py`` uses, including the ``holder``
     deferred-registry-ref so the factory can pass ``registry=`` for ephemeral
     auto-vanish, and its real-litellm-name resolver so a spawned session's
     model-support pre-check has a name to resolve."""

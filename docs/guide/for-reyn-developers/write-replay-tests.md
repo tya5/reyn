@@ -285,7 +285,7 @@ REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
 
 Commit the new fixture alongside the change. Reviewers can diff the
 `prompt_preview` field in the JSONL to see what changed.
-`tests/test_replay_fixture_no_stacking_3634.py` is a CI gate that fails if any
+`tests/dev/test_replay_fixture_no_stacking_3634.py` is a CI gate that fails if any
 committed fixture ever holds the same logical call under more than one key.
 
 > **Warning — `-k` filtered runs exclude replay tests.** If your local test run uses
@@ -362,5 +362,5 @@ When adding a new LLM-dependent OS path, verify:
 - Full LLMReplay API: [docs/reference/testing/replay.md](../../reference/testing/replay.md)
 - Full testing policy (Tier definitions, NEVER rules, decision flow): [docs/deep-dives/contributing/testing.md](../../deep-dives/contributing/testing.md)
 - Live examples in the codebase:
-  - `tests/test_llm_tools.py` — the canonical `@pytest.mark.replay` tests for `call_llm_tools`
+  - `tests/llm/test_llm_tools.py` — the canonical `@pytest.mark.replay` tests for `call_llm_tools`
   - `tests/conftest.py` — the `_llm_replay` autouse fixture and record/replay mode resolution

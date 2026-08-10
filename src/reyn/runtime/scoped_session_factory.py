@@ -27,7 +27,7 @@ value in one line.
 
 The multi-callsite invariant (no factory constructs ``Session`` directly —
 all route through here) is pinned by
-``tests/test_scoped_session_factory_invariant_1402.py``.
+``tests/runtime/test_scoped_session_factory_invariant_1402.py``.
 """
 from __future__ import annotations
 

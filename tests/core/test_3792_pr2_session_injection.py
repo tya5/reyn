@@ -3,7 +3,7 @@
 
 Covers, per architect's issue #3792 Test plan (the Session-level items; the
 RouterLoop-level wire-position / strip-falsify witnesses live in
-``tests/test_3792_pr2_router_loop_injection.py``):
+``tests/llm/test_3792_pr2_router_loop_injection.py``):
 
 - **origin gate** — only ``TurnOrigin.CLIENT_INPUT`` is peek-eligible; all 9
   members enumerated (vacuity guard: fails loud if the enumeration is empty).
@@ -21,7 +21,7 @@ RouterLoop-level wire-position / strip-falsify witnesses live in
 - **loop valve** — commit does not reset ``_hook_driven_turns``.
 
 Real ``Session``/``StateLog``/``SnapshotJournal`` throughout (the
-``tests/test_3300_p3_cancel_by_id.py`` convention) — no ``unittest.mock``.
+``tests/interfaces/test_3300_p3_cancel_by_id.py`` convention) — no ``unittest.mock``.
 """
 from __future__ import annotations
 
@@ -276,7 +276,7 @@ async def test_commit_truncate_falsify(tmp_path):
     """Tier 2: #3792 — CLAUDE.md recovery-feature PR gate. A committed
     injection's inbox entry (WAL ``inbox_consume`` tombstone + synchronous
     snapshot prune, ``SnapshotJournal.consume_inbox`` — the SAME mechanism
-    ``cancel_queued`` uses, per ``tests/test_3300_p3_cancel_by_id.py``'s
+    ``cancel_queued`` uses, per ``tests/interfaces/test_3300_p3_cancel_by_id.py``'s
     identical shape) must NOT resurrect after a WAL truncation below its
     ``inbox_put``/``inbox_consume`` source events.
 

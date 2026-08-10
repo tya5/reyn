@@ -2,9 +2,9 @@
 
 Covers the parts of the ratified retrieval redesign
 (`docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md` §7) not
-already exercised by ``tests/test_embedding_config.py`` (the field/parser
-itself) or the migrated ``tests/test_universal_catalog.py`` /
-``tests/test_2895_retrieval_scheme_requires_embedding.py`` (the
+already exercised by ``tests/config/test_embedding_config.py`` (the field/parser
+itself) or the migrated ``tests/tools/test_universal_catalog.py`` /
+``tests/tools/test_2895_retrieval_scheme_requires_embedding.py`` (the
 ``is_search_available`` predicate + the retrieval-scheme config-load gate):
 
   1. Symmetric model (§7 table): ``embedding.enabled: false`` hides only the

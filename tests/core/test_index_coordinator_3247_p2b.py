@@ -14,7 +14,7 @@ below now implements the ``prepare_material``/``adopt_build_result`` shape
 instead of the retired self-contained ``build()``-does-everything shape, and
 routes actual writes through the REAL ``embed_verify_write`` (via a real
 ``OpContext`` + a fake embedding provider — same convention as
-``tests/test_index_coordinator_3247_p2a.py``) so the Coordinator's own
+``tests/core/test_index_coordinator_3247_p2a.py``) so the Coordinator's own
 lock/write machinery is genuinely exercised, not bypassed.
 
 Covers:
@@ -30,7 +30,7 @@ Covers:
 
 No mocks — real ``IndexCoordinator``, real ``SourceManifest``, real
 ``RouterLoop`` instances (constructed the same minimal-subclass way
-``tests/test_action_embedding_build_failure_1458.py`` already does, since
+``tests/core/test_action_embedding_build_failure_1458.py`` already does, since
 a full host/session is not needed to exercise this orchestration layer);
 a plain fake index (real class, not a Mock) stands in for
 ``ActionEmbeddingIndex`` so build success/failure/timing is controllable
@@ -78,7 +78,7 @@ class _FakeEmbeddingProvider:
 
 def _op_ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
     """Real OpContext whose `embed` op resolves to ``provider`` (mirrors
-    ``tests/test_index_coordinator_3247_p2a.py::_ctx_for``)."""
+    ``tests/core/test_index_coordinator_3247_p2a.py::_ctx_for``)."""
     import reyn.core.op_runtime.embed as _embed_mod
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
     events = EventLog()

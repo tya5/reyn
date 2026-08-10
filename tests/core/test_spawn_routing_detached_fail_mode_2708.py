@@ -55,7 +55,7 @@ def _scripted_llm():
     # detached driver's reply-to session processing a pipeline_result, the
     # run_agent_step ephemeral worker's own turn, or a session_spawn child's
     # initial submitted request) reaches real litellm.acompletion with no stub
-    # wired — same shape as tests/test_2103_s1bc_exec_result_routing.py.
+    # wired — same shape as tests/runtime/test_2103_s1bc_exec_result_routing.py.
     async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
         return LLMToolCallResult(
             content="ack", tool_calls=[], finish_reason="stop",

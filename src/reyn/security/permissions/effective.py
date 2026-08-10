@@ -349,7 +349,7 @@ class ContextualPermission:
     to answer "which narrowing rejected this name". A leaf term has
     ``composed_from=()`` and IS its own single term; ``origin=None`` means a term
     was built without provenance (nothing in ``src/`` does — see
-    ``tests/test_3501_untrusted_narrowing_opt_in.py``'s coverage arm — but a
+    ``tests/security/test_3501_untrusted_narrowing_opt_in.py``'s coverage arm — but a
     hand-built term stays legal and degrades to the generic message).
     """
 

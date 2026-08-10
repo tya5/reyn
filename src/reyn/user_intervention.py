@@ -234,7 +234,7 @@ class UserChannel(Protocol):
 # (= the OS↔upper-layer "send a request, await an answer" contract).
 # All in-tree production callers have migrated to ``RequestBus`` directly
 # (verified at test time by
-# ``tests/test_intervention_legacy_alias_deprecated.py``);
+# ``tests/intervention/test_intervention_legacy_alias_deprecated.py``);
 # the module-level binding is retained so external code (= plugins,
 # restored snapshots, legacy integrations) that imports the legacy name
 # keeps working.

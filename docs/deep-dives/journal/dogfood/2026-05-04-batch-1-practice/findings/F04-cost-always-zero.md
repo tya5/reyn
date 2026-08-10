@@ -89,7 +89,7 @@ _pricing_model = (
 
 ### 検証
 
-Tier 2 invariant test 3 件を `tests/test_session_cost_accumulation.py` に追加:
+Tier 2 invariant test 3 件を `tests/runtime/test_session_cost_accumulation.py` に追加:
 - `test_router_loop_total_usage_propagates_to_session` — Bug 2 の回帰防止
 - `test_estimate_cost_strips_proxy_prefix` — Bug 1 の litellm lookup を直接確認
 - `test_router_loop_run_accumulates_usage_across_iterations` — 複数 iteration 集計

@@ -21,15 +21,15 @@ move — `_skill_body()` below now concatenates `SKILL.md` with every bundled
 `references/*.md` file, so the extraction-based checks (pipeline names, doc
 paths, tool names) keep pinning the SAME prose regardless of which file
 within the one skill directory it physically lives in
-(`tests/test_skill_md_default_inline_cap_gate.py` is the structural gate
+(`tests/builtin/test_skill_md_default_inline_cap_gate.py` is the structural gate
 keeping every file under the cap;
-`tests/test_skill_references_gate_3162.py` gates the reference-link
+`tests/builtin/test_skill_references_gate_3162.py` gates the reference-link
 mechanism itself).
 
 Under ADR 0064 the skill is no longer a standing `BUILTIN_SKILLS` entry —
 it is registered only once `plugin_install(source={"kind": "builtin",
 "name": "rag"})` runs (real coverage of THAT mechanism lives in
-`tests/test_plugin_install.py` + `scripts/wheel_plugin_install_probe.py`).
+`tests/core/test_plugin_install.py` + `scripts/wheel_plugin_install_probe.py`).
 What this file pins instead, directly against the shipped plugin files:
 
   1. **The manifest declares the skills capability**, and the SKILL.md this
@@ -65,7 +65,7 @@ What this file pins instead, directly against the shipped plugin files:
      (`run_pipeline_inline`) and never recovered. Names are EXTRACTED
      from the skill's code fences, never restated, for the same
      never-goes-red reason as (3). #3092 generalized THIS pin to every
-     builtin SKILL.md (`tests/test_builtin_skill_tool_name_drift_3092.py`)
+     builtin SKILL.md (`tests/repo/test_builtin_skill_tool_name_drift_3092.py`)
      after finding the exact same drift shape on two skills the RAG-only
      scope here could not see; the extraction/lookup logic below is now
      SHARED with that gate via `tests/_support/builtin_skill_tool_names.py`

@@ -16,7 +16,7 @@ to be a client input?" answered instead "who matches my pattern?" — the questi
 was decided by the search, and five separate censuses on #3595 each missed a
 different form. With a member there is exactly one spelling, and the question
 becomes "who references this symbol", which an AST walk answers completely
-(``tests/test_3595_client_input_provenance_gate.py``).
+(``tests/runtime/test_3595_client_input_provenance_gate.py``).
 
 **Why no member is named ``USER``.** ``kind`` was one word used by two unrelated
 vocabularies: this one (inbox, provenance) and the outbox DISPLAY kinds
@@ -81,7 +81,7 @@ class TurnOrigin(StrEnum):
     #: message of any other kind is text, not a command. That is what makes this
     #: member a trust decision rather than a label, and why every site in
     #: ``src/`` that names it is enumerated with its reason in
-    #: ``tests/test_3595_client_input_provenance_gate.py``. Four producers that
+    #: ``tests/runtime/test_3595_client_input_provenance_gate.py``. Four producers that
     #: were not that human claimed it until #3595 steps 1 / 1b: a pipeline agent
     #: step's prompt (model-authored), a chat webhook, an MCP / A2A peer, and a
     #: cron fire.

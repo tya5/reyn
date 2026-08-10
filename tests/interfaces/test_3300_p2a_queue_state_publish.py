@@ -31,7 +31,7 @@ Covers (see the architect's #3300 design-pass comments on the issue):
 
 Real ``Session``/``AgentRegistry``/``StateLog`` throughout — no
 ``unittest.mock``. The only "fake" collaborator is the same controllable
-plain-async-function hang ``tests/test_2242_hard_cancel.py`` uses for
+plain-async-function hang ``tests/core/test_2242_hard_cancel.py`` uses for
 ``RouterLoopDriver.run_turn`` (a real method-assignment, not a mock), which is
 the established no-mock seam for putting a turn genuinely "mid-flight"
 without a real LLM call.
@@ -82,7 +82,7 @@ async def _stop_auto_driver(registry: AgentRegistry, name: str) -> None:
     loop that would otherwise race a test's own manual
     ``run_one_iteration()`` calls (both dequeuing from the same inbox). Cancel
     it so the test has sole, deterministic control over dispatch — mirrors
-    how ``tests/test_2242_hard_cancel.py`` drives a bare (non-registry)
+    how ``tests/core/test_2242_hard_cancel.py`` drives a bare (non-registry)
     ``Session`` directly; this is the registry-attached equivalent."""
     key = (name, "main")
     task = registry._tasks.get(key)
@@ -102,7 +102,7 @@ async def _stop_auto_driver(registry: AgentRegistry, name: str) -> None:
 
 
 def _install_hanging_run_turn(session: Session) -> tuple[asyncio.Event, asyncio.Event]:
-    """Same no-mock seam as ``tests/test_2242_hard_cancel.py``: a real, plain
+    """Same no-mock seam as ``tests/core/test_2242_hard_cancel.py``: a real, plain
     async function method-assigned onto the instance, standing in for a
     genuinely in-flight LLM call so a turn can be observed mid-flight."""
     call_started = asyncio.Event()

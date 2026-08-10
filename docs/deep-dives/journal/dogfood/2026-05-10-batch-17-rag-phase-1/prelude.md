@@ -73,7 +73,7 @@ ADR-0033 Phase 1 が Tier 2/3 test で closed-form に検証された設計ど�
 ## 4. Embedding 制約への対応 = FakeEmbeddingProvider 経由
 
 OPENAI_API_KEY 不在のため、 real LiteLLM embedding endpoint へ届く dogfood は不可。
-代わりに **`tests/test_embedding_provider.py` 由来の `FakeEmbeddingProvider` を
+代わりに **`tests/data/test_embedding_provider.py` 由来の `FakeEmbeddingProvider` を
 `register_provider("fake", FakeEmbeddingProvider)` で登録**、 各 scenario の driver script
 が startup 時に register、 reyn.local.yaml で `embedding.provider: fake` 指定 (= phase 2
 plugin path の先取り使用)。

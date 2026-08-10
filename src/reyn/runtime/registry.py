@@ -1180,7 +1180,7 @@ class AgentRegistry:
         ``restore_all`` — e.g. the next process start, or a future
         `only_names` that includes it) but auto-resume itself does not
         happen. See ``test_deferred_agent_does_not_auto_resume_if_never_touched``
-        (tests/test_registry_restore_all_only_names_3671_p4c1.py) for the
+        (tests/core/test_registry_restore_all_only_names_3671_p4c1.py) for the
         behavioral pin. Whether this trade-off is acceptable is pending
         explicit owner confirmation as of #3683 (asked by lead-coder) — this
         docstring states the CURRENT actual behavior either way, so a future

@@ -37,13 +37,13 @@ Witnesses:
 (g) hard-cancel wiring (② — ``Session.run_one_iteration``'s
     ``CancelledError`` catch), driven through a REAL ``Session`` via
     ``cancel_inflight()`` against an in-flight (hung) turn — the same
-    controllable-hang seam ``tests/test_2242_hard_cancel.py`` uses. Kept
+    controllable-hang seam ``tests/core/test_2242_hard_cancel.py`` uses. Kept
     HERE (not only cross-referenced) after review caught that this file's
     own suite went fully green with ② stripped to a no-op — the positive
     witness lived exclusively in test_2242_hard_cancel.py's UPDATED
     assertion, invisible to anyone reading this file in isolation.
 
-``tests/test_2242_hard_cancel.py``'s own end-to-end hard-cancel test was
+``tests/core/test_2242_hard_cancel.py``'s own end-to-end hard-cancel test was
 ALSO updated in this same PR (its pre-existing assertion pinned "only the
 user message survives a hard cancel", now correctly "user message + the
 marker") — that update is corroborating evidence, not this file's sole

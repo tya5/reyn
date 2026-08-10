@@ -75,9 +75,9 @@ require `run_id`, `actor`, `phase`). The authoritative, current registry
 lives in `src/reyn/core/events/event_schema.py`
 (`EVENT_AUDIT_REQUIREMENTS`) — this list has grown over time and will keep
 growing, so it is not duplicated here. Dedicated per-feature invariant tests
-(e.g. `tests/test_session_lifecycle_events_1800.py`,
-`tests/test_mcp_search_tool_invariants.py`,
-`tests/test_chat_turn_completed_inline.py`) each assert that their event
+(e.g. `tests/core/test_session_lifecycle_events_1800.py`,
+`tests/runtime/test_mcp_search_tool_invariants.py`,
+`tests/dev/test_chat_turn_completed_inline.py`) each assert that their event
 kinds are declared here with the correct required fields, on every CI run.
 
 Enforcement is test-time only (not at `emit()` runtime) to keep

@@ -36,8 +36,8 @@ Structural contract this gate fixes in place:
      escalate beyond it.
 
 No mocks: real ``AgentRegistry``/``Session``/``StateLog`` throughout, mirroring
-``tests/test_3036_spawned_session_mcp_refresh.py``'s and
-``tests/test_2581_pipeline_hotreload.py``'s harnesses.
+``tests/runtime/test_3036_spawned_session_mcp_refresh.py``'s and
+``tests/core/test_2581_pipeline_hotreload.py``'s harnesses.
 """
 from __future__ import annotations
 

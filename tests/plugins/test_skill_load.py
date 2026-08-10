@@ -25,7 +25,7 @@ Pins (real instances throughout — no mocks):
 **FP-0066 P0 (#3247) split.** The INTEGRATION half of this module — the real
 `file` read op / `FileIROp` tests exercising the #3196 provenance gate + the
 #3198 allowlist gate end-to-end — moved to
-``tests/test_op_runtime_load_skill_3247.py``, now constructing `LoadSkillIROp`
+``tests/core/test_op_runtime_load_skill_3247.py``, now constructing `LoadSkillIROp`
 and calling `reyn.core.op_runtime.load_skill.handle` directly (the
 responsibility moved out of `file.py` into the dedicated `load_skill` op;
 that test module also pins the file.read strip-falsify: a `file.read` of a

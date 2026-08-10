@@ -207,7 +207,7 @@ class ClientTransport(ABC):
         through the transport rather than `SlashContext.session` directly —
         the field is declared migration residue, and reading a NEW attribute
         off it (even a public one) would grow what the ratchet in
-        `tests/test_3595_s4_slash_handler_seam.py` is closing rather than
+        `tests/interfaces/test_3595_s4_slash_handler_seam.py` is closing rather than
         adding a designed operation. This is that operation.
 
         None means "cannot be resolved through THIS transport" — not "no

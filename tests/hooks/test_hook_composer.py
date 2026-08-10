@@ -124,7 +124,7 @@ def test_load_composers_parses_deadline_config():
     the #3180 durability default: a deadline composer parses to
     `durable=True` (the load-time crash-non-durability UserWarning now fires
     only on an explicit `durable: false` opt-out — see
-    tests/test_3180_durable_pending_store.py)."""
+    tests/hooks/test_3180_durable_pending_store.py)."""
     raw = [
         {
             "name": "job_overdue",

@@ -28,7 +28,7 @@ Covers (per the architect's P3 firm §7 tracked items + P3a scope):
 
 No mocks — real ``SqliteIndexBackend``, real ``SourceManifest``, real
 ``Workspace``/``OpContext``/``ToolContext``; a plain ``FakeEmbeddingProvider``
-(same established convention as ``tests/test_index_coordinator_3247_p2a.py``)
+(same established convention as ``tests/core/test_index_coordinator_3247_p2a.py``)
 stands in for the litellm boundary via the ``get_provider`` monkeypatch seam.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _run(coro: Any) -> Any:
 
 class _FakeEmbeddingProvider:
     """Deterministic canned vectors, one per input text — no litellm call.
-    Mirrors ``tests/test_index_coordinator_3247_p2a.py::_FakeEmbeddingProvider``."""
+    Mirrors ``tests/core/test_index_coordinator_3247_p2a.py::_FakeEmbeddingProvider``."""
 
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail

@@ -25,7 +25,7 @@ Three co-vet pins (Addendum C):
 
 Real objects only (testing policy): no mocks. The registry-derivation witness
 drops a real ``.py`` module into the real ``reyn.core.part_types`` package,
-mirroring ``tests/test_part_type_registry_taxonomy_0060.py``.
+mirroring ``tests/core/test_part_type_registry_taxonomy_0060.py``.
 """
 from __future__ import annotations
 

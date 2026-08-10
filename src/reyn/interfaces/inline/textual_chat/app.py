@@ -138,7 +138,7 @@ logger = logging.getLogger(__name__)
 # ``/attach`` or ``/session switch`` is implemented by this set.
 #
 # ★They are NOT symmetric on the REMOTE path, and the difference is measured
-# (#3362, ``tests/test_agui_control_filter.py``) — the forwarder's ``continue``
+# (#3362, ``tests/interfaces/test_agui_control_filter.py``) — the forwarder's ``continue``
 # is subscriber-local and gates only ``repl_outbox``, so it says nothing about
 # the wire (canonical reasoning: ``transport/agui/protocol.py`` beside
 # ``CONTROL_FILTER_KINDS``):

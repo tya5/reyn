@@ -146,7 +146,7 @@ renderable display kinds):
 > Corrected in #3362. This section previously stated that both sentinels "never
 > reach the AG-UI tap" because the registry forwarder swallows them. Both do
 > reach it; the forwarder's `continue` is subscriber-local. Measured with the
-> real forwarder + real tap in `tests/test_agui_control_filter.py`.
+> real forwarder + real tap in `tests/interfaces/test_agui_control_filter.py`.
 
 #### The session-switch barrier (`reyn.event.session_attached`, #3310 N1/N2)
 
@@ -587,7 +587,7 @@ through `encode_frame_wire_streaming`, which maps `agent_delta` onto the
 STANDARD `TEXT_MESSAGE_CONTENT` surface (#3288 ③d — see *Text lifecycle* above),
 never this `CUSTOM` name, on the wire a real client receives. This row documents
 what the plain codec functions do in isolation (still exercised directly by
-`tests/test_agent_delta_audit_event_3288.py`), not what ships on the connected
+`tests/interfaces/test_agent_delta_audit_event_3288.py`), not what ships on the connected
 wire.
 
 | Custom `name`                        | Meaning                                          |
@@ -764,7 +764,7 @@ second hand-rolled column:
   with `background=_CC_ERR`, painting the row's text (and, because the tint
   spans the gutter column, the gutter's coral `⎿`/`✗` glyph) in its own
   background colour, so a failed tool call rendered as an unreadable solid
-  band. `tests/test_textual_chat_row_contrast_3367.py` gates the invariant over
+  band. `tests/interfaces/test_textual_chat_row_contrast_3367.py` gates the invariant over
   the (kind, state) cross-product enumerated from `DISPLAY_KINDS` +
   `EntryState`.
 - **RIGHT gutter — `ReynRightGutter`** (`gutter.py`, #3283 ④): one column, two

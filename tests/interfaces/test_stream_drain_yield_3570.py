@@ -64,7 +64,7 @@ class _InputProbeApp(TextualChatApp):
     at which delta a probe posted mid-backlog is handled.
 
     A subclass recording around ``super()`` calls, never a stand-in — the idiom
-    ``tests/test_transport_bit_identical.py``'s ``_RecordingInlineRenderer``
+    ``tests/interfaces/test_transport_bit_identical.py``'s ``_RecordingInlineRenderer``
     uses. Both readings are counted in FRAMES (the logical tick), which is what
     keeps the gate off wall-clock and therefore stable under load.
     """

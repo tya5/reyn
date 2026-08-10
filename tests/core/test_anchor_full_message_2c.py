@@ -8,7 +8,7 @@ anchor (robust vs fragile after-the-fact WAL/history mining). Turn checkpoints
 only (plan-step/phase pass no user message). Back-compatible: legacy str-valued
 anchor files load with full = "" (edit-prefill degrades to empty = manual re-type).
 
-Real AnchorStore + SnapshotJournal (no mocks); mirrors tests/test_anchor_text_1547.py.
+Real AnchorStore + SnapshotJournal (no mocks); mirrors tests/core/test_anchor_text_1547.py.
 """
 from __future__ import annotations
 

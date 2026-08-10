@@ -40,12 +40,12 @@ in the same run), so a driver-session's own fresh disk-rebuild at ITS spawn
 finds a just-installed sibling without needing the caller's in-memory copy.
 
 Real ``AgentRegistry``/``Session``/``StateLog``/``PipelineExecutor`` throughout (no
-mocks) — mirrors ``tests/test_pipeline_is2_driver_session.py``'s harness, driving
+mocks) — mirrors ``tests/core/test_pipeline_is2_driver_session.py``'s harness, driving
 the REAL production tool-verb entry points (``_handle_run_pipeline`` /
 ``_handle_run_pipeline_async``) rather than the lower-level ``session_api``
 functions directly, so the exact code path a real chat session takes is exercised.
 Pipelines are installed the PRODUCTION way — an on-disk DSL file + a
-``.reyn/config/pipelines.yaml`` entry (mirrors ``tests/test_2581_pipeline_hotreload.py``'s
+``.reyn/config/pipelines.yaml`` entry (mirrors ``tests/core/test_2581_pipeline_hotreload.py``'s
 ``_write_pipeline``/``_write_dynamic_entries`` helpers) — so the family-gate's
 disk-cascade rebuild has something real to find.
 
@@ -87,7 +87,7 @@ def _scripted_llm():
     # The DETACHED driver's completion posts a ``pipeline_result`` inbox
     # message to the reply-to (caller) session, whose next router turn reaches
     # real litellm.acompletion with no stub wired — same shape as the sibling
-    # stub in tests/test_2103_s1bc_exec_result_routing.py.
+    # stub in tests/runtime/test_2103_s1bc_exec_result_routing.py.
     async def _fake_llm(*args, **kwargs) -> LLMToolCallResult:
         return LLMToolCallResult(
             content="ack", tool_calls=[], finish_reason="stop",

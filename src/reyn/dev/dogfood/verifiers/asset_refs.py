@@ -37,7 +37,7 @@ neither registry. The corpus had known violations at the time this check
 was written (#2965 part 1 — reconstructing each one's *intent* needs a
 human judgement call between delete / re-point / drop, which this module
 does not make); those are tracked in ``KNOWN_PENDING_VIOLATIONS`` in
-``tests/test_dogfood_scenario_asset_refs_contract.py`` so the gate is
+``tests/dev/test_dogfood_scenario_asset_refs_contract.py`` so the gate is
 green today while still hard-failing on any *new* dead reference.
 """
 from __future__ import annotations
