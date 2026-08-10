@@ -201,3 +201,46 @@ def test_truncate_falsify_snapshot_backed_kept_state_survives(tmp_path: Path):
     truncated = AgentSnapshot.load("agent_x", tmp_path / "snap.json")  # applied_seq=2
     truncated.apply_events([])                         # chain@seq3 WAL entry truncated
     assert "c-walonly" not in truncated.pending_chains  # WAL-only state LOST
+
+
+def test_chain_register_replay_carries_origin_sid_and_task_kind():
+    """Tier 2: #3978 P4 — a chain_register event's ``origin_sid`` (#2130) and
+    ``task_kind`` (P4) fields must survive PURE WAL REPLAY, not just a
+    snapshot save/load round-trip. Before this fix, ``apply_events``'s own
+    ``chain_register`` branch hardcoded a 5-field dict that silently dropped
+    both — a crash recovered via replay (rather than a loaded snapshot file)
+    would reconstruct a pending_chains entry missing them, which
+    ``ChainManager.restore()`` then reads back as ``None`` regardless of
+    what was actually registered. This directly affects P4's
+    ``_PendingChain.requester`` property (derived from
+    ``origin_agent``/``origin_sid``) and ``describe_task``/``list_tasks``
+    (which read ``kind``): a wrong ``origin_sid`` silently mis-attributes
+    the requester to "main"."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-kind",
+            origin_agent="a", origin_depth=0, original_request="x",
+            origin_sid="sid-7", task_kind="pipeline",
+        ),
+    ])
+    chain = snap.pending_chains["c-kind"]
+    assert chain["origin_sid"] == "sid-7"
+    assert chain["task_kind"] == "pipeline"
+
+
+def test_chain_register_replay_defaults_origin_sid_and_task_kind_to_none():
+    """Tier 2: falsification pair — an event carrying neither field (a
+    pre-#2130/pre-P4 WAL entry) still replays cleanly, defaulting both to
+    ``None`` rather than raising a ``KeyError`` (both are ``event.get``,
+    not ``event[...]``)."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-old",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+    ])
+    chain = snap.pending_chains["c-old"]
+    assert chain["origin_sid"] is None
+    assert chain["task_kind"] is None
