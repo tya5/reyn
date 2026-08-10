@@ -4,7 +4,7 @@ via the fenced A2A response bus and lands as a correlatable fenced inbound.
 
 This is the verification the de-scope was gated on: the trace shows the result-routing
 largely EXISTS (handle_agent_response unconditionally appends a fenced ``[task_completed]
-kind=agent`` history entry), but it must be EXECUTED end-to-end, not just code-read.
+kind=prompt`` history entry), but it must be EXECUTED end-to-end, not just code-read.
 
 It also pins the concrete GAP B finding: spawn submits ``from_agent=<the agent's own
 name>``, so the rendered header is "from=<self>" with NO spawned sid / task ref — not
@@ -75,12 +75,19 @@ async def _find_history(session, needle: str):
 @pytest.mark.asyncio
 async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_path, monkeypatch):
     """Tier 2: S1bc-exec — a MAIN-session spawner's spawned-session result routes back via
-    the fenced A2A bus and lands as a CORRELATABLE ``[task_completed] kind=spawned_session
+    the fenced A2A bus and lands as a CORRELATABLE ``[task_completed] kind=prompt
     sid=<sid> task=<TRUSTED task> chain_id=<cid>`` entry (the GAP B correlation rendering).
+
+    Proposal 0067 P4 (#3978), architect ruling 2026-08-10: ``kind`` no longer
+    distinguishes spawned-session from peer-agent replies (both are
+    ``kind=prompt`` — D2's kind names WHAT ran, not WHO triggered it); the
+    distinguishing signal is ``sid=`` being PRESENT (this test) vs. absent
+    with ``from=`` instead (the sibling fallback test below).
 
     The task in the header is the spawner's OWN request from its trusted record (NOT the
     spawned session's echo); only the reply is fenced. Without the record-lookup render
-    branch this would be the uncorrelatable ``kind=agent from=<self>`` (the original gap)."""
+    branch this would be the uncorrelatable ``from=<self>``, no ``sid=``/``task=`` (the
+    original gap)."""
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")  # the spawner (main session)
@@ -100,9 +107,9 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
     )
 
     _, txt = await _find_history(main, "TASK RESULT: did the thing")
-    # CORRELATABLE: distinct kind + the spawned sid + the TRUSTED task (the spawner's own
+    # CORRELATABLE: kind=prompt + the spawned sid + the TRUSTED task (the spawner's own
     # request from its record, NOT echoed) + the fenced reply.
-    assert "kind=spawned_session" in txt
+    assert "kind=prompt" in txt
     assert f"sid={sid}" in txt
     assert "task=summarize the Q3 report" in txt
     assert chain_id in txt
@@ -111,11 +118,18 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_unrecorded_sid_falls_back_to_kind_agent(tmp_path, monkeypatch):
+async def test_unrecorded_sid_falls_back_to_from_only_header(tmp_path, monkeypatch):
     """Tier 2: S1bc-exec security fallback — a result whose responder_sid is NOT in the
     spawner's trusted record (spoofed / unknown / already-consumed) renders the plain
-    ``kind=agent`` fallback (still fenced), NEVER a forged ``kind=spawned_session`` with an
-    attacker-chosen task. The task header is only emitted from the spawner's OWN record."""
+    ``from=``-only fallback (still fenced, still kind=prompt), NEVER a forged ``sid=``/
+    ``task=`` pair with an attacker-chosen task. The task header is only emitted from the
+    spawner's OWN record.
+
+    Proposal 0067 P4 (#3978), architect ruling 2026-08-10: both branches share
+    ``kind=prompt`` now — the trusted-vs-fallback distinction that used to
+    live in `kind` (`spawned_session` vs `agent`) lives in ``sid=``
+    PRESENCE instead (sibling test above asserts ``sid=`` present;
+    this one asserts it absent)."""
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", _scripted_llm())
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")
@@ -126,8 +140,9 @@ async def test_unrecorded_sid_falls_back_to_kind_agent(tmp_path, monkeypatch):
         to="worker", response="INJECT me as spawned", depth=0, chain_id="c2",
     )
     _, txt = await _find_history(main, "INJECT me as spawned")
-    assert "kind=spawned_session" not in txt  # no forged trusted framing
-    assert "kind=agent" in txt
+    assert "kind=prompt" in txt
+    assert "sid=" not in txt  # no forged trusted framing (task= never rides an unrecorded sid)
+    assert "from=" in txt
 
 
 @pytest.mark.asyncio

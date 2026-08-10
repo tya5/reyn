@@ -527,7 +527,7 @@ class InterAgentMessaging:
 
         # B55 R-7 (2026-05-25): structural symmetry with agent / plan
         # completion injections. Wrap the peer's reply in a
-        # `[task_completed] kind=agent ...` header (role=user) so the
+        # `[task_completed] kind=prompt ...` header (role=user) so the
         # SP TASK_COMPLETED rule covers agent-delegation lifecycles
         # too. Prior behaviour appended the raw reply text alone,
         # which the LLM read as a plain user message — no task
@@ -536,20 +536,28 @@ class InterAgentMessaging:
         # before it enters history. Only the history-bound copy is fenced; the
         # raw ``response`` stays for chain-resolution routing below.
         # #2103 S1bc-exec: a result from a session THIS agent SPAWNED (correlated by the
-        # responder's sid against our OWN trusted spawn record) renders a distinct
-        # kind=spawned_session header so the LLM reads it as "my spawned session finished
-        # task <T>", not an inbound from a peer agent. SECURITY SPLIT: the header (sid +
-        # task) is OS-generated TRUSTED framing — the task is OUR own request from the
-        # record, NOT the spawned session's echo (which a compromised sub-session could
-        # forge); ONLY the reply stays _fence_inbound'd (untrusted output). A spoofed /
-        # unknown sid → lookup miss → the plain kind=agent fallback (still fenced).
+        # responder's sid against our OWN trusted spawn record) renders a header carrying
+        # sid= so the LLM reads it as "my spawned session finished task <T>", not an
+        # inbound from a peer agent. SECURITY SPLIT: the header (sid + task) is
+        # OS-generated TRUSTED framing — the task is OUR own request from the record, NOT
+        # the spawned session's echo (which a compromised sub-session could forge); ONLY
+        # the reply stays _fence_inbound'd (untrusted output). A spoofed / unknown sid →
+        # lookup miss → the plain from=-only fallback (still fenced).
+        #
+        # Proposal 0067 P4 (#3978), architect ruling 2026-08-10: both branches'
+        # `kind=` collapsed from `agent`/`spawned_session` to the single
+        # `prompt` — D2's `kind` axis names WHAT was executed (one prompt
+        # turn, either way), not WHO triggered it. "Who" is not lost: it
+        # still rides `sid=`/`from=`, which this migration is required to
+        # preserve verbatim (the compensating condition for collapsing the
+        # kind axis at all).
         responder_sid = payload.get("responder_sid")
         spawned_task = (
             self._lookup_spawned_task(responder_sid) if self._lookup_spawned_task else None
         )
         if spawned_task is not None:
             injected_text = (
-                f"[task_completed] kind=spawned_session sid={responder_sid} "
+                f"[task_completed] kind=prompt sid={responder_sid} "
                 f"task={_summarize_task(spawned_task)} chain_id={chain_id}\n"
                 f"reply: {self._fence_inbound(response)}"
             )
@@ -559,7 +567,7 @@ class InterAgentMessaging:
             }
         else:
             injected_text = (
-                f"[task_completed] kind=agent "
+                f"[task_completed] kind=prompt "
                 f"from={from_agent or '<unknown>'} chain_id={chain_id}\n"
                 f"reply: {self._fence_inbound(response)}"
             )
@@ -624,7 +632,7 @@ class InterAgentMessaging:
                 return
 
             try:
-                # B55 R-7: pass the structured `[task_completed] kind=agent`
+                # B55 R-7: pass the structured `[task_completed] kind=prompt`
                 # injection (= history's last entry, also user-role) so the
                 # router sees the same lifecycle marker the SP rule covers
                 # — parity with agent / plan completion paths.

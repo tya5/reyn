@@ -1322,7 +1322,8 @@ class RouterHostAdapter:
             intervention_bridge=_routing.intervention_bridge,
         )
         # #2103 S1bc-exec: record sid→task BEFORE submitting, so a fast result finds the
-        # trusted task on return (else it falls back to the kind=agent rendering).
+        # trusted task on return (else it falls back to the from=-only rendering — both
+        # still kind=prompt, proposal 0067 P4 #3978, architect ruling 2026-08-10).
         if self._record_spawned_task is not None:
             self._record_spawned_task(sid, request)
         session = self._registry.ensure_session_running(self._agent_name, sid)
