@@ -57,14 +57,32 @@ def measured_flat_files(tests_dir: Path = _TESTS_DIR) -> "set[str]":
     ``tests_dir.glob("*.py")`` does not recurse, so a file already moved into
     a subdirectory is correctly absent.
 
-    ``__init__.py`` is excluded: it is a package marker (#4001 — makes
-    ``tests/`` a real package so pytest's import-mode walk never stops at
-    ``tests/`` itself, closing the tests/<bucket>/ name-collision class),
-    not a test file. This ratchet's INVARIANT is about new flat TESTS, and a
-    package marker is not one — the same class of exclusion
-    ``check_migration_diff_shape.py`` already grants an empty
-    ``tests/<pkg>/__init__.py`` bucket-marker addition."""
-    return {p.name for p in tests_dir.glob("*.py") if p.name != "__init__.py"}
+    Three exclusions, none of them a test file this ratchet's INVARIANT (new
+    flat TESTS) is about:
+
+    - ``__init__.py`` — a package marker (#4001 — makes ``tests/`` a real
+      package so pytest's import-mode walk never stops at ``tests/`` itself,
+      closing the tests/<bucket>/ name-collision class), not a test file.
+      The same class of exclusion ``check_migration_diff_shape.py`` already
+      grants an empty ``tests/<pkg>/__init__.py`` bucket-marker addition.
+    - ``conftest.py`` — pytest fixture configuration, structurally pinned
+      flat forever (the PR-workflow rule 4/CLAUDE.md hard-rule docs
+      themselves note it as "the one structural exception" for
+      ``__file__``-depth references); #3879's own bucket-migration arc has
+      never proposed moving it, so it is not a member of the population a
+      disposition decision is owed for.
+    - a name starting with ``_`` — a shared test-support HELPER
+      (``tests/_async_wait.py``), not a test module pytest collects; the
+      leading underscore is the same "not a public/collectible thing"
+      convention Python itself uses, and lead-coder's #4072 review named
+      this and ``conftest.py`` as the two remaining #3879-population
+      members that should never have been counted as flat TESTS needing a
+      bucket decision in the first place."""
+    return {
+        p.name
+        for p in tests_dir.glob("*.py")
+        if p.name != "__init__.py" and p.name != "conftest.py" and not p.name.startswith("_")
+    }
 
 
 def load_baseline(path: Path = _BASELINE_PATH) -> "set[str]":

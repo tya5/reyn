@@ -61,6 +61,22 @@ def test_measured_flat_files_ignores_non_python(tmp_path: Path) -> None:
     assert measured_flat_files(tests_dir) == {"test_a.py"}
 
 
+def test_measured_flat_files_excludes_conftest(tmp_path: Path) -> None:
+    """Tier 2: conftest.py is structurally pinned flat (the __file__-depth
+    gate's own documented exception) — never a member of the population a
+    #3879 disposition decision is owed for (lead-coder, #4072 review)."""
+    tests_dir = _make_tests_dir(tmp_path, flat_names=["test_a.py", "conftest.py"])
+    assert measured_flat_files(tests_dir) == {"test_a.py"}
+
+
+def test_measured_flat_files_excludes_underscore_prefixed_names(tmp_path: Path) -> None:
+    """Tier 2: an underscore-prefixed name (tests/_async_wait.py) is a
+    shared test-support helper, not a collectible test module — same
+    lead-coder finding as the conftest.py exclusion above."""
+    tests_dir = _make_tests_dir(tmp_path, flat_names=["test_a.py", "_async_wait.py"])
+    assert measured_flat_files(tests_dir) == {"test_a.py"}
+
+
 def test_new_flat_files_is_measured_minus_baseline() -> None:
     """Tier 2: the ratchet's core arithmetic — a name absent from the
     baseline is new; a baseline name absent from measured (moved away) is
