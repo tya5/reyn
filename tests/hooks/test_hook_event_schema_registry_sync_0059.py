@@ -133,7 +133,7 @@ def _make_session(tmp_path: Path) -> Session:
 
 
 @pytest.mark.asyncio
-async def test_all_nine_builtin_points_dispatch_schema_matching_payloads(
+async def test_every_builtin_point_dispatches_schema_matching_payload(
     tmp_path, monkeypatch,
 ):
     """Tier 2: every builtin hook-point, exercised via its REAL
