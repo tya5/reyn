@@ -45,10 +45,13 @@ from types import SimpleNamespace
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.core.pipeline.executor import Pipeline, TransformStep
+from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.hooks import dispatcher as dispatcher_mod
 from reyn.hooks.ingress import McpIngressAdapter
 from reyn.hooks.loader import load_hooks
 from reyn.hooks.registry import HookRegistry
+from reyn.hooks.schema import ALLOWED_HOOK_POINTS
 from reyn.hooks.schema_registry import (
     BUILTIN_HOOK_SCHEMAS,
     HookSchemaError,
@@ -60,8 +63,11 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.mcp.message_handler import ReynMCPMessageHandler
 from reyn.runtime.cron.routing import dispatch_cron_fired
+from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.webhook_routing import dispatch_webhook_received
+from reyn.tools.pipeline_verbs import _handle_run_pipeline_async
+from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
 
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
@@ -186,12 +192,48 @@ async def test_all_eight_builtin_points_dispatch_schema_matching_payloads(
         "file_changed", path="/repo/src/main.py", event_type="modified",
     ))
 
+    # ── task_settled (#3978 P3, pipeline-async terminal-delivery producer) ──
+    # driven via a REAL run_pipeline_async through to completion — the same
+    # AgentRegistry-backed setup test_pipeline_is2_driver_session.py's own
+    # delivery test uses, minimized to a single pure TransformStep (no tool
+    # needed to reach a terminal, schema-matching payload).
+    async def _scripted(**kwargs: object) -> LLMToolCallResult:
+        return _text_result("ack")
+
+    registry = AgentRegistry(
+        project_root=tmp_path / "task-settled-arc",
+        session_factory=lambda profile, **kw: make_session(
+            agent_name=profile.name, state_log=StateLog(tmp_path / "task-settled-arc" / ".reyn" / "wal.jsonl"),
+        ),
+        state_log=StateLog(tmp_path / "task-settled-arc" / ".reyn" / "wal.jsonl"),
+    )
+    registry.create("worker")
+    caller = registry.get_or_load("worker")
+    caller._loop_driver._loop_observer = lambda loop: setattr(loop, "_llm_caller", _scripted)
+    pipeline_registry = PipelineRegistry()
+    pipeline_registry.register("p", Pipeline(steps=[TransformStep(value="1 + 1", output="t0")]))
+    ctx = ToolContext(
+        events=caller._router_host.events, permission_resolver=None, workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(
+            pipeline_registry=pipeline_registry, agent_registry=registry, host=caller._router_host,
+        ),
+        state_log=StateLog(tmp_path / "task-settled-arc" / ".reyn" / "wal.jsonl"),
+    )
+    launch = await _handle_run_pipeline_async({"name": "p", "input": {}}, ctx)
+    assert launch["status"] == "started"
+    await _wait_for(lambda: any(p == "task_settled" for p, _ in captured))
+
     seen_points = {p for p, _ in captured}
-    expected_points = {
-        "session_start", "session_end", "turn_start", "turn_end",
-        "cron_fired", "webhook_received",
-        "mcp_resource_updated", "file_changed",
-    }
+    # Derived from ALLOWED_HOOK_POINTS (the schema-driven open set), not
+    # hand-copied (lead-coder's #3978 P3 finding): a hardcoded literal here
+    # is exactly the gap that let a 9th declared-but-unproduced point
+    # (task_settled) pass silently — declaring a point in BARE_TO_KIND/
+    # BUILTIN_HOOK_SCHEMAS without ALSO exercising its real producer here
+    # left "every dispatch call-site's assembled payload == the shipped
+    # schema" (this file's own docstring) true only for the 8 points this
+    # set happened to name by hand.
+    expected_points = set(ALLOWED_HOOK_POINTS)
     missing = expected_points - seen_points
     assert not missing, f"builtin points never captured: {sorted(missing)}"
 

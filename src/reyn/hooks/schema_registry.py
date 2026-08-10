@@ -62,10 +62,17 @@ _LIFECYCLE_POINTS: "tuple[str, ...]" = (
 _EXTERNAL_POINTS: "tuple[str, ...]" = (
     "mcp_resource_updated", "file_changed", "cron_fired", "webhook_received",
 )
+# proposal 0067 P3 — neither a session lifecycle transition nor an external
+# ingress signal; a THIRD category for "an async unit of work reached a
+# terminal disposition" (today: only the pipeline-async terminal-delivery
+# producer — see build_hook_payload's own P3 note below for why delegate_to_
+# agent's chain-resolve path is deliberately NOT a second producer yet).
+_TASK_POINTS: "tuple[str, ...]" = ("task_settled",)
 
 BARE_TO_KIND: "dict[str, str]" = {
     **{p: f"builtin:lifecycle:{p}" for p in _LIFECYCLE_POINTS},
     **{p: f"builtin:external:{p}" for p in _EXTERNAL_POINTS},
+    **{p: f"builtin:task:{p}" for p in _TASK_POINTS},
 }
 KIND_TO_BARE: "dict[str, str]" = {kind: bare for bare, kind in BARE_TO_KIND.items()}
 
@@ -109,6 +116,15 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
     "builtin:external:file_changed": frozenset({"point", "path", "event_type"}),
     "builtin:external:cron_fired": frozenset({"point", "job_name", "to"}),
     "builtin:external:webhook_received": frozenset({"point", "transport", "sender"}),
+    # proposal 0067 P3: producer = the pipeline-async terminal-delivery path
+    # ONLY (owner ruling via lead-coder, 2026-08-10) — delegate_to_agent's
+    # chain-resolve path is a SEPARATE, still-unwired "settle"-shaped
+    # completion today; folding it in is P6's job (retiring delegate_to_agent
+    # repurposes pending_chains as this point's second producer). Recorded
+    # here, not silently dropped, per CLAUDE.md's arc-closure remainder rule.
+    "builtin:task:task_settled": frozenset(
+        {"point", "task_id", "kind", "status", "session", "result"},
+    ),
 }
 
 # The schema-driven OPEN SET of valid builtin ``on:`` values — the single
@@ -149,7 +165,16 @@ ALLOWED_HOOK_KINDS: "frozenset[str]" = frozenset(BUILTIN_HOOK_SCHEMAS)
 # closed by ``tests/hooks/test_context_safe_gate_3978.py``'s own
 # membership check (``CONTEXT_UNSAFE_FIELDS[kind] <= BUILTIN_HOOK_SCHEMAS[kind]``
 # for every kind), not by convention.
-CONTEXT_UNSAFE_FIELDS: "dict[str, frozenset[str]]" = {}
+CONTEXT_UNSAFE_FIELDS: "dict[str, frozenset[str]]" = {
+    # proposal 0067 P3, ADR-0040 D3: `result` is LLM-authored content (the
+    # task's own output) — the FIRST field this deny-list actually excludes.
+    # Not covered by the "current fields are safe" owner ruling (that
+    # covered the 8 pre-P3 builtin schemas only): P3's OWN design already
+    # specifies "result: context_safe false" (proposal §"The task
+    # mechanism"), so this entry is the payload's authors' declared intent,
+    # not a narrowing added after the fact.
+    "builtin:task:task_settled": frozenset({"result"}),
+}
 
 
 def safe_context_fields(kind_or_point: str, context: dict) -> dict:

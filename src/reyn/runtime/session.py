@@ -2419,9 +2419,8 @@ class Session:
         return out
 
     async def dispatch_external_event(self, point: str, template_vars: dict) -> None:
-        """#2608 H5: public entry point for an OUT-OF-SESSION external-event
-        source (cron / webhook ingress) to fire a hook on THIS session's
-        dispatcher.
+        """#2608 H5: public entry point for an OUT-OF-SESSION source to fire
+        a hook on THIS session's dispatcher.
 
         H1 (``mcp_resource_updated``) and H4 (``file_changed``) both fire
         their hook via a ``hook_trigger`` closure captured over
@@ -2436,6 +2435,13 @@ class Session:
         dispatch`` already gives every H1/H4 guarantee (per-hook isolation —
         never raises; H2 matcher evaluated before a hook's action runs;
         empty-registry is a byte-identical no-op).
+
+        proposal 0067 P3: ``reyn.runtime.services.pipeline_executor_driver.
+        PipelineExecutorDriver._deliver`` calls this on the REPLY session
+        (the issuer waiting on the task, not the driver-session that ran
+        it) to fire ``task_settled`` right after ``pipeline_result`` is
+        delivered — the same "resolve a Session it doesn't own, long after
+        its own ``__init__``" shape H5/H4 already needed a public seam for.
         """
         await self._hook_dispatcher.dispatch(point, template_vars)
 

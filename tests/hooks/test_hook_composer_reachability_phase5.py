@@ -129,7 +129,7 @@ def test_composed_kind_now_loads_as_on_target():
     """Tier 1: ``on: composed:<name>`` — fail-loud-rejected in Phase 4b (the
     §9 example's own annotation) — now loads successfully. ``composed:<name>``
     is accepted as an OPEN namespace (by prefix), not enumerated in the fixed
-    ``ALLOWED_HOOK_POINTS`` frozenset (which stays the 10 builtin points)."""
+    ``ALLOWED_HOOK_POINTS`` frozenset (which stays the 9 builtin points)."""
     registry = load_hooks([
         {"on": "composed:deploy_approved", "template_push": {"message": "go", "wake": True}},
     ])

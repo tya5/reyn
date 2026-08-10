@@ -103,6 +103,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from reyn.hooks.schema_registry import build_hook_payload
 from reyn.runtime.session_pure import new_chain_id
 
 if TYPE_CHECKING:
@@ -428,6 +429,22 @@ class PipelineExecutorDriver:
         await target.submit_pipeline_result(
             run_id=wo.run_id, pipeline_name=wo.pipeline_name, status=status,
             text=text, chain_id=new_chain_id(),
+        )
+        # proposal 0067 P3: task_settled fires AFTER delivery succeeds
+        # (delivery-anchored, matching the point's own name — "settled"
+        # means the result already reached its destination, not merely
+        # that this driver decided to send it). kind="pipeline" is a
+        # placeholder value (P4 has not landed the prompt|pipeline|exec
+        # vocabulary yet) — the ONLY producer wired today, per lead-coder's
+        # ruling (delegate_to_agent's chain-resolve path is a separate,
+        # still-unwired "settle"-shaped completion; folding it in is P6's
+        # job, see BUILTIN_HOOK_SCHEMAS's own comment on this point).
+        await target.dispatch_external_event(
+            "task_settled",
+            build_hook_payload(
+                "task_settled", task_id=wo.run_id, kind="pipeline",
+                status=status, session=wo.reply_to_sid or "main", result=text,
+            ),
         )
         return True
 
