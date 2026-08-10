@@ -375,7 +375,7 @@ async def test_multi_hop_pending_chain_registered(
     assert "peer_c" in pending.waiting_on, (
         "waiting_on must contain the delegated agent"
     )
-    assert pending.origin_agent == "upstream_a"
+    assert pending.requester.agent_name == "upstream_a"
 
     # No immediate upstream response should be sent (deferred path).
     upstream_responses = [r for r in responses if r["to"] == "upstream_a"]

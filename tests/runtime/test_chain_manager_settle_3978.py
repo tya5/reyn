@@ -23,6 +23,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
+from reyn.runtime.task_types import Requester
 
 
 class _NullEvents:
@@ -49,7 +50,7 @@ async def test_registered_kind_is_readable_back(tmp_path: Path):
     via ``get``/``find_chain`` (describe_task/list_tasks's own read path)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-k1", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-k1", depth=0, original_text="p", sender=None,
         kind="pipeline",
     )
     assert mgr.get("run-k1").kind == "pipeline"
@@ -65,7 +66,7 @@ async def test_registered_kind_defaults_to_none_for_legacy_delegate_chains(
     value from any of prompt/pipeline/exec, not a crash."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-k2", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-k2", depth=0, original_text="p", sender=None,
     )
     assert mgr.get("run-k2").kind is None
 
@@ -79,8 +80,8 @@ async def test_requester_derives_from_origin_agent_and_sid(tmp_path: Path):
     origin_sid)"). Real, non-default sid."""
     mgr = _make_manager(tmp_path)
     chain = await mgr.register(
-        chain_id="run-k3", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid="s7",
+        chain_id="run-k3", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="s7"),
     )
     assert chain.requester.agent_name == "worker"
     assert chain.requester.session_id == "s7"
@@ -97,8 +98,7 @@ async def test_requester_session_id_defaults_to_main_when_origin_sid_none(
     ``Requester``'s own type (``session_id: str``) can't even represent."""
     mgr = _make_manager(tmp_path)
     chain = await mgr.register(
-        chain_id="run-k4", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid=None,
+        chain_id="run-k4", depth=0, original_text="p", sender="worker",
     )
     assert chain.requester.session_id == "main"
 
@@ -131,7 +131,7 @@ async def test_settle_deliver_runs_the_deliver_callback(tmp_path: Path):
     """Tier 2: on_settle="deliver" awaits the caller's own deliver callback."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-1", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-1", depth=0, original_text="p", sender=None,
     )
     calls = []
 
@@ -148,7 +148,7 @@ async def test_settle_drop_never_calls_deliver(tmp_path: Path):
     called (ADR-0040 D4: the disposition is intentionally discarded)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-2", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-2", depth=0, original_text="p", sender=None,
     )
     calls = []
 
@@ -169,7 +169,7 @@ async def test_settle_pipeline_name_without_launcher_raises_not_implemented(
     launch-and-reroute mechanism is still unbuilt (proposal 0067 P4/P7)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-3", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-3", depth=0, original_text="p", sender=None,
     )
 
     async def _deliver() -> None:
@@ -188,7 +188,7 @@ async def test_settle_pipeline_name_with_launcher_calls_it_with_the_name(
     pipeline name), not ``deliver``."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-4", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-4", depth=0, original_text="p", sender=None,
     )
     launched = []
 
@@ -213,7 +213,7 @@ async def test_settle_pops_the_handle_in_the_same_call(tmp_path: Path):
     the handle is gone from the manager (mirrors resolve()'s pop)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-5", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-5", depth=0, original_text="p", sender=None,
     )
     assert mgr.has("run-5")
 
@@ -233,8 +233,8 @@ async def test_settle_returns_the_popped_handle(tmp_path: Path):
     off the return value after it's gone from the manager."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-6", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid="s1",
+        chain_id="run-6", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="s1"),
     )
 
     async def _deliver() -> None:
@@ -243,8 +243,8 @@ async def test_settle_returns_the_popped_handle(tmp_path: Path):
     popped = await mgr.settle("run-6", on_settle="deliver", deliver=_deliver)
 
     assert popped is not None
-    assert popped.origin_agent == "worker"
-    assert popped.origin_sid == "s1"
+    assert popped.requester.agent_name == "worker"
+    assert popped.requester.session_id == "s1"
 
 
 @pytest.mark.asyncio

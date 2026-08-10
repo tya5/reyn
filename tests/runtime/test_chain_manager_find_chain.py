@@ -20,6 +20,7 @@ from pathlib import Path
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
+from reyn.runtime.task_types import Requester
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,12 +60,11 @@ def test_find_chain_returns_pending_when_registered(tmp_path: Path):
     async def go():
         await mgr.register(
             chain_id="X-001",
-            from_user=False,
             depth=1,
             original_text="hello",
             sender="caller",
             waiting_on={"B"},
-            origin_agent="A",
+            requester=Requester(agent_name="A", session_id="main"),
             origin_depth=1,
         )
 
@@ -72,7 +72,7 @@ def test_find_chain_returns_pending_when_registered(tmp_path: Path):
     found = mgr.find_chain("X-001")
     assert isinstance(found, _PendingChain)
     assert found.chain_id == "X-001"
-    assert found.origin_agent == "A"
+    assert found.requester.agent_name == "A"
     assert found.waiting_on == {"B"}
 
 
@@ -89,12 +89,11 @@ def test_find_chain_is_read_only(tmp_path: Path):
     async def go():
         await mgr.register(
             chain_id="X-002",
-            from_user=False,
             depth=1,
             original_text="hi",
             sender="caller",
             waiting_on={"B"},
-            origin_agent="A",
+            requester=Requester(agent_name="A", session_id="main"),
             origin_depth=1,
         )
 
@@ -120,12 +119,11 @@ def test_find_chain_returns_none_after_resolve(tmp_path: Path):
     async def go():
         await mgr.register(
             chain_id="X-003",
-            from_user=False,
             depth=1,
             original_text="hi",
             sender="caller",
             waiting_on={"B"},
-            origin_agent="A",
+            requester=Requester(agent_name="A", session_id="main"),
             origin_depth=1,
         )
         await mgr.resolve("X-003")

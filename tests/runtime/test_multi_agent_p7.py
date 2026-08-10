@@ -40,6 +40,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.session import Session
+from reyn.runtime.task_types import Requester
 from reyn.runtime.topology import Topology
 from tests._support.agent_session import make_session
 from tests._support.paths import REPO_ROOT
@@ -142,22 +143,20 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
     # test pure chain mechanics).
     await sess_a.chains.register(
         chain_id=chain_ab,
-        from_user=True,
         depth=1,
         original_text="task for B",
         sender=None,
         waiting_on={"B"},
-        origin_agent="",
+        requester=Requester(agent_name="", session_id="main"),
         origin_depth=0,
     )
     await sess_a.chains.register(
         chain_id=chain_ac,
-        from_user=True,
         depth=1,
         original_text="task for C",
         sender=None,
         waiting_on={"C"},
-        origin_agent="",
+        requester=Requester(agent_name="", session_id="main"),
         origin_depth=0,
     )
 
@@ -352,12 +351,11 @@ async def test_chain_resolve_does_not_inspect_skill_name():
     for cid in skill_like_ids:
         await mgr.register(
             chain_id=cid,
-            from_user=False,
             depth=1,
             original_text="request",
             sender="upstream",
             waiting_on={"downstream"},
-            origin_agent="upstream",
+            requester=Requester(agent_name="upstream", session_id="main"),
             origin_depth=1,
         )
 

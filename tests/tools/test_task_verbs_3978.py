@@ -16,6 +16,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
+from reyn.runtime.task_types import Requester
 from reyn.tools.task_verbs import (
     _handle_cancel_task,
     _handle_describe_task,
@@ -57,8 +58,8 @@ async def test_describe_task_returns_full_shape_for_a_running_task(tmp_path: Pat
     session, requester} — for a real, registered running task."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-1", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid="s1", kind="pipeline",
+        chain_id="run-1", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="s1"), kind="pipeline",
     )
 
     result = await _handle_describe_task({"task_id": "run-1"}, _ctx(mgr))
@@ -92,7 +93,7 @@ async def test_describe_task_excludes_untyped_legacy_delegate_chains(tmp_path: P
     caller didn't ask)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="legacy-1", from_user=False, depth=0, original_text="p", sender="peer",
+        chain_id="legacy-1", depth=0, original_text="p", sender="peer",
     )
 
     result = await _handle_describe_task({"task_id": "legacy-1"}, _ctx(mgr))
@@ -117,8 +118,8 @@ async def test_describe_task_reports_session_inbox_depth(tmp_path: Path):
     the handler itself does no resolution)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-depth", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid="s1", kind="pipeline",
+        chain_id="run-depth", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="s1"), kind="pipeline",
     )
 
     result = await _handle_describe_task({"task_id": "run-depth"}, _ctx(mgr, inbox_depth=3))
@@ -133,7 +134,7 @@ async def test_describe_task_session_inbox_depth_defaults_to_none(tmp_path: Path
     would misread as "definitely empty")."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-nodepth", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-nodepth", depth=0, original_text="p", sender=None,
         kind="pipeline",
     )
 
@@ -151,11 +152,11 @@ async def test_list_tasks_lists_only_typed_running_tasks(tmp_path: Path):
     the {task_id, kind, status, session} list shape — no requester field."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-2", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid=None, kind="pipeline",
+        chain_id="run-2", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="main"), kind="pipeline",
     )
     await mgr.register(
-        chain_id="legacy-2", from_user=False, depth=0, original_text="p", sender="peer",
+        chain_id="legacy-2", depth=0, original_text="p", sender="peer",
     )
 
     result = await _handle_list_tasks({}, _ctx(mgr))
@@ -177,10 +178,10 @@ async def test_list_tasks_session_inbox_depth_same_for_every_entry(tmp_path: Pat
     list_tasks can even see was registered with the same origin session."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-5", from_user=False, depth=0, original_text="p", sender=None, kind="pipeline",
+        chain_id="run-5", depth=0, original_text="p", sender=None, kind="pipeline",
     )
     await mgr.register(
-        chain_id="run-6b", from_user=False, depth=0, original_text="p", sender=None, kind="prompt",
+        chain_id="run-6b", depth=0, original_text="p", sender=None, kind="prompt",
     )
 
     result = await _handle_list_tasks({}, _ctx(mgr, inbox_depth=7))
@@ -194,11 +195,11 @@ async def test_list_tasks_filters_by_kind(tmp_path: Path):
     """Tier 2: a kind filter narrows the listing to matching tasks only."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-3", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-3", depth=0, original_text="p", sender=None,
         kind="pipeline",
     )
     await mgr.register(
-        chain_id="run-4", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-4", depth=0, original_text="p", sender=None,
         kind="prompt",
     )
 
@@ -225,7 +226,7 @@ async def test_cancel_task_calls_the_hook_and_returns_cancel_requested(tmp_path:
     mgr = _make_manager(tmp_path)
     calls = []
     await mgr.register(
-        chain_id="run-5", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-5", depth=0, original_text="p", sender=None,
         kind="pipeline", cancel=lambda: calls.append("cancelled"),
     )
 
@@ -243,7 +244,7 @@ async def test_cancel_task_without_a_live_hook_never_reports_success(tmp_path: P
     silent 'cancelled' while the task keeps running."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-6", from_user=False, depth=0, original_text="p", sender=None,
+        chain_id="run-6", depth=0, original_text="p", sender=None,
         kind="pipeline",  # no cancel= — mirrors a recovered handle
     )
 
@@ -273,7 +274,7 @@ async def test_cancel_task_untyped_legacy_chain_returns_error(tmp_path: Path):
     mgr = _make_manager(tmp_path)
     calls = []
     await mgr.register(
-        chain_id="legacy-3", from_user=False, depth=0, original_text="p", sender="peer",
+        chain_id="legacy-3", depth=0, original_text="p", sender="peer",
         cancel=lambda: calls.append("should not run"),
     )
 
@@ -308,8 +309,8 @@ async def test_describe_task_reaches_a_real_chain_manager_through_the_real_route
     (#2120's own spawn_session-advertised-but-undispatched precedent)."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-e2e", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid="s1", kind="pipeline",
+        chain_id="run-e2e", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="s1"), kind="pipeline",
     )
     host = FakeRouterHost(chains=mgr)
     loop = RouterLoop(host=host, chain_id="chain-test")
@@ -340,8 +341,8 @@ async def test_describe_task_session_inbox_depth_reaches_production_wiring(
     constructed with ``inbox_depth=``."""
     mgr = _make_manager(tmp_path)
     await mgr.register(
-        chain_id="run-depth-e2e", from_user=False, depth=0, original_text="p", sender=None,
-        origin_agent="worker", origin_sid="s1", kind="pipeline",
+        chain_id="run-depth-e2e", depth=0, original_text="p", sender=None,
+        requester=Requester(agent_name="worker", session_id="s1"), kind="pipeline",
     )
     host = FakeRouterHost(chains=mgr, inbox_depth=5)
     loop = RouterLoop(host=host, chain_id="chain-test")

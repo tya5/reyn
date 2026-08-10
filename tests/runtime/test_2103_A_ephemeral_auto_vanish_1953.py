@@ -94,7 +94,7 @@ async def test_ephemeral_does_not_vanish_while_awaiting_delegation(tmp_path):
 
     # the spawned session delegated to a peer + awaits its response (pending chain;
     # the inbox is transiently empty between the delegate-send and the response).
-    await eph._chains.register(chain_id="c1", from_user=False, depth=1,
+    await eph._chains.register(chain_id="c1", depth=1,
                                original_text="sub", sender="alice", waiting_on={"peer"})
     eph._maybe_schedule_ephemeral_vanish()
     # drain any (erroneously) scheduled teardown so the assertion reflects the true

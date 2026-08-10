@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session_pure import new_chain_id
+from reyn.runtime.task_types import Requester
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
@@ -384,7 +385,7 @@ class InterAgentMessaging:
         from_agent = payload.get("from_agent", "")
         # #2130: the REQUESTER's session id (None for the main-case / external peers) — so
         # this agent's reply routes back to the SPECIFIC (from_agent, from_sid), threaded
-        # to every send_agent_response below + the pending chain's origin_sid.
+        # to every send_agent_response below + the pending chain's requester.session_id.
         from_sid = payload.get("from_sid")
         # FP-0050/#1822 S4b (EP5, Class A): fence + scan the untrusted peer
         # request before it enters history (a remote agent is outside the trust
@@ -471,14 +472,16 @@ class InterAgentMessaging:
             waiting_on = {d["to"] for d in dispatched}
             await self._chains.register(
                 chain_id=chain_id,
-                from_user=False,
                 depth=depth,
                 original_text=request,
                 sender=from_agent,
                 waiting_on=waiting_on,
-                origin_agent=from_agent,
+                # #2130: route the chain reply back to the specific
+                # (from_agent, from_sid) — proposal 0067 P4e (#3978):
+                # requester is the materialized stored form, not a derived
+                # property, of that same address.
+                requester=Requester(agent_name=from_agent, session_id=from_sid or "main"),
                 origin_depth=depth,
-                origin_sid=from_sid,  # #2130: route the chain reply back to (origin_agent, origin_sid)
             )
             self._chains.arm_timeout(
                 chain_id, on_fire=self._on_chain_timeout_fire,
@@ -511,8 +514,8 @@ class InterAgentMessaging:
         - chain_id ∈ self._chains → multi-hop relay. Drop sender
           from waiting_on; when waiting_on becomes empty, re-invoke router
           and forward the synthesized reply (or fresh delegations) on the
-          same chain. Reply goes to the chain's ``origin_agent``, NOT
-          ``from_agent``.
+          same chain. Reply goes to the chain's ``requester.agent_name``,
+          NOT ``from_agent``.
         - chain_id ∉ self._chains → user-initiated chain (PR11
           compatibility). The router's reply_text is treated as a
           user-facing message (outbox + history); further delegations
@@ -691,15 +694,15 @@ class InterAgentMessaging:
                 self._output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
             )
             user_text = msg_template.format(peer=peer, reason=reason)
-            # Forward the failure upstream — the pending chain always has an
-            # origin_agent (chains from user requests don't reach _resolve_pending_chain;
+            # Forward the failure upstream — the pending chain always has a
+            # requester (chains from user requests don't reach _resolve_pending_chain;
             # they are handled by the `chain_id ∉ self._chains` branch above).
             await self.send_agent_response(
-                to=pending.origin_agent,
+                to=pending.requester.agent_name,
                 response=user_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
-                to_sid=pending.origin_sid,  # #2130
+                to_sid=pending.requester.session_id,  # #2130
             )
             self._events.emit(
                 "peer_reply_failed_surfaced",
@@ -723,14 +726,14 @@ class InterAgentMessaging:
             # of whether LLM wrap-up succeeded — user-facing and agent-protocol are
             # orthogonal: origin agent must know the chain ended on cap (#1538).
             await self.send_agent_response(
-                to=pending.origin_agent,
+                to=pending.requester.agent_name,
                 response=_no_reply_marker(
                     self.agent_name,
                     f"router retry budget exhausted ({exc.count}/{exc.cap}) "
                     f"resolving chain",
                 ),
                 depth=pending.origin_depth, chain_id=chain_id,
-                to_sid=pending.origin_sid,  # #2130
+                to_sid=pending.requester.session_id,  # #2130
             )
             await self._chains.resolve(chain_id)
             return
@@ -745,13 +748,13 @@ class InterAgentMessaging:
             ))
             # F6/F7 fix: structured marker upstream, not "".
             await self.send_agent_response(
-                to=pending.origin_agent,
+                to=pending.requester.agent_name,
                 response=_no_reply_marker(
                     self.agent_name,
                     f"router error during chain resolve: {exc}",
                 ),
                 depth=pending.origin_depth, chain_id=chain_id,
-                to_sid=pending.origin_sid,  # #2130
+                to_sid=pending.requester.session_id,  # #2130
             )
             await self._chains.resolve(chain_id)
             return
@@ -782,9 +785,9 @@ class InterAgentMessaging:
             )
         # History already appended by put_outbox.
         await self.send_agent_response(
-            to=pending.origin_agent, response=final_reply,
+            to=pending.requester.agent_name, response=final_reply,
             depth=pending.origin_depth, chain_id=chain_id,
-            to_sid=pending.origin_sid,  # #2130
+            to_sid=pending.requester.session_id,  # #2130
         )
         await self._chains.resolve(chain_id)
 

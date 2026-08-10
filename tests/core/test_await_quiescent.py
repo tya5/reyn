@@ -58,7 +58,7 @@ async def test_await_quiescent_cancels_chain_timeout_timer_no_append(tmp_path):
     # The chain must be registered so the watchdog's "still pending?" check passes
     # and on_fire would actually run (otherwise the fire short-circuits).
     await session._chains.register(
-        chain_id="c1", from_user=True, depth=0, original_text="q", sender=None,
+        chain_id="c1", depth=0, original_text="q", sender=None,
     )
 
     async def _on_fire(chain_id: str) -> None:

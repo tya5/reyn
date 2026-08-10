@@ -107,6 +107,7 @@ from typing import TYPE_CHECKING, Any
 
 from reyn.runtime.errors import AgentStepError
 from reyn.runtime.session_pure import new_chain_id
+from reyn.runtime.task_types import Requester
 from reyn.runtime.transport import SystemRef
 from reyn.runtime.turn_origin import TurnOrigin
 
@@ -629,10 +630,9 @@ async def _spawn_pipeline_driver_session(
         )
         if reply_target is not None:
             await reply_target.chains.register(
-                chain_id=rid, from_user=False, depth=0,
+                chain_id=rid, depth=0,
                 original_text=pipeline_name, sender=None,
-                origin_agent=reply_to_agent,
-                origin_sid=None if reply_to_sid == "main" else reply_to_sid,
+                requester=Requester(agent_name=reply_to_agent, session_id=reply_to_sid),
                 kind="pipeline",
                 cancel=driver.request_cancel,
             )

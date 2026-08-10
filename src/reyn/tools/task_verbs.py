@@ -40,8 +40,8 @@ def _inbox_depth(ctx: ToolContext) -> "int | None":
 
     ``chains`` is scoped to THE CALLING session's own ChainManager (module
     docstring), so every task these tools can even see was registered with
-    ``origin_sid`` equal to this same calling session — the depth is
-    therefore homogeneous across every task in a given response; no
+    ``requester.session_id`` equal to this same calling session — the depth
+    is therefore homogeneous across every task in a given response; no
     per-task resolution is needed."""
     rs = getattr(ctx, "router_state", None)
     return getattr(rs, "session_inbox_depth", None) if rs is not None else None
@@ -53,7 +53,7 @@ def _describe(chain: Any, *, inbox_depth: "int | None" = None) -> dict[str, Any]
         "task_id": chain.chain_id,
         "kind": chain.kind,
         "status": chain.status.value,
-        "session": chain.origin_sid or "main",
+        "session": chain.requester.session_id,
         # Proposal 0067 P9 (#3978), architect ruling 2026-08-10: an
         # INSTANTANEOUS read of the task's own (= this calling session's)
         # inbox queue depth — by the time this reply reaches the LLM the
