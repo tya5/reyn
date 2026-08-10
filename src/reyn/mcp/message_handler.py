@@ -6,36 +6,43 @@ keeps its receive loop running — so server-pushed notifications (``tools/list_
 ``prompts/list_changed``, ``notifications/progress``) ARRIVE on the wire, but nothing
 consumed them before S2b. This module installs the consumer.
 
-Design (verified against the installed ``fastmcp`` 3.4.2 source — see S2-pre spike):
+## Composition, not inheritance (#3698 P3)
 
-  - **Base class**: :class:`fastmcp.client.tasks.TaskNotificationHandler`, NOT the bare
-    ``fastmcp.client.messages.MessageHandler``. ``TaskNotificationHandler`` is FastMCP's
-    own SEP-1686 task-status router — its ``dispatch()`` peeks every incoming
-    ``ServerNotification`` for a ``TaskStatusNotification`` and forwards it to the owning
-    ``Client`` BEFORE calling ``super().dispatch()`` (the base ``MessageHandler`` match/case
-    that invokes ``on_tool_list_changed`` / ``on_prompt_list_changed`` / ``on_progress``
-    etc). Subclassing (and NOT overriding ``dispatch`` itself) means task-status routing
-    keeps running unconditionally on every message — our hook overrides only add behavior
-    on top, they never replace or skip it.
+Earlier versions of this class subclassed ``fastmcp.client.tasks.TaskNotificationHandler``
+(itself a subclass of ``fastmcp.client.messages.MessageHandler``). #3698 P3 measured
+the ACTUAL call contract by reading the installed ``mcp``/``fastmcp`` source directly:
+``mcp.client.session.ClientSession`` invokes ``self._message_handler(req)`` — a plain
+``Callable`` (``MessageHandlerFnT``, a ``Protocol``, not a class requirement) —
+``fastmcp.client.client.Client.__init__`` just stores whatever ``message_handler=``
+object it is given, verbatim. **No inheritance is required anywhere in the real call
+chain.** This class now implements :meth:`__call__` directly instead.
 
-  - **Two-phase client binding**: ``TaskNotificationHandler.__init__(self, client)``
-    requires an already-constructed ``fastmcp.Client`` (it stores ``weakref.ref(client)``
-    for the task-status routing above) — but FastMCP's own
-    ``Client(transport, message_handler=...)`` constructor takes the handler as an
-    argument, so the handler must exist BEFORE the ``Client`` object does. There is no
-    factory hook for this in the public API (verified: ``fastmcp.client.client.Client``
-    stores whatever ``message_handler`` object it's given verbatim in
-    ``_session_kwargs["message_handler"]``, consumed later at ``__aenter__``/session-connect
-    time — the client's *own* default path sidesteps this by constructing
-    ``TaskNotificationHandler(self)`` INLINE inside its own ``__init__``, where ``self``
-    already exists). This class breaks the same chicken-and-egg cycle explicitly:
-    ``__init__`` skips ``TaskNotificationHandler.__init__`` (calls
-    ``MessageHandler.__init__`` instead, which takes no arguments) and leaves
-    ``_client_ref`` pointing at a ``lambda: None``; :meth:`bind_client` — called by
-    :class:`~reyn.mcp.client.MCPClient` immediately after constructing the
-    ``fastmcp.Client`` and before ``__aenter__()`` opens the transport — completes the
-    weakref binding. No message can be dispatched before ``__aenter__()`` completes the
-    handshake, so ``bind_client`` always runs before the first ``dispatch()`` call.
+What the inheritance used to provide, and how this class now provides it itself:
+
+  - **Task-status routing** (``TaskNotificationHandler.dispatch``'s own job): peek every
+    incoming ``ServerNotification`` for a ``TaskStatusNotification`` and forward it to
+    the owning ``Client`` via the weakref binding below — :meth:`__call__` does this
+    directly now, in the same ``match`` statement as the rest of the routing (see
+    below), rather than via ``super().dispatch()``.
+  - **Message-type routing** (``MessageHandler.dispatch``'s own job): the base class
+    matched all 14 message shapes (requests, 7 notification subtypes, exceptions) and
+    routed each to its own ``on_X`` hook, all defaulting to a no-op ``pass`` unless
+    overridden. This class only ever overrode 4 of those 14 (``on_tool_list_changed``/
+    ``on_prompt_list_changed``/``on_resource_updated``/``on_progress``) — the other 10
+    were always inherited no-ops. :meth:`__call__`'s ``match`` now routes ONLY those 4
+    shapes (plus task-status) directly; everything else calls :meth:`_log_unhandled`
+    rather than silently reaching nothing (see below — this is a DELIBERATE behavior
+    addition, not a byte-identical port).
+
+  - **Two-phase client binding** (unchanged mechanism, no longer inherited): the owning
+    ``fastmcp.Client`` does not exist yet when this handler must be constructed (FastMCP's
+    own ``Client(transport, message_handler=...)`` takes the handler as a constructor
+    argument, so the handler must exist first) — :meth:`bind_client`, called by
+    :class:`~reyn.mcp.client.MCPClient` immediately after constructing the ``fastmcp.Client``
+    and before ``__aenter__()`` opens the transport, completes a weakref binding
+    (``self._client_ref``) that :meth:`__call__` reads for task-status forwarding. No
+    message can be dispatched before ``__aenter__()`` completes the handshake, so
+    ``bind_client`` always runs before the first ``__call__``.
 
   - **Synchronous hook bodies**: the handler runs on FastMCP's ``session_task`` (not the
     agent turn task), but ``EventLog.emit()`` is fully synchronous and asyncio is
@@ -45,12 +52,20 @@ Design (verified against the installed ``fastmcp`` 3.4.2 source — see S2-pre s
     docstring). Each hook below calls the sink SYNCHRONOUSLY (never ``await``s it) so a
     sink fault or a slow sink can never stall the receive loop or delay task-status
     routing; a fault in the sink is caught and swallowed (logged) rather than propagated,
-    since notification handling must never crash the held connection's receive loop. The
-    sole ``await super().<hook>(...)`` call in every override resolves against the base
-    ``MessageHandler``'s bare ``pass`` body — no real async work, no scheduler yield of any
-    consequence — so overriding these ``async def`` hooks (the base signature requires
-    ``async def``; that is a FastMCP interface constraint, not a body-level await) does not
-    reintroduce blocking.
+    since notification handling must never crash the held connection's receive loop.
+
+## What actually changed vs. the inherited version (named explicitly, #3698 P3 review)
+
+For every message shape the real MCP protocol produces TODAY, observable behavior is
+identical: the 4 acted-on notification types still trigger the same hook bodies
+(unchanged), task-status still routes to the client, and every other shape still
+produces no ``EventLog``/hook-trigger side effect. **One deliberate addition**: an
+unrecognized message shape now emits a DEBUG log line (:meth:`_log_unhandled`) instead
+of silently reaching an inherited no-op — lead-coder's P3 review condition: a closed
+match-list must not silently drop an "unknown to us" shape the same way it silently
+finishes handling a KNOWN one; the day fastmcp/MCP adds a new notification type this
+class doesn't yet act on, that day is now distinguishable in the log from an ordinary
+quiet run, rather than reading identical to one.
 """
 from __future__ import annotations
 
@@ -58,18 +73,7 @@ import logging
 import weakref
 from typing import Any, Callable
 
-# #3698 P2: imported via the boundary module for import-LOCATION
-# consistency only — this is a RELOCATION, not a decoupling. The base
-# class below is still directly INHERITED (see ReynMCPMessageHandler's
-# class statement + this module's own docstring: dispatch()'s routing
-# logic + the _client_ref attribute contract are both real, unremoved
-# coupling to fastmcp's class hierarchy). A future SDK swap still needs
-# either an equivalent base class or a composition rewrite here — this
-# import alone does not provide that boundary (contrast client.py's/
-# elicitation.py's accessor functions in _fastmcp_boundary.py, which DO
-# fully decouple their callers). See _fastmcp_boundary.py's module
-# docstring for the full reasoning.
-from reyn.mcp._fastmcp_boundary import MessageHandler, TaskNotificationHandler
+import mcp.types
 
 logger = logging.getLogger(__name__)
 
@@ -94,17 +98,21 @@ ToolsCacheInvalidate = Callable[[str], None]
 OnExternalEvent = Callable[[str | None, bool], None]
 
 
-class ReynMCPMessageHandler(TaskNotificationHandler):
+class ReynMCPMessageHandler:
     """Bridges FastMCP server-pushed notifications on a held connection to reyn's
     ``EventLog`` (#2597 S2b). One instance per held server connection.
+
+    Composes, does not inherit, fastmcp's message-handling contract — see module
+    docstring's "#3698 P3" section for the full design and what changed.
 
     Scope (S2b): ``tools/list_changed``, ``prompts/list_changed``. ``resources/
     updated`` is bridged by slice ②b (see :meth:`on_resource_updated`) now that
     :class:`~reyn.mcp.connection_service.MCPConnectionService` actually tracks
     subscribed URIs — S2b itself deferred it because nothing was subscribed yet.
-    ``on_resource_list_changed`` stays a base-class no-op (out of ②b's scope —
+    ``ResourceListChangedNotification`` stays unhandled (out of ②b's scope —
     no reyn caller subscribes to the resource LIST changing, only individual
-    resource content updates).
+    resource content updates) — it now reaches :meth:`_log_unhandled` rather than
+    an inherited no-op, same as every other shape reyn doesn't act on.
 
     #2608 H1: ``on_resource_updated`` ALSO fires a user-configured
     ``mcp_resource_updated`` hook (external-event->hooks arc, first slice) via
@@ -150,9 +158,6 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         on_external_event: "OnExternalEvent | None" = None,
         agent_name: str | None = None,
     ) -> None:
-        # Deliberately bypass TaskNotificationHandler.__init__ — see module docstring
-        # ("two-phase client binding"). MessageHandler.__init__ takes no arguments.
-        MessageHandler.__init__(self)
         self._client_ref: Callable[[], Any] = lambda: None
         self._emit_sink = emit_sink
         self._server_name = server_name
@@ -163,12 +168,50 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         self._agent_name = agent_name
 
     def bind_client(self, client: Any) -> None:
-        """Complete the ``TaskNotificationHandler`` weakref binding once the owning
-        ``fastmcp.Client`` exists. MUST run before the first message is dispatched —
-        :meth:`reyn.mcp.client.MCPClient.initialize` calls this immediately after
-        constructing the ``fastmcp.Client`` and before ``__aenter__()`` opens the
-        transport (= before any notification can possibly arrive)."""
+        """Complete the weakref binding once the owning ``fastmcp.Client`` exists.
+        MUST run before the first message is dispatched — see module docstring's
+        "two-phase client binding"."""
         self._client_ref = weakref.ref(client)
+
+    # ── the MCP SDK's actual entry point (see module docstring's "#3698 P3") ───────
+
+    async def __call__(self, message: Any) -> None:
+        """Route an incoming MCP message. Called directly by
+        ``mcp.client.session.ClientSession`` as ``self._message_handler(req)`` — a
+        plain ``Callable``, no base-class contract required (module docstring)."""
+        if isinstance(message, mcp.types.ServerNotification):
+            root = message.root
+            match root:
+                case mcp.types.TaskStatusNotification():
+                    client = self._client_ref()
+                    if client is not None:
+                        client._handle_task_status_notification(root)
+                case mcp.types.ToolListChangedNotification():
+                    await self.on_tool_list_changed(root)
+                case mcp.types.PromptListChangedNotification():
+                    await self.on_prompt_list_changed(root)
+                case mcp.types.ResourceUpdatedNotification():
+                    await self.on_resource_updated(root)
+                case mcp.types.ProgressNotification():
+                    await self.on_progress(root)
+                case _:
+                    self._log_unhandled(root)
+        else:
+            # A request (RequestResponder) or a transport-level Exception — reyn
+            # never acted on either (no on_request/on_ping/on_exception override
+            # existed even in the inherited version) — see module docstring.
+            self._log_unhandled(message)
+
+    def _log_unhandled(self, message: Any) -> None:
+        """#3698 P3 review condition: an OBSERVABLE trace for a message shape this
+        handler doesn't act on — distinguishes "processed and silent" (the 5 shapes
+        matched above) from "not one of ours, silently ignored" (everything else),
+        so a future fastmcp/MCP protocol addition landing here unnoticed is
+        distinguishable in the log from an ordinary quiet run, not identical to it."""
+        logger.debug(
+            "ReynMCPMessageHandler: no handler for message type %s on server %r",
+            type(message).__name__, self._server_name,
+        )
 
     # ── notification hooks — synchronous bodies, see module docstring ──────────────
 
@@ -182,11 +225,9 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
                     self._server_name, exc_info=True,
                 )
         self._emit("mcp_tool_list_changed", server=self._server_name)
-        await super().on_tool_list_changed(message)
 
     async def on_prompt_list_changed(self, message: Any) -> None:
         self._emit("mcp_prompt_list_changed", server=self._server_name)
-        await super().on_prompt_list_changed(message)
 
     async def on_resource_updated(self, message: Any) -> None:
         # #2597 slice ②b: the async push event-source this bridge exists for. The
@@ -204,7 +245,6 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         uri = getattr(getattr(message, "params", None), "uri", None)
         uri_str = str(uri) if uri is not None else None
         self.emit_resource_updated(uri_str, resync=False)
-        await super().on_resource_updated(message)
 
     def emit_resource_updated(self, uri: str | None, *, resync: bool) -> None:
         """The shared ``mcp_resource_updated`` producer: EventLog emit +
@@ -258,7 +298,7 @@ class ReynMCPMessageHandler(TaskNotificationHandler):
         # The per-call ``progress_callback`` path (``op_runtime/mcp.py``'s
         # ``_on_progress``) already emits ``mcp_progress`` (with tool-name context)
         # for every call-scoped progress notification the SDK also routes here.
-        await super().on_progress(message)
+        pass
 
     # ── sink dispatch ───────────────────────────────────────────────────────────────
 
