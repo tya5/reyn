@@ -1,8 +1,36 @@
 """reyn.hooks.render — Jinja2 template rendering for hook push directives (#1800 slice B).
 
-Entry point: ``render_push(push, context)`` — renders a ``PushBlock``'s
-template fields against a runtime context dict and returns a ``ResolvedPush``
-frozen dataclass that the runtime consumes directly.
+Entry point: ``render_push(push, context, point)`` — renders a
+``PushBlock``'s template fields against a runtime context dict and returns
+a ``ResolvedPush`` frozen dataclass that the runtime consumes directly.
+
+context_safe gate (proposal 0067 P2)
+-------------------------------------
+``point`` (the hook's dispatch point / kind) is what lets this module know
+WHICH fields of ``context`` are safe to interpolate into ``message`` — see
+``reyn.hooks.schema_registry.CONTEXT_UNSAFE_FIELDS``/``safe_context_fields``.
+Before P2, ``render_push`` had no way to make this distinction at all (it
+received only the raw context dict, no notion of which kind produced it) —
+"build the gate before adding the first field that needs it" (the
+proposal's own framing) required this signature change NOW, even though
+today's 8 builtin schemas mark every field safe (so the filter is a no-op
+in practice until a future field is declared unsafe).
+
+The gate applies to ``message`` ONLY — ``wake``/``push_when``/``session``
+render against the FULL, unfiltered context (those fields never surface
+event content directly into a session's context the way ``message``
+does), and ``render_pipeline_input`` (below) is unaffected entirely: a
+launched pipeline is a DIFFERENT session, a different permission boundary
+(proposal 0067 P2).
+
+``include`` (proposal 0067 P2)
+--------------------------------
+``PushBlock.include`` names payload fields to append to ``message``
+VERBATIM — fenced, attributed, and never passed through Jinja2. This is
+the door for a ``context_safe: false`` field to still reach the pushed
+text as CONTENT without being available for template CONTROL FLOW (a
+Jinja2 conditional/loop keyed on operator-uncontrolled event data). See
+``_render_included_block``.
 
 Jinja2 environment
 ------------------
@@ -59,6 +87,7 @@ from jinja2 import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
 from reyn.hooks.schema import PushBlock
+from reyn.hooks.schema_registry import safe_context_fields
 from reyn.security.template_env import make_sandboxed_env
 
 _log = logging.getLogger(__name__)
@@ -124,7 +153,7 @@ class ResolvedPush:
 # ---------------------------------------------------------------------------
 
 
-def render_push(push: PushBlock, context: dict) -> ResolvedPush:
+def render_push(push: PushBlock, context: dict, point: str) -> ResolvedPush:
     """Render a ``PushBlock`` against ``context`` and return a ``ResolvedPush``.
 
     Parameters
@@ -135,6 +164,12 @@ def render_push(push: PushBlock, context: dict) -> ResolvedPush:
     context:
         Runtime context dict — typically event + session metadata supplied
         by the hook dispatcher.
+    point:
+        The hook's dispatch point (bare or canonical form, either accepted
+        — see ``reyn.hooks.schema_registry.canonical_kind``). Identifies
+        WHICH builtin schema's ``context_safe`` declarations gate
+        ``message``'s interpolation (proposal 0067 P2) — see module
+        docstring's "context_safe gate" section.
 
     Returns
     -------
@@ -144,7 +179,7 @@ def render_push(push: PushBlock, context: dict) -> ResolvedPush:
         push rather than crashing.
     """
     try:
-        return _render_push_inner(push, context)
+        return _render_push_inner(push, context, point)
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "Hook push render failed — push will be skipped. "
@@ -157,13 +192,37 @@ def render_push(push: PushBlock, context: dict) -> ResolvedPush:
         return ResolvedPush(message="", wake=False, push_when=False, session=None)
 
 
-def _render_push_inner(push: PushBlock, context: dict) -> ResolvedPush:
+def _render_included_block(push: PushBlock, context: dict) -> str:
+    """``push.include``'s named fields, formatted as fenced, attributed,
+    VERBATIM text — never through Jinja2 (proposal 0067 P2, see module
+    docstring's "include" section). A name absent from ``context`` (a
+    typo, or a field this kind's schema doesn't carry) is rendered as
+    ``(absent)`` rather than silently skipped — a silent skip would read
+    as "the operator asked for nothing", which is not what happened."""
+    if not push.include:
+        return ""
+    blocks = []
+    for field in push.include:
+        value = context[field] if field in context else "(absent)"
+        blocks.append(f"--- included: {field} ---\n{value}\n---")
+    return "\n\n" + "\n\n".join(blocks)
+
+
+def _render_push_inner(push: PushBlock, context: dict, point: str) -> ResolvedPush:
     """Inner renderer — may raise; callers should use ``render_push`` instead."""
     env_strict = make_sandboxed_env(undefined="strict")
     env_silent = make_sandboxed_env(undefined="lenient")
 
     # ── message (StrictUndefined — a blank message due to a typo is misleading) ──
-    message = env_strict.from_string(push.message).render(context)
+    # Gated (proposal 0067 P2): message renders against ONLY the
+    # context_safe subset of `context` — a template referencing a field
+    # CONTEXT_UNSAFE_FIELDS excludes for this point hits the SAME
+    # StrictUndefined failure path a genuine typo would (no new error
+    # class needed — see module docstring). wake/push_when/session below
+    # deliberately render against the FULL, unfiltered `context`.
+    message_context = safe_context_fields(point, context)
+    message = env_strict.from_string(push.message).render(message_context)
+    message += _render_included_block(push, context)
 
     # ── wake ──────────────────────────────────────────────────────────────────
     if isinstance(push.wake, bool):

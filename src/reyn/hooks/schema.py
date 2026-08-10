@@ -147,12 +147,24 @@ class PushBlock:
     session:
         Optional Jinja2 template string or static session identifier.
         When absent the runtime will default to the current session.
+    include:
+        Names of hook-event payload fields to append VERBATIM after the
+        rendered ``message`` — fenced, attributed, and NEVER passed through
+        Jinja2 (proposal 0067 P2: "fenced and attributed, appended after
+        the message, never interpolated into it"). This is the door for a
+        field ``CONTEXT_UNSAFE_FIELDS`` excludes from ``message``
+        interpolation to still reach the pushed text — content-carrying
+        without letting the field's raw value drive template control flow
+        (a Jinja2 conditional/loop keyed on operator-uncontrolled content).
+        Default ``()`` (nothing appended, byte-identical to pre-P2
+        behaviour for every existing config).
     """
 
     message: str
     wake: Union[bool, str] = True
     push_when: str = "true"
     session: str | None = None
+    include: "tuple[str, ...]" = ()
 
 
 # ---------------------------------------------------------------------------

@@ -102,11 +102,21 @@ def _parse_push_block(raw: object, entry_index: int) -> PushBlock:
         )
     session: str | None = raw_session if raw_session else None
 
+    # Optional: include (list of hook-event payload field names, default ())
+    raw_include = raw.get("include", [])
+    if not isinstance(raw_include, list) or not all(isinstance(f, str) for f in raw_include):
+        raise HookConfigError(
+            f"hooks[{entry_index}].template_push.include must be a list of strings, "
+            f"got {type(raw_include).__name__!r}."
+        )
+    include: "tuple[str, ...]" = tuple(raw_include)
+
     return PushBlock(
         message=message,
         wake=wake,
         push_when=push_when,
         session=session,
+        include=include,
     )
 
 

@@ -257,7 +257,7 @@ class HookDispatcher:
         ``tuple[str, ...]``)."""
         template_vars = event.payload
         if hook.template_push is not None:
-            resolved = render_push(hook.template_push, template_vars)
+            resolved = render_push(hook.template_push, template_vars, point)
             await self._push_resolved(resolved, hook, point)
         elif hook.exec is not None:
             # exec — an external side-effect. Output IGNORED; never raises
