@@ -710,7 +710,7 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | `pipeline` topology | Ordered — each member sends only to next | — |
 | `_default` topology | Auto-synthesized full mesh for unassigned agents | [Multi-agent config](reference/config/multi-agent.md) |
 | MessageBus | Quiescence-based coordination with `reply_to` correlation | [Multi-agent config](reference/config/multi-agent.md) |
-| `run_prompt` | Ask a peer agent's already-live session to run a prompt and wait for the reply inline (`collect="attached"`, the only supported value today) — the successor to `delegate_to_agent`, retired in proposal 0067 P6 | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
+| `run_prompt` | Ask a peer agent's already-live session to run a prompt — `collect="attached"` waits for the reply inline; `collect="async"` dispatches and returns a `task_id` immediately, the reply arriving later via `task_settled` — the successor to `delegate_to_agent`, retired in proposal 0067 P6 | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | `send_to_session` | Fire-and-forget delivery to a specific `(agent, session)` — no reply is collected; `wake=True` starts a turn on it now, `wake=False` (default) queues it as context for the target's next turn | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | `describe_task` / `list_tasks` / `cancel_task` | Read/act against the settle-path task handle (`ChainManager`) — `describe_task` returns `{task_id, kind, status, session, requester}`, `list_tasks` lists running handles by kind, `cancel_task` never reports a fabricated success on a crash-recovered handle whose live callable is gone | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | Agent hops cap | Max delegation depth via `safety.loop.max_agent_hops` | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
@@ -729,8 +729,9 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 > launch-verb unification (P7, 0 aliases kept — see the row above), and
 > `delegate_to_agent`'s retirement (P6, no fold — see ADR-0040/proposal 0067
 > for why a nested-delegation chain-settle fold never happens for this specific
-> tool) have all landed. Only the `run_prompt(collect="async")` producer and
-> P8/P9's remaining vocabulary work are still pending.
+> tool), `session_inbox_depth` + `task_settle_undelivered` (P9), and
+> `run_prompt(collect="async")` (P4e, the reply-routing producer + settle
+> branch) have all landed. Only P8 (ttl expiry) is still pending.
 
 ---
 

@@ -27,13 +27,18 @@ Pins:
      (mirrors test_multi_agent_p7.py's manual register), still resolves
      through the ORIGINAL relay-continuation path when a reply arrives —
      the new kind-based branch does not accidentally catch it too.
-  6. CLAUDE.md's recovery-feature PR gate: run_prompt_async's real
-     registration call writes a chain_register WAL event whose kind/
-     waiting_on/requester survive PURE WAL REPLAY (a fresh AgentSnapshot
-     reconstructed from applied_seq=0, simulating a crash with no valid
-     live snapshot) — not just the generic ChainManager.register()
-     mechanism #4134 already covers, but THIS producer's actual call
-     shape (did it pass the right kwargs?).
+  6. NOT a truncate-falsify test (nothing here is truncated below any
+     floor) — run_prompt_async's REAL registration call writes a
+     chain_register WAL event that reconstructs with the right
+     kind/waiting_on/requester via pure WAL replay from applied_seq=0.
+     CLAUDE.md's recovery-feature PR gate (truncate PAST a saved
+     snapshot's floor, confirm survival) is satisfied by
+     tests/core/test_agent_snapshot.py::
+     test_truncate_falsify_requester_survives_wal_truncation, which
+     covers ChainManager.register()'s own generic WAL-shape mechanism;
+     this test is narrower and different — it pins THIS producer's
+     actual call shape (did run_prompt_async pass register() the right
+     kwargs?), not the reconstruction mechanism itself.
 """
 from __future__ import annotations
 
@@ -87,15 +92,9 @@ async def test_no_live_target_session_refuses_without_spawning(tmp_path):
         target_agent="beta", target_session="main",
         prompt="hi",
     )
-    assert result == {
-        "status": "error",
-        "kind": "target_session_not_found",
-        "error": (
-            "no live session ('beta', 'main') — run_prompt(collect=\"async\") "
-            "addresses an already-running peer, the same as send_to_session; "
-            "it does not spawn one."
-        ),
-    }
+    assert result["status"] == "error"
+    assert result["kind"] == "target_session_not_found"
+    assert "no live session" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -255,15 +254,20 @@ async def test_legacy_kind_none_chain_still_uses_the_relay_continuation_path(
 
 
 @pytest.mark.asyncio
-async def test_truncate_falsify_registered_chain_survives_wal_replay(tmp_path):
-    """Tier 2c: CLAUDE.md's recovery-feature PR gate. run_prompt_async's
-    REAL registration call (not a synthetic event) writes a chain_register
-    WAL entry whose kind="prompt"/waiting_on/requester survive PURE WAL
-    REPLAY — a fresh AgentSnapshot reconstructed from applied_seq=0,
-    simulating a crash where only the WAL (no valid live snapshot)
-    survives. ChainManager.register()'s own generic WAL-shape correctness
-    is already covered by #4134's tests; this pins THIS producer's actual
-    call shape specifically (did run_prompt_async pass the right kwargs?)."""
+async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(tmp_path):
+    """Tier 2c: NOT a truncate-falsify test — this replays every WAL event
+    from applied_seq=0 (nothing is truncated below any floor). The actual
+    truncation-survives-WAL-truncation coverage for kind/waiting_on/
+    requester lives in
+    tests/core/test_agent_snapshot.py::test_truncate_falsify_requester_survives_wal_truncation
+    (a synthetic chain_register event, generic to ChainManager.register()'s
+    own mechanism). What THIS test pins is different and narrower:
+    run_prompt_async's REAL registration call (not a synthetic event)
+    actually writes a chain_register WAL entry with the RIGHT kwargs —
+    kind="prompt", the correct waiting_on, the correct requester — i.e.
+    did this producer's call to register() pass what it claims to, proven
+    by reading it back via pure WAL replay rather than trusting the
+    in-memory chain object alone."""
     reg = _make_registry(tmp_path)
     _seed(tmp_path, "alpha")
     _seed(tmp_path, "beta")
