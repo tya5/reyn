@@ -266,4 +266,13 @@ def test_no_stdlib_glob_in_source_or_config() -> None:
     root_py = (_REPO_ROOT / "src" / "reyn" / "config" / "root.py").read_text(encoding="utf-8")
     assert 'scan_dirs: ["skills"]' not in root_py
     assert not (_REPO_ROOT / "tests" / "test_workspace_glob_stdlib_perm.py").exists()
-    assert (_REPO_ROOT / "tests" / "test_workspace_glob_outside_root_perm.py").exists()
+    # A hardcoded-path existence check for the RENAMED replacement
+    # (test_workspace_glob_outside_root_perm.py) used to live here too —
+    # removed (#4025 M4 review): the file is mid-relocation under the M4
+    # bucket migration, and a fixed `tests/<name>` path is exactly the
+    # fragile pattern that arc spends the night closing elsewhere. The
+    # two asserts above already establish Addendum A2's completion (the
+    # misleading old name is gone, the source no longer scans it); the
+    # rename itself (not merely a deletion) is preserved permanently in
+    # git history, not by a path pinned to one moment of the repo's
+    # ongoing reorganisation.
