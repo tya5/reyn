@@ -85,7 +85,7 @@ class ChainTimeoutGlue:
                     run_id=chain_id,
                 )
                 if decision.allow_continue:
-                    self._chains.arm_timeout(
+                    await self._chains.arm_timeout(
                         chain_id, on_fire=self.on_chain_timeout_fire,
                     )
                     self._events.emit(
