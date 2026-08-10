@@ -12,10 +12,9 @@ per-session ``asyncio.Lock`` before entering the critical section.
 This module is the single registry for those locks. ``mcp.server.send_to_agent_impl``
 is the one call site that actually acquires a lock today — ``a2a.py`` routes
 through ``send_to_agent_impl`` itself (``reyn.interfaces.web.routers.a2a``
-imports it from ``reyn.mcp.server``) rather than acquiring its own; a2a's OWN
-``get_agent_lock`` import is a leftover from a drain loop #2442 removed
-(the acquire went with it, the import didn't) and is not itself part of the
-current protection path. On a given event loop, every caller that reaches
+imports it from ``reyn.mcp.server``) rather than acquiring its own. (It
+carried a vestigial ``get_agent_lock`` import until #4095 — the acquire went
+with the drain loop #2442 removed, the import didn't.) On a given event loop, every caller that reaches
 ``send_to_agent_impl`` shares the same lock object for a given (agent, sid) pair.
 
 Design constraints:
