@@ -69,6 +69,8 @@ class FakeRouterHost:
         self.history: list[dict] = []
         self.skill_calls: list[dict] = []
         self.agent_sends: list[dict] = []
+        # Proposal 0067 P1' (#3978)
+        self.mark_task_pending_calls: int = 0
         self.spawn_calls: list[dict] = []
         self.file_writes: list[tuple[str, str]] = []
         self.file_deletes: list[str] = []
@@ -154,6 +156,12 @@ class FakeRouterHost:
                             chain_id: str) -> None:
         self.agent_sends.append({"to": to, "request": request, "depth": depth,
                                   "chain_id": chain_id})
+
+    def mark_task_pending(self) -> None:
+        """Proposal 0067 P1' (#3978): records the call so a test can assert
+        the async-dispatch block fired it, mirroring RouterHostAdapter's
+        own forwarding method."""
+        self.mark_task_pending_calls += 1
 
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str) -> dict:

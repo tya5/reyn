@@ -142,6 +142,9 @@ def _make_inter_agent_messaging(emit_fn: _RecordingEmit) -> InterAgentMessaging:
         set_router_loop_delegations=lambda _v: None,
         get_router_loop_agent_replies=lambda: None,
         set_router_loop_agent_replies=lambda _v: None,
+        # Proposal 0067 P1' (#3978)
+        get_current_task=lambda: None,
+        set_current_task=lambda _v: None,
     )
 
 

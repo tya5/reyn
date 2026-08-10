@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
     from reyn.runtime.limits.limit_handler import LimitDecision
     from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
+    from reyn.runtime.task_types import CurrentTask
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +190,12 @@ class InterAgentMessaging:
         set_router_loop_delegations: "Callable[[list[dict] | None], None]",
         get_router_loop_agent_replies: "Callable[[], list[str] | None]",
         set_router_loop_agent_replies: "Callable[[list[str] | None], None]",
+        # Proposal 0067 P1' (#3978): current_task get/set, same mutable-ref-
+        # owned-by-Session pattern as the two pairs above. handle_agent_response
+        # is the settle point for a top-level (non-relay) delegation — see its
+        # own docstring for the capture-before/finally-compare clearing logic.
+        get_current_task: "Callable[[], CurrentTask | None]",
+        set_current_task: "Callable[[CurrentTask | None], None]",
         # FP-0050/#1822 S4b (EP5, Class A): content-threat scan + fence config.
         # Inbound peer text (request/response) is fenced before entering history.
         threat_scan: "object | None" = None,
@@ -221,6 +228,8 @@ class InterAgentMessaging:
         self._set_router_loop_delegations = set_router_loop_delegations
         self._get_router_loop_agent_replies = get_router_loop_agent_replies
         self._set_router_loop_agent_replies = set_router_loop_agent_replies
+        self._get_current_task = get_current_task
+        self._set_current_task = set_current_task
 
     # ── Public API (mirrors former session._<name> methods) ─────────────────
 
@@ -573,51 +582,68 @@ class InterAgentMessaging:
             return
 
         # User-initiated chain: PR11 path, reply goes to user.
-
-        # B2-H2 fix: if the peer's reply is a no-reply marker, bypass the LLM
-        # entirely and surface the failure deterministically. Without this,
-        # gemini-2.5-flash-lite interprets the marker as a polite conversational
-        # reply (e.g. "かしこまりました") and the user never learns that the peer
-        # failed.
-        if _is_no_reply_marker(response):
-            parsed = _parse_no_reply_marker(response)
-            peer = parsed[0] if parsed else from_agent or "<unknown>"
-            reason = parsed[1] if parsed else "no reply produced"
-            msg_template = _PEER_REPLY_FAILED_MSG.get(
-                self._output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
-            )
-            user_text = msg_template.format(peer=peer, reason=reason)
-            await self._put_outbox(OutboxMessage(
-                kind="agent",
-                text=user_text,
-                meta={"chain_id": chain_id, "peer_failure": True},
-            ))
-            self._events.emit(
-                "peer_reply_failed_surfaced",
-                chain_id=chain_id,
-                peer=peer,
-                reason=reason,
-            )
-            return
-
+        #
+        # Proposal 0067 P1' (#3978): this branch is the SETTLE point for the
+        # session's own current_task, set (see router_loop.py's async-dispatch
+        # block, RouterHostAdapter.send_to_agent) when dispatch_kind="async"
+        # first exited the turn to delegate. Capture-before / finally-compare:
+        # clear current_task only if THIS call didn't itself set a NEW one (a
+        # further delegation triggered while processing this very response) —
+        # an unconditional clear would wipe out that fresh re-set and break
+        # multi-round delegation chains. finally (not except-only) so a
+        # genuine exception clears it too — lead-coder review, #3978: an
+        # error here must not leave the task marked outstanding forever
+        # (worse than the bug P1' exists to close — a session that delegated
+        # and can never again report quiescent).
+        task_before = self._get_current_task()
         try:
-            # B55 R-7: pass the structured `[task_completed] kind=agent`
-            # injection (= history's last entry, also user-role) so the
-            # router sees the same lifecycle marker the SP rule covers
-            # — parity with agent / plan completion paths.
-            await self._run_router_loop(injected_text, chain_id)
-        except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
-            return
-        except Exception as exc:
-            _detail = f"{type(exc).__name__}: {exc}"
-            if len(_detail) > 72:
-                _detail = _detail[:69] + "…"
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed (agent_response): {_detail}",
-                meta={"chain_id": chain_id},
-            ))
-            return
+            # B2-H2 fix: if the peer's reply is a no-reply marker, bypass the LLM
+            # entirely and surface the failure deterministically. Without this,
+            # gemini-2.5-flash-lite interprets the marker as a polite conversational
+            # reply (e.g. "かしこまりました") and the user never learns that the peer
+            # failed.
+            if _is_no_reply_marker(response):
+                parsed = _parse_no_reply_marker(response)
+                peer = parsed[0] if parsed else from_agent or "<unknown>"
+                reason = parsed[1] if parsed else "no reply produced"
+                msg_template = _PEER_REPLY_FAILED_MSG.get(
+                    self._output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
+                )
+                user_text = msg_template.format(peer=peer, reason=reason)
+                await self._put_outbox(OutboxMessage(
+                    kind="agent",
+                    text=user_text,
+                    meta={"chain_id": chain_id, "peer_failure": True},
+                ))
+                self._events.emit(
+                    "peer_reply_failed_surfaced",
+                    chain_id=chain_id,
+                    peer=peer,
+                    reason=reason,
+                )
+                return
+
+            try:
+                # B55 R-7: pass the structured `[task_completed] kind=agent`
+                # injection (= history's last entry, also user-role) so the
+                # router sees the same lifecycle marker the SP rule covers
+                # — parity with agent / plan completion paths.
+                await self._run_router_loop(injected_text, chain_id)
+            except RouterCapExceeded as exc:
+                await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+                return
+            except Exception as exc:
+                _detail = f"{type(exc).__name__}: {exc}"
+                if len(_detail) > 72:
+                    _detail = _detail[:69] + "…"
+                await self._put_outbox(OutboxMessage(
+                    kind="error", text=f"router failed (agent_response): {_detail}",
+                    meta={"chain_id": chain_id},
+                ))
+                return
+        finally:
+            if self._get_current_task() is task_before:
+                self._set_current_task(None)
 
     async def _resolve_pending_chain(
         self,

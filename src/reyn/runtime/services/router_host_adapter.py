@@ -307,6 +307,13 @@ class RouterHostAdapter:
         # exactly like a phase host (no-op seam).
         peek_mid_turn_injection: "Callable[[], Awaitable[dict | None]] | None" = None,
         commit_mid_turn_injection: "Callable[[str], Awaitable[None]] | None" = None,
+        # Proposal 0067 P1' (#3978): mark_task_pending — bare, no shared-
+        # consumer partner (same reasoning as the peek/commit pair above).
+        # None-default so pre-existing hand-built adapters stay valid;
+        # RouterLoopHost.mark_task_pending is unconditional (not
+        # getattr-guarded) but a None here becomes a no-op lambda below,
+        # not a missing attribute.
+        mark_task_pending: "Callable[[], None] | None" = None,
         # #1953 dynamic-wire + #2103 S1bc-exec: the chat session identity
         # (``emit_hook_event`` builds the LLM's own ``llm:<session_id>:*``
         # namespace from it — never an op field the LLM could forge) and the
@@ -544,6 +551,8 @@ class RouterHostAdapter:
         # #3792
         self._peek_mid_turn_injection_cb = peek_mid_turn_injection
         self._commit_mid_turn_injection_cb = commit_mid_turn_injection
+        # Proposal 0067 P1' (#3978)
+        self._mark_task_pending_cb = mark_task_pending
         # FP-0034 PR-3b-iii
         self._universal_wrappers_enabled = universal_wrappers_enabled
         # B25-S5-1
@@ -1167,6 +1176,16 @@ class RouterHostAdapter:
         tracker = self._send_to_agent_in.delegation_tracker()
         if tracker is not None:
             tracker.append({"to": to, "request": request})
+
+    def mark_task_pending(self) -> None:
+        """Proposal 0067 P1' (#3978): forward to ``Session.current_task``
+        when wired. None-safe (same reasoning as
+        :meth:`peek_mid_turn_injection`) — an adapter built without the
+        callback (pre-#3978 test construction) is a no-op, matching what a
+        host that never implemented the concept would do."""
+        if self._mark_task_pending_cb is None:
+            return
+        self._mark_task_pending_cb()
 
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str) -> dict:
