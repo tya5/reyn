@@ -184,6 +184,7 @@ P7    run_pipeline: four names → one (`collect` carries the attached/async axi
 P8    ttl expiry: reuse the chain-timeout shape, plus persist `arm_at`
       chain_manager.py re-arms "a fresh timeout watchdog" on restore, so a crash currently
       extends the effective deadline
+      ✅ 解消 — P8 は #4140 で着地（restore が残り時間で張り直す）。以下は着手前の記録で、書き換えない。
       🔴 Requires #4108 first. This line assumed a chain field could simply be persisted;
          it could not. `ChainManager.update()` forwards any field to the WAL, but the
          snapshot write-back handled `waiting_on` alone — so `arm_at` would have been
@@ -221,12 +222,12 @@ Measured during design; each has bitten or would bite:
 | | finding |
 |---|---|
 | `dispatch_kind` | means "end this turn", not "is asynchronous" (`router_loop.py`). P1′ and P6 touch it directly. |
-| `agent_locks` | the serialization lock is keyed by **agent name** while what it protects is a **session's** history. P0/P1 move identity to the session axis; this key is then inconsistent. |
-| `_is_quiescent` | its docstring promises three conditions; the implementation checks `inbox.empty()` only (`message_bus.py`). |
+| `agent_locks` | the serialization lock is keyed by **agent name** while what it protects is a **session's** history. P0/P1 move identity to the session axis; this key is then inconsistent. ✅ 解消 — P1（#4090）（記録として原文を残す） |
+| `_is_quiescent` | its docstring promises three conditions; the implementation checks `inbox.empty()` only (`message_bus.py`). ✅ 解消 — P1′（#4086）（記録として原文を残す） |
 | `RunEntry` | `interfaces/web/run_registry.py` is a fourth handle store already carrying status/result/error/webhook_url plus persistence. §7's type is its generalization; whether it moves to core is a layering decision. |
-| `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py`) — a live misdelivery path that P1 removes. |
-| chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
-| hook points | **do not restate the count.** `ALLOWED_HOOK_POINTS` derives from `schema_registry.BARE_TO_KIND`; every prose count has drifted at least once (#3996 found comments claiming ten against eight; #4103 swept the rest after `task_settled` made them wrong again). Read the registry. |
+| `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py`) — a live misdelivery path that P1 removes. ✅ 解消 — P1（#4090）（記録として原文を残す） |
+| chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). ✅ 解消 — #4140（記録として原文を残す） |
+| hook points | **do not restate the count.** `ALLOWED_HOOK_POINTS` derives from `schema_registry.BARE_TO_KIND`; every prose count has drifted at least once (#3996 found comments claiming ten against eight; #4103 swept the rest after `task_settled` made them wrong again). Read the registry. ✅ 解消 — P3（#4087）（記録として原文を残す） |
 | S3 deny sets | the launch-verb deny exists **twice** — `_PIPELINE_STEP_DENY_TOOLS` (`tools/pipeline_verbs.py`, R6 S3, pipeline tool steps) and `_DELEGATION_DENY_TOOLS` (`runtime/session_api.py`, R5, agent steps). Same five names today. Both files say "kept in lock-step" and **nothing enforces it**: the only place `tests/` names both is a module docstring, and no test compares them. P6 and P7 each touch both. See the note below. |
 | `RunStatus` | the status vocabulary D3 describes **already existed** — five members, with the `input_required` transition live in `a2a_intervention.py` (`self._registry.update(self._run_id, status="input-required")`). What was missing was a bridge to the chain handle, not a state machine. It lived in `interfaces/web/run_registry.py`, and reading it from `runtime/` would have been a new layering inversion (`runtime/ → interfaces/web/` was 0 imports; the reverse, 10), so **P4 moved it to `runtime/task_types.py`** beside `TaskKind` / `Requester`; `run_registry.py` re-exports it. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
 
