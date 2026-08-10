@@ -4,7 +4,7 @@ Redesign Phase 5 part 2, proposal
 
 This is the FIRST place an LLM can put a ``HookEvent`` onto a live
 ``HookBus`` (``reyn.hooks.bus``, Phase 4a) — every prior producer
-(``HookDispatcher.dispatch`` at the 10 builtin points, ``Composer.emit``,
+(``HookDispatcher.dispatch`` at the builtin points, ``Composer.emit``,
 the Ingress Adapters) is OS-internal code, never an LLM tool call. Because
 ``HookBus.publish`` is synchronous, never raises, and broadcasts to every
 live subscriber (module docstring, ``reyn/hooks/bus.py``), there is no

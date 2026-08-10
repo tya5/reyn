@@ -133,7 +133,7 @@ def validate_against_schema(
     ``{"inputs": [...], "correlation_key": <key>}``, so this schema is knowable
     and identical for every composer) checked FIRST, falling back to the
     builtin ``schema_registry.BUILTIN_HOOK_SCHEMAS`` (the two namespaces never
-    collide — ``composed:*`` vs the 10 shipped builtin points). ``None``
+    collide — ``composed:*`` vs the shipped builtin points). ``None``
     (the default — no composer configuration known to the caller) skips the
     composed lookup entirely, preserving the pre-#2889 open-set posture for
     every caller that doesn't thread it.
