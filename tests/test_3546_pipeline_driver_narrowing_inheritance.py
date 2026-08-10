@@ -558,11 +558,18 @@ class _SiteDeclaration:
     unmeasured_reason: str = ""
 
 
-_S3546 = "tests/test_3546_pipeline_driver_narrowing_inheritance.py"
-_S3553 = "tests/test_3553_agent_step_worker_narrowing_inheritance.py"
-_S3556 = "tests/test_3556_session_spawn_narrowing_inheritance.py"
-_S3561 = "tests/test_3561_spawn_session_seam_reachability.py"
-_S3562 = "tests/test_3562_slash_session_new_narrowing_inheritance.py"
+# Derived from this file's OWN location (never a hardcoded literal): all 5
+# narrowing-cluster siblings always move together into the same destination
+# bucket, so their repo-relative directory is identical to this file's own
+# — computing it here means a future M4 bucket move needs zero string
+# updates for these 5 constants, only `git mv` (see #4069 -- this sidesteps
+# the class entirely rather than relying on the rename-substitution rule).
+_OWN_DIR = Path(__file__).resolve().parent.relative_to(REPO_ROOT).as_posix()
+_S3546 = f"{_OWN_DIR}/test_3546_pipeline_driver_narrowing_inheritance.py"
+_S3553 = f"{_OWN_DIR}/test_3553_agent_step_worker_narrowing_inheritance.py"
+_S3556 = f"{_OWN_DIR}/test_3556_session_spawn_narrowing_inheritance.py"
+_S3561 = f"{_OWN_DIR}/test_3561_spawn_session_seam_reachability.py"
+_S3562 = f"{_OWN_DIR}/test_3562_slash_session_new_narrowing_inheritance.py"
 
 #: Every spawn site in ``src/``, with the parent layers its ``narrowing=`` value
 #: composes and the behavioural test that measures that claim. A site missing from
