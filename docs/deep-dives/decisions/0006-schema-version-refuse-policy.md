@@ -95,7 +95,7 @@ Release-time mechanic: when a breaking change ships, bump
 
 - Commit `7ba4303` — U4 schema_version refuse machinery
 - Commit `0a8c654` — U5 chat CLI graceful exit on SchemaVersionError
-- [docs/en/reference/upgrade-policy.md](../reference/upgrade-policy.md) —
+- [reference/upgrade-policy.md](../../reference/upgrade-policy.md) —
   operator-facing version of this policy
 - ADR-0010 (CLI flags — defines `--reset`)
 - R-D15 (post-1.0 migration framework)
