@@ -106,6 +106,7 @@ from reyn.runtime.session_pure import (
     render_summary_for_storage,
 )
 from reyn.runtime.spawn_tracker import SpawnTracker
+from reyn.runtime.task_types import CurrentTask
 from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
@@ -1063,6 +1064,13 @@ class Session:
         self._last_sender: str | None = None
         # Reply-to attribution captured from an inbound payload's reply_to (FP-0041 #489 PR-D2)
         self._last_reply_to: Any = None
+        # Proposal 0067 P0 (#3978): typed home for the present-tense task
+        # state, additive and unread by anything yet — _last_sender /
+        # _last_reply_to above remain the live attribution path until P1
+        # extracts InboxArbiter and migrates onto this field. See
+        # reyn.runtime.task_types.CurrentTask's own docstring for why each
+        # field exists and where it comes from.
+        self.current_task: "CurrentTask | None" = None
         # Outbox interceptor for external transport (e.g. Slack via MCP); None skips interception (FP-0041 #489 PR-D2)
         self._outbox_interceptor: Any = None
         self._mcp_servers = mcp_servers
