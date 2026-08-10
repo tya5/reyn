@@ -108,7 +108,7 @@ P1    extract `InboxArbiter` (one module out of session.py)
 
 ```
 P2    `context_safe` + hook-push `include`
-        declare the eight existing schemas' current fields context_safe: true
+        declare every existing schema's current fields context_safe: true
         gate applies to message interpolation only (render.py:166)
           — pipeline_launch input is a different session (a different permission boundary)
           — shell argv is already load-time rejected (0059 §223), unchanged
@@ -124,7 +124,9 @@ P3    builtin hook point `task_settled` + the settle path
         payload = {point, task_id, kind, status, session, result}   (result: context_safe false)
         disposition comes from the task's own on_settle, not from hook configuration
         task_id deleted at settle — no retention, no clock
-      ⚠️ ALLOWED_HOOK_POINTS is eight today, not the ten several comments claim (#3996)
+      ⚠️ read the point set from `schema_registry.BARE_TO_KIND`, never a count written in
+         prose — several comments claimed ten when there were eight (#3996), and the
+         prose counts drifted again when `task_settled` landed (#4091 → #4103)
 
 P4    task ops: run_prompt / describe_task / list_tasks / cancel_task
         `cancel` joins CANONICAL_VERBS; REMOVAL_VERBS is untouched (separate frozensets)
@@ -169,7 +171,7 @@ Measured during design; each has bitten or would bite:
 | `RunEntry` | `interfaces/web/run_registry.py` is a fourth handle store already carrying status/result/error/webhook_url plus persistence. §7's type is its generalization; whether it moves to core is a layering decision. |
 | `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py`) — a live misdelivery path that P1 removes. |
 | chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
-| hook points | eight, not ten (#3996). |
+| hook points | **do not restate the count.** `ALLOWED_HOOK_POINTS` derives from `schema_registry.BARE_TO_KIND`; every prose count has drifted at least once (#3996 found comments claiming ten against eight; #4103 swept the rest after `task_settled` made them wrong again). Read the registry. |
 | S3 deny sets | the launch-verb deny exists **twice** — `_PIPELINE_STEP_DENY_TOOLS` (`tools/pipeline_verbs.py`, R6 S3, pipeline tool steps) and `_DELEGATION_DENY_TOOLS` (`runtime/session_api.py`, R5, agent steps). Same five names today. Both files say "kept in lock-step" and **nothing enforces it**: the only place `tests/` names both is a module docstring, and no test compares them. P6 and P7 each touch both. See the note below. |
 | `RunStatus` | the status vocabulary D3 describes **already existed** — five members, with the `input_required` transition live in `a2a_intervention.py` (`self._registry.update(self._run_id, status="input-required")`). What was missing was a bridge to the chain handle, not a state machine. It lived in `interfaces/web/run_registry.py`, and reading it from `runtime/` would have been a new layering inversion (`runtime/ → interfaces/web/` was 0 imports; the reverse, 10), so **P4 moved it to `runtime/task_types.py`** beside `TaskKind` / `Requester`; `run_registry.py` re-exports it. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
 
