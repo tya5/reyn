@@ -230,6 +230,106 @@ def test_recurses_into_subdirectories(tmp_path: Path) -> None:
     assert offenders == [sub / "helper.py"]
 
 
+# ── #4019 (review finding) — a WITHIN-home reference can still be silently
+# wrong, invisible to both (a)/(b) above and a′ (which only runs against a
+# migration PR's OWN diff, not retroactively against already-merged
+# history). Real instance: tests/dev/test_replay_fixture_no_stacking_3634.py
+# resolved a module-level glob root to a directory that plainly did not
+# exist, silently collecting zero fixture files instead of failing.
+
+
+def test_a_missing_module_level_glob_root_is_flagged(tmp_path: Path) -> None:
+    """Tier 2: #4019's real confirmed instance, reproduced — a
+    module-level `_ROOT = Path(__file__).parent / "fixtures"` immediately
+    used as `_ROOT.rglob(...)`'s base, where `fixtures/` does not exist,
+    is flagged even though it is structurally "inside home" (so (a)/(b)
+    alone would have missed it — this is a genuinely separate check).
+
+    Uses a file already living in a subdirectory (own home != tests_dir),
+    same isolation reason as the "not flagged" tests below: a FLAT file's
+    `.parent / "fixtures"` join is ALSO independently caught by the OLDER
+    (a)/(b) peer-directory check regardless of existence, which would make
+    this test pass even with the NEW existence check fully stripped — a
+    real gap caught locally (falsify-verification here initially showed
+    green with the mechanism disabled, for exactly this reason) before
+    this isolation fix."""
+    sub = tmp_path / "core"
+    sub.mkdir()
+    (sub / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_ROOT = Path(__file__).parent / "fixtures"\n'
+        '_FILES = sorted(_ROOT.rglob("*.jsonl"))\n',
+        encoding="utf-8",
+    )
+    offenders = offending_files(tmp_path)
+    assert offenders == [sub / "test_a.py"]
+
+
+def test_an_existing_module_level_glob_root_is_not_flagged(tmp_path: Path) -> None:
+    """Tier 2: non-vacuity — the SAME shape as above, but the referenced
+    directory genuinely exists, must not be flagged. Uses a file already
+    living in a subdirectory (own home != tests_dir) so ONLY the new
+    existence check is exercised, isolated from the older (a)/(b)
+    peer-directory check (which would separately flag a FLAT file's
+    `.parent / "fixtures"` join regardless of existence — a different
+    check, not what this test is verifying)."""
+    sub = tmp_path / "core"
+    (sub / "fixtures").mkdir(parents=True)
+    (sub / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_ROOT = Path(__file__).parent / "fixtures"\n'
+        '_FILES = sorted(_ROOT.rglob("*.jsonl"))\n',
+        encoding="utf-8",
+    )
+    assert offending_files(tmp_path) == []
+
+
+def test_a_runtime_created_glob_root_inside_a_function_is_not_flagged(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: non-vacuity for the design's key constraint (lead-coder's
+    #4019 review) — a directory a test CREATES and globs at runtime,
+    inside a function body (never at module level, since nothing has run
+    yet at import time), must NOT be flagged even though the directory
+    genuinely doesn't exist at static-scan time. This is exactly the
+    common pattern a blanket existence-assert would have false-positived
+    on; restricting to module-level roots is what avoids it. Uses a
+    subdirectory file for the same isolation reason as the test above."""
+    sub = tmp_path / "core"
+    sub.mkdir()
+    (sub / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "\n"
+        "def test_x(tmp_path):\n"
+        '    out_dir = Path(__file__).parent / "generated_output"\n'
+        "    out_dir.mkdir()\n"
+        '    files = sorted(out_dir.glob("*.txt"))\n',
+        encoding="utf-8",
+    )
+    assert offending_files(tmp_path) == []
+
+
+def test_a_bound_name_module_level_glob_root_is_flagged(tmp_path: Path) -> None:
+    """Tier 2: non-vacuity for the name-binding path specifically —
+    `_ROOT.rglob(...)` (a Name reference to a module-level-bound variable)
+    must be caught the same way a direct `Path(__file__)...rglob(...)`
+    chain would be; this is the exact shape of the real #4019 instance
+    (`_FIXTURES_ROOT = ...; _FIXTURE_FILES = sorted(_FIXTURES_ROOT.rglob(...))`).
+    Same subdirectory isolation as the tests above (the older (a)/(b)
+    check would independently catch a flat file's version of this)."""
+    sub = tmp_path / "core"
+    sub.mkdir()
+    (sub / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "llm"\n'
+        '_FIXTURE_FILES = sorted(_FIXTURES_ROOT.rglob("*.jsonl"))\n',
+        encoding="utf-8",
+    )
+    offenders = offending_files(tmp_path)
+    assert offenders == [sub / "test_a.py"]
+
+
 def test_the_real_repo_tree_is_currently_clean() -> None:
     """Tier 2: #3990/#3997/#3998/#4002 — the zero-baseline claim this gate
     is founded on, checked against the ACTUAL checkout, not a fixture. If

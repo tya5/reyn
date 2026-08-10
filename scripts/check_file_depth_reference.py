@@ -119,6 +119,44 @@ the tests it configures — the one file in ``tests/`` that STRUCTURALLY
 never moves (M4's own migration leaves it in place), so a reference there
 carries none of the risk this gate exists to catch. Every OTHER ``tests/``
 file is in scope, subdirectories included.
+
+## #4019 (review finding) — a WITHIN-home reference can still be silently
+## wrong, and neither (a)/(b) above nor a′ can see it
+
+(a)/(b) are purely STRUCTURAL/positional checks — "does this look like it
+reaches outside home" — never an EXISTENCE check, by design (a′ owns
+existence-checking, at real move time). That leaves a real gap: a
+``__file__``-rooted reference that stays structurally INSIDE its own home
+but points at something that plain doesn't exist — e.g. a file already
+resolved into ``tests/dev/`` whose own reference computes ``tests/dev/
+fixtures/llm`` (structurally fine, "inside home") when the real, intended
+directory is ``tests/fixtures/llm`` (a stale reference from BEFORE the
+file's own last move). Neither (a)/(b) (position looks fine) nor a′ (only
+runs against a migration PR's OWN diff, not retroactively against
+already-merged history) can catch this — confirmed as a REAL, not
+hypothetical, gap: ``tests/dev/test_replay_fixture_no_stacking_3634.py``
+had exactly this stale reference, silently collecting ZERO fixture files
+and skipping every parametrized case instead of failing (found and fixed
+in the same PR that added this section).
+
+**Why not a blanket existence-assert on every resolved target**: an
+operator's own review (lead-coder, #4019) named the concrete risk
+directly — plenty of legitimate ``__file__``-rooted paths name a
+directory a test CREATES at runtime (a per-test output dir, a staging
+area) rather than one that must already exist on disk at STATIC-SCAN
+time. A naive "the target must exist right now" check would false-positive
+on that whole, common pattern.
+
+**The fix: :func:`scripts._file_depth_predicate.module_level_glob_roots`**
+— narrowly scoped to the exact shape that broke: a ``__file__``-rooted
+directory used, AT MODULE LEVEL (import time, never inside a function or
+class body), as the base of a ``.glob(...)``/``.rglob(...)`` call. A
+runtime-created output directory is, by construction, always built
+INSIDE a function body (nothing has run yet at bare module scope) — so
+restricting to module-level glob roots specifically targets "eager
+fixture discovery at import time" (this gate's real broken instance)
+while structurally excluding the runtime-directory false-positive risk
+the review flagged. See :func:`_missing_module_level_glob_roots`.
 """
 from __future__ import annotations
 
@@ -127,7 +165,10 @@ from pathlib import Path
 
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _file_depth_predicate import parse_file_relative_targets  # noqa: E402
+from _file_depth_predicate import (  # noqa: E402
+    module_level_glob_roots,
+    parse_file_relative_targets,
+)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _TESTS_DIR = _ROOT / "tests"
@@ -205,18 +246,42 @@ def _references_a_fixed_tests_location(path: Path, tests_dir: Path) -> bool:
     return False
 
 
+def _has_a_missing_module_level_glob_root(path: Path) -> bool:
+    """#4019 (review finding): does *path* use a ``__file__``-rooted
+    directory, AT MODULE LEVEL, as a ``.glob(...)``/``.rglob(...)`` root
+    that does not exist on disk right now? See the module docstring's
+    "WITHIN-home reference can still be silently wrong" section for why
+    this is scoped to module-level roots specifically (excludes the
+    runtime-created-directory false-positive risk) and why it is a
+    SEPARATE check from :func:`_references_a_fixed_tests_location`
+    (existence is a′'s question; this is the one narrow slice of it a
+    static check can safely still ask)."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    for root in module_level_glob_roots(content, path):
+        if not root.is_dir():
+            return True
+    return False
+
+
 def offending_files(tests_dir: Path = _TESTS_DIR) -> "list[Path]":
     """Every ``.py`` file under *tests_dir* (recursive) matching
-    :func:`_references_a_fixed_tests_location` — the gate's entire
-    decision, isolated from CLI/printing so it is directly testable.
-    ``conftest.py`` (any depth — pytest resolves the nearest one to the
-    file being collected) is excluded: it is the one file class that
-    structurally never moves, see module docstring."""
+    :func:`_references_a_fixed_tests_location` (the peer-directory proxy)
+    OR :func:`_has_a_missing_module_level_glob_root` (#4019's narrow
+    existence check) — the gate's entire decision, isolated from
+    CLI/printing so it is directly testable. ``conftest.py`` (any depth —
+    pytest resolves the nearest one to the file being collected) is
+    excluded: it is the one file class that structurally never moves, see
+    module docstring."""
     offenders = []
     for path in sorted(tests_dir.rglob("*.py")):
         if path.name in _STRUCTURALLY_EXEMPT:
             continue
-        if _references_a_fixed_tests_location(path, tests_dir):
+        if _references_a_fixed_tests_location(
+            path, tests_dir
+        ) or _has_a_missing_module_level_glob_root(path):
             offenders.append(path)
     return offenders
 
@@ -228,29 +293,57 @@ def main(argv: "list[str] | None" = None) -> int:
     if not offenders:
         print(
             "OK: no tests/ file references tests/ itself, above it, or "
-            "outside its own home subdirectory via __file__."
+            "outside its own home subdirectory via __file__, and no "
+            "module-level glob root points at a missing directory."
         )
         return 0
 
+    peer_refs = [
+        p for p in offenders if _references_a_fixed_tests_location(p, _TESTS_DIR)
+    ]
+    missing_roots = [
+        p for p in offenders if _has_a_missing_module_level_glob_root(p)
+    ]
+
     print("file-depth-reference gate FAILED:\n", file=sys.stderr)
+
+    if peer_refs:
+        print(
+            f"{len(peer_refs)} file(s) contain a __file__-rooted expression "
+            "that reaches tests/ itself (or above it), or lands outside the "
+            "file's own home subdirectory — at any depth, not just directly "
+            "under tests/ (e.g. _support, fixtures/llm/...) — this SILENTLY "
+            "BREAKS the moment the file is moved to a different depth (the "
+            "exact M4 failure class, #3989/#3994/#4002/#4019):",
+            file=sys.stderr,
+        )
+        for path in peer_refs:
+            print(f"  {path.relative_to(_ROOT)}", file=sys.stderr)
+        print(
+            "\nUse the marker-walk `tests._support.paths.REPO_ROOT` instead "
+            "— depth-independent, correct at any location including its "
+            "own, permanently. (`tests/conftest.py` is the one structural "
+            "exception: it never moves, so a reference there is exempt.)",
+            file=sys.stderr,
+        )
+
+    if missing_roots:
+        print(
+            f"\n{len(missing_roots)} file(s) use a __file__-rooted "
+            "directory, AT MODULE LEVEL, as a .glob()/.rglob() root that "
+            "does not exist on disk — a stale reference (often left behind "
+            "by an EARLIER move), silently collecting zero files instead "
+            "of failing (#4019's real instance: tests/dev/test_replay_"
+            "fixture_no_stacking_3634.py silently skipped every "
+            "parametrized case):",
+            file=sys.stderr,
+        )
+        for path in missing_roots:
+            print(f"  {path.relative_to(_ROOT)}", file=sys.stderr)
+
     print(
-        f"{len(offenders)} file(s) under tests/ contain a __file__-rooted "
-        "expression that reaches tests/ itself (or above it), or lands "
-        "outside the file's own home subdirectory — at any depth, not "
-        "just directly under tests/ (e.g. _support, fixtures/llm/...) — "
-        "this SILENTLY BREAKS the moment the file is moved to a different "
-        "depth (the exact M4 failure class, #3989/#3994/#4002/#4019), and "
-        "this gate's own starting population is zero, so any hit here is "
-        "a new regression, not inherited debt:",
-        file=sys.stderr,
-    )
-    for path in offenders:
-        print(f"  {path.relative_to(_ROOT)}", file=sys.stderr)
-    print(
-        "\nUse the marker-walk `tests._support.paths.REPO_ROOT` instead — "
-        "depth-independent, correct at any location including its own, "
-        "permanently. (`tests/conftest.py` is the one structural exception: "
-        "it never moves, so a reference there is exempt.)",
+        "\nThis gate's own starting population is zero, so any hit here is "
+        "a new regression, not inherited debt.",
         file=sys.stderr,
     )
     return 1
