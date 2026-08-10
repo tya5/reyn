@@ -140,6 +140,15 @@ P5    send_to_session
 P6    retire delegate_to_agent (its own PR; 129 files mention it, whole-repo, at 5f80e0a6 —
       re-measure before starting, and see the scope note below for what is NOT work)
       pending_chains is repurposed as P3/P4's collection substrate
+      Acceptance, settled during P4 and recorded here because P6 is where they come due:
+        - no field on `_PendingChain` carries a delegate-specific NAME and is still required.
+          P4 left `origin_agent` / `origin_depth` / `origin_sid` in place with a derived
+          `requester` property over them; P6 is when the storage itself is renamed, and this
+          condition is how "the generalization actually happened" gets checked.
+        - `register()` accepts `from_user` and never stores it — the `_PendingChain(...)`
+          construction does not reference it. Either it feeds something P6 keeps, or it goes.
+        - both S3 deny sets shed `delegate_to_agent` in the same PR, and the equality gate
+          added in P7 stays green (see the deny-set note below).
 
 P7    run_pipeline: four names → one (`collect` carries the attached/async axis)
       The two SOURCE params are unchanged: `name` (a registered pipeline) and `definition`
@@ -204,6 +213,25 @@ to *remove* a retired name over-denies and is harmless. Failing to *add* a futur
 of the two leaves that surface under-denied — a real hole, and the direction nothing is watching.
 
 Put the check on whichever of P6 / P7 touches both files first.
+
+### Adding or retiring an LLM-visible tool re-records the same fixtures
+
+Every step of this arc that changes the tool surface has paid the same bill, and each one
+discovered it at CI rather than budgeting for it:
+
+| step | change | what went red |
+|---|---|---|
+| P5 (#4101) | `send_to_session` added | `fp0063_arc_witness` turn1/turn2, `test_router_tools` |
+| P7 (#4115) | three `run_pipeline_*` names retired | the same `fp0063_arc_witness` pair |
+| P4d (#4117) | `run_prompt` added | the same pair, plus two `router_tools` goldens |
+
+The cause is that the recorded LLM payloads embed the whole tool catalog, so a tool appearing
+or disappearing changes a hash in fixtures that have nothing to do with the feature. **P6 will
+hit this hardest** — retiring `delegate_to_agent` removes a tool that has been in every recorded
+catalog since those fixtures were made.
+
+Budget the re-record as part of any surface-changing step, and re-record rather than hand-edit:
+the fixtures are captured payloads, and an edited one no longer witnesses what it claims to.
 
 ### `input_required` is spelled three ways
 
