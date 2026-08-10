@@ -67,7 +67,15 @@ async def test_await_quiescent_cancels_chain_timeout_timer_no_append(tmp_path):
 
     # Short timeout so the watchdog WOULD fire almost immediately if not cancelled.
     session._chains._chain_timeout_seconds = 0.05
-    session._chains.arm_timeout("c1", on_fire=_on_fire)
+    await session._chains.arm_timeout("c1", on_fire=_on_fire)
+    # proposal 0067 P8 (#3978): arm_timeout() now persists arm_at via a
+    # fire-and-forget WAL append (append_nowait — the worker assigns the
+    # seq off-loop, not synchronously when record_chain_update() returns).
+    # Flush BEFORE capturing seq_after so that legitimate append is
+    # counted here, not raced into the "nothing new happened" window
+    # below — this test is about the WATCHDOG being cancelled, not about
+    # whether arm_timeout's own bookkeeping write has landed yet.
+    await log.flush()
 
     await asyncio.wait_for(session.await_quiescent(), timeout=2.0)
 
