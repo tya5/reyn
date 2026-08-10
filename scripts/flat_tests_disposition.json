@@ -1253,11 +1253,41 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4011
   },
+  "tests/test_3546_pipeline_driver_narrowing_inheritance.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "bundle": "narrowing-cluster",
+    "pr": 4079
+  },
   "tests/test_3552_mcp_install_probe_permission_gate.py": {
     "disposition": "moved",
     "to": "tests/security/test_3552_mcp_install_probe_permission_gate.py",
     "bundle": "backfill-3879-arc-start",
     "pr": 4005
+  },
+  "tests/test_3553_agent_step_worker_narrowing_inheritance.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3553_agent_step_worker_narrowing_inheritance.py",
+    "bundle": "narrowing-cluster",
+    "pr": 4079
+  },
+  "tests/test_3556_session_spawn_narrowing_inheritance.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3556_session_spawn_narrowing_inheritance.py",
+    "bundle": "narrowing-cluster",
+    "pr": 4079
+  },
+  "tests/test_3561_spawn_session_seam_reachability.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3561_spawn_session_seam_reachability.py",
+    "bundle": "narrowing-cluster",
+    "pr": 4079
+  },
+  "tests/test_3562_slash_session_new_narrowing_inheritance.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py",
+    "bundle": "narrowing-cluster",
+    "pr": 4079
   },
   "tests/test_3593_preserve_envelope_when_base_unreadable.py": {
     "disposition": "moved",

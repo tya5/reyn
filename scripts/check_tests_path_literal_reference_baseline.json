@@ -1,0 +1,2352 @@
+[
+  {
+    "file": ".github/workflows/test.yml",
+    "literal": "tests/test_2608_h4_fs_watcher.py",
+    "class": "stale"
+  },
+  {
+    "file": ".github/workflows/test.yml",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": ".github/workflows/test.yml",
+    "literal": "tests/test_mcp_client.py",
+    "class": "stale"
+  },
+  {
+    "file": "CLAUDE.md",
+    "literal": "tests/test_audit_event_kind_vocabulary_3410.py",
+    "class": "stale"
+  },
+  {
+    "file": "CLAUDE.md",
+    "literal": "tests/test_tui_colour_tokens.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/events.ja.md",
+    "literal": "tests/test_chat_turn_completed_inline.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/events.ja.md",
+    "literal": "tests/test_mcp_search_tool_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/events.ja.md",
+    "literal": "tests/test_session_lifecycle_events_1800.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/events.md",
+    "literal": "tests/test_chat_turn_completed_inline.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/events.md",
+    "literal": "tests/test_mcp_search_tool_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/events.md",
+    "literal": "tests/test_session_lifecycle_events_1800.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/intervention-delivery.md",
+    "literal": "tests/test_3049_driver_router_op_intervention_reaches_originator.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/runtime/intervention-delivery.md",
+    "literal": "tests/test_3053_budget_bus_bridge_aware.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/tools-integrations/skills.md",
+    "literal": "tests/test_skill_references_gate_3162.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/tools-integrations/universal-catalog.ja.md",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/tools-integrations/universal-catalog.ja.md",
+    "literal": "tests/test_qualified_name_provider_grammar_1456.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/tools-integrations/universal-catalog.md",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/concepts/tools-integrations/universal-catalog.md",
+    "literal": "tests/test_qualified_name_provider_grammar_1456.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/cli-redesign.md",
+    "literal": "tests/cli/test_tui_smoke.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/cli-redesign.md",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.ja.md",
+    "literal": "tests/test_os_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.ja.md",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.ja.md",
+    "literal": "tests/test_replay_my_area.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.ja.md",
+    "literal": "tests/test_replay_skill_router.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/scripts/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_compaction_resolver_aware_1172.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_fp0063_p2_builtin_mcp_rag.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_fp0063_p3_rag_pipelines.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_os_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_replay_my_area.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_replay_skill_router.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/contributing/testing.md",
+    "literal": "tests/test_your_area.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/contributing/verification-hazards.md",
+    "literal": "tests/test_X.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0021-g12-attractor-structural-fix-design.md",
+    "literal": "tests/test_router_empty_response.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0022-plan-mode-crash-fail-safe.md",
+    "literal": "tests/test_plan_lifecycle_crash.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0022-plan-mode-crash-fail-safe.md",
+    "literal": "tests/test_planner.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0023-plan-mode-forward-replay.md",
+    "literal": "tests/test_plan_lifecycle_crash.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0026-unified-tool-registry.md",
+    "literal": "tests/test_plan_async_dispatch.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0026-unified-tool-registry.md",
+    "literal": "tests/test_tool_registry_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/decisions/0035-phase-tool-calls-unification.md",
+    "literal": "tests/test_op_loop_resume_memo_1212.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-1-practice/findings/F04-cost-always-zero.md",
+    "literal": "tests/test_session_cost_accumulation.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-2-real/findings.md",
+    "literal": "tests/test_chat_router_i18n.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-2-real/findings/B2-H1-specialist-describe-invoke-fail.md",
+    "literal": "tests/test_router_system_prompt.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-2-real/findings/B2-H2-default-silent-absorption-marker.md",
+    "literal": "tests/test_session_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-4-retest/findings/B4-H2-copy-to-work-act-budget.md",
+    "literal": "tests/test_copy_to_work_phase.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-4-retest/findings/B4-H2-copy-to-work-act-budget.md",
+    "literal": "tests/test_copy_to_work_preprocessor.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-6-non-attractor/findings/B6-S1-M1-hypothesis-a-tier3-verify.md",
+    "literal": "tests/test_copy_to_work_validation_judgment.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-truncation-fix.md",
+    "literal": "tests/test_router_skill_description_truncation.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H2-fix-design.md",
+    "literal": "tests/test_router_list_skills_input_hint.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-11-non-determinism-reduction/findings/B11-R1-path-typo-fix.md",
+    "literal": "tests/test_improvement_session_schema.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-11-non-determinism-reduction/findings/B11-R2-g12-fix-verify.md",
+    "literal": "tests/test_router_skill_description_truncation.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-11-non-determinism-reduction/findings/B11-R3-text-reply-fix-verify.md",
+    "literal": "tests/test_replay_skill_router.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-11-non-determinism-reduction/findings/B11-R3-text-reply-fix-verify.md",
+    "literal": "tests/test_router_system_prompt.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/findings.md",
+    "literal": "tests/test_eval_builder_path_resolution.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/findings/B9-G15-diagnosis.md",
+    "literal": "tests/test_g15_noninteractive_startup_guard.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/findings/B9-G15-fix-verify.md",
+    "literal": "tests/test_g15_noninteractive_startup_guard.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/findings/B9-G16-fix-verify.md",
+    "literal": "tests/test_g16_eval_builder_routing_wording.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/findings/B9-G17-fix-verify.md",
+    "literal": "tests/test_eval_builder_path_resolution.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-12-real-milestone/findings/B12-M2-fixture-audit.md",
+    "literal": "tests/test_copy_to_work_validation_judgment.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-12-real-milestone/findings/B12-M2-fixture-audit.md",
+    "literal": "tests/test_replay_skill_improver.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-12-real-milestone/findings/B12-M2-fixture-audit.md",
+    "literal": "tests/test_skill_postprocessor_executor.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-12-real-milestone/findings/B12-R1-fix-verify.md",
+    "literal": "tests/test_b11_stdlib_default_read_zone.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-12-real-milestone/findings/B12-R1-fix-verify.md",
+    "literal": "tests/test_g15_noninteractive_startup_guard.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-12-real-milestone/findings/B12-R1-fix-verify.md",
+    "literal": "tests/test_skill_improver_stdlib_read_perm.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/findings/B13-R1-revert-g15.md",
+    "literal": "tests/test_g15_noninteractive_startup_guard.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/findings/B13-R2-revert-stdlib-default-zone.md",
+    "literal": "tests/test_b11_stdlib_default_read_zone.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/findings/B13-R2-revert-stdlib-default-zone.md",
+    "literal": "tests/test_g15_noninteractive_startup_guard.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/findings/B13-R2-revert-stdlib-default-zone.md",
+    "literal": "tests/test_skill_improver_stdlib_read_perm.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/findings/B13-R3-v3-wording-fix.md",
+    "literal": "tests/test_router_system_prompt.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/findings.md",
+    "literal": "tests/test_replay_skill_improver.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/findings/B14-R1-fix-verify.md",
+    "literal": "tests/test_run_skill_model_class.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/findings/B14-R2-fixture-fix.md",
+    "literal": "tests/test_replay_skill_improver.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/prelude.md",
+    "literal": "tests/test_replay_skill_improver.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-08-batch-16-plan-mode-validation/findings/S5-large-output-spill.md",
+    "literal": "tests/plan/test_plan_registry_spill.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/findings.md",
+    "literal": "tests/test_index_docs_skill.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/findings.md",
+    "literal": "tests/test_router_indexed_sources.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/findings.md",
+    "literal": "tests/test_tool_recall.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/findings/S9-cost-preflight.md",
+    "literal": "tests/test_candidate_abort.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/prelude.md",
+    "literal": "tests/test_embedding_provider.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/retrospective.md",
+    "literal": "tests/test_tool_recall.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-17-ablation-wave-plateau-diagnosis/results/results-H4-description.md",
+    "literal": "tests/test_skill_description_disambiguation.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-17-batch-36-alias-schema-verify/retrospective.md",
+    "literal": "tests/test_event_store_stale_path_recovery.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-17-batch-38-d2-scope-verify/workers/findings-worker-3.md",
+    "literal": "tests/test_judge_phase_schema.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/2026-05-23-batch-52-post-fp0042-complete/retrospective.md",
+    "literal": "tests/test_session_factory_sandbox_config_uniform.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/giveup-tracker.md",
+    "literal": "tests/test_mcp_server.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/dogfood/giveup-tracker.md",
+    "literal": "tests/test_router_empty_response.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-09-adr0026-m2-poc-success.md",
+    "literal": "tests/test_replay_skill_router.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-09-adr0026-m2-poc-success.md",
+    "literal": "tests/test_web_search_unified.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/track4_baseline_starvation.md",
+    "literal": "tests/spike/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/track4_baseline_starvation.md",
+    "literal": "tests/spike/test_adr_a_starvation_repro.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/track4_baseline_starvation.md",
+    "literal": "tests/test_mcp_server.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/track5_pumping_prototype.md",
+    "literal": "tests/spike/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/track5_pumping_prototype.md",
+    "literal": "tests/spike/test_adr_a_pumping_prototype.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/track5_pumping_prototype.md",
+    "literal": "tests/test_mcp_server.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/insights/2026-05-07-plan-mode-crash-resilience-phase1.md",
+    "literal": "tests/test_plan_lifecycle_crash.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/tier-c1-cleanup-sweep-design/1533-2a2-checkout-design.md",
+    "literal": "tests/test_registry_checkout_2a2.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/tier-c1-cleanup-sweep-design/1533-2a3-act-turn-design.md",
+    "literal": "tests/test_act_turn_rewind_2a3.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/tier-c1-cleanup-sweep-design/1533-phase2-e2e-live-gate-design.md",
+    "literal": "tests/test_live_fork_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/journal/tier-c1-cleanup-sweep-design/1533-phase2-e2e-live-gate-design.md",
+    "literal": "tests/test_live_rewind_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0003-budget-exceed-user-approval.ja.md",
+    "literal": "tests/test_budget_extend_chain.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0003-budget-exceed-user-approval.md",
+    "literal": "tests/test_budget_extend_chain.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0004-safety-config-ux.ja.md",
+    "literal": "tests/test_safety_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0004-safety-config-ux.md",
+    "literal": "tests/test_safety_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0005-safety-as-checkpoint.ja.md",
+    "literal": "tests/test_safety_limit_handler.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0005-safety-as-checkpoint.ja.md",
+    "literal": "tests/test_safety_on_limit.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0005-safety-as-checkpoint.ja.md",
+    "literal": "tests/test_safety_phase2_wiring.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0005-safety-as-checkpoint.md",
+    "literal": "tests/test_safety_limit_handler.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0005-safety-as-checkpoint.md",
+    "literal": "tests/test_safety_on_limit.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0005-safety-as-checkpoint.md",
+    "literal": "tests/test_safety_phase2_wiring.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.ja.md",
+    "literal": "tests/test_multi_agent_p7.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.ja.md",
+    "literal": "tests/test_narrator_drift.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.ja.md",
+    "literal": "tests/test_replay_narrator.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.ja.md",
+    "literal": "tests/test_router_loop_chatsession.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.md",
+    "literal": "tests/test_multi_agent_p7.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.md",
+    "literal": "tests/test_narrator_drift.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.md",
+    "literal": "tests/test_replay_narrator.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0011-remove-narrator.md",
+    "literal": "tests/test_router_loop_chatsession.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.ja.md",
+    "literal": "tests/test_sandbox_factory.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.ja.md",
+    "literal": "tests/test_sandbox_landlock.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.ja.md",
+    "literal": "tests/test_sandbox_seatbelt.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.ja.md",
+    "literal": "tests/test_sandbox_seccomp.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.md",
+    "literal": "tests/test_sandbox_factory.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.md",
+    "literal": "tests/test_sandbox_landlock.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.md",
+    "literal": "tests/test_sandbox_seatbelt.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0017-sandboxed-execution.md",
+    "literal": "tests/test_sandbox_seccomp.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0050-content-threat-scan.md",
+    "literal": "tests/test_returns_external_content_flagset_1822.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md",
+    "literal": "tests/cli/test_tool_result_viewer_registry.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0051-tool-result-viewer-registry-llm-template.md",
+    "literal": "tests/cli/test_tool_result_viewer_template.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0056-canonical-coverage-enforcement.md",
+    "literal": "tests/test_fp0056_canonical_coverage_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0061-repo-self-access-and-packaging-standardization.md",
+    "literal": "tests/test_0060_d5b_docs_mirror.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/0064-plugin-model.md",
+    "literal": "tests/test_builtin_plugins_registry_disk_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/phase-8-require-web-fetch-removal.md",
+    "literal": "tests/test_permission_collapse_phase3.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/phase-8-require-web-fetch-removal.md",
+    "literal": "tests/test_permission_prompt_phrasing.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/deep-dives/proposals/phase-8-require-web-fetch-removal.md",
+    "literal": "tests/test_web_fetch_unified.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/feature-map.md",
+    "literal": "tests/test_branch_tree_2b.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/guide/for-reyn-developers/add-an-op-kind.md",
+    "literal": "tests/test_3193_op_status_classifier_coverage.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/guide/for-reyn-developers/write-replay-tests.md",
+    "literal": "tests/test_llm_tools.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/guide/for-reyn-developers/write-replay-tests.md",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/guide/for-reyn-developers/write-replay-tests.md",
+    "literal": "tests/test_replay_my_area.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/runtime/agui-transport.ja.md",
+    "literal": "tests/test_agent_delta_audit_event_3288.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/agui-transport.ja.md",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/agui-transport.md",
+    "literal": "tests/test_agent_delta_audit_event_3288.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/agui-transport.md",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/agui-transport.md",
+    "literal": "tests/test_textual_chat_row_contrast_3367.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/session-construction.md",
+    "literal": "tests/test_router_host_adapter_param_gate_3482.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/tool-naming.md",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/runtime/tool-naming.md",
+    "literal": "tests/test_tool_naming_convention_gate_3223.py",
+    "class": "stale"
+  },
+  {
+    "file": "docs/reference/test-tier-audit.ja.md",
+    "literal": "tests/test_new_feature.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/test-tier-audit.ja.md",
+    "literal": "tests/test_router.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/test-tier-audit.ja.md",
+    "literal": "tests/test_util.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/test-tier-audit.md",
+    "literal": "tests/test_new_feature.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/test-tier-audit.md",
+    "literal": "tests/test_router.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/test-tier-audit.md",
+    "literal": "tests/test_util.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "docs/reference/testing/replay.md",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "scripts/_file_depth_predicate.py",
+    "literal": "tests/hooks/test_x.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_file_depth_reference.py",
+    "literal": "tests/runtime/x.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_file_depth_reference.py",
+    "literal": "tests/x.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_migration_diff_shape.py",
+    "literal": "tests/foo/bar.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_migration_diff_shape.py",
+    "literal": "tests/old/path.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_migration_diff_shape.py",
+    "literal": "tests/test_a.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_tests_dir_names.py",
+    "literal": "tests/scripts/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/flat_tests_ratchet.py",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "scripts/measure_router_host_adapter_consumers.py",
+    "literal": "tests/test_router_host_adapter_param_gate_3482.py",
+    "class": "stale"
+  },
+  {
+    "file": "scripts/mypy_ratchet.py",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "scripts/test_tier_audit.py",
+    "literal": "tests/test_foo.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "src/reyn/_network.py",
+    "literal": "tests/network/test_egress_env_completeness.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "src/reyn/core/events/event_schema.py",
+    "literal": "tests/test_audit_event_kind_vocabulary_3410.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/core/events/progress_lifecycle.py",
+    "literal": "tests/test_progress_lifecycle_fanout_3357.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/core/offload/canonical.py",
+    "literal": "tests/test_fp0056_canonical_coverage_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/__init__.py",
+    "literal": "tests/test_fp0056_canonical_coverage_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/embed.py",
+    "literal": "tests/test_op_semantic_search.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/core/op_runtime/status_classify.py",
+    "literal": "tests/test_3193_op_status_classifier_coverage.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/core/part_type_registry.py",
+    "literal": "tests/test_0060_d5d_doc_ref_registry_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/data/index/coordinator.py",
+    "literal": "tests/test_index_coordinator_3247_p2a.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/dev/dogfood/verifiers/asset_refs.py",
+    "literal": "tests/test_dogfood_scenario_asset_refs_contract.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/dev/testing/network_gate.py",
+    "literal": "tests/test_network_gate_3451.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/dev/testing/network_gate.py",
+    "literal": "tests/test_network_gate_boundary_completeness_3451.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/dev/testing/replay.py",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/dev/testing/replay_stacking.py",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/hooks/durable_pending_store.py",
+    "literal": "tests/test_3180_composer_pending_truncate_falsify.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/chat.py",
+    "literal": "tests/test_startup_client_before_attach_3671_p2.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/cli/commands/pipe.py",
+    "literal": "tests/test_2575_pipeline_disk_registration.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/inline/textual_chat/presenter.py",
+    "literal": "tests/test_textual_chat_row_contrast_3367.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/renderer.py",
+    "literal": "tests/test_markdown_palette_gate_3469.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/repl/stream_client.py",
+    "literal": "tests/test_stream_client_own_echo_3287.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/slash/__init__.py",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/profile.py",
+    "literal": "tests/test_agui_profile_completeness.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/agui/protocol.py",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/client_transport.py",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/interfaces/transport/frames.py",
+    "literal": "tests/test_transport_dual_stream_completeness.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/llm/llm.py",
+    "literal": "tests/test_streaming_usage_provider_supplied_3348.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/mcp/server.py",
+    "literal": "tests/test_3595_client_input_provenance_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/prompt/__init__.py",
+    "literal": "tests/scaffold/test_sp_prompt_package_phase1_byte_identical.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "src/reyn/prompt/__init__.py",
+    "literal": "tests/scaffold/test_sp_prompt_package_phase2_byte_identical.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "src/reyn/prompt/__init__.py",
+    "literal": "tests/test_llm_facing_text_english_only.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/prompt/__init__.py",
+    "literal": "tests/test_sp_prompt_package_loop_control_nudges.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "src/reyn/prompt/router_frame.py",
+    "literal": "tests/scaffold/test_sp_prompt_package_phase1_byte_identical.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "src/reyn/prompt/router_frame.py",
+    "literal": "tests/test_llm_facing_text_english_only.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/outbox.py",
+    "literal": "tests/test_agui_profile_completeness.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/outbox.py",
+    "literal": "tests/test_outbox_vocabulary.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/presentation_consumer.py",
+    "literal": "tests/test_present_sink_na_ratchet_2708.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/registry.py",
+    "literal": "tests/test_registry_restore_all_only_names_3671_p4c1.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/reyn_repo.py",
+    "literal": "tests/test_0061_repo_self_access_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/scoped_session_factory.py",
+    "literal": "tests/test_scoped_session_factory_invariant_1402.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/services/execution_driver.py",
+    "literal": "tests/test_execution_driver_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/services/router_history_buffer.py",
+    "literal": "tests/test_2957_prb_elide_advisor_token_unification.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/services/router_host_adapter.py",
+    "literal": "tests/test_router_host_adapter_param_gate_3482.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/services/snapshot_journal.py",
+    "literal": "tests/test_3300_p3_cancel_by_id.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "literal": "tests/test_3300_p3_cancel_by_id.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/session.py",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/spawn_routing.py",
+    "literal": "tests/test_spawn_routing_gate_2708.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/runtime/turn_origin.py",
+    "literal": "tests/test_3595_client_input_provenance_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/security/permissions/capability_profile.py",
+    "literal": "tests/test_2111_floor_alias_completeness.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/security/permissions/capability_profile.py",
+    "literal": "tests/test_3501_untrusted_narrowing_opt_in.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/security/permissions/effective.py",
+    "literal": "tests/test_3501_untrusted_narrowing_opt_in.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/security/sandbox/backends/landlock.py",
+    "literal": "tests/test_subprocess_cancel_1470.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/security/sandbox/noop_backend.py",
+    "literal": "tests/test_sandbox_self_test_2983.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/services/compaction/engine.py",
+    "literal": "tests/test_compaction_resolver_aware_1172.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/knowledge.py",
+    "literal": "tests/test_returns_external_content_flagset_1822.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/schemes/_category_exposure.py",
+    "literal": "tests/test_tool_use_category_content_fence_3376.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/types.py",
+    "literal": "tests/test_0060_d5d_doc_ref_registry_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/types.py",
+    "literal": "tests/test_tool_schema_3383_process_history_independence.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/universal_catalog.py",
+    "literal": "tests/test_resource_collapse_invariant_3026.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/universal_catalog.py",
+    "literal": "tests/test_universal_catalog.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/universal_dispatch.py",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/universal_dispatch.py",
+    "literal": "tests/test_resource_collapse_invariant_3026.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/tools/universal_dispatch.py",
+    "literal": "tests/test_universal_catalog.py",
+    "class": "stale"
+  },
+  {
+    "file": "src/reyn/user_intervention.py",
+    "literal": "tests/test_intervention_legacy_alias_deprecated.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/_support/builtin_skill_tool_names.py",
+    "literal": "tests/test_builtin_skill_tool_name_drift_3092.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/_support/builtin_skill_tool_names.py",
+    "literal": "tests/test_catalog_entries_1593.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/_support/builtin_skill_tool_names.py",
+    "literal": "tests/test_fp0063_p4_builtin_rag_skill.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/_support/tool_use_negative_examples.py",
+    "literal": "tests/test_fp0066_p4a_transport_axis_3247.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_0060_phase1_f3a_builtin_tier.py",
+    "literal": "tests/test_0060_f3b_sibling_builtins.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_0060_phase1_f3a_builtin_tier.py",
+    "literal": "tests/test_0060_phase2_f3b_builtin_content.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_0060_phase1_f3a_builtin_tier.py",
+    "literal": "tests/test_0061_repo_self_access_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_0060_phase1_f3a_builtin_tier.py",
+    "literal": "tests/test_workspace_glob_stdlib_perm.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_builtin_plugins_registry_disk_parity.py",
+    "literal": "tests/test_builtin_registry_disk_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_fp0063_p3_rag_pipelines.py",
+    "literal": "tests/test_3010_empty_success_fact_data_path.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_fp0063_p3_rag_pipelines.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_fp0063_p3_rag_pipelines.py",
+    "literal": "tests/test_plugin_install.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_shipped_skill_name_standard_conformance_3567.py",
+    "literal": "tests/test_skill_md_default_inline_cap_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/builtin/test_skill_md_default_inline_cap_gate.py",
+    "literal": "tests/test_builtin_registry_disk_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/cli/test_httpx_lazy_load_cli_entry.py",
+    "literal": "tests/test_llm_call_retry.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/config/test_action_retrieval_config.py",
+    "literal": "tests/test_embedding_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/conftest.py",
+    "literal": "tests/test_3233_inprocess_env_identity.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/conftest.py",
+    "literal": "tests/test_a2a_runentry_task_migration_1981.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/conftest.py",
+    "literal": "tests/test_fp0001_a2a_endpoints.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/conftest.py",
+    "literal": "tests/test_fp0063_p3_rag_pipelines.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/conftest.py",
+    "literal": "tests/test_markdown_palette_gate_3469.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/conftest.py",
+    "literal": "tests/test_network_gate_3451.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_0060_phase2_f3b_builtin_content.py",
+    "literal": "tests/test_pipeline_is3_dsl_parser.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_0060_phase2_f3b_builtin_content.py",
+    "literal": "tests/test_pipeline_r5_run_agent_step.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2103_C2_fail_closed_capwalk_1953.py",
+    "literal": "tests/test_cascade_profile_preserve_2103.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2242_hard_cancel.py",
+    "literal": "tests/test_2884_hook_driven_turns_truncation_falsify.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2242_hard_cancel.py",
+    "literal": "tests/test_turn_cancel_1468.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2575_pipeline_disk_registration.py",
+    "literal": "tests/test_asyncio_diagnostics.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2708_p31_spawn_bridge_present.py",
+    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2884_hook_driven_turns_truncation_falsify.py",
+    "literal": "tests/test_2259_config_truncation_bug.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_2884_hook_driven_turns_truncation_falsify.py",
+    "literal": "tests/test_hook_loop_valve_1800_7.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3082_recovery_wiring.py",
+    "literal": "tests/scaffold/test_family2_recovery_bundle_byte_identical.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3099_on_error_canonical_seam.py",
+    "literal": "tests/test_fp0063_p3_rag_pipelines.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3101_rag_ingest_upfront_permission_gate.py",
+    "literal": "tests/test_config_write_jit_bus_3086.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3101_rag_ingest_upfront_permission_gate.py",
+    "literal": "tests/test_fp0063_p3_rag_pipelines.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3101_rag_ingest_upfront_permission_gate.py",
+    "literal": "tests/test_require_file_jit_ask_1505.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3104_fallback_structured_error_stamp.py",
+    "literal": "tests/test_3099_on_error_canonical_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3162_rag_skill_body_read_reachable.py",
+    "literal": "tests/test_3162_plugin_body_read_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3193_op_status_classifier_coverage.py",
+    "literal": "tests/test_network_egress_env_completeness_3075.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3212_plugin_install_concurrency.py",
+    "literal": "tests/test_action_embedding_index_concurrency.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3377_run_loop_survives_turn_cancel.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3475_probe_degradation_visibility_and_timeout_config.py",
+    "literal": "tests/test_3475_mcp_probe_priming_all_turn_kinds.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3475_probe_degradation_visibility_and_timeout_config.py",
+    "literal": "tests/test_audit_event_kind_vocabulary_3410.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3475_probe_degradation_visibility_and_timeout_config.py",
+    "literal": "tests/test_mcp_lazy_tools_cache.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3783_stage3_invert_default_to_recover.py",
+    "literal": "tests/test_pr_n6_compaction_overflow_retry.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3792_pr2_session_injection.py",
+    "literal": "tests/test_3300_p3_cancel_by_id.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3792_pr2_session_injection.py",
+    "literal": "tests/test_3792_pr2_router_loop_injection.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3846_image_fetch.py",
+    "literal": "tests/test_ssrf_guard_1956.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3846_image_fetch.py",
+    "literal": "tests/test_web_fetch_download_cap_1913.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3901_sandbox_axis_unenforced.py",
+    "literal": "tests/test_sandbox_landlock.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_build_failure_1458.py",
+    "literal": "tests/test_index_coordinator_3247_p2b.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_build_failure_1458.py",
+    "literal": "tests/test_index_coordinator_3247_p2d.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_index.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_index.py",
+    "literal": "tests/test_universal_handlers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_index_concurrency.py",
+    "literal": "tests/test_index_coordinator_3247_p2a.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_index_concurrency.py",
+    "literal": "tests/test_index_coordinator_3247_p2b.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_action_embedding_index_concurrency.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_anchor_full_message_2c.py",
+    "literal": "tests/test_anchor_text_1547.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_audit_event_kind_vocabulary_3410.py",
+    "literal": "tests/test_progress_lifecycle_fanout_3357.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_config_write_jit_bus_3086.py",
+    "literal": "tests/test_require_file_jit_ask_1505.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_emit_hook_event_0059_phase5_part2.py",
+    "literal": "tests/test_hook_composer_reachability_phase5.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_emit_hook_event_0059_phase5_part2.py",
+    "literal": "tests/test_hook_loop_valve_1800_7.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_fp0057_phase0_index_consolidation.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_fp0066_p1a_embedding_enabled_gate.py",
+    "literal": "tests/test_2895_retrieval_scheme_requires_embedding.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_fp0066_p1a_embedding_enabled_gate.py",
+    "literal": "tests/test_embedding_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_fp0066_p1a_embedding_enabled_gate.py",
+    "literal": "tests/test_universal_catalog.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_fp0066_p3a_knowledge_ingest.py",
+    "literal": "tests/test_index_coordinator_3247_p2a.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_fp0066_p3b_repo_knowledge_ingest.py",
+    "literal": "tests/test_fp0066_p3a_knowledge_ingest.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_index_coordinator_3247_p2a.py",
+    "literal": "tests/test_action_embedding_index.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_index_coordinator_3247_p2b.py",
+    "literal": "tests/test_action_embedding_build_failure_1458.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_index_coordinator_3247_p2b.py",
+    "literal": "tests/test_index_coordinator_3247_p2a.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_index_coordinator_3247_p2d.py",
+    "literal": "tests/test_action_embedding_index.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_index_coordinator_3247_p2d.py",
+    "literal": "tests/test_index_coordinator_3247_p2b.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_mcp_drop_server.py",
+    "literal": "tests/test_1199_effective_permission.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_mcp_drop_server.py",
+    "literal": "tests/test_permissions_mcp_install.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_mcp_install_op.py",
+    "literal": "tests/test_1199_effective_permission.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_mcp_offload_raw_2336.py",
+    "literal": "tests/test_2425_canonical_tool_result.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_mechanism_routing_frame_0060.py",
+    "literal": "tests/test_part_type_registry_taxonomy_0060.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_op_embed.py",
+    "literal": "tests/test_op_recall.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_op_index_update.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_op_semantic_search.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_part_type_registry_taxonomy_0060.py",
+    "literal": "tests/test_hook_event_schema_registry_sync_0059.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_plugin_install.py",
+    "literal": "tests/test_require_file_jit_ask_1505.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_restore_all_subscription_scan_bound_2944.py",
+    "literal": "tests/test_active_branch_history_scan_bound_2941.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_retrieval_sink_identity_3408.py",
+    "literal": "tests/test_agent_delta_audit_event_3288.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_search_knowledge_3247_p3c.py",
+    "literal": "tests/test_fp0066_p3a_knowledge_ingest.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_session_intervention_persistence.py",
+    "literal": "tests/test_session_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_spawn_routing_detached_fail_mode_2708.py",
+    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_state_log_truncate.py",
+    "literal": "tests/test_3436_unknown_wal_kind_reader_tolerant.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/data/test_memory_rewrite_index_e2e.py",
+    "literal": "tests/test_memory_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/dev/test_missing_fixture_fails_loud_3662.py",
+    "literal": "tests/test_network_gate_3451.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/dev/test_network_gate_3451.py",
+    "literal": "tests/x.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/dev/test_rekey_fixtures_tool.py",
+    "literal": "tests/test_x.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/environment/test_environment_import_no_circular_3867.py",
+    "literal": "tests/test_x.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/hooks/test_hook_composer.py",
+    "literal": "tests/test_3180_durable_pending_store.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/hooks/test_hook_composer_reachability_phase5.py",
+    "literal": "tests/test_hook_event_bus_0059_phase4a.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/hooks/test_hook_composer_reachability_phase5.py",
+    "literal": "tests/test_hook_loop_valve_1800_7.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/hooks/test_hook_event_schema_registry_sync_0059.py",
+    "literal": "tests/test_1800_wake_drain.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/hooks/test_hook_event_schema_registry_sync_0059.py",
+    "literal": "tests/test_2608_run_loop_pickup.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/hooks/test_hook_sandbox_policy_legibility_3005.py",
+    "literal": "tests/test_hook_subprocess_per_site_2827.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/hooks/test_hook_subprocess_per_site_2827.py",
+    "literal": "tests/test_op_sandboxed_exec.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_2280_durability_halt_observability.py",
+    "literal": "tests/test_2259_pr3_recovery_semantics_falsify.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_2839_a2a_run_registry_truncate_falsify.py",
+    "literal": "tests/test_2884_hook_driven_turns_truncation_falsify.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3288_3c_tui_delta_coalesce.py",
+    "literal": "tests/test_agent_delta_no_visible_garbage_3288.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3288_3c_tui_delta_coalesce.py",
+    "literal": "tests/test_stream_spinner_3530.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3300_intervention_answer_eventify.py",
+    "literal": "tests/test_3540_intervention_answer_fold.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3300_intervention_answer_eventify.py",
+    "literal": "tests/test_user_echo_broadcast.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3300_p2a_queue_state_publish.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3300_p2b_sentqueue_render.py",
+    "literal": "tests/test_user_submitted_render_3300.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3300_p3_cancel_by_id.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3300_p3_cancel_by_id.py",
+    "literal": "tests/test_2884_hook_driven_turns_truncation_falsify.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3310_n1_session_attached_barrier.py",
+    "literal": "tests/test_agui_profile_completeness.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3310_n2_reset_hydrate.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3310_n2_reset_hydrate.py",
+    "literal": "tests/test_textual_chat_intervention_panel_3299.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3328_connect_remote_parity_witness.py",
+    "literal": "tests/test_mcp_client.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_a2a_webhook_progress_267_gap2.py",
+    "literal": "tests/test_progress_lifecycle_fanout_3357.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agent_delta_audit_event_3288.py",
+    "literal": "tests/test_agui_profile_completeness.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agent_delta_audit_event_3288.py",
+    "literal": "tests/test_user_submitted_render_3300.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agent_delta_no_visible_garbage_3288.py",
+    "literal": "tests/test_3300_p2b_sentqueue_render.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agent_delta_no_visible_garbage_3288.py",
+    "literal": "tests/test_stream_spinner_3530.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agent_delta_no_visible_garbage_3288.py",
+    "literal": "tests/test_user_submitted_render_3300.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agent_delta_round_index_3656.py",
+    "literal": "tests/test_3288_3c_tui_delta_coalesce.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_agui_multi_content_streaming_3288.py",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_cui_permission_answer_resumes_2690.py",
+    "literal": "tests/test_repl_intervention_listener.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_fp0001_a2a_endpoints.py",
+    "literal": "tests/test_a2a_capability_claim_interim.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_fp0001_e2e_ask_user_roundtrip.py",
+    "literal": "tests/test_fp0001_a2a_intervention_bus.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_fp0001_run_registry.py",
+    "literal": "tests/test_a2a_iv_kind_choices_267_gap4.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_fp0001_run_registry.py",
+    "literal": "tests/test_fp0001_a2a_intervention_bus.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_loop_probe_3539.py",
+    "literal": "tests/test_3288_3c_tui_delta_coalesce.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_mcp_refresh_cli.py",
+    "literal": "tests/test_3475_probe_degradation_visibility_and_timeout_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_plugin_cli_surface.py",
+    "literal": "tests/test_plugin_install.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_reyn_embeddings_cli.py",
+    "literal": "tests/test_index_backend.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_run_registry_persist.py",
+    "literal": "tests/test_intervention_restore.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_stream_drain_yield_3570.py",
+    "literal": "tests/test_transport_bit_identical.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_stream_repaint_coalesce_3570.py",
+    "literal": "tests/test_3327_answer_bypasses_sentqueue.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_stream_repaint_coalesce_3570.py",
+    "literal": "tests/test_agent_delta_audit_event_3288.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_stream_repaint_coalesce_3570.py",
+    "literal": "tests/test_stream_spinner_3530.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_textual_chat_copy_rewind_3362.py",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_textual_chat_phase2_3273.py",
+    "literal": "tests/test_textual_chat_row_contrast_3367.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_textual_chat_streaming_visibility_3283.py",
+    "literal": "tests/test_3288_3c_tui_delta_coalesce.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_textual_chat_streaming_visibility_3283.py",
+    "literal": "tests/test_stream_repaint_coalesce_3570.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_textual_chat_streaming_visibility_3283.py",
+    "literal": "tests/test_stream_spinner_3530.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_user_submitted_render_3300.py",
+    "literal": "tests/test_3300_p2b_sentqueue_render.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/llm/test_2608_run_loop_pickup.py",
+    "literal": "tests/test_1800_wake_drain.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/llm/test_2608_run_loop_pickup.py",
+    "literal": "tests/test_2608_h1_mcp_resource_updated_hook.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/llm/test_2608_run_loop_pickup.py",
+    "literal": "tests/test_2608_h4_fs_watcher.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/llm/test_llm_streaming_delta_emission_3288.py",
+    "literal": "tests/test_agent_delta_audit_event_3288.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/mcp/test_2597_s2b_mcp_notifications_bridge.py",
+    "literal": "tests/test_mcp_lazy_tools_cache.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/mcp/test_mcp_capability_advertising_271_m3.py",
+    "literal": "tests/test_progress_lifecycle_fanout_3357.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/mcp/test_mcp_client_stderr_capture.py",
+    "literal": "tests/test_mcp_client.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_builtin_skill_tool_name_drift_3092.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_plugin_install.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_skill_md_default_inline_cap_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_skill_references_gate_3162.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_skill_load.py",
+    "literal": "tests/test_op_runtime_load_skill_3247.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/repo/test_3794_p3_audit_event_identifier_rename.py",
+    "literal": "tests/test_audit_event_kind_vocabulary_3410.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/repo/test_builtin_skill_tool_name_drift_3092.py",
+    "literal": "tests/test_fp0063_p4_builtin_rag_skill.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_0061_repo_self_access_parity.py",
+    "literal": "tests/test_0061_repo_self_access_parity.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_2073_s2_reapply_seams.py",
+    "literal": "tests/test_3097_config_projection_refresh_family_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_2548_skill_registry_pr_a.py",
+    "literal": "tests/test_2971_skill_visibility.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_2708_p32a_spawn_bridge_intervention.py",
+    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_2946_item2_restore_all_bucketing.py",
+    "literal": "tests/test_multi_session_restore.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3036_spawned_session_mcp_refresh.py",
+    "literal": "tests/test_mcp_hot_reload_2372.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3093_pipeline_registry_spawn_propagation.py",
+    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3093_pipeline_registry_spawn_propagation.py",
+    "literal": "tests/test_2581_pipeline_hotreload.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3093_pipeline_registry_spawn_propagation.py",
+    "literal": "tests/test_pipeline_is2_driver_session.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3097_config_projection_refresh_family_gate.py",
+    "literal": "tests/test_2581_pipeline_hotreload.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3097_config_projection_refresh_family_gate.py",
+    "literal": "tests/test_3036_spawned_session_mcp_refresh.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3475_mcp_probe_priming_all_turn_kinds.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3475_mcp_probe_priming_all_turn_kinds.py",
+    "literal": "tests/test_session_refresh_mcp_servers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_3093_pipeline_registry_spawn_propagation.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_3556_session_spawn_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_3561_spawn_session_seam_reachability.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_pipeline_a2_spawn_ephemeral_session.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3553_agent_step_worker_narrowing_inheritance.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3556_session_spawn_narrowing_inheritance.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3561_spawn_session_seam_reachability.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3561_spawn_session_seam_reachability.py",
+    "literal": "tests/test_pipeline_r5_run_agent_step.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py",
+    "literal": "tests/test_3561_spawn_session_seam_reachability.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3595_s2_pipeline_nudge_origin.py",
+    "literal": "tests/test_pipeline_is6_attached.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3694_persist_cancelled_turn_outcome.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_a2a_bus_stamping_268_phase2.py",
+    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_fp0063_arc_witness.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_fp0063_arc_witness.py",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_intervention_bus_protocols.py",
+    "literal": "tests/test_intervention_legacy_alias_deprecated.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_mcp_search_tool_invariants.py",
+    "literal": "tests/test_audit_event_kind_vocabulary_3410.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_media_cap_272.py",
+    "literal": "tests/test_file_read_binary_retire_rtr_1449.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_pipeline_a2_spawn_ephemeral_session.py",
+    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_pipeline_driver_resource_caller_state_2567.py",
+    "literal": "tests/test_pipeline_is2_driver_session.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_pipeline_driver_resource_caller_state_2567.py",
+    "literal": "tests/test_pipeline_is5_surfacing.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_pipeline_driver_resource_caller_state_2567.py",
+    "literal": "tests/test_router_caller_state_mcp_servers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_plugin_slash_surface.py",
+    "literal": "tests/test_2548_skill_hotreload_toggle_pr_b.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_plugin_slash_surface.py",
+    "literal": "tests/test_plugin_cli_surface.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_reyn_repo_resolver.py",
+    "literal": "tests/test_reyn_repo_resolver.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_router_host_adapter_param_gate_3482.py",
+    "literal": "tests/test_check_pr_closing_intent.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_router_tools.py",
+    "literal": "tests/test_op_semantic_search.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_session_invariants.py",
+    "literal": "tests/scaffold/test_chain_manager.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_session_invariants.py",
+    "literal": "tests/scaffold/test_intervention_registry.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_session_pure_extraction_3679_s1.py",
+    "literal": "tests/test_force_close_covers_slice_1092.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_session_pure_extraction_3679_s1.py",
+    "literal": "tests/test_retry_loop_chat_wiring_1125.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_workspace_root_not_cwd_3705.py",
+    "literal": "tests/test_session_writes_stay_in_its_workspace_3705.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_3726_mypy_ratchet.py",
+    "literal": "tests/test_3595_s4_slash_handler_seam.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_check_file_depth_reference_3995.py",
+    "literal": "tests/test_fp0063_arc_witness.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/core/test_a.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/core/test_a_moved.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/does_not_exist/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/newpkg/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/newpkg/test_new.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/test_a.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
+    "literal": "tests/test_b.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_pr_closing_intent.py",
+    "literal": "tests/test_tier_audit_format_pin.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_check_tests_dir_names_3879.py",
+    "literal": "tests/scripts/__init__.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_check_tests_dir_names_3879.py",
+    "literal": "tests/test_swe_bench_runner_venv_183.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_check_tests_dir_names_3879.py",
+    "literal": "tests/test_verify_package_move_root_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_flat_tests_disposition_check_3879.py",
+    "literal": "tests/test_a.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_flat_tests_disposition_check_3879.py",
+    "literal": "tests/test_b.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_flat_tests_disposition_check_3879.py",
+    "literal": "tests/test_c.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_flat_tests_disposition_check_3879.py",
+    "literal": "tests/x/test_a.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/security/test_1199_s31b_mcp_cutover.py",
+    "literal": "tests/test_permissions.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/security/test_codeact_runner_1593.py",
+    "literal": "tests/test_sandbox_landlock.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/security/test_sandbox_axis_contract_2983.py",
+    "literal": "tests/test_sandbox_seccomp_network_3030.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/security/test_sandbox_seccomp_network_3030.py",
+    "literal": "tests/test_plugin_install.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_2895_retrieval_scheme_requires_embedding.py",
+    "literal": "tests/test_action_retrieval_wiring.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_2895_retrieval_scheme_requires_embedding.py",
+    "literal": "tests/test_embedding_config.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_catalog_entries_1593.py",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_catalog_unified.py",
+    "literal": "tests/test_tool_registry_handlers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_delegate_to_agent_unified.py",
+    "literal": "tests/test_tool_registry_handlers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_pipeline_is5_surfacing.py",
+    "literal": "tests/test_router_caller_state_mcp_servers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_pipeline_is5_surfacing.py",
+    "literal": "tests/test_session_invariants.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_router_call_mcp_tool_enum.py",
+    "literal": "tests/test_router_invoke_skill_enum.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_tier3_op_description_positive_frame.py",
+    "literal": "tests/test_tier3_op_description_positive_frame.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_tool_description_relocation.py",
+    "literal": "tests/test_tool_schema_3383_process_history_independence.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_tool_naming_convention_gate_3223.py",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_universal_catalog.py",
+    "literal": "tests/test_universal_handlers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_universal_dispatch.py",
+    "literal": "tests/test_no_qualified_tool_names_3429.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/tools/test_universal_handlers.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/web/test_a2a.py",
+    "literal": "tests/test_a2a_capability_claim_interim.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/web/test_mcp_sse.py",
+    "literal": "tests/test_mcp_server.py",
+    "class": "stale"
+  }
+]

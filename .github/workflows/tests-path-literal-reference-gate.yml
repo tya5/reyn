@@ -1,0 +1,41 @@
+name: tests-path-literal-reference gate
+
+# #4065: every `tests/...py` path literal anywhere in the tracked repo —
+# docstring, comment, doc prose, YAML/workflow arg — must resolve to a real
+# file. #3879's bucket migrations broke this 3 times in one night, and the
+# 3rd shape (stale prose nobody executes) stayed green until a human ran
+# grep by hand. See scripts/check_tests_path_literal_reference.py's module
+# docstring for the full design (whole-repo scan via `git ls-files`, a
+# ratchet baseline rather than a zero baseline, why no placeholder-name
+# allowlist).
+#
+# No paths filter — the reference and the referenced file are on OPPOSITE
+# sides (a doc can go stale because a `tests/` file moved, with the doc
+# itself untouched), so scoping the trigger to any one directory would miss
+# exactly the case this gate exists for.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests-path-literal-reference:
+    name: tests-path-literal-reference gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_tests_path_literal_reference.py is stdlib-only
+      # (json / re / subprocess / pathlib) plus a `git` invocation. No pip
+      # install needed.
+      - name: Check every tests/...py path literal resolves to a real file
+        run: |
+          python scripts/check_tests_path_literal_reference.py
