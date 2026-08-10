@@ -249,10 +249,11 @@ Re-adding an explicit hand-off here would reintroduce that staleness risk.
 ## Security — launching a pipeline stays gated
 
 Registering a pipeline does **not** loosen the capability floor. Launching a
-pipeline (`run_pipeline` / `run_pipeline_async` / the inline launch verbs, and
-their `pipeline__*` catalog forms) is on the same restricted floor as spawning a
-sub-session or re-delegating: a pipeline step can itself write, execute, or
-delegate, so a pipeline launch is a cost-bound multi-step dispatch.
+pipeline (`run_pipeline`, whether `name=` or `definition=`, and whether
+`collect="attached"` or `collect="async"`) is on the same restricted floor as
+spawning a sub-session or re-delegating: a pipeline step can itself write,
+execute, or delegate, so a pipeline launch is a cost-bound multi-step
+dispatch.
 
 As a result, a context narrowed by the `_untrusted` floor (untrusted external
 content is live AND `safety.threat_scan.capability_narrowing` is enabled — it is

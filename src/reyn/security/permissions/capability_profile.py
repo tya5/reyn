@@ -428,18 +428,14 @@ _FLOORED_TOOLS: "dict[str, frozenset[str]]" = {
     # write / exec / delegate (bounded ⊆ the invoker per R6, but still a
     # cost-bound multi-step dispatch), so pipeline launch gets the same
     # spawn-adjacent floor as spawn_session/spawn_agent/create_topology.
-    # IS-2: the async launch (``run_pipeline_async``) is
-    # the SAME threat class — it additionally spawns a driver-session, so it
-    # must not be floored looser than the sync verb.
-    # IS-4: the ad-hoc INLINE launches (``run_pipeline_inline`` /
-    # ``run_pipeline_inline_async``) run an
-    # agent-GENERATED pipeline — an even STRICTER-to-trust surface than a
-    # registered one (no trusted registrant chose the steps), so they belong on
-    # the SAME spawn-adjacent floor.
-    "pipeline-run": frozenset({
-        "run_pipeline", "run_pipeline_async",
-        "run_pipeline_inline", "run_pipeline_inline_async",
-    }),
+    # Proposal 0067 P7 (#3978): run_pipeline_async / run_pipeline_inline /
+    # run_pipeline_inline_async retired into the single ``run_pipeline``
+    # (4 names -> 1, architect ruling: 0 aliases) — every combination this
+    # floor used to name separately (async launch spawns a driver-session
+    # same as sync; an ad-hoc inline definition is STRICTER-to-trust than a
+    # registered one, no trusted registrant chose the steps) is now reached
+    # through the one surviving name, so no threat-class coverage is lost.
+    "pipeline-run": frozenset({"run_pipeline"}),
 }
 
 # The floor names ARE the deny set: #3429 left every tool with exactly one

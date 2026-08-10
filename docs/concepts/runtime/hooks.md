@@ -473,7 +473,7 @@ hooks:
   "stdout is JSON" contract); omitted, the pipeline launches with no input.
 - **Async/detached**, works from any hook-point (lifecycle or
   `mcp_resource_updated`): the launch is the same
-  [`run_pipeline_async`](../../reference/runtime/pipeline-dsl.md#registered-launch)
+  [`run_pipeline(name=..., collect="async")`](../../reference/runtime/pipeline-dsl.md#registered-launch)
   path — the hook fires-and-continues, the pipeline runs in its own
   crash-recoverable driver-session, and the result arrives later on this
   session's own inbox as a `pipeline_result` message.

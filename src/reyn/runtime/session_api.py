@@ -121,21 +121,24 @@ if TYPE_CHECKING:
 #     ``MessageBus.request``'s quiescence predicate (inbox.empty()) return
 #     early on a pending chain the spawned session is still awaiting a reply
 #     for (see the module docstring).
-#   - ``run_pipeline`` / ``run_pipeline_async`` / ``run_pipeline_inline`` /
-#     ``run_pipeline_inline_async`` (IS-1/IS-2/IS-4, R6 S3): nesting a pipeline
-#     launch inside an ``agent`` step would let a step spawn ANOTHER pipeline at
-#     runtime, defeating the transitive-closure cost-bound approval a pipeline
-#     gets at launch time — nesting is ``call``-only. The async + inline launch
-#     verbs are the same escape hatch as the sync registered one (siblings); the
-#     inline verbs get NO exemption (an ad-hoc pipeline is still non-grantable
-#     inside a pipeline). Kept in lock-step with ``pipeline_verbs.
-#     _PIPELINE_STEP_DENY_TOOLS`` (the tool-step sibling of this agent-step deny).
+#   - ``run_pipeline`` (R6 S3): nesting a pipeline launch inside an ``agent``
+#     step would let a step spawn ANOTHER pipeline at runtime, defeating the
+#     transitive-closure cost-bound approval a pipeline gets at launch time —
+#     nesting is ``call``-only. Proposal 0067 P7 (#3978) unified the former
+#     4 pipeline-launch names (run_pipeline / run_pipeline_async /
+#     run_pipeline_inline / run_pipeline_inline_async) into this one; every
+#     collect=/definition= combination is STILL non-grantable inside a
+#     pipeline step (an ad-hoc inline pipeline gets no exemption). Kept in
+#     lock-step with ``pipeline_verbs._PIPELINE_STEP_DENY_TOOLS`` (the
+#     tool-step sibling of this agent-step deny) — see
+#     ``test_pipeline_step_deny_sets_are_equal`` (tests/tools/
+#     test_pipeline_step_deny_gate_3978.py), the equality gate architect
+#     required after this arc's rebase collided on this exact pair.
 # #3429: each name here is the tool's ONLY invocable name, so the deny-set is
 # complete as written. It used to need ``_expand_tool_forms``
 # (capability_profile.py) to add each tool's second, catalog-qualified spelling.
 _DELEGATION_DENY_TOOLS: tuple[str, ...] = (
-    "delegate_to_agent", "run_pipeline", "run_pipeline_async",
-    "run_pipeline_inline", "run_pipeline_inline_async",
+    "delegate_to_agent", "run_pipeline",
 )
 
 # MessageBus.request has no default — an agent step needs one so callers
@@ -435,6 +438,7 @@ async def _spawn_pipeline_driver_session(
     run_id: "str | None" = None,
     schema_registry: "SchemaRegistry | None" = None,
     attached_parent_session: "Any | None" = None,
+    on_settle: str = "deliver",
 ) -> "tuple[Any, str, str]":
     """Spawn + arm a pipeline driver-session, up to (but NOT including) the
     run/resume nudge — the shared launch prefix of the async (``start_pipeline_run``)
@@ -568,6 +572,14 @@ async def _spawn_pipeline_driver_session(
         driver_sid=sid,
         spawn_seq=state_log.current_seq,
         schema_defs=schema_registry.as_dict() if schema_registry is not None else None,
+        # Proposal 0067 P7 (#3978): the first caller-supplied value this field
+        # ever receives (WorkOrder.on_settle's own docstring: "P7's job").
+        # The attached path (run_pipeline_attached, below) never passes this
+        # param — its call keeps the dataclass default "deliver", which is
+        # correct-by-construction since ADR-0040 D4 already established the
+        # attached path creates no settle handle at all, so nothing ever
+        # reads this field for that run.
+        on_settle=on_settle,
     )
     write_invocation(pipeline_run_dir(root, rid), work_order)
     session = registry.get_session(reply_to_agent, sid)
@@ -633,6 +645,7 @@ async def start_pipeline_run(
     state_log: "object",
     run_id: "str | None" = None,
     schema_registry: "SchemaRegistry | None" = None,
+    on_settle: str = "deliver",
 ) -> str:
     """IS-2: launch an ASYNC pipeline run in a dedicated driver-session (D案).
 
@@ -652,6 +665,13 @@ async def start_pipeline_run(
     ``Session.refresh_config_projections()``) — no caller hand-off needed. See
     ``_spawn_pipeline_driver_session``'s docstring for the full mechanism.
 
+    ``on_settle`` (proposal 0067 P7, #3978): "deliver" (default) | "<pipeline
+    name>" | "drop" — the first caller-supplied value this ever receives; see
+    ``PipelineWorkOrder.on_settle``'s own docstring. Threaded straight to
+    ``_spawn_pipeline_driver_session``, which stamps it onto the work-order
+    the settle path (``ChainManager.settle`` / ``PipelineExecutorDriver.
+    _deliver``) reads at completion time.
+
     Returns the ``run_id`` immediately; the result arrives later on the invoker's
     inbox as a ``pipeline_result`` message."""
     session, rid, sid = await _spawn_pipeline_driver_session(
@@ -665,6 +685,7 @@ async def start_pipeline_run(
         notify_reply=True,
         run_id=run_id,
         schema_registry=schema_registry,
+        on_settle=on_settle,
     )
     await session.submit_user_text("")  # the no-payload run nudge (D案)
     registry.ensure_session_running(reply_to_agent, sid)

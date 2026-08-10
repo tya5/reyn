@@ -46,7 +46,7 @@ from `_FLOORED_DENY_CLASSES`):
 | `skill-install` | `skill_install_local`, `skill_install_source` | Registering skills from untrusted content is a persistence vector (#2548); mirrors `mcp-install` |
 | `pipeline-install` | `pipeline_install_local`, `pipeline_install_source` | Registering pipelines from untrusted content — same persistence vector as `skill-install` |
 | `spawn` | `spawn_session`, `spawn_agent`, `create_topology` | Unbounded sub-session/agent spawn is a DoS vector (#2103); peer of `re-delegation` |
-| `pipeline-run` | `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`, `run_pipeline_inline_async` | Launching a pipeline is spawn-adjacent — peer of `spawn` |
+| `pipeline-run` | `run_pipeline` | Launching a pipeline is spawn-adjacent — peer of `spawn` |
 | `memory-write` | `remember_shared`, `remember_agent`, `forget_memory` | Persistence from an unbound delegate requires deliberate opt-in |
 
 (#3429 removed the second, catalog-qualified spelling every tool used to also
@@ -132,7 +132,7 @@ the runtime floor uses, so the audit and the floor cannot drift apart.
 | `skill-install` | HIGH | `skill_install_local`, `skill_install_source` |
 | `pipeline-install` | HIGH | `pipeline_install_local`, `pipeline_install_source` |
 | `spawn` | HIGH | `spawn_session`, `spawn_agent`, `create_topology` |
-| `pipeline-run` | HIGH | `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`, `run_pipeline_inline_async` |
+| `pipeline-run` | HIGH | `run_pipeline` |
 | `memory-write` | MED | `remember_shared`, `remember_agent`, `forget_memory` |
 | `destructive-fs` | MED | `delete_file` (audit-only, not on runtime floor) |
 

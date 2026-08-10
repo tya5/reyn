@@ -144,7 +144,7 @@ hooks:
 
 - `name` — pipeline の登録名。ディスパッチ時に解決されます。登録されていない場合、フックは警告をログして起動をスキップします — ライフサイクル/外部イベントポイントは他のフック失敗と全く同様に、正常に完了します。
 - `input_template` — 任意。`dict` の場合、その文字列リーフ(再帰的に)がそれぞれテンプレート変数に対して Jinja2 レンダリングされます。プレーンな文字列の場合、一度レンダリングされ、その出力が JSON オブジェクトとしてパースされます(`exec_capture` の「stdout は JSON」契約を反映)。省略時は、pipeline は input なしで起動します。
-- **非同期 / detached** で、どのフックポイント(ライフサイクルでも `mcp_resource_updated` でも)からも動作します: 起動は [`run_pipeline_async`](../../reference/runtime/pipeline-dsl.ja.md#registered-launch) と同じ経路です — フックは fire-and-continue し、pipeline は自身の crash-recoverable な driver-session で実行され、結果は後でこのセッション自身のインボックスに `pipeline_result` メッセージとして届きます。
+- **非同期 / detached** で、どのフックポイント(ライフサイクルでも `mcp_resource_updated` でも)からも動作します: 起動は [`run_pipeline(name=..., collect="async")`](../../reference/runtime/pipeline-dsl.ja.md#registered-launch) と同じ経路です — フックは fire-and-continue し、pipeline は自身の crash-recoverable な driver-session で実行され、結果は後でこのセッション自身のインボックスに `pipeline_result` メッセージとして届きます。
 
 ### クロスセッションプッシュ
 

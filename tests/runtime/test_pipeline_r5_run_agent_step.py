@@ -245,24 +245,22 @@ async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Pat
     contextual, _excluded = reg.resolved_profile_for("worker", sid=sid)
 
     assert contextual is not None
-    assert {"delegate_to_agent", "delegate_to_agent"} <= contextual.tool_deny
-    assert {"run_pipeline", "run_pipeline"} <= contextual.tool_deny
-    # IS-2: the async launch is the same S3 escape hatch — denied alongside.
-    assert {"run_pipeline_async", "run_pipeline_async"} <= contextual.tool_deny
+    assert {"delegate_to_agent"} <= contextual.tool_deny
+    # Proposal 0067 P7 (#3978): the unified run_pipeline verb is denied
+    # regardless of collect= — the async launch is the same S3 escape hatch.
+    assert {"run_pipeline"} <= contextual.tool_deny
 
 
 def test_build_agent_step_narrowing_no_capabilities_is_restrict_only(tmp_path: Path) -> None:
     """Tier 2: OS invariant — omitting ``capabilities`` (None) leaves
     ``tool_allow`` unset (no re-grant beyond the agent's normal envelope);
-    only the structural leaf-worker deny (delegation + the nested pipeline
-    launches — registered AND inline, sync AND async — R6 S3) is imposed.
+    only the structural leaf-worker deny (delegation + the unified pipeline
+    launch — registered AND inline, sync AND async, all reached through the
+    one surviving name post proposal 0067 P7 #3978 — R6 S3) is imposed.
     Pure function, no session needed."""
     narrowing = _build_agent_step_narrowing(None)
     assert "tool_allow" not in narrowing
-    assert set(narrowing["tool_deny"]) == {
-        "delegate_to_agent", "run_pipeline", "run_pipeline_async",
-        "run_pipeline_inline", "run_pipeline_inline_async",
-    }
+    assert set(narrowing["tool_deny"]) == {"delegate_to_agent", "run_pipeline"}
 
 
 # ── ephemeral cleanup ────────────────────────────────────────────────────────

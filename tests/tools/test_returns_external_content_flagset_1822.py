@@ -194,28 +194,20 @@ _NOT_EXTERNAL = {
     "invoke_action",
     # — reyn's own framework source (trusted) —
     "reyn_repo_list", "reyn_repo_read", "reyn_repo_glob", "reyn_repo_grep",
-    # IS-1 (pipeline v0.9 R6): run_pipeline returns the pipeline's OWN final
-    # output (run_id / output / named_stores) — an OS-assembled result of
-    # internal step execution, not fetched external content. Any external
+    # IS-1/IS-2/IS-4 (pipeline v0.9 R6), unified into one name by proposal 0067
+    # P7 (#3978, 4 names -> 1, 0 aliases): ``run_pipeline`` (registered via
+    # ``name=`` or ad-hoc via ``definition=``) returns EITHER the pipeline's
+    # OWN final output (run_id / output / named_stores, ``collect="attached"``)
+    # OR only {status: started, run_id} (an OS-assembled launch ACK,
+    # ``collect="async"``) — both OS-assembled framings, never fetched
+    # external content itself. For ``definition=``, the DSL string is
+    # AGENT-GENERATED, not fetched external content either. Any external
     # content a tool/agent step's own result carries is fenced on THAT step's
     # own tool-result path when it runs (same "ACK here, fenced at its own
-    # seam" pattern as delegate_to_agent / spawn_session above).
+    # seam" pattern as delegate_to_agent / spawn_session above); for the async
+    # collect, the eventual result arrives as an OS-framed pipeline_result
+    # inbox message, fenced the same way at the step that produced it.
     "run_pipeline",
-    # IS-2: run_pipeline_async returns only {status: started, run_id} — an
-    # OS-assembled launch ACK, no content at all. The eventual result arrives
-    # as an OS-framed pipeline_result inbox message; any external content a
-    # step fetched was fenced at that step's own tool-result seam when it
-    # ran (same rationale as run_pipeline above).
-    "run_pipeline_async",
-    # IS-4: run_pipeline_inline returns the ad-hoc pipeline's OWN final output
-    # (run_id / output / named_stores), and run_pipeline_inline_async returns
-    # only {status: started, run_id} — identical OS-assembled framing to
-    # run_pipeline / run_pipeline_async respectively. The definition is an
-    # AGENT-GENERATED DSL string, not fetched external content; any external
-    # content a step pulls is fenced at THAT step's own tool-result seam when it
-    # runs (same "ACK here, fenced at its own seam" rationale as above).
-    "run_pipeline_inline",
-    "run_pipeline_inline_async",
     # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task all
     # return OS-assembled structured data (task_id/kind/status/session/
     # requester, drawn from ChainManager's own in-memory state) — no

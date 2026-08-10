@@ -130,12 +130,12 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # skill. #2971 added the ``skill_list`` DISCOVERY verb, which is
     # the same move #3026 makes for corpora and pipelines.
     "skill_management",
-    # IS-1/IS-2/IS-4 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md
-    # R6): pipeline launch verbs. ``run_pipeline`` (sync,
-    # REGISTERED-only); ``run_pipeline_async`` (IS-2:
-    # background launch in a crash-recoverable driver-session);
-    # ``run_pipeline_inline`` / ``run_pipeline_inline_async`` (IS-4) = the
-    # ad-hoc INLINE launches of an agent-GENERATED DSL definition, gated by a
+    # Proposal 0067 P7 (#3978): the unified pipeline launch verb —
+    # ``run_pipeline``, ``collect="attached"|"async"`` (was 4 separate
+    # names: sync/async x registered-name/ad-hoc-inline-DSL, per
+    # docs/proposals/reyn-pipeline-v0.9-design-resolutions.md R6 IS-1/IS-2/
+    # IS-4 — retired with 0 aliases, architect ruling). An ad-hoc
+    # ``definition=`` DSL string is still gated by the same
     # static-analysis pass before spawn.
     "pipeline",
     # pipeline management ops (install_local / install_source) — the management

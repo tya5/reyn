@@ -30,14 +30,14 @@ Reyn には既に非決定的な execution plane が存在します: エージ�
 
 ## Driver-as-session
 
-pipeline は起動元エージェント自身のターン上でインラインには実行されません。`run_pipeline` / `run_pipeline_async` / `run_pipeline_inline` / `run_pipeline_inline_async` のいずれで起動しても、`PipelineExecutorDriver` を実行する専用セッションが spawn され、pipeline は*その*セッションの中で実行されます。
+pipeline は起動元エージェント自身のターン上でインラインには実行されません。`run_pipeline` で起動する限り — 登録済み pipeline を選ぶ(`name=`)か ad-hoc なインライン定義を選ぶ(`definition=`)か、sync-attached か async-detached か(`collect=`)によらず — `PipelineExecutorDriver` を実行する専用セッションが spawn され、pipeline は*その*セッションの中で実行されます。
 
 これは、専用の実行パスではなく通常のセッション基盤を意図的に再利用したものです: driver-session の run-loop、inbox、WAL journaling、crash-restore の仕組みは、チャットセッションが使うものとまったく同じです — driver は単に「ターン」を LLM に通すユーザー発話としてではなく、run/resume の nudge として解釈するだけです。実務上の利点は、pipeline の crash-recovery が、他のあらゆるセッションにとってもともと正しくなければならないインフラの上に乗ることであり、そこからズレうる第二の recovery パスにはならないことです。
 
 エージェントが起動した pipeline の run と関わる方法は二通りあります:
 
-- **Sync / attached**(`run_pipeline`、`run_pipeline_inline`): 呼び出し元が driver-session の run に attach し、terminal 状態に達するのを in-band で待ちます — その間ライブなステップ進捗イベントが呼び出し元にストリームされ(TUI のライブビューが描画するもの)、協調的な Ctrl-C は run を途中で kill するのではなく、次のステップ境界でクリーンに停止させます。attach 中にプロセスがクラッシュしても run 自体は失われません — recovery が resume し、結果は代わりに後で inbox メッセージとして届きます。
-- **Async / detached**(`run_pipeline_async`、`run_pipeline_inline_async`): 呼び出し元は即座に `{status: started, run_id}` を受け取り、結果は run が terminal 状態に達した時点で後から inbox メッセージとして届きます。
+- **Sync / attached**(`run_pipeline(..., collect="attached")`、デフォルト): 呼び出し元が driver-session の run に attach し、terminal 状態に達するのを in-band で待ちます — その間ライブなステップ進捗イベントが呼び出し元にストリームされ(TUI のライブビューが描画するもの)、協調的な Ctrl-C は run を途中で kill するのではなく、次のステップ境界でクリーンに停止させます。attach 中にプロセスがクラッシュしても run 自体は失われません — recovery が resume し、結果は代わりに後で inbox メッセージとして届きます。`on_settle=` はここでは受理されますが無視されます — 結果はすでに in-band で返っているためです。
+- **Async / detached**(`run_pipeline(..., collect="async")`): 呼び出し元は即座に `{status: started, run_id}` を受け取り、run が terminal 状態に達した時点で結果は `on_settle=` に従って処理されます — inbox メッセージとして届く(`"deliver"`、デフォルト)、別の pipeline にルーティングされる(pipeline 名)、または破棄される(`"drop"`)。
 
 ## Crash recovery
 

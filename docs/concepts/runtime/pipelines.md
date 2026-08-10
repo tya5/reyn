@@ -80,9 +80,11 @@ out of the DSL's shape rather than needing a runtime policy layered on top:
 ## Driver-as-session
 
 A pipeline does not run inline on the launching agent's own turn. Launching
-one — via any of `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`,
-or `run_pipeline_inline_async` — spawns a dedicated session running a
-`PipelineExecutorDriver`, and the pipeline executes inside *that* session.
+one — via `run_pipeline`, whether it selects a registered pipeline (`name=`)
+or an ad-hoc inline definition (`definition=`), and whether it runs
+sync-attached or async-detached (`collect=`) — spawns a dedicated session
+running a `PipelineExecutorDriver`, and the pipeline executes inside *that*
+session.
 
 This is a deliberate reuse of the ordinary session substrate rather than a
 bespoke execution path: the driver-session's run-loop, inbox, WAL journaling,
@@ -95,17 +97,20 @@ sync with it.
 
 Two ways an agent can relate to a launched pipeline's run:
 
-- **Sync / attached** (`run_pipeline`, `run_pipeline_inline`): the caller
-  attaches to the driver-session's run and waits for it to reach a terminal
-  state in-band — live step-progress events stream to the caller for the
-  duration (what a TUI live view renders), and a cooperative Ctrl-C stops the
-  run cleanly at the next step boundary rather than killing it mid-step. If
-  the process crashes while attached, the run itself is not lost — recovery
-  resumes it, and the result is delivered later as an inbox message instead.
-- **Async / detached** (`run_pipeline_async`, `run_pipeline_inline_async`):
-  the caller gets `{status: started, run_id}` immediately and the result
-  arrives later as an inbox message, whenever the run reaches a terminal
-  state.
+- **Sync / attached** (`run_pipeline(..., collect="attached")`, the
+  default): the caller attaches to the driver-session's run and waits for it
+  to reach a terminal state in-band — live step-progress events stream to the
+  caller for the duration (what a TUI live view renders), and a cooperative
+  Ctrl-C stops the run cleanly at the next step boundary rather than killing
+  it mid-step. If the process crashes while attached, the run itself is not
+  lost — recovery resumes it, and the result is delivered later as an inbox
+  message instead. `on_settle=` is accepted but ignored here, since the
+  result is already returned in-band.
+- **Async / detached** (`run_pipeline(..., collect="async")`): the caller
+  gets `{status: started, run_id}` immediately and the result is handled
+  per `on_settle=` once the run reaches a terminal state — delivered as an
+  inbox message (`"deliver"`, the default), routed into another pipeline (a
+  pipeline name), or discarded (`"drop"`).
 
 ## Crash recovery
 

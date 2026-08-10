@@ -2,14 +2,15 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns, parse_json]
+search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, collect, on_settle, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns, parse_json]
 ---
 
 # Pipeline DSL reference
 
 Normative grammar for a pipeline definition — the step kinds, the
 compositional primitives, the expression language they evaluate against, the
-schema/`verify: schema` mechanism, and the four tools that launch a pipeline.
+schema/`verify: schema` mechanism, and the `run_pipeline` tool that launches a
+pipeline.
 See [Pipelines](../../concepts/runtime/pipelines.md) for the why/architecture,
 and [Pipeline registration](../../concepts/runtime/pipeline-registration.md)
 for how a definition reaches a session.
@@ -799,22 +800,26 @@ a more capable model than the pipeline's default):
 
 ## Invocation
 
-Four tools launch a pipeline. All four converge on the same execution: a
-launch spawns a dedicated `PipelineExecutorDriver` session and the pipeline
-runs inside it (see [Driver-as-session](../../concepts/runtime/pipelines.md#driver-as-session)) —
-none of them run a pipeline inline on the caller's own turn.
+One tool, `run_pipeline`, launches a pipeline. Proposal 0067 P7 unified the
+prior four launch verbs (`run_pipeline`, `run_pipeline_async`,
+`run_pipeline_inline`, `run_pipeline_inline_async`, 0 aliases kept) into this
+single verb with three orthogonal parameters:
 
-| Tool | Registered / inline | Sync / async |
-|------|---------------------|---------------|
-| `run_pipeline` | Registered, by `name` | Sync — attached, blocks until terminal |
-| `run_pipeline_async` | Registered, by `name` | Async — detached, returns immediately |
-| `run_pipeline_inline` | Inline, ad-hoc `definition` string | Sync — attached, blocks until terminal |
-| `run_pipeline_inline_async` | Inline, ad-hoc `definition` string | Async — detached, returns immediately |
+| Parameter | Values | Selects |
+|-----------|--------|---------|
+| `name=` **xor** `definition=` | a registered pipeline name / an ad-hoc DSL string | Registered vs. inline launch |
+| `collect=` | `"attached"` (default) \| `"async"` | Sync-blocking vs. fire-and-forget |
+| `on_settle=` | `"deliver"` (default) \| `"<pipeline name>"` \| `"drop"` | What happens to the result on settle — P4's delivery vocabulary; accepted but ignored for `collect="attached"`, since the result is already returned in-band |
+
+Every combination converges on the same execution: a launch spawns a
+dedicated `PipelineExecutorDriver` session and the pipeline runs inside it
+(see [Driver-as-session](../../concepts/runtime/pipelines.md#driver-as-session)) —
+`run_pipeline` never runs a pipeline inline on the caller's own turn.
 
 ### Registered launch
 
-`run_pipeline(name, input?)` and `run_pipeline_async(name, input?)` look a
-pipeline up by its registered name (see
+`run_pipeline(name, input?, collect?, on_settle?)` looks a pipeline up by its
+registered name (see
 [Pipeline registration](../../concepts/runtime/pipeline-registration.md)).
 `input` seeds the pipeline's initial named context (`ctx.*`) for its first
 step; omit it for a pipeline that needs no seed input. A `name` that isn't
@@ -822,7 +827,7 @@ registered fails clearly.
 
 ### Sync vs async
 
-- **Sync** (`run_pipeline`, `run_pipeline_inline`): the caller attaches to the
+- **Sync** (`collect="attached"`, the default): the caller attaches to the
   driver-session's run and blocks until it reaches a terminal state, reading
   the result back in-band (`{status: "ok", data: {run_id, output,
   named_stores}}` on success; on failure/cancellation, the standard
@@ -836,20 +841,24 @@ registered fails clearly.
   run cleanly at the next step boundary. If the attach itself is interrupted
   by a crash, the run is not lost — it is handed to the same recovery path
   async uses, and the result arrives later as an inbox message instead
-  (`{status: "started", data: {run_id}}`).
-- **Async** (`run_pipeline_async`, `run_pipeline_inline_async`): returns
-  `{status: "started", data: {run_id}}` immediately; the final result arrives
-  later as a `[pipeline]` inbox message.
+  (`{status: "started", data: {run_id}}`). `on_settle=` is accepted but
+  ignored in this mode.
+- **Async** (`collect="async"`): returns `{status: "started", data:
+  {run_id}}` immediately; once the run reaches a terminal state, the result
+  is handled per `on_settle=` — delivered as a `[pipeline]` inbox message
+  (`"deliver"`, the default), routed into another pipeline (a pipeline
+  name), or discarded (`"drop"`).
 
 ### Ad-hoc inline launch
 
-`run_pipeline_inline(definition, input?)` and
-`run_pipeline_inline_async(definition, input?)` take a pipeline DSL string
-the calling agent generates at run time — the same Appendix-B grammar as a
-registered pipeline file, including any `schema:` documents the definition's
-own steps reference. There is no pre-registration: the string is parsed and
-run through a **static-analysis gate** before anything is spawned, so a bad
-definition fails clearly and spawns nothing:
+`run_pipeline(definition, input?, collect?, on_settle?)` — passing
+`definition=` instead of `name=` — takes a pipeline DSL string the calling
+agent generates at run time — the same Appendix-B grammar as a registered
+pipeline file, including any `schema:` documents the definition's own steps
+reference. `name=` and `definition=` are mutually exclusive; exactly one must
+be given. There is no pre-registration: the string is parsed and run through
+a **static-analysis gate** before anything is spawned, so a bad definition
+fails clearly and spawns nothing:
 
 1. The definition parses.
 2. Every step `schema:` reference resolves within the definition's own
@@ -900,15 +909,16 @@ operator-set and restart-only.
 ## Security
 
 See [Pipeline registration § Security](../../concepts/runtime/pipeline-registration.md#security-launching-a-pipeline-stays-gated):
-launching a pipeline (any of the four tools above) sits on the same
-`HIGH`-severity, spawn-adjacent capability floor as delegating to another
-agent. A context narrowed by the untrusted-content floor or an unbound
-delegate's floor cannot launch a pipeline, registered or inline.
+launching a pipeline, in any `name=`/`definition=`/`collect=` combination,
+sits on the same `HIGH`-severity, spawn-adjacent capability floor as
+delegating to another agent. A context narrowed by the untrusted-content
+floor or an unbound delegate's floor cannot launch a pipeline, registered or
+inline.
 
 ## Grammar (for generation)
 
 A compact, self-contained block for an agent authoring a pipeline definition
-at run time (e.g. for `run_pipeline_inline`) — the grammar plus the rules
+at run time (e.g. for `run_pipeline(definition=...)`) — the grammar plus the rules
 that don't fall out of the grammar alone, plus one canonical example. This
 section stands on its own; it does not assume the prose above has been read.
 
