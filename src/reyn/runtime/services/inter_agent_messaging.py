@@ -253,6 +253,12 @@ class InterAgentMessaging:
         guard, default 3). chain_id (PR14) identifies the logical request
         thread for cross-agent trace; it propagates verbatim to the target's
         inbox payload and is recorded in history meta + events.
+
+        Not the MCP tool ``reyn:send_to_agent`` (#4142) — same name, two
+        unrelated mechanisms: this is the internal transport
+        ``run_prompt(collect="async")`` (via ``Session._send_to_agent``)
+        delivers through; the MCP tool drives a target session's turn
+        directly via ``MessageBus.request`` and never reaches this method.
         """
         # FP-0005: extension granted by safety-limit checkpoint raises
         # the effective hop cap for this chain.
