@@ -608,9 +608,10 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    from reyn.dev.testing import network_gate
+    from reyn.dev.testing import extra_skip_report, network_gate
 
     network_gate.pytest_sessionfinish(session, exitstatus)
+    extra_skip_report.pytest_sessionfinish(session, exitstatus)
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────
