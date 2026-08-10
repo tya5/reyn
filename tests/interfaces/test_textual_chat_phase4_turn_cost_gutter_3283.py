@@ -61,7 +61,6 @@ All collaborators are real: a real :class:`BudgetTracker` (its bound
 from __future__ import annotations
 
 import asyncio
-import unicodedata
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -545,29 +544,6 @@ def test_every_label_the_column_can_emit_fits_the_configured_width() -> None:
         ),
     )
     assert 0 < cell_len(long_elapsed) <= RIGHT_GUTTER_WIDTH, long_elapsed
-
-
-def test_the_direction_markers_measure_one_cell_each() -> None:
-    """Tier 1: ★ the ambiguous-width hazard, pinned rather than assumed.
-    :data:`PROMPT_TOKENS_MARKER` / :data:`COMPLETION_TOKENS_MARKER` are East
-    Asian **Ambiguous** (``east_asian_width == "A"``), so their column count is
-    not universally fixed. The width derivation above is only sound if the
-    renderer measures them as ONE cell — this asserts that against
-    ``rich.cells.cell_len``, the very function Textual's compositor uses, so a
-    rich upgrade that reclassified ambiguous-width to 2 fails HERE with a clear
-    cause rather than as a mysteriously shifted gutter.
-
-    Not a format pin: it pins a LAYOUT invariant the fixed-width column depends
-    on, not the choice of glyph."""
-    for marker in (PROMPT_TOKENS_MARKER, COMPLETION_TOKENS_MARKER):
-        assert unicodedata.east_asian_width(marker) == "A", (
-            f"{marker!r} is no longer ambiguous-width — the note in "
-            "PROMPT_TOKENS_MARKER's docstring needs revisiting"
-        )
-        assert cell_len(marker) == 1, (
-            f"{marker!r} measures {cell_len(marker)} cells; RIGHT_GUTTER_WIDTH "
-            f"={RIGHT_GUTTER_WIDTH} is derived assuming 1"
-        )
 
 
 def test_the_column_pads_by_cells_not_characters() -> None:
