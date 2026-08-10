@@ -379,8 +379,26 @@ async def test_composer_submit_during_pending_intervention_is_always_a_new_turn(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        app.query_one(Composer).focus()
-        await pilot.pause()
+        composer = app.query_one(Composer)
+        # #4051: the arriving intervention frame's own hidden→shown transition
+        # posts a TabbedContent.TabActivated message that schedules a DEFERRED
+        # call_after_refresh(radios[0].focus) (intervention_panel.py's
+        # on_tabbed_content_tab_activated) — a ONE-SHOT callback that can land
+        # on any later refresh, including one after a plain composer.focus()
+        # call, stealing focus back to the RadioSet with nothing left to
+        # re-claim it: the keypresses below then land on the RadioSet instead
+        # of the Composer, submit_user_text is never called, and
+        # transport.submitted stays empty forever (the wait at the bottom of
+        # this test is unbounded by design, #3748). A single focus() + wait-
+        # for-condition does not structurally close this — the one-shot steal
+        # can still land AFTER the check passes. RE-ASSERT focus every pump
+        # until it demonstrably sticks, so the race resolves regardless of
+        # which pump the deferred callback lands on (same "wait on the
+        # condition, not a pause count" shape as #4044's fix, but the
+        # condition here needs an accompanying retry, not just an observation).
+        while app.focused is not composer:
+            composer.focus()
+            await pilot.pause()
         await pilot.press("y", "e", "s")
         await pilot.press("enter")
         # #3720: wait for the submit to ARRIVE, not for one turn of the loop.
