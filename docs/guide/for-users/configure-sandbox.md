@@ -188,13 +188,27 @@ two deny-list fields, and only on a backend that is specifically deny-list
 incapable, which today means Landlock alone. It is not a general "your policy
 was not enforced" check.
 
-🔴 **Silence is therefore not a clean bill of health.** The clearest case is
-Noop: it enforces nothing at all — `allow_write_paths`, `network` and
-`subprocess` are recorded for audit and otherwise ignored — and it emits **no**
-`sandbox_axis_unenforced` warning for any of them, because the check asks
-"can this backend express a deny-list?", not "does this backend enforce what
-you configured?". A quiet run under Noop and a quiet run under Seatbelt look
-identical from this signal alone.
+🔴 **Silence is therefore not a clean bill of health.** The check asks "can
+this backend express a deny-list?", not "does this backend enforce what you
+configured?" — so a backend that enforces little or nothing passes it in
+silence.
+
+The sharpest case is the **Docker backend** (`--env-backend=docker`, below).
+It is a sandbox backend — the same object serves as both the environment and
+the sandbox backend for a container agent — and its `run()` **honors only
+`policy.timeout_seconds`**. Configure `allow_write_paths`, `network` or
+`subprocess` under it and none of them is applied, and **no
+`sandbox_axis_unenforced` warning is emitted**, because Docker is not
+deny-list-incapable in the sense this check tests for; it is simply not
+enforcing those axes at all, which the check does not look at. Isolation does
+come from the container boundary itself — but it is the image and the mount
+set that provide it, not the policy fields you wrote.
+
+Noop is the same shape with nothing left to fall back on: it enforces nothing,
+records the policy for audit, and likewise warns about nothing.
+
+A quiet run under Docker or Noop and a quiet run under Seatbelt are
+indistinguishable from this signal alone.
 
 **What to rely on instead:** the per-backend tables above state, field by field,
 what each backend actually enforces. Read the table for the backend you are
@@ -208,10 +222,11 @@ Two other mechanisms are easy to mistake for this one, and neither widens it:
   boundary and the process-spawn gate on your host. It runs at backend
   *selection*; this warning runs at op *dispatch*, once the policy's individual
   axes are known.
-- Container (mount) mode below is a **different mechanism**, not one of the
-  backends in this section — the three sandbox backends are Seatbelt, Landlock
-  and Noop. The tables above do not describe container mode, and this warning
-  does not report on it.
+- Container (mount) mode below is a **different kind of isolation** from the
+  three profile-based backends tabled above (Seatbelt, Landlock, Noop) — the
+  container boundary, not a policy applied to a host process. It is still a
+  sandbox backend as far as this warning is concerned, which is exactly why the
+  silence described above covers it too.
 
 ## Run in a container (mount mode)
 
