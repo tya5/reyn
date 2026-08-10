@@ -558,11 +558,18 @@ class _SiteDeclaration:
     unmeasured_reason: str = ""
 
 
-_S3546 = "tests/test_3546_pipeline_driver_narrowing_inheritance.py"
-_S3553 = "tests/test_3553_agent_step_worker_narrowing_inheritance.py"
-_S3556 = "tests/test_3556_session_spawn_narrowing_inheritance.py"
-_S3561 = "tests/test_3561_spawn_session_seam_reachability.py"
-_S3562 = "tests/test_3562_slash_session_new_narrowing_inheritance.py"
+# Derived from this file's OWN location (never a hardcoded literal): all 5
+# narrowing-cluster siblings always move together into the same destination
+# bucket, so their repo-relative directory is identical to this file's own
+# — computing it here means a future M4 bucket move needs zero string
+# updates for these 5 constants, only `git mv` (see #4069 -- this sidesteps
+# the class entirely rather than relying on the rename-substitution rule).
+_OWN_DIR = Path(__file__).resolve().parent.relative_to(REPO_ROOT).as_posix()
+_S3546 = f"{_OWN_DIR}/test_3546_pipeline_driver_narrowing_inheritance.py"
+_S3553 = f"{_OWN_DIR}/test_3553_agent_step_worker_narrowing_inheritance.py"
+_S3556 = f"{_OWN_DIR}/test_3556_session_spawn_narrowing_inheritance.py"
+_S3561 = f"{_OWN_DIR}/test_3561_spawn_session_seam_reachability.py"
+_S3562 = f"{_OWN_DIR}/test_3562_slash_session_new_narrowing_inheritance.py"
 
 #: Every spawn site in ``src/``, with the parent layers its ``narrowing=`` value
 #: composes and the behavioural test that measures that claim. A site missing from
@@ -1068,7 +1075,6 @@ def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
     ever gets — a stale name (a renamed or deleted test) fails here rather than
     quietly leaving the site unmeasured.
     """
-    tests_root = Path(__file__).resolve().parent
     for (mod, fn), decl in sorted(_SITE_PARENT_LAYERS.items()):
         assert decl.parent_layers.strip(), f"{mod}::{fn} declares no parent layers"
         assert (
@@ -1081,7 +1087,7 @@ def test_every_declared_site_names_a_behavioural_test_or_a_reason() -> None:
         )
         for ref in decl.measured_by:
             path_part, _, test_name = ref.partition("::")
-            path = tests_root.parent / path_part
+            path = REPO_ROOT / path_part
             assert path.is_file(), f"{mod}::{fn} names a missing test file: {ref}"
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             defined = {
