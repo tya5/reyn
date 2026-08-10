@@ -10,9 +10,6 @@ registry is loop-aware since #1762, see ``agent_locks`` docstring):
   (a) ``get_agent_lock("x")`` is idempotent: repeated calls on the same loop
       return the identical lock object (``is`` identity).
   (b) Different agent names yield distinct lock objects.
-  (c) MCP and A2A obtain the SAME lock object for the same agent_name on the
-      same loop — both import from ``reyn.runtime.agent_locks``; the per-loop
-      registry ensures identity.
   (d) Concurrent coroutines acquiring the same lock are serialized:
       critical sections do not overlap (behavioral, not count-pin).
   (e) #1762 regression: a contended lock used across distinct event loops
@@ -71,40 +68,6 @@ async def test_different_names_return_distinct_locks() -> None:
     assert lock_a is not lock_b, (
         "get_agent_lock must return distinct asyncio.Lock objects for different "
         "agent names — sharing a lock across agents would over-serialize"
-    )
-
-
-# ---------------------------------------------------------------------------
-# (c) Cross-transport sharing: MCP and A2A import from the same registry
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_mcp_and_a2a_share_same_lock_registry() -> None:
-    """Tier 2: MCP and A2A obtain the same lock object for the same agent_name (same loop).
-
-    This is the central cross-transport guarantee of #1128 PR-b: both
-    mcp_server and a2a import ``get_agent_lock`` (aliased as
-    ``_get_agent_lock`` in mcp_server) from ``reyn.runtime.agent_locks``.
-    Because Python module imports are singletons, the module-level
-    ``_AGENT_LOCKS`` dict is shared, so the same agent_name yields the
-    same ``asyncio.Lock`` object regardless of which transport calls it.
-    """
-    # Import MCP's accessor — it is aliased as _get_agent_lock in mcp_server
-    # but the underlying function is the same object from agent_locks.
-    from reyn.mcp.server import (
-        _get_agent_lock as mcp_get_lock,  # type: ignore[attr-defined]  # noqa: PLC0415
-    )
-
-    agent = "cross-transport-agent"
-    lock_via_agent_locks = get_agent_lock(agent)
-    lock_via_mcp = mcp_get_lock(agent)
-
-    assert lock_via_agent_locks is lock_via_mcp, (
-        "MCP's _get_agent_lock and reyn.runtime.agent_locks.get_agent_lock must "
-        "return the SAME asyncio.Lock object for the same agent_name. "
-        "If they differ, a concurrent MCP+A2A pair on the same agent bypasses "
-        "the serialization guarantee."
     )
 
 

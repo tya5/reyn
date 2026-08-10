@@ -40,12 +40,45 @@ Field-by-field source, all from proposal 0067 (docs/deep-dives/proposals/
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
 from reyn.runtime.transport import TransportRef
 
 TaskKind = Literal["prompt", "pipeline", "exec"]
 CollectMode = Literal["attached", "async"]
+
+
+class RunStatus(str, Enum):
+    """The narrow, flat run-status vocabulary A2A needs (#2839 Phase 1),
+    relocated here (#3978 P4, architect ruling 2026-08-10) so both
+    ``runtime/`` (``ChainManager``/``describe_task``) and
+    ``interfaces/web/`` (``RunEntry``) can import ONE vocabulary without a
+    layering inversion: ``runtime/`` → ``interfaces/web/`` had ZERO imports
+    before this move, and ``interfaces/web/`` → ``runtime/`` is the
+    established direction (10 files) — so the type moves here rather than
+    ``runtime`` reaching into ``interfaces.web.run_registry``.
+    ``reyn.interfaces.web.run_registry`` re-exports this name unchanged
+    (``from reyn.runtime.task_types import RunStatus``) — zero behavior
+    change, zero import-site churn for its existing 3 consumers.
+
+    Deliberately NOT the 7-state Task-tree ``TaskState`` (unassigned /
+    ready / running / blocked / done / failed / aborted) — this enum
+    only carries what an A2A async run's lifecycle actually produces:
+    the running default, the terminal outcomes, and the one
+    interactive state (``INPUT_REQUIRED`` — an ask_user escalation is
+    pending). ``str`` subclass so persisted JSON + wire comparisons
+    (``entry.status == "running"``) keep working without a shim.
+
+    A rename to ``TaskStatus`` (matching this module's other task-model
+    names) is deferred to P6, same "read-site first, rename later" shape
+    as ``_PendingChain.requester``."""
+
+    RUNNING = "running"
+    INPUT_REQUIRED = "input-required"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)

@@ -150,6 +150,40 @@ def _install_side_effect_tool(monkeypatch) -> None:
     monkeypatch.setattr(tools_pkg, "get_default_registry", _with_tool)
 
 
+def _install_gated_side_effect_tool(monkeypatch, gate: "asyncio.Event") -> None:
+    """Like ``_install_side_effect_tool``, but the handler blocks on ``gate``
+    AFTER writing its line and BEFORE returning — so a test can create a
+    real, deterministic mid-flight window (the write is observably done,
+    but the executor hasn't reached the next step-boundary cancel_check
+    yet) instead of racing an instantaneous, no-await pipeline where every
+    step lands in the same event-loop tick."""
+    import reyn.tools as tools_pkg
+    from reyn.tools.types import ToolDefinition, ToolGates
+
+    async def _handler(args, ctx):
+        p = Path(args["path"])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(str(args["line"]) + "\n")
+        await gate.wait()
+        return {"line": str(args["line"])}
+
+    tool = ToolDefinition(
+        name="is2_append", description="IS-2 test: gated append.",
+        parameters={"type": "object", "properties": {}},
+        gates=ToolGates(router="allow"), handler=_handler,
+        category="io", purity="side_effect",
+    )
+    base_build = tools_pkg.get_default_registry
+
+    def _with_tool():
+        registry = base_build()
+        registry.register(tool)
+        return registry
+
+    monkeypatch.setattr(tools_pkg, "get_default_registry", _with_tool)
+
+
 def _bare_ctx(state_log: "StateLog | None" = None) -> ToolContext:
     from reyn.core.events.events import EventLog
     return ToolContext(
@@ -355,6 +389,80 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
     assert await _wait_for(
         lambda: reg.get_session("worker", invocation["driver_sid"]) is None
     )
+
+
+@pytest.mark.asyncio
+async def test_the_registered_cancel_hook_actually_stops_a_running_async_run(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: proposal 0067 P4 (#3978), lead-coder's original P4 witness
+    spec — "cancel_task actually stops a running task". Before this PR,
+    NOTHING forwarded a cancel signal to a DETACHED async pipeline run
+    (only an ATTACHED caller's ``cancel_inflight`` ever reached
+    ``request_cancel``). This test witnesses the registered HOOK stopping a
+    running task, driven directly via ``chain.cancel()`` — ``cancel_task``
+    (the LLM-facing tool) doesn't exist yet in this PR; its own reachability
+    from a tool call is a separate PR's witness. Real mid-flight
+    interruption, not a pre-empted launch: step 1's real side effect (a real
+    file write) is confirmed to have landed, THEN cancel fires while step
+    1's tool call is still in-flight (gated on an ``asyncio.Event`` — the
+    plain pipeline's steps have no internal ``await`` point, so without this
+    gate every step lands in the same event-loop tick, and there is no
+    observable mid-flight window at all), THEN step 1 is allowed to return
+    — confirming step 2's side effect NEVER lands (the run stopped BETWEEN
+    steps, not after
+    completing) — plus the full settle-path contract: terminal status is
+    "cancelled", task_settled fires with that status, and the handle is
+    gone."""
+    gate = asyncio.Event()
+    _install_gated_side_effect_tool(monkeypatch, gate)
+    captured: list[tuple[str, dict]] = []
+    _capture_hook_dispatch(monkeypatch, captured)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    scripted = _ScriptedAgentReply("acknowledged")
+    reg = _agent_registry(tmp_path, state_log, scripted)
+    out_file = tmp_path / "out.txt"
+
+    pipeline_registry = PipelineRegistry()
+    pipeline_registry.register("p", _three_step_pipeline(out_file))
+
+    caller = reg.get_or_load("worker")
+    ctx = ToolContext(
+        events=caller._router_host.events,
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(
+            pipeline_registry=pipeline_registry,
+            agent_registry=reg,
+            host=caller._router_host,
+        ),
+        state_log=state_log,
+    )
+
+    result = await _handle_run_pipeline_async({"name": "p", "input": {"seed": 10}}, ctx)
+    run_id = result["data"]["run_id"]
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
+
+    # Anchor on real mid-flight execution: step 1's write landed, but its
+    # tool call is still blocked on `gate` — the executor is genuinely
+    # inside step 1, not merely queued to start it.
+    assert await _wait_for(lambda: out_file.is_file() and out_file.read_text() == "11\n")
+
+    chain = caller.chains.get(run_id)
+    assert chain is not None and chain.cancel is not None
+    chain.cancel()
+    gate.set()  # let step 1's tool call return — the step boundary check follows
+
+    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    terminal = _result_json(run_dir)
+    assert terminal["status"] == "cancelled"
+    # Step 2's side effect NEVER lands — stopped between steps, not after.
+    assert out_file.read_text(encoding="utf-8").splitlines() == ["11"]
+    (settled,) = [p for point, p in captured if point == "task_settled"]
+    assert settled["task_id"] == run_id
+    assert settled["status"] == "cancelled"
+    assert not caller.chains.has(run_id)
 
 
 # ── #3978 P3: task_settled — delivery-anchored ordering + strip-falsify ─────
