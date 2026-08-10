@@ -394,6 +394,29 @@ actually promises.
   projection helper" is provable and was proven; "no NEW seam can ever
   route around it" is a different, harder claim that needed a structurally
   different assertion (the AST gate), not a bigger version of the same one.
+- **A migration-safety gate's founding axiom** (2026-08-09/10,
+  `check_migration_diff_shape.py`, #3995→#4002→#4009): "byte-identical
+  `R100` rename ⇒ safe" is a provable, easy-to-state property, and CI
+  enforced it correctly. It is a narrower claim than "this file's behavior
+  is unchanged by the move" — false in principle for any
+  `Path(__file__)`-rooted expression, whose meaning depends on the file's
+  OWN location. The design went through two retracted attempts to widen the
+  SAME predicate before landing on the right shape: first, "flag by
+  hop-count" (retracted — `Path(__file__).parent / "_support"` is one hop
+  but still breaks on a move, because `_support` doesn't travel with the
+  file); second, "classify by whether the target travels with the file"
+  (retracted — that's a property of the MOVE, not the source text,
+  undecidable statically). What shipped instead is **two separate,
+  narrower mechanisms**, not one bigger predicate: a move-time check that
+  re-resolves every `__file__` expression against the file's REAL new
+  location (no inference needed, the move already happened), and a
+  static add-time check restricted to a filesystem-derived structural
+  proxy (does the expression reach `tests/` or one of its current direct
+  children) — deliberately not attempting the undecidable general claim.
+  Both new gates then found 30 real, pre-existing instances of the defect
+  class on their first whole-tree run, confirming "declared byte-identical
+  ⇒ safe" had been true only for the specific property it checked, never
+  the broader one readers assumed from its name.
 
 **Apply**: when writing or reviewing a gate, write out the FULL property the
 surrounding prose/docstring promises, then check whether the assertion
