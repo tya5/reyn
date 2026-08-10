@@ -70,9 +70,19 @@ class RunStatus(str, Enum):
     pending). ``str`` subclass so persisted JSON + wire comparisons
     (``entry.status == "running"``) keep working without a shim.
 
-    A rename to ``TaskStatus`` (matching this module's other task-model
-    names) is deferred to P6, same "read-site first, rename later" shape
-    as ``_PendingChain.requester``."""
+    Stays ``RunStatus``, not renamed to ``TaskStatus`` (architect ruling,
+    #3978/#4148, 2026-08-10): of 36 ``src/``-only references across 6
+    files (measured ``main@db69e15d``), 31 are in ``interfaces/web``, and
+    ``TaskStatus`` would read as describing the A2A spec's own "Task"
+    concept — a different thing from reyn's task — not reyn's task-model
+    vocabulary. Living in ``task_types.py`` despite the ``Run`` name is
+    not an inconsistency: placement follows "which module the OS owns
+    this type in," naming follows "which lifecycle it describes."
+
+    (An earlier note here deferred a rename to P6 — withdrawn: P6 landed
+    catalog-only, so there was never a sweep to ride, and unlike
+    ``requester`` this word is a live protocol's, not a retired
+    mechanism's.)"""
 
     RUNNING = "running"
     INPUT_REQUIRED = "input-required"
