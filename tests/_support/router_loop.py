@@ -74,6 +74,8 @@ class FakeRouterHost:
         # Proposal 0067 P1' (#3978)
         self.mark_task_pending_calls: int = 0
         self.spawn_calls: list[dict] = []
+        # Proposal 0067 P5 (#3978)
+        self.send_to_session_calls: list[dict] = []
         self.file_writes: list[tuple[str, str]] = []
         self.file_deletes: list[str] = []
         self.file_reads: list[str] = []
@@ -181,6 +183,22 @@ class FakeRouterHost:
         self.spawn_calls.append({"request": request, "mode": mode,
                                   "narrowing": narrowing, "chain_id": chain_id})
         return {"status": "ok", "kind": "session_spawned", "mode": mode}
+
+    async def send_to_session(self, *, agent: str, session: str,
+                              text: str, wake: bool) -> dict:
+        # Proposal 0067 P5 (#3978): multi-session host hook (duck-typed;
+        # RouterLoop binds send_to_session_fn only when this method exists —
+        # same pattern as spawn_session above). Records the call + returns a
+        # delivery ack — lets a dispatch test prove send_to_session reaches
+        # the handler instead of falling through to "unhandled tool" (the
+        # #2120-class defect spawn_session shipped with once; #4101's own
+        # review caught that this PR's e2e tests didn't guard against it,
+        # since they hand-bind their own ToolContext instead of driving
+        # RouterLoop._build_router_caller_state's real binding).
+        self.send_to_session_calls.append({
+            "agent": agent, "session": session, "text": text, "wake": wake,
+        })
+        return {"status": "delivered", "agent": agent, "session": session, "wake": wake}
 
     async def put_outbox(
         self, *, kind: str, text: str, meta: dict, persist: bool = True,

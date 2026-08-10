@@ -712,19 +712,22 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | `_default` topology | Auto-synthesized full mesh for unassigned agents | [Multi-agent config](reference/config/multi-agent.md) |
 | MessageBus | Quiescence-based coordination with `reply_to` correlation | [Multi-agent config](reference/config/multi-agent.md) |
 | `delegate_to_agent` | Async-dispatch to peer with topology permission gate | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
+| `send_to_session` | Fire-and-forget delivery to a specific `(agent, session)` — no reply is collected; `wake=True` starts a turn on it now, `wake=False` (default) queues it as context for the target's next turn | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | Agent hops cap | Max delegation depth via `safety.loop.max_agent_hops` | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
 | `chain_id` propagation | Trace multi-hop chains in P6 events | [Events reference](reference/runtime/events.md) |
 
 > **Differentiation vs general agents:** delegation is topology-gated (network / team / pipeline) with a hop-depth cap and `chain_id` audit propagation — multi-agent reach is bounded and traceable, not free-form.
 
-> **Design only, not yet implemented:** [ADR-0040](deep-dives/decisions/0040-task-as-os-concept.md) +
+> **In progress, landing incrementally:** [ADR-0040](deep-dives/decisions/0040-task-as-os-concept.md) +
 > [proposal 0067](deep-dives/proposals/0067-task-model-and-arbiter.md) (accepted 2026-08-10, tracking
 > #3978) unify `run_pipeline_async`, `delegate_to_agent`, `spawn_session` (renamed from
 > `session_spawn` by #4004/#4017), and the A2A async run under one `task` concept (one execution
 > and a handle) with a single collection surface, retiring
 > `delegate_to_agent` and the three `run_pipeline_*` async variants in favor of `run_prompt` /
-> `run_pipeline(collect=…)`. The table above describes the CURRENT, shipped mechanism —
-> `delegate_to_agent` is live and unchanged until this arc's own PRs land.
+> `run_pipeline(collect=…)`. `send_to_session` (P5) has landed — see the row above; the
+> remaining `run_prompt` / `describe_task` / `list_tasks` / `cancel_task` tools and
+> `delegate_to_agent`'s retirement are still pending. `delegate_to_agent` stays live and
+> unchanged until its own retirement PR lands.
 
 ---
 

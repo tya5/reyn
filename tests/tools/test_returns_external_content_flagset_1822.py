@@ -81,6 +81,11 @@ _NOT_EXTERNAL = {
     # #2103 C1: create_topology → returns an OS-generated create ACK
     # {status, name, kind, members, ...}, not external content (it wires a topology).
     "create_topology",
+    # Proposal 0067 P5 (#3978): send_to_session → returns an OS-generated
+    # delivery ACK {status, agent, session, wake}, not external content (it
+    # is fire-and-forget delivery; there is no reply to relay at all, unlike
+    # delegate_to_agent's future-arriving reply).
+    "send_to_session",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file",
     "remember_shared", "remember_agent", "forget_memory",

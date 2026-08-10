@@ -434,6 +434,20 @@ def build_tools(
             dispatch_kind=_topology_create_def.dispatch_kind,
         ))
 
+    # ── B2e: send_to_session (proposal 0067 P5, #3978) ─────────────────────
+    # Router-only fire-and-forget delivery primitive (static schema → render
+    # without state). Advertised alongside its delegation siblings so the
+    # router=allow tool is reachable (the #2120 advertise-drift lesson).
+    _send_to_session_def = _registry.lookup("send_to_session")
+    if _send_to_session_def is not None and _send_to_session_def.gates.router == "allow":
+        _send_to_session_rendered = _send_to_session_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_send_to_session_rendered["function"]["name"],
+            description=_send_to_session_rendered["function"]["description"],
+            parameters=_send_to_session_rendered["function"]["parameters"],
+            dispatch_kind=_send_to_session_def.dispatch_kind,
+        ))
+
     # ── B3: remember_shared ──────────────────────────────────────────────
     _remember_shared_def = _registry.lookup("remember_shared")
     if _remember_shared_def is not None and _remember_shared_def.gates.router == "allow":
