@@ -3,7 +3,7 @@ CI sync gate (proposal ``docs/deep-dives/proposals/0059-hook-event-redesign.md``
 §4), mirroring the ``OP_KIND_MODEL_MAP`` <-> ``control-ir.md`` sync discipline
 (CLAUDE.md hard rule).
 
-Every one of reyn's 9 builtin hook-points now funnels its payload through
+Every one of reyn's builtin hook-points now funnels its payload through
 ``reyn.hooks.schema_registry.build_hook_payload`` at its ONE producer call
 site (``reyn.runtime.session`` /
 ``reyn.mcp.message_handler`` / ``reyn.runtime.fs_watcher`` /
@@ -18,10 +18,12 @@ This file drives the REAL production call sites (no mocks — real ``Session``,
 real ``HookDispatcher``, real op handlers, real ingress-routing functions) and
 captures the EXACT field-set each dispatches, proving:
 
-1. byte-identical coverage — every one of the 9 builtin points is actually
-   exercised and its captured payload key-set matches
-   ``BUILTIN_HOOK_SCHEMAS`` exactly (the values are the same ones the
-   pre-Phase-1 ad-hoc dict literals carried — only the schema-check is new).
+1. byte-identical coverage — every builtin point (``expected_points`` below
+   derives this set from ``ALLOWED_HOOK_POINTS`` at test-run time, not a
+   hand-copied literal) is actually exercised and its captured payload
+   key-set matches ``BUILTIN_HOOK_SCHEMAS`` exactly (the values are the
+   same ones the pre-Phase-1 ad-hoc dict literals carried — only the
+   schema-check is new).
 2. the strip-falsify direction — narrowing a schema entry (as if a call site
    had drifted) makes the NEXT real call through that site raise
    ``HookSchemaError`` — the gate actually catches drift, not just documents
@@ -91,7 +93,7 @@ def _capture_dispatch(monkeypatch, captured: list) -> None:
     push/shell/pipeline routing all still run for real — only observation is
     added). Every builtin producer (in-process or out-of-process) funnels
     through some ``HookDispatcher`` instance's ``dispatch``, so patching the
-    class method here captures all 8 points uniformly."""
+    class method here captures every builtin point uniformly."""
     original = dispatcher_mod.HookDispatcher.dispatch
 
     async def _recording_dispatch(self, point, template_vars):
@@ -131,10 +133,10 @@ def _make_session(tmp_path: Path) -> Session:
 
 
 @pytest.mark.asyncio
-async def test_all_nine_builtin_points_dispatch_schema_matching_payloads(
+async def test_every_builtin_point_dispatches_schema_matching_payload(
     tmp_path, monkeypatch,
 ):
-    """Tier 2: every one of the 9 builtin hook-points, exercised via its REAL
+    """Tier 2: every builtin hook-point, exercised via its REAL
     production call site, dispatches a payload whose key-set EXACTLY matches
     ``BUILTIN_HOOK_SCHEMAS`` for that point — the byte-identical proof."""
     captured: list[tuple[str, dict]] = []
