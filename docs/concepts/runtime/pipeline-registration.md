@@ -10,8 +10,10 @@ search_hints: [pipeline registration, pipelines entries, register pipeline, run_
 A **pipeline** is a deterministic, multi-step control flow written in the
 pipeline DSL. A DSL file may hold one or more `pipeline:` documents (private
 helper pipelines co-located with an entry point). Once registered, an agent can
-launch a pipeline by its fully-qualified name with `run_pipeline` (or the
-catalog verb `pipeline__<name>`), and one pipeline can `call` another.
+launch a pipeline by its fully-qualified name with `run_pipeline`, and one
+pipeline can `call` another. (Before #3429 a per-pipeline `pipeline__<name>`
+catalog verb also resolved to the same launch — see "Adding a pipeline"
+below for the current, only form.)
 
 **Namespacing is always on.** Every pipeline registers under a global name of
 the form `{entry-key}.{pipeline-name}` — where `{entry-key}` is the config
