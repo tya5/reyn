@@ -52,7 +52,7 @@ class RouterCallerState:
     Populated by RouterLoop / dispatch_tool when invoking a
     ToolDefinition handler in router context. Handlers that need
     session-scoped resources (agent registry, MCP servers, etc.)
-    or async-dispatch callbacks (send_to_agent)
+    or async-dispatch callbacks
     consume them via this object.
 
     All fields are Optional so test contexts can populate only the
@@ -90,10 +90,6 @@ class RouterCallerState:
     # this number.
     session_inbox_depth: "int | None" = None
 
-    # Async dispatch callbacks (= for delegate_to_agent / plan
-    # handlers that need to interact with chain / task lifecycle)
-    send_to_agent: Callable[..., Awaitable[Any]] | None = None
-
     # #2103 S1bc: session-spawn dispatch. The spawn_session handler spawns a
     # fresh-context session under the agent (rewind-tracked via session_spawned),
     # applies the per-session capability narrowing (S1a), and submits the task.
@@ -116,10 +112,10 @@ class RouterCallerState:
 
     # Proposal 0067 P5 (#3978): send_to_session dispatch — fire-and-forget
     # delivery to a peer (agent, session) via TurnOrigin.PEER_SESSION.
-    # Bound by RouterLoop with no pre-bound identity (the target agent/session
-    # are per-call args, unlike send_to_agent's chain_id); None when the host
-    # doesn't support multi-session delivery (= duck-typed / hasattr-guarded
-    # at caller-state build, same pattern as spawn_session_fn above).
+    # Bound by RouterLoop with no pre-bound identity — the target agent/
+    # session are per-call args; None when the host doesn't support
+    # multi-session delivery (= duck-typed / hasattr-guarded at
+    # caller-state build, same pattern as spawn_session_fn above).
     send_to_session_fn: Callable[..., Awaitable[Any]] | None = None
 
     # Proposal 0067 P4d (#3978): run_prompt(collect="attached") dispatch — sends
@@ -260,7 +256,7 @@ class RouterCallerState:
 # #2567: the host-derived subset of RouterCallerState — every field a
 # RouterHostAdapter (or compatible host) alone can populate, with NO
 # loop-local state (chain_id / budget / router_model / available_tool_names /
-# excluded_categories / send_to_agent / spawn_*_fn / topology_create_fn /
+# excluded_categories / spawn_*_fn / topology_create_fn /
 # catalog-callback / memory-callback fields — those belong to a live
 # RouterLoop turn and stay None here by construction).
 #

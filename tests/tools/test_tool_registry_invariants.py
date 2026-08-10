@@ -346,7 +346,7 @@ def test_router_caller_state_defaults_all_none():
     state = RouterCallerState()
     assert state.agent_registry is None
     assert state.available_agents is None
-    assert state.send_to_agent is None
+    assert state.send_to_session_fn is None
     assert state.chain_id is None
     assert state.budget is None
     assert state.router_model is None
@@ -409,7 +409,7 @@ def test_router_caller_state_partial_population():
 
     assert state.agent_registry is sentinel_registry
     assert state.available_agents is None
-    assert state.send_to_agent is None
+    assert state.send_to_session_fn is None
     assert state.chain_id is None
     assert state.budget is None
     assert state.router_model is None
@@ -423,13 +423,13 @@ def test_router_caller_state_full_population():
     sentinel_budget = object()
     sentinel_memory = object()
 
-    async def _send_to_agent(*a, **kw):
+    async def _send_to_session(*a, **kw):
         pass
 
     state = RouterCallerState(
         agent_registry=sentinel_agent_reg,
         available_agents=[{"name": "a1"}],
-        send_to_agent=_send_to_agent,
+        send_to_session_fn=_send_to_session,
         chain_id="chain-xyz",
         budget=sentinel_budget,
         router_model="openai/gpt-4o",
@@ -439,7 +439,7 @@ def test_router_caller_state_full_population():
 
     assert state.agent_registry is sentinel_agent_reg
     assert state.available_agents == [{"name": "a1"}]
-    assert state.send_to_agent is _send_to_agent
+    assert state.send_to_session_fn is _send_to_session
     assert state.chain_id == "chain-xyz"
     assert state.budget is sentinel_budget
     assert state.router_model == "openai/gpt-4o"
