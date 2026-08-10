@@ -163,15 +163,15 @@ Measured during design; each has bitten or would bite:
 
 | | finding |
 |---|---|
-| `dispatch_kind` | means "end this turn", not "is asynchronous" (`router_loop.py:2249`). P1′ and P6 touch it directly. |
+| `dispatch_kind` | means "end this turn", not "is asynchronous" (`router_loop.py`). P1′ and P6 touch it directly. |
 | `agent_locks` | the serialization lock is keyed by **agent name** while what it protects is a **session's** history. P0/P1 move identity to the session axis; this key is then inconsistent. |
-| `_is_quiescent` | its docstring promises three conditions; the implementation checks `inbox.empty()` only (`message_bus.py:188` vs `:193`). |
+| `_is_quiescent` | its docstring promises three conditions; the implementation checks `inbox.empty()` only (`message_bus.py`). |
 | `RunEntry` | `interfaces/web/run_registry.py` is a fourth handle store already carrying status/result/error/webhook_url plus persistence. §7's type is its generalization; whether it moves to core is a layering decision. |
-| `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py:2731-2733`) — a live misdelivery path that P1 removes. |
+| `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py`) — a live misdelivery path that P1 removes. |
 | chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
 | hook points | eight, not ten (#3996). |
-| S3 deny sets | the launch-verb deny exists **twice** — `_PIPELINE_STEP_DENY_TOOLS` (`tools/pipeline_verbs.py:211`, R6 S3, pipeline tool steps) and `_DELEGATION_DENY_TOOLS` (`runtime/session_api.py:136`, R5, agent steps). Same five names today. Both files say "kept in lock-step" and **nothing enforces it**: the only place `tests/` names both is a module docstring, and no test compares them. P6 and P7 each touch both. See the note below. |
-| `RunStatus` | the status vocabulary D3 describes **already exists** — `run_registry.py:64`, five members, and the `input_required` transition is live at `a2a_intervention.py:124`. What is missing is a bridge to the chain handle, not a state machine. Reusing it from `runtime/` would be a new layering inversion (`runtime/ → interfaces/web/` is currently 0 imports; the reverse is 10), so it moves to `runtime/task_types.py` beside `TaskKind` / `Requester`. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
+| S3 deny sets | the launch-verb deny exists **twice** — `_PIPELINE_STEP_DENY_TOOLS` (`tools/pipeline_verbs.py`, R6 S3, pipeline tool steps) and `_DELEGATION_DENY_TOOLS` (`runtime/session_api.py`, R5, agent steps). Same five names today. Both files say "kept in lock-step" and **nothing enforces it**: the only place `tests/` names both is a module docstring, and no test compares them. P6 and P7 each touch both. See the note below. |
+| `RunStatus` | the status vocabulary D3 describes **already existed** — five members, with the `input_required` transition live in `a2a_intervention.py` (`self._registry.update(self._run_id, status="input-required")`). What was missing was a bridge to the chain handle, not a state machine. It lived in `interfaces/web/run_registry.py`, and reading it from `runtime/` would have been a new layering inversion (`runtime/ → interfaces/web/` was 0 imports; the reverse, 10), so **P4 moved it to `runtime/task_types.py`** beside `TaskKind` / `Requester`; `run_registry.py` re-exports it. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
 
 ### The two S3 deny sets stay two, and get an equality check
 
@@ -206,8 +206,8 @@ implemented; the underscore is the wrong needle.
 | where | spelling | whose convention |
 |---|---|---|
 | ADR-0040 §D3 prose, and its MCP-Tasks quote | `input_required` | MCP's |
-| `run_registry.py:77` member name | `INPUT_REQUIRED` | Python's |
-| that member's **value**, and `a2a_task_view.py:46` | `"input-required"` | A2A's — this is what reaches the wire |
+| the `RunStatus` member name (`runtime/task_types.py`) | `INPUT_REQUIRED` | Python's |
+| that member's **value**, and `_A2A_TASK_STATES` (`a2a_task_view.py`) | `"input-required"` | A2A's — this is what reaches the wire |
 
 Write `RunStatus.INPUT_REQUIRED`, never the string. This cost a reviewer a false "D3 is
 unimplemented, that's a separate problem" reading on 2026-08-10, from a grep that was correct in
