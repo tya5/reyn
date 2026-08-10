@@ -387,15 +387,20 @@ argument lists for one object, which had diverged on twelve fields.
 
 **#3482 param bundling**: `RouterHostAdapter.__init__` groups every real
 consumer-set cluster (measured by AST, not by name prefix) into frozen,
-default-free dataclasses built just before the constructor call — four of
-them, each named after the sole consumer the measurement found:
+default-free dataclasses built just before the constructor call — three of
+them today (`ROUTER_HOST_ADAPTER_BUNDLE_TYPES`), each named after the sole
+consumer the measurement found:
 
 | bundle | fields | sole consumer |
 | --- | --- | --- |
 | `McpGatewayInputs` | `mcp_connection_service`/`mcp_agent_id`/`ephemeral_fn` (#3447's Path A fold) | `_mcp_list_via_gateway` |
-| `SendToAgentInputs` | `send_to_agent`/`delegation_tracker` | the `send_to_agent` method |
 | `PutOutboxInputs` | `put_outbox`/`agent_replies_tracker` | the `put_outbox` method |
 | `LiveSessionIdInputs` | `session_id`/`live_session_id_fn` | the `live_session_id` property |
+
+(`SendToAgentInputs` was a fourth bundle here — removed along with the dead
+`RouterLoopHost.send_to_agent`/`RouterHostAdapter.send_to_agent` Protocol
+member it existed solely to serve, #4144/#4153; `InterAgentMessaging.send_to_agent`,
+the still-live P4e delivery transport, is a different, unrelated method.)
 
 Session still builds each field with the exact same expression as before
 (same object, same order, same call-time semantics — `ephemeral_fn` /
