@@ -157,6 +157,41 @@ sharing only the underlying AST resolver, not one shared predicate — the
 "1機構" framing this docstring originally used was itself part of what
 got retracted.
 
+## #4069 — a content-change line explained ENTIRELY by this PR's own rename
+
+The blanket "no content changes" rule (above) has one real structural hole:
+a reference that CANNOT be written correctly before the move it depends on
+has already happened — a Python ``import`` statement naming the moved
+module's dotted path, or a ``measured_by``-style registry string resolved
+by ``path.is_file()`` — either breaks immediately if written early (import-
+time ``ModuleNotFoundError`` / an assertion failing against a location that
+doesn't exist yet), so the only structurally possible place to fix it is
+the SAME commit as the move. Before this addition, such a fix could only be
+merged as a declared "human review" exception — a PROMISE a reviewer read
+every changed line, not a mechanism (#4071 hit exactly this: 3 files,
+7 changed lines, all of this shape).
+
+The rule (lead-coder, #4069, verified against #4071's real 7 lines before
+shipping — 7/7 explained): build this PR's own rename mapping from its
+R100 lines (old path → new path), then for a content-changed ``M`` file
+under ``tests/``, check EVERY changed line — paired within its own diff
+HUNK, never across hunk boundaries, and only when a hunk's removed/added
+line counts match 1:1 (anything else cannot be explained this
+mechanically and stays rejected) — asks: does substituting every mapping
+entry into the OLD line, in EITHER form (the raw ``tests/old/path.py``
+string, or its dotted-import equivalent ``tests.old.path``), produce
+EXACTLY the NEW line? If every changed line in the file passes, the whole
+file is permitted; a single line that doesn't reduces to the plain
+rejection. See :func:`is_explained_by_rename_substitution`.
+
+This is not a loosening of the "no content changes" rule — it identifies,
+mechanically, from the diff's own R100 lines (no external list, no human
+judgment call), exactly the subset that had structurally no other order to
+land in. #4064's rejected proposal ("relax rule ① to any coherent subject")
+went the OPPOSITE direction: that one substituted a human judgment call for
+a mechanical one; this one substitutes a mechanical check for what was
+previously only a human promise to read the diff.
+
 ## Lifespan — this gate is temporary, unlike Stage 0's ratchet
 
 Stage 0's ratchet (``flat_tests_ratchet.py``) is permanent: it must keep
@@ -460,13 +495,115 @@ def _in_scope(line: str) -> bool:
     return any(p.startswith("tests/") for p in paths)
 
 
-def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
-    """Every in-scope diff line that is NOT one of the three allowed shapes
-    — the gate's entire decision, isolated from I/O so it is directly
+def rename_mapping(lines: "list[str]") -> "dict[str, str]":
+    """This PR's own R100 renames as an ``{old path: new path}`` map — the
+    ONLY input :func:`is_explained_by_rename_substitution` reads (#4069):
+    no external list, no baseline, nothing but this diff's own allowed
+    moves."""
+    mapping: "dict[str, str]" = {}
+    for line in lines:
+        parts = line.split("\t")
+        if parts[0] == "R100" and len(parts) == 3:
+            mapping[parts[1]] = parts[2]
+    return mapping
+
+
+def _dotted_module_path(path: str) -> str:
+    """``tests/foo/bar.py`` -> ``tests.foo.bar`` — the form a Python
+    ``import``/``from`` statement names a moved module by, as opposed to
+    the slash-path form a ``measured_by``-style string literal uses. A
+    rename substitution must try both, since #4071's 7 real lines used
+    each form in different files."""
+    stem = path[:-len(".py")] if path.endswith(".py") else path
+    return stem.replace("/", ".")
+
+
+def _line_explained_by_rename(old_line: str, new_line: str, mapping: "dict[str, str]") -> bool:
+    """Does substituting every entry of *mapping* into *old_line* — in
+    EITHER its path form or its dotted-import form — produce exactly
+    *new_line*? The whole rule from #4069's single line of substitution
+    logic, made total over both spellings a reference can use."""
+    explained = old_line
+    for old_path, new_path in mapping.items():
+        explained = explained.replace(old_path, new_path)
+        explained = explained.replace(
+            _dotted_module_path(old_path), _dotted_module_path(new_path),
+        )
+    return explained == new_line
+
+
+def _diff_hunks_for_file(base: str, path: str, root: Path) -> "list[tuple[list[str], list[str]]]":
+    """Every hunk of ``git diff -U0 <base>...HEAD -- <path>`` as
+    ``(removed_lines, added_lines)`` pairs, one entry per hunk — zero
+    context lines, since only the actual changed lines matter here.
+    Hunk boundaries are preserved deliberately (lead-coder's own
+    correction on #4069: pairing removed/added lines by position ACROSS
+    the whole file, ignoring hunk boundaries, was an explicitly-flagged
+    shortcut in the verification script, not something the real
+    implementation may do — two unrelated single-line hunks elsewhere in
+    the same file could otherwise cross-pair and "explain" a change that
+    isn't actually a rename substitution)."""
+    proc = subprocess.run(
+        ["git", "diff", "-U0", f"{base}...HEAD", "--", path],
+        cwd=root, capture_output=True, text=True, check=True,
+    )
+    hunks: "list[tuple[list[str], list[str]]]" = []
+    removed: "list[str]" = []
+    added: "list[str]" = []
+    for line in proc.stdout.splitlines():
+        if line.startswith("@@"):
+            if removed or added:
+                hunks.append((removed, added))
+            removed, added = [], []
+        elif line.startswith("-") and not line.startswith("---"):
+            removed.append(line[1:])
+        elif line.startswith("+") and not line.startswith("+++"):
+            added.append(line[1:])
+    if removed or added:
+        hunks.append((removed, added))
+    return hunks
+
+
+def is_explained_by_rename_substitution(
+    path: str, base: str, mapping: "dict[str, str]", root: Path = _ROOT,
+) -> bool:
+    """#4069: whether every changed line in *path* (an ``M`` file, not
+    itself renamed) is fully explained by substituting THIS PR's own
+    rename *mapping* — permitted even though it is a content change,
+    because the reference could not have been written correctly before
+    the move happened (see module docstring's #4069 section). Requires
+    EVERY hunk's removed/added line counts to match 1:1 (anything else —
+    an added or removed line with no counterpart — cannot be explained
+    this mechanically) AND every paired line to satisfy
+    :func:`_line_explained_by_rename`. No mapping, or no hunks at all
+    (e.g. a binary-diff edge case), is conservatively NOT explained."""
+    if not mapping:
+        return False
+    hunks = _diff_hunks_for_file(base, path, root)
+    if not hunks:
+        return False
+    for removed, added in hunks:
+        if len(removed) != len(added):
+            return False
+        for old_line, new_line in zip(removed, added):
+            if not _line_explained_by_rename(old_line, new_line, mapping):
+                return False
+    return True
+
+
+def offending_lines(lines: "list[str]", root: Path = _ROOT, base: "str | None" = None) -> "list[str]":
+    """Every in-scope diff line that is NOT one of the allowed shapes —
+    the gate's entire decision, isolated from I/O so it is directly
     testable against a hand-built line list. Only called once
     :func:`gate_is_active` has confirmed this PR is a migration PR at all;
     an out-of-scope line (outside ``tests/``, not the baseline) is skipped
-    here, not flagged — see :func:`_in_scope`."""
+    here, not flagged — see :func:`_in_scope`.
+
+    *base* is optional (defaults to skipping the #4069 rename-substitution
+    check entirely) so existing callers/tests that only care about the
+    ORIGINAL shapes — and have no real git history to diff against — keep
+    working unchanged; :func:`main` always passes it."""
+    mapping = rename_mapping(lines) if base is not None else {}
     offenders = []
     for line in lines:
         if not _in_scope(line):
@@ -506,6 +643,16 @@ def offending_lines(lines: "list[str]", root: Path = _ROOT) -> "list[str]":
             continue
 
         if status == "M" and len(parts) == 2 and parts[1] in _ALLOWED_MODIFIED_PATHS:
+            continue
+
+        if (
+            status == "M" and len(parts) == 2 and base is not None
+            and is_explained_by_rename_substitution(parts[1], base, mapping, root)
+        ):
+            # #4069: this M line's every changed line is exactly the OLD
+            # line with this PR's own rename mapping substituted in — not
+            # a rewrite, the one shape of "content change riding a rename
+            # PR" that has no other order to land in.
             continue
 
         if status.startswith("C") and len(parts) == 3:
@@ -594,7 +741,7 @@ def main(argv: "list[str] | None" = None) -> int:
         )
         return 0
 
-    offenders = offending_lines(lines)
+    offenders = offending_lines(lines, base=args.base)
 
     if not offenders:
         print(
@@ -639,7 +786,12 @@ def main(argv: "list[str] | None" = None) -> int:
             "new path, and split any real content change into a SEPARATE PR "
             "(this gate cannot tell 'legitimate unrelated fix' from 'the "
             "exact rewrite this gate exists to catch' — it rejects both on "
-            "purpose).",
+            "purpose).\n\n"
+            "An `M` line above IS allowed automatically (#4069) if every "
+            "changed line is exactly the old line with this PR's own R100 "
+            "rename mapping substituted in (path or dotted-import form) — "
+            "if it's still here, at least one changed line in that file "
+            "isn't explained that mechanically.",
             file=sys.stderr,
         )
     return 1
