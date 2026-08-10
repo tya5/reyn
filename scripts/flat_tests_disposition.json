@@ -383,6 +383,12 @@
     "pr": 4062,
     "to": "tests/tools/test_scheme_self_register_1608.py"
   },
+  "tests/test_session_shutdown_acompletion_warning.py": {
+    "disposition": "deleted",
+    "reason": "Mirrored Session._drain_on_shutdown's warnings.catch_warnings() suppression filter, but that mechanism was removed by #2435 on 2026-07-03; the test only verified its own local regex copy, never live reyn code, and had zero consumers (#4059)",
+    "bundle": "F",
+    "pr": 4059
+  },
   "tests/test_source_manifest.py": {
     "bundle": "data",
     "disposition": "moved",
