@@ -4,16 +4,47 @@
 ## What this is
 
 `scripts/flat_tests_arc_population.json` is a FROZEN snapshot of every flat
-`tests/*.py` file name #3879 ever needs a disposition for — the union of
-`flat_tests_disposition.json`'s own keys and `flat_tests_baseline.json`'s
-content at the moment this snapshot was written (#4068 follow-up; the
-diff/union computed and verified disjoint before writing, not assumed —
-see the paired test file's `test_the_frozen_snapshot_has_no_internal_overlap`).
+`tests/*.py` file name #3879 needs a disposition for — the 1,129 filenames
+`flat_tests_baseline.json` named at commit `accdfd226` (#3883, "Stage 0 — a
+ratchet that rejects new .py files landing flat in tests/"), the arc's true
+starting population (lead-coder ruling, #4072 follow-up; see the section
+below on the first, WRONG snapshot this replaced).
 `scripts/flat_tests_disposition.json` is a single-writer artifact recording,
 per flat file, exactly ONE of three outcomes: `moved` (with the real
 destination `to`), `flat-by-decision` (stays flat, `reason` states WHY —
 never a classification word like "Tier 4" or "no axis"), or `deleted`
 (`reason` states which of the six questions it failed).
+
+## The first snapshot was wrong — "add the two live artifacts" isn't the population
+
+The very first version of `flat_tests_arc_population.json` was `disposition.
+keys() | baseline` (81 + 37 = 118) — exactly the "combination that isn't a
+sum" #3879 itself warns about (bare numbers don't compare; a union of two
+LIVE, already-partial views is not a census of the arc's actual starting
+point). #4066 having only existed since the previous night meant the
+~1,011 files moved BEFORE it was created had zero disposition record and
+were invisible to that union — the "complete" set was ~10% of the real
+population. Caught live (lead-coder, #4072 review). Fixed by reading the
+one artifact that actually recorded the true starting state: Stage 0's own
+`flat_tests_baseline.json`, 1,129 files, committed before any bucket
+migration touched the tree.
+
+## Backfilling ~1,020 pre-#4066 moves — mechanical, no per-file judgment
+
+`git log -M100% --diff-filter=R --name-status accdfd226..origin/main --
+tests/` names every rename `git` detected in this window: old path, new
+path, commit, commit subject (which carries the PR number). Chain-
+resolving each Stage-0 filename through that rename graph to its FINAL
+tracked location (a file can be renamed more than once) accounted for all
+1,129: 1,101 moved (all resolving to a currently-tracked path — verified,
+not assumed), 25 still flat (exactly the real `origin/main` baseline,
+cross-checked), 3 genuinely deleted (not renamed — `test_2708_cred_check_
+chokepoint.py` / `test_chat_grant_file_write_187.py`, each removed in the
+same PR that removed the mechanism it tested; `test_session_shutdown_
+acompletion_warning.py`, already recorded via #4059/#4066). No manual
+per-file judgment was needed for the 1,021 backfilled `moved` entries — a
+rename is a rename; `bundle: "backfill-3879-arc-start"` marks them as
+mechanically derived rather than authored per-bundle like the other 81.
 
 **#3879 closes when the unprocessed set is empty** — not when the flat
 count reaches zero (a file can legitimately have no subject bucket and stay

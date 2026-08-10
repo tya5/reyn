@@ -14,6 +14,7 @@ from scripts.flat_tests_disposition_check import (
     unprocessed,
     validation_errors,
 )
+from tests._support.paths import REPO_ROOT
 
 
 def _write_arc_population(path: Path, keys: "list[str]") -> None:
@@ -144,14 +145,14 @@ def test_the_real_disposition_file_has_no_schema_errors() -> None:
 
 
 def test_the_frozen_snapshot_has_no_internal_duplicate_keys() -> None:
-    """Tier 2: the real, committed flat_tests_arc_population.json was built
-    as a union of `disposition`'s own keys and `baseline` at freeze time —
-    this asserts what was verified before writing (not assumed, per the
-    #3879 "bare numbers don't compare" lesson) stayed true."""
+    """Tier 2: the real, committed flat_tests_arc_population.json is
+    Stage 0's own flat_tests_baseline.json (commit accdfd226, 1,129 files)
+    — a plain list, not derived by combining two sources, but still worth
+    a non-vacuity check that nothing produced a duplicate key along the
+    way (e.g. a `tests/{n}` normalization collision)."""
     keys = load_arc_population()
     raw = json.loads(
-        (Path(__file__).resolve().parents[2] / "scripts" / "flat_tests_arc_population.json")
-        .read_text(encoding="utf-8")
+        (REPO_ROOT / "scripts" / "flat_tests_arc_population.json").read_text(encoding="utf-8")
     )
     assert len(raw) == len(keys), "duplicate keys in the frozen snapshot"
 
@@ -166,3 +167,20 @@ def test_the_real_disposition_keys_are_a_subset_of_the_frozen_population() -> No
     population = load_arc_population()
     disposition = load_disposition()
     assert set(disposition.keys()) <= population
+
+
+def test_the_frozen_snapshot_equals_stage_0s_own_committed_baseline() -> None:
+    """Tier 2: the load-bearing witness for the #4072 fix — the committed
+    `flat_tests_arc_population.json` must be EXACTLY the 1,129 filenames
+    Stage 0 (commit accdfd226, #3883) committed to `flat_tests_baseline.
+    json`, normalized the same way `load_baseline()` normalizes the live
+    one. Not the union of two live artifacts (the first, wrong snapshot's
+    own shape) — read directly from git history, not re-derived."""
+    import subprocess
+
+    raw = subprocess.run(
+        ["git", "show", "accdfd226:scripts/flat_tests_baseline.json"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout
+    stage0 = {f"tests/{n}" for n in json.loads(raw)}
+    assert load_arc_population() == stage0
