@@ -24,13 +24,24 @@ from reyn.security.sandbox import noop_backend as _noop_module
 # ─── 1. SandboxConfig dataclass ───────────────────────────────────────────────
 
 
-def test_default_config_values():
-    """Tier 2: SandboxConfig() defaults to backend='auto', on_unsupported='warn',
-    mode='compat' (#3823 ②, owner-ruled "A")."""
+def test_default_backend_and_on_unsupported_values():
+    """Tier 1: :class:`SandboxConfig`'s ``backend``/``on_unsupported`` defaults
+    are asserted HERE ONLY (grep-confirmed, #3878 co-vet) — no other test in
+    the suite pins these two values, and a sample-config doc comment
+    elsewhere describes them without a seam test of its own. If either
+    dataclass default silently drifted, nothing else would catch it, so this
+    is the sole witness of a doc-vs-code default-value contract, not a
+    redundant transcription.
+
+    ``mode``'s default is deliberately NOT asserted here — that one IS
+    redundant: ``test_yaml_parse_defaults_mode_to_compat_when_absent``
+    (below) already pins it through the real ``reyn.yaml -> SandboxConfig``
+    seam, a stronger witness than the bare dataclass (#3878 Phase 3
+    correction: the original three-assert form declared Tier 2 for all
+    three, but only ``mode`` had a genuine duplicate)."""
     cfg = SandboxConfig()
     assert cfg.backend == "auto"
     assert cfg.on_unsupported == "warn"
-    assert cfg.mode == "compat"
 
 
 def test_config_rejects_invalid_mode():
