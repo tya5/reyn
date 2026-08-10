@@ -135,8 +135,8 @@ P4    task ops: run_prompt / describe_task / list_tasks / cancel_task
 
 P5    send_to_session
 
-P6    retire delegate_to_agent (its own PR; ~19 src / ~45 tests / ~51 docs files mention it,
-      measured at 27da0d6b2 — a scope estimate that drifts, re-measure before starting)
+P6    retire delegate_to_agent (its own PR; 129 files mention it, whole-repo, at 5f80e0a6 —
+      re-measure before starting, and see the scope note below for what is NOT work)
       pending_chains is repurposed as P3/P4's collection substrate
 
 P7    run_pipeline: four names → one (collect / inline as arguments)
@@ -168,6 +168,42 @@ Measured during design; each has bitten or would bite:
 | chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
 | hook points | eight, not ten (#3996). |
 | `RunStatus` | the status vocabulary D3 describes **already exists** — `run_registry.py:64`, five members, and the `input_required` transition is live at `a2a_intervention.py:124`. What is missing is a bridge to the chain handle, not a state machine. Reusing it from `runtime/` would be a new layering inversion (`runtime/ → interfaces/web/` is currently 0 imports; the reverse is 10), so it moves to `runtime/task_types.py` beside `TaskKind` / `Requester`. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
+
+### `input_required` is spelled three ways
+
+Grepping `src/` for `input_required` returns nothing, which reads as "D3 is unimplemented." It is
+implemented; the underscore is the wrong needle.
+
+| where | spelling | whose convention |
+|---|---|---|
+| ADR-0040 §D3 prose, and its MCP-Tasks quote | `input_required` | MCP's |
+| `run_registry.py:77` member name | `INPUT_REQUIRED` | Python's |
+| that member's **value**, and `a2a_task_view.py:46` | `"input-required"` | A2A's — this is what reaches the wire |
+
+Write `RunStatus.INPUT_REQUIRED`, never the string. This cost a reviewer a false "D3 is
+unimplemented, that's a separate problem" reading on 2026-08-10, from a grep that was correct in
+every way except the needle.
+
+### P6's scope: what the 129 files are, and which are not work
+
+The earlier estimate here read `~19 src / ~45 tests / ~51 docs`, which is 115 and names three
+directories. Naming three directories tells the reader those are the population, and they are not
+— `scripts/` (6), `website/` (2) and `CHANGELOG.md` (1) were never counted. The count also drifted
+upward inside the three that were. The note that used to sit here warned about the drift, which is
+the smaller of the two problems: "re-measure before starting" reads as *recount these three*, so it
+cannot catch a missing surface. Take the population as **the whole repo**, not a directory list.
+
+Two of the nine are **not work**:
+
+| | why |
+|---|---|
+| `scripts/flat_tests_arc_population.json` | records a test population *as it was*; holding paths that no longer exist is the file's job |
+| `scripts/flat_tests_disposition.json` | same |
+
+Editing those to remove a retired name rewrites a record of what was true then — the same line
+`decisions/README.md` draws for accepted ADRs and this repo draws for `journal/`. Leave them.
+`CHANGELOG.md` and `website/` are undecided rather than excluded: if the mention describes a past
+release, it is history too. Nobody has read them; decide at P6.
 
 ### Reading ADR-0040 on what a cancel leaves behind
 
