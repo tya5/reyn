@@ -869,11 +869,28 @@ class RouterHostAdapter:
         wiring needed, ``self._registry``/``self._agent_name`` already exist
         for exactly this shape. Instantaneous read (``asyncio.Queue.qsize()``)
         — see ``RouterCallerState.session_inbox_depth``'s own docstring for
-        the staleness caveat this value's field description must also carry."""
+        the staleness caveat this value's field description must also carry.
+
+        ⚠️ ``build_resource_caller_state`` calls this on EVERY router turn,
+        unconditionally, for every host — unlike ``get_chains()`` (a stored
+        attribute read, no live call), this makes a LIVE call on
+        ``self._registry``. Falsify-verified regression (#4127 CI): a
+        narrower test double implementing only PART of the registry
+        interface (e.g. ``get_or_load``/``exists`` but no ``get_session`` —
+        a legitimate, deliberately-minimal stub, not a bug in it) made this
+        raise ``AttributeError`` mid-turn, which propagated far enough to
+        derail an UNRELATED test's dispatch flow. ``getattr`` with a
+        default, not a direct method call, so an incomplete registry
+        degrades to ``None`` — the same tolerance ``get_mcp_servers()`` /
+        other duck-typed accessors on this class already have — rather than
+        breaking a turn that never asked for this observability field."""
         if self._registry is None:
             return None
+        get_session = getattr(self._registry, "get_session", None)
+        if get_session is None:
+            return None
         sid = self.live_session_id or "main"
-        session = self._registry.get_session(self._agent_name, sid)
+        session = get_session(self._agent_name, sid)
         if session is None:
             return None
         return session.inbox.qsize()
