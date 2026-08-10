@@ -379,9 +379,9 @@ hooks:
   `path`, which match via a shell-style glob (`fnmatch`) — so
   `file:///repo/**` matches any URI under that prefix, and `/repo/src/**`
   matches any watched path under that directory.
-- For the 9 **builtin** hook points (the 4 lifecycle points + `mcp_resource_updated` /
-  `file_changed` / `cron_fired` / `webhook_received` + `task_settled`), a matcher field must be
-  one the point's builtin schema actually carries — a typo'd or nonexistent
+- For a **builtin** hook point (the lifecycle + external + task points listed
+  in the table above), a matcher field must be one the point's builtin schema
+  actually carries — a typo'd or nonexistent
   field name (e.g. a lifecycle point's matcher naming `server`/`uri`, or
   `payload.srever`) is a **load-time `HookConfigError`**, rejected before the
   hook can ever run (a schema-external matcher would otherwise never fire —
