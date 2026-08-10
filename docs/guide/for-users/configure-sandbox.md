@@ -256,6 +256,30 @@ In mount mode, the workspace root is automatically bind-mounted at `/workspace`
 inside the container. The sandbox backend used inside the container is determined
 by `reyn.yaml sandbox.backend` as usual (typically `landlock` on Linux).
 
+### What container mode itself enforces
+
+The per-backend tables above, and the `sandbox_axis_unenforced` warning, are
+about the three **sandbox** backends (Seatbelt, Landlock, Noop) — a separate
+question from what the **container** you launch into already restricts on its
+own, independent of any `sandbox.*` policy. Measured directly (real execution
+against a live container, not inferred from the launch code):
+
+| axis | what actually happens | driven by |
+|---|---|---|
+| write | root filesystem is read-only; `/tmp` (tmpfs) and the workspace bind mount are writable | fixed at container launch (`--read-only`, `--tmpfs /tmp`) — not `sandbox.*` policy |
+| network | outbound connections fail | fixed at container launch (`--network none`, unless overridden) — not `sandbox.*` policy |
+| subprocess | **not restricted** — a process inside the container can spawn further child processes freely | nothing; `subprocess: false` in your policy has no effect once you are inside a container |
+| env | the container sees only the image's own environment (its `/etc/profile` / shell activation) — your host's environment variables are not forwarded in, and `env_deny_names` has nothing to filter because there is nothing to filter | nothing; not a policy mechanism, just how `docker exec` works |
+
+The write and network rows come from the container's fixed launch flags
+(`--cap-drop ALL`, non-root user, read-only root + tmpfs, `--network none` by
+default) — they hold regardless of what your `reyn.yaml sandbox:` config says,
+because they are set once when the container starts, not per operation. The subprocess and
+env rows are the opposite kind of fact: there is **no** mechanism restricting
+them at all, at any layer, inside the container — `subprocess: false` and
+`allow_env_names` only take effect for the sandbox backends listed above, not
+for container mode.
+
 ### Default image
 
 When `--image` is omitted, reyn uses a bundled base image built for the current
