@@ -83,6 +83,13 @@ class PipelineWorkOrder:
     driver_sid: str
     spawn_seq: "int | None" = None
     schema_defs: "dict[str, dict[str, Any]] | None" = None
+    # proposal 0067 / ADR-0040 D4: the settle disposition — "deliver" (default,
+    # byte-identical to pre-settle-path behaviour) | "<pipeline name>" | "drop".
+    # No launch site sets anything but the default today (no LLM-facing param
+    # exposes it yet — that is P7's job); the field exists so the settle path
+    # can read it, same "type lands ahead of its issuing surface" shape P0
+    # already established for CurrentTask.on_settle.
+    on_settle: str = "deliver"
 
 
 def _atomic_write(path: "Path", content: dict) -> None:

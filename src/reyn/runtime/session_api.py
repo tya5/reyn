@@ -516,7 +516,10 @@ async def _spawn_pipeline_driver_session(
         pipeline_run_dir,
         write_invocation,
     )
-    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+    from reyn.runtime.services.pipeline_executor_driver import (
+        PipelineExecutorDriver,
+        resolve_reply_target,
+    )
 
     root = reyn_root(state_log.path)
     if root is None:
@@ -567,6 +570,29 @@ async def _spawn_pipeline_driver_session(
         schema_defs=schema_registry.as_dict() if schema_registry is not None else None,
     )
     write_invocation(pipeline_run_dir(root, rid), work_order)
+    if notify_reply:
+        # proposal 0067 settle path (#3978): register this run's collection
+        # handle on the REPLY session's own ChainManager (pending_chains,
+        # repurposed per the proposal's own P6 note) BEFORE the driver ever
+        # runs — settle-time (``PipelineExecutorDriver._deliver``) pops it
+        # via the SAME ``resolve_reply_target`` this call mirrors. The sync
+        # ATTACHED path (``notify_reply=False``) creates no handle at all
+        # (ADR-0040 D4: "collect='attached' creates nothing — nothing to
+        # retain, on_settle is ignored"). A resolution failure here is
+        # non-fatal — it just means no handle exists yet (the same "no
+        # handle" case ``ChainManager.settle()`` already tolerates); the
+        # run still launches and ``_deliver``'s own fail-safe re-discovers
+        # the vanished target at settle time.
+        reply_target, _reason = await resolve_reply_target(
+            registry, reply_to_agent, reply_to_sid,
+        )
+        if reply_target is not None:
+            await reply_target.chains.register(
+                chain_id=rid, from_user=False, depth=0,
+                original_text=pipeline_name, sender=None,
+                origin_agent=reply_to_agent,
+                origin_sid=None if reply_to_sid == "main" else reply_to_sid,
+            )
     session = registry.get_session(reply_to_agent, sid)
     if session is None:
         raise RuntimeError(

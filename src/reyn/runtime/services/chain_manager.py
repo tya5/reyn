@@ -220,6 +220,58 @@ class ChainManager:
         await self._journal.record_chain_resolve(chain_id=chain_id)
         return chain
 
+    async def settle(
+        self,
+        chain_id: str,
+        *,
+        on_settle: str,
+        deliver: "Callable[[], Awaitable[None]]",
+        launch_pipeline: "Callable[[str], Awaitable[None]] | None" = None,
+    ) -> _PendingChain | None:
+        """Execute a task's settle disposition, then pop its handle — same
+        function, mirroring ``resolve()``'s pop+cancel_timeout+journal shape
+        (ADR-0040 D4: "push-at-settle with immediate deletion", "no
+        retention, no clock"; the settle-path acceptance condition is
+        exactly this — ONE settle function, no ``pipeline``/``run_id`` in
+        its signature, so P6 can point ``delegate_to_agent``'s own
+        chain-resolve completion at this SAME function later).
+
+        ``on_settle`` (proposal 0067 § Issuing / ADR-0040 D4①):
+          - ``"deliver"`` — await ``deliver()`` (the caller's own delivery
+            callback — e.g. posting a ``pipeline_result``/``agent_response``
+            inbox message; this method has no opinion on what "deliver"
+            means for a given task kind).
+          - ``"drop"`` — no-op; the disposition is intentionally discarded.
+          - anything else — a pipeline NAME to launch via
+            ``launch_pipeline`` (D4: "filters a large result before it
+            reaches the issuer's context"). Scope of the actual launch is
+            not yet decided (proposal 0067 P4/P7) — a caller that doesn't
+            pass ``launch_pipeline`` gets ``NotImplementedError`` rather
+            than a silent no-op, so an unimplemented disposition fails
+            loud, not quiet.
+
+        Tolerates a missing handle exactly like ``resolve()`` does (``pop``
+        with a ``None`` default, no error) — the disposition still
+        executes; only the bookkeeping (pop/cancel_timeout/journal) is a
+        no-op when nothing was registered for ``chain_id`` (e.g. a run
+        launched before this mechanism existed, mid-recovery from an older
+        on-disk work-order)."""
+        if on_settle == "drop":
+            pass
+        elif on_settle == "deliver":
+            await deliver()
+        else:
+            if launch_pipeline is None:
+                raise NotImplementedError(
+                    f"ChainManager.settle(on_settle={on_settle!r}): pipeline-name "
+                    "dispositions are not yet implemented (proposal 0067 P4/P7)"
+                )
+            await launch_pipeline(on_settle)
+        chain = self._chains.pop(chain_id, None)
+        self.cancel_timeout(chain_id)
+        await self._journal.record_chain_resolve(chain_id=chain_id)
+        return chain
+
     def find_chain(self, chain_id: str) -> _PendingChain | None:
         """Return the in-memory _PendingChain for ``chain_id``, or None.
 
