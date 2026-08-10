@@ -1,25 +1,11 @@
 # ADR-0034: A2A task lifecycle (FP-0001)
 
-**Status**: Accepted + Implemented (2026-05-16) — **Components 1–3 superseded by
-[ADR-0041](0041-intervention-ownership-and-channel-pinning.md)** (2026-05-20 / #268 Phase 2, #292 α,
-#267 Gap 5). Components 4–5, Context and Considered alternatives stand. See #866 "task lifecycle is
+**Status**: Accepted + Implemented (2026-05-16) — Components 1–3 **superseded by
+[ADR-0041](0041-intervention-ownership-and-channel-pinning.md)**; Components 4–5, Context and
+Considered alternatives stand (audit: #4016). **Extended by
+[ADR-0040](0040-task-as-os-concept.md)** (not yet implemented). See #866 "task lifecycle is
 shipped" doc refresh + the Gap 3-5 PR chain.
 **Track**: A2A protocol — async task support + ask_user round-trip
-
-> 🔴 **Read Components 1–3 below as history, not as current mechanism.** The drift audit in #4016
-> verified all five component claims against `origin/main`: **three had been false since 2026-05-20**
-> — `RunEntry` no longer holds the pending `UserIntervention` or its question text (they live in
-> `Session._interventions`), `A2AInterventionBus` implements `on_dispatch(iv)` rather than
-> `request(iv)` and never awaits `iv.future`, and `register_intervention_override` no longer exists
-> (routing is pinned to `iv.origin_channel_id` = `a2a:<run_id>`). `RunEntry` is also persisted now,
-> falsifying "lifetime = process lifetime". **Components 4 (router endpoints) and 5 (Agent Card
-> capabilities) were re-verified and hold.** [ADR-0041](0041-intervention-ownership-and-channel-pinning.md)
-> records what replaced them and why.
-
-> **Extended by [ADR-0040](0040-task-as-os-concept.md)** (2026-08-10, not yet implemented):
-> 0040 makes `task` an OS-level concept, of which this ADR's A2A-protocol surface (`RunRegistry`,
-> `RunEntry`) becomes one projection. This ADR's own vocabulary — `RunStatus`, deliberately "NOT
-> the 7-state Task-tree `TaskState`" — is the model ADR-0040's D2/D3 generalize.
 
 ## Context
 
