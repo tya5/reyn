@@ -1,20 +1,15 @@
-"""run_prompt ToolDefinition — proposal 0067 P4d (#3978).
+"""run_prompt ToolDefinition — proposal 0067 P4d/P4e (#3978).
 
 Router-only (gates.router=allow).
 
-collect="attached" only, for now
-----------------------------------
+collect="attached" | "async"
+-----------------------------
 The proposal names two ``collect`` values: ``"attached"`` (waits inline,
-returns the reply — this file) and ``"async"`` (returns a task_id
-immediately, result arrives later via ``task_settled``). ``"async"`` is
-NOT implemented here — it is blocked on an architect ruling for the
-task_id/chain_id ID-space question (issue #3978). The schema below
-therefore only accepts ``collect="attached"``; a value outside that is a
-plain JSON-schema validation failure, not a runtime branch this module
-needs to handle.
+returns the reply) and ``"async"`` (returns a task_id immediately, result
+arrives later via ``task_settled``). Both are implemented here.
 
-Synchronous run+collect semantics
------------------------------------
+Synchronous run+collect semantics (collect="attached")
+---------------------------------------------------------
 Unlike ``delegate_to_agent`` (async-dispatch: ends the turn, the reply
 arrives in a FUTURE RouterLoop invocation), ``run_prompt(collect="attached")``
 drives the target peer INLINE and returns the reply in THIS same tool call
@@ -27,7 +22,21 @@ wiring only, mirroring ``send_to_session.py``.
 dispatch_kind="sync": the tool call returns immediately once the reply (or
 a typed refusal) is in hand — never ends the turn early the way
 ``delegate_to_agent``'s "async" posture does.
-"""
+
+Async-dispatch semantics (collect="async")
+----------------------------------------------
+Proposal 0067 P4e (#3978), architect ruling 2026-08-10 (three rounds:
+reply-routing identity, the register-per-call structural condition, this
+function's own shape). ``run_prompt(collect="async")`` dispatches
+``prompt`` to a LIVE peer as an ``agent_request`` and returns
+``{"status": "started", "data": {"task_id": <chain_id>}}`` immediately —
+it does NOT drive the target inline the way ``collect="attached"`` does,
+so it needs none of that path's busy-check/lock/deadlock-timeout
+machinery. The reply arrives later as a ``task_settled`` push, once the
+peer's own turn responds. See ``session_api.run_prompt_async``'s
+docstring for the full producer-identity / register-per-call rationale —
+this file is thin wiring only, mirroring the ``collect="attached"``
+branch above."""
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -54,7 +63,7 @@ _RUN_PROMPT_PARAMETERS: dict[str, Any] = {
         },
         "collect": {
             "type": "string",
-            "enum": ["attached"],
+            "enum": ["attached", "async"],
             "description": _delegation_descriptions.PARAMS["run_prompt"]["collect"].text,
         },
     },
@@ -63,17 +72,27 @@ _RUN_PROMPT_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Delegate to RouterCallerState.run_prompt_result_fn.
+    """Dispatch on ``collect`` to RouterCallerState.run_prompt_result_fn
+    (``"attached"``) or .run_prompt_async_fn (``"async"``).
 
-    Raises RuntimeError when router_state or run_prompt_result_fn is missing
+    Raises RuntimeError when router_state or the selected fn is missing
     (= mis-wiring; matches send_to_session's handler convention) — a host
-    that genuinely doesn't support multi-session delivery leaves
-    run_prompt_result_fn None, and the tool should not even be catalog-visible
-    on such a host.
+    that genuinely doesn't support multi-session delivery leaves both
+    None, and the tool should not even be catalog-visible on such a host.
 
-    ``collect`` is validated by the JSON schema (enum=["attached"]) before
-    this handler ever runs — there is no other branch to dispatch on today."""
+    ``collect`` is validated by the JSON schema (enum=["attached", "async"])
+    before this handler ever runs — no other value reaches this branch."""
     rs = ctx.router_state
+    if args["collect"] == "async":
+        if rs is None or rs.run_prompt_async_fn is None:
+            raise RuntimeError(
+                "run_prompt(collect=\"async\") handler requires "
+                "ctx.router_state.run_prompt_async_fn to be populated by "
+                "the dispatcher (= RouterLoop)."
+            )
+        return await rs.run_prompt_async_fn(
+            agent=args["agent"], session=args["session"], prompt=args["prompt"],
+        )
     if rs is None or rs.run_prompt_result_fn is None:
         raise RuntimeError(
             "run_prompt handler requires ctx.router_state.run_prompt_result_fn "

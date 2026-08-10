@@ -116,14 +116,15 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
     "builtin:external:file_changed": frozenset({"point", "path", "event_type"}),
     "builtin:external:cron_fired": frozenset({"point", "job_name", "to"}),
     "builtin:external:webhook_received": frozenset({"point", "transport", "sender"}),
-    # proposal 0067 P3: producer = the pipeline-async terminal-delivery path
-    # ONLY (owner ruling via lead-coder, 2026-08-10). delegate_to_agent's own
-    # chain-resolve completion never folds in here — architect ruling,
-    # #3978: P6 retired the tool with no replacement producer, so its
-    # chains stay outside the task/settle vocabulary permanently (kind=None
-    # for their remaining lifetime). run_prompt(collect="async") is this
-    # point's real second producer, a later PR. Recorded here, not silently
-    # dropped, per CLAUDE.md's arc-closure remainder rule.
+    # proposal 0067 P3/P4e: TWO producers — the pipeline-async terminal-
+    # delivery path (P3, owner ruling via lead-coder, 2026-08-10) and
+    # run_prompt(collect="async")'s settle branch (P4e, #3978, landed —
+    # InterAgentMessaging.handle_agent_response's kind="prompt" branch).
+    # Both dispatch through the SAME schema/kind, no new one added.
+    # delegate_to_agent's own chain-resolve completion never folds in
+    # here — architect ruling, #3978: P6 retired the tool with no
+    # replacement producer, so its chains stay outside the task/settle
+    # vocabulary permanently (kind=None for their remaining lifetime).
     "builtin:task:task_settled": frozenset(
         {"point", "task_id", "kind", "status", "session", "result"},
     ),

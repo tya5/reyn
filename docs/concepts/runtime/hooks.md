@@ -347,9 +347,10 @@ or undeliverable task would mean `all` never fires — composition rests on
 P6 (#3978) with no replacement producer for its own chain-resolve
 completion path, so folding it into this point never happens for that
 specific mechanism (architect ruling, #3978) — `run_prompt(collect="async")`
-is this hook point's real second producer, still pending its own PR
-(`BUILTIN_HOOK_SCHEMAS`'s own code comment tracks it, not silently
-dropped).
+is this hook point's real second producer (P4e, landed): its own settle
+branch, in `InterAgentMessaging.handle_agent_response`, fires through the
+SAME `task_settled` schema/kind as the pipeline-async path above, no new
+kind added.
 
 Template vars:
 

@@ -204,6 +204,14 @@ class InterAgentMessaging:
         # spawned session replies) + the spawner's trusted spawned-task lookup.
         session_id_fn: "Callable[[], str | None] | None" = None,
         lookup_spawned_task: "Callable[[str | None], str | None] | None" = None,
+        # Proposal 0067 P4e (#3978): fires task_settled for a settled
+        # kind="prompt" chain — the SAME dispatch_external_event seam
+        # PipelineExecutorDriver._finish uses, injected here rather than a
+        # direct Session reference (this module's own design constraint:
+        # "No direct reference to Session"). None on a host that never
+        # constructs a task-shaped chain here (defensive; production always
+        # wires it).
+        dispatch_task_settled: "Callable[[str, dict], Awaitable[None]] | None" = None,
     ) -> None:
         self._events = event_log
         self._chains = chain_manager
@@ -222,6 +230,7 @@ class InterAgentMessaging:
         self._send_response_callback = send_response_callback
         self._session_id_fn = session_id_fn            # #2103 S1bc-exec
         self._lookup_spawned_task = lookup_spawned_task  # #2103 S1bc-exec
+        self._dispatch_task_settled = dispatch_task_settled  # #3978 P4e
         self._on_chain_timeout_fire = on_chain_timeout_fire
         self._emit_router_cap_exhausted_fn = emit_router_cap_exhausted_fn
 
@@ -510,12 +519,24 @@ class InterAgentMessaging:
     async def handle_agent_response(self, payload: dict) -> None:
         """Process an incoming ``agent_response``.
 
-        Two branches:
-        - chain_id ∈ self._chains → multi-hop relay. Drop sender
-          from waiting_on; when waiting_on becomes empty, re-invoke router
-          and forward the synthesized reply (or fresh delegations) on the
-          same chain. Reply goes to the chain's ``requester.agent_name``,
-          NOT ``from_agent``.
+        Three branches:
+        - chain_id ∈ self._chains AND pending.kind is not None → proposal
+          0067 P4e (#3978) settle path: a task-shaped (``run_prompt(collect=
+          "async")``) chain settles here, NOT through the legacy multi-hop
+          relay-continuation path below — there is no further upstream to
+          forward to; THIS session is the terminal requester. See the
+          settle-branch's own comment for why the history-append lives
+          inside ``ChainManager.settle()``'s ``deliver`` disposition here,
+          not unconditionally before the branch (architect ruling,
+          2026-08-10: doing it unconditionally would make ``on_settle``'s
+          other dispositions — "drop", a pipeline name — unreachable for
+          this producer, the same bug class as an unenforced TTL that
+          still displays as armed).
+        - chain_id ∈ self._chains AND pending.kind is None → legacy
+          multi-hop relay. Drop sender from waiting_on; when waiting_on
+          becomes empty, re-invoke router and forward the synthesized
+          reply (or fresh delegations) on the same chain. Reply goes to
+          the chain's ``requester.agent_name``, NOT ``from_agent``.
         - chain_id ∉ self._chains → user-initiated chain (PR11
           compatibility). The router's reply_text is treated as a
           user-facing message (outbox + history); further delegations
@@ -579,13 +600,53 @@ class InterAgentMessaging:
                 "from_agent": from_agent, "depth": depth,
                 "chain_id": chain_id,
             }
-        self._append_history("user", injected_text, _now_iso(), history_meta)
         self._events.emit(
             "agent_response_received",
             from_agent=from_agent, depth=depth, chain_id=chain_id,
         )
 
         pending = self._chains.get(chain_id)
+        if pending is not None and pending.kind is not None:
+            # proposal 0067 P4e (#3978): settle, don't relay-continue — see
+            # this method's own docstring. The history-append (+ the ONE
+            # router turn that lets the LLM actually act on it, mirroring
+            # Session._handle_pipeline_result/_handle_hook_message's
+            # "append is already done, just run the turn" shape — NOT
+            # _handle_inbox_text, which would append AGAIN) lives inside
+            # the "deliver" disposition, not unconditionally above, so
+            # on_settle="drop" (a future caller could pass it) genuinely
+            # means nothing is surfaced, not "surfaced anyway, plus
+            # settle() also ran a no-op disposition."
+            async def _deliver() -> None:
+                self._append_history("user", injected_text, _now_iso(), history_meta)
+                await self._run_router_loop(injected_text, chain_id)
+
+            await self._chains.settle(chain_id, on_settle="deliver", deliver=_deliver)
+            # proposal 0067 settle path (#3978): task_settled fires on the
+            # FACT of settling, independent of the disposition's own
+            # outcome (ADR-0040 D4④, architect ruling "B", 2026-08-10 — same
+            # reasoning PipelineExecutorDriver._finish already applies).
+            # Dispatched via the injected ``dispatch_task_settled`` — the
+            # SAME dispatch_external_event/build_hook_payload seam pipeline
+            # settles use, reusing the EXISTING task_settled hook point (no
+            # new audit kind — architect ruling: settle() already fires
+            # from the same place pipeline tasks do, so there is no
+            # driver-object-absence problem to invent a new mechanism for).
+            if self._dispatch_task_settled is not None:
+                from reyn.hooks.schema_registry import build_hook_payload
+
+                await self._dispatch_task_settled(
+                    "task_settled",
+                    build_hook_payload(
+                        "task_settled", task_id=chain_id, kind="prompt",
+                        status="ok",
+                        session=self._session_id_fn() if self._session_id_fn else "main",
+                        result=response,
+                    ),
+                )
+            return
+
+        self._append_history("user", injected_text, _now_iso(), history_meta)
         if pending is not None:
             await self._resolve_pending_chain(
                 pending, from_agent=from_agent, last_response=response,

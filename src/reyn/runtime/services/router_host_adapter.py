@@ -1503,6 +1503,33 @@ class RouterHostAdapter:
             timeout=timeout if timeout is not None else _RUN_PROMPT_DEFAULT_TIMEOUT_S,
         )
 
+    async def run_prompt_async(
+        self, *, agent: str, session: str, prompt: str,
+    ) -> dict:
+        """Proposal 0067 P4e (#3978): ``run_prompt(collect="async")`` —
+        dispatch ``prompt`` to a LIVE peer and return a ``task_id``
+        immediately; the reply arrives later via ``task_settled``.
+
+        Thin wiring layer only, mirroring ``run_prompt_result`` above — all
+        the real logic (registration, dispatch, refusal) lives in
+        ``session_api.run_prompt_async``. This method's only job is to
+        supply the CALLER's own identity."""
+        if self._registry is None:
+            raise RuntimeError(
+                "run_prompt(collect=\"async\") requires a registry "
+                "(multi-session host) — unavailable in this context."
+            )
+        from reyn.runtime.session_api import run_prompt_async as _run_prompt_async
+
+        return await _run_prompt_async(
+            self._registry,
+            caller_agent=self._agent_name,
+            caller_sid=self.live_session_id or "main",
+            target_agent=agent,
+            target_session=session,
+            prompt=prompt,
+        )
+
     async def _spawn_limit_checkpoint(
         self, *, kind: str, prompt: str, detail: str,
         extension_amount: float, run_id: str,
