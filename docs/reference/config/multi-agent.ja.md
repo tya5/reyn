@@ -28,6 +28,13 @@ safety:
 
 完全なスキーマは [リファレンス: `reyn.yaml` — `safety` ブロック](reyn-yaml.md#safety-block) を参照してください。
 
+> **現行 producer 無し**（architect 裁定、#3978/#4135、2026-08-10）: この 2 つの設定が制御する
+> 多段 `messages_to_agents`/`_PendingChain` 機構は、今日は構造的に到達不能です — 唯一の
+> consumer だった `delegate_to_agent` は proposal 0067 P6 で退役しました。両設定とそれが
+> 構成する enforcement コードはそのまま残っています。以下に記述する多段 join
+> （`|waiting_on| >= 2`）は恒久的に退役済みです。以下は退役前の姿の記述として読んでください。
+> 現行の挙動ではありません。
+
 ## `safety.loop.max_agent_hops`（整数、デフォルト `3`）
 
 ランタイムがそれ以上の送信を拒否する前に、agent 間メッセージチェーンが何ホップ深くトラバースできるかを制限します。LangGraph の再帰制限に倣っています。

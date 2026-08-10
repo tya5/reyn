@@ -69,6 +69,16 @@ A single `AgentRegistry` instance per process owns all loaded agents and the Ses
 
 ## Agent-to-agent messaging
 
+> **No current producer** (architect ruling, #3978/#4135, 2026-08-10): the
+> substrate this section describes (`RouterCallerState.send_to_agent`,
+> `InterAgentMessaging.send_to_agent`, `_PendingChain` registration) is
+> still present in code but structurally unreachable — its sole consumer,
+> `delegate_to_agent`, was retired in proposal 0067 P6. No tool wired today
+> populates `dispatched`, so `register(waiting_on=...)` never fires. The
+> multi-hop join (`|waiting_on| >= 2`) this section describes is
+> permanently retired. Read what follows as a description of the
+> mechanism's pre-retirement shape, not current behavior.
+
 When a router decision emits `messages_to_agents: [{to, request}, ...]`, the Session routes each entry to the target's inbox as an `agent_request` payload:
 
 ```
