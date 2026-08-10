@@ -886,8 +886,8 @@ def test_ingest_file_discovery_aborts_clean_on_unreadable_input_path(
     project_root = _write_project(tmp_path, out_of_process_reyn)
     # A folder OUTSIDE project_root with no permission grant -- Workspace's
     # own default-deny boundary for absolute paths outside base_dir/state_dir
-    # (see tests/test_workspace_glob_outside_root_perm.py) with `reyn pipe
-    # run`'s non-interactive resolver (`_build_run_tool_context`: "fail-
+    # (see tests/core/test_workspace_glob_outside_root_perm.py) with `reyn
+    # pipe run`'s non-interactive resolver (`_build_run_tool_context`: "fail-
     # closed by default"), so the PermissionError is real, not simulated.
     outside_docs = tmp_path.parent / f"{tmp_path.name}_outside_docs"
     outside_docs.mkdir()
