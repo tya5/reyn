@@ -891,7 +891,7 @@ been caught by fixing the other**.
   `tests/`. For `tests/fixtures/llm/fp0063_arc_witness`, `.parent` is
   `tests/fixtures/llm`, so branch (b) was False; branch (a) ("outside
   `tests/`") was also False, because it is inside. The issue's own summary:
-  「**穴の 形は «`.parent` 単発» でも «多段 join» でも ありません** ——
+  「**穴の 形は «`.parent` 単発」でも «多段 join» でも ありません** ——
   **«tests-root peer の «中» に 何階層か 入った» という 深さです。**
   `tests/fixtures` 直下なら 捕まり、`tests/fixtures/llm/...` だと 抜ける」.
   The item was not misclassified — **it received no verdict at all**, because
