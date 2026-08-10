@@ -42,7 +42,7 @@ CodeAct には JSON tool channel が **そもそも存在しない** — 「chan
 呼べる理由でもある。
 
 **何が載るか**: `enumerate-all` scheme が `tool_calls` で advertise するのと同じ
-集合 — base tool（`read_file` / `delegate_to_agent` / `session_spawn` …）と
+集合 — base tool（`read_file` / `delegate_to_agent` / `spawn_session` …）と
 [universal catalog](universal-catalog.md) の全 action（`glob_files` /
 `run_pipeline` …）。
 

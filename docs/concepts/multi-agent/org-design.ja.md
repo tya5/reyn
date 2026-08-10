@@ -10,9 +10,9 @@ Reyn は LLM にランタイムでライブなマルチエージェント組織�
 
 | ツール | 機能 |
 |------|-------------|
-| `agent_spawn` | 名前とロールを持つ子 agent を作成。自分のケイパビリティの ⊆ でキャップされる |
-| `session_spawn` | タスクを分離して実行するための新鮮なコンテキストのサブセッションを開始 |
-| `topology_create` | スポーンした agent をコミュニケーショントポロジーにワイヤリングし、オプションで各メンバーのケイパビリティを絞り込む |
+| `spawn_agent` | 名前とロールを持つ子 agent を作成。自分のケイパビリティの ⊆ でキャップされる |
+| `spawn_session` | タスクを分離して実行するための新鮮なコンテキストのサブセッションを開始 |
+| `create_topology` | スポーンした agent をコミュニケーショントポロジーにワイヤリングし、オプションで各メンバーのケイパビリティを絞り込む |
 
 これらのツールは**ルーター専用**（フェーズ内では使用不可）：スキルで作成された命令ではなく、実行中の agent が行う org-design の判断です。
 
@@ -20,26 +20,26 @@ Reyn は LLM にランタイムでライブなマルチエージェント組織�
 
 ---
 
-## `agent_spawn` — 子 agent の作成
+## `spawn_agent` — 子 agent の作成
 
 ```text
-agent_spawn(name: str, role: str = "")
+spawn_agent(name: str, role: str = "")
 ```
 
 あなたの権限の下でレジストリに新しい agent を作成します。新しい agent のスポーン血統は LLM ではなく OS が設定します（forge-guard：LLM は親リンクを供給しません）。新しい agent の有効ケイパビリティは**設計によりあなたのケイパビリティの部分集合でキャップされます**——あなたができないことは何もできません（[⊆-parent ケイパビリティモデル](../runtime/permission-model.md#llm-spawn-capability-model)を参照）。
 
-`agent_spawn` は org の*identity レイヤー*を設計するために使います：誰が存在し、そのロールは何か。*誰が誰と話せるか*を制御してケイパビリティをさらに絞り込むには `topology_create` を使います。
+`spawn_agent` は org の*identity レイヤー*を設計するために使います：誰が存在し、そのロールは何か。*誰が誰と話せるか*を制御してケイパビリティをさらに絞り込むには `create_topology` を使います。
 
 ### 戻り値が伝えること
 
-`agent_spawn` はスポーン ack を返します（同期）——ツールが返る前に agent は作成・登録されています。ack には新しい agent の名前が含まれるため、後続の `topology_create` 呼び出しで参照できます。
+`spawn_agent` はスポーン ack を返します（同期）——ツールが返る前に agent は作成・登録されています。ack には新しい agent の名前が含まれるため、後続の `create_topology` 呼び出しで参照できます。
 
 ---
 
-## `session_spawn` — 新鮮なコンテキストでタスクを実行
+## `spawn_session` — 新鮮なコンテキストでタスクを実行
 
 ```text
-session_spawn(request: str, mode: "ephemeral" | "persistent" = "persistent",
+spawn_session(request: str, mode: "ephemeral" | "persistent" = "persistent",
               narrowing: dict | None = None)
 ```
 
@@ -60,10 +60,10 @@ session_spawn(request: str, mode: "ephemeral" | "persistent" = "persistent",
 
 ---
 
-## `topology_create` — スポーンサブツリーのワイヤリングと絞り込み
+## `create_topology` — スポーンサブツリーのワイヤリングと絞り込み
 
 ```text
-topology_create(
+create_topology(
     name: str,
     kind: "network" | "team" | "pipeline",
     members: list[str],
@@ -72,7 +72,7 @@ topology_create(
 )
 ```
 
-**あなたのスポーンサブツリー**（あなた自身 + `agent_spawn` 経由で推移的に作成した agent）の agent から名前付きコミュニケーショントポロジーを作成します。`can_send(A, B)` ルールはオペレーターが作成したトポロジーと同じ 3 種類に従います：
+**あなたのスポーンサブツリー**（あなた自身 + `spawn_agent` 経由で推移的に作成した agent）の agent から名前付きコミュニケーショントポロジーを作成します。`can_send(A, B)` ルールはオペレーターが作成したトポロジーと同じ 3 種類に従います：
 
 | Kind | 送信できる相手 |
 |------|----------------------|
@@ -103,11 +103,11 @@ topology_create(
 
 ```text
 # 1. チームメンバーを作成
-agent_spawn(name="researcher", role="gather background on topic X")
-agent_spawn(name="writer",     role="draft the section from findings")
+spawn_agent(name="researcher", role="gather background on topic X")
+spawn_agent(name="writer",     role="draft the section from findings")
 
 # 2. ワイヤリングとオプションの絞り込み
-topology_create(
+create_topology(
     name="research_team",
     kind="team",
     leader="researcher",   # researcher が writer を調整
@@ -116,7 +116,7 @@ topology_create(
 )
 
 # 3. 単発の必要性のために分離タスクをスポーン
-session_spawn(
+spawn_session(
     request="translate the draft to Japanese",
     mode="ephemeral",
 )
@@ -131,7 +131,7 @@ session_spawn(
 | キー | デフォルト | 効果 |
 |-----|---------|--------|
 | `safety.spawn.max_depth` | `10` | スポーン血統チェーンの最大深度（0 = 無制限） |
-| `safety.spawn.max_children` | `20` | 親ごとの直接スポーン子の最大数、および `topology_create` 呼び出しのメンバー最大数 |
+| `safety.spawn.max_children` | `20` | 親ごとの直接スポーン子の最大数、および `create_topology` 呼び出しのメンバー最大数 |
 
 スポーンが制限を超える場合、ループキャップやバジェットキャップと同じモード駆動フレームワーク（`safety.on_limit` チェックポイント）が発火します：
 

@@ -1,4 +1,7 @@
-"""agent_spawn ToolDefinition — #2103 B-tool (LLM agent-spawn primitive, org-design).
+"""spawn_agent ToolDefinition — #2103 B-tool (LLM agent-spawn primitive, org-design).
+Renamed from agent_spawn (#4004) — the module and its internal identifiers
+keep the old spelling; only the registered ``name=`` (the LLM-visible
+string) and everything keyed off it changed.
 
 Router-only (gates.router=allow). The LLM DESIGNS an org: it creates
 a new AGENT (WHO: name + role) under its own authority. The handler calls
@@ -10,7 +13,7 @@ Capability model (#2103 B-core, ⊆-parent by construction): the spawned agent's
 capability is CAPPED at ⊆ the spawner — resolved_profile_for composes the spawner's LIVE
 resolved effective as a restrict-only conjunct, so the new agent can never exceed the
 spawner (recursive, no-escalation-via-spawn). The #2081 floor also applies (least-
-privilege). Narrowing the child BELOW the spawner is done via ``topology_create`` (C),
+privilege). Narrowing the child BELOW the spawner is done via ``create_topology`` (C),
 which assigns the restrict-only capability_profile bindings — keeping agent-spawn
 (identity + lineage) and the capability assignment (topology profiles) cleanly split.
 """
@@ -31,11 +34,11 @@ _AGENT_SPAWN_PARAMETERS: dict[str, Any] = {
     "properties": {
         "name": {
             "type": "string",
-            "description": _delegation_descriptions.PARAMS["agent_spawn"]["name"].text,
+            "description": _delegation_descriptions.PARAMS["spawn_agent"]["name"].text,
         },
         "role": {
             "type": "string",
-            "description": _delegation_descriptions.PARAMS["agent_spawn"]["role"].text,
+            "description": _delegation_descriptions.PARAMS["spawn_agent"]["role"].text,
         },
     },
     "required": ["name"],
@@ -50,7 +53,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     rs = ctx.router_state
     if rs is None or getattr(rs, "spawn_agent_fn", None) is None:
         raise RuntimeError(
-            "agent_spawn requires ctx.router_state.spawn_agent_fn — unavailable "
+            "spawn_agent requires ctx.router_state.spawn_agent_fn — unavailable "
             "(host does not support agent-spawn / mis-wired dispatcher)."
         )
     name = args.get("name")
@@ -58,7 +61,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         return {
             "status": "error",
             "kind": "invalid_name",
-            "error": "agent_spawn requires a non-empty 'name'.",
+            "error": "spawn_agent requires a non-empty 'name'.",
         }
     return await rs.spawn_agent_fn(name=name, role=args.get("role", "") or "")
 
@@ -67,7 +70,7 @@ from reyn.core.offload.canonical import agent_spawn_to_canonical  # noqa: E402
 
 AGENT_SPAWN = ToolDefinition(
     canonical=agent_spawn_to_canonical,
-    name="agent_spawn",
+    name="spawn_agent",
     router_dispatched=True,
     description=_AGENT_SPAWN_DESCRIPTION,
     parameters=_AGENT_SPAWN_PARAMETERS,

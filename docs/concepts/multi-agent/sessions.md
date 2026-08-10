@@ -57,7 +57,7 @@ One capability layer is nonetheless *session*-scoped: a session can be **narrowe
 below its agent's envelope (restrict-only — a narrowing can never grant what the
 identity does not already have). That layer is inherited on spawn: a session opened
 from a narrowed session — by `/session new`, by a pipeline, by an agent step, or by
-the `session_spawn` tool — is born inside the opener's narrowing, composed
+the `spawn_session` tool — is born inside the opener's narrowing, composed
 most-restrictive-wins (denials union, allow-lists intersect). So an operator whose own
 session is narrowed gets a narrowed new session, and `/session new` names what it
 inherited in its reply. The alternative — a fresh session silently starting wide — is

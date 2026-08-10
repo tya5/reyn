@@ -1,10 +1,10 @@
-"""Tier 2: OS invariant — a session spawned through the ``session_spawn`` TOOL is
+"""Tier 2: OS invariant — a session spawned through the ``spawn_session`` TOOL is
 born inside its spawner's per-session capability envelope, not inside whatever
 envelope the spawner's LLM asked for.
 
 #3556, the third site of the #3546 / #3553 fix-class and the one whose contract was
 already WRITTEN DOWN. ``router_host_adapter.spawn_session`` forwarded its ``narrowing``
-argument to ``spawn_session_recorded`` verbatim — and that argument is a ``session_spawn``
+argument to ``spawn_session_recorded`` verbatim — and that argument is a ``spawn_session``
 tool parameter, i.e. LLM-authored. The spawner's own sid-keyed #2103-S1a narrowing was
 not a term, so a narrowed session widened itself by spawning a sibling and handing it the
 task. The tool's parameter description tells the model the opposite, in both languages:
@@ -15,17 +15,17 @@ true; before the fix it was not.
 ★ Reachability, measured BEFORE this test was designed, because the answer decides the
 test's premises:
 
-  * ``session_spawn`` IS in ``capability_profile._FLOORED_TOOLS["spawn"]``, so it is
+  * ``spawn_session`` IS in ``capability_profile._FLOORED_TOOLS["spawn"]``, so it is
     denied by BOTH the #1827-S4b untrusted-context floor and the #2081 ``_delegate``
     floor. A session tainted by untrusted external content therefore cannot reach this
     seam at all — "#1827's contextual narrowing is bypassable wholesale through
-    ``session_spawn``" is FALSE, and this module does not claim it.
+    ``spawn_session``" is FALSE, and this module does not claim it.
   * The #2103-S1a sid-keyed layer — the one this fix carries — has NO such default. A
     session narrowed with ``{"tool_deny": [...]}`` resolves
-    ``tool_contextually_denied("session_spawn")`` to ``False``: the seam stays reachable
-    unless the narrowing names ``session_spawn`` itself. That is the window the two legs
+    ``tool_contextually_denied("spawn_session")`` to ``False``: the seam stays reachable
+    unless the narrowing names ``spawn_session`` itself. That is the window the two legs
     below occupy, and ``test_narrowed_session_can_still_reach_the_session_spawn_seam``
-    keeps the premise honest — if a future default DID floor ``session_spawn`` on this
+    keeps the premise honest — if a future default DID floor ``spawn_session`` on this
     layer, that test goes red and tells the reader the legs' premises moved, rather than
     letting them pass for a reason that no longer exists.
 
@@ -91,7 +91,7 @@ _WITNESS_TOOL = "write_file"
 _OTHER_TOOL = "read_file"
 #: The spawn seam itself — a spawner narrowed by an allow-list must keep it, or the
 #: leg would be measuring "the spawner could not spawn" instead.
-_SPAWN_TOOL = "session_spawn"
+_SPAWN_TOOL = "spawn_session"
 _OUT_NAME = "p3556_out.txt"
 
 #: What the spawner's LLM asks the child to do. The child's scripted LLM keys off this
@@ -225,11 +225,11 @@ async def _spawn_via_tool(
     spawner: Session, reg: AgentRegistry, state_log: StateLog,
     scripted: "_WritesOnceLLM", *, narrowing: "dict | None",
 ) -> dict:
-    """Drive the REAL ``session_spawn`` handler with the ``narrowing`` an LLM would have
+    """Drive the REAL ``spawn_session`` handler with the ``narrowing`` an LLM would have
     written, then wait for the spawned child's turn to REACH ITS END (two scripted
     calls: the tool-call turn and the terminal one).
 
-    The barrier is asserted, not just awaited: ``session_spawn`` is async-dispatch
+    The barrier is asserted, not just awaited: ``spawn_session`` is async-dispatch
     posture (it returns a spawn-ack while the child runs), so reading the disk without
     it would let "the child never ran" masquerade as "the capability was denied".
     """
@@ -261,10 +261,10 @@ def _written(tmp_path: Path) -> "list[str]":
 
 def test_narrowed_session_can_still_reach_the_session_spawn_seam(tmp_path: Path) -> None:
     """Tier 2: the premise the two legs stand on — a session narrowed on the #2103-S1a
-    layer is NOT thereby denied ``session_spawn``, so the seam is reachable from inside
+    layer is NOT thereby denied ``spawn_session``, so the seam is reachable from inside
     a narrowed envelope.
 
-    ``session_spawn`` is floored by the #1827 untrusted-context profile and the #2081
+    ``spawn_session`` is floored by the #1827 untrusted-context profile and the #2081
     ``_delegate`` profile, which is why this module makes no claim about those layers.
     The sid-keyed layer is different: nothing denies the seam by default there. If that
     ever changes, this test fails and says so, instead of the legs below quietly
@@ -278,7 +278,7 @@ def test_narrowed_session_can_still_reach_the_session_spawn_seam(tmp_path: Path)
 
     assert tool_contextually_denied(contextual, _WITNESS_TOOL)
     assert not tool_contextually_denied(contextual, _SPAWN_TOOL), (
-        "a per-session narrowing now denies session_spawn by default — the two "
+        "a per-session narrowing now denies spawn_session by default — the two "
         "acceptance legs below would stop measuring inheritance and start measuring "
         "an entrance denial"
     )
@@ -343,7 +343,7 @@ async def test_spawner_deny_survives_an_llm_requested_allow_list(
     tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: a session cannot re-grant itself a denied tool by spawning a sibling and
-    naming that tool in the ``session_spawn`` ``narrowing``.
+    naming that tool in the ``spawn_session`` ``narrowing``.
 
     The requested ``tool_allow`` is restrict-shaped in isolation — on its own it would
     make the tool the child's ONLY reachable capability — so the seam had no reason to
@@ -374,7 +374,7 @@ async def test_spawner_deny_survives_an_llm_requested_allow_list(
 async def test_spawner_allow_list_survives_an_llm_requested_narrowing(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2: a ``session_spawn`` ``narrowing`` that constrains only the DENY axis does
+    """Tier 2: a ``spawn_session`` ``narrowing`` that constrains only the DENY axis does
     not discard the spawner's own allow-list.
 
     This is the widening the composition's ⊤ rule closes: the requested narrowing says

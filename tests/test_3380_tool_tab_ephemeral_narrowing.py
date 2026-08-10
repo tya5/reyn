@@ -267,9 +267,9 @@ async def test_an_envelope_denial_keeps_its_durable_reason_while_tainted(
     )
     assert envelope_denied not in _tools(state, "denied_by_turn_context")
     # ``delegate_to_agent`` is not in the enumerate-all census this arm composes;
-    # ``agent_spawn`` is, and the topology profile above denies neither it nor anything
+    # ``spawn_agent`` is, and the topology profile above denies neither it nor anything
     # but ``delegate_to_agent`` — so it is ephemeral-only here.
-    assert "agent_spawn" in _tools(state, "denied_by_turn_context"), (
+    assert "spawn_agent" in _tools(state, "denied_by_turn_context"), (
         "control: a tool denied ONLY by the ephemeral profile still lands on the "
         "per-turn axis, so the split above is a split and not a collapse"
     )

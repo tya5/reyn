@@ -1,4 +1,4 @@
-"""Tier 1: #2681 Bucket B — the 24 genuinely-structured record-read producers (+ topology_create,
+"""Tier 1: #2681 Bucket B — the 24 genuinely-structured record-read producers (+ create_topology,
 punted here from Bucket C's sweep) get REAL structured mappers (a short bounded ``text`` summary +
 the record(s) as a ``structured`` attachment), NOT the ``CANONICAL_TODO`` whole-dict fallback.
 
@@ -71,13 +71,13 @@ def test_describe_agent_summarizes_the_single_record() -> None:
 
 
 def test_topology_create_summarizes_the_created_record() -> None:
-    """Tier 1: topology_create (punted here from Bucket C's sweep — success echoes the FULL created
+    """Tier 1: create_topology (punted here from Bucket C's sweep — success echoes the FULL created
     config, a genuine record, not a status ack) names the topology + kind + member count."""
     result = {
         "status": "created", "name": "org1", "kind": "team",
         "members": ["a", "b"], "leader": "a", "profiles": {},
     }
-    canonical = to_canonical(result, source="topology_create")
+    canonical = to_canonical(result, source="create_topology")
     assert canonical["text"] == "topology org1 (team): 2 members."
     assert canonical["attachments"] == [{"kind": "structured", "data": result}]
 
@@ -123,7 +123,7 @@ def test_falsify_mapped_result_differs_from_the_naive_whole_dict_fallback() -> N
 
 
 def test_all_bucket_b_producers_are_real_callables_not_todo_or_passthrough() -> None:
-    """Tier 1: every #2681 Bucket B producer (24 + topology_create) resolves to a real callable
+    """Tier 1: every #2681 Bucket B producer (24 + create_topology) resolves to a real callable
     mapper — never ``CANONICAL_TODO`` (the ratcheted debt marker this burn-down removes) and never
     ``STRUCTURED_PASSTHROUGH`` (the admin-6 opt-in this PR does not touch, owner decision #1). A
     regression back to either sentinel fails this loop by name."""
@@ -135,7 +135,7 @@ def test_all_bucket_b_producers_are_real_callables_not_todo_or_passthrough() -> 
         "list_mcp_resources", "list_mcp_resource_templates", "list_mcp_prompts",
         "mcp_search_registry",
         "cron_list",
-        "topology_create",
+        "create_topology",
     ]
     for sid in bucket_b:
         decl = canonical_declaration(sid)

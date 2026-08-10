@@ -67,6 +67,37 @@ the right position, and isn't a 5th removal/fetch verb."
   verb_object in isolation; that breaks family-internal consistency instead
   of upholding it.
 
+### Family-prefix validity condition (#4004, owner-ratified)
+
+A family-prefix exemption is valid **only when it holds the object's tools
+completely** — every tool for that object uses the family's `object_verb`
+order, with no `verb_object`-ordered sibling naming the same object
+elsewhere in the registry. When a `verb_object` tool for the same object
+DOES exist, the family does not hold: R1's flat default governs, and the
+`object_verb` member(s) are the ones out of step, not the exemption.
+
+This was not a hypothetical concern: a live registry census found the
+decisive counter-example — `pipeline_list` (`object_verb`) and
+`list_agents` (`verb_object`) name the SAME operation class (`list`) in
+opposite word orders, with no semantic distinction between them (a
+resource-generation-vs-listing hypothesis does not hold — `pipeline_list`
+itself is proof against it). The census also found `agent_spawn` /
+`session_spawn` (`object_verb`, informally called a "spawn family" though
+never documented as one above) coexisting with no `verb_object` sibling for
+the same object at the time — but `topology_create`'s later rename (#4004)
+to `create_topology` illustrates the direction this condition points:
+grandfathering an `object_verb` anomaly is only a name for "not yet fixed",
+not a permanent exemption, once a working `verb_object` alternative exists
+for the same object.
+
+This section records the DIRECTION, not a retroactive ruling on every
+existing family: `pipeline_*` and `skill_*` remain grandfathered above
+pending their own future reconciliation (out of scope for #4004, which
+resolved only the `agent_spawn`/`session_spawn`/`topology_create` case) —
+this condition governs how a FUTURE addition to any family should be
+judged, and flags which existing families are candidates for the same
+treatment.
+
 ## R2 — removal: four verbs, four *distinct* classes (frozen)
 
 Census inspection found that the apparent "3-verb inconsistency" in removal
@@ -198,7 +229,8 @@ the verbs they minted are still in the lexicon:
 
 - **`exec`** — `run` was chosen as the canonical verb for the "execute an
   ephemeral subprocess" class (`spawn` is reserved for long-lived entities:
-  `agent_spawn`, `session_spawn`). The tool itself is `exec`.
+  `spawn_agent`, `spawn_session` — renamed from `agent_spawn`/`session_spawn`,
+  #4004). The tool itself is `exec`.
   ★ Note for CodeAct: `exec` collides with a BANNED builtin, so
   `encoders.sanitize_identifier` suffixes it (`exec_`) when rendering the
   code-API. That is a rendering concern, not a second name — the gate still
@@ -216,7 +248,11 @@ established family-prefix group. Each is grandfathered individually rather
 than invented into a new "rule":
 
 - `hooks_add` — sole `hooks_*`-shaped tool, predates the convention.
-- `topology_create` — sole tool of its shape, no established family.
+
+> #4004 (owner-ratified): `topology_create` used to be grandfathered here
+> ("sole tool of its shape, no established family") — renamed to
+> `create_topology`, now a compliant `verb_object` name (see "Canonical verb
+> lexicon" below for the newly added `create` verb), no longer an anomaly.
 
 > FP-0066 P1b retired the agent-facing layer-1 in-core RAG tools
 > (`semantic_search`, `index_update`, `drop_source`, `list_rag_sources`)
@@ -236,7 +272,8 @@ than invented into a new "rule":
 either `verb_object` position, per R1's flat default, or `object_verb`
 suffix position for the pre-existing `cron_*` family and any future
 cron-like family reusing this lifecycle-toggle dual pattern — see "Dual-pair
-verbs" above).
+verbs" above), `create` (#4004 — added for `create_topology`, renamed from
+`topology_create`).
 
 This lexicon (and the grandfather frozen-set) is reconciled against the full
 live registry census in `tests/test_tool_naming_convention_gate_3223.py` —

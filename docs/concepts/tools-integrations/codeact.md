@@ -44,7 +44,7 @@ all — that is different from having one with nothing in it, and it is why ever
 action stays callable from the code API even though nothing is advertised.
 
 **What is on it:** the same set the `enumerate-all` scheme advertises over
-`tool_calls` — the base tools (`read_file`, `delegate_to_agent`, `session_spawn`,
+`tool_calls` — the base tools (`read_file`, `delegate_to_agent`, `spawn_session`,
 …) plus every action of the [universal catalog](universal-catalog.md)
 (`glob_files`, `run_pipeline`, …).
 

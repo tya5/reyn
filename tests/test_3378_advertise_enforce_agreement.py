@@ -229,7 +229,7 @@ def test_exclude_tools_survives_alongside_an_explicit_contextual() -> None:
     result = _call(loop, "web_search", {"query": "gold patch"})
     assert _is_excluded(result), result
     # and the contextual's own denials are not lost by the composition either
-    assert _is_excluded(_call(loop, "session_spawn", {"request": "x"}))
+    assert _is_excluded(_call(loop, "spawn_session", {"request": "x"}))
 
 
 @pytest.mark.parametrize("shape", ["native", "invoke_action"])
@@ -371,7 +371,7 @@ def test_represent_round_applies_the_advertisement_filter() -> None:
     )
 
     contextual = _untrusted_contextual()
-    target = "session_spawn"
+    target = "spawn_session"
     assert target in contextual.tool_deny
 
     class _RepresentScheme:

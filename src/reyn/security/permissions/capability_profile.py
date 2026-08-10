@@ -68,12 +68,49 @@ def _as_tuple(value: "object | None") -> "tuple[str, ...] | None":
     return (str(value),)
 
 
+#: #4004: "the name an operator writes IS the name the gate matches" (this
+#: module's own :func:`resolve_profile` docstring) means a rename of a TOOL
+#: is also, silently, a rename of what an operator's ``tool_allow``/
+#: ``tool_deny`` list must say to keep matching. Left unguarded, an existing
+#: profile YAML naming ``agent_spawn`` in ``tool_deny`` would simply stop
+#: matching anything once the tool becomes ``spawn_agent`` — the deny lifts
+#: with NO error, NO log, nothing: a silent capability ESCALATION, the one
+#: direction a permission-narrowing primitive must never fail in (an old
+#: name in ``tool_allow`` fails the opposite, safer direction — a silent
+#: narrowing — but both are silent state changes an operator never asked
+#: for). Same pattern as ``_RENAMED_SANDBOX_POLICY_KEYS``
+#: (``reyn/config/infra.py``, #3823/#3953): a rename fails LOUD with
+#: specific guidance, checked BEFORE the value is used for anything,
+#: never silently dropped or silently accepted under its old spelling.
+#: Owner's standing policy is "backward compat is not a reason" — breaking
+#: is fine; breaking SILENTLY is the only thing this guards against.
+_RENAMED_TOOL_NAMES: "dict[str, str]" = {
+    "agent_spawn": "'agent_spawn' was renamed to 'spawn_agent' (#4004).",
+    "session_spawn": "'session_spawn' was renamed to 'spawn_session' (#4004).",
+    "topology_create": "'topology_create' was renamed to 'create_topology' (#4004).",
+}
+
+
+def _check_no_renamed_tool_names(names: "tuple[str, ...]", *, axis: str) -> None:
+    """Raise ``ValueError`` with rename guidance if *names* (a ``tool_allow``
+    or ``tool_deny`` tuple) contains a since-renamed tool name — see
+    :data:`_RENAMED_TOOL_NAMES`."""
+    for name in names:
+        guidance = _RENAMED_TOOL_NAMES.get(name)
+        if guidance is not None:
+            raise ValueError(f"capability_profile {axis} is invalid: {guidance}")
+
+
 def load_capability_profile(path: "str | Path") -> CapabilityProfile:
     """Load a ``CapabilityProfile`` from a ``.reyn/capability_profiles/<name>.yaml``.
 
     Unknown keys are ignored (forward-compat). ``name`` defaults to the file stem.
     A missing ``categories`` key → ``None`` (no view narrowing); a present-but-empty
     list → ``()`` (narrow the view to nothing).
+
+    A ``tool_allow``/``tool_deny`` entry naming a since-renamed tool (#4004)
+    raises loud, specific guidance rather than silently matching nothing —
+    see :func:`_check_no_renamed_tool_names`.
     """
     import yaml
 
@@ -81,12 +118,16 @@ def load_capability_profile(path: "str | Path") -> CapabilityProfile:
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         data = {}
+    tool_allow = _as_tuple(data["tool_allow"]) if "tool_allow" in data else None
+    tool_deny = _as_tuple(data.get("tool_deny")) or ()
+    _check_no_renamed_tool_names(tool_allow or (), axis="tool_allow")
+    _check_no_renamed_tool_names(tool_deny, axis="tool_deny")
     return CapabilityProfile(
         name=str(data.get("name", p.stem)),
         description=str(data.get("description", "") or ""),
         categories=_as_tuple(data["categories"]) if "categories" in data else None,
-        tool_allow=_as_tuple(data["tool_allow"]) if "tool_allow" in data else None,
-        tool_deny=_as_tuple(data.get("tool_deny")) or (),
+        tool_allow=tool_allow,
+        tool_deny=tool_deny,
         mcp_allow=_as_tuple(data["mcp_allow"]) if "mcp_allow" in data else None,
         mcp_deny=_as_tuple(data.get("mcp_deny")) or (),
     )
@@ -375,17 +416,18 @@ _FLOORED_TOOLS: "dict[str, frozenset[str]]" = {
     # unbound delegate (#2103: unbounded spawn is a DoS vector; the ⊆-parent model
     # blocks ESCALATION, but spawning ITSELF is restrict-floored like re-delegation —
     # default-deny, re-grantable within parent bounds by a topology binding). #2103
-    # B-tool adds ``agent_spawn`` (org-design create); C1 adds ``topology_create``
-    # (org-design wiring + capability-profile binding — same DoS-floor rationale: an
+    # B-tool adds ``spawn_agent`` (org-design create, renamed from agent_spawn — #4004);
+    # C1 adds ``create_topology`` (renamed from topology_create — #4004; org-design
+    # wiring + capability-profile binding — same DoS-floor rationale: an
     # unbound delegate must not forge an org). All router-only tools with NO
     # invoke_action route today; they are floored by their own names, like
     # everything else here.
-    "spawn": frozenset({"session_spawn", "agent_spawn", "topology_create"}),
+    "spawn": frozenset({"spawn_session", "spawn_agent", "create_topology"}),
     # IS-1 (pipeline v0.9 R6): no launching a registered pipeline from
     # untrusted content / an unbound delegate — a pipeline step can itself
     # write / exec / delegate (bounded ⊆ the invoker per R6, but still a
     # cost-bound multi-step dispatch), so pipeline launch gets the same
-    # spawn-adjacent floor as session_spawn/agent_spawn/topology_create.
+    # spawn-adjacent floor as spawn_session/spawn_agent/create_topology.
     # IS-2: the async launch (``run_pipeline_async``) is
     # the SAME threat class — it additionally spawns a driver-session, so it
     # must not be floored looser than the sync verb.

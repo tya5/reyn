@@ -14,6 +14,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from reyn.security.permissions.capability_profile import (
     CapabilityProfile,
     compose_resolved,
@@ -46,6 +48,51 @@ def test_load_round_trip_non_default(tmp_path: Path):
     assert prof.categories == ("file", "validation")
     assert prof.tool_allow == ("read_file",)
     assert prof.tool_deny == ("memory__write", "delegate_to_agent")
+
+
+# ── #4004 — a since-renamed tool name in tool_allow/tool_deny fails LOUD ────
+# "the name an operator writes IS the name the gate matches" (this module's
+# own resolve_profile docstring) means a tool rename is also, silently, a
+# rename of what an operator's config must say. Left unguarded, an old name
+# would simply stop matching anything — a tool_deny entry silently lifting
+# is a permission ESCALATION, the one direction this axis must never fail
+# silently in (lead-coder's #4004 review finding, mirroring #3823/#3953's
+# _RENAMED_SANDBOX_POLICY_KEYS pattern).
+
+
+def test_load_rejects_a_renamed_tool_name_in_tool_deny(tmp_path: Path):
+    """Tier 2: #4004 — a pre-rename tool name in tool_deny raises loud,
+    specific guidance rather than silently loading a deny-list entry that
+    will never match anything again."""
+    p = tmp_path / "old.yaml"
+    p.write_text("name: old\ntool_deny: [agent_spawn]\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="renamed to 'spawn_agent'"):
+        load_capability_profile(p)
+
+
+def test_load_rejects_a_renamed_tool_name_in_tool_allow(tmp_path: Path):
+    """Tier 2: non-vacuity — the same guard applies to tool_allow, not just
+    tool_deny (an old name there silently NARROWS instead of escalating,
+    but is still an unannounced state change the operator never asked
+    for)."""
+    p = tmp_path / "old.yaml"
+    p.write_text("name: old\ntool_allow: [session_spawn]\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="renamed to 'spawn_session'"):
+        load_capability_profile(p)
+
+
+def test_load_accepts_the_new_tool_name_unchanged(tmp_path: Path):
+    """Tier 2: non-vacuity for the guard — the NEW tool name loads normally,
+    unaffected by the rename-guard (only the OLD spellings are rejected)."""
+    p = tmp_path / "new.yaml"
+    p.write_text(
+        "name: new\ntool_deny: [spawn_agent, spawn_session, create_topology]\n",
+        encoding="utf-8",
+    )
+    prof = load_capability_profile(p)
+    assert prof.tool_deny == ("spawn_agent", "spawn_session", "create_topology")
 
 
 def test_load_missing_categories_is_none_vs_empty(tmp_path: Path):

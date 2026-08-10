@@ -1,6 +1,6 @@
-"""Tier 2: #2103 C1 — the topology_create surface (reachability + floor + subtree forge-guard).
+"""Tier 2: #2103 C1 — the create_topology surface (reachability + floor + subtree forge-guard).
 
-topology_create is the LLM org-WIRING primitive: group agents you spawned into a topology
+create_topology is the LLM org-WIRING primitive: group agents you spawned into a topology
 and optionally bind capability_profiles. The 3-seam wiring (register → advertise →
 dispatch) must reach the REAL gate (the #2120 advertised-but-not-dispatched lesson); the
 #2081 floor must default-deny it (org-design is restrict-floored like spawn); the
@@ -36,23 +36,23 @@ def _registry(tmp_path: Path) -> AgentRegistry:
 
 
 def test_topology_create_is_dispatch_routed():
-    """Tier 2: topology_create reaches the REAL gate — it is in
+    """Tier 2: create_topology reaches the REAL gate — it is in
     RouterLoop.REGISTRY_DISPATCH_TOOLS (dispatch). Guards the #2120
     advertised-but-not-dispatched class (the LLM would hit 'unhandled tool')."""
     from reyn.runtime.router_loop import RouterLoop
-    assert "topology_create" in RouterLoop.REGISTRY_DISPATCH_TOOLS
+    assert "create_topology" in RouterLoop.REGISTRY_DISPATCH_TOOLS
 
 
 def test_topology_create_is_advertised_router_allow():
-    """Tier 2: topology_create is registered router=allow + advertised via build_tools, so
+    """Tier 2: create_topology is registered router=allow + advertised via build_tools, so
     the LLM can actually see it (the #2120 advertise-drift lesson)."""
     from reyn.tools import get_default_registry
-    d = get_default_registry().lookup("topology_create")
+    d = get_default_registry().lookup("create_topology")
     assert d is not None and d.gates.router == "allow"
 
 
 def test_topology_create_is_floored_default_deny():
-    """Tier 2: #2081 — topology_create is in the _delegate floor (org-design is
+    """Tier 2: #2081 — create_topology is in the _delegate floor (org-design is
     restrict-floored, default-deny) under the ONE name it has. RED if the floor
     entry is dropped.
 
@@ -64,8 +64,8 @@ def test_topology_create_is_floored_default_deny():
     from reyn.security.permissions.capability_profile import builtin_delegate_profile
     from reyn.tools import get_default_registry
 
-    assert "topology_create" in builtin_delegate_profile().tool_deny  # floored
-    assert get_default_registry().lookup("topology_create") is not None
+    assert "create_topology" in builtin_delegate_profile().tool_deny  # floored
+    assert get_default_registry().lookup("create_topology") is not None
 
 
 # ── is_spawn_descendant: the subtree predicate backbone ─────────────────────────────

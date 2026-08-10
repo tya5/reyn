@@ -76,20 +76,20 @@ class RouterCallerState:
     # handlers that need to interact with chain / task lifecycle)
     send_to_agent: Callable[..., Awaitable[Any]] | None = None
 
-    # #2103 S1bc: session-spawn dispatch. The session_spawn handler spawns a
+    # #2103 S1bc: session-spawn dispatch. The spawn_session handler spawns a
     # fresh-context session under the agent (rewind-tracked via session_spawned),
     # applies the per-session capability narrowing (S1a), and submits the task.
     # Bound by RouterLoop with chain_id pre-bound; None when the host doesn't
     # support session-spawn (= duck-typed / hasattr-guarded at caller-state build).
     spawn_session_fn: Callable[..., Awaitable[Any]] | None = None
 
-    # #2103 B-tool: agent-spawn dispatch. The agent_spawn handler creates a new agent
+    # #2103 B-tool: agent-spawn dispatch. The spawn_agent handler creates a new agent
     # under the spawner (rewind-tracked via agent_created carrying the OS-set parent
     # lineage), capped at ⊆ the spawner by construction (B-core), with an optional
     # restrict-only narrowing. None when the host doesn't support agent-spawn.
     spawn_agent_fn: Callable[..., Awaitable[Any]] | None = None
 
-    # #2103 C1: topology-create dispatch. The topology_create handler wires the spawner's
+    # #2103 C1: topology-create dispatch. The create_topology handler wires the spawner's
     # spawn-subtree agents into a topology (routed through registry.create_topology — the
     # logged emit seam, WAL-tracked for rewind), restricting members to the creator's
     # subtree so profile bindings stay ⊆-creator by construction. None when the host

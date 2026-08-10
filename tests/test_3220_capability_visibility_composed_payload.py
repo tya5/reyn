@@ -131,7 +131,7 @@ async def test_universal_category_expands_wrapper_to_reachable_capabilities(tmp_
 
     # A router-only primitive that SURVIVES the universal wrapper-mode strip (still
     # literally advertised, not folded into the wrapper) stays visible too.
-    assert "agent_spawn" in authorized_tools
+    assert "spawn_agent" in authorized_tools
     # #3429: the arm that used to sit here asserted ``delegate_to_agent not in
     # authorized_tools`` -- that the per-kind NATIVE name is stripped from
     # tools= while the same capability stays reachable under its qualified

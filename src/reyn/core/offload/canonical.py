@@ -946,7 +946,7 @@ def memory_body_to_canonical(result: dict) -> CanonicalToolResult:
 
 # ── Status-text mappers — FP-0056 issue #2681 Bucket C burn-down ─────────────────────────────────
 #
-# The 26 (25 real mappers; ``topology_create`` triaged as a genuine RECORD — full config echo, not
+# The 26 (25 real mappers; ``create_topology`` triaged as a genuine RECORD — full config echo, not
 # an ack — and left in the ratchet ledger for Bucket B) write/ack/spawn-ack producers whose result
 # has NO readable body: a write confirmation, a spawn ack, an install ack. Before this burn-down each
 # took the ``CANONICAL_TODO`` whole-dict fallback (a raw ``structured`` blob); :func:`make_status_text_mapper`
@@ -1088,7 +1088,7 @@ def _render_agent_spawn(result: dict) -> str:
     return f"{text}\n{note}" if note else text
 
 
-# ``agent_spawn`` (tools/agent_spawn.py) — ``{status, name, parent, note}``.
+# ``spawn_agent`` (tools/agent_spawn.py) — ``{status, name, parent, note}``.
 agent_spawn_to_canonical = make_status_text_mapper(
     render=_render_agent_spawn, meta_keys=("name", "parent"),
 )
@@ -1100,7 +1100,7 @@ def _render_session_spawn(result: dict) -> str:
     return f"{text}\n{note}" if note else text
 
 
-# ``session_spawn`` (tools/session_spawn.py) — ``{status, sid, mode, note}``.
+# ``spawn_session`` (tools/session_spawn.py) — ``{status, sid, mode, note}``.
 session_spawn_to_canonical = make_status_text_mapper(
     render=_render_session_spawn, meta_keys=("sid", "mode"),
 )
@@ -1587,7 +1587,7 @@ def cron_list_to_canonical(result: dict) -> CanonicalToolResult:
 
 
 def topology_create_to_canonical(result: dict) -> CanonicalToolResult:
-    """``topology_create`` result -> canonical (#2681 Bucket B — punted here from Bucket C's sweep:
+    """``create_topology`` result -> canonical (#2681 Bucket B — punted here from Bucket C's sweep:
     the success shape ``{status: "created", name, kind, members, leader, profiles}`` echoes the
     FULL created config, a genuine record, not a mere status ack — see
     ``router_host_adapter.py::create_topology``). Every error branch (``spawn_limit_exceeded`` /

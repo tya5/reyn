@@ -1,4 +1,7 @@
-"""session_spawn ToolDefinition — #2103 S1bc (LLM session-spawn primitive).
+"""spawn_session ToolDefinition — #2103 S1bc (LLM session-spawn primitive).
+Renamed from session_spawn (#4004) — the module and its internal
+identifiers keep the old spelling; only the registered ``name=`` (the
+LLM-visible string) and everything keyed off it changed.
 
 Router-only (gates.router=allow). Async-dispatch posture: the LLM
 spawns a FRESH-context session under its own agent to run a task in isolation; the
@@ -43,17 +46,17 @@ _SESSION_SPAWN_PARAMETERS: dict[str, Any] = {
     "properties": {
         "request": {
             "type": "string",
-            "description": _delegation_descriptions.PARAMS["session_spawn"]["request"].text,
+            "description": _delegation_descriptions.PARAMS["spawn_session"]["request"].text,
         },
         "mode": {
             "type": "string",
             "enum": ["ephemeral", "persistent"],
             "default": "persistent",
-            "description": _delegation_descriptions.PARAMS["session_spawn"]["mode"].text,
+            "description": _delegation_descriptions.PARAMS["spawn_session"]["mode"].text,
         },
         "narrowing": {
             "type": "object",
-            "description": _delegation_descriptions.PARAMS["session_spawn"]["narrowing"].text,
+            "description": _delegation_descriptions.PARAMS["spawn_session"]["narrowing"].text,
         },
     },
     "required": ["request"],
@@ -69,7 +72,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     rs = ctx.router_state
     if rs is None or rs.spawn_session_fn is None:
         raise RuntimeError(
-            "session_spawn requires ctx.router_state.spawn_session_fn — unavailable "
+            "spawn_session requires ctx.router_state.spawn_session_fn — unavailable "
             "(host does not support session-spawn / mis-wired dispatcher)."
         )
     mode = args.get("mode", "persistent")
@@ -88,7 +91,7 @@ from reyn.core.offload.canonical import session_spawn_to_canonical  # noqa: E402
 
 SESSION_SPAWN = ToolDefinition(
     canonical=session_spawn_to_canonical,
-    name="session_spawn",
+    name="spawn_session",
     router_dispatched=True,
     description=_SESSION_SPAWN_DESCRIPTION,
     parameters=_SESSION_SPAWN_PARAMETERS,

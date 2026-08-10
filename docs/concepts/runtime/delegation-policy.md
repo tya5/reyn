@@ -45,7 +45,7 @@ from `_FLOORED_DENY_CLASSES`):
 | `mcp-install` | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` | MCP server installation is a high-privilege, operator-controlled action |
 | `skill-install` | `skill_install_local`, `skill_install_source` | Registering skills from untrusted content is a persistence vector (#2548); mirrors `mcp-install` |
 | `pipeline-install` | `pipeline_install_local`, `pipeline_install_source` | Registering pipelines from untrusted content — same persistence vector as `skill-install` |
-| `spawn` | `session_spawn`, `agent_spawn`, `topology_create` | Unbounded sub-session/agent spawn is a DoS vector (#2103); peer of `re-delegation` |
+| `spawn` | `spawn_session`, `spawn_agent`, `create_topology` | Unbounded sub-session/agent spawn is a DoS vector (#2103); peer of `re-delegation` |
 | `pipeline-run` | `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`, `run_pipeline_inline_async` | Launching a pipeline is spawn-adjacent — peer of `spawn` |
 | `memory-write` | `remember_shared`, `remember_agent`, `forget_memory` | Persistence from an unbound delegate requires deliberate opt-in |
 
@@ -131,7 +131,7 @@ the runtime floor uses, so the audit and the floor cannot drift apart.
 | `mcp-install` | HIGH | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` |
 | `skill-install` | HIGH | `skill_install_local`, `skill_install_source` |
 | `pipeline-install` | HIGH | `pipeline_install_local`, `pipeline_install_source` |
-| `spawn` | HIGH | `session_spawn`, `agent_spawn`, `topology_create` |
+| `spawn` | HIGH | `spawn_session`, `spawn_agent`, `create_topology` |
 | `pipeline-run` | HIGH | `run_pipeline`, `run_pipeline_async`, `run_pipeline_inline`, `run_pipeline_inline_async` |
 | `memory-write` | MED | `remember_shared`, `remember_agent`, `forget_memory` |
 | `destructive-fs` | MED | `delete_file` (audit-only, not on runtime floor) |

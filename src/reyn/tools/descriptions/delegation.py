@@ -8,16 +8,18 @@ its origin tool module; the origin module now aliases its
 ``_X_DESCRIPTION`` module constant to ``delegation.NAME.text`` so every
 call site is unchanged.
 
-Covers: agent_spawn (#2103 B-tool), delegate_to_agent (ADR-0026 M4),
-session_spawn (#2103 S1bc), topology_create (#2103 C1). All four are
-router-only — org-design / delegation primitives the LLM drives directly.
+Covers: spawn_agent (#2103 B-tool, renamed from agent_spawn — #4004),
+delegate_to_agent (ADR-0026 M4), spawn_session (#2103 S1bc, renamed from
+session_spawn — #4004), create_topology (#2103 C1, renamed from
+topology_create — #4004). All four are router-only — org-design /
+delegation primitives the LLM drives directly.
 """
 from __future__ import annotations
 
 from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 
 agent_spawn = ToolDescription(
-    tool_name="agent_spawn",
+    tool_name="spawn_agent",
     surfaced="router (gates.router=allow) — #2103 B-tool",
     purpose=(
         "Create a new agent (org-design: WHO) under the caller's own "
@@ -28,14 +30,14 @@ agent_spawn = ToolDescription(
         "Create a new agent under your authority (org-design): give it a name + role. The "
         "new agent's capabilities are automatically capped at a SUBSET of your own (it can "
         "never do anything you can't). Use to design a team/org of agents; to narrow a "
-        "member's capabilities further or wire who-can-message-whom, use topology_create."
+        "member's capabilities further or wire who-can-message-whom, use create_topology."
     ),
     ja=(
         "自分の権限の下で新しいエージェントを作成する（組織設計: WHO）。"
         "名前とロールを与える。新エージェントの権限は自動的に自分のサブ"
         "セットに制限される（自分にできないことはできない）。エージェント"
         "チーム/組織を設計する用途。メンバーの権限をさらに絞ったり、誰が"
-        "誰にメッセージできるかを配線するには topology_create を使う。"
+        "誰にメッセージできるかを配線するには create_topology を使う。"
     ),
 )
 
@@ -58,7 +60,7 @@ delegate_to_agent = ToolDescription(
 )
 
 session_spawn = ToolDescription(
-    tool_name="session_spawn",
+    tool_name="spawn_session",
     surfaced="router (gates.router=allow) — #2103 S1bc",
     purpose=(
         "Spawn a fresh-context session under the caller's agent to run a "
@@ -81,7 +83,7 @@ session_spawn = ToolDescription(
 )
 
 topology_create = ToolDescription(
-    tool_name="topology_create",
+    tool_name="create_topology",
     surfaced="router (gates.router=allow) — #2103 C1",
     purpose=(
         "Wire the caller's spawned agents into a topology (org-design: "
@@ -93,7 +95,7 @@ topology_create = ToolDescription(
         "(network = all-to-all, team = star around a leader, pipeline = ordered chain) to "
         "control who-can-message-whom, and optionally bind each member to a "
         "capability_profile to narrow it further. You may only include agents in your own "
-        "spawn subtree (yourself or agents you created via agent_spawn) — a member's "
+        "spawn subtree (yourself or agents you created via spawn_agent) — a member's "
         "capabilities stay capped at a SUBSET of yours."
     ),
     ja=(
@@ -108,17 +110,17 @@ topology_create = ToolDescription(
 )
 
 ALL: dict[str, ToolDescription] = {
-    "agent_spawn": agent_spawn,
+    "spawn_agent": agent_spawn,
     "delegate_to_agent": delegate_to_agent,
-    "session_spawn": session_spawn,
-    "topology_create": topology_create,
+    "spawn_session": session_spawn,
+    "create_topology": topology_create,
 }
 
 
 # ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
-    "agent_spawn": {
+    "spawn_agent": {
         "name": ParamDescription(
             text="The new agent's identity (a unique agent name).",
             ja="新しいエージェントの識別子（一意なエージェント名）。",
@@ -141,7 +143,7 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ja="相手エージェントの文脈向けに言い換えた自然言語のリクエスト。",
         ),
     },
-    "session_spawn": {
+    "spawn_session": {
         "request": ParamDescription(
             text="The task for the fresh-context session to run.",
             ja="新規コンテキストのセッションに実行させるタスク。",
@@ -173,7 +175,7 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ),
         ),
     },
-    "topology_create": {
+    "create_topology": {
         "name": ParamDescription(
             text="The new topology's name (unique; 1-32 chars [a-z0-9_-]).",
             ja="新しいトポロジー名（一意、1〜32文字 [a-z0-9_-]）。",

@@ -566,13 +566,13 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_session_spawn_dispatches_to_host_not_unhandled():
-    """Tier 2: #2120 — _invoke_router_tool('session_spawn') reaches the registry handler
+    """Tier 2: #2120 — _invoke_router_tool('spawn_session') reaches the registry handler
     and the host's spawn_session, NOT the {"error": "unhandled tool"} fall-through.
 
-    The tui live-probe found session_spawn advertised but undispatched: the LLM called it
-    and got {"error": "unhandled tool: session_spawn"}, no spawn. This drives the real
+    The tui live-probe found spawn_session advertised but undispatched: the LLM called it
+    and got {"error": "unhandled tool: spawn_session"}, no spawn. This drives the real
     dispatch path (REGISTRY_DISPATCH_TOOLS → _invoke_via_registry → SESSION_SPAWN._handle
-    → RouterCallerState.spawn_session_fn → host.spawn_session). Drop session_spawn from
+    → RouterCallerState.spawn_session_fn → host.spawn_session). Drop spawn_session from
     REGISTRY_DISPATCH_TOOLS → the bare name falls through → result is the unhandled-tool
     error and host.spawn_calls stays empty → RED."""
     host = FakeRouterHost()
@@ -584,13 +584,13 @@ async def test_session_spawn_dispatches_to_host_not_unhandled():
     loop._tool_names = frozenset(loop._catalog.keys())
 
     result = await loop._invoke_router_tool(
-        "session_spawn", {"request": "do a task", "mode": "persistent"}
+        "spawn_session", {"request": "do a task", "mode": "persistent"}
     )
 
     assert not (isinstance(result, dict) and "unhandled tool" in str(result.get("error", ""))), (
-        f"session_spawn hit the unhandled-tool fall-through (#2120 dispatch gap): {result}"
+        f"spawn_session hit the unhandled-tool fall-through (#2120 dispatch gap): {result}"
     )
-    assert host.spawn_calls, "session_spawn did not reach host.spawn_session"
+    assert host.spawn_calls, "spawn_session did not reach host.spawn_session"
     spawned = host.spawn_calls[-1]
     assert spawned["request"] == "do a task"
     assert spawned["mode"] == "persistent"

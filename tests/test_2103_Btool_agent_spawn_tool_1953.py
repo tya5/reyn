@@ -1,6 +1,6 @@
-"""Tier 2: #2103 B-tool — the agent_spawn surface (reachability + floor + lineage cap).
+"""Tier 2: #2103 B-tool — the spawn_agent surface (reachability + floor + lineage cap).
 
-agent_spawn is the LLM org-design primitive: create a new agent under the spawner. The
+spawn_agent is the LLM org-design primitive: create a new agent under the spawner. The
 3-seam wiring (register → advertise → dispatch) must reach the REAL gate (the #2120
 advertised-but-not-dispatched lesson), the #2081 floor must default-deny it (spawning is
 restrict-floored), and the create-via-spawn path must set the OS lineage so the new agent
@@ -37,20 +37,20 @@ def _bind(tmp_path: Path, *, member: str, profile: str, body: str) -> None:
 
 
 def test_agent_spawn_is_dispatch_routed_and_advertised():
-    """Tier 2: agent_spawn reaches the REAL gate — it is in RouterLoop.REGISTRY_DISPATCH_TOOLS
+    """Tier 2: spawn_agent reaches the REAL gate — it is in RouterLoop.REGISTRY_DISPATCH_TOOLS
     (dispatch) and registered router=allow (advertise via build_tools, pinned by
     test_router_tools' EXPECTED_TOOL_NAMES). Guards the #2120 advertised-but-not-dispatched
-    class (the LLM would hit 'unhandled tool: agent_spawn')."""
+    class (the LLM would hit 'unhandled tool: spawn_agent')."""
     from reyn.runtime.router_loop import RouterLoop
-    assert "agent_spawn" in RouterLoop.REGISTRY_DISPATCH_TOOLS
+    assert "spawn_agent" in RouterLoop.REGISTRY_DISPATCH_TOOLS
 
 
 def test_agent_spawn_is_floored_default_deny():
-    """Tier 2: #2081 — agent_spawn is in the _delegate floor (spawning is
+    """Tier 2: #2081 — spawn_agent is in the _delegate floor (spawning is
     restrict-floored, default-deny, re-grantable within parent bounds) under the
     ONE name it has. RED if the floor entry is dropped.
 
-    #3429: the second assertion used to be ``agent_spawn in _FLOORED_BARE_ONLY``
+    #3429: the second assertion used to be ``spawn_agent in _FLOORED_BARE_ONLY``
     — the set declaring "this floor entry deliberately has no qualified alias to
     derive". Every entry is bare-only now, so the set is gone; what replaces it
     is ``test_2111_floor_alias_completeness``'s check that a floored name is a
@@ -58,8 +58,8 @@ def test_agent_spawn_is_floored_default_deny():
     from reyn.security.permissions.capability_profile import builtin_delegate_profile
     from reyn.tools import get_default_registry
 
-    assert "agent_spawn" in builtin_delegate_profile().tool_deny  # floored
-    assert get_default_registry().lookup("agent_spawn") is not None
+    assert "spawn_agent" in builtin_delegate_profile().tool_deny  # floored
+    assert get_default_registry().lookup("spawn_agent") is not None
 
 
 @pytest.mark.asyncio

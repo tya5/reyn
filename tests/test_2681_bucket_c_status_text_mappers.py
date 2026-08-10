@@ -69,13 +69,13 @@ def test_cron_register_renders_replaced_vs_registered() -> None:
 
 
 def test_agent_spawn_renders_status_text_with_note() -> None:
-    """Tier 1: ``agent_spawn`` (tools/agent_spawn.py ``spawn_agent`` success shape) names the new
+    """Tier 1: ``spawn_agent`` (tools/spawn_agent.py ``spawn_agent`` success shape) names the new
     agent + its parent, with the OS-authored ``note`` appended verbatim (lossless)."""
     result = {
         "status": "spawned", "name": "researcher", "parent": "lead",
         "note": "New agent created; its capabilities are capped at ⊆ yours.",
     }
-    canonical = to_canonical(result, source="agent_spawn")
+    canonical = to_canonical(result, source="spawn_agent")
     assert "researcher" in canonical["text"]
     assert "lead" in canonical["text"]
     assert "capped at" in canonical["text"]  # the note rides along, not dropped
@@ -83,12 +83,12 @@ def test_agent_spawn_renders_status_text_with_note() -> None:
 
 
 def test_session_spawn_renders_status_text() -> None:
-    """Tier 1: ``session_spawn`` (tools/session_spawn.py) success shape names the sid + mode."""
+    """Tier 1: ``spawn_session`` (tools/spawn_session.py) success shape names the sid + mode."""
     result = {
         "status": "spawned", "sid": "sess-42", "mode": "ephemeral",
         "note": "Fresh session spawned + task submitted; it runs in isolation.",
     }
-    canonical = to_canonical(result, source="session_spawn")
+    canonical = to_canonical(result, source="spawn_session")
     assert "sess-42" in canonical["text"]
     assert "ephemeral" in canonical["text"]
     assert canonical["meta"]["sid"] == "sess-42"
@@ -217,7 +217,7 @@ def test_error_shape_bypasses_the_new_status_mapper() -> None:
     """Tier 1: an error-shaped result (carries ``error``) is intercepted by the shared error seam
     BEFORE any of the new status-text mappers run — the mapper only ever sees a success dict."""
     error_result = {"status": "error", "kind": "agent_exists", "error": "agent 'x' already exists."}
-    canonical = to_canonical(error_result, source="agent_spawn")
+    canonical = to_canonical(error_result, source="spawn_agent")
     assert canonical["meta"]["isError"] is True
     assert "already exists" in canonical["text"]
 
