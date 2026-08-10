@@ -235,13 +235,14 @@ async def test_progress_notification_not_double_emitted_by_bridge(tmp_path: Path
         await service.aclose()
 
 
-# ── (c) subclassing TaskNotificationHandler preserves task-status routing ─────────
+# ── (c) task-status routing (#3698 P3: composed, not inherited) ────────────────────
 
 
 class _FakeClient:
     """Duck-typed stand-in for fastmcp.Client — only the ONE method
-    TaskNotificationHandler.dispatch actually calls (``_handle_task_status_
-    notification``). A real (hand-written) object, not a Mock/patch."""
+    ReynMCPMessageHandler.__call__ actually calls for a task-status notification
+    (``_handle_task_status_notification``). A real (hand-written) object, not a
+    Mock/patch."""
 
     def __init__(self) -> None:
         self.routed: list[types.TaskStatusNotification] = []
@@ -265,36 +266,81 @@ def _make_task_status_notification() -> types.ServerNotification:
 
 
 @pytest.mark.asyncio
-async def test_task_status_routing_preserved_through_subclass():
-    """Tier 1: ReynMCPMessageHandler subclasses TaskNotificationHandler and does NOT
-    override ``dispatch`` — so TaskNotificationHandler's own SEP-1686 task-status
-    routing (peek for a TaskStatusNotification, forward to the bound client, THEN
-    fall through to the base MessageHandler match/case that invokes our hooks) keeps
-    running unmodified. Drives the REAL inherited ``dispatch()`` (not a private-state
-    assertion) and observes the routing side effect on a real fake client object."""
-    from fastmcp.client.tasks import TaskNotificationHandler
-
+async def test_task_status_routing_via_composed_call():
+    """Tier 1: #3698 P3 — ReynMCPMessageHandler no longer inherits fastmcp's
+    TaskNotificationHandler; it implements ``__call__`` itself and peeks for a
+    TaskStatusNotification, forwarding it to the bound client's
+    ``_handle_task_status_notification`` directly (the same SEP-1686 routing
+    the inherited version used to get for free). Drives the REAL ``__call__``
+    entry point — the same one ``mcp.client.session.ClientSession`` invokes
+    as ``self._message_handler(req)`` — and observes the routing side effect
+    on a real fake client object, not a private-state assertion."""
     handler = ReynMCPMessageHandler(lambda *a, **k: None, "srv")
-    assert isinstance(handler, TaskNotificationHandler)
 
     fake_client = _FakeClient()
     handler.bind_client(fake_client)
 
     notification = _make_task_status_notification()
-    await handler.dispatch(notification)
+    await handler(notification)
 
     (routed,) = fake_client.routed  # exactly one status notification was dispatched
     assert routed.params.taskId == "task-1"
 
 
-# ── (d) synchronous handler body — sink faults never escape dispatch ──────────────
+@pytest.mark.asyncio
+async def test_unrecognized_notification_is_logged_not_silently_dropped(caplog) -> None:
+    """Tier 1: #3698 P3 review condition (lead-coder) — a message shape the
+    handler's closed match-list doesn't act on must be OBSERVABLE (a debug log
+    line naming the type), not silently reach nothing. Distinguishes "processed
+    and produced no side effect" (the 4 acted-on shapes, when their own body
+    happens to do nothing) from "not one of ours, ignored" — the day fastmcp/MCP
+    adds a notification type this handler doesn't yet act on, that day must be
+    distinguishable in the log from an ordinary quiet run.
+
+    ``ResourceListChangedNotification`` — a real MCP notification shape reyn
+    has never acted on (module docstring: "out of ②b's scope") — is the probe."""
+    import logging
+
+    handler = ReynMCPMessageHandler(lambda *a, **k: None, "srv")
+    handler.bind_client(_FakeClient())
+
+    notification = types.ServerNotification(types.ResourceListChangedNotification())
+    with caplog.at_level(logging.DEBUG, logger="reyn.mcp.message_handler"):
+        await handler(notification)
+
+    assert any(
+        "no handler for message type" in r.message and "ResourceListChangedNotification" in r.message
+        for r in caplog.records
+    ), f"expected an observable unhandled-message log line; got: {[r.message for r in caplog.records]}"
 
 
 @pytest.mark.asyncio
-async def test_emit_sink_fault_does_not_break_dispatch():
+async def test_a_non_notification_message_is_also_logged_not_silently_dropped(caplog) -> None:
+    """Tier 1: same condition as above, for the OTHER branch of __call__ — a
+    non-ServerNotification message (a request or a transport-level Exception,
+    per ``mcp.types``' own ``Message`` union) also reaches _log_unhandled
+    rather than nothing, since reyn has never acted on either shape (no
+    on_request/on_ping/on_exception override existed even in the inherited
+    version)."""
+    import logging
+
+    handler = ReynMCPMessageHandler(lambda *a, **k: None, "srv")
+    handler.bind_client(_FakeClient())
+
+    with caplog.at_level(logging.DEBUG, logger="reyn.mcp.message_handler"):
+        await handler(RuntimeError("not a ServerNotification"))
+
+    assert any("no handler for message type" in r.message for r in caplog.records)
+
+
+# ── (d) synchronous handler body — sink faults never escape __call__ ──────────────
+
+
+@pytest.mark.asyncio
+async def test_emit_sink_fault_does_not_break_call():
     """Tier 1: the notification hooks call the emit sink SYNCHRONOUSLY (never
     ``await`` it — see message_handler.py's module docstring) and never let a sink
-    fault escape: a raising sink must not propagate out of ``dispatch()``, since
+    fault escape: a raising sink must not propagate out of ``__call__()``, since
     that would crash/stall the held connection's FastMCP receive loop for every
     subsequent message, not just the one notification that triggered the fault."""
 
@@ -305,7 +351,7 @@ async def test_emit_sink_fault_does_not_break_dispatch():
     handler.bind_client(_FakeClient())
 
     notification = types.ServerNotification(types.ToolListChangedNotification())
-    await handler.dispatch(notification)  # must not raise
+    await handler(notification)  # must not raise
 
 
 @pytest.mark.asyncio
@@ -326,7 +372,7 @@ async def test_tools_cache_invalidate_fault_does_not_block_event_emit(tmp_path: 
     handler.bind_client(_FakeClient())
 
     notification = types.ServerNotification(types.ToolListChangedNotification())
-    await handler.dispatch(notification)  # must not raise
+    await handler(notification)  # must not raise
 
     matching = [e for e in collected if e.type == "mcp_tool_list_changed"]
     (only_event,) = matching  # exactly one — invalidate faulting must not swallow the emit

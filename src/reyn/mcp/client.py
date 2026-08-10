@@ -662,8 +662,9 @@ class MCPClient:
         # docstring rather than left for a reader to discover from the wiring.
         self._emit_event: Callable[..., Any] | None = emit_event
         # #2597 S2b: optional async server->client notifications bridge — a
-        # ReynMCPMessageHandler (fastmcp.client.tasks.TaskNotificationHandler subclass;
-        # see reyn.mcp.message_handler) that receives tools/prompts list_changed +
+        # ReynMCPMessageHandler (#3698 P3: composes fastmcp's message-handler
+        # contract rather than subclassing it — see reyn.mcp.message_handler's
+        # module docstring) that receives tools/prompts list_changed +
         # progress notifications on this client's held connection and emits them onto
         # reyn's EventLog. None (default) preserves pre-S2b behaviour — no bridge, no
         # behaviour change for callers that don't pass one (e.g. the ephemeral
