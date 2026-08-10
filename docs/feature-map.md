@@ -713,6 +713,7 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | MessageBus | Quiescence-based coordination with `reply_to` correlation | [Multi-agent config](reference/config/multi-agent.md) |
 | `delegate_to_agent` | Async-dispatch to peer with topology permission gate | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | `send_to_session` | Fire-and-forget delivery to a specific `(agent, session)` — no reply is collected; `wake=True` starts a turn on it now, `wake=False` (default) queues it as context for the target's next turn | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
+| `describe_task` / `list_tasks` / `cancel_task` | Read/act against the settle-path task handle (`ChainManager`) — `describe_task` returns `{task_id, kind, status, session, requester}`, `list_tasks` lists running handles by kind, `cancel_task` never reports a fabricated success on a crash-recovered handle whose live callable is gone | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | Agent hops cap | Max delegation depth via `safety.loop.max_agent_hops` | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
 | `chain_id` propagation | Trace multi-hop chains in P6 events | [Events reference](reference/runtime/events.md) |
 
@@ -724,8 +725,8 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 > `session_spawn` by #4004/#4017), and the A2A async run under one `task` concept (one execution
 > and a handle) with a single collection surface, retiring
 > `delegate_to_agent` and the three `run_pipeline_*` async variants in favor of `run_prompt` /
-> `run_pipeline(collect=…)`. `send_to_session` (P5) has landed — see the row above; the
-> remaining `run_prompt` / `describe_task` / `list_tasks` / `cancel_task` tools and
+> `run_pipeline(collect=…)`. `send_to_session` (P5) and `describe_task` / `list_tasks` /
+> `cancel_task` (P4) have landed — see the row above; `run_prompt` (attached and async) and
 > `delegate_to_agent`'s retirement are still pending. `delegate_to_agent` stays live and
 > unchanged until its own retirement PR lands.
 
