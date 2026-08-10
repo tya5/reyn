@@ -269,6 +269,15 @@ class AgentSnapshot:
                 "origin_depth": int(event["origin_depth"]),
                 "original_request": event["original_request"],
                 "waiting_on": list(event.get("waiting_on", [])),
+                "origin_sid": event.get("origin_sid"),
+                # #3978 P4: the task kind (prompt/pipeline/exec) — persisted
+                # key is "task_kind" (chain_manager.py's own record_chain_register
+                # collision note: "kind" is SnapshotJournal._wal_append_nowait's
+                # own WAL-event-type positional). Without this branch, a crash
+                # recovered via pure WAL REPLAY (not a loaded snapshot file)
+                # would silently drop it — ChainManager.restore() reads it
+                # back out under the same key.
+                "task_kind": event.get("task_kind"),
             }
         elif kind == "chain_update":
             chain = self.pending_chains.get(event["chain_id"])

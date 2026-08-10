@@ -592,6 +592,7 @@ async def _spawn_pipeline_driver_session(
                 original_text=pipeline_name, sender=None,
                 origin_agent=reply_to_agent,
                 origin_sid=None if reply_to_sid == "main" else reply_to_sid,
+                kind="pipeline",
             )
     session = registry.get_session(reply_to_agent, sid)
     if session is None:

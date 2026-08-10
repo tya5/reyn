@@ -38,6 +38,69 @@ def _make_manager(tmp_path: Path) -> ChainManager:
     )
 
 
+# ── P4 field decision: kind (added) + requester (derived, not stored) ──────
+
+
+@pytest.mark.asyncio
+async def test_registered_kind_is_readable_back(tmp_path: Path):
+    """Tier 2: #3978 P4 — a handle registered with ``kind`` is readable back
+    via ``get``/``find_chain`` (describe_task/list_tasks's own read path)."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-k1", from_user=False, depth=0, original_text="p", sender=None,
+        kind="pipeline",
+    )
+    assert mgr.get("run-k1").kind == "pipeline"
+
+
+@pytest.mark.asyncio
+async def test_registered_kind_defaults_to_none_for_legacy_delegate_chains(
+    tmp_path: Path,
+):
+    """Tier 2: falsification pair — a caller that doesn't pass ``kind`` (every
+    existing delegate-relay call site, unchanged by this PR) still registers
+    cleanly, with ``kind=None`` — "not yet a typed task" is a real, distinct
+    value from any of prompt/pipeline/exec, not a crash."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-k2", from_user=False, depth=0, original_text="p", sender=None,
+    )
+    assert mgr.get("run-k2").kind is None
+
+
+@pytest.mark.asyncio
+async def test_requester_derives_from_origin_agent_and_sid(tmp_path: Path):
+    """Tier 2: ADR-0040 D6 — ``requester`` is NOT a stored field (lead-coder's
+    measurement, #3978): it's a read accessor over the EXISTING
+    (origin_agent, origin_sid) fields, which already carry the same fact
+    (the docstring's own "routes back to the specific (origin_agent,
+    origin_sid)"). Real, non-default sid."""
+    mgr = _make_manager(tmp_path)
+    chain = await mgr.register(
+        chain_id="run-k3", from_user=False, depth=0, original_text="p", sender=None,
+        origin_agent="worker", origin_sid="s7",
+    )
+    assert chain.requester.agent_name == "worker"
+    assert chain.requester.session_id == "s7"
+
+
+@pytest.mark.asyncio
+async def test_requester_session_id_defaults_to_main_when_origin_sid_none(
+    tmp_path: Path,
+):
+    """Tier 2: falsification pair — ``origin_sid=None`` (the main-session
+    case, #2130's own documented default) derives ``requester.session_id ==
+    "main"``, matching every other main-case convention in this codebase
+    (e.g. ``PipelineWorkOrder.reply_to_sid``), not a bare ``None`` that
+    ``Requester``'s own type (``session_id: str``) can't even represent."""
+    mgr = _make_manager(tmp_path)
+    chain = await mgr.register(
+        chain_id="run-k4", from_user=False, depth=0, original_text="p", sender=None,
+        origin_agent="worker", origin_sid=None,
+    )
+    assert chain.requester.session_id == "main"
+
+
 # ── acceptance condition ①: one settle function, kind-agnostic signature ───
 
 

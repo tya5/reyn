@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_ch
 
 if TYPE_CHECKING:
     from reyn.core.events.agent_snapshot import AgentSnapshot
+    from reyn.runtime.task_types import Requester
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _PendingChain:
-    """Multi-hop relay state held in a delegating agent.
+    """Multi-hop relay state held in a delegating agent — and, since proposal
+    0067's settle path (#3978), also a task's collection handle
+    (``pending_chains`` repurposed as the settle-path substrate, per the
+    proposal's own P6 note).
 
     Created when an agent receives an ``agent_request`` and decides to
     further delegate (router emits ``messages_to_agents``). The reply to
@@ -52,6 +56,33 @@ class _PendingChain:
     # specific (origin_agent, origin_sid), not the origin agent's main session. None →
     # main-case (user-initiated / external peer / pre-#2130 journal entries).
     origin_sid: "str | None" = None
+    # proposal 0067 P4 (#3978): the task kind (prompt/pipeline/exec) this
+    # handle represents — None for a legacy delegate-relay chain (no typed
+    # task kind exists for that flow yet; P6 assigns one when
+    # delegate_to_agent's own completion is folded into this same
+    # substrate). ``describe_task``/``list_tasks`` read this; a handle
+    # registered with no ``kind`` is not yet describable as a typed task.
+    kind: "str | None" = None
+
+    @property
+    def requester(self) -> "Requester":
+        """ADR-0040 D6's ``Requester(agent_name, session_id)`` — derived
+        from ``(origin_agent, origin_sid)``, NOT a second stored field.
+
+        Measured (lead-coder, 2026-08-10): these two fields already ARE
+        D6's Requester in substance — the docstring above already says
+        "routes back to the specific (origin_agent, origin_sid)". Adding a
+        separate ``requester`` field would duplicate storage for the same
+        fact. The RENAME (making ``origin_agent``/``origin_sid`` literally
+        ``requester.agent_name``/``requester.session_id``) is deferred to
+        P6 (no consumer needs it before delegate_to_agent's own completion
+        folds into this substrate) — this read accessor lets P4's
+        ``describe_task`` consumer be satisfied today without committing to
+        that rename now; P6 changing the field names underneath won't
+        change this property's callers."""
+        from reyn.runtime.task_types import Requester
+
+        return Requester(agent_name=self.origin_agent, session_id=self.origin_sid or "main")
 
 
 # ── Journal protocol ──────────────────────────────────────────────────────────
@@ -142,6 +173,7 @@ class ChainManager:
         origin_agent: str = "",
         origin_depth: int = 0,
         origin_sid: "str | None" = None,
+        kind: "str | None" = None,
     ) -> _PendingChain:
         """Register a new pending chain and persist it via the journal.
 
@@ -163,6 +195,12 @@ class ChainManager:
             The agent to reply to when the chain resolves.
         origin_depth:
             The depth at which to send the reply upstream.
+        kind:
+            proposal 0067 P4 (#3978): the task kind (``"prompt"`` /
+            ``"pipeline"`` / ``"exec"``) this handle represents, or
+            ``None`` for a legacy delegate-relay chain (no producer sets
+            this today — P6 assigns one when ``delegate_to_agent``'s own
+            completion folds into this substrate).
         """
         chain = _PendingChain(
             chain_id=chain_id,
@@ -171,6 +209,7 @@ class ChainManager:
             original_request=original_text,
             waiting_on=set(waiting_on or []),
             origin_sid=origin_sid,
+            kind=kind,
         )
         self._chains[chain_id] = chain
 
@@ -181,6 +220,11 @@ class ChainManager:
             "waiting_on": sorted(chain.waiting_on),
             "from_user": from_user,
             "origin_sid": chain.origin_sid,  # #2130
+            # Persisted key is "task_kind", not "kind" — SnapshotJournal's
+            # own _wal_append_nowait(kind: str, **fields) takes "kind" as
+            # the WAL EVENT type positional (e.g. "chain_register"); a
+            # "kind" entry inside **fields collides with it.
+            "task_kind": chain.kind,  # #3978 P4
         }
         await self._journal.record_chain_register(chain_id=chain_id, fields=fields)
         return chain
@@ -410,5 +454,6 @@ class ChainManager:
                 original_request=chain_dict["original_request"],
                 waiting_on=set(chain_dict.get("waiting_on", [])),
                 origin_sid=chain_dict.get("origin_sid"),  # #2130 (None for pre-#2130 entries)
+                kind=chain_dict.get("task_kind"),  # #3978 P4 (None for pre-P4 entries)
             )
             self.arm_timeout(cid, on_fire=on_fire)
