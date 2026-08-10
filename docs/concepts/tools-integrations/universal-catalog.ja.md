@@ -249,7 +249,7 @@ gate は pure function; runtime は `embedding.enabled`(FP-0066 §7)
 ## System prompt placement (§D9)
 
 `action_retrieval.universal_wrappers_enabled` が true のとき、 router
-system prompt に **`## Action categories`** section が加わり、 13
+system prompt に **`## Action categories`** section が加わり、 全
 category と canonical-default 意味論を列挙する。 この section は
 `## Capabilities` と `## Behaviour` の間に位置し、 static prompt-cache
 prefix 内に留まる (= 2 回目以降の request は warm cache を hit)。

@@ -124,6 +124,7 @@ def get_default_registry() -> ToolRegistry:
         SKILL_INSTALL_SOURCE,
         SKILL_LIST,
     )
+    from reyn.tools.task_verbs import CANCEL_TASK, DESCRIBE_TASK, LIST_TASKS
     from reyn.tools.topology_create import TOPOLOGY_CREATE
 
     # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
@@ -307,6 +308,12 @@ def get_default_registry() -> ToolRegistry:
     # identical (invocation.json carries the full serialized Pipeline).
     registry.register(RUN_PIPELINE_INLINE)
     registry.register(RUN_PIPELINE_INLINE_ASYNC)
+    # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task —
+    # read/act against the settle-path handle substrate (ChainManager),
+    # threaded via RouterCallerState.chains.
+    registry.register(DESCRIBE_TASK)
+    registry.register(LIST_TASKS)
+    registry.register(CANCEL_TASK)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through

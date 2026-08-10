@@ -3911,6 +3911,10 @@ class Session:
             # RouterCallerState.pipeline_registry by
             # RouterLoop._build_router_caller_state.
             pipeline_registry=self._pipeline_registry,
+            # proposal 0067 P4 (#3978): describe_task/list_tasks/cancel_task
+            # act against THIS session's own pending_chains — mirrors
+            # pipeline_registry above.
+            chains=self.chains,
             # FP-0054 PR-C: the session's PresentationRegistry — mirrors
             # pipeline_registry above; the adapter threads its CURRENT snapshot into
             # each router OpContext, and _reapply_presentations swaps both copies.

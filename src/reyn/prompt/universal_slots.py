@@ -243,6 +243,13 @@ ACTION_CATEGORIES_LINES = [
         ".reyn/pipelines/<name>/)."
     ),
     (
+        "- **task** — describe/list/cancel a currently RUNNING async task "
+        "(a run_prompt/run_pipeline launch): `describe_task` for one by its "
+        "task_id, `list_tasks` for all (optionally filtered by kind), "
+        "`cancel_task` to request cooperative stop. A settled task has no "
+        "handle — its result arrives as a push, not via these."
+    ),
+    (
         "- **presentation_management** — manage named presentation templates: "
         "`presentation_install_local` to register a named presentation "
         "blueprint (a declarative component tree) into "
