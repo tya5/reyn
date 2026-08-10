@@ -417,6 +417,19 @@ actually promises.
   class on their first whole-tree run, confirming "declared byte-identical
   ⇒ safe" had been true only for the specific property it checked, never
   the broader one readers assumed from its name.
+  **Update (2026-08-10, #4069→#4073)**: the axiom itself did not loosen —
+  a reference that CANNOT be written correctly before its own move lands
+  (an `import` of the moved module's dotted path, a `path.is_file()`
+  registry string) has no other legal order to land in, so permitting it
+  is not a bigger version of "byte-identical ⇒ safe", it is a mechanical
+  identification of the subset that was never byte-identical-capable in
+  the first place. The check builds the PR's own rename mapping from its
+  `R100` lines and verifies every changed line, hunk-scoped, resolves
+  under that mapping — no external list, no human judgment call. This is
+  the opposite direction from #4064's rejected proposal (widen rule ① to
+  "any coherent subject", a human judgment call): #4073 substitutes a
+  mechanical check for what could previously only merge as a declared,
+  unverifiable "a human read every line" promise.
 
 **Apply**: when writing or reviewing a gate, write out the FULL property the
 surrounding prose/docstring promises, then check whether the assertion
