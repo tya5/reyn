@@ -60,6 +60,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
 )
 from reyn.runtime.error_format import classify_router_error
 from reyn.runtime.errors import AgentStepError, RouterCapExceeded, StructuredOutputError
+from reyn.runtime.inbox_arbiter import InboxArbiter
 from reyn.runtime.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -313,70 +314,10 @@ def _extract_tool_call_records(
     return out
 
 
-# FP-0041 (#489) PR-A: humanic dispatch attribution helper.
-#
-# Sender envelope strings follow ``<transport>:<id>[:<display>]``. This
-# helper produces a human-readable label for inclusion in state_change
-# summaries so the LLM sees "bob (Slack)" instead of "slack:U456:bob".
-# Unknown / malformed senders fall through to the raw string.
-_SENDER_TRANSPORT_DISPLAY = {
-    "user":     "user",
-    "slack":    "Slack",
-    "line":     "LINE",
-    "cron":     "scheduled cron job",
-    "a2a":      "peer agent",
-    "webhook":  "external webhook",
-}
-
-
-def _format_sender_label(sender: str | None) -> str:
-    """Format a sender envelope string for LLM-visible state_change text.
-
-    Examples
-    --------
-    ``"slack:U456:bob"`` → ``"bob (Slack)"``
-    ``"slack:U456"`` → ``"slack user U456"``
-    ``"cron:morning_news"`` → ``"scheduled cron job 'morning_news'"``
-    ``"user:tui"`` → ``"user (TUI)"``
-    ``"a2a:news_agent"`` → ``"peer agent 'news_agent'"``
-    ``None`` → ``"an unknown sender"`` (= used in first-turn pre-state)
-
-    Falls through to the raw string when the transport is not in the
-    known list — keeps the dispatch resilient to new sources added by
-    future PRs without label updates here.
-    """
-    if sender is None:
-        return "an unknown sender"
-    parts = sender.split(":", 2)
-    if not parts or not parts[0]:
-        return sender
-    transport = parts[0]
-    rest = parts[1:] if len(parts) > 1 else []
-    transport_label = _SENDER_TRANSPORT_DISPLAY.get(transport)
-    if transport_label is None:
-        return sender
-    if transport == "user":
-        surface = rest[0].upper() if rest else ""
-        return f"user ({surface})" if surface else "user"
-    if transport == "slack" or transport == "line":
-        if len(rest) >= 2 and rest[1]:
-            return f"{rest[1]} ({transport_label})"
-        if len(rest) >= 1 and rest[0]:
-            return f"{transport_label.lower()} user {rest[0]}"
-        return transport_label
-    if transport == "cron":
-        if rest and rest[0]:
-            return f"{transport_label} '{rest[0]}'"
-        return transport_label
-    if transport == "a2a":
-        if rest and rest[0]:
-            return f"{transport_label} '{rest[0]}'"
-        return transport_label
-    if transport == "webhook":
-        if rest and rest[0]:
-            return f"{transport_label} ({rest[0]})"
-        return transport_label
-    return sender
+# FP-0041 (#489) PR-A: humanic dispatch attribution helper — moved to
+# ``reyn.runtime.inbox_arbiter`` (proposal 0067 P1, #3978), the only caller
+# (``InboxArbiter.handle_sender_attribution``, née
+# ``Session._handle_sender_attribution``).
 
 
 def _format_config_reloaded(data: dict) -> str:
@@ -1060,16 +1001,9 @@ class Session:
         self._eager_embedding_build = eager_embedding_build
         # agent_id is owned by Agent (identity SSoT); the field + its prior
         # None-fallback default were removed (#3133 P0-follow-up, see docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2).
-        # Sender of the most-recently-dispatched inbox item, for sender-transition state_change entries (FP-0041 #489 PR-A)
-        self._last_sender: str | None = None
-        # Reply-to attribution captured from an inbound payload's reply_to (FP-0041 #489 PR-D2)
-        self._last_reply_to: Any = None
         # Proposal 0067 P0 (#3978): typed home for the present-tense task
-        # state, additive and unread by anything yet — _last_sender /
-        # _last_reply_to above remain the live attribution path until P1
-        # extracts InboxArbiter and migrates onto this field. See
-        # reyn.runtime.task_types.CurrentTask's own docstring for why each
-        # field exists and where it comes from.
+        # state. See reyn.runtime.task_types.CurrentTask's own docstring for
+        # why each field exists and where it comes from.
         self.current_task: "CurrentTask | None" = None
         # Outbox interceptor for external transport (e.g. Slack via MCP); None skips interception (FP-0041 #489 PR-D2)
         self._outbox_interceptor: Any = None
@@ -1156,8 +1090,9 @@ class Session:
         # dequeue leaves no stale Queue entry to skip (a fresh process starts
         # with an empty asyncio.Queue and repopulates it from the recovered
         # snapshot, which already excludes the cancelled item — see
-        # `restore_state`).
-        self._cancelled_msg_ids: "set[str]" = set()
+        # `restore_state`). Owned by ``self._inbox_arbiter`` (proposal 0067
+        # P1, #3978 — InboxArbiter extraction), constructed below once
+        # ``self.inbox`` exists.
         self._turn_owner_task: "asyncio.Task | None" = None  # lets await_quiescent skip its wait when called re-entrantly from the owning task
         # #2242: True only for the window between cancel_inflight() calling
         # `_turn_owner_task.cancel()` and run_one_iteration observing the
@@ -1178,8 +1113,9 @@ class Session:
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
         # In-memory buffer of restored-then-resolved intervention answers (PR-intervention-link L6, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode)
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
-        # In-memory staging for wake=false ride-along messages, durably persisted in the snapshot (#1800 slice 4b, see session-construction.md#safety-limits-interactive-mode)
-        self._next_turn_context: list[dict] = []
+        # In-memory staging for wake=false ride-along messages, durably
+        # persisted in the snapshot (#1800 slice 4b). Owned by
+        # ``self._inbox_arbiter`` (proposal 0067 P1, #3978).
 
         # HookBus/HookDispatcher/fs_watcher/composers/hot_reloader built together below; the config-derivation feeding them stays inline as builder inputs (#1800 slice 5b / #3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         self._startup_hooks_raw: list = hooks_config if isinstance(hooks_config, list) else []
@@ -1229,18 +1165,20 @@ class Session:
 
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
-        # #3792: a 1-slot, volatile (not WAL/snapshot-backed) peek buffer.
-        # ``asyncio.Queue`` has no peek/un-get API (see ``_consume_inbox``'s
-        # own docstring on this), so ``peek_mid_turn_injection`` dequeues via
-        # ``get_nowait()`` into THIS slot without telling the journal — the
-        # snapshot-backed SSoT (``self._journal``) stays untouched until
-        # ``commit_mid_turn_injection`` actually commits. ``_consume_inbox``
-        # (the ordinary turn-boundary dequeue) checks this slot FIRST so an
-        # item peeked-but-never-committed (abnormal exit mid-turn, or an
-        # ineligible-origin head the peek deliberately did not act on) is
-        # never stranded or reordered — it surfaces exactly where it would
-        # have if the peek had never happened.
-        self._pending_inbox_item: "tuple[str, dict] | None" = None
+        # Proposal 0067 P1 (#3978): InboxArbiter owns the inbox-drain +
+        # dispatch-attribution state cluster (pending peek buffer,
+        # cancelled-msg-id skip-set, staged wake=false ride-alongs,
+        # last_sender / last_reply_to) — see reyn.runtime.inbox_arbiter's
+        # module docstring for what moved and what stayed here (and why).
+        # ``notify_state_change`` is passed as a bound method reference
+        # (resolved at call time, not at this line — the method is defined
+        # later in this class, same shape callback-injection already uses
+        # elsewhere in Session, e.g. InterAgentMessaging's construction).
+        self._inbox_arbiter = InboxArbiter(
+            inbox=self.inbox,
+            journal=self._journal,
+            notify_state_change=self.notify_state_change,
+        )
         self.outbox: asyncio.Queue = asyncio.Queue()
         # event_store -> audit_events -> outbox_hub (+ opt-in OTEL), byte-identical extraction (#3082 Family 1, see session-construction.md#family-1-audit-event-spine-p6)
         _audit_bundle = self._build_audit_event_bundle(observability_config)
@@ -1870,9 +1808,10 @@ class Session:
         Captured by the sender-attribution path and used by
         ``_put_outbox`` to default the outbox message's ``reply_to``
         when the caller did not supply one. Tests verify the capture
-        + default chain through this surface.
+        + default chain through this surface. Proposal 0067 P1 (#3978):
+        the value itself lives on ``self._inbox_arbiter.last_reply_to``.
         """
-        return self._last_reply_to
+        return self._inbox_arbiter.last_reply_to
 
     @property
     def on_perm_persist_cb(self):
@@ -2474,7 +2413,7 @@ class Session:
             outstanding_interventions      → self._interventions (clear)
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
-            next_turn_context              → self._next_turn_context
+            next_turn_context              → self._inbox_arbiter.next_turn_context
             hook_driven_turns              → self._hook_driven_turns (#2884; restore_state's
                                                plain assignment is unconditional, so no
                                                separate clear step is needed here)
@@ -2498,12 +2437,29 @@ class Session:
             self._restore_intervention_tasks = []
         self._buffered_intervention_answers.clear()
         # next_turn_context (#1800-4b)
-        self._next_turn_context.clear()
+        self._inbox_arbiter.next_turn_context.clear()
         # hook_driven_turns (#2884): reset the loop-valve counter mirror. restore_state
         # re-assigns it wholesale from the reconstructed snapshot, but clearing here keeps
         # the zero-residue guarantee robust independent of that assignment.
         self._hook_driven_turns = 0
         self._inflight_wal_tasks.clear()
+        # pending_inbox_item / cancelled_msg_ids / last_sender / last_reply_to
+        # (proposal 0067 P1, #3978 InboxArbiter extraction): the same latent
+        # gap current_task's own comment below names — NONE of these four
+        # were part of AgentSnapshot before this extraction either, and
+        # reset_for_rewind never cleared them (only next_turn_context and
+        # hook_driven_turns were). A genuine process crash was already safe
+        # (fresh Session() defaults win, restore_state never sets them), but
+        # a REWIND reuses the SAME live Session — without this, a peeked
+        # mid-turn item, a stale cancel-skip entry, or a stale sender/
+        # reply_to attribution from BEFORE the rewound point would silently
+        # outlive it. Discovered while moving this state into one holder for
+        # this extraction; fixed here rather than deferred, matching the
+        # current_task precedent immediately below.
+        self._inbox_arbiter.pending_inbox_item = None
+        self._inbox_arbiter.cancelled_msg_ids.clear()
+        self._inbox_arbiter.last_sender = None
+        self._inbox_arbiter.last_reply_to = None
         # current_task (proposal 0067 P1', #3978): NOT part of AgentSnapshot
         # (deliberately volatile, same framing ADR-0040 gives reply_to — "None
         # after crash"), so a genuine process crash is naturally safe: a
@@ -2722,71 +2678,13 @@ class Session:
                 out.append(m)
         return out
 
-    def _handle_sender_attribution(self, payload: object) -> None:
-        """Surface a sender transition to the LLM as a state_change entry
-        (= FP-0041 (#489) PR-A humanic dispatch attribution).
-
-        When the sender of an inbox item differs from the prior turn's
-        sender, emit a state_change history entry so the LLM reads
-        "[context shift] Now responding to <X> via <transport>.
-        Previous turn was from <Y>." before processing the new turn.
-        Without this, merged-inbox multi-consumer dispatch produces a
-        confused linear feed where the LLM can't tell who's talking.
-
-        ``sender`` convention (= envelope shape):
-          - ``user:tui`` / ``user:web`` / ``user:cli`` — local human user
-          - ``slack:<user_id>[:<display_name>]`` — Slack consumer
-          - ``line:<user_id>[:<display_name>]`` — LINE consumer
-          - ``cron:<job_name>`` — scheduled fire
-          - ``a2a:<peer_agent>`` — peer-agent message
-          - ``webhook:<source>`` — external event source (= Phase 2)
-
-        Payloads without a ``sender`` field are dispatched unchanged
-        (= backward compat for existing inbox producers that haven't
-        adopted the convention yet). No state_change is emitted in
-        that case; ``self._last_sender`` is unchanged.
-        """
-        if not isinstance(payload, dict):
-            return
-        # FP-0041 #489 PR-D2: capture reply_to from payload regardless
-        # of sender transition (= even a same-sender follow-up may have
-        # a new reply_to, e.g. different Slack thread). When the payload
-        # doesn't carry reply_to, the previous value is preserved (=
-        # downstream interceptor handles the "no reply_to" case by
-        # falling through to the default surface).
-        reply_to = payload.get("reply_to")
-        if reply_to is not None:
-            self._last_reply_to = reply_to
-        new_sender = payload.get("sender")
-        if not new_sender or not isinstance(new_sender, str):
-            return
-        if new_sender == self._last_sender:
-            return
-        prev_label = _format_sender_label(self._last_sender)
-        new_label = _format_sender_label(new_sender)
-        if self._last_sender is None:
-            summary = (
-                f"[context shift] Now responding to {new_label}. "
-                f"This is the first attributed turn this session."
-            )
-        else:
-            summary = (
-                f"[context shift] Now responding to {new_label}. "
-                f"Previous turn was from {prev_label}."
-            )
-        try:
-            self.notify_state_change(summary, source="dispatch_attribution")
-        except Exception:
-            # Defensive: attribution emission must not crash dispatch.
-            pass
-        self._last_sender = new_sender
-
     def last_sender(self) -> str | None:
         """Return the most-recently-attributed sender label or None if no
         message has been routed yet. Read-only accessor for
-        ``_last_sender`` — write side stays internal to the dispatch
-        attribution path."""
-        return self._last_sender
+        ``InboxArbiter.last_sender`` — write side stays internal to the
+        dispatch attribution path (proposal 0067 P1, #3978: moved onto
+        ``self._inbox_arbiter``, see ``InboxArbiter.handle_sender_attribution``)."""
+        return self._inbox_arbiter.last_sender
 
     def _on_audit_event_for_state_change(self, event) -> None:
         """Generic events-log subscriber that converts known emitter events
@@ -3528,7 +3426,7 @@ class Session:
         hook_dispatcher = HookDispatcher(
             self._build_hook_registry(boot_in_set),
             put_inbox=self._put_inbox,
-            stage_next_turn_context=self._stage_next_turn_context,
+            stage_next_turn_context=self._inbox_arbiter.stage_next_turn_context,
             # #2072: route a push whose `session` names a different session to THAT session
             # (cross-session); `current_session_id` keeps a self/unnamed push local.
             cross_session_put=self._cross_session_hook_put,
@@ -4046,7 +3944,7 @@ class Session:
             put_outbox_inputs=_put_outbox_inputs,  # #3482
             append_history=self._append_history,
             # #3792: mid-turn CLIENT_INPUT injection.
-            peek_mid_turn_injection=self._peek_mid_turn_injection,
+            peek_mid_turn_injection=self._inbox_arbiter.peek_mid_turn_injection,
             commit_mid_turn_injection=self._commit_mid_turn_injection,
             # Proposal 0067 P1' (#3978)
             mark_task_pending=lambda: setattr(self, "current_task", CurrentTask()),
@@ -5123,90 +5021,11 @@ class Session:
         cancelled = await self._journal.cancel_inbox(msg_id=msg_id)
         if not cancelled:
             return False
-        self._cancelled_msg_ids.add(msg_id)
+        self._inbox_arbiter.cancelled_msg_ids.add(msg_id)
         self._audit_events.emit(
             "inbox_cancel", msg_id=msg_id, seq=self._bump_queue_seq(),
         )
         return True
-
-    async def _consume_inbox(self) -> "tuple[str, dict] | None":
-        """Wait for next inbox message; on receive, record `inbox_consume`
-        via journal (skipped for shutdown signals which are out-of-band).
-
-        #3300 P3 (Y-server) skip-at-consume: if the dequeued item's msg_id was
-        already cancelled (``Session.cancel_queued`` — its snapshot.inbox entry
-        + WAL ``inbox_cancel`` tombstone were already recorded synchronously at
-        cancel time), this discards the physical ``asyncio.Queue`` entry
-        WITHOUT recording a redundant ``inbox_consume`` (the item is already
-        gone from the snapshot) and returns ``None`` — the caller
-        (``_drain_to_wake``) must treat this as "nothing dequeued yet" and
-        loop again, never dispatching a turn for a cancelled item.
-
-        #3792: reads ``self._pending_inbox_item`` FIRST, ahead of a fresh
-        ``self.inbox.get()``. An item can land there via
-        ``peek_mid_turn_injection`` — either because the running turn ended
-        (cancel / cap / overflow / LLM exception) before
-        ``commit_mid_turn_injection`` ever fired (carry-forward: the item is
-        simply processed as an ordinary new turn here, exactly as if the
-        peek had never happened), or because the peeked head was an
-        INELIGIBLE origin (peek deliberately leaves it there rather than
-        skipping past it — see that method). Checking here first is what
-        makes both cases land correctly instead of being stranded behind a
-        ``self.inbox.get()`` that would never see them again.
-        """
-        if self._pending_inbox_item is not None:
-            kind, payload = self._pending_inbox_item
-            self._pending_inbox_item = None
-        else:
-            kind, payload = await self.inbox.get()
-        msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
-        if kind != "shutdown" and msg_id in self._cancelled_msg_ids:
-            self._cancelled_msg_ids.discard(msg_id)
-            return None
-        if kind != "shutdown":
-            await self._journal.consume_inbox(msg_id=msg_id)
-        return kind, payload
-
-    async def _peek_mid_turn_injection(self) -> "dict | None":
-        """#3792: non-blocking, non-committing peek at the inbox head for a
-        mid-turn ``CLIENT_INPUT`` injection candidate.
-
-        Returns ``{"payload": dict, "msg_id": str}`` when the head is an
-        eligible, uncancelled ``CLIENT_INPUT`` message; ``None`` otherwise
-        (empty queue, or an ineligible-origin head).
-
-        Does NOT commit — ``self._journal``/``snapshot.inbox`` (the SSoT)
-        is untouched either way. The dequeued item (if any) is held in
-        ``self._pending_inbox_item`` so it is never lost: an eligible
-        candidate stays there until ``commit_mid_turn_injection`` actually
-        commits it (the caller must have spliced it into the wire first —
-        see ``RouterLoop.run_loop``'s seam); an ineligible-origin head also
-        stays there, UNCONSUMED, so the ordinary turn-boundary
-        ``_consume_inbox`` picks it up next, in arrival order — a queue
-        whose head is ineligible STOPS here rather than skipping ahead
-        (#3792 design: skipping would silently reorder arrival, and that
-        reordering would leave no trace anywhere).
-
-        A CANCELLED head (``Session.cancel_queued`` already pruned it from
-        the snapshot) is the one case this DOES discard outright — mirrors
-        ``_consume_inbox``'s own skip-at-consume handling, since a cancelled
-        item was never going to be eligible for anything.
-        """
-        while True:
-            if self._pending_inbox_item is None:
-                try:
-                    self._pending_inbox_item = self.inbox.get_nowait()
-                except asyncio.QueueEmpty:
-                    return None
-            kind, payload = self._pending_inbox_item
-            msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
-            if kind != "shutdown" and msg_id in self._cancelled_msg_ids:
-                self._cancelled_msg_ids.discard(msg_id)
-                self._pending_inbox_item = None
-                continue
-            if kind != TurnOrigin.CLIENT_INPUT:
-                return None
-            return {"payload": payload, "msg_id": msg_id}
 
     async def _commit_mid_turn_injection(self, msg_id: str) -> None:
         """#3792: commit (pop) the item the most recent successful
@@ -5235,18 +5054,18 @@ class Session:
         (architect's point 4: the loop valve must not reset).
 
         No-op (raises nothing, commits nothing) if ``msg_id`` does not match
-        the currently held ``self._pending_inbox_item`` — defensive: this
-        would only happen if the caller calls commit without a matching
-        prior peek, which is a caller bug, not a runtime condition to paper
-        over silently as a success.
+        the currently held ``self._inbox_arbiter.pending_inbox_item`` —
+        defensive: this would only happen if the caller calls commit
+        without a matching prior peek, which is a caller bug, not a runtime
+        condition to paper over silently as a success.
         """
-        if self._pending_inbox_item is None:
+        if self._inbox_arbiter.pending_inbox_item is None:
             return
-        kind, payload = self._pending_inbox_item
+        kind, payload = self._inbox_arbiter.pending_inbox_item
         held_msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
         if held_msg_id != msg_id:
             return
-        self._pending_inbox_item = None
+        self._inbox_arbiter.pending_inbox_item = None
         self._append_history(ChatMessage(
             role="user", content=payload.get("text") or "", ts=_now_iso(),
             meta=payload.get("meta") or {},
@@ -5258,15 +5077,6 @@ class Session:
             chain_id=payload.get("chain_id"),
             seq=self._bump_queue_seq(),
         )
-
-    async def _stage_next_turn_context(self, kind: str, payload: dict) -> None:
-        """Stage a wake=false ride-along (C) into next-turn context, durably
-        (B=persist): append to the in-memory buffer + record the WAL/snapshot
-        entry. Shared by ``_drain_to_wake`` (inbox ride-alongs) and the
-        ``HookDispatcher`` (#1800 slice 5b — direct C-staging that bypasses the
-        inbox). Byte-behavior-identical extraction of the prior inline pair."""
-        self._next_turn_context.append({"kind": kind, "payload": payload})
-        await self._journal.record_next_turn_context_staged(kind=kind, payload=payload)
 
     async def _launch_pipeline_from_hook(self, name: str, input_data: "dict | None") -> None:
         """#2608 H3: launch a registered Pipeline from a hook's
@@ -5328,118 +5138,6 @@ class Session:
             schema_registry=schema_registry,
         )
 
-    async def _drain_to_wake(
-        self,
-    ) -> tuple[list[tuple[str, dict]], tuple[str, dict]] | tuple[None, None]:
-        """Drain the inbox up to and including the first ``wake=true`` message.
-
-        Each inbox payload carries an optional ``wake`` bool (default ``True``
-        when absent).  Every producer but the hook dispatcher (``TurnOrigin``'s
-        other members) never sets ``wake``; the absent-means-True default makes them
-        all behaviorally identical to wake=true, so the common/back-compat
-        path returns immediately after the first blocking get with no
-        ride-alongs.
-
-        Returns ``(ride_alongs, trigger)`` where:
-
-        - ``ride_alongs``  — list of ``(kind, payload)`` tuples for every
-          ``wake=false`` message drained before the trigger.  Staged for the
-          next turn as context (slice 4b — see TODO below).  Empty in the
-          common case.
-        - ``trigger``      — the first ``wake=true`` (or absent-wake) message;
-          this drives the turn.
-
-        Special case: if the first blocking get yields ``shutdown``, returns
-        ``(None, None)`` so the caller can signal loop exit.
-
-        Decision A (RESOLVED, issuecomment-4773744053): if the queue empties
-        while holding only ``wake=false`` ride-alongs (no trigger yet),
-        re-enter the blocking wait.  Ride-alongs NEVER trigger a turn alone.
-
-        Per-message ``inbox_consume`` is recorded via ``_consume_inbox`` for
-        EACH drained message (ride-alongs and the trigger alike), so the
-        snapshot stays correct on crash+restore.
-
-        #1800 slice 4a.  ``wake=false`` ride-along staging (slice 4b) is the
-        next step; no ``wake=false`` producers exist yet, so the collected
-        list is returned but not consumed here.
-
-        #1800 slice 4b: each ``wake=false`` ride-along is staged durably
-        (B=persist) **here**, immediately after its ``inbox_consume``.
-        Staging in ``_drain_to_wake`` rather than in ``run_one_iteration``
-        closes the crash window: a crash while blocking-waiting for the
-        trigger (Decision A) leaves the C's already in the WAL + snapshot,
-        so restore_state recovers them.  ``run_one_iteration`` still
-        receives ``ride_alongs`` (4a contract) but no longer re-stages them.
-        The common path (no wake=false) never calls
-        ``record_next_turn_context_staged``, preserving 4a equivalence.
-        """
-        ride_alongs: list[tuple[str, dict]] = []
-
-        while True:
-            # (a) Blocking wait — preserves the idle-sleep property exactly
-            # as the previous single-get path did.  Also records
-            # inbox_consume via _consume_inbox (journaled, P6-clean).
-            # #3300 P3 (Y-server): `None` means the dequeued item was
-            # cancelled (skip-at-consume) — loop again without treating it
-            # as a trigger or ride-along.
-            step = await self._consume_inbox()
-            if step is None:
-                continue
-            kind0, p0 = step
-
-            # (b) Shutdown sentinel: propagate immediately regardless of any
-            # already-accumulated ride-alongs.
-            if kind0 == "shutdown":
-                return None, None
-
-            # (c) wake=true (or absent → default True): this is the trigger.
-            # Common/back-compat path — returns after the first blocking get
-            # with no ride-alongs.
-            if p0.get("wake", True):
-                return ride_alongs, (kind0, p0)
-
-            # (d) wake=false ride-along: stage durably (B=persist) the
-            # moment it is consumed, BEFORE re-entering the blocking wait
-            # for the trigger.  This closes the gap: without this, a crash
-            # in the blocking wait would lose the consumed-but-not-persisted
-            # ride-along.
-            await self._stage_next_turn_context(kind0, p0)
-            ride_alongs.append((kind0, p0))
-
-            # Non-blocking drain: collect additional wake=false messages until
-            # either a wake=true trigger arrives or the queue is momentarily
-            # empty (Decision A: re-enter the blocking wait in that case).
-            while True:
-                try:
-                    kind_nb, p_nb = self.inbox.get_nowait()
-                except asyncio.QueueEmpty:
-                    # Queue empty, no trigger yet — re-enter outer blocking
-                    # wait (Decision A).
-                    break
-
-                msg_id_nb = (
-                    p_nb.get("_msg_id") if isinstance(p_nb, dict) else None
-                )
-                # #3300 P3 (Y-server) skip-at-consume: same discard as the
-                # blocking path above — a cancelled item is never dispatched
-                # and never gets a redundant inbox_consume.
-                if kind_nb != "shutdown" and msg_id_nb in self._cancelled_msg_ids:
-                    self._cancelled_msg_ids.discard(msg_id_nb)
-                    continue
-                if kind_nb != "shutdown":
-                    await self._journal.consume_inbox(msg_id=msg_id_nb)
-
-                if kind_nb == "shutdown":
-                    return None, None
-
-                if p_nb.get("wake", True):
-                    return ride_alongs, (kind_nb, p_nb)
-
-                # wake=false via non-blocking path: stage durably before
-                # accumulating (same B=persist guarantee as the outer path).
-                await self._stage_next_turn_context(kind_nb, p_nb)
-                ride_alongs.append((kind_nb, p_nb))
 
     def restore_state(self, snapshot: AgentSnapshot) -> None:
         """Adopt a recovered snapshot: install in journal, repopulate the
@@ -5468,8 +5166,8 @@ class Session:
                 text=ans.get("text", ""),
                 choice_id=ans.get("choice_id"),
             )
-        # #1800 slice 4b: restore the staged next-turn-context buffer — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_next_turn_context`).
-        self._next_turn_context = [
+        # #1800 slice 4b: restore the staged next-turn-context buffer — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`InboxArbiter.next_turn_context`).
+        self._inbox_arbiter.next_turn_context = [
             entry for entry in snapshot.next_turn_context
             if isinstance(entry, dict)
         ]
@@ -5554,7 +5252,7 @@ class Session:
         # ride_alongs holds wake=false C messages accumulated before the
         # trigger.  They are already staged durably by _drain_to_wake (4b);
         # no further persist needed here.
-        ride_alongs, trigger = await self._drain_to_wake()
+        ride_alongs, trigger = await self._inbox_arbiter.drain_to_wake()
         if trigger is None:
             # shutdown sentinel
             return False
@@ -5594,7 +5292,7 @@ class Session:
         # FP-0041 (#489) PR-A: surface a sender change as a state_change
         # entry — removing this call collapses multi-consumer attribution
         # into one undifferentiated feed (authoring-guide.md#sender-attribution-as-state_change-fp-0041-489).
-        self._handle_sender_attribution(payload)
+        self._inbox_arbiter.handle_sender_attribution(payload)
         # #1800 slice 5a: turn lifecycle audit event (P6). Emitted after the
         # trigger is consumed and before dispatch, so slice 5b can attach the
         # turn_start hook here. chain_id from the payload (may be absent for
@@ -6080,8 +5778,8 @@ class Session:
         # so C messages only attach to an actually-running router turn (flow-
         # trace §3 risk note: a slash-command short-circuit must NOT consume
         # the staged C's — they wait for the real turn).
-        if self._next_turn_context:
-            for entry in self._next_turn_context:
+        if self._inbox_arbiter.next_turn_context:
+            for entry in self._inbox_arbiter.next_turn_context:
                 hook_kind = entry.get("kind", "hook")
                 payload_data = entry.get("payload", {})
                 hook_name = payload_data.get("name", hook_kind)
@@ -6091,7 +5789,7 @@ class Session:
                     content=_format_hook_attribution(hook_name, hook_text),
                     ts=_now_iso(),
                 ))
-            self._next_turn_context.clear()
+            self._inbox_arbiter.next_turn_context.clear()
             await self._journal.record_next_turn_context_cleared()
 
         # R-D4: WAL size safety-net check at the chat turn boundary — see
@@ -6224,7 +5922,8 @@ class Session:
 
         FP-0041 #489 PR-D2: outbox reply_to + external transport interceptor.
           - When ``msg.reply_to`` is unset and the session has a recent
-            inbox-captured ``_last_reply_to``, the outbox message
+            inbox-captured ``self._inbox_arbiter.last_reply_to`` (proposal
+            0067 P1, #3978), the outbox message
             inherits it (= so the agent's reply automatically routes
             back to the producer's transport without each emit site
             needing to know).
@@ -6238,9 +5937,9 @@ class Session:
             dispatch surfaces to TUI rather than silently disappearing).
         """
         # PR-D2: default reply_to from last captured inbox reply_to.
-        if msg.reply_to is None and self._last_reply_to is not None:
+        if msg.reply_to is None and self._inbox_arbiter.last_reply_to is not None:
             from dataclasses import replace
-            msg = replace(msg, reply_to=self._last_reply_to)
+            msg = replace(msg, reply_to=self._inbox_arbiter.last_reply_to)
         # PR-D2: external transport interceptor.
         if self._outbox_interceptor is not None:
             from reyn.runtime.transport import ExternalRef
@@ -6287,9 +5986,9 @@ class Session:
         ``/cost`` line typed in the TUI away from the TUI would contradict that
         ruling rather than preserve behaviour.
         """
-        if msg.reply_to is None and self._last_reply_to is not None:
+        if msg.reply_to is None and self._inbox_arbiter.last_reply_to is not None:
             from dataclasses import replace
-            msg = replace(msg, reply_to=self._last_reply_to)
+            msg = replace(msg, reply_to=self._inbox_arbiter.last_reply_to)
         # #3793 stage 2: the "nobody is watching, drop status/trace" gate
         # (formerly ``if not self.is_attached: return`` here) is now derived
         # from ``self.outbox_hub.has_subscribers()`` instead of a manually-

@@ -187,7 +187,7 @@ async def test_queued_user_messages_reflects_undispatched_inbox_queue(tmp_path):
 
     # Dispatch (consume) the first item directly — mirrors what
     # ``run_one_iteration`` does before the turn body runs.
-    await session._consume_inbox()
+    await session._inbox_arbiter.consume_inbox()
     remaining = session.queued_user_messages()
     assert [item["text"] for item in remaining] == ["second"]
 

@@ -216,7 +216,7 @@ async def test_drain_to_wake_wake_true_first_returns_immediately(
     # Enqueue a wake=true message directly (explicit flag set to True).
     await session._put_inbox("user", {"text": "hi", "wake": True})
 
-    ride_alongs, trigger = await session._drain_to_wake()
+    ride_alongs, trigger = await session._inbox_arbiter.drain_to_wake()
 
     assert ride_alongs == [], (
         f"Expected no ride-alongs for wake=true first message; got {ride_alongs}"
@@ -240,7 +240,7 @@ async def test_drain_to_wake_absent_wake_treated_as_true(tmp_path) -> None:
     # submit_user_text does NOT set wake — this is the back-compat case.
     await session.submit_user_text("back-compat")
 
-    ride_alongs, trigger = await session._drain_to_wake()
+    ride_alongs, trigger = await session._inbox_arbiter.drain_to_wake()
 
     assert ride_alongs == [], (
         f"Absent wake must be treated as True; ride-alongs must be empty: {ride_alongs}"
@@ -264,7 +264,7 @@ async def test_drain_to_wake_collects_ride_alongs_then_trigger(tmp_path) -> None
     await session._put_inbox("user", {"text": "ride2", "wake": False})
     await session._put_inbox("user", {"text": "trigger", "wake": True})
 
-    ride_alongs, trigger = await session._drain_to_wake()
+    ride_alongs, trigger = await session._inbox_arbiter.drain_to_wake()
 
     # Exactly 2 ride-alongs — unpack-enforcement idiom.
     ra1, ra2 = ride_alongs
@@ -293,7 +293,7 @@ async def test_drain_to_wake_shutdown_returns_none_none(tmp_path) -> None:
     # Shutdown is enqueued out-of-band (no WAL, no _msg_id).
     await session.inbox.put(("shutdown", {}))
 
-    ride_alongs, trigger = await session._drain_to_wake()
+    ride_alongs, trigger = await session._inbox_arbiter.drain_to_wake()
 
     assert ride_alongs is None, (
         f"Shutdown must return (None, None) not ({ride_alongs!r}, ...)"
@@ -320,7 +320,7 @@ async def test_drain_to_wake_inbox_consume_per_message(tmp_path) -> None:
     await session._put_inbox("user", {"text": "t1", "wake": True})
 
     # Drain: should consume both and record 2 inbox_consume WAL events.
-    ride_alongs, trigger = await session._drain_to_wake()
+    ride_alongs, trigger = await session._inbox_arbiter.drain_to_wake()
 
     # Exactly 1 ride-along — unpack-enforcement idiom.
     (only_ra,) = ride_alongs
@@ -372,7 +372,7 @@ async def test_drain_to_wake_only_wake_false_then_trigger_arrives(
     trigger_task = asyncio.create_task(_delayed_trigger())
 
     ride_alongs, trigger = await asyncio.wait_for(
-        session._drain_to_wake(), timeout=2.0
+        session._inbox_arbiter.drain_to_wake(), timeout=2.0
     )
 
     await trigger_task

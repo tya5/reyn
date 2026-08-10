@@ -198,7 +198,7 @@ async def test_c_staging_ride_alongs_injected_as_system_messages(
     )
 
     # _next_turn_context must be empty after the turn.
-    n_ntc = len(session._next_turn_context)
+    n_ntc = len(session._inbox_arbiter.next_turn_context)
     assert n_ntc == 0, (
         f"_next_turn_context must be empty after turn; got {n_ntc} entries"
     )
@@ -289,11 +289,11 @@ async def test_c_staging_persist_and_restore(tmp_path) -> None:
     # restore_state expects the snapshot to already have next_turn_context.
     session4.restore_state(restored_snap)
 
-    n_recovered = len(session4._next_turn_context)
+    n_recovered = len(session4._inbox_arbiter.next_turn_context)
     assert n_recovered == 1, (
         f"restore_state must recover 1 next_turn_context entry; got {n_recovered}"
     )
-    (recovered_entry,) = session4._next_turn_context
+    (recovered_entry,) = session4._inbox_arbiter.next_turn_context
     assert recovered_entry.get("kind") == "hook", (
         f"Recovered entry kind must be 'hook'; got {recovered_entry!r}"
     )
@@ -387,7 +387,7 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
 
     # Start _drain_to_wake concurrently.  It will consume the wake=false C,
     # stage it durably, then block waiting for a trigger (Decision A).
-    drain_task = asyncio.create_task(session._drain_to_wake())
+    drain_task = asyncio.create_task(session._inbox_arbiter.drain_to_wake())
 
     # Wait until the drain has DURABLY staged the C. Both the WAL append AND the snapshot
     # save fsync OFF the event loop (#1765 1a-i/1a-ii) on a worker thread, and the snapshot
@@ -446,12 +446,12 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
     recovered_snap = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     session2.restore_state(recovered_snap)
 
-    n_recovered = len(session2._next_turn_context)
+    n_recovered = len(session2._inbox_arbiter.next_turn_context)
     assert n_recovered == 1, (
         f"restore_state must recover 1 next_turn_context entry after crash; "
         f"got {n_recovered}"
     )
-    (recovered_entry,) = session2._next_turn_context
+    (recovered_entry,) = session2._inbox_arbiter.next_turn_context
     assert recovered_entry.get("kind") == "hook", (
         f"Recovered entry kind must be 'hook'; got {recovered_entry!r}"
     )
@@ -480,7 +480,7 @@ async def test_c_staging_slash_command_does_not_consume_staged(
     session = _make_session(tmp_path)
 
     # Stage a C message manually.
-    session._next_turn_context.append(
+    session._inbox_arbiter.next_turn_context.append(
         {"kind": "hook", "payload": {"name": "pending_hook", "text": "pending-context"}}
     )
 
@@ -492,7 +492,7 @@ async def test_c_staging_slash_command_does_not_consume_staged(
     assert consumed is True, "/help must be claimed by the client slash layer"
 
     # The staged entries must still be in _next_turn_context.
-    n_ntc = len(session._next_turn_context)
+    n_ntc = len(session._inbox_arbiter.next_turn_context)
     assert n_ntc == 1, (
         f"Slash command must NOT consume staged C messages; "
         f"expected 1 entry in _next_turn_context, got {n_ntc}"

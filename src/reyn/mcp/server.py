@@ -244,9 +244,12 @@ async def send_to_agent_impl(
     chain_id = new_chain_id()
     req_id = f"mcp-{chain_id}"
 
-    # Serialize concurrent calls to the same agent — the lock keeps
-    # baseline → MessageBus.request → history-read atomic per agent.
-    async with _get_agent_lock(agent_name):
+    # Serialize concurrent calls to the same (agent, sid) session — the lock
+    # keeps baseline → MessageBus.request → history-read atomic per session
+    # (proposal 0067 P1, #3978: rekeyed from agent_name alone — this lock
+    # protects THIS session's history, and an agent can have more than one
+    # live session; see agent_locks.py's own docstring).
+    async with _get_agent_lock(agent_name, sid):
         baseline = len(session.history)
         bus = MessageBus()
         # issue #268 Phase 2: when the override exposes a stable

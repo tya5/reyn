@@ -214,8 +214,9 @@ and uses the process-shared registry.
 
 `push_to_agent`'s `sender` argument (e.g. `"slack:U456:bob"`,
 `"cron:morning_news"`, `"a2a:peer_agent"`) is more than a routing label —
-Reyn's session dispatch (`Session._handle_sender_attribution`, called from
-`run_one_iteration` before turn dispatch) compares each inbox item's
+Reyn's session dispatch (`InboxArbiter.handle_sender_attribution`, moved out
+of `Session` in #3978 P1, called from `run_one_iteration` before turn
+dispatch) compares each inbox item's
 `sender` against the PRIOR turn's sender. When they differ, it surfaces the
 transition to the LLM as a `state_change` history entry.
 

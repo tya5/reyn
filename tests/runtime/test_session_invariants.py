@@ -832,7 +832,7 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
     })
 
     # ── inbox_consume ─────────────────────────────────────────────────────
-    kind, payload = await session._consume_inbox()
+    kind, payload = await session._inbox_arbiter.consume_inbox()
     assert kind == "agent_request"
     chain_id = payload["chain_id"]
 
