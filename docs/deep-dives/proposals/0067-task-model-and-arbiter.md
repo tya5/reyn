@@ -26,9 +26,9 @@ the stale hook-point count (**#3996**).
 | `list_tasks` | `kind?` | `[{task_id, kind, status, session}]` — running only | lexicon `list` | `sync` |
 | `cancel_task` | `task_id` | `{task_id, status}` | **`cancel`, added to the lexicon** | `sync` |
 | `send_to_session` | `agent`, `session`, `text`, `wake=False` | `{}` | pairs with existing `send_to_agent` | `sync` |
-| `run_pipeline` | `pipeline`, `collect`, `inline`, `on_settle`, … | as `run_prompt` | lexicon `run` | `sync` |
+| `run_pipeline` | `name`, `definition`, `collect`, `on_settle`, … | as `run_prompt` | lexicon `run` | `sync` |
 | ~~`delegate_to_agent`~~ | — | — | — | retired |
-| ~~`run_pipeline_{async,inline,inline_async}`~~ | — | — | — | retired (folded into `collect` / `inline`) |
+| ~~`run_pipeline_{async,inline,inline_async}`~~ | — | — | — | retired (folded into `collect`) |
 
 ```
 new tools   5      4 task-facing + 1 delivery
@@ -139,7 +139,10 @@ P6    retire delegate_to_agent (its own PR; 129 files mention it, whole-repo, at
       re-measure before starting, and see the scope note below for what is NOT work)
       pending_chains is repurposed as P3/P4's collection substrate
 
-P7    run_pipeline: four names → one (collect / inline as arguments)
+P7    run_pipeline: four names → one (`collect` carries the attached/async axis)
+      The two SOURCE params are unchanged: `name` (a registered pipeline) and `definition`
+      (an ad-hoc DSL string) — exactly one, validated, never inferred from which is present.
+      P7 adds `collect` and `on_settle` and renames nothing.
 
 P8    ttl expiry: reuse the chain-timeout shape, plus persist `arm_at`
       chain_manager.py:362 re-arms "a fresh timeout watchdog" on restore, so a crash currently
@@ -167,7 +170,33 @@ Measured during design; each has bitten or would bite:
 | `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py:2731-2733`) — a live misdelivery path that P1 removes. |
 | chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
 | hook points | eight, not ten (#3996). |
+| S3 deny sets | the launch-verb deny exists **twice** — `_PIPELINE_STEP_DENY_TOOLS` (`tools/pipeline_verbs.py:211`, R6 S3, pipeline tool steps) and `_DELEGATION_DENY_TOOLS` (`runtime/session_api.py:136`, R5, agent steps). Same five names today. Both files say "kept in lock-step" and **nothing enforces it**: the only place `tests/` names both is a module docstring, and no test compares them. P6 and P7 each touch both. See the note below. |
 | `RunStatus` | the status vocabulary D3 describes **already exists** — `run_registry.py:64`, five members, and the `input_required` transition is live at `a2a_intervention.py:124`. What is missing is a bridge to the chain handle, not a state machine. Reusing it from `runtime/` would be a new layering inversion (`runtime/ → interfaces/web/` is currently 0 imports; the reverse is 10), so it moves to `runtime/task_types.py` beside `TaskKind` / `Requester`. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
+
+### The two S3 deny sets stay two, and get an equality check
+
+They are not one fact stored twice — they are two rules (R5 on agent steps, R6 S3 on pipeline tool
+steps) that currently name the same tools. Divergence could one day be correct: a tool safe to call
+from an agent step but not from a pipeline tool step. Collapsing them into one set would forbid that
+structurally, which is the opposite of the reasoning that put the cancel hook onto `_PendingChain`
+as a single field — there, one fact lived in two places and any divergence was a bug.
+
+The discriminator is **one fact, or two rules that agree** — not "are there two containers".
+
+What the pair does need is a check, because the agreement is currently asserted only in prose:
+
+- `set(_PIPELINE_STEP_DENY_TOOLS) == set(_DELEGATION_DENY_TOOLS)`
+- plus a non-empty assertion on both — `set() == set()` is green, so an emptied set would pass the
+  equality check while denying nothing
+- and a docstring line saying that diverging them means editing this test deliberately
+
+That converts silent drift into a red test without forbidding a deliberate divergence.
+
+⚠️ The drift is **asymmetric**, and the safe direction is the one P6/P7 will actually take. Failing
+to *remove* a retired name over-denies and is harmless. Failing to *add* a future launch verb to one
+of the two leaves that surface under-denied — a real hole, and the direction nothing is watching.
+
+Put the check on whichever of P6 / P7 touches both files first.
 
 ### `input_required` is spelled three ways
 
