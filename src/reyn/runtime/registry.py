@@ -3034,9 +3034,9 @@ class AgentRegistry:
         # SETs it — and when the session had no registry back-reference there was no base
         # to re-resolve, so it set an ALLOW-ALL envelope and silently discarded anything
         # injected before it. Passing the narrowing down was tried and falsified by
-        # tests/test_2103_s1bc_session_spawn_tool.py::
+        # tests/runtime/test_2103_s1bc_session_spawn_tool.py::
         # test_spawn_session_recorded_enforces_narrowing_on_live_session and
-        # tests/test_pipeline_a2_spawn_ephemeral_session.py::
+        # tests/runtime/test_pipeline_a2_spawn_ephemeral_session.py::
         # test_spawn_ephemeral_session_narrowing_applied — both went RED with an empty
         # ``tool_deny`` on the live session.
         #

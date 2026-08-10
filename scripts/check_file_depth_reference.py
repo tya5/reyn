@@ -45,7 +45,7 @@ The FIRST version of (b) only caught a target sitting DIRECTLY under
 ``tests_dir`` (``target.parent == tests_dir``) — real for #4002's
 ``Path(__file__).parent / "_support"`` (one join, lands one level under
 ``tests/``), but tui-coder's pre-move audit found a real miss:
-``tests/test_fp0063_arc_witness.py``'s ``Path(__file__).parent / "fixtures"
+``tests/runtime/test_fp0063_arc_witness.py``'s ``Path(__file__).parent / "fixtures"
 / "llm" / "fp0063_arc_witness"`` resolves to ``tests/fixtures/llm/
 fp0063_arc_witness`` — a target NESTED *inside* the peer directory
 ``tests/fixtures``, not sitting directly under ``tests_dir`` itself, so
