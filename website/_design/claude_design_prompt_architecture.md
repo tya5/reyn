@@ -164,9 +164,20 @@ SECTION 04 — Beyond a single agent
   - Heading: {{ARCH_S04_HEADING_HTML}}
   - Body paragraph: {{ARCH_S04_BODY}}
   - Two diagrams side by side on desktop, stacked on mobile.
-    Left = A2A delegation chain. Right = MCP server/client symmetry.
+    Left = A2A delegation. Right = MCP server/client symmetry.
     Each in its own white card with 1px border.
-    Left diagram code:
+    ⚠️ **The left diagram's original spec below is STALE — do not regenerate
+    it as written.** It depicted `delegate_to_agent`, a depth-tagged
+    multi-hop relay + fan-out + join across 3 agents. That capability
+    retired in proposal 0067 P6 (#3978) with no successor —
+    `run_prompt`/`send_to_session` are 1:1 (no hop depth, no fan-out at
+    the interface); architect ruling, 2026-08-10: multi-hop relay is a
+    retired capability, not a renamed one, so the diagram must not be
+    "fixed" by swapping the tool name in place. The live page currently
+    shows a placeholder card stating the capability is retired, with the
+    redraw deferred to P4e (redraw after proposal 0067 P4e settles the
+    async producer's own shape). Left diagram code (STALE, kept here as
+    the pre-retirement record only):
     ```
     sequenceDiagram
         participant U as User (depth=0)
