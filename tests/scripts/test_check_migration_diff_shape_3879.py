@@ -23,6 +23,7 @@ from scripts.check_migration_diff_shape import (
     is_tests_copy,
     offending_lines,
     position_dependent_rename_lines,
+    rename_mapping,
 )
 
 
@@ -680,3 +681,235 @@ def test_a_same_basename_zero_similarity_disguised_move_still_activates_the_gate
         "activate the gate — the signal's original purpose, which the "
         "#3930 basename-equality fix must preserve"
     )
+
+
+# ── #4069 — a content change explained ENTIRELY by this PR's own rename ────
+
+
+@pytest.fixture
+def _repo_with_referencing_sibling(tmp_path: Path) -> Path:
+    """A real git repo with two committed files: ``tests/test_a.py`` (the
+    file this bundle's #4069 tests move) and ``tests/test_b.py``, which
+    references it by path string and by dotted-import — the shape #4071's
+    real `test_3595_client_input_provenance_gate.py` / `test_yank_failure_
+    is_visible_3616.py` had."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tests_dir / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        "\n"
+        "REGISTRY_PATH = \"tests/test_a.py\"\n"
+        "UNRELATED = 1\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    return repo
+
+
+def test_m_line_explained_by_rename_path_form_is_allowed(_repo_with_referencing_sibling: Path) -> None:
+    """Tier 2: (#4069) test_b.py's REGISTRY_PATH string is exactly the old
+    path with test_a's own rename substituted in — a real instance of
+    #4071's test_3595_client_input_provenance_gate.py shape. This M line
+    must be permitted, not just the rename itself."""
+    repo = _repo_with_referencing_sibling
+    core = repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=repo, check=True)
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        "\n"
+        "REGISTRY_PATH = \"tests/core/test_a.py\"\n"
+        "UNRELATED = 1\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move test_a, update test_b's registry string")
+
+    lines = diff_name_status("HEAD~1", root=repo)
+    assert offending_lines(lines, root=repo, base="HEAD~1") == [], (
+        "a path-string reference fully explained by this PR's own rename "
+        "mapping was not permitted"
+    )
+
+
+def test_m_line_explained_by_rename_dotted_import_form_is_allowed(_repo_with_referencing_sibling: Path) -> None:
+    """Tier 2: (#4069) test_b.py's `from tests.test_a import` line follows
+    the SAME rename, in its dotted-import spelling rather than the
+    path-string spelling — #4071's test_yank_failure_is_visible_3616.py /
+    test_text_effect_toggle_3796.py shape. Both spellings must be tried."""
+    repo = _repo_with_referencing_sibling
+    core = repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=repo, check=True)
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.core.test_a import VALUE\n"
+        "\n"
+        "REGISTRY_PATH = \"tests/test_a.py\"\n"
+        "UNRELATED = 1\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move test_a, update test_b's dotted import")
+
+    lines = diff_name_status("HEAD~1", root=repo)
+    assert offending_lines(lines, root=repo, base="HEAD~1") == [], (
+        "a dotted-import reference fully explained by this PR's own rename "
+        "mapping was not permitted"
+    )
+
+
+def test_m_line_without_base_stays_rejected(_repo_with_referencing_sibling: Path) -> None:
+    """Tier 2: (#4069) falsification pair for the two accept-side tests
+    above — omitting `base` (the pre-#4069 call shape, and what every
+    OTHER test in this file uses) must NOT auto-permit the change; the new
+    rule is opt-in via `base`, not a default loosening."""
+    repo = _repo_with_referencing_sibling
+    core = repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=repo, check=True)
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        "\n"
+        "REGISTRY_PATH = \"tests/core/test_a.py\"\n"
+        "UNRELATED = 1\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move test_a, update test_b's registry string")
+
+    lines = diff_name_status("HEAD~1", root=repo)
+    offenders = offending_lines(lines, root=repo)
+    assert any("test_b.py" in line for line in offenders), (
+        "the M line was permitted even without base= — #4069 must not "
+        "activate implicitly"
+    )
+
+
+def test_m_line_with_an_unexplained_extra_change_stays_rejected(_repo_with_referencing_sibling: Path) -> None:
+    """Tier 2: (#4069) falsification — if test_b.py ALSO changes something
+    the rename mapping cannot explain (here: UNRELATED's value), the whole
+    file stays rejected. #4069 permits ONLY a pure rename-substitution
+    rewrite, not "mostly explained"."""
+    repo = _repo_with_referencing_sibling
+    core = repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=repo, check=True)
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        "\n"
+        "REGISTRY_PATH = \"tests/core/test_a.py\"\n"
+        "UNRELATED = 2\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move test_a, update registry string AND an unrelated value")
+
+    lines = diff_name_status("HEAD~1", root=repo)
+    offenders = offending_lines(lines, root=repo, base="HEAD~1")
+    assert any("test_b.py" in line for line in offenders), (
+        "a file with one rename-explained line and one UNEXPLAINED line "
+        "was wrongly permitted in full"
+    )
+
+
+def test_hunk_with_unequal_added_removed_counts_stays_rejected(_repo_with_referencing_sibling: Path) -> None:
+    """Tier 2: (#4069) a hunk that removes 1 line but adds 2 (or vice
+    versa) cannot be reduced to a 1:1 substitution check at all — this
+    must stay rejected rather than guessing a pairing."""
+    repo = _repo_with_referencing_sibling
+    core = repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=repo, check=True)
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        "\n"
+        "REGISTRY_PATH = \"tests/core/test_a.py\"\n"
+        "REGISTRY_PATH_EXTRA_LINE = \"tests/core/test_a.py\"\n"
+        "UNRELATED = 1\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move test_a, replace one line with two")
+
+    lines = diff_name_status("HEAD~1", root=repo)
+    offenders = offending_lines(lines, root=repo, base="HEAD~1")
+    assert any("test_b.py" in line for line in offenders), (
+        "a hunk with mismatched removed/added line counts was permitted "
+        "without a real 1:1 substitution check"
+    )
+
+
+def test_pairing_does_not_cross_hunk_boundaries(_repo_with_referencing_sibling: Path) -> None:
+    """Tier 2: (#4069) falsification for hunk-scoped pairing specifically
+    (lead-coder's own correction on the design: a whole-file zip of
+    removed/added lines — checking only the GLOBAL removed/added line
+    COUNT, not each hunk's own — was an explicitly-flagged shortcut, not
+    the real rule).
+
+    A global-count check alone is fooled here: hunk 1 removes 2 lines and
+    adds only 1 (a real content COLLAPSE, not a pure substitution — one
+    of the two old registrations is dropped); hunk 2, separated by
+    padding, adds 1 new line with nothing removed. Globally 2 removed ==
+    2 added, so a whole-file line-count check sees no problem, and a
+    naive order-preserving zip across both hunks HAPPENS to pair each
+    removed line with a substitution-correct added line (because the
+    dropped registration's replacement was relocated into hunk 2) — every
+    individual pair passes :func:`_line_explained_by_rename`, so a
+    global-count implementation would WRONGLY permit this file. Hunk-scoped
+    pairing catches it immediately: hunk 1 alone has 2 removed vs 1 added,
+    which can never reduce to a 1:1 substitution check, so it is rejected
+    without even looking at content — this is exactly the "these counts
+    already disqualify the hunk" case a purely global check cannot see."""
+    repo = _repo_with_referencing_sibling
+    padding = "\n".join(f"pad_{i} = {i}" for i in range(20))
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        "REGISTRY_A = \"tests/test_a.py\"\n"
+        "REGISTRY_B = \"tests/test_a.py\"\n"
+        f"{padding}\n"
+        "TRAILING = 1\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "test_b registers test_a twice, with padding after")
+
+    core = repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=repo, check=True)
+    (repo / "tests" / "test_b.py").write_text(
+        "from tests.test_a import VALUE\n"
+        # hunk 1: 2 lines removed, only 1 added — REGISTRY_B's
+        # registration is dropped here, not substituted.
+        "REGISTRY_A = \"tests/core/test_a.py\"\n"
+        f"{padding}\n"
+        # hunk 2: 0 lines removed, 1 added — REGISTRY_B's replacement,
+        # relocated after the padding instead of staying in hunk 1.
+        "REGISTRY_B = \"tests/core/test_a.py\"\n"
+        "TRAILING = 1\n",
+        encoding="utf-8",
+    )
+    _commit_all(repo, "move test_a; collapse+relocate test_b's registrations")
+
+    lines = diff_name_status("HEAD~1", root=repo)
+    offenders = offending_lines(lines, root=repo, base="HEAD~1")
+    assert any("test_b.py" in line for line in offenders), (
+        "a hunk with 2 removed / 1 added lines was permitted because a "
+        "SEPARATE hunk's extra added line balanced the GLOBAL count — "
+        "pairing must be scoped per hunk, not per file"
+    )
+
+
+def test_rename_mapping_reads_only_r100_lines(_repo: Path) -> None:
+    """Tier 2: (#4069) rename_mapping() — the sole input the whole rule
+    reads — includes only R100 (byte-identical, ALLOWED) renames, never a
+    low-similarity rename (which offending_lines rejects on its own, and
+    must not ALSO leak into explaining some other file's content change)."""
+    core = _repo / "tests" / "core"
+    core.mkdir()
+    subprocess.run(["git", "mv", "tests/test_a.py", "tests/core/test_a.py"], cwd=_repo, check=True)
+    _commit_all(_repo, "pure move")
+
+    lines = diff_name_status("HEAD~1", root=_repo)
+    mapping = rename_mapping(lines)
+    assert mapping == {"tests/test_a.py": "tests/core/test_a.py"}
