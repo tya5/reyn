@@ -1159,13 +1159,33 @@ silently start running the full suite locally again without updating it.
    ```bash
    python scripts/mypy_ratchet.py
    ```
+6. **path-literal reference ratchet** — `scripts/check_tests_path_literal_reference.py`
+   (#4065). Same ratchet shape as #5 against
+   `scripts/check_tests_path_literal_reference_baseline.json`, but a different
+   population: every `tests/...py` path literal repo-wide (docstring, comment,
+   doc prose, YAML/workflow arg), checked against `git ls-files` — not the
+   pytest collection, so a moved test's OLD path lingering in prose elsewhere
+   fails here even though nothing executes that prose. Costs ~2.6s against
+   mypy ratchet's ~76s (#4068 measurement, 2026-08-10) — cheap enough that cost
+   is never the reason to skip it:
+   ```bash
+   python scripts/check_tests_path_literal_reference.py
+   ```
+   ⚠️ **This gate scans the whole repo, so its baseline goes stale the moment
+   `main` moves underneath your branch** — a PR that both moves tests AND
+   updates the baseline can pass locally, then fail in CI once a sibling PR's
+   own move landed on `main` first. #4068 hit this 4 times in one night before
+   the cause was identified (#3880). On any PR that moves or renames a
+   `tests/...py` file, rebase onto latest `main` and run this gate again
+   immediately before pushing — not once, earlier in the session.
 
 A green scoped `pytest` run alone has shipped PRs that CI then bounced on ruff
 (`I001`) or the tier audit (a `len(...) == 1` format pin). Report scope
-honestly: say which of the five you actually ran locally (e.g. "ruff +
-tier-audit + mypy ratchet + the tests I touched") rather than "suite passed" —
-that phrase implies the full local run this section no longer asks for, and CI
-is the only place all five now run together.
+honestly: say which of the six you actually ran locally (e.g. "ruff +
+tier-audit + mypy ratchet + path-literal ratchet + the tests I touched")
+rather than "suite passed" — that phrase implies the full local run this
+section no longer asks for, and CI is the only place all six now run
+together.
 
 ---
 

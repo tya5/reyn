@@ -245,7 +245,13 @@ per-PR coders) authenticating as the same `gh` user.
 **Before you open a PR, run `ruff check src tests`, `python
 scripts/test_tier_audit.py --strict <changed test files>`, `python
 scripts/verify_module_docstrings.py <changed src files>`, `python
-scripts/mypy_ratchet.py`, and `pytest` scoped to the files/keywords your
+scripts/mypy_ratchet.py`, `python
+scripts/check_tests_path_literal_reference.py` (#4065/#4068 — a `tests/...py`
+path-literal ratchet, ~2.6s; on a PR that moves/renames a `tests/...py` file,
+its whole-repo baseline goes stale the moment `main` moves underneath your
+branch, so re-run it right before pushing, not earlier in the session —
+#4068 rebased 4 times over this before the cause was identified, #3880),
+and `pytest` scoped to the files/keywords your
 diff actually affects.** **Do NOT run the full `pytest` suite from the repo
 root locally** — CI already does that, in a clean checkout, faster and
 without picking up local machine config a full local run would (#3791).
