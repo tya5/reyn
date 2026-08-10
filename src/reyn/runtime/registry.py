@@ -3269,10 +3269,29 @@ class AgentRegistry:
             EventFrame(Event(type="session_attached", data={"agent": name, "session_id": sid}))
         )
 
-    async def attach(self, name: str) -> "object":
+    async def attach(self, name: str, *, start_runner: bool = True) -> "object":
         """Switch the attached agent to `name`. Loads + starts session.run()
         and the outbox forwarder for the new agent if not already running.
-        Old agent stays in `self._tasks` (background)."""
+        Old agent stays in `self._tasks` (background).
+
+        ``start_runner`` (#4113, architect ruling 2026-08-10): False skips
+        ONLY the ``asyncio.create_task(new_session.run())`` line below —
+        load happens regardless (``get_or_load`` a few lines down), and
+        every other side effect (forwarder, focus-listener wiring,
+        connection switch, announce, pending-intervention replay) is
+        UNCHANGED. Exists for ``reyn run-once``: fixing the "violating
+        side" of a same-process double-pump (`registry.attach()`'s own
+        background `session.run()` loop racing `send_to_agent_impl`'s
+        inline `MessageBus.request` pump on the identical Session object —
+        the exact shape `a2a.py`'s "self-running OR inline-driven, never
+        both" invariant forbids) rather than adding a generic "refuse if a
+        runner exists" gate at the pump layer, which would break every
+        already-shipped MCP/A2A caller that legitimately drives a
+        self-running session inline today (architect: the same
+        "fix becomes an outage" shape as the MCP double-pump warning,
+        this time concrete). `_run_once`'s own design never needed the
+        runner — it drives the session to completion via
+        `send_to_agent_impl` itself; the runner's job (nothing else)."""
         # #3671 P3: a fresh attach attempt (or its `get_or_load` below, which
         # can itself raise) is never shadowed by a PRIOR background attempt's
         # recorded failure — clear it up front rather than only on success,
@@ -3300,7 +3319,7 @@ class AgentRegistry:
             self._wire_focus_listeners(new_session)
         # Boot session.run() + forwarder on first attach. Keep them alive
         # across detach/re-attach cycles — shutdown drains via `running_tasks()`.
-        if key not in self._tasks or self._tasks[key].done():
+        if start_runner and (key not in self._tasks or self._tasks[key].done()):
             self._tasks[key] = asyncio.create_task(new_session.run())
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(

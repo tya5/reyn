@@ -809,7 +809,16 @@ def _run(args: argparse.Namespace) -> None:
         if not skip_restore:
             if not await _safe_restore():
                 return False
-        await registry.attach(name)
+        # #4113, architect ruling 2026-08-10: start_runner=False — `_run_once`
+        # (below) drives the session to completion itself via
+        # send_to_agent_impl's MessageBus.request pump; a background
+        # session.run() task would race that SAME pump on the identical
+        # Session object (the exact same-process double-pump architect's
+        # ruling names). `attach()` still LOADS the scoped session (so
+        # send_to_agent_impl's own get_or_load fallback finds this
+        # already-scoped session, not a fresh unscoped one) — only the
+        # runner is skipped.
+        await registry.attach(name, start_runner=False)
         return True
 
     async def _main_chat() -> None:
