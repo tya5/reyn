@@ -135,7 +135,8 @@ P4    task ops: run_prompt / describe_task / list_tasks / cancel_task
 
 P5    send_to_session
 
-P6    retire delegate_to_agent (its own PR; src 19 / tests 41 / docs 51 files mention it)
+P6    retire delegate_to_agent (its own PR; ~19 src / ~45 tests / ~51 docs files mention it,
+      measured at 27da0d6b2 — a scope estimate that drifts, re-measure before starting)
       pending_chains is repurposed as P3/P4's collection substrate
 
 P7    run_pipeline: four names → one (collect / inline as arguments)
