@@ -143,5 +143,5 @@ discarded paths so future readers understand what was tried and why.
   decisions must respect
 - Skill resume (page removed) — user-facing summary of
   the resulting machinery
-- [Upgrade policy](../reference/upgrade-policy.md) — operator-facing
+- [Upgrade policy](../../reference/upgrade-policy.md) — operator-facing
   consequence of ADR-0006

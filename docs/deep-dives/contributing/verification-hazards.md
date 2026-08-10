@@ -879,6 +879,6 @@ correct throughout, and the verdicts attached to its members were not.
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
-- [CLAUDE.md](../../../../CLAUDE.md) — the doc-sync hard rule (a doc
+- [CLAUDE.md](../../../CLAUDE.md) — the doc-sync hard rule (a doc
   describing a mechanism goes stale the moment the mechanism changes) is the
   same family: a claim whose referent moved out from under it.

@@ -107,4 +107,4 @@ confirm=True)` for testability + the run() function's flag handling.
 
 - Commit `3b90902` — U3 CLI flag implementation
 - ADR-0006 (schema version policy — `--reset` is its remediation)
-- [docs/en/reference/upgrade-policy.md](../reference/upgrade-policy.md)
+- [reference/upgrade-policy.md](../../reference/upgrade-policy.md)
