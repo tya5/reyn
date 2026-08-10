@@ -197,6 +197,53 @@ async def test_c_staging_ride_alongs_injected_as_system_messages(
         f"(idx={user_idx}); history roles: {history_roles}"
     )
 
+
+@pytest.mark.asyncio
+async def test_c_staging_attributes_a_non_hook_kind_truthfully(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 1: proposal 0067 P5 (#3978, architect + lead-coder co-vet) — a
+    staged ride-along's flushed attribution uses its OWN kind, not a
+    hardcoded "hook" label.
+
+    Before this fix, the flush (``_run_router_loop``) read the staged
+    entry's ``kind`` only as a fallback DEFAULT for ``name``, then always
+    formatted through ``[hook:{name}]`` — so a non-hook wake=false
+    ride-along (e.g. a future ``send_to_session`` push, kind
+    ``TurnOrigin.PEER_SESSION``) rendered as a hook push, a false
+    attribution the LLM reads as fact.
+
+    Falsify-verified: reverting the flush to call
+    ``_format_ride_along_attribution("hook", entry_name, entry_text)``
+    unconditionally (the pre-fix shape) makes this go RED.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+
+    stub = _make_llm_stub_fn(_text_result("got it"))
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
+
+    # A non-hook wake=false ride-along, then a wake=true trigger.
+    await session._put_inbox(
+        "peer_session",
+        {"text": "peer says hi", "name": "alpha/main", "wake": False},
+    )
+    await session._put_inbox("user", {"text": "trigger-msg", "wake": True})
+
+    await _run_n_turns_then_shutdown(session, n=1)
+
+    system_msgs = [m for m in session.history if m.role == "system"]
+    assert system_msgs, "expected at least one system-role ride-along message"
+    sys_msg = system_msgs[0]
+    assert "[peer_session:alpha/main]" in sys_msg.content, (
+        f"must be truthfully attributed to its own kind, not hardcoded "
+        f"'hook'; got {sys_msg.content!r}"
+    )
+    assert "[hook:" not in sys_msg.content, (
+        f"a peer_session ride-along must NEVER render as a hook push; "
+        f"got {sys_msg.content!r}"
+    )
+
     # _next_turn_context must be empty after the turn.
     n_ntc = len(session._inbox_arbiter.next_turn_context)
     assert n_ntc == 0, (

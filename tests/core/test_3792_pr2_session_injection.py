@@ -65,14 +65,17 @@ _NON_CLIENT_INPUT_KWARGS: dict[TurnOrigin, dict] = {
     TurnOrigin.CRON: {"job": "nightly"},
     TurnOrigin.HOOK: {"name": "on_idle"},
     TurnOrigin.PIPELINE_NUDGE: {"run_id": "run1"},
+    # Proposal 0067 P5 (#3978): send_to_session / run_prompt(attached), a
+    # peer session's text — see TurnOrigin.PEER_SESSION's own docstring.
+    TurnOrigin.PEER_SESSION: {"text": "hi", "from_session": "a2a:peer"},
 }
 
 
 @pytest.mark.asyncio
 async def test_only_client_input_origin_is_peek_eligible(tmp_path):
-    """Tier 2: #3792 — exhaustive origin gate over ALL 9 ``TurnOrigin``
+    """Tier 2: #3792 — exhaustive origin gate over ALL 10 ``TurnOrigin``
     members (vacuity guard: asserts the enumeration itself is non-empty and
-    matches the expected 9, so a future member silently added to the enum
+    matches the expected 10, so a future member silently added to the enum
     without a corresponding case here is caught, not silently vacuous).
 
     Falsification (performed during review): removing the
