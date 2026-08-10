@@ -103,6 +103,24 @@ def test_changelog_md_is_excluded_even_though_tracked(tmp_path) -> None:
     assert offenders == []
 
 
+def test_flat_tests_disposition_json_is_excluded_even_though_tracked(tmp_path) -> None:
+    """Tier 1: scripts/flat_tests_disposition.json (#3879 S2) is the same
+    shape as CHANGELOG.md, not the gate's own baseline shape — its `moved`
+    entries are keyed on the file's OLD flat path BY DESIGN, so the old
+    path correctly never resolving is the record, not a defect. Without
+    this exclusion, every file #3879 records as moved would cost one
+    baseline entry here forever (lead-coder review, #4065 follow-up)."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "flat_tests_disposition.json").write_text(
+        '{"tests/test_moved_away.py": {"disposition": "moved", "to": "tests/core/test_moved_away.py"}}\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    offenders = offending_references(tmp_path)
+    assert offenders == []
+
+
 # ── classify — the never-existed vs. stale discriminator ───────────────────
 
 

@@ -134,7 +134,21 @@ _SCAN_SUFFIXES = frozenset({".py", ".md", ".yml", ".yaml", ".rst", ".txt", ".jso
 # were prose/code references and count once per baseline entry per run —
 # an entirely self-inflicted, ever-growing false-positive population,
 # caught the first time `--write-baseline` was run against itself.
-_EXCLUDED_FILES = frozenset({"CHANGELOG.md", "check_tests_path_literal_reference_baseline.json"})
+#
+# scripts/flat_tests_disposition.json (#3879 S2) is the SAME shape as
+# CHANGELOG.md, not the same shape as this gate's own baseline: its
+# `moved` entries are keyed on the file's OLD flat path by design — "this
+# WAS at tests/foo.py, now at tests/bar/foo.py" is the record, and the old
+# path correctly never resolves again. Counting that as gate debt would
+# charge #3879's own disposition-tracking artifact for doing its job
+# (lead-coder review, #4065 follow-up): every file it records as moved
+# would cost one baseline entry here, forever, which is backwards for the
+# same reason rewriting CHANGELOG.md's history would be.
+_EXCLUDED_FILES = frozenset({
+    "CHANGELOG.md",
+    "check_tests_path_literal_reference_baseline.json",
+    "flat_tests_disposition.json",
+})
 
 
 def _iter_scan_files(root: Path = _ROOT):

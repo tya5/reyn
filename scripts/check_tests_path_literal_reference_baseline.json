@@ -801,413 +801,18 @@
   },
   {
     "file": "scripts/check_tests_path_literal_reference.py",
-    "literal": "tests/test_x.py",
+    "literal": "tests/bar/foo.py",
     "class": "never-existed"
   },
   {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_2081_s1_delegation_config.py",
-    "class": "stale"
+    "file": "scripts/check_tests_path_literal_reference.py",
+    "literal": "tests/foo.py",
+    "class": "never-existed"
   },
   {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_2421_mcp_seam_completeness.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3024_env_identity.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3126_doc_anchor_gate.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3233_inprocess_env_identity.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3237_worktree_clean_gate.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3723_flowview_pin_check.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3726_mypy_ratchet.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3794_p2_no_audit_event_prose.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_3794_p3_audit_event_identifier_rename.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_action_retrieval_config.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_agent_construction_via_factory_997.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_artifact_validator_resolve_path.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_audit_events_single_assignment_3408.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_builtin_skill_tool_name_drift_3092.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_charter_citations_reference_live_content_3592.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_check_pr_closing_intent.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_compaction_outcome_dist.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_config_cascade.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_config_loader_malformed.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_config_loader_pure_helpers.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_config_mcp_merge_1146.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_config_mirror_coverage_1056.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_config_package_reexport_1682.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_cost_chokepoint_ast_guard_1190.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_cwd_sandbox_aware_1477.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_detect_attractor.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_batch_compaction_grant_opt_in.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_batch_config_scenario_count_autoderive.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_batch_tools.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_dispatch_absolute_deliverable.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_dispatch_verdict_scoping_guidance.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_enforcement_profile.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_long_session_skill_wait.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_trace_llm_modes.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_trace_multi_file.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_trace_tool.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_variant_replay.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_dogfood_workspace_rooting_1431.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_embedding_config.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_embedding_provider.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_environment_import_no_circular_3867.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_fastmcp_core_dep_import_chain.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_fp0009_b_cron_config.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_httpx_lazy_load_cli_entry.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_index_backend.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_litellm_api_base_single_writer_ast_guard_2683.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_llm_replay_diff.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_llm_replay_from_attractor.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_llm_replay_patch.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_llm_replay_script.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_mcp_gateway_cancel_event_completeness_2813.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_media_store.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_media_store_pure_helpers.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_memory_rewrite_index_e2e.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_missing_fixture_fails_loud_3662.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_pipe_proxy_bootstrap_2682.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_present_sink_ast_guard_2708.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_project_context_agents_md.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_python_harness_no_litellm_import.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_reyn_web_proc.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_root_markdown_relative_links.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_router_op_context_single_source_1412.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_scheme_self_register_1608.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_session_shutdown_acompletion_warning.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_source_manifest.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_source_manifest_chunk_count_coerce.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_sqlite_index_pure_helpers.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_st_removal_grep_zero_3128.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_stream_client_single_writer_boundary.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_swe_bench_runner.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_swe_bench_runner_chat_187.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_swe_bench_runner_venv_183.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_text_codec.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_threat_scan_config_1822.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_tier_audit_format_pin.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_tier_audit_private_state_ast.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_tier_audit_source_segment_cache_3670.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_verify_package_move_root_config.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_web_auth_config_contract.py",
-    "class": "stale"
-  },
-  {
-    "file": "scripts/flat_tests_disposition.json",
-    "literal": "tests/test_ws_consolidation_complete.py",
-    "class": "stale"
+    "file": "scripts/check_tests_path_literal_reference.py",
+    "literal": "tests/test_x.py",
+    "class": "never-existed"
   },
   {
     "file": "scripts/flat_tests_ratchet.py",
@@ -1416,11 +1021,6 @@
   },
   {
     "file": "src/reyn/runtime/registry.py",
-    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
-    "class": "stale"
-  },
-  {
-    "file": "src/reyn/runtime/registry.py",
     "literal": "tests/test_registry_restore_all_only_names_3671_p4c1.py",
     "class": "stale"
   },
@@ -1562,6 +1162,11 @@
   {
     "file": "tests/_support/builtin_skill_tool_names.py",
     "literal": "tests/test_catalog_entries_1593.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/_support/builtin_skill_tool_names.py",
+    "literal": "tests/test_fp0063_p4_builtin_rag_skill.py",
     "class": "stale"
   },
   {
@@ -1772,6 +1377,11 @@
   {
     "file": "tests/core/test_3783_stage3_invert_default_to_recover.py",
     "literal": "tests/test_pr_n6_compaction_overflow_retry.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3846_image_fetch.py",
+    "literal": "tests/test_ssrf_guard_1956.py",
     "class": "stale"
   },
   {
@@ -2246,6 +1856,11 @@
   },
   {
     "file": "tests/llm/test_2608_run_loop_pickup.py",
+    "literal": "tests/test_2608_h1_mcp_resource_updated_hook.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/llm/test_2608_run_loop_pickup.py",
     "literal": "tests/test_2608_h4_fs_watcher.py",
     "class": "stale"
   },
@@ -2270,6 +1885,26 @@
     "class": "stale"
   },
   {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_builtin_skill_tool_name_drift_3092.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_plugin_install.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_skill_md_default_inline_cap_gate.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/plugins/test_fp0063_p4_builtin_rag_skill.py",
+    "literal": "tests/test_skill_references_gate_3162.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/plugins/test_skill_load.py",
     "literal": "tests/test_op_runtime_load_skill_3247.py",
     "class": "stale"
@@ -2277,6 +1912,11 @@
   {
     "file": "tests/repo/test_3794_p3_audit_event_identifier_rename.py",
     "literal": "tests/test_audit_event_kind_vocabulary_3410.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/repo/test_builtin_skill_tool_name_drift_3092.py",
+    "literal": "tests/test_fp0063_p4_builtin_rag_skill.py",
     "class": "stale"
   },
   {
@@ -2350,6 +1990,16 @@
     "class": "stale"
   },
   {
+    "file": "tests/runtime/test_fp0063_arc_witness.py",
+    "literal": "tests/test_op_embed.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_fp0063_arc_witness.py",
+    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/runtime/test_intervention_bus_protocols.py",
     "literal": "tests/test_intervention_legacy_alias_deprecated.py",
     "class": "stale"
@@ -2362,6 +2012,11 @@
   {
     "file": "tests/runtime/test_media_cap_272.py",
     "literal": "tests/test_file_read_binary_retire_rtr_1449.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_pipeline_a2_spawn_ephemeral_session.py",
+    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
     "class": "stale"
   },
   {
@@ -2435,6 +2090,11 @@
     "class": "stale"
   },
   {
+    "file": "tests/scripts/test_check_file_depth_reference_3995.py",
+    "literal": "tests/test_fp0063_arc_witness.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
     "literal": "tests/core/test_a.py",
     "class": "never-existed"
@@ -2488,6 +2148,11 @@
     "file": "tests/scripts/test_check_tests_dir_names_3879.py",
     "literal": "tests/test_verify_package_move_root_config.py",
     "class": "stale"
+  },
+  {
+    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
+    "literal": "tests/core/test_moved_away.py",
+    "class": "never-existed"
   },
   {
     "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
@@ -2590,6 +2255,11 @@
     "class": "stale"
   },
   {
+    "file": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_pipeline_a2_spawn_ephemeral_session.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/test_3561_spawn_session_seam_reachability.py",
     "literal": "tests/test_pipeline_r5_run_agent_step.py",
     "class": "stale"
@@ -2607,41 +2277,6 @@
   {
     "file": "tests/test_3792_pr2_session_injection.py",
     "literal": "tests/test_3792_pr2_router_loop_injection.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_fp0063_arc_witness.py",
-    "literal": "tests/test_op_embed.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_fp0063_arc_witness.py",
-    "literal": "tests/test_replay_fixture_no_stacking_3634.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_fp0063_p4_builtin_rag_skill.py",
-    "literal": "tests/test_builtin_skill_tool_name_drift_3092.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_fp0063_p4_builtin_rag_skill.py",
-    "literal": "tests/test_plugin_install.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_fp0063_p4_builtin_rag_skill.py",
-    "literal": "tests/test_skill_md_default_inline_cap_gate.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_fp0063_p4_builtin_rag_skill.py",
-    "literal": "tests/test_skill_references_gate_3162.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_pipeline_a2_spawn_ephemeral_session.py",
-    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
     "class": "stale"
   },
   {
