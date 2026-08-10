@@ -427,9 +427,24 @@ async def test_running_body_animates_live_then_stops_on_settle() -> None:
         await pilot.pause()
         await transport.push(_started("op-live"))
         await pilot.pause()
-        await pilot.pause(0.4)  # let the live body re-present several times
+        # #4044: a fixed-duration pilot.pause(0.4) here made the re-present COUNT
+        # a function of the machine's timer/scheduler latency, not just
+        # ANIMATION_FPS — CI under load only landed 2 ticks where 3+ ran on a
+        # light machine, taking down an unrelated docs-only PR (#4043). Wait on
+        # the condition instead of a fixed duration (CLAUDE.md testing policy,
+        # Time) — tests/_async_wait.py's own wait_until, at its OWN default
+        # timeout (no local timeout literal here: a timeout picked to make
+        # this one call pass is the same axis as lowering the count threshold
+        # to make it pass — both just relocate the same flake).
+        from tests._async_wait import wait_until
+
+        reached = await wait_until(
+            lambda: presenter.present_counts.get("op-live", 0) >= 3
+        )
         live_count = presenter.present_counts.get("op-live", 0)
-        assert live_count >= 3, f"running body did not animate live: {live_count} presents"
+        assert reached and live_count >= 3, (
+            f"running body did not animate live: {live_count} presents"
+        )
 
         # Complete it → settle stops the per-entry animation (coalesce in place).
         await transport.push(_completed("op-live"))
