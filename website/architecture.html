@@ -509,12 +509,14 @@ sequenceDiagram
                (delegate_to_agent, depth-tagged hop chain, fan-out + join)
                depicted a capability retired in proposal 0067 P6 with no
                successor — run_prompt/send_to_session are 1:1, no hop
-               depth or fan-out at the interface. Redrawn after P4e
-               settles the async producer's own shape (architect ruling,
-               2026-08-10). -->
-          Multi-hop agent-to-agent relay (this diagram) is being redesigned
-          as part of an in-progress runtime change. Agents still delegate
-          to each other today — see the docs for the current mechanism.
+               depth or fan-out at the interface. "being redesigned" was
+               an earlier, inaccurate draft of this note (architect
+               co-vet, #4131, 2026-08-10): multi-hop relay is not
+               scheduled to come back, so implying a return misleads a
+               reader who has no way to check. -->
+          Multi-hop agent-to-agent relay retired with delegate_to_agent;
+          the current interface addresses a single (agent, session).
+          Whether a join concept returns is an open design question.
         </p>
       </div>
       <div class="diagram-card">
