@@ -273,7 +273,10 @@ either `verb_object` position, per R1's flat default, or `object_verb`
 suffix position for the pre-existing `cron_*` family and any future
 cron-like family reusing this lifecycle-toggle dual pattern — see "Dual-pair
 verbs" above), `create` (#4004 — added for `create_topology`, renamed from
-`topology_create`).
+`topology_create`), `send` (proposal 0067 P5, #3978 — added for
+`send_to_session`; verb source is the existing external/MCP-level
+`send_to_agent` tool, extending the same `send_to_<addressee>` shape into
+the internal router-tool set).
 
 This lexicon (and the grandfather frozen-set) is reconciled against the full
 live registry census in `tests/tools/test_tool_naming_convention_gate_3223.py` —

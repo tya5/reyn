@@ -52,6 +52,11 @@ CANONICAL_VERBS: frozenset[str] = frozenset(
         # ceases to exist"; a cancelled task's record persists as an
         # audit-event, only the handle is gone). Added for cancel_task.
         "cancel",
+        # Proposal 0067 P5 (#3978): added for send_to_session — the verb
+        # source is the existing (external, MCP-level, not in this
+        # registry) send_to_agent tool; send_to_session extends the same
+        # "send_to_<addressee>" shape into the internal router-tool set.
+        "send",
     }
 )
 

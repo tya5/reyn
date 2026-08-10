@@ -11,8 +11,9 @@ call site is unchanged.
 Covers: spawn_agent (#2103 B-tool, renamed from agent_spawn — #4004),
 delegate_to_agent (ADR-0026 M4), spawn_session (#2103 S1bc, renamed from
 session_spawn — #4004), create_topology (#2103 C1, renamed from
-topology_create — #4004). All four are router-only — org-design /
-delegation primitives the LLM drives directly.
+topology_create — #4004), send_to_session (proposal 0067 P5, #3978 — new,
+not a relocation: authored directly here). All five are router-only —
+org-design / delegation / peer-messaging primitives the LLM drives directly.
 """
 from __future__ import annotations
 
@@ -109,11 +110,34 @@ topology_create = ToolDescription(
     ),
 )
 
+send_to_session = ToolDescription(
+    tool_name="send_to_session",
+    surfaced="router (gates.router=allow) — proposal 0067 P5 (#3978)",
+    purpose=(
+        "Deliver a message to a specific (agent, session) pair — "
+        "fire-and-forget, no reply is collected. Pairs with delegate_to_agent, "
+        "which waits for a reply."
+    ),
+    text=(
+        "Send a message to a specific session of an agent (delivery only — no reply is "
+        "collected; use delegate_to_agent if you need one). Set wake=True to have the "
+        "target start a turn on it now; wake=False (default) queues it as context for "
+        "whenever the target next runs a turn on its own."
+    ),
+    ja=(
+        "指定した (agent, session) にメッセージを配送する（配送のみ——応答は"
+        "収集しない。応答が必要なら delegate_to_agent を使う）。wake=True で"
+        "相手に今すぐターンを開始させる。wake=False（既定）は相手が次に自分で"
+        "ターンを実行するまでのコンテキストとしてキューに入れる。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "spawn_agent": agent_spawn,
     "delegate_to_agent": delegate_to_agent,
     "spawn_session": session_spawn,
     "create_topology": topology_create,
+    "send_to_session": send_to_session,
 }
 
 
@@ -218,6 +242,30 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "そのプロファイルで絞り込まれる（⊆自分の範囲内でのみ絞り込め、"
                 "広げることはできない）。各キーは 'members' のいずれかである"
                 "必要がある。"
+            ),
+        ),
+    },
+    "send_to_session": {
+        "agent": ParamDescription(
+            text="Target agent name as listed by list_agents.",
+            ja="list_agents に列挙される送信先エージェント名。",
+        ),
+        "session": ParamDescription(
+            text="Target session id (e.g. 'main', or a sid from list_tasks/describe_task).",
+            ja="送信先のセッション id（例: 'main'、または list_tasks/describe_task の sid）。",
+        ),
+        "text": ParamDescription(
+            text="Message body to deliver.",
+            ja="配送するメッセージ本文。",
+        ),
+        "wake": ParamDescription(
+            text=(
+                "True = the target starts a turn on this message now. "
+                "False (default) = queue it as context for the target's next turn."
+            ),
+            ja=(
+                "True = 相手がこのメッセージで即座にターンを開始する。"
+                "False（既定）= 相手の次のターンのコンテキストとしてキューに入れる。"
             ),
         ),
     },

@@ -23,6 +23,7 @@ from reyn.runtime.services.mcp_cache_file import (
     answered_only,
 )
 from reyn.runtime.session_pure import merge_memory_indexes
+from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 
 #: Sentinel for "the turn_budget engine has not been computed yet" — distinct
@@ -1333,6 +1334,65 @@ class RouterHostAdapter:
                 "(FP-0043 Stage-4)."
             ),
         }
+
+    async def send_to_session(
+        self, *, agent: str, session: str, text: str, wake: bool,
+    ) -> dict:
+        """Proposal 0067 P5 (#3978): fire-and-forget delivery to a peer
+        (agent, session) — ``TurnOrigin.PEER_SESSION``, no chain/collection.
+
+        Resolves THIS adapter's own backing Session (same pattern
+        ``spawn_session`` above uses to reach the parent for bridging:
+        ``self._registry.get_session(self._agent_name, live_session_id)``)
+        and delegates to its ``_deliver_cross_session_message`` — the
+        substrate already proven by 4 falsify-verified tests
+        (``tests/runtime/test_deliver_cross_session_message_3978_p5.py``).
+        No new callable injection needed: the adapter already holds
+        ``self._registry``/``self._agent_name`` for exactly this shape.
+
+        Returns an error-shaped response when the caller session cannot be
+        resolved (mis-wiring) or the target session is not LIVE — mirrors
+        ``delegate_to_agent``'s B33 W5 F2 fix: a success-shaped envelope for
+        a message that never arrived invites the LLM to fabricate a reply
+        on the peer's behalf.
+        """
+        if self._registry is None:
+            raise RuntimeError(
+                "send_to_session requires a registry (multi-session host) — "
+                "unavailable in this context."
+            )
+        caller_sid = self.live_session_id
+        caller = self._registry.get_session(self._agent_name, caller_sid)
+        if caller is None:
+            return {
+                "status": "error",
+                "kind": "caller_session_not_found",
+                "error": (
+                    f"internal: this session ({self._agent_name!r}, "
+                    f"{caller_sid!r}) is not resolvable via the registry"
+                ),
+            }
+        delivered = await caller._deliver_cross_session_message(  # noqa: SLF001
+            target_agent=agent, target_session_id=session,
+            kind=TurnOrigin.PEER_SESSION,
+            payload={
+                "text": text,
+                "from_agent": self._agent_name,
+                "from_session": caller_sid,
+                "sender": f"peer_session:{self._agent_name}/{caller_sid}",
+            },
+            wake=wake,
+        )
+        if not delivered:
+            return {
+                "status": "error",
+                "kind": "target_session_not_found",
+                "error": (
+                    f"no live session {session!r} for agent {agent!r} — "
+                    "send_to_session delivers only, it does not spawn one"
+                ),
+            }
+        return {"status": "delivered", "agent": agent, "session": session, "wake": wake}
 
     async def _spawn_limit_checkpoint(
         self, *, kind: str, prompt: str, detail: str,
