@@ -2,7 +2,7 @@
 ``CLIENT_INPUT`` injection.
 
 The Session-level peek/commit/origin-gate/carry-forward/truncate-falsify/
-loop-valve witnesses live in ``tests/test_3792_pr2_session_injection.py``.
+loop-valve witnesses live in ``tests/core/test_3792_pr2_session_injection.py``.
 This file covers what ONLY ``RouterLoop.run_loop``'s actual seam code can
 witness: the injected message really lands in the outgoing ``messages``
 list, at the position the wire format requires, and the commit only fires

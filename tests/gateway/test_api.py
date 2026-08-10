@@ -17,7 +17,7 @@ helper is the documented path. Tests cover:
      ``"user"`` and be overridable, which is what let a webhook
      message execute an operator slash command; the reachability
      consequence is measured in
-     ``tests/test_3595_step1b_external_producer_slash_reachability.py``).
+     ``tests/runtime/test_3595_step1b_external_producer_slash_reachability.py``).
   5. Custom ``registry`` override is honored (= tests stub out the
      process singleton).
   6. ``FileNotFoundError`` from registry propagates (= caller
