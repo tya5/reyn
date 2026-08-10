@@ -232,6 +232,14 @@ async def test_security_deny_subprocess_has_no_effect_in_container(mount_contain
     launch-time isolation (cap-drop ALL + non-root + Docker's unmodified
     default seccomp) is the only boundary in effect, and none of those stop
     an unprivileged process from forking/exec'ing another unprivileged one.
+
+    This is NOT a Docker-behavior test (Q1's third-party-property trap):
+    the claim under test is reyn's OWN documented boundary — that
+    ``DockerEnvironmentBackend`` deliberately does not read
+    ``deny_subprocess`` (#4040's doc scope). A failure here means that
+    documented boundary is now FALSE (reyn started reading the field, or
+    stopped, without the doc catching up) — not "Docker changed how nested
+    processes work".
     """
     backend, _, _ = mount_container
     policy = SandboxPolicy(timeout_seconds=30, deny_subprocess=True)
@@ -269,6 +277,14 @@ async def test_security_env_deny_names_has_no_effect_and_host_env_does_not_leak(
     environment via ``docker exec`` (no ``-e``/``--env`` in the exec argv
     construction) — a real fidelity-boundary check, not an inference from
     reading the argv-building code.
+
+    This is NOT a Docker-behavior test (Q1's third-party-property trap):
+    the claim under test is reyn's OWN documented boundary — that
+    ``DockerEnvironmentBackend`` deliberately forwards no host env and does
+    not honor ``env_deny_names`` (#4040's doc scope). A failure here means
+    that documented boundary is now FALSE (reyn started forwarding host env,
+    or started filtering it, without the doc catching up) — not "Docker
+    changed its exec env-inheritance rules".
     """
     backend, _, _ = mount_container
     monkeypatch.setenv("REYN_4040_HOST_ONLY_PROBE", "host-side-value")
