@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -347,6 +348,157 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
     assert await _wait_for(
         lambda: reg.get_session("worker", invocation["driver_sid"]) is None
     )
+
+
+# ── #3978 P3: task_settled — delivery-anchored ordering + strip-falsify ─────
+
+
+def _capture_hook_dispatch(monkeypatch, captured: list) -> None:
+    """Record (point, dict(template_vars)) on every real ``HookDispatcher.dispatch``
+    call, then delegate to the real implementation — same record-then-delegate
+    idiom as ``test_hook_event_schema_registry_sync_0059.py``'s own capture
+    helper (every builtin producer funnels through this one class method)."""
+    from reyn.hooks import dispatcher as dispatcher_mod
+
+    original = dispatcher_mod.HookDispatcher.dispatch
+
+    async def _recording_dispatch(self, point, template_vars):
+        captured.append((point, dict(template_vars)))
+        return await original(self, point, template_vars)
+
+    monkeypatch.setattr(dispatcher_mod.HookDispatcher, "dispatch", _recording_dispatch)
+
+
+@pytest.mark.asyncio
+async def test_task_settled_fires_after_delivery_and_the_handle_is_then_gone(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: (#3978 P3, lead-coder's witness spec) anchor on DELIVERY — wait
+    for the result to appear in the issuer's own history (``scripted.calls``,
+    no sleep) — then confirm ``task_settled`` was the thing that carried it
+    (payload matches the real work-order), and immediately after (polled, no
+    sleep) confirm the run's handle is gone: no ``describe_task`` verb exists
+    yet (P4), so the driver-session's own A10 reclaim is the standing proxy
+    for "this task can no longer be found" — the same fact
+    ``test_run_pipeline_async_launches_and_delivers_result`` already
+    witnesses, reused here rather than re-tested, per the six-questions Q1
+    read (that reclaim mechanism is pre-existing code this PR did not touch)."""
+    _install_side_effect_tool(monkeypatch)
+    captured: list[tuple[str, dict]] = []
+    _capture_hook_dispatch(monkeypatch, captured)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    scripted = _ScriptedAgentReply("acknowledged")
+    reg = _agent_registry(tmp_path, state_log, scripted)
+    out_file = tmp_path / "out.txt"
+
+    pipeline_registry = PipelineRegistry()
+    pipeline_registry.register("p", _three_step_pipeline(out_file))
+
+    caller = reg.get_or_load("worker")
+    ctx = ToolContext(
+        events=caller._router_host.events,
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(
+            pipeline_registry=pipeline_registry,
+            agent_registry=reg,
+            host=caller._router_host,
+        ),
+        state_log=state_log,
+    )
+
+    result = await _handle_run_pipeline_async({"name": "p", "input": {"seed": 10}}, ctx)
+    run_id = result["data"]["run_id"]
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
+
+    # Delivery-anchored: the issuer's own history actually carries the result
+    # (a real scripted-LLM turn consumed the pipeline_result inbox message).
+    assert await _wait_for(lambda: scripted.calls >= 1)
+    # task_settled was dispatched — and, since _deliver awaits
+    # submit_pipeline_result BEFORE dispatching it (source order), its
+    # presence here is itself the ordering proof: it cannot have fired before
+    # the delivery ``scripted.calls`` just witnessed.
+    settled = [payload for point, payload in captured if point == "task_settled"]
+    (payload,) = settled  # exactly-once dispatch: unpack fails on 0 or >1
+    assert payload["task_id"] == run_id
+    assert payload["status"] == "ok"
+    assert payload["session"] == "main"
+
+    # Immediately after (polled, unbounded — no sleep budget): the handle is
+    # gone. describe_task doesn't exist yet (P4) — the driver-session's A10
+    # reclaim is the only "can this task still be found" surface today.
+    invocation = json.loads((run_dir / "invocation.json").read_text(encoding="utf-8"))
+    assert await _wait_for(
+        lambda: reg.get_session("worker", invocation["driver_sid"]) is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_settled_never_fires_when_reply_agent_no_longer_exists(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: strip-falsify direction 1 of 2 — ``_deliver``'s pre-existing
+    fail-safe (module docstring: "a vanished reply target is LOGGED and
+    dropped ... NEVER rerouted to main") returns False before ever reaching
+    the new P3 dispatch call. Proves the new call sits AFTER this early
+    return in ``_deliver``'s control flow, not before it."""
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    captured: list[tuple[str, dict]] = []
+    _capture_hook_dispatch(monkeypatch, captured)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    wo = replace(
+        _crash_state_work_order(
+            "gone-agent-run", _three_step_pipeline(tmp_path / "o.txt"), input={"seed": 1},
+        ),
+        reply_to_agent="does-not-exist",
+    )
+    driver = PipelineExecutorDriver(wo, registry=reg, state_log=state_log)
+    # Bind a real, live driver-session (production always does this before the
+    # first nudge — module docstring) so a falsified dispatch call reachable
+    # via ``self._session`` would genuinely fire, not merely crash on a None
+    # attribute — the falsify-verification for this pair uses this binding.
+    worker = reg.get_or_load("worker")
+    driver.bind_session(worker, worker._router_host)
+
+    delivered = await driver._deliver(status="ok", output={"x": 1}, error=None)
+
+    assert delivered is False
+    assert not any(point == "task_settled" for point, _ in captured)
+
+
+@pytest.mark.asyncio
+async def test_task_settled_never_fires_when_reply_session_is_not_loaded(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: strip-falsify direction 2 of 2 — the SIBLING fail-safe branch
+    (a non-main ``reply_to_sid`` that isn't a live loaded session) also
+    returns False before the new P3 dispatch call, matching direction 1
+    above. Both early-exit branches of ``_deliver`` are covered, not just
+    one — a single-branch test would leave the other unguarded."""
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    captured: list[tuple[str, dict]] = []
+    _capture_hook_dispatch(monkeypatch, captured)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    wo = replace(
+        _crash_state_work_order(
+            "unloaded-sid-run", _three_step_pipeline(tmp_path / "o.txt"), input={"seed": 1},
+            driver_sid="drv-unloaded",
+        ),
+        reply_to_sid="not-a-loaded-session",
+    )
+    driver = PipelineExecutorDriver(wo, registry=reg, state_log=state_log)
+    worker = reg.get_or_load("worker")
+    driver.bind_session(worker, worker._router_host)
+
+    delivered = await driver._deliver(status="ok", output={"x": 1}, error=None)
+
+    assert delivered is False
+    assert not any(point == "task_settled" for point, _ in captured)
 
 
 @pytest.mark.asyncio

@@ -973,9 +973,9 @@
 #   pipeline_launch — launch a registered pipeline (async/detached), input
 #                    Jinja2-rendered from the event's template vars.
 #
-#   on:            the 10 builtin points — turn_start | turn_end | session_start |
-#                  session_end | task_start | task_end | mcp_resource_updated |
-#                  file_changed | cron_fired | webhook_received — plus the two
+#   on:            the 9 builtin points — turn_start | turn_end | session_start |
+#                  session_end | mcp_resource_updated | file_changed |
+#                  cron_fired | webhook_received | task_settled — plus the two
 #                  open namespaces ``composed:<name>`` (a Composer's output,
 #                  below) and, as a Composer INPUT only (never a hook's own
 #                  ``on:``), ``llm:<session_id>:<event_name>`` (LLM-emitted via

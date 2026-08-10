@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Hook-Event Redesign (proposal 0059), Phases 1-3**: typed `HookEvent` + a builtin Schema Registry declaring each of the 10 builtin hook points' payload field set (Phase 1, `c319285`); a unified Ingress Adapter consolidating hook-firing entry points (Phase 2, `f4db86c`); an `EventPattern` match grammar generalizing `matcher` field-name matching, schema-validated at config-load time for builtin points (Phase 3, `3ff41bc`).
+- **Hook-Event Redesign (proposal 0059), Phases 1-3**: typed `HookEvent` + a builtin Schema Registry declaring each of the 9 builtin hook points' payload field set (Phase 1, `c319285`); a unified Ingress Adapter consolidating hook-firing entry points (Phase 2, `f4db86c`); an `EventPattern` match grammar generalizing `matcher` field-name matching, schema-validated at config-load time for builtin points (Phase 3, `3ff41bc`).
 
 - **B22 RAG affordance-bias schema-layer fix — 0/3 → 3/3 first-attempt 100% recovery**
   (= 2026-05-10, commit `9fdecd1`). 5 parallel sonnet context-analysis agents

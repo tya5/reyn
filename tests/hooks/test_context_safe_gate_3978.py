@@ -27,12 +27,22 @@ from reyn.hooks.schema_registry import (
 # ── CONTEXT_UNSAFE_FIELDS itself ────────────────────────────────────────────
 
 
-def test_context_unsafe_fields_is_empty_for_every_builtin_kind_today() -> None:
-    """Tier 2: owner ruling (2026-08-10) — all 8 builtin schemas' current
-    fields are context_safe. The empty default IS the current real state,
-    not a placeholder (see schema_registry.py's own module comment)."""
-    for kind in BUILTIN_HOOK_SCHEMAS:
+def test_context_unsafe_fields_is_empty_for_the_original_8_builtin_kinds() -> None:
+    """Tier 2: owner ruling (2026-08-10) — the 8 PRE-P3 builtin schemas'
+    fields are all context_safe. The empty default for each of THESE 8 is
+    the current real state, not a placeholder (see schema_registry.py's own
+    module comment). ``task_settled`` (P3, added after this ruling) is
+    the deliberate exception — see the next test."""
+    pre_p3_kinds = frozenset(BUILTIN_HOOK_SCHEMAS) - {"builtin:task:task_settled"}
+    for kind in pre_p3_kinds:
         assert CONTEXT_UNSAFE_FIELDS.get(kind, frozenset()) == frozenset()
+
+
+def test_context_unsafe_fields_excludes_task_settled_result() -> None:
+    """Tier 2: proposal 0067 P3 / ADR-0040 D3 — ``result`` is LLM-authored
+    task output, declared context_safe: false in the design itself (not a
+    narrowing added after the fact, unlike a hypothetical future field)."""
+    assert CONTEXT_UNSAFE_FIELDS["builtin:task:task_settled"] == frozenset({"result"})
 
 
 def test_context_unsafe_fields_only_names_real_schema_fields() -> None:
@@ -102,6 +112,21 @@ def test_safe_context_fields_accepts_bare_or_canonical_point_form(
 
 
 # ── render_push's message gate ───────────────────────────────────────────────
+
+
+def test_task_settled_result_cannot_be_interpolated_into_message() -> None:
+    """Tier 2: (#3978 P3, lead-coder's 5th acceptance condition) the REAL
+    production entry — not a monkeypatched injection — for task_settled's
+    own CONTEXT_UNSAFE_FIELDS declaration. A message template referencing
+    `result` (LLM-authored task output, ADR-0040 D3) is blocked by the
+    gate that already exists for it in the shipped registry, no injection
+    needed to prove it."""
+    push = PushBlock(message="task finished: {{ result }}")
+
+    result = render_push(push, {"result": "leak me"}, "task_settled")
+
+    assert result.push_when is False
+    assert result.message == ""
 
 
 def test_render_push_message_cannot_interpolate_an_unsafe_field(
