@@ -1,13 +1,10 @@
 # ADR-0034: A2A task lifecycle (FP-0001)
 
-**Status**: Accepted + Implemented (2026-05-16) — task lifecycle shipped (see #866 "task lifecycle is shipped" doc refresh + the Gap 3-5 PR chain)
+**Status**: Accepted + Implemented (2026-05-16) — Components 1–3 **superseded by
+[ADR-0041](0041-intervention-ownership-and-channel-pinning.md)** (audit: #4016); Components 4–5,
+Context and Considered alternatives stand. See #866 "task lifecycle is shipped" doc refresh + the
+Gap 3-5 PR chain.
 **Track**: A2A protocol — async task support + ask_user round-trip
-
-> **Extended by [ADR-0040](0040-task-as-os-concept.md)** (2026-08-10, not yet implemented):
-> 0040 makes `task` an OS-level concept, of which this ADR's A2A-protocol surface (`RunRegistry`,
-> `RunEntry`) becomes one projection. This ADR's own vocabulary — `RunStatus`, deliberately "NOT
-> the 7-state Task-tree `TaskState`" — is the model ADR-0040's D2/D3 generalize. Everything below
-> describes the mechanism as it stands today (unchanged until 0040/proposal-0067's own PRs land).
 
 ## Context
 
