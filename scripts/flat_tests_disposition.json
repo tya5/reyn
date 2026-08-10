@@ -1,4 +1,16 @@
 {
+  "tests/_async_wait.py": {
+    "disposition": "flat-by-decision",
+    "reason": "a shared test-support helper module, not a collectible test (leading underscore, same convention Python itself uses); measured_flat_files() now excludes it from the ratchet population, #4072 follow-up",
+    "bundle": "backfill-3879-arc-start",
+    "pr": null
+  },
+  "tests/conftest.py": {
+    "disposition": "flat-by-decision",
+    "reason": "pytest fixture configuration, structurally pinned flat forever (the __file__-depth gate's own documented exception; measured_flat_files() now excludes it from the ratchet population, #4072 follow-up)",
+    "bundle": "backfill-3879-arc-start",
+    "pr": null
+  },
   "tests/test_0060_d5c_error_rail.py": {
     "disposition": "moved",
     "to": "tests/core/test_0060_d5c_error_rail.py",
