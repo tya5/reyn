@@ -4864,6 +4864,44 @@ class Session:
         if wake:
             reg.ensure_session_running(self.agent_name, target_session_id)
 
+    async def _deliver_cross_session_message(
+        self, *, target_agent: str, target_session_id: str,
+        kind: "TurnOrigin", payload: dict, wake: bool,
+    ) -> bool:
+        """Proposal 0067 P5 (#3978): deliver a message to a LIVE session of ANY
+        agent (not just this one) — the substrate ``send_to_session`` drives.
+
+        Same canonical wake-triple as ``_cross_session_hook_put`` (resolve →
+        ``_put_inbox`` → ``ensure_session_running``), generalized to an
+        explicit ``target_agent`` instead of always ``self.agent_name``
+        (``AgentRegistry.get_session``/``resolve_session`` already take an
+        agent name — the hook-push method just never needed to pass a
+        different one).
+
+        Unlike the hook push, this is NOT fire-and-forget: it returns
+        ``True``/``False`` so the calling tool handler can report failure to
+        the LLM instead of a silent drop (delegate_to_agent's B33 W5 F2
+        precedent — a success-shaped envelope for a message that never
+        arrived invites the LLM to fabricate a reply on the peer's behalf).
+
+        Delivery-only, deliberately: a target naming no LIVE session returns
+        ``False`` rather than loading/spawning one — ``send_to_session`` pairs
+        with an already-running peer (ADR-0040 D5's "tap the shoulder"), it is
+        not a spawn primitive.
+        """
+        reg = self._registry
+        if ":" in target_session_id:
+            transport, _, native = target_session_id.partition(":")
+            target = reg.resolve_session(target_agent, transport, native)
+        else:
+            target = reg.get_session(target_agent, target_session_id)
+        if target is None:
+            return False
+        await target._put_inbox(kind, payload)
+        if wake:
+            reg.ensure_session_running(target_agent, target_session_id)
+        return True
+
     @property
     def halted_reason(self) -> "str | None":
         """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
