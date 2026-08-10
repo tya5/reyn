@@ -28,7 +28,7 @@ the MCP ``RegistryClient``) — this is the only case that needs a ``transport=`
 override, and centralizing it here is what keeps proxy-awareness attached to
 every future SSRF-pinned client automatically.
 
-The structural completeness gate (``tests/network/test_egress_env_completeness.py``)
+The structural completeness gate (``tests/security/test_network_egress_env_completeness_3075.py``)
 asserts no ``httpx.Client(``/``httpx.AsyncClient(`` construction in ``src/reyn``
 bypasses these two functions — so a new call site that free-hands its own
 ``httpx.AsyncClient(...)`` fails CI instead of silently re-opening the "almost
