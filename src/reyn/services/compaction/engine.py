@@ -571,7 +571,7 @@ def assert_static_bounds(
         # B_M <= 0 ⇒ effective_trigger = min(main_M_room, B_M) <= B_M <= 0
         # always. Any budget config that trips THIS branch necessarily also
         # trips the effective_trigger branch below, so the effective_trigger
-        # -O witness (tests/test_3027_budget_guard_survives_optimize.py)
+        # -O witness (tests/services/test_3027_budget_guard_survives_optimize.py)
         # already exercises the same "raise survives -O" property for this
         # branch too. This is containment by construction (via `min`), not a
         # witness gap — do not add a same-shaped standalone B_M-only -O test.

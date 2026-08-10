@@ -5,7 +5,6 @@
   "test_2608_h1_mcp_resource_updated_hook.py",
   "test_2708_p32a_spawn_bridge_intervention.py",
   "test_2779_stdin_intervention_neutralize.py",
-  "test_3027_budget_guard_survives_optimize.py",
   "test_3300_p2a_queue_state_publish.py",
   "test_3546_pipeline_driver_narrowing_inheritance.py",
   "test_3553_agent_step_worker_narrowing_inheritance.py",
