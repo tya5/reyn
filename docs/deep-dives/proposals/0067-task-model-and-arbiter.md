@@ -147,8 +147,13 @@ P7    run_pipeline: four names → one (`collect` carries the attached/async axi
       P7 adds `collect` and `on_settle` and renames nothing.
 
 P8    ttl expiry: reuse the chain-timeout shape, plus persist `arm_at`
-      chain_manager.py:362 re-arms "a fresh timeout watchdog" on restore, so a crash currently
+      chain_manager.py re-arms "a fresh timeout watchdog" on restore, so a crash currently
       extends the effective deadline
+      🔴 Requires #4108 first. This line assumed a chain field could simply be persisted;
+         it could not. `ChainManager.update()` forwards any field to the WAL, but the
+         snapshot write-back handled `waiting_on` alone — so `arm_at` would have been
+         dropped from reconstruction AND the same call would have overwritten `waiting_on`
+         with `[]`, destroying live state. P8 is the first caller that would have hit it.
 ```
 
 ### Observation (explicitly not bounding)
