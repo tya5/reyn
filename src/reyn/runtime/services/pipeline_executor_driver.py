@@ -53,8 +53,17 @@ because no registry ever reached the executor):
   the next step boundary and raises ``PipelineCancelled``: the driver writes a
   TERMINAL ``cancelled`` marker (so the recovery scan never resurrects an
   intentionally-cancelled run) while LEAVING the R4 generation snapshots on
-  disk (abort-now, resume-later — R6). Cancel only reaches a sync/attached run
-  (async is detached), so a cancelled run is always ``notify_reply=False``.
+  disk (abort-now, resume-later — R6). Cancel used to reach only a
+  sync/attached run (async is detached — nothing forwarded a cancel signal
+  to a driver-session nobody is attached to) — proposal 0067 P4 (#3978)
+  closes that gap: launch-time registration on the settle-path handle
+  (``session_api._spawn_pipeline_driver_session``) captures THIS driver's
+  ``request_cancel`` as the task's ``cancel`` hook (``ChainManager``'s
+  ``_PendingChain.cancel``, cooperative and argument-zero, same shape as
+  the sync path's forward), so ``cancel_task`` can reach a DETACHED async
+  run too. ``notify_reply`` is no longer 1:1 with "was this cancelled via
+  the attached path" — an async run's cancelled terminal still delivers
+  (settles) via the normal ``_finish``/``_deliver`` path below.
 - after terminal, the driver marks its session ephemeral so the standard
   post-turn vanish teardown (``Session._maybe_schedule_ephemeral_vanish`` →
   ``registry.remove_session``) reclaims it — the driver-session never leaks
@@ -278,13 +287,17 @@ class PipelineExecutorDriver:
                     invoker_session=self._session,
                 )
         except PipelineCancelled as exc:
-            # IS-6: an intentional Ctrl-C stop at a step boundary. TERMINAL (so
-            # the recovery scan never zombie-resurrects a user-cancelled run) but
+            # IS-6: an intentional stop at a step boundary. TERMINAL (so the
+            # recovery scan never zombie-resurrects a user-cancelled run) but
             # the R4 generation snapshots are LEFT ON DISK — abort-now, yet a
             # future explicit-resume tool could continue from ``step_index``.
-            # Cancel only reaches here on the sync/attached path (async is
-            # detached, no Ctrl-C), so ``notify_reply`` is False → no inbox turn;
-            # the attached caller reads ``status=cancelled`` inline.
+            # Two reachable sources today: a Ctrl-C on the sync/attached path
+            # (``notify_reply=False`` — the attached caller reads
+            # ``status=cancelled`` inline via ``read_result``, no inbox turn)
+            # and, since proposal 0067 P4 (#3978), ``cancel_task`` reaching a
+            # DETACHED async run's ``request_cancel`` hook via the settle-path
+            # handle (``notify_reply=True`` — this ``_finish`` call below
+            # settles/delivers exactly like any other terminal status).
             await self._finish(
                 status="cancelled",
                 error=str(exc),

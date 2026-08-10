@@ -19,6 +19,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
 
+from reyn.runtime.task_types import RunStatus
+
 if TYPE_CHECKING:
     from reyn.core.events.agent_snapshot import AgentSnapshot
     from reyn.runtime.task_types import Requester
@@ -63,6 +65,29 @@ class _PendingChain:
     # substrate). ``describe_task``/``list_tasks`` read this; a handle
     # registered with no ``kind`` is not yet describable as a typed task.
     kind: "str | None" = None
+    # proposal 0067 P4 (#3978): describe_task's status field (architect
+    # ruling, 2026-08-10) — typed RunStatus, not a bare string, so a LATER
+    # value (INPUT_REQUIRED, once the ask_user bridge lands — a separate
+    # step) is a value addition, not a caller-side type change. VOLATILE —
+    # deliberately NOT threaded through register()'s persisted `fields`
+    # dict, so it is never written to the journal/WAL. A crash-recovered
+    # handle has no way to truthfully know it was mid-ask_user, so it
+    # defaults back to RUNNING on restore() rather than persist a stale
+    # claim.
+    status: "RunStatus" = field(default=RunStatus.RUNNING, compare=False, repr=False)
+    # proposal 0067 P4 (#3978), architect ruling 2026-08-10: the task's
+    # cancel hook — cooperative, argument-zero (mirrors Session.
+    # cancel_inflight / *Driver.request_cancel's own zero-arg shape; see
+    # pipeline_executor_driver.PipelineExecutorDriver.request_cancel).
+    # VOLATILE, held on THIS SAME dataclass rather than a second dict
+    # (lead-coder's ruling: "the hole where a callback survives after its
+    # chain is popped, and cancel_task can act on a task nothing runs
+    # anymore, is structurally impossible when there is only ONE store —
+    # not two that must be kept in sync"). `None` after a crash-recovered
+    # restore (the live callable belonged to the dead process) — a caller
+    # (cancel_task) that finds `cancel is None` MUST NOT report success:
+    # nothing is actually listening.
+    cancel: "Callable[[], None] | None" = field(default=None, compare=False, repr=False)
 
     @property
     def requester(self) -> "Requester":
@@ -174,6 +199,7 @@ class ChainManager:
         origin_depth: int = 0,
         origin_sid: "str | None" = None,
         kind: "str | None" = None,
+        cancel: "Callable[[], None] | None" = None,
     ) -> _PendingChain:
         """Register a new pending chain and persist it via the journal.
 
@@ -201,6 +227,11 @@ class ChainManager:
             ``None`` for a legacy delegate-relay chain (no producer sets
             this today — P6 assigns one when ``delegate_to_agent``'s own
             completion folds into this substrate).
+        cancel:
+            proposal 0067 P4 (#3978): the task's cooperative cancel hook
+            (argument-zero), or ``None`` if this task cannot be cancelled
+            (e.g. a legacy delegate-relay chain). VOLATILE — never
+            persisted (see ``_PendingChain.cancel``'s own docstring).
         """
         chain = _PendingChain(
             chain_id=chain_id,
@@ -210,6 +241,7 @@ class ChainManager:
             waiting_on=set(waiting_on or []),
             origin_sid=origin_sid,
             kind=kind,
+            cancel=cancel,
         )
         self._chains[chain_id] = chain
 

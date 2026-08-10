@@ -570,6 +570,16 @@ async def _spawn_pipeline_driver_session(
         schema_defs=schema_registry.as_dict() if schema_registry is not None else None,
     )
     write_invocation(pipeline_run_dir(root, rid), work_order)
+    session = registry.get_session(reply_to_agent, sid)
+    if session is None:
+        raise RuntimeError(
+            f"pipeline launch: spawned driver-session ({reply_to_agent!r}, "
+            f"{sid!r}) not found in the registry"
+        )
+    driver = PipelineExecutorDriver(
+        work_order, registry=registry, state_log=state_log,
+        notify_reply=notify_reply,
+    )
     if notify_reply:
         # proposal 0067 settle path (#3978): register this run's collection
         # handle on the REPLY session's own ChainManager (pending_chains,
@@ -583,6 +593,19 @@ async def _spawn_pipeline_driver_session(
         # handle" case ``ChainManager.settle()`` already tolerates); the
         # run still launches and ``_deliver``'s own fail-safe re-discovers
         # the vanished target at settle time.
+        #
+        # proposal 0067 P4 (#3978), architect ruling 2026-08-10: the
+        # DRIVER's own ``request_cancel`` (the SAME argument-zero hook
+        # ``run_pipeline_attached`` already forwards via
+        # ``register_cancel_forward`` for the sync path) is captured here
+        # as this handle's ``cancel`` — the async path had NO cancel
+        # reachability before this (nothing forwards a cancel signal to a
+        # detached driver-session; only an ATTACHED caller's
+        # cancel_inflight ever reached ``request_cancel``). ``cancel_task``
+        # reads this off the handle; it does NOT branch on ``kind`` to
+        # pick a mechanism (architect's correction — the three
+        # cancellation mechanisms differ in what LIVE OBJECT they need,
+        # not in which method name to call).
         reply_target, _reason = await resolve_reply_target(
             registry, reply_to_agent, reply_to_sid,
         )
@@ -593,19 +616,9 @@ async def _spawn_pipeline_driver_session(
                 origin_agent=reply_to_agent,
                 origin_sid=None if reply_to_sid == "main" else reply_to_sid,
                 kind="pipeline",
+                cancel=driver.request_cancel,
             )
-    session = registry.get_session(reply_to_agent, sid)
-    if session is None:
-        raise RuntimeError(
-            f"pipeline launch: spawned driver-session ({reply_to_agent!r}, "
-            f"{sid!r}) not found in the registry"
-        )
-    session.set_loop_driver(
-        PipelineExecutorDriver(
-            work_order, registry=registry, state_log=state_log,
-            notify_reply=notify_reply,
-        )
-    )
+    session.set_loop_driver(driver)
     return session, rid, sid
 
 
