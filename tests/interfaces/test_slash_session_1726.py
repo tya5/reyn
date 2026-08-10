@@ -38,7 +38,7 @@ class _StubRegistry:
     replies. ★ The inheritance itself is NOT measured against this stub and must not be:
     a stand-in that answers None can only ever exercise the empty case. It is measured
     against real instances, by a denied tool's real side effect, in
-    ``tests/test_3562_slash_session_new_narrowing_inheritance.py``.
+    ``tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py``.
     """
 
     def __init__(self, *, attached_name="default", sids=("main",), focused="main"):

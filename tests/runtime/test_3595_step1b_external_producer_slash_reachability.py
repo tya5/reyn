@@ -1,7 +1,7 @@
 """Tier 2: no non-operator inbox producer can execute a registered slash command.
 
 #3595 step 1 closed the pipeline ``agent`` step's prompt (``TurnOrigin.AGENT_STEP``);
-``tests/test_3561_spawn_session_seam_reachability.py`` holds that leg. Step 1b closes
+``tests/runtime/test_3561_spawn_session_seam_reachability.py`` holds that leg. Step 1b closes
 the three producers that were left claiming ``kind="user"`` with NON-EMPTY text:
 
   * ``reyn.gateway.api.push_to_agent`` — the stable public webhook API every chat
@@ -83,7 +83,7 @@ _SETTLE_TIMEOUT_S = 10.0
 class _ScriptedReply:
     """A real ``_llm_caller``-shaped callable answering with one fixed plain-text
     turn — the Tier-2c LLM stand-in this arc's sibling files already use (see
-    ``tests/test_3561_spawn_session_seam_reachability.py``), NOT a ``MagicMock``:
+    ``tests/runtime/test_3561_spawn_session_seam_reachability.py``), NOT a ``MagicMock``:
     a signature drift in the ``call_llm_tools`` contract raises ``TypeError`` here
     exactly as it would in production.
 
@@ -106,7 +106,7 @@ def _registry(
     tmp_path: Path, scripted: _ScriptedReply, *, agents: "tuple[str, ...]" = ("worker", "operator"),
 ) -> AgentRegistry:
     """Real ``AgentRegistry`` + real ``Session`` factory — the harness shape
-    ``tests/test_3561_spawn_session_seam_reachability.py`` uses, including the
+    ``tests/runtime/test_3561_spawn_session_seam_reachability.py`` uses, including the
     ``holder`` deferred-registry-ref so the factory can pass ``registry=``, and its
     real-litellm-name resolver so a spawned session's model-support pre-check has a
     name to resolve."""
