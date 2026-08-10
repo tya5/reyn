@@ -169,33 +169,16 @@ def test_the_real_disposition_keys_are_a_subset_of_the_frozen_population() -> No
     assert set(disposition.keys()) <= population
 
 
-def test_the_frozen_snapshot_equals_stage_0s_own_committed_baseline() -> None:
-    """Tier 2: the load-bearing witness for the #4072 fix — the committed
-    `flat_tests_arc_population.json` must be EXACTLY the 1,129 filenames
-    Stage 0 (commit accdfd226, #3883) committed to `flat_tests_baseline.
-    json`, normalized the same way `load_baseline()` normalizes the live
-    one. Not the union of two live artifacts (the first, wrong snapshot's
-    own shape) — read directly from git history, not re-derived.
-
-    SKIPS (explicitly, not silently) when `accdfd226` isn't a reachable
-    commit — CI's own `pytest` job checks out with the default shallow
-    depth (no `fetch-depth: 0`), so this specific historical commit is
-    genuinely absent there, not a bug this test should paper over by
-    catching a broader error class. A skip here means "couldn't check,"
-    never "checked and passed" — a full local clone (the common dev-machine
-    case) runs the real assertion."""
-    import subprocess
-
-    proc = subprocess.run(
-        ["git", "show", "accdfd226:scripts/flat_tests_baseline.json"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        import pytest
-
-        pytest.skip(
-            "commit accdfd226 unreachable in this checkout (shallow clone, "
-            f"no fetch-depth:0) — git show exit {proc.returncode}: {proc.stderr.strip()}"
-        )
-    stage0 = {f"tests/{n}" for n in json.loads(proc.stdout)}
-    assert load_arc_population() == stage0
+# A prior version of this test re-derived Stage 0's population by running
+# `git show accdfd226:scripts/flat_tests_baseline.json` on every test run —
+# this passed on every local full clone but failed CI's `pytest` job
+# (shallow checkout, no `fetch-depth: 0`): `git show` on a commit the
+# shallow clone never fetched exits 128. Caught live (lead-coder, #4072
+# CI red). The provenance claim ("arc_population.json == accdfd226's
+# baseline") was already verified once, mechanically, at generation time
+# (this PR's own commit message records the 1,129/1,101/3/25 accounting) —
+# re-deriving it from git history on every test run adds a clone-depth
+# dependency for no additional confidence a skip-on-failure can't already
+# lose silently. The provenance itself lives in this module's own
+# docstring ("Stage 0 (commit accdfd226, #3883)") — prose, not a runtime
+# git query, which is the safer place for it per lead-coder's own call.
