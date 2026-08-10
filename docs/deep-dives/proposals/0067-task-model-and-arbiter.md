@@ -154,7 +154,11 @@ P6    retire delegate_to_agent (its own PR; 129 files mention it, whole-repo, at
         - `kind is None` after P6 means "not a task" and no more: restored relay chains and
           joins both keep it, so the value cannot be narrowed to either one alone.
 
-Pasync run_prompt(collect="async") — the substrate step this arc deferred twice
+P4e   run_prompt(collect="async") — the substrate step this arc deferred twice
+      ⚠️ P4's letters are identity, not order: P4d landed AFTER P5, and P4e lands after
+      P6/P7. Read the position in this block for sequence and the letter for which tool
+      family the step belongs to. (Counting "how many steps are done" from the letters
+      is what makes P4 look like one step when it is five.)
       Owns the settle fold, and with it the two renames P4 deliberately postponed:
         - `origin_agent` / `origin_depth` / `origin_sid` become the stored form of
           `requester`; the derived property P4 added stops being a translation layer. The
