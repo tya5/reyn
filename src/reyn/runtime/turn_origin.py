@@ -161,5 +161,23 @@ class TurnOrigin(StrEnum):
     #: slash defect could not expose, because empty text never starts with ``/``.
     PIPELINE_NUDGE = "pipeline_nudge"
 
+    #: A peer SESSION's text — proposal 0067 P5 (#3978): ``send_to_session``
+    #: (fire-and-forget delivery) and P4's ``run_prompt(collect="attached")``
+    #: (synchronous collection) both land here. Architect's ruling
+    #: (#3978): this member's FIRST criterion is "who authored it", not "who
+    #: dispatches on it" — both producers answer identically (a peer session's
+    #: text, addressed to a specific (agent, session) pair, #2130's primitive),
+    #: so one member serves both, the same shape ``EXTERNAL_MESSAGE`` already
+    #: uses for its two transports. The fire-and-forget/collect-a-reply
+    #: distinction rides on ``reply_to``/``collect`` in the payload, not on
+    #: this member — a distinction a richer field already carries is a label,
+    #: not a union member (this module's own discriminator, applied to
+    #: ``EXTERNAL_MESSAGE`` and ``CRON`` above).
+    #:
+    #: Not named ``SESSION_MESSAGE``: that name would misrepresent
+    #: ``run_prompt``'s synchronous-collection use as "message" — ADR-0040 D1's
+    #: three-word vocabulary reserves "message" for delivery-only.
+    PEER_SESSION = "peer_session"
+
 
 __all__ = ["TurnOrigin"]
