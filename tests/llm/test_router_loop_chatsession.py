@@ -153,6 +153,13 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
     host = session.router_host
 
     required = _router_loop_host_member_names()
+    # lead-coder review: a derivation that silently returns [] (e.g. the
+    # vars()/__annotations__ walk stops finding anything after an unrelated
+    # typing-internals change) makes `missing` vacuously [] too — green
+    # without checking anything. Guard the derivation itself, not just its
+    # result. Falsify-verified: with the derivation forced to return [],
+    # this assert fires (not the missing== one).
+    assert required, "Protocol member derivation returned nothing — the gate would pass vacuously"
     missing = [m for m in required if not hasattr(host, m)]
     assert missing == [], f"Missing protocol members on RouterHostAdapter: {missing}"
 
