@@ -93,10 +93,12 @@ from reyn.hooks.schema_registry import BARE_TO_KIND
 # kind table) rather than hand-maintained here — a future builtin point (the
 # proposal's "future point" list: pre/post_tool_use, pipeline_start/end) is
 # added there (schema + one dispatch call site) and automatically becomes a
-# recognised ``on:`` value here, with zero edits to this module. The 8
-# points today are unchanged: turn_start/turn_end, session_start/
-# session_end (lifecycle), mcp_resource_updated
-# (#2608 H1), file_changed (#2608 H4), cron_fired/webhook_received (#2608 H5).
+# recognised ``on:`` value here, with zero edits to this module. See
+# ``schema_registry.py``'s own ``_LIFECYCLE_POINTS``/``_EXTERNAL_POINTS``/
+# ``_TASK_POINTS`` for the current membership — deliberately not re-listed
+# here, so this comment can't itself go stale the way it just did (it named
+# a fixed 8-point enumeration that silently excluded ``task_settled``, #3978
+# P3, once that landed).
 # The registry's namespaced kind (e.g. ``builtin:lifecycle:turn_end``) is
 # ALSO accepted in ``on:`` — a permanent alias of the bare form below,
 # normalized by ``reyn.hooks.loader`` — but this frozenset (the internal
