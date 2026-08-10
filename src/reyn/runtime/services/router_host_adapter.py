@@ -79,20 +79,6 @@ class McpGatewayInputs:
 
 
 @dataclass(frozen=True)
-class SendToAgentInputs:
-    """#3482: the two params whose consumer set is EXACTLY
-    ``{adapter.send_to_agent, router_loop::_send_to_agent_bound}`` — the peer
-    dispatch callback and the tracker its result is appended to. One dedicated
-    method reads both and nothing else does, so they travel together.
-
-    Pure value object — no defaults, no construction logic (see
-    :class:`McpGatewayInputs`'s docstring for the rationale)."""
-
-    send_to_agent: "Callable[..., Awaitable[None]]"
-    delegation_tracker: "Callable[[], list[dict] | None]"
-
-
-@dataclass(frozen=True)
 class PutOutboxInputs:
     """#3482: the two params whose consumer set is EXACTLY
     ``{adapter.put_outbox, router_loop::run_loop}`` — the raw outbox put and
@@ -218,11 +204,6 @@ class RouterHostAdapter:
           registry / pipeline executor (spawn-time flip), mirroring
           ``live_session_id_fn``'s same staleness hazard. ``None`` (test
           construction) behaves as never-ephemeral.
-    send_to_agent_inputs:
-        :class:`SendToAgentInputs` — the peer-dispatch callback ``(*, to,
-        request, depth, chain_id) -> None`` plus the ``list[dict] | None``
-        delegation tracker it records into (#3482 bundle: exact consumer-set
-        match on ``send_to_agent``).
     put_outbox_inputs:
         :class:`PutOutboxInputs` — the raw ``(OutboxMessage) -> None`` put plus
         the ``list[str] | None`` agent-replies tracker (#3482 bundle: exact
@@ -309,7 +290,6 @@ class RouterHostAdapter:
         # cluster (#3482); ``append_history`` stays bare because its consumer
         # set is strictly larger than ``put_outbox``'s (append_history_entry
         # reads it too).
-        send_to_agent_inputs: SendToAgentInputs,
         put_outbox_inputs: PutOutboxInputs,
         append_history: Callable,
         # #3792: mid-turn CLIENT_INPUT injection — a peek/commit pair, both
@@ -486,7 +466,6 @@ class RouterHostAdapter:
     ) -> None:
         self._op_ctx_source = op_context_source
         self._mcp_gateway = mcp_gateway_inputs
-        self._send_to_agent_in = send_to_agent_inputs
         self._put_outbox_in = put_outbox_inputs
         self._live_sid_in = live_session_id_inputs
         self._threat_scan = threat_scan
@@ -559,9 +538,16 @@ class RouterHostAdapter:
         # #3447/#3482: raw inputs for the 5 mcp_list_* methods this adapter
         # implements directly (folded off Session — see class docstring),
         # bundled into mcp_gateway_inputs (single reader: _mcp_list_via_gateway).
-        # Action callbacks — the dispatch/outbox pairs live on their #3482
-        # bundles (``self._send_to_agent_in`` / ``self._put_outbox_in``); the
-        # ``send_to_agent`` / ``put_outbox`` methods read them there.
+        # Action callbacks — the outbox put lives on its #3482 bundle
+        # (``self._put_outbox_in``); the ``put_outbox`` method reads it
+        # there. ``send_to_agent`` (the RouterLoopHost protocol member +
+        # this adapter's own implementation) retired in #4150 — zero
+        # callers after P6 (#3978) removed the sole producer of the
+        # closure that used to reach it (router_loop.py's
+        # _send_to_agent_bound, removed in #4144). The LIVE peer-dispatch
+        # transport is InterAgentMessaging.send_to_agent, reached via
+        # Session._send_to_agent directly — this adapter is not on that
+        # path.
         self._append_history_cb = append_history
         # #3792
         self._peek_mid_turn_injection_cb = peek_mid_turn_injection
@@ -1226,17 +1212,6 @@ class RouterHostAdapter:
         return self._memory
 
     # --- Action callbacks ---
-
-    async def send_to_agent(self, *, to: str, request: str, depth: int,
-                            chain_id: str) -> None:
-        """Dispatch to peer and record delegation for pending-chain registration."""
-        await self._send_to_agent_in.send_to_agent(
-            to=to, request=request, depth=depth, chain_id=chain_id,
-        )
-        # Track delegations so callers can register _PendingChain after the loop.
-        tracker = self._send_to_agent_in.delegation_tracker()
-        if tracker is not None:
-            tracker.append({"to": to, "request": request})
 
     def mark_task_pending(self) -> None:
         """Proposal 0067 P1' (#3978): forward to ``Session.current_task``
@@ -2655,7 +2630,6 @@ class RouterHostAdapter:
 
 ROUTER_HOST_ADAPTER_BUNDLE_TYPES: "tuple[str, ...]" = (
     "McpGatewayInputs",
-    "SendToAgentInputs",
     "PutOutboxInputs",
     "LiveSessionIdInputs",
 )

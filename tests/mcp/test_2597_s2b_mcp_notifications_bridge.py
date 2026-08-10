@@ -26,7 +26,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
 )
 from tests._support.events import collect_events
 
@@ -62,10 +61,6 @@ async def _null_file_delete(path: str) -> dict:
 
 async def _null_file_regen(*, path, output_path, entry_template, header) -> dict:
     return {"path": path, "output_path": output_path, "entries": 0}
-
-
-async def _null_send_to_agent(*, to, request, depth, chain_id) -> None:
-    pass
 
 
 async def _null_put_outbox(msg) -> None:
@@ -113,9 +108,6 @@ def _make_adapter(*, tmp_path: Path, events: EventLog) -> RouterHostAdapter:
         agent_workspace_dir=workspace,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
         ),

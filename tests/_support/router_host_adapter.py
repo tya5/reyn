@@ -17,7 +17,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
 )
 
 # Every RouterOpContextSource field, all inert. Deliberately spelled out
@@ -87,10 +86,6 @@ async def null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
     return {}
 
 
-async def null_send_to_agent(*, to, request, depth, chain_id) -> None:
-    pass
-
-
 async def null_put_outbox(msg) -> None:
     pass
 
@@ -104,7 +99,6 @@ def make_adapter(
     agent_workspace_dir: Path | None = None,
     events: EventLog | None = None,
     memory: MemoryService | None = None,
-    delegation_list: "list[dict] | None" = None,
     agent_replies_list: "list[str] | None" = None,
     resolver: ModelResolver | None = None,
     turn_budget_engine: object = None,
@@ -162,7 +156,6 @@ def make_adapter(
     if resolver is None:
         resolver = ModelResolver({})
 
-    _delegations = delegation_list
     _replies = agent_replies_list
 
     op_context_source = make_op_context_source(
@@ -176,10 +169,6 @@ def make_adapter(
         mcp_connection_service=None,
         mcp_agent_id=None,
         ephemeral_fn=None,
-    )
-    send_to_agent_inputs = SendToAgentInputs(
-        send_to_agent=null_send_to_agent,
-        delegation_tracker=lambda: _delegations,
     )
     put_outbox_inputs = PutOutboxInputs(
         put_outbox=null_put_outbox,
@@ -209,7 +198,6 @@ def make_adapter(
         agent_workspace_dir=workspace,
         mcp_call_tool=null_mcp_call_tool,
         mcp_gateway_inputs=mcp_gateway_inputs,
-        send_to_agent_inputs=send_to_agent_inputs,
         put_outbox_inputs=put_outbox_inputs,
         append_history=null_append_history,
         live_session_id_inputs=live_session_id_inputs,

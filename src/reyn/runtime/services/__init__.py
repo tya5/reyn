@@ -16,7 +16,6 @@ from reyn.runtime.services.router_host_adapter import (
     McpGatewayInputs,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
 )
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
