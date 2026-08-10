@@ -11,13 +11,21 @@ whatever's LEFT of it instead.
 
 Real ``ChainManager``/``SnapshotJournal``/``StateLog``/``AgentSnapshot``
 throughout — no mocks, matching ``test_chain_manager_settle_3978.py``'s and
-``test_chain_manager_find_chain.py``'s established pattern. The injected
-``clock_fn`` computes ``arm_at``/``remaining`` deterministically (no real
-sleep needed to test THAT arithmetic); the watchdog's actual scheduling
-still runs on real ``asyncio.sleep``, so tests that need to observe it FIRE
-use a short real duration + a bounded ``asyncio.wait_for`` on an event it
-sets — never a fixed sleep as the thing that makes the assertion pass
-(CLAUDE.md's testing policy).
+``test_chain_manager_find_chain.py``'s established pattern.
+
+Time-dependence, eliminated (owner design, via lead-coder): what P8 actually
+changed is WHICH ``duration_seconds`` ``_chain_timeout_watch`` sleeps for —
+the full window on a fresh arm, the REMAINING time on a restore with a
+persisted deadline, a fresh window again on a legacy restore with none. A
+test only needs to observe THAT DECISION, not wait for the sleep it drives
+to actually elapse. ``ChainManager``'s injected ``sleep_fn`` (mirrors
+``clock_fn``'s seam) records the requested ``duration_seconds`` and returns
+immediately — zero real wall-clock time in any test here, and precise
+enough to distinguish 0.05s from 0.03s (a bounded "fires within N seconds"
+proxy could only ever distinguish magnitudes coarser than N). Firing
+confirmation is recorded INSIDE the ``on_fire`` callback (a plain list,
+appended once) and asserted from OUTSIDE it — a callback-internal-only
+assert would stay vacuously green if ``on_fire`` were never invoked at all.
 """
 from __future__ import annotations
 
@@ -39,8 +47,43 @@ class _NullEvents:
         pass
 
 
+def _recording_sleep():
+    """Returns (sleep_fn, calls) — sleep_fn records each requested duration
+    and returns immediately (no real ``asyncio.sleep``, zero elapsed time),
+    calls is the list it appends to."""
+    calls: list[float] = []
+
+    async def _sleep(duration: float) -> None:
+        calls.append(duration)
+
+    return _sleep, calls
+
+
+def _recording_fire():
+    """Returns (on_fire, calls) — on_fire records each chain_id it was
+    called with. Checked from OUTSIDE the callback (see module docstring)."""
+    calls: list[str] = []
+
+    async def _on_fire(chain_id: str) -> None:
+        calls.append(chain_id)
+
+    return _on_fire, calls
+
+
+async def _let_scheduled_watchdogs_run() -> None:
+    """A single zero-time scheduler yield — NOT a wait-budget constant
+    (CLAUDE.md's testing policy targets a fixed retry/poll COUNT or REAL
+    delay used to paper over eventual consistency). ``asyncio.create_task``
+    defers the watchdog coroutine to the next loop iteration; with
+    ``sleep_fn`` recording-and-returning-immediately (no real suspension),
+    one yield is sufficient for it to run to completion — this is the
+    standard idiom for "let already-ready callbacks run", not a timing
+    proxy standing in for the assertion itself."""
+    await asyncio.sleep(0)
+
+
 def _make_manager(
-    tmp_path: Path, *, chain_timeout_seconds: float, clock_fn=None,
+    tmp_path: Path, *, chain_timeout_seconds: float, clock_fn=None, sleep_fn=None,
 ) -> "tuple[ChainManager, SnapshotJournal]":
     """Returns (manager, journal) — the journal is a real collaborator the
     TEST constructs and owns (not the manager's private state), so a test
@@ -54,7 +97,7 @@ def _make_manager(
     mgr = ChainManager(
         journal=journal, events=_NullEvents(),
         chain_timeout_seconds=chain_timeout_seconds, max_hop_depth=10,
-        clock_fn=clock_fn,
+        clock_fn=clock_fn, sleep_fn=sleep_fn,
     )
     return mgr, journal
 
@@ -102,20 +145,16 @@ async def test_arm_timeout_disabled_does_not_set_arm_at(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_restore_of_a_past_due_chain_fires_promptly_not_after_a_fresh_window(
+async def test_restore_of_a_past_due_chain_schedules_zero_remaining(
     tmp_path: Path,
 ):
     """Tier 2: the P8 bug, falsified directly. A chain whose persisted
     arm_at is already in the PAST (crash happened after the real deadline)
-    must fire on its very next scheduler tick after restore — NOT get a
-    fresh chain_timeout_seconds window. chain_timeout_seconds is set LARGE
-    (60s) specifically so a bounded wait proves this: if restore() were
-    still doing the pre-P8 "arm exactly like new", on_fire would not fire
-    within this test's short bounded wait at all."""
-    log = StateLog(tmp_path / "wal.jsonl")
-    journal = SnapshotJournal(
-        agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
-    )
+    must be scheduled with duration_seconds=0.0 — NOT a fresh
+    chain_timeout_seconds window. chain_timeout_seconds is set to 999 (a
+    value nothing in this test's PASSING path could produce by accident)
+    so a regression to the fresh-window branch is unambiguous in the
+    recorded duration, not inferred from timing."""
     now = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
     past_arm_at = now - timedelta(seconds=5)  # 5s overdue
     snapshot = AgentSnapshot(
@@ -131,37 +170,34 @@ async def test_restore_of_a_past_due_chain_fires_promptly_not_after_a_fresh_wind
             },
         },
     )
-    journal.install(snapshot)
-    mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
-        chain_timeout_seconds=60, max_hop_depth=10, clock_fn=lambda: now,
-    )
-
-    fired = asyncio.Event()
-
-    async def _on_fire(chain_id: str) -> None:
-        assert chain_id == "c-overdue"
-        fired.set()
-
-    mgr.restore(on_fire=_on_fire)
-
-    await asyncio.wait_for(fired.wait(), timeout=2.0)
-
-
-@pytest.mark.asyncio
-async def test_restore_of_a_chain_with_time_remaining_waits_the_remainder_not_the_full_window(
-    tmp_path: Path,
-):
-    """Tier 2: falsification pair — a chain that still has a SHORT real
-    remainder (0.05s of a 60s window) fires within that short remainder.
-    chain_timeout_seconds is 60s so this genuinely distinguishes "scheduled
-    for the remainder" from "scheduled for the full window" — if restore()
-    regressed to the pre-P8 fresh-arm behavior, this bounded wait would
-    time out."""
     log = StateLog(tmp_path / "wal.jsonl")
     journal = SnapshotJournal(
         agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
     )
+    journal.install(snapshot)
+    sleep_fn, sleep_calls = _recording_sleep()
+    on_fire, fire_calls = _recording_fire()
+    mgr = ChainManager(
+        journal=journal, events=_NullEvents(),
+        chain_timeout_seconds=999, max_hop_depth=10,
+        clock_fn=lambda: now, sleep_fn=sleep_fn,
+    )
+
+    mgr.restore(on_fire=on_fire)
+    await _let_scheduled_watchdogs_run()
+
+    assert sleep_calls == [0.0]
+    assert fire_calls == ["c-overdue"]
+
+
+@pytest.mark.asyncio
+async def test_restore_of_a_chain_with_time_remaining_schedules_the_remainder(
+    tmp_path: Path,
+):
+    """Tier 2: falsification pair — a chain with 0.05s left on its
+    persisted deadline is scheduled with duration_seconds==0.05 exactly
+    (not chain_timeout_seconds=999, the fresh-window value a regression
+    would produce)."""
     now = datetime(2026, 1, 1, 0, 5, 0, tzinfo=timezone.utc)
     soon_arm_at = now + timedelta(seconds=0.05)
     snapshot = AgentSnapshot(
@@ -177,36 +213,35 @@ async def test_restore_of_a_chain_with_time_remaining_waits_the_remainder_not_th
             },
         },
     )
-    journal.install(snapshot)
-    mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
-        chain_timeout_seconds=60, max_hop_depth=10, clock_fn=lambda: now,
-    )
-
-    fired = asyncio.Event()
-
-    async def _on_fire(chain_id: str) -> None:
-        fired.set()
-
-    mgr.restore(on_fire=_on_fire)
-
-    await asyncio.wait_for(fired.wait(), timeout=2.0)
-
-
-@pytest.mark.asyncio
-async def test_restore_without_a_persisted_arm_at_falls_back_to_a_fresh_full_window(
-    tmp_path: Path,
-):
-    """Tier 2: non-vacuity — a LEGACY chain (pre-P8 WAL entry, no arm_at
-    key at all) restores exactly like before P8: a fresh full-window arm.
-    Proven by NOT firing within a short bounded wait, with
-    chain_timeout_seconds set to something real callers would use (not 60s
-    — a short-but-not-instant value keeps the test itself fast while still
-    genuinely distinguishing "fresh full window" from "already fired")."""
     log = StateLog(tmp_path / "wal.jsonl")
     journal = SnapshotJournal(
         agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
     )
+    journal.install(snapshot)
+    sleep_fn, sleep_calls = _recording_sleep()
+    on_fire, fire_calls = _recording_fire()
+    mgr = ChainManager(
+        journal=journal, events=_NullEvents(),
+        chain_timeout_seconds=999, max_hop_depth=10,
+        clock_fn=lambda: now, sleep_fn=sleep_fn,
+    )
+
+    mgr.restore(on_fire=on_fire)
+    await _let_scheduled_watchdogs_run()
+
+    assert sleep_calls == [pytest.approx(0.05)]
+    assert fire_calls == ["c-soon"]
+
+
+@pytest.mark.asyncio
+async def test_restore_without_a_persisted_arm_at_schedules_a_fresh_full_window(
+    tmp_path: Path,
+):
+    """Tier 2: non-vacuity — a LEGACY chain (pre-P8 WAL entry, no arm_at
+    key at all) restores exactly like before P8: scheduled with
+    duration_seconds==chain_timeout_seconds (the full window), and
+    arm_at stays None (the fallback branch never computed one — it
+    can't recover a deadline that was never recorded)."""
     snapshot = AgentSnapshot(
         agent_name="alpha",
         pending_chains={
@@ -220,27 +255,26 @@ async def test_restore_without_a_persisted_arm_at_falls_back_to_a_fresh_full_win
             },
         },
     )
+    log = StateLog(tmp_path / "wal.jsonl")
+    journal = SnapshotJournal(
+        agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
+    )
     journal.install(snapshot)
+    sleep_fn, sleep_calls = _recording_sleep()
+    on_fire, fire_calls = _recording_fire()
     mgr = ChainManager(
         journal=journal, events=_NullEvents(),
-        chain_timeout_seconds=0.3, max_hop_depth=10,
+        chain_timeout_seconds=60, max_hop_depth=10, sleep_fn=sleep_fn,
     )
 
-    fired = asyncio.Event()
-
-    async def _on_fire(chain_id: str) -> None:
-        fired.set()
-
-    mgr.restore(on_fire=_on_fire)
+    mgr.restore(on_fire=on_fire)
+    await _let_scheduled_watchdogs_run()
 
     assert mgr.get("c-legacy").arm_at is None, (
         "a legacy restore must not fabricate a deadline that was never recorded"
     )
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(fired.wait(), timeout=0.05)
-    # ...but it DOES eventually fire, on the full fresh window — proves the
-    # watchdog was actually scheduled, not silently dropped.
-    await asyncio.wait_for(fired.wait(), timeout=2.0)
+    assert sleep_calls == [60]
+    assert fire_calls == ["c-legacy"]
 
 
 # ── restore() stays sync (no cascading get_or_load()/restore_state() to async) ──
@@ -304,7 +338,7 @@ async def test_truncate_falsify_restore_schedules_from_the_snapshot_backed_arm_a
     # Serialize → the snapshot carries arm_at + applied_seq=2.
     snap.save(tmp_path / "snap-recover.json")
 
-    # TRUNCATE: reload and replay an EMPTY tail — all 3 source WAL events
+    # TRUNCATE: reload and replay an EMPTY tail — all source WAL events
     # are gone below the truncation floor.
     reloaded = _Snap.load("alpha", tmp_path / "snap-recover.json")
     reloaded.apply_events([])
@@ -318,21 +352,22 @@ async def test_truncate_falsify_restore_schedules_from_the_snapshot_backed_arm_a
         agent_name="alpha", snapshot_path=tmp_path / "snap-live.json", state_log=log,
     )
     journal.install(reloaded)
+    sleep_fn, sleep_calls = _recording_sleep()
+    on_fire, fire_calls = _recording_fire()
     mgr = ChainManager(
         journal=journal, events=_NullEvents(),
-        chain_timeout_seconds=60, max_hop_depth=10, clock_fn=lambda: now,
+        chain_timeout_seconds=999, max_hop_depth=10,
+        clock_fn=lambda: now, sleep_fn=sleep_fn,
     )
-    fired = asyncio.Event()
 
-    async def _on_fire(chain_id: str) -> None:
-        assert chain_id == "c-recover"
-        fired.set()
+    mgr.restore(on_fire=on_fire)
+    await _let_scheduled_watchdogs_run()
 
-    mgr.restore(on_fire=_on_fire)
-    # Fires from the ~0.05s REMAINING on the recovered deadline — if
-    # restore() had regressed to a fresh 60s window (the pre-P8 bug this
-    # gate exists to catch), this bounded wait would time out.
-    await asyncio.wait_for(fired.wait(), timeout=2.0)
+    # Scheduled from the ~0.05s REMAINING on the recovered deadline — if
+    # restore() had regressed to a fresh 999s window (the pre-P8 bug this
+    # gate exists to catch), sleep_calls would be [999], not ~[0.05].
+    assert sleep_calls == [pytest.approx(0.05)]
+    assert fire_calls == ["c-recover"]
 
     # WAL-only CONTROL: a DIFFERENT chain, registered+updated entirely
     # AFTER the snapshot's applied_seq, is WAL-only — present when its

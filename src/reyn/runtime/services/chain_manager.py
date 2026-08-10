@@ -164,10 +164,22 @@ class ChainManager:
         proposal 0067 P8 (#3978): callable returning an aware UTC
         ``datetime`` — injectable for tests (mirrors
         ``cron.scheduler.CronScheduler``'s identical seam: production omits
-        it and gets ``datetime.now(timezone.utc)``; a test advances a fake
-        clock instead of sleeping real wall-clock seconds — CLAUDE.md's
-        testing policy bans a wait-budget constant or a straight-line
-        ``sleep(N)`` as the thing that makes an assertion pass).
+        it and gets ``datetime.now(timezone.utc)``).
+    sleep_fn:
+        proposal 0067 P8 (#3978, owner design): callable with
+        ``asyncio.sleep``'s signature — injectable for tests, next to
+        ``clock_fn``. What P8 actually changed is WHICH ``duration_seconds``
+        ``_chain_timeout_watch`` sleeps for (the full window on a fresh
+        arm, the REMAINING time on a restore with a persisted deadline, a
+        fresh window again on a legacy restore with none) — the decision,
+        not the sleep's own completion. A test asserting the decision
+        needs to observe the ``duration_seconds`` a call was made with,
+        not wait for a real (or even short) sleep to finish: CLAUDE.md's
+        testing policy bans a wait-budget constant AND a straight-line
+        ``sleep(N)`` as the thing that makes an assertion pass, and a
+        bounded "fires within N seconds" proxy can only distinguish
+        magnitudes coarser than N (60s vs 0.05s, never 0.05s vs 0.03s).
+        Production omits it and gets real ``asyncio.sleep``.
     """
 
     def __init__(
@@ -178,12 +190,14 @@ class ChainManager:
         chain_timeout_seconds: float,
         max_hop_depth: int,
         clock_fn: "Callable[[], datetime] | None" = None,
+        sleep_fn: "Callable[[float], Awaitable[None]] | None" = None,
     ) -> None:
         self._journal = journal
         self._events = events
         self._chain_timeout_seconds = chain_timeout_seconds
         self.max_hop_depth = max_hop_depth
         self._clock = clock_fn or (lambda: datetime.now(timezone.utc))
+        self._sleep = sleep_fn or asyncio.sleep
 
         self._chains: dict[str, _PendingChain] = {}
         self._timers: dict[str, asyncio.Task] = {}
@@ -543,7 +557,7 @@ class ChainManager:
         is harmless.
         """
         try:
-            await asyncio.sleep(duration_seconds)
+            await self._sleep(duration_seconds)
         except asyncio.CancelledError:
             return
         # Chain may have been resolved between sleep wake and pop.
