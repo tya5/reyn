@@ -74,12 +74,10 @@ A single `AgentRegistry` instance per process owns all loaded agents and the Ses
 > `InterAgentMessaging.send_to_agent`, `_PendingChain` registration) is
 > still present in code but structurally unreachable — its sole consumer,
 > `delegate_to_agent`, was retired in proposal 0067 P6. No tool wired today
-> populates `dispatched`, so `register(waiting_on=...)` never fires.
-> Rewriting this section waits for P4e's second half (reply-routing), which
-> reactivates the same substrate under a different shape — `|waiting_on| ==
-> 1`, not the multi-hop join described below, which is permanently retired.
-> Read what follows as a description of the mechanism's pre-retirement
-> shape, not current behavior.
+> populates `dispatched`, so `register(waiting_on=...)` never fires. The
+> multi-hop join (`|waiting_on| >= 2`) this section describes is
+> permanently retired. Read what follows as a description of the
+> mechanism's pre-retirement shape, not current behavior.
 
 When a router decision emits `messages_to_agents: [{to, request}, ...]`, the Session routes each entry to the target's inbox as an `agent_request` payload:
 
