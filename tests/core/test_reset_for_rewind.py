@@ -44,7 +44,7 @@ async def test_reset_for_rewind_then_restore_state_zero_residue(tmp_path):
     # ── populate pre-rewind live state (OLD markers) ──
     session.inbox.put_nowait(("user", {"text": "OLD"}))
     await session._chains.register(
-        chain_id="OLD-chain", from_user=True, depth=0,
+        chain_id="OLD-chain", depth=0,
         original_text="old", sender=None,
     )
     session._buffered_intervention_answers["OLD-run"] = InterventionAnswer(text="OLD")

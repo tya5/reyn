@@ -112,15 +112,24 @@ class ChainTimeoutGlue:
             chain_id=chain_id,
             waiting_on=waiting,
             timeout_seconds=self._chain_timeout_seconds,
-            origin_agent=pending.origin_agent,
+            # proposal 0067 P4e (#3978): field KEY unchanged (see the
+            # matching comment in session.py's chain_peer_discarded emit —
+            # audit payload shape, not the closed AUDIT_EVENT_KINDS
+            # vocabulary), value now reads the materialized requester field.
+            origin_agent=pending.requester.agent_name,
         )
         try:
             await self._send_agent_response(
-                to=pending.origin_agent,
+                to=pending.requester.agent_name,
                 response=error_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
-                to_sid=getattr(pending, "origin_sid", None),  # #2130
+                # proposal 0067 P4e (#3978): direct access, not the previous
+                # defensive getattr(pending, "origin_sid", None) — requester
+                # is a required field on _PendingChain (never absent), so
+                # the defensiveness that inconsistency flagged (#3978 P4e
+                # scope measurement) no longer has anything to guard against.
+                to_sid=pending.requester.session_id,  # #2130
             )
         except Exception as exc:
             await self._put_outbox(OutboxMessage(

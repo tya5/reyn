@@ -206,16 +206,19 @@ def test_truncate_falsify_snapshot_backed_kept_state_survives(tmp_path: Path):
 def test_chain_register_replay_carries_origin_sid_and_task_kind():
     """Tier 2: #3978 P4 — a chain_register event's ``origin_sid`` (#2130) and
     ``task_kind`` (P4) fields must survive PURE WAL REPLAY, not just a
-    snapshot save/load round-trip. Before this fix, ``apply_events``'s own
-    ``chain_register`` branch hardcoded a 5-field dict that silently dropped
-    both — a crash recovered via replay (rather than a loaded snapshot file)
-    would reconstruct a pending_chains entry missing them, which
-    ``ChainManager.restore()`` then reads back as ``None`` regardless of
-    what was actually registered. This directly affects P4's
-    ``_PendingChain.requester`` property (derived from
-    ``origin_agent``/``origin_sid``) and ``describe_task``/``list_tasks``
-    (which read ``kind``): a wrong ``origin_sid`` silently mis-attributes
-    the requester to "main"."""
+    snapshot save/load round-trip. Before the original P4 fix, ``apply_events``'s
+    own ``chain_register`` branch hardcoded a 5-field dict that silently
+    dropped both — a crash recovered via replay (rather than a loaded
+    snapshot file) would reconstruct a pending_chains entry missing them.
+
+    proposal 0067 P4e (#3978): this test now exercises the LEGACY event
+    shape specifically (flat ``origin_agent``/``origin_sid`` keys, no
+    ``requester`` key) — the shape a pre-P4e WAL entry actually has.
+    ``apply_events`` normalizes it into the current nested ``requester``
+    shape at replay time (same normalization ``ChainManager.restore()``
+    then reads unconditionally), so this is now also the falsify-coverage
+    for that legacy-to-current normalization, not just the original
+    origin_sid/task_kind drop."""
     snap = _snap("agent_x")
     snap.apply_events([
         _event(
@@ -225,15 +228,18 @@ def test_chain_register_replay_carries_origin_sid_and_task_kind():
         ),
     ])
     chain = snap.pending_chains["c-kind"]
-    assert chain["origin_sid"] == "sid-7"
+    assert chain["requester"] == {"agent_name": "a", "session_id": "sid-7"}
     assert chain["task_kind"] == "pipeline"
 
 
 def test_chain_register_replay_defaults_origin_sid_and_task_kind_to_none():
     """Tier 2: falsification pair — an event carrying neither field (a
-    pre-#2130/pre-P4 WAL entry) still replays cleanly, defaulting both to
-    ``None`` rather than raising a ``KeyError`` (both are ``event.get``,
-    not ``event[...]``)."""
+    pre-#2130/pre-P4 WAL entry) still replays cleanly, defaulting
+    ``requester.session_id`` to ``"main"`` (proposal 0067 P4e, #3978:
+    ``Requester.session_id`` is typed ``str``, never ``None`` — the same
+    normalization ``ChainManager.register()``'s own no-``requester``-passed
+    default applies) and ``task_kind`` to ``None`` rather than raising a
+    ``KeyError``."""
     snap = _snap("agent_x")
     snap.apply_events([
         _event(
@@ -242,7 +248,7 @@ def test_chain_register_replay_defaults_origin_sid_and_task_kind_to_none():
         ),
     ])
     chain = snap.pending_chains["c-old"]
-    assert chain["origin_sid"] is None
+    assert chain["requester"] == {"agent_name": "a", "session_id": "main"}
     assert chain["task_kind"] is None
 
 
@@ -354,6 +360,95 @@ def test_truncate_falsify_chain_update_field_survives_wal_truncation(tmp_path: P
     truncated = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
     truncated.apply_events([])  # seq 3/4 events truncated
     assert "c-walonly" not in truncated.pending_chains  # WAL-only state LOST
+
+
+def test_truncate_falsify_requester_survives_wal_truncation(tmp_path: Path):
+    """Tier 2c: CLAUDE.md's recovery-feature PR gate — proposal 0067 P4e
+    (#3978) materializes ``requester`` as ``_PendingChain``'s stored reply
+    address (was two flat fields, ``origin_agent``/``origin_sid``, behind a
+    derived property). Same shape as
+    ``test_truncate_falsify_chain_update_field_survives_wal_truncation``
+    above: bake a chain_register-carried ``requester`` into a saved
+    snapshot (``applied_seq`` past its own seq), then reload and replay an
+    EMPTY tail (simulating the source WAL event truncated below the
+    snapshot's own seq) — ``requester`` must still be correct, because it
+    survives via the snapshot, not via replaying the (now-gone) WAL entry.
+    The WAL-only control proves this isn't trivially passing."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-req",
+            origin_depth=0, original_request="x",
+            requester={"agent_name": "worker", "session_id": "sid-9"},
+        ),
+    ])
+    assert snap.applied_seq == 1
+    assert snap.pending_chains["c-req"]["requester"] == {
+        "agent_name": "worker", "session_id": "sid-9",
+    }
+
+    # Serialize → the snapshot carries requester + applied_seq=1.
+    snap.save(tmp_path / "snap-req.json")
+
+    # TRUNCATE: replay an EMPTY tail (the source WAL event, seq 1, is gone
+    # below the truncation floor) — apply_events skips seq<=applied_seq
+    # regardless, so this simulates "the event isn't even offered" faithfully.
+    reloaded = AgentSnapshot.load("agent_x", tmp_path / "snap-req.json")
+    reloaded.apply_events([])
+    assert reloaded.pending_chains["c-req"]["requester"] == {
+        "agent_name": "worker", "session_id": "sid-9",
+    }, (
+        "requester must survive WAL truncation below its chain_register's "
+        "seq — it is baked into the SAVED snapshot, not replayed from the "
+        "(now-gone) event"
+    )
+
+    # WAL-only CONTROL: a DIFFERENT chain, registered entirely AFTER the
+    # snapshot's applied_seq, is WAL-only — present when its event is
+    # replayed, LOST when it's truncated instead. Proves the assertion
+    # above is snapshot-backed survival, not something that always passes.
+    later_event = _event(
+        "chain_register", seq=2, chain_id="c-walonly-req",
+        origin_depth=0, original_request="y",
+        requester={"agent_name": "other", "session_id": "sid-2"},
+    )
+    replayed = AgentSnapshot.load("agent_x", tmp_path / "snap-req.json")
+    replayed.apply_events([later_event])
+    assert replayed.pending_chains["c-walonly-req"]["requester"] == {
+        "agent_name": "other", "session_id": "sid-2",
+    }  # present WITH its event
+    truncated = AgentSnapshot.load("agent_x", tmp_path / "snap-req.json")
+    truncated.apply_events([])  # seq 2 event truncated
+    assert "c-walonly-req" not in truncated.pending_chains  # WAL-only state LOST
+
+
+def test_chain_register_replay_normalizes_legacy_origin_keys_into_requester(tmp_path: Path):
+    """Tier 2c: CLAUDE.md's recovery-feature PR gate, legacy-shape half —
+    a chain_register WAL event recorded BEFORE proposal 0067 P4e (flat
+    ``origin_agent``/``origin_sid`` keys, no ``requester`` key at all) must
+    still reconstruct a correct ``requester`` value, not a KeyError and not
+    a dropped field — the SAME truncate-survives shape as the test above,
+    but for an event generation this PR did not write. Falsifies the
+    normalization ``apply_events``'s ``chain_register`` branch performs at
+    replay time (see its own comment): baked into a saved snapshot, then
+    replayed past an empty (truncated) tail."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-legacy",
+            origin_agent="legacy-worker", origin_sid="legacy-sid",
+            origin_depth=0, original_request="x",
+        ),
+    ])
+    assert snap.pending_chains["c-legacy"]["requester"] == {
+        "agent_name": "legacy-worker", "session_id": "legacy-sid",
+    }
+    snap.save(tmp_path / "snap-legacy.json")
+    reloaded = AgentSnapshot.load("agent_x", tmp_path / "snap-legacy.json")
+    reloaded.apply_events([])  # TRUNCATE: the legacy event is gone
+    assert reloaded.pending_chains["c-legacy"]["requester"] == {
+        "agent_name": "legacy-worker", "session_id": "legacy-sid",
+    }, "a legacy-shape chain_register's normalized requester must survive truncation too"
 
 
 def test_chain_update_replay_writes_only_real_pending_chain_fields():

@@ -27,6 +27,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.runtime.task_types import Requester
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
@@ -96,12 +97,11 @@ def test_handler_resolves_chain_and_emits_audit_event(tmp_path: Path):
         # A registers a chain waiting on B
         await sess_a.chains.register(
             chain_id="X-001",
-            from_user=True,
             depth=1,
             original_text="please research X",
             sender="user",
             waiting_on={"B"},
-            origin_agent="user",
+            requester=Requester(agent_name="user", session_id=""),
             origin_depth=0,
         )
         assert sess_a.chains.find_chain("X-001") is not None
@@ -152,12 +152,11 @@ def test_notify_finds_waiter_and_returns_true(tmp_path: Path):
     async def go():
         await sess_a.chains.register(
             chain_id="X-002",
-            from_user=True,
             depth=1,
             original_text="task",
             sender="user",
             waiting_on={"B"},
-            origin_agent="user",
+            requester=Requester(agent_name="user", session_id=""),
             origin_depth=0,
         )
         notified = await registry.notify_chain_discarded(
@@ -196,12 +195,11 @@ def test_notify_excludes_self_from_scan(tmp_path: Path):
         # B registers a chain (irrelevant to the discard)
         await sess_b.chains.register(
             chain_id="X-self",
-            from_user=False,
             depth=1,
             original_text="t",
             sender="caller",
             waiting_on={"C"},
-            origin_agent="A",
+            requester=Requester(agent_name="A", session_id=""),
             origin_depth=1,
         )
         # B notifies for the same chain_id

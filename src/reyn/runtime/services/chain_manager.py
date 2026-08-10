@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
 
-from reyn.runtime.task_types import RunStatus
+from reyn.runtime.task_types import Requester, RunStatus
 
 if TYPE_CHECKING:
     from reyn.core.events.agent_snapshot import AgentSnapshot
@@ -40,24 +40,31 @@ class _PendingChain:
 
     Created when an agent receives an ``agent_request`` and decides to
     further delegate (router emits ``messages_to_agents``). The reply to
-    the upstream ``origin_agent`` is held back until every entry in
+    the upstream ``requester`` is held back until every entry in
     ``waiting_on`` has returned an ``agent_response`` for this chain_id.
     On the final response, the agent re-runs its router so the LLM can
     compose a synthesized answer with all delegate replies in history,
-    then sends that answer to ``origin_agent`` at ``origin_depth``.
+    then sends that answer to ``requester`` at ``origin_depth``.
 
     Note: session.py retains an identical copy until wave 2 imports this.
     """
 
     chain_id: str
-    origin_agent: str
+    # proposal 0067 P4e (#3978), architect ruling 2026-08-10: ADR-0040 D6's
+    # ``Requester(agent_name, session_id)`` stored as ONE nested field, not
+    # two flat ones — "the pair is the address, not either half alone"
+    # (``Requester``'s own docstring), and #2130 already lived the flat-2-key
+    # failure mode once (a missing ``origin_sid`` silently misdelivered to
+    # ``main``). A flat pair structurally permits writing one half without
+    # the other; a nested value does not. Was ``origin_agent``/``origin_sid``
+    # (two flat fields) plus a `.requester` DERIVED property (P4, #3978) —
+    # this rename makes the property redundant by making the field itself
+    # BE what the property used to compute. See ``register()``'s docstring
+    # for the WAL-persisted shape.
+    requester: Requester
     origin_depth: int
     original_request: str
     waiting_on: set[str] = field(default_factory=set)
-    # #2130: the origin's session id — so the resolved chain reply routes back to the
-    # specific (origin_agent, origin_sid), not the origin agent's main session. None →
-    # main-case (user-initiated / external peer / pre-#2130 journal entries).
-    origin_sid: "str | None" = None
     # proposal 0067 P4 (#3978): the task kind (prompt/pipeline/exec) this
     # handle represents — None for a delegate-relay chain, which stays
     # OUTSIDE the task vocabulary permanently. NOT because of its
@@ -95,27 +102,6 @@ class _PendingChain:
     # (cancel_task) that finds `cancel is None` MUST NOT report success:
     # nothing is actually listening.
     cancel: "Callable[[], None] | None" = field(default=None, compare=False, repr=False)
-
-    @property
-    def requester(self) -> "Requester":
-        """ADR-0040 D6's ``Requester(agent_name, session_id)`` — derived
-        from ``(origin_agent, origin_sid)``, NOT a second stored field.
-
-        Measured (lead-coder, 2026-08-10): these two fields already ARE
-        D6's Requester in substance — the docstring above already says
-        "routes back to the specific (origin_agent, origin_sid)". Adding a
-        separate ``requester`` field would duplicate storage for the same
-        fact. The RENAME (making ``origin_agent``/``origin_sid`` literally
-        ``requester.agent_name``/``requester.session_id``) is deferred to
-        run_prompt(collect="async")'s own PR (architect ruling, #3978: P6
-        retired delegate_to_agent with no fold — nothing consumes this
-        field's rename before that async producer exists) — this read
-        accessor lets P4's ``describe_task`` consumer be satisfied today
-        without committing to that rename now; a later PR changing the
-        field names underneath won't change this property's callers."""
-        from reyn.runtime.task_types import Requester
-
-        return Requester(agent_name=self.origin_agent, session_id=self.origin_sid or "main")
 
 
 # ── Journal protocol ──────────────────────────────────────────────────────────
@@ -198,14 +184,12 @@ class ChainManager:
         self,
         *,
         chain_id: str,
-        from_user: bool,
         depth: int,
         original_text: str,
         sender: str | None,
         waiting_on: set[str] | None = None,
-        origin_agent: str = "",
+        requester: "Requester | None" = None,
         origin_depth: int = 0,
-        origin_sid: "str | None" = None,
         kind: "str | None" = None,
         cancel: "Callable[[], None] | None" = None,
     ) -> _PendingChain:
@@ -215,18 +199,28 @@ class ChainManager:
         ----------
         chain_id:
             Unique identifier for the chain.
-        from_user:
-            True when the chain originates from a user message.
         depth:
             Current hop depth (used as ``origin_depth`` when not specified).
         original_text:
             The original request text.
         sender:
-            Agent name that sent the request, or None for user-initiated chains.
+            Agent name that sent the request, or None for user-initiated
+            chains. Also the fallback for ``requester.agent_name`` when
+            ``requester`` is not passed explicitly.
         waiting_on:
             Set of agent names this chain is waiting for.
-        origin_agent:
-            The agent to reply to when the chain resolves.
+        requester:
+            proposal 0067 P4e (#3978), architect ruling 2026-08-10: ADR-0040
+            D6's ``Requester(agent_name, session_id)`` — the address to
+            reply to when the chain resolves, stored as ONE value (see
+            ``_PendingChain.requester``'s own docstring for why a flat
+            2-field pair was rejected). Defaults to
+            ``Requester(sender or "", "main")`` when omitted, mirroring the
+            pre-materialization defaulting (``origin_agent or sender or
+            ""`` / an implicit ``origin_sid`` of ``None`` → ``"main"``) —
+            every production call site passes this explicitly today; the
+            default exists for callers (and tests) that don't need a
+            specific reply target.
         origin_depth:
             The depth at which to send the reply upstream.
         kind:
@@ -242,25 +236,35 @@ class ChainManager:
             (e.g. a legacy delegate-relay chain). VOLATILE — never
             persisted (see ``_PendingChain.cancel``'s own docstring).
         """
+        resolved_requester = requester or Requester(
+            agent_name=sender or "", session_id="main"
+        )
         chain = _PendingChain(
             chain_id=chain_id,
-            origin_agent=origin_agent or sender or "",
+            requester=resolved_requester,
             origin_depth=origin_depth or depth,
             original_request=original_text,
             waiting_on=set(waiting_on or []),
-            origin_sid=origin_sid,
             kind=kind,
             cancel=cancel,
         )
         self._chains[chain_id] = chain
 
         fields: dict[str, Any] = {
-            "origin_agent": chain.origin_agent,
+            # proposal 0067 P4e (#3978): persisted as ONE nested value, not
+            # two flat keys — #4110's field-name-independent WAL/snapshot
+            # mirror makes nesting free (any JSON-serializable value passes
+            # through unchanged); a flat pair would let a future caller omit
+            # one half without a construction-time error, the exact shape
+            # #2130 already misdelivered on once (a missing origin_sid
+            # silently routed to "main").
+            "requester": {
+                "agent_name": chain.requester.agent_name,
+                "session_id": chain.requester.session_id,
+            },
             "origin_depth": chain.origin_depth,
             "original_request": chain.original_request,
             "waiting_on": sorted(chain.waiting_on),
-            "from_user": from_user,
-            "origin_sid": chain.origin_sid,  # #2130
             # Persisted key is "task_kind", not "kind" — SnapshotJournal's
             # own _wal_append_nowait(kind: str, **fields) takes "kind" as
             # the WAL EVENT type positional (e.g. "chain_register"); a
@@ -491,13 +495,31 @@ class ChainManager:
         Call this after the journal has installed a recovered snapshot.
         """
         for cid, chain_dict in self._journal.snapshot.pending_chains.items():
+            # proposal 0067 P4e (#3978): the persisted "requester" key is a
+            # nested {"agent_name", "session_id"} value (see register()'s
+            # own docstring) — reconstructed here rather than read as a flat
+            # pair. Pre-P4e journal entries (recorded under the old
+            # "origin_agent"/"origin_sid" keys) have no "requester" key at
+            # all; that legacy shape is read as a fallback so an
+            # already-persisted chain from before this rename still
+            # restores correctly rather than losing its reply address.
+            requester_dict = chain_dict.get("requester")
+            if requester_dict is not None:
+                requester = Requester(
+                    agent_name=requester_dict["agent_name"],
+                    session_id=requester_dict["session_id"],
+                )
+            else:
+                requester = Requester(
+                    agent_name=chain_dict.get("origin_agent", ""),
+                    session_id=chain_dict.get("origin_sid") or "main",
+                )
             self._chains[cid] = _PendingChain(
                 chain_id=chain_dict["chain_id"],
-                origin_agent=chain_dict["origin_agent"],
+                requester=requester,
                 origin_depth=int(chain_dict["origin_depth"]),
                 original_request=chain_dict["original_request"],
                 waiting_on=set(chain_dict.get("waiting_on", [])),
-                origin_sid=chain_dict.get("origin_sid"),  # #2130 (None for pre-#2130 entries)
                 kind=chain_dict.get("task_kind"),  # #3978 P4 (None for pre-P4 entries)
             )
             self.arm_timeout(cid, on_fire=on_fire)

@@ -285,13 +285,11 @@ class AgentSnapshot:
             msg_id = event.get("msg_id")
             self.inbox = [m for m in self.inbox if m.get("id") != msg_id]
         elif kind == "chain_register":
-            self.pending_chains[event["chain_id"]] = {
+            chain_entry = {
                 "chain_id": event["chain_id"],
-                "origin_agent": event["origin_agent"],
                 "origin_depth": int(event["origin_depth"]),
                 "original_request": event["original_request"],
                 "waiting_on": list(event.get("waiting_on", [])),
-                "origin_sid": event.get("origin_sid"),
                 # #3978 P4: the task kind (prompt/pipeline/exec) — persisted
                 # key is "task_kind" (chain_manager.py's own record_chain_register
                 # collision note: "kind" is SnapshotJournal._wal_append_nowait's
@@ -301,6 +299,25 @@ class AgentSnapshot:
                 # back out under the same key.
                 "task_kind": event.get("task_kind"),
             }
+            # proposal 0067 P4e (#3978): "requester" is a nested
+            # {"agent_name", "session_id"} value (ChainManager.register()'s
+            # own docstring) — mirrored through as-is when present. A
+            # pre-P4e WAL event (recorded under the old flat "origin_agent"/
+            # "origin_sid" keys) has no "requester" key — NORMALIZED into the
+            # same nested shape here, at replay time, rather than carrying
+            # the legacy flat keys forward into ``pending_chains``: every
+            # entry this branch produces uses ONE shape regardless of which
+            # WAL-event generation wrote it, so nothing downstream (including
+            # ChainManager.restore(), which reads "requester" unconditionally
+            # after this normalization) needs its own legacy-fallback branch.
+            if "requester" in event:
+                chain_entry["requester"] = event["requester"]
+            else:
+                chain_entry["requester"] = {
+                    "agent_name": event.get("origin_agent", ""),
+                    "session_id": event.get("origin_sid") or "main",
+                }
+            self.pending_chains[event["chain_id"]] = chain_entry
         elif kind == "chain_update":
             # #4108: field-name-INDEPENDENT write-back — mirrors every
             # non-routing key the event actually carries, rather than

@@ -37,6 +37,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
+from reyn.runtime.task_types import Requester
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
@@ -238,9 +239,11 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     session = _make_session(tmp_path, on_limit=OnLimitConfig(mode="unattended"))
 
     await session.chains.register(
-        chain_id="chain-reg-001", from_user=False, depth=1,
+        chain_id="chain-reg-001", depth=1,
         original_text="do something", sender="origin_agent",
-        waiting_on={"peer_agent"}, origin_agent="origin_agent", origin_depth=1,
+        waiting_on={"peer_agent"},
+        requester=Requester(agent_name="origin_agent", session_id="main"),
+        origin_depth=1,
     )
 
     await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
@@ -254,10 +257,12 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     assert ev.get("chain_id") == "chain-reg-001", (
         f"chain_id mismatch: {ev.get('chain_id')!r}"
     )
-    assert "origin_agent" in ev, f"Missing 'origin_agent' in WAL event: {ev}"
+    assert "requester" in ev, f"Missing 'requester' in WAL event: {ev}"
+    assert ev["requester"].get("agent_name") == "origin_agent", (
+        f"requester.agent_name mismatch in WAL event: {ev}"
+    )
     assert "origin_depth" in ev, f"Missing 'origin_depth' in WAL event: {ev}"
     assert "waiting_on" in ev, f"Missing 'waiting_on' in WAL event: {ev}"
-    assert "from_user" in ev, f"Missing 'from_user' in WAL event: {ev}"
 
     # Snapshot must reflect the chain as pending.
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
@@ -293,9 +298,11 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
 
     # Phase 1: register a pending chain directly.
     await session.chains.register(
-        chain_id="chain-res-001", from_user=False, depth=1,
+        chain_id="chain-res-001", depth=1,
         original_text="synthesize", sender="origin_agent",
-        waiting_on={"peer_agent"}, origin_agent="origin_agent", origin_depth=1,
+        waiting_on={"peer_agent"},
+        requester=Requester(agent_name="origin_agent", session_id="main"),
+        origin_depth=1,
     )
     assert session.chains.has("chain-res-001"), (
         "Chain should be pending after registration"
@@ -384,9 +391,11 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     # timeout watchdog — the same two-call pairing every real producer uses
     # (inter_agent_messaging.py's own delegation registration site).
     await session.chains.register(
-        chain_id="chain-timeout-001", from_user=False, depth=1,
+        chain_id="chain-timeout-001", depth=1,
         original_text="do slow work", sender="upstream_agent",
-        waiting_on={"slow_peer"}, origin_agent="upstream_agent", origin_depth=1,
+        waiting_on={"slow_peer"},
+        requester=Requester(agent_name="upstream_agent", session_id="main"),
+        origin_depth=1,
     )
     session.chains.arm_timeout(
         "chain-timeout-001", on_fire=session._on_chain_timeout_fire,
@@ -489,7 +498,7 @@ async def test_restore_reconstructs_chains_and_inbox_from_snapshot(tmp_path, mon
     )
     pc = session.chains.get(chain_id)
     assert pc is not None
-    assert pc.origin_agent == "origin"
+    assert pc.requester.agent_name == "origin"
     assert "peer_agent" in pc.waiting_on
 
 
@@ -814,12 +823,11 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
     # ── chain_register ────────────────────────────────────────────────────
     await session.chains.register(
         chain_id=chain_id,
-        from_user=False,
         depth=1,
         original_text="hello",
         sender="upstream",
         waiting_on={"downstream"},
-        origin_agent="upstream",
+        requester=Requester(agent_name="upstream", session_id="main"),
         origin_depth=1,
     )
 
@@ -1107,12 +1115,11 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     chain_id = "chain-b2h2-relay-001"
     await session.chains.register(
         chain_id=chain_id,
-        from_user=False,
         depth=2,
         original_text="what is the recipe?",
         sender="origin_agent",
         waiting_on={"specialist"},
-        origin_agent="origin_agent",
+        requester=Requester(agent_name="origin_agent", session_id="main"),
         origin_depth=1,
     )
 

@@ -6923,15 +6923,20 @@ class Session:
             peer=peer,
             reason=reason,
             waiting_on=waiting,
-            origin_agent=pending.origin_agent,
+            # proposal 0067 P4e (#3978): field KEY unchanged (this audit
+            # event's payload shape is not part of the closed AUDIT_EVENT_KINDS
+            # vocabulary, but .reyn/events has consumers outside reyn — see
+            # CLAUDE.md — so only the VALUE's source moved to the
+            # materialized requester field, not the emitted key name).
+            origin_agent=pending.requester.agent_name,
         )
         try:
             await self._send_agent_response(
-                to=pending.origin_agent,
+                to=pending.requester.agent_name,
                 response=error_text,
                 depth=pending.origin_depth,
                 chain_id=chain_id,
-                to_sid=pending.origin_sid,  # #2130
+                to_sid=pending.requester.session_id,  # #2130
             )
         except Exception as exc:  # noqa: BLE001 — never wedge the loop
             await self._put_outbox(OutboxMessage(
