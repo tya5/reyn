@@ -44,14 +44,14 @@ valid in one is not necessarily valid in the other:
 | — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
 
 **`llm:*` can never be a hook's `on:` value — only a Composer input.** A
-`hooks:` entry only accepts the 9 builtin bare/namespaced forms above or a
-`composed:<name>` prefix; anything else (including a well-formed
+`hooks:` entry only accepts the builtin bare/namespaced forms in the table
+above or a `composed:<name>` prefix; anything else (including a well-formed
 `llm:<session_id>:<event_name>`) is a load-time `HookConfigError`. To react
 to an LLM-emitted event, correlate it through a `composers:` entry into a
 `composed:<name>` event, then put your `hooks:` entry's `on:` on THAT
 composed kind — see the [worked example](#llm-authored-hook-events-emit_hook_event)
-below. The bare/namespaced-form duality only applies within the 9 builtin
-points — it does not extend `on:`'s acceptance to `llm:*`.
+below. The bare/namespaced-form duality only applies within the builtin
+points listed in the table — it does not extend `on:`'s acceptance to `llm:*`.
 
 ### The 4 config schemes — every field
 
@@ -116,7 +116,7 @@ template vars before the hook's action runs.
 - Match rule by field **name**: `uri` and `path` use a shell-style glob
   (`fnmatch`); every other field name is exact string equality.
 - Absent or empty `matcher` → the hook always fires.
-- For the 9 builtin points, a matcher field outside that point's payload
+- For a builtin point, a matcher field outside that point's payload
   (a typo, or a field the point never carries) is a **load-time
   `HookConfigError`** — rejected before the hook can ever run.
 - For a hook's `matcher` on a `composed:*` `on:` target, or a Composer
