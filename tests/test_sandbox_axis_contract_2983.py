@@ -25,7 +25,7 @@ Three things this file exists to pin, matching the module docstring of
 The real 3-leg witnessing (deny + boundary + workload, against a real
 Landlock backend and against ``NoopBackend`` as the falsifying medium) is
 Linux-only and lives in the ``@requires_landlock``-gated group below, mirroring
-``tests/test_sandbox_seccomp_network_3030.py``'s own gating — a green run on a
+``tests/security/test_sandbox_seccomp_network_3030.py``'s own gating — a green run on a
 non-Linux dev box witnesses nothing there, same as every sibling file.
 """
 from __future__ import annotations
