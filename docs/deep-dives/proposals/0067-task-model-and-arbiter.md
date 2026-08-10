@@ -131,9 +131,16 @@ P3    builtin hook point `task_settled` + the settle path
 P4    task ops: run_prompt / describe_task / list_tasks / cancel_task
         `cancel` joins CANONICAL_VERBS; REMOVAL_VERBS is untouched (separate frozensets)
         cancellation machinery already exists for all three kinds — this exposes it
-      ⚠️ Same PR: migrate `[task_completed] kind=` values from agent|spawned_session to
-         prompt|pipeline|exec, plus the system prompt's TASK_SPAWNED rule and
-         descriptions/catalog.py
+      ✅ `[task_completed]`/`[task_spawned] kind=` migrated — landed separately from the
+         task-op tools themselves (blocked on an architect ruling that arrived later),
+         not literally "same PR" as originally noted here. Architect ruling 2026-08-10:
+         both prior values (`agent`, `spawned_session`) collapse to `prompt` — D2's
+         `kind` axis names WHAT ran, not WHO; `sid=`/`from=` on the header still carry
+         "who", unaffected. `exec`/`pipeline` producers were NOT touched this round
+         (architect: unverified whether they carry this same header at all — `exec`
+         doesn't have one today; `pipeline` completion may be a different producer).
+         `descriptions/catalog.py`'s TASK_SPAWNED/TASK_COMPLETED text updated in the
+         same PR as the code.
 
 P5    send_to_session
 
