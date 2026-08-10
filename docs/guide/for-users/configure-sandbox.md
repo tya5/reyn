@@ -174,6 +174,62 @@ Uses the Linux Landlock LSM with path-beneath allowlist rules.
 No containment enforced. Policy fields are recorded in the audit log but have no
 effect. Use only in trusted environments where enforcement is unavailable.
 
+### When Reyn warns that an axis is not enforced — and when it stays quiet
+
+If you configure `deny_read_paths` or `deny_write_paths` and the selected backend
+cannot express them, Reyn says so at dispatch time: a `sandbox_axis_unenforced`
+audit event plus a `WARNING` log line naming the axes, the backend, and the
+reason ("Landlock cannot express a deny-list — LSM allowlist-only constraint").
+The policy is still written to the audit log; it simply was not applied for
+those axes.
+
+**Scope — this warning covers one gap, not every gap.** It fires only for the
+two deny-list fields, and only on a backend that is specifically deny-list
+incapable, which today means Landlock alone. It is not a general "your policy
+was not enforced" check.
+
+🔴 **Silence is therefore not a clean bill of health.** The check asks "can
+this backend express a deny-list?", not "does this backend enforce what you
+configured?" — so a backend that enforces little or nothing passes it in
+silence.
+
+The sharpest case is the **Docker backend** (`--env-backend=docker`, below).
+It is a sandbox backend — the same object serves as both the environment and
+the sandbox backend for a container agent — and its `run()` **honors only
+`policy.timeout_seconds`**. Configure `allow_write_paths`, `network` or
+`subprocess` under it and none of them is applied, and **no
+`sandbox_axis_unenforced` warning is emitted**, because Docker is not
+deny-list-incapable in the sense this check tests for; it is simply not
+enforcing those axes at all, which the check does not look at. Isolation does
+come from the container boundary itself — but it is the image and the mount
+set that provide it, not the policy fields you wrote.
+
+Noop is the same shape with nothing left to fall back on: it enforces nothing,
+records the policy for audit, and likewise warns about nothing.
+
+A quiet run under Docker or Noop and a quiet run under Seatbelt are
+indistinguishable from this signal alone.
+
+**What to rely on instead:** the per-backend tables above state, field by field,
+what each backend actually enforces. Read the table for the backend you are
+running; treat the warning as a targeted extra notice, not as the answer to
+"was my policy applied?".
+
+Two other mechanisms are easy to mistake for this one, and neither widens it:
+
+- The startup self-test (see [Reyn checks that your sandbox really
+  sandboxes](#reyn-checks-that-your-sandbox-really-sandboxes)) proves the write
+  boundary and the process-spawn gate on your host. It runs at backend
+  *selection*; this warning runs at op *dispatch*, once the policy's individual
+  axes are known.
+- Container (mount) mode below is a **different kind of isolation** from the
+  three profile-based backends tabled above (Seatbelt, Landlock, Noop) — the
+  container boundary, not a policy applied to a host process. It is still a
+  sandbox backend as far as this warning is concerned, which is exactly why the
+  silence described above covers it too — see [What container mode itself
+  enforces](#what-container-mode-itself-enforces) below for what actually
+  applies instead.
+
 ## Run in a container (mount mode)
 
 For the strongest isolation — or to run workflows against a consistent Linux
@@ -201,6 +257,32 @@ reyn run my_skill --env-backend=docker --container my-container --repo-dir /work
 In mount mode, the workspace root is automatically bind-mounted at `/workspace`
 inside the container. The sandbox backend used inside the container is determined
 by `reyn.yaml sandbox.backend` as usual (typically `landlock` on Linux).
+
+### What container mode itself enforces
+
+The section above already establishes that Docker's `run()` honors only
+`policy.timeout_seconds`, and that `allow_write_paths`/`network`/`subprocess`
+pass through unenforced with no warning. That leaves the question of what, if
+anything, DOES restrict those axes when you run in a container — the
+container's own launch-time isolation, independent of any `sandbox.*` policy.
+Measured directly (real execution against a live container, not inferred from
+the launch code):
+
+| axis | what actually happens | driven by |
+|---|---|---|
+| write | root filesystem is read-only; `/tmp` (tmpfs) and the workspace bind mount are writable | fixed at container launch (`--read-only`, `--tmpfs /tmp`) — not `sandbox.*` policy |
+| network | outbound connections fail | fixed at container launch (`--network none`, unless overridden) — not `sandbox.*` policy |
+| subprocess | **not restricted** — a process inside the container can spawn further child processes freely | nothing; `subprocess: false` in your policy has no effect once you are inside a container |
+| env | the container sees only the image's own environment (its `/etc/profile` / shell activation) — your host's environment variables are not forwarded in, and `env_deny_names` has nothing to filter because there is nothing to filter | nothing; not a policy mechanism, just how `docker exec` works |
+
+The write and network rows come from the container's fixed launch flags
+(`--cap-drop ALL`, non-root user, read-only root + tmpfs, `--network none` by
+default) — they hold regardless of what your `reyn.yaml sandbox:` config says,
+because they are set once when the container starts, not per operation. The subprocess and
+env rows are the opposite kind of fact: there is **no** mechanism restricting
+them at all, at any layer, inside the container — `subprocess: false` and
+`allow_env_names` only take effect for the sandbox backends listed above, not
+for container mode.
 
 ### Default image
 
