@@ -51,12 +51,14 @@ class FakeRouterHost:
         file_permissions: dict | None = None,
         mcp_servers: list[dict] | None = None,
         threat_scan: Any = None,
+        chains: Any = None,  # proposal 0067 P4 (#3978): ChainManager | None
     ):
         self._skills = skills or []
         self._agents = agents or []
         self._memory_index = memory_index or {"status": "not_found", "content": ""}
         self._file_permissions = file_permissions
         self._mcp_servers = mcp_servers or []
+        self._chains = chains
 
         # Track calls
         self.outbox: list[dict] = []
@@ -126,6 +128,14 @@ class FakeRouterHost:
 
     def get_mcp_servers(self) -> list[dict]:
         return self._mcp_servers
+
+    def get_chains(self) -> Any:
+        """proposal 0067 P4 (#3978): mirrors RouterHostAdapter.get_chains()
+        — the production seam ``build_resource_caller_state`` reads to
+        populate ``RouterCallerState.chains``. Returns whatever
+        ``chains=`` this fake was constructed with (None by default,
+        matching a host that doesn't support the settle-path substrate)."""
+        return self._chains
 
     def get_web_fetch_allowed(self) -> bool:
         return False

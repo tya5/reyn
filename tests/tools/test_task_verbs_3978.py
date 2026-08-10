@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.tools.task_verbs import (
@@ -21,6 +22,7 @@ from reyn.tools.task_verbs import (
     _handle_list_tasks,
 )
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.router_loop import FakeRouterHost
 
 
 class _NullEvents:
@@ -226,3 +228,47 @@ async def test_cancel_task_untyped_legacy_chain_returns_error(tmp_path: Path):
 
     assert result["status"] == "error"
     assert calls == []
+
+
+# ── production-wiring witness (lead-coder block on #4106) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_describe_task_reaches_a_real_chain_manager_through_the_real_router_loop(
+    tmp_path: Path,
+):
+    """Tier 2: every test above builds ``RouterCallerState(chains=mgr)``
+    directly — proving the HANDLER is correct, but never exercising the
+    production WIRING (``build_resource_caller_state``'s own
+    ``host.get_chains()`` read, the seam ``RouterHostAdapter.get_chains()``
+    /``Session``'s ``chains=self.chains`` construction-time wiring mirrors
+    in production). Dropping that ONE wiring line degrades SILENTLY — no
+    exception, `chains=None` renders as an ordinary "no running task"
+    error the handler itself already covers — so a test that never drives
+    the real seam cannot tell "wiring removed" from "task genuinely not
+    found". This drives a REAL ``RouterLoop._invoke_router_tool`` call
+    (the exact production dispatch path — REGISTRY_DISPATCH_TOOLS →
+    ``_invoke_via_registry`` → ``_build_router_caller_state`` →
+    ``build_resource_caller_state`` → ``host.get_chains()``) against a
+    ``FakeRouterHost`` carrying a REAL, task-registered ``ChainManager`` —
+    same shape as ``test_session_spawn_dispatches_to_host_not_unhandled``
+    (#2120's own spawn_session-advertised-but-undispatched precedent)."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-e2e", from_user=False, depth=0, original_text="p", sender=None,
+        origin_agent="worker", origin_sid="s1", kind="pipeline",
+    )
+    host = FakeRouterHost(chains=mgr)
+    loop = RouterLoop(host=host, chain_id="chain-test")
+
+    result = await loop._invoke_router_tool("describe_task", {"task_id": "run-e2e"})
+
+    assert not (isinstance(result, dict) and "unhandled tool" in str(result.get("error", ""))), (
+        f"describe_task hit the unhandled-tool fall-through: {result}"
+    )
+    assert result.get("ok") is True, (
+        f"describe_task did not reach the real ChainManager through production "
+        f"wiring (chains=None would render as ok=False, not a crash): {result}"
+    )
+    assert result["task_id"] == "run-e2e"
+    assert result["kind"] == "pipeline"
