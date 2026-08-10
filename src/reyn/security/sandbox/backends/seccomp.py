@@ -30,7 +30,7 @@ a caller-side gate, not a builder change. The practical consequence: every
 `deny_subprocess: False` MCP server (the default) is now under this default-deny
 allowlist for the first time, which is exactly the #2962 correctness risk this
 module's validation history above is about — see
-`tests/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
+`tests/security/test_sandbox_seccomp_network_3030.py` for the representative-real-MCP-server
 probes (`reyn-rag-chunker` / `reyn-rag-vector-store` / `uvx markitdown-mcp`) this
 change specifically needed, on top of the synthetic echo/ls/cat workloads above.
 That risk materialized in review (#3059), across two x86_64 CI rounds the aarch64
@@ -234,7 +234,7 @@ _BASELINE: list[str] = [
     # Derived as a CLASS, not one syscall at a time: fixing socketpair alone
     # would only surface eventfd as the next deny (#3059 co-vet). Witnessed on
     # x86_64 (the enforce arch) by the representative-server group in
-    # tests/test_sandbox_seccomp_network_3030.py + the deny-gate CI job, not on
+    # tests/security/test_sandbox_seccomp_network_3030.py + the deny-gate CI job, not on
     # the aarch64 host whose green did not speak for x86_64.
     "socketpair",
     "eventfd", "eventfd2",

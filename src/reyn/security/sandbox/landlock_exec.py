@@ -132,7 +132,7 @@ def _apply_seccomp(policy: SandboxPolicy) -> None:
     (its first live load killed ``/bin/echo``) — mitigated by the allowlist
     already being live-validated for ordinary MCP-server workloads (see
     ``backends/seccomp.py``'s module docstring and the representative-server
-    probes in ``tests/test_sandbox_seccomp_network_3030.py``).
+    probes in ``tests/security/test_sandbox_seccomp_network_3030.py``).
     """
     load_seccomp_filter(policy)
 
