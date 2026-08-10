@@ -29,17 +29,14 @@ assuming the doc is the thing to fix.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from reyn.security.permissions.capability_profile import (
     _FLOORED_DENY_CLASSES,
     DELEGATION_AUDIT_CLASSES,
 )
+from tests._support.paths import REPO_ROOT
 
-_DOC_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "docs" / "concepts" / "runtime" / "delegation-policy.md"
-)
+_DOC_PATH = REPO_ROOT / "docs" / "concepts" / "runtime" / "delegation-policy.md"
 
 _TOOL_RE = re.compile(r"`([a-zA-Z_][a-zA-Z0-9_]*)`")
 
