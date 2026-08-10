@@ -175,12 +175,27 @@ def test_the_frozen_snapshot_equals_stage_0s_own_committed_baseline() -> None:
     Stage 0 (commit accdfd226, #3883) committed to `flat_tests_baseline.
     json`, normalized the same way `load_baseline()` normalizes the live
     one. Not the union of two live artifacts (the first, wrong snapshot's
-    own shape) — read directly from git history, not re-derived."""
+    own shape) — read directly from git history, not re-derived.
+
+    SKIPS (explicitly, not silently) when `accdfd226` isn't a reachable
+    commit — CI's own `pytest` job checks out with the default shallow
+    depth (no `fetch-depth: 0`), so this specific historical commit is
+    genuinely absent there, not a bug this test should paper over by
+    catching a broader error class. A skip here means "couldn't check,"
+    never "checked and passed" — a full local clone (the common dev-machine
+    case) runs the real assertion."""
     import subprocess
 
-    raw = subprocess.run(
+    proc = subprocess.run(
         ["git", "show", "accdfd226:scripts/flat_tests_baseline.json"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    ).stdout
-    stage0 = {f"tests/{n}" for n in json.loads(raw)}
+        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        import pytest
+
+        pytest.skip(
+            "commit accdfd226 unreachable in this checkout (shallow clone, "
+            f"no fetch-depth:0) — git show exit {proc.returncode}: {proc.stderr.strip()}"
+        )
+    stage0 = {f"tests/{n}" for n in json.loads(proc.stdout)}
     assert load_arc_population() == stage0
