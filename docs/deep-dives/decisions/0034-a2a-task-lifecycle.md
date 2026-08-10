@@ -1,10 +1,9 @@
 # ADR-0034: A2A task lifecycle (FP-0001)
 
 **Status**: Accepted + Implemented (2026-05-16) — Components 1–3 **superseded by
-[ADR-0041](0041-intervention-ownership-and-channel-pinning.md)**; Components 4–5, Context and
-Considered alternatives stand (audit: #4016). **Extended by
-[ADR-0040](0040-task-as-os-concept.md)** (not yet implemented). See #866 "task lifecycle is
-shipped" doc refresh + the Gap 3-5 PR chain.
+[ADR-0041](0041-intervention-ownership-and-channel-pinning.md)** (audit: #4016); Components 4–5,
+Context and Considered alternatives stand. See #866 "task lifecycle is shipped" doc refresh + the
+Gap 3-5 PR chain.
 **Track**: A2A protocol — async task support + ask_user round-trip
 
 ## Context
