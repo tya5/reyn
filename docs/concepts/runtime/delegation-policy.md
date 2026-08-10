@@ -126,7 +126,7 @@ the runtime floor uses, so the audit and the floor cannot drift apart.
 
 | Class | Severity | Tools |
 |-------|----------|-------|
-| `re-delegation` | HIGH | `delegate_to_agent`, `send_to_session` |
+| `re-delegation` | HIGH | `delegate_to_agent`, `run_prompt`, `send_to_session` |
 | `exec` | HIGH | `exec` |
 | `mcp-install` | HIGH | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` |
 | `skill-install` | HIGH | `skill_install_local`, `skill_install_source` |

@@ -32,7 +32,7 @@ delegation:
 
 | クラス | 拒否されるツール | 理由 |
 |--------|----------------|------|
-| `re-delegation` | `delegate_to_agent`、`run_prompt`、`send_to_session` | 未信頼コンテンツから他エージェントのコンテキストへ到達させない — `run_prompt`（proposal 0067 P4d）と `send_to_session`（P5）は `delegate_to_agent` と同じ経路でこれを行う。`send_to_session` は `wake=False` も含む（architect 裁定、2026-08-10）。EN 版の同表は `run_prompt` を #4123（#4117 自身の doc drift 対応、EN のみ）に委ねているため `send_to_session` だけを持つ — #4123 は ja を触らないため、この ja 表は本 PR がまとめて 3 名を持つ |
+| `re-delegation` | `delegate_to_agent`、`run_prompt`、`send_to_session` | 未信頼コンテンツから他エージェントのコンテキストへ到達させない — `run_prompt`（proposal 0067 P4d）と `send_to_session`（P5）は `delegate_to_agent` と同じ経路でこれを行う。`send_to_session` は `wake=False` も含む（architect 裁定、2026-08-10） |
 | `exec` | `exec`、`exec` | 実行には明示的なオペレーター認証が必要 |
 | `mcp-install` | `mcp_install_registry`、`mcp_install_package`、`mcp_install_local` | MCP サーバーインストールは高権限のオペレーター管理アクション |
 | `memory-write` | `remember_shared`、`remember_agent`、`forget_memory` | アンバウンド委任エージェントからの永続化には意図的なオプトインが必要 |
