@@ -9,7 +9,7 @@ the shared output loop for the interactive inline driver.
 The defining property is **single-writer by construction**: this module touches
 the world ONLY through the ``ClientTransport`` it is handed — it imports no
 ``Session`` / ``Workspace`` / tool / registry surface (enforced by
-``tests/test_stream_client_single_writer_boundary.py``). One stream comes in;
+``tests/repo/test_stream_client_single_writer_boundary.py``). One stream comes in;
 the renderer's two entry points (``message`` for display frames,
 ``on_audit_event`` for event frames) go out, dispatched by frame tag. This is
 what makes the future remote client (P2) single-writer-safe for free: it is the
