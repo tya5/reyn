@@ -5855,6 +5855,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4018
   },
+  "tests/test_sp_prompt_package_coverage.py": {
+    "disposition": "flat-by-decision",
+    "reason": "reyn.prompt.* を主題とする test がリポジトリ全体でこの1件だけ。src/reyn/prompt/ は実パッケージなので規則①は満たすが件数が満たさない。#3878 で Tier を再訪する",
+    "bundle": "backfill-3879-arc-start",
+    "pr": null
+  },
   "tests/test_spawn_routing_detached_fail_mode_2708.py": {
     "disposition": "moved",
     "to": "tests/core/test_spawn_routing_detached_fail_mode_2708.py",
