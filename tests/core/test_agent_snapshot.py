@@ -296,3 +296,61 @@ def test_chain_update_replay_does_not_leak_routing_meta_keys():
     chain = snap.pending_chains["c-meta"]
     for meta_key in ("kind", "seq", "target", "agent", "session_id"):
         assert meta_key not in chain
+
+
+def test_truncate_falsify_chain_update_field_survives_wal_truncation(tmp_path: Path):
+    """Tier 2c: CLAUDE.md's recovery-feature PR gate — #4108 fixes a PR that
+    makes a ``chain_update``-carried field (any field, not just
+    ``waiting_on``) actually reach the reconstruction source; the gate
+    requires a truncate-falsify test in the SAME PR, not a follow-up. Same
+    shape as ``test_truncate_falsify_snapshot_backed_kept_state_survives``
+    above (#2259's own precedent): set a field via a real
+    chain_register+chain_update pair, bake BOTH into a saved snapshot
+    (``applied_seq`` past both), then reload and replay an EMPTY tail
+    (simulating the source WAL events truncated below the snapshot's own
+    seq) — the field must still be correct, because it survives via the
+    snapshot, not via replaying the (now-gone) WAL entries. The WAL-only
+    control at the end proves this isn't trivially passing (an un-fixed
+    field would ALSO be "gone" whether truncated or not, for the wrong
+    reason — never wrote back at all)."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-ttl",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-ttl", arm_at=42.0),
+    ])
+    assert snap.applied_seq == 2
+    assert snap.pending_chains["c-ttl"]["arm_at"] == 42.0
+
+    # Serialize → the snapshot carries arm_at + applied_seq=2.
+    snap.save(tmp_path / "snap-ttl.json")
+
+    # TRUNCATE: replay an EMPTY tail (both source WAL events, seq 1 and 2,
+    # are gone below the truncation floor) — apply_events skips seq<=applied_seq
+    # regardless, so this simulates "the events aren't even offered" faithfully.
+    reloaded = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
+    reloaded.apply_events([])
+    assert reloaded.pending_chains["c-ttl"]["arm_at"] == 42.0, (
+        "arm_at must survive WAL truncation below its chain_update's seq — "
+        "it is baked into the SAVED snapshot, not replayed from the (now-gone) event"
+    )
+
+    # WAL-only CONTROL: a DIFFERENT chain, registered+updated entirely AFTER
+    # the snapshot's applied_seq, is WAL-only — present when its events are
+    # replayed, LOST when they're truncated instead. Proves the assertion
+    # above is snapshot-backed survival, not something that always passes.
+    later_events = [
+        _event(
+            "chain_register", seq=3, chain_id="c-walonly",
+            origin_agent="a", origin_depth=0, original_request="y",
+        ),
+        _event("chain_update", seq=4, chain_id="c-walonly", arm_at=7.0),
+    ]
+    replayed = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
+    replayed.apply_events(later_events)
+    assert replayed.pending_chains["c-walonly"]["arm_at"] == 7.0  # present WITH its events
+    truncated = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
+    truncated.apply_events([])  # seq 3/4 events truncated
+    assert "c-walonly" not in truncated.pending_chains  # WAL-only state LOST
