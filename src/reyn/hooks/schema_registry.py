@@ -146,7 +146,7 @@ ALLOWED_HOOK_KINDS: "frozenset[str]" = frozenset(BUILTIN_HOOK_SCHEMAS)
 # Sync-drift risk (only one direction is dangerous — a stale/typo'd field
 # name here silently stays "safe" rather than wrongly excluding something,
 # since the render-side filter only REMOVES names it finds a match for):
-# closed by ``tests/hooks/test_context_unsafe_fields_3978.py``'s own
+# closed by ``tests/hooks/test_context_safe_gate_3978.py``'s own
 # membership check (``CONTEXT_UNSAFE_FIELDS[kind] <= BUILTIN_HOOK_SCHEMAS[kind]``
 # for every kind), not by convention.
 CONTEXT_UNSAFE_FIELDS: "dict[str, frozenset[str]]" = {}
