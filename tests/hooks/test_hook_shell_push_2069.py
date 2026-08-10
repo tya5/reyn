@@ -225,7 +225,7 @@ async def test_template_push_and_exec_capture_share_identical_push_path() -> Non
     sp_hook = HookDef(on="turn_end", name="u", exec_capture=("emit.sh",))
 
     # sanity: the two sources yield equal ResolvedPush objects.
-    assert render_push(tmpl_hook.template_push, {}) == _parse_exec_push(sp_stdout)
+    assert render_push(tmpl_hook.template_push, {}, "turn_end") == _parse_exec_push(sp_stdout)
 
     t_disp, t_seams = _dispatcher([tmpl_hook], run_shell=_Recorder())
     s_disp, s_seams = _dispatcher([sp_hook], run_shell=_ReturningShell(sp_stdout))

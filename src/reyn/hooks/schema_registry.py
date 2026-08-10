@@ -117,6 +117,59 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
 ALLOWED_HOOK_KINDS: "frozenset[str]" = frozenset(BUILTIN_HOOK_SCHEMAS)
 
 
+# ---------------------------------------------------------------------------
+# context_safe (proposal 0067 § "The gate, before the field that needs it",
+# P2) — per-field, per-kind: is this field safe to interpolate into a hook
+# push's message template (``reyn.hooks.render.render_push``)?
+# ---------------------------------------------------------------------------
+#
+# ``CONTEXT_UNSAFE_FIELDS`` is a SEPARATE structure from
+# ``BUILTIN_HOOK_SCHEMAS`` (owner ruling via lead-coder, broker 2026-08-10)
+# rather than folding a per-field bool into that dict's value type — the
+# alternative measured at 10 src/tests files (8 direct
+# ``frozenset(payload) == BUILTIN_HOOK_SCHEMAS[kind]`` asserts + 2
+# ``monkeypatch.setitem`` sites) that would all need rewriting for a type
+# change carrying no new information for those tests (they check field-set
+# membership, not safety). This structure is untouched by that blast radius.
+#
+# DENY-LIST, not allow-list, and the empty default is deliberate: it is the
+# owner's standing policy made structural — "UX・予測可能性優先、
+# セキュリティは opt-in" (permanent instruction) means a NEW field defaults
+# to context_safe (interpolatable), and only a field someone has decided is
+# unsafe gets listed here. All 8 of today's builtin schemas' fields are
+# safe (owner ruling, 2026-08-10) — the empty default below is not a
+# placeholder, it is the CURRENT real state, matching #4069's own
+# "explicit reviewed allowlist over open-ended widening" shape (this is the
+# same pattern inverted: an explicit reviewed DENYLIST over open-ended
+# narrowing).
+#
+# Sync-drift risk (only one direction is dangerous — a stale/typo'd field
+# name here silently stays "safe" rather than wrongly excluding something,
+# since the render-side filter only REMOVES names it finds a match for):
+# closed by ``tests/hooks/test_context_safe_gate_3978.py``'s own
+# membership check (``CONTEXT_UNSAFE_FIELDS[kind] <= BUILTIN_HOOK_SCHEMAS[kind]``
+# for every kind), not by convention.
+CONTEXT_UNSAFE_FIELDS: "dict[str, frozenset[str]]" = {}
+
+
+def safe_context_fields(kind_or_point: str, context: dict) -> dict:
+    """*context* filtered down to fields safe for hook-push MESSAGE
+    interpolation (``reyn.hooks.render.render_push``) — every key in
+    *context* except the ones ``CONTEXT_UNSAFE_FIELDS`` names for this
+    kind. A kind with no entry (today: all 8 builtins) removes nothing —
+    ``dict.get(kind, frozenset())`` is the empty-deny-list default (see
+    module docstring above).
+
+    This does NOT validate *context* against ``BUILTIN_HOOK_SCHEMAS`` —
+    that is ``validate_payload``'s job, at payload-construction time, not
+    render time; this function only filters whatever it is handed."""
+    kind = canonical_kind(kind_or_point)
+    unsafe = CONTEXT_UNSAFE_FIELDS.get(kind, frozenset())
+    if not unsafe:
+        return context
+    return {k: v for k, v in context.items() if k not in unsafe}
+
+
 class HookSchemaError(ValueError):
     """A hook-event payload's field-set doesn't match its builtin schema.
 
@@ -216,11 +269,13 @@ __all__ = [
     "ALLOWED_HOOK_KINDS",
     "BARE_TO_KIND",
     "BUILTIN_HOOK_SCHEMAS",
+    "CONTEXT_UNSAFE_FIELDS",
     "KIND_TO_BARE",
     "HookSchemaError",
     "bare_point",
     "build_hook_payload",
     "is_emittable_llm_kind",
     "canonical_kind",
+    "safe_context_fields",
     "validate_payload",
 ]

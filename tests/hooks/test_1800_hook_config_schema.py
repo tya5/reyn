@@ -144,6 +144,7 @@ def test_load_hooks_push_all_fields_accepted() -> None:
                 "wake": "{{ ctx.wake_needed }}",
                 "push_when": "{{ ctx.should_push }}",
                 "session": "{{ ctx.target_session }}",
+                "include": ["chain_id", "agent_name"],
             },
             # schema-valid field for turn_end (chain_id) — Phase-3 load-time
             # validation would reject a schema-external field.
@@ -158,7 +159,37 @@ def test_load_hooks_push_all_fields_accepted() -> None:
     assert hd.template_push.wake == "{{ ctx.wake_needed }}"
     assert hd.template_push.push_when == "{{ ctx.should_push }}"
     assert hd.template_push.session == "{{ ctx.target_session }}"
+    assert hd.template_push.include == ("chain_id", "agent_name")
     assert hd.matcher == {"chain_id": "my-chain-filter"}
+
+
+def test_load_hooks_push_include_defaults_to_empty() -> None:
+    """Tier 1: accept-side non-vacuity for the previous test — a push hook
+    with NO ``include:`` key parses to the empty-tuple default (proposal
+    0067 P2), not an error and not None."""
+    raw = [{"on": "turn_end", "template_push": {"message": "m"}}]
+    registry = load_hooks(raw)
+    (hd,) = registry.hooks_for("turn_end")
+    assert hd.template_push is not None
+    assert hd.template_push.include == ()
+
+
+def test_load_hooks_push_include_non_list_rejected() -> None:
+    """Tier 1: ``include`` must be a list — a bare string (an easy operator
+    typo, e.g. writing ``include: chain_id`` instead of ``include:
+    [chain_id]``) is rejected rather than silently iterated character-by-
+    character."""
+    raw = [{"on": "turn_end", "template_push": {"message": "m", "include": "chain_id"}}]
+    with pytest.raises(HookConfigError, match="include"):
+        load_hooks(raw)
+
+
+def test_load_hooks_push_include_non_string_element_rejected() -> None:
+    """Tier 1: falsification pair — a list whose elements are the wrong
+    type (not field-name strings) is rejected, not silently accepted."""
+    raw = [{"on": "turn_end", "template_push": {"message": "m", "include": [123]}}]
+    with pytest.raises(HookConfigError, match="include"):
+        load_hooks(raw)
 
 
 def test_load_hooks_shell_valid() -> None:

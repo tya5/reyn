@@ -25,6 +25,13 @@ import pytest
 from reyn.hooks.render import ResolvedPush, render_push
 from reyn.hooks.schema import PushBlock
 
+# A real builtin point (proposal 0067 P2 added render_push's `point`
+# parameter — see reyn.hooks.schema_registry.safe_context_fields). None of
+# this file's tests exercise the context_safe gate itself (that lives in
+# test_context_safe_gate_3978.py); any valid point works here since today's
+# builtin schemas mark every field safe (CONTEXT_UNSAFE_FIELDS is empty).
+_POINT = "turn_end"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -62,7 +69,7 @@ def test_render_push_full_non_default_context() -> None:
         session="ses-abc-123",
     )
     ctx = {"event": {"name": "skill_end"}, "skill": "my_skill", "ctx": {"should_push": "yes"}}
-    result = render_push(push, ctx)
+    result = render_push(push, ctx, _POINT)
 
     assert isinstance(result, ResolvedPush)
     assert result.message == "event=skill_end skill=my_skill"
@@ -74,7 +81,7 @@ def test_render_push_full_non_default_context() -> None:
 def test_render_push_wake_true_non_default() -> None:
     """Tier 1: wake=True (non-default) passes through as bool without rendering."""
     push = _push(message="msg", wake=True, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
 
     assert result.wake is True
     assert result.push_when is True
@@ -89,7 +96,7 @@ def test_render_push_wake_true_non_default() -> None:
 def test_truthy_strings_resolve_to_true(token: str) -> None:
     """Tier 1: all documented truthy string tokens render wake to True."""
     push = _push(message="m", wake=token, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.wake is True
 
 
@@ -97,21 +104,21 @@ def test_truthy_strings_resolve_to_true(token: str) -> None:
 def test_falsy_strings_resolve_to_false(token: str) -> None:
     """Tier 1: all documented falsy string tokens render wake to False."""
     push = _push(message="m", wake=token, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.wake is False
 
 
 def test_bool_true_passthrough() -> None:
     """Tier 1: wake=True (Python bool) bypasses string rendering."""
     push = _push(message="m", wake=True, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.wake is True
 
 
 def test_bool_false_passthrough() -> None:
     """Tier 1: wake=False (Python bool) bypasses string rendering."""
     push = _push(message="m", wake=False, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.wake is False
 
 
@@ -123,14 +130,14 @@ def test_bool_false_passthrough() -> None:
 def test_push_when_false_template() -> None:
     """Tier 1: push_when template rendering to 'false' ⇒ push_when=False."""
     push = _push(message="m", wake=False, push_when="{{ skip }}")
-    result = render_push(push, {"skip": "false"})
+    result = render_push(push, {"skip": "false"}, _POINT)
     assert result.push_when is False
 
 
 def test_push_when_static_false() -> None:
     """Tier 1: push_when='false' (static string) ⇒ push_when=False."""
     push = _push(message="m", wake=False, push_when="false")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.push_when is False
 
 
@@ -141,7 +148,7 @@ def test_push_when_conditional_evaluates_to_true() -> None:
         wake=False,
         push_when="{% if count > 0 %}true{% else %}false{% endif %}",
     )
-    result = render_push(push, {"count": 3})
+    result = render_push(push, {"count": 3}, _POINT)
     assert result.push_when is True
 
 
@@ -152,7 +159,7 @@ def test_push_when_conditional_evaluates_to_false() -> None:
         wake=False,
         push_when="{% if count > 0 %}true{% else %}false{% endif %}",
     )
-    result = render_push(push, {"count": 0})
+    result = render_push(push, {"count": 0}, _POINT)
     assert result.push_when is False
 
 
@@ -176,7 +183,7 @@ def test_sandbox_blocks_class_escape() -> None:
         push_when="true",
     )
     # render_push must not raise regardless of sandbox outcome
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     # Safety net fires: the push is skipped
     assert result.push_when is False
     assert result.message == ""
@@ -194,7 +201,7 @@ def test_sandbox_blocks_globals_escape() -> None:
         wake=False,
         push_when="true",
     )
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.push_when is False
     assert result.message == ""
 
@@ -206,7 +213,7 @@ def test_sandbox_allows_normal_attribute_access() -> None:
         name = "turn_end"
 
     push = _push(message="{{ event.name }}", wake=False, push_when="true")
-    result = render_push(push, {"event": _Evt()})
+    result = render_push(push, {"event": _Evt()}, _POINT)
     assert result.message == "turn_end"
     assert result.push_when is True
 
@@ -224,7 +231,7 @@ def test_message_undefined_var_triggers_safety_net() -> None:
     returned so the push is skipped.
     """
     push = _push(message="{{ no_such_var }}", wake=False, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     # Safety net: push is skipped, not raised
     assert result.push_when is False
     assert result.message == ""
@@ -237,7 +244,7 @@ def test_wake_undefined_var_resolves_to_false() -> None:
     wake on an undefined condition — the safer direction).
     """
     push = _push(message="m", wake="{{ no_such_wake }}", push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.wake is False
 
 
@@ -248,7 +255,7 @@ def test_push_when_undefined_var_resolves_to_false() -> None:
     (don't push on an undefined condition — the safer direction).
     """
     push = _push(message="m", wake=False, push_when="{{ no_such_condition }}")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.push_when is False
 
 
@@ -260,28 +267,28 @@ def test_push_when_undefined_var_resolves_to_false() -> None:
 def test_session_static_passthrough() -> None:
     """Tier 1: session without '{{' is used as-is (no rendering)."""
     push = _push(message="m", wake=False, push_when="true", session="static-ses-007")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.session == "static-ses-007"
 
 
 def test_session_template_rendered() -> None:
     """Tier 1: session containing '{{' is rendered against context."""
     push = _push(message="m", wake=False, push_when="true", session="ses-{{ sid }}")
-    result = render_push(push, {"sid": "xyz"})
+    result = render_push(push, {"sid": "xyz"}, _POINT)
     assert result.session == "ses-xyz"
 
 
 def test_session_none_resolves_to_none() -> None:
     """Tier 1: session=None ⇒ resolved session=None (use current session)."""
     push = _push(message="m", wake=False, push_when="true", session=None)
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.session is None
 
 
 def test_session_template_undefined_var_resolves_to_none() -> None:
     """Tier 1: session template with undefined var → empty string → None (fail-safe)."""
     push = _push(message="m", wake=False, push_when="true", session="{{ no_such_sid }}")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.session is None
 
 
@@ -295,14 +302,14 @@ def test_render_error_never_raises() -> None:
     # Unrecognised boolean string → _str_to_bool raises ValueError
     push = _push(message="m", wake="not-a-bool-value", push_when="true")
     # Must not raise
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.push_when is False
 
 
 def test_render_error_returns_safe_defaults() -> None:
     """Tier 1: render failure returns the documented safe-default ResolvedPush fields."""
     push = _push(message="{{ undefined_strict }}", wake=False, push_when="true")
-    result = render_push(push, {})
+    result = render_push(push, {}, _POINT)
     assert result.push_when is False
     assert result.wake is False
     assert result.message == ""
