@@ -91,7 +91,7 @@ def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
         "pending_chains": "session._chains.reset()",
         "outstanding_interventions": "session._interventions.clear() + restore tasks",
         "buffered_intervention_answers": "session._buffered_intervention_answers cleared",
-        "next_turn_context": "session._next_turn_context cleared",
+        "next_turn_context": "session._inbox_arbiter.next_turn_context cleared",
         # #2884: the loop-valve counter mirror is reset to 0 (restore_state re-assigns
         # it wholesale from the reconstructed snapshot; the reset keeps zero-residue robust).
         "hook_driven_turns": "session._hook_driven_turns reset to 0",
