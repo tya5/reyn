@@ -597,6 +597,48 @@ async def test_session_spawn_dispatches_to_host_not_unhandled():
 
 
 @pytest.mark.asyncio
+async def test_send_to_session_dispatches_to_host_not_unhandled():
+    """Tier 2: proposal 0067 P5 (#3978) — _invoke_router_tool('send_to_session')
+    reaches the registry handler and the host's send_to_session, NOT the
+    {"error": "unhandled tool"} fall-through.
+
+    Same shape as test_session_spawn_dispatches_to_host_not_unhandled above,
+    added per #4101 review (lead-coder): that PR's own e2e tests
+    (tests/runtime/test_send_to_session_3978_p5.py) hand-build their own
+    ToolContext/RouterCallerState with a self-bound send_to_session_fn,
+    bypassing RouterLoop._build_router_caller_state's REAL hasattr-guarded
+    binding entirely — so they stayed green even with the binding line
+    removed. This drives the real dispatch path (REGISTRY_DISPATCH_TOOLS
+    → _invoke_via_registry → SEND_TO_SESSION._handle →
+    RouterCallerState.send_to_session_fn → host.send_to_session). Drop the
+    `send_to_session_fn=_send_to_session_bound` line from
+    RouterLoop._build_router_caller_state → the bare name falls through →
+    result is the unhandled-tool error and host.send_to_session_calls stays
+    empty → RED (falsify-verified during review)."""
+    host = FakeRouterHost()
+    loop = RouterLoop(host=host, chain_id="chain-test")
+
+    from reyn.runtime.router_tools import build_tools
+    tools = build_tools(host.list_available_agents())
+    loop._catalog = {t["function"]["name"]: t for t in tools}
+    loop._tool_names = frozenset(loop._catalog.keys())
+
+    result = await loop._invoke_router_tool(
+        "send_to_session", {"agent": "beta", "session": "main", "text": "hi", "wake": True},
+    )
+
+    assert not (isinstance(result, dict) and "unhandled tool" in str(result.get("error", ""))), (
+        f"send_to_session hit the unhandled-tool fall-through (#2120-class dispatch gap): {result}"
+    )
+    assert host.send_to_session_calls, "send_to_session did not reach host.send_to_session"
+    sent = host.send_to_session_calls[-1]
+    assert sent["agent"] == "beta"
+    assert sent["session"] == "main"
+    assert sent["text"] == "hi"
+    assert sent["wake"] is True
+
+
+@pytest.mark.asyncio
 async def test_no_events_attribute_needed_for_unknown_tool_path(monkeypatch):
     """Tier 2: P6 invariant — unknown tool error emits tool_failed via host.events through dispatch_tool; event routing is not bypassed on the error path."""
     host = FakeRouterHost()
