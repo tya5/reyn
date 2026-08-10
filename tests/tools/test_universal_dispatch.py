@@ -319,6 +319,11 @@ _ACTION_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
      {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
     ("run_pipeline_inline_async",
      {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
+    # task category (proposal 0067 P4, #3978) — describe/cancel require the
+    # task's handle; list_tasks takes an optional kind filter.
+    ("describe_task", {"task_id": "pipeline-my_pipeline-abc123"}),
+    ("list_tasks", {}),
+    ("cancel_task", {"task_id": "pipeline-my_pipeline-abc123"}),
     # plugin_management category (ADR 0064 P2, #3083) — install requires
     # source (a {kind, ...} object); uninstall requires name.
     ("install_plugin",

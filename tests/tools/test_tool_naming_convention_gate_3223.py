@@ -47,6 +47,11 @@ CANONICAL_VERBS: frozenset[str] = frozenset(
         # owner-ratified rename sweep, see docs/reference/runtime/tool-naming.md
         # § "family-prefix validity condition".
         "create",
+        # proposal 0067 P4 (#3978), architect ruling: NOT a 5th removal verb
+        # (R2's four — delete/drop/forget/uninstall — all mean "a thing
+        # ceases to exist"; a cancelled task's record persists as an
+        # audit-event, only the handle is gone). Added for cancel_task.
+        "cancel",
     }
 )
 

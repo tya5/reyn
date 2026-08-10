@@ -176,6 +176,11 @@ _CATEGORY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     ),
     # The management plane for pipelines, mirroring ``skill_management``.
     "pipeline_management": ("pipeline_install_local", "pipeline_install_source"),
+    # proposal 0067 P4 (#3978): describe/list/cancel a currently-running
+    # async task (run_prompt/run_pipeline launch) — reads/acts against the
+    # settle-path handle substrate. No read_task_result: a settled task's
+    # handle is gone (ADR-0040 D4); results arrive via task_settled, not a poll.
+    "task": ("describe_task", "list_tasks", "cancel_task"),
     # proposal 0060 Phase 1 Layer A (A8): register a named presentation
     # template. Single verb — a blueprint is inline declarative data, never
     # file-backed, so there is no source/git-fetch counterpart.

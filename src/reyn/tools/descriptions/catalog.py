@@ -62,7 +62,10 @@ invoke_action = ToolDescription(
     tool_name="invoke_action",
     surfaced=(
         "router (gates.router=allow) — the universal "
-        "catalog's single dispatch entry point for all 13 action categories"
+        "catalog's single dispatch entry point for every action category "
+        "(no fixed count named here — see universal_catalog.CATEGORIES for "
+        "the live enumeration; a hardcoded count here has drifted stale "
+        "at least twice already, #3978 P4)"
     ),
     purpose=(
         "Execute any catalog action by name — the ONE dispatch "
@@ -78,7 +81,7 @@ invoke_action = ToolDescription(
         "are invoked through this single entry point. "
         "WHEN NOT: For chitchat or self-questions, reply without tools. "
         "PREFERRED OVER: Legacy per-kind tools (call_mcp_tool, etc.) — "
-        "invoke_action covers all 13 action categories uniformly. "
+        "invoke_action covers every action category uniformly. "
         "On unknown action_name, returns an error with similar-name suggestions. "
         ""
         "SPAWN-ACK HANDLING: when an action result is {status:'spawned', ...}, the "
