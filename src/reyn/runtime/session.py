@@ -423,12 +423,33 @@ def _user_frame_meta(attribution: "dict | None") -> dict:
     return meta
 
 
-def _format_hook_attribution(name: str, text: str) -> str:
-    """Render an attributed hook message (#1800 slice 5b). The single source for
-    the ``[hook:<name>]`` system-role prefix, shared by the staged-context
-    consumer (C — wake=false ride-along) and ``_handle_hook_message`` (E —
-    wake=true trigger) so the two paths can never drift."""
-    return f"[hook:{name}] {text}"
+def _format_ride_along_attribution(kind: str, name: str, text: str) -> str:
+    """Render an attributed system-role push message: ``[<kind>:<name>] <text>``.
+
+    #1800 slice 5b originally: the single source for the ``[hook:<name>]``
+    prefix, shared by the staged-context consumer (C — wake=false
+    ride-along) and ``_handle_hook_message`` (E — wake=true trigger) so the
+    two paths can never drift. ``_handle_hook_message`` still always passes
+    ``kind="hook"`` (a hook push, by construction, at that call site) —
+    byte-identical output for that path.
+
+    Proposal 0067 P5 (#3978, architect + lead-coder co-vet): generalized to
+    take ``kind`` as an explicit parameter rather than hardcoding
+    ``"hook"``. The staged-context flush (``_run_router_loop``) used to call
+    this with only ``name`` and ``text``, discarding the entry's own
+    ``kind`` as a mere fallback DEFAULT for ``name`` — so ANY staged
+    producer (a future ``send_to_session`` wake=false ride-along included)
+    rendered as ``[hook:...]`` regardless of what it actually was: a false
+    attribution the LLM reads as fact. The fix follows the same TRUSTED-
+    framing discipline ``InterAgentMessaging.handle_agent_response`` already
+    uses for its ``[task_completed] kind=...`` header — the LABEL is
+    OS-assigned from the entry's own recorded ``kind`` (trusted: staged by
+    ``InboxArbiter.stage_next_turn_context`` from the inbox item's own
+    ``TurnOrigin``, never echoed from producer-supplied content), never
+    downgraded to a producer-supplied default. Only the ``text`` itself
+    stays whatever content the producer supplied — the label doesn't.
+    """
+    return f"[{kind}:{name}] {text}"
 
 
 # NOTE: `_PendingChain` lives in `reyn.runtime.services.chain_manager` (PR-refactor-session-1
@@ -4864,6 +4885,44 @@ class Session:
         if wake:
             reg.ensure_session_running(self.agent_name, target_session_id)
 
+    async def _deliver_cross_session_message(
+        self, *, target_agent: str, target_session_id: str,
+        kind: "TurnOrigin", payload: dict, wake: bool,
+    ) -> bool:
+        """Proposal 0067 P5 (#3978): deliver a message to a LIVE session of ANY
+        agent (not just this one) — the substrate ``send_to_session`` drives.
+
+        Same canonical wake-triple as ``_cross_session_hook_put`` (resolve →
+        ``_put_inbox`` → ``ensure_session_running``), generalized to an
+        explicit ``target_agent`` instead of always ``self.agent_name``
+        (``AgentRegistry.get_session``/``resolve_session`` already take an
+        agent name — the hook-push method just never needed to pass a
+        different one).
+
+        Unlike the hook push, this is NOT fire-and-forget: it returns
+        ``True``/``False`` so the calling tool handler can report failure to
+        the LLM instead of a silent drop (delegate_to_agent's B33 W5 F2
+        precedent — a success-shaped envelope for a message that never
+        arrived invites the LLM to fabricate a reply on the peer's behalf).
+
+        Delivery-only, deliberately: a target naming no LIVE session returns
+        ``False`` rather than loading/spawning one — ``send_to_session`` pairs
+        with an already-running peer (ADR-0040 D5's "tap the shoulder"), it is
+        not a spawn primitive.
+        """
+        reg = self._registry
+        if ":" in target_session_id:
+            transport, _, native = target_session_id.partition(":")
+            target = reg.resolve_session(target_agent, transport, native)
+        else:
+            target = reg.get_session(target_agent, target_session_id)
+        if target is None:
+            return False
+        await target._put_inbox(kind, payload)
+        if wake:
+            reg.ensure_session_running(target_agent, target_session_id)
+        return True
+
     @property
     def halted_reason(self) -> "str | None":
         """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
@@ -5538,6 +5597,19 @@ class Session:
                 payload.get("text", ""),
                 chain_id=payload.get("chain_id") or new_chain_id(),
             )
+        elif kind == TurnOrigin.PEER_SESSION:
+            # Proposal 0067 P5 (#3978): a peer session's text, delivered by
+            # send_to_session(wake=True) or run_prompt(collect="attached") —
+            # see TurnOrigin.PEER_SESSION's own docstring for why the two
+            # share this member. Same routing as EXTERNAL_MESSAGE/CRON above:
+            # the sender-attribution path (_handle_sender_attribution, run
+            # unconditionally before dispatch) already surfaces the
+            # "[context shift] ..." framing generically from the payload's
+            # own sender/reply_to fields — this branch does not need its own.
+            await self._handle_inbox_text(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or new_chain_id(),
+            )
 
     def _maybe_schedule_ephemeral_vanish(self) -> None:
         """#2103: schedule the ephemeral auto-vanish teardown once this session's turn
@@ -5590,14 +5662,15 @@ class Session:
         router turn (self-continuation). The push is appended as an attributed
         system-role ``[hook:name]`` message — a NEW message (fidelity: never a
         silent mutation of an existing one) using the shared
-        ``_format_hook_attribution`` helper so C and E cannot drift — then a
-        single router turn runs."""
+        ``_format_ride_along_attribution`` helper (``kind="hook"`` at this call
+        site, always — a hook push by construction) so C and E cannot drift —
+        then a single router turn runs."""
         name = payload.get("name", "hook")
         text = payload.get("text", "")
         chain_id = payload.get("chain_id") or new_chain_id()
         self._append_history(ChatMessage(
             role="system",
-            content=_format_hook_attribution(name, text),
+            content=_format_ride_along_attribution(TurnOrigin.HOOK, name, text),
             ts=_now_iso(),
             meta={"chain_id": chain_id},
         ))
@@ -5784,13 +5857,29 @@ class Session:
         # the staged C's — they wait for the real turn).
         if self._inbox_arbiter.next_turn_context:
             for entry in self._inbox_arbiter.next_turn_context:
-                hook_kind = entry.get("kind", "hook")
+                # Proposal 0067 P5 (#3978, architect + lead-coder co-vet):
+                # entry_kind is the entry's OWN, OS-recorded TurnOrigin (staged
+                # by InboxArbiter.stage_next_turn_context straight from the
+                # inbox item's kind — trusted, never producer-echoed). It used
+                # to be discarded as a mere fallback DEFAULT for entry_name and
+                # never reach the formatter's bracket, so every staged
+                # producer rendered "[hook:...]" regardless of what it truly
+                # was (a real bug this arc's own extraction surfaced: the
+                # first non-hook staged producer, send_to_session wake=false,
+                # would have carried a false "[hook:...]" label to the LLM).
+                # Same TRUSTED-framing discipline InterAgentMessaging.
+                # handle_agent_response already applies to its own
+                # OS-assigned "[task_completed] kind=..." header — the LABEL
+                # is OS state, not producer content.
+                entry_kind = entry.get("kind", "hook")
                 payload_data = entry.get("payload", {})
-                hook_name = payload_data.get("name", hook_kind)
-                hook_text = payload_data.get("text", "")
+                entry_name = payload_data.get("name", entry_kind)
+                entry_text = payload_data.get("text", "")
                 self._append_history(ChatMessage(
                     role="system",
-                    content=_format_hook_attribution(hook_name, hook_text),
+                    content=_format_ride_along_attribution(
+                        entry_kind, entry_name, entry_text,
+                    ),
                     ts=_now_iso(),
                 ))
             self._inbox_arbiter.next_turn_context.clear()

@@ -102,6 +102,14 @@ class RouterCallerState:
     # doesn't support topology-create.
     topology_create_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # Proposal 0067 P5 (#3978): send_to_session dispatch — fire-and-forget
+    # delivery to a peer (agent, session) via TurnOrigin.PEER_SESSION.
+    # Bound by RouterLoop with no pre-bound identity (the target agent/session
+    # are per-call args, unlike send_to_agent's chain_id); None when the host
+    # doesn't support multi-session delivery (= duck-typed / hasattr-guarded
+    # at caller-state build, same pattern as spawn_session_fn above).
+    send_to_session_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

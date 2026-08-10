@@ -634,6 +634,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str) -> dict: ...
 
+    # Proposal 0067 P5 (#3978): fire-and-forget delivery to a peer (agent,
+    # session) via TurnOrigin.PEER_SESSION. Multi-session hosts implement it;
+    # others leave it unbound (= hasattr-guarded at caller-state build, same
+    # pattern as spawn_session above).
+    async def send_to_session(self, *, agent: str, session: str,
+                              text: str, wake: bool) -> dict: ...
+
     # #3633: see RouterLoopCore.put_outbox above — ``persist`` is the same
     # explicit per-call-site opt-out, inherited here (Protocol overlap).
     async def put_outbox(
@@ -4083,6 +4090,22 @@ class RouterLoop:
                 return await self.host.spawn_agent(name=name, role=role)
             _spawn_agent_bound = _spawn_agent_bound_impl
 
+        # Proposal 0067 P5 (#3978): send_to_session binding (mirror
+        # session-spawn). Only multi-session hosts implement it; a host
+        # without it leaves this None. No pre-bound identity — target
+        # agent/session are per-call args, unlike send_to_agent's chain_id.
+        _send_to_session_bound: Any = None
+        if hasattr(self.host, "send_to_session") and callable(
+            getattr(self.host, "send_to_session", None)
+        ):
+            async def _send_to_session_bound_impl(
+                *, agent: str, session: str, text: str, wake: bool = False,
+            ) -> dict:
+                return await self.host.send_to_session(
+                    agent=agent, session=session, text=text, wake=wake,
+                )
+            _send_to_session_bound = _send_to_session_bound_impl
+
         # #2103 C1: topology-create binding (mirror agent-spawn). Only multi-agent hosts
         # implement ``create_topology``; a host without it leaves this None.
         _topology_create_bound: Any = None
@@ -4120,6 +4143,9 @@ class RouterLoop:
             send_to_agent=_send_to_agent_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
             spawn_session_fn=_spawn_session_bound,
+            # Proposal 0067 P5 (#3978): send_to_session dispatch (None for
+            # non-multi-session hosts).
+            send_to_session_fn=_send_to_session_bound,
             # #2103 B-tool: agent-spawn dispatch (None for non-multi-agent hosts).
             spawn_agent_fn=_spawn_agent_bound,
             # #2103 C1: topology-create dispatch (None for non-multi-agent hosts).

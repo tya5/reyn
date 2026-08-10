@@ -1118,6 +1118,24 @@ delegate_to_agent_to_canonical = make_status_text_mapper(
 )
 
 
+def _render_send_to_session(result: dict) -> str:
+    # SUCCESS shape only ({status:"delivered", agent, session, wake}) — a
+    # not-delivered result carries a truthy ``error`` field, so the shared
+    # error seam (is_error_result / error_to_canonical) routes it BEFORE
+    # this mapper ever runs (make_status_text_mapper's own contract).
+    agent = result.get("agent", "")
+    session = result.get("session", "")
+    wake = result.get("wake")
+    return f"Delivered to {agent!r} session {session!r} (wake={wake})."
+
+
+# ``send_to_session`` (tools/send_to_session.py) — proposal 0067 P5 (#3978)
+# — ``{status, agent, session, wake}`` on success.
+send_to_session_to_canonical = make_status_text_mapper(
+    render=_render_send_to_session, meta_keys=("agent", "session"),
+)
+
+
 def _render_index_drop(result: dict) -> str:
     chunks = result.get("chunks_dropped", 0)
     verb = "Removed" if result.get("removed") else "No source found; removed"
