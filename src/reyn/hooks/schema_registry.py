@@ -20,7 +20,7 @@ per-``event_name`` value allowlist — the future OUT-set config file layers
 name-level curation ON TOP of this structural gate, it does not replace it.
 
 ``BUILTIN_HOOK_SCHEMAS`` is the single source of truth for what field-set
-each of reyn's 8 builtin hook-points carries — mirroring the
+each of reyn's 9 builtin hook-points carries — mirroring the
 ``OP_KIND_MODEL_MAP`` ↔ ``control-ir.md`` sync discipline (CLAUDE.md hard
 rule): every dispatch call site MUST build its payload through
 ``build_hook_payload`` (below), which validates the assembled dict against
@@ -181,7 +181,8 @@ def safe_context_fields(kind_or_point: str, context: dict) -> dict:
     """*context* filtered down to fields safe for hook-push MESSAGE
     interpolation (``reyn.hooks.render.render_push``) — every key in
     *context* except the ones ``CONTEXT_UNSAFE_FIELDS`` names for this
-    kind. A kind with no entry (today: all 8 builtins) removes nothing —
+    kind. A kind with no entry (today: 8 of the 9 builtins — every one
+    except ``builtin:task:task_settled``) removes nothing —
     ``dict.get(kind, frozenset())`` is the empty-deny-list default (see
     module docstring above).
 

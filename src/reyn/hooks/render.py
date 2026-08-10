@@ -12,9 +12,11 @@ WHICH fields of ``context`` are safe to interpolate into ``message`` — see
 Before P2, ``render_push`` had no way to make this distinction at all (it
 received only the raw context dict, no notion of which kind produced it) —
 "build the gate before adding the first field that needs it" (the
-proposal's own framing) required this signature change NOW, even though
-today's 8 builtin schemas mark every field safe (so the filter is a no-op
-in practice until a future field is declared unsafe).
+proposal's own framing) required this signature change NOW, even though at
+P2 landing time every builtin schema marked every field safe (the filter
+was a no-op in practice). P3 (same arc) is that "future field": ``result``
+on ``builtin:task:task_settled`` is the first real exclusion — see
+``reyn.hooks.schema_registry.CONTEXT_UNSAFE_FIELDS``.
 
 The gate applies to ``message`` ONLY — ``wake``/``push_when``/``session``
 render against the FULL, unfiltered context (those fields never surface

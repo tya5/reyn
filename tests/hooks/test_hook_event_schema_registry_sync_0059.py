@@ -3,11 +3,13 @@ CI sync gate (proposal ``docs/deep-dives/proposals/0059-hook-event-redesign.md``
 §4), mirroring the ``OP_KIND_MODEL_MAP`` <-> ``control-ir.md`` sync discipline
 (CLAUDE.md hard rule).
 
-Every one of reyn's 8 builtin hook-points now funnels its payload through
+Every one of reyn's 9 builtin hook-points now funnels its payload through
 ``reyn.hooks.schema_registry.build_hook_payload`` at its ONE producer call
 site (``reyn.runtime.session`` /
 ``reyn.mcp.message_handler`` / ``reyn.runtime.fs_watcher`` /
-``reyn.runtime.cron.routing`` / ``reyn.runtime.webhook_routing``) — so a call
+``reyn.runtime.cron.routing`` / ``reyn.runtime.webhook_routing`` /
+``reyn.runtime.services.pipeline_executor_driver`` for ``task_settled``,
+#3978 P3) — so a call
 site's assembled payload IS the shipped schema BY CONSTRUCTION: a missing,
 renamed, or extra field raises ``HookSchemaError`` immediately at that call
 site, not just detectable by a separate after-the-fact diff.
@@ -16,7 +18,7 @@ This file drives the REAL production call sites (no mocks — real ``Session``,
 real ``HookDispatcher``, real op handlers, real ingress-routing functions) and
 captures the EXACT field-set each dispatches, proving:
 
-1. byte-identical coverage — every one of the 8 builtin points is actually
+1. byte-identical coverage — every one of the 9 builtin points is actually
    exercised and its captured payload key-set matches
    ``BUILTIN_HOOK_SCHEMAS`` exactly (the values are the same ones the
    pre-Phase-1 ad-hoc dict literals carried — only the schema-check is new).
@@ -129,10 +131,10 @@ def _make_session(tmp_path: Path) -> Session:
 
 
 @pytest.mark.asyncio
-async def test_all_eight_builtin_points_dispatch_schema_matching_payloads(
+async def test_all_nine_builtin_points_dispatch_schema_matching_payloads(
     tmp_path, monkeypatch,
 ):
-    """Tier 2: every one of the 8 builtin hook-points, exercised via its REAL
+    """Tier 2: every one of the 9 builtin hook-points, exercised via its REAL
     production call site, dispatches a payload whose key-set EXACTLY matches
     ``BUILTIN_HOOK_SCHEMAS`` for that point — the byte-identical proof."""
     captured: list[tuple[str, dict]] = []

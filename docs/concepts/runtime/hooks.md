@@ -39,17 +39,18 @@ valid in one is not necessarily valid in the other:
 | `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
 | `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
 | `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session | ✅ | ✅ |
+| `task_settled` | `builtin:task:task_settled` | an async task (today: a `run_pipeline` async launch) reaches a terminal disposition | ✅ | ✅ |
 | — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output | ✅ | ✅ (chaining — another Composer's output) |
 | — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
 
 **`llm:*` can never be a hook's `on:` value — only a Composer input.** A
-`hooks:` entry only accepts the 8 builtin bare/namespaced forms above or a
+`hooks:` entry only accepts the 9 builtin bare/namespaced forms above or a
 `composed:<name>` prefix; anything else (including a well-formed
 `llm:<session_id>:<event_name>`) is a load-time `HookConfigError`. To react
 to an LLM-emitted event, correlate it through a `composers:` entry into a
 `composed:<name>` event, then put your `hooks:` entry's `on:` on THAT
 composed kind — see the [worked example](#llm-authored-hook-events-emit_hook_event)
-below. The bare/namespaced-form duality only applies within the 8 builtin
+below. The bare/namespaced-form duality only applies within the 9 builtin
 points — it does not extend `on:`'s acceptance to `llm:*`.
 
 ### The 4 config schemes — every field
@@ -115,7 +116,7 @@ template vars before the hook's action runs.
 - Match rule by field **name**: `uri` and `path` use a shell-style glob
   (`fnmatch`); every other field name is exact string equality.
 - Absent or empty `matcher` → the hook always fires.
-- For the 8 builtin points, a matcher field outside that point's payload
+- For the 9 builtin points, a matcher field outside that point's payload
   (a typo, or a field the point never carries) is a **load-time
   `HookConfigError`** — rejected before the hook can ever run.
 - For a hook's `matcher` on a `composed:*` `on:` target, or a Composer
@@ -324,6 +325,32 @@ never wait on a hook action — dispatch is scheduled as a fire-and-forget
 background task, so a slow hook (e.g. a multi-second `exec`) can never
 stall the ingress that triggered it.
 
+## Task points
+
+A **task point** is neither a session lifecycle transition nor an external
+ingress signal — it fires when an async unit of work reaches a terminal
+disposition. Proposal 0067 P3 adds the first (and today, only) one.
+
+### `task_settled`
+
+Fires after a `run_pipeline`-launched async pipeline's result has been
+delivered to the issuing session's history (delivery-anchored — the hook
+fires only once `submit_pipeline_result` has succeeded). `delegate_to_agent`'s
+own chain-resolve completion path is a separate, still-unwired "settle"-shaped
+mechanism today — folding it into this same point is deferred (recorded as an
+open remainder in `BUILTIN_HOOK_SCHEMAS`'s own code comment, not silently
+dropped).
+
+Template vars:
+
+| Var | Meaning |
+|-----|---------|
+| `task_id` | The settled task's handle. |
+| `kind` | The task kind (e.g. `pipeline`). |
+| `status` | The terminal status the task settled with. |
+| `session` | The issuing session. |
+| `result` | The task's own LLM-authored output. **Not** `context_safe` (ADR-0040 D3) — cannot be interpolated into a `template_push`'s `message`; use `include` (below) to carry it as fenced, attributed content instead. |
+
 ## Matcher: narrowing which events fire a hook
 
 A hook may set `matcher`, a `dict[str, str]` of field → pattern, evaluated
@@ -341,8 +368,8 @@ hooks:
   `path`, which match via a shell-style glob (`fnmatch`) — so
   `file:///repo/**` matches any URI under that prefix, and `/repo/src/**`
   matches any watched path under that directory.
-- For the 10 **builtin** hook points (6 lifecycle + `mcp_resource_updated` /
-  `file_changed` / `cron_fired` / `webhook_received`), a matcher field must be
+- For the 9 **builtin** hook points (the 4 lifecycle points + `mcp_resource_updated` /
+  `file_changed` / `cron_fired` / `webhook_received` + `task_settled`), a matcher field must be
   one the point's builtin schema actually carries — a typo'd or nonexistent
   field name (e.g. a lifecycle point's matcher naming `server`/`uri`, or
   `payload.srever`) is a **load-time `HookConfigError`**, rejected before the

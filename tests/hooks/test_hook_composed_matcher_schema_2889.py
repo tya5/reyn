@@ -5,7 +5,10 @@ left in.
 Root cause (see the architect's design comment on #2889): ``composed:*`` is
 an open namespace, so a ``matcher`` on a ``composed:*`` hook was NOT
 schema-checked at load — a typo'd field silently never matches at dispatch,
-exactly the footgun Phase 3 closed for the 9 builtin points. Fix: every
+exactly the footgun Phase 3 closed for the 10 builtin points (task_start/
+task_end were still live then; #3214 later removed them, and #4087 added
+task_settled — today's count is 9, but this sentence describes Phase 3's
+own state, not today's). Fix: every
 composed event, across all 7 Composer ops, is emitted by the single
 ``_emit_composed`` producer (``reyn.hooks.composer``) with the FIXED payload
 shape ``{"inputs": [...], "correlation_key": <key>}`` — so the schema is
