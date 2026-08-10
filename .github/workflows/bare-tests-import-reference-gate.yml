@@ -1,0 +1,43 @@
+name: bare-tests-import-reference gate
+
+# #4008: reject any nested tests/ file that bare-imports a name matching an
+# existing flat tests/*.py module — resolves today only because pytest's
+# prepend import mode puts a FLAT consumer's own directory on sys.path, and
+# silently breaks the moment that CONSUMER (not the imported module) moves
+# to a different bucket. The sys.path-dependent sibling of
+# file-depth-reference-gate.yml's __file__-rooted-path class — same
+# permanent lifespan reasoning (a silent path failure the moment a file
+# moves to a different depth can recur for as long as tests/ has
+# subdirectories at all), a distinct AST shape, kept as its own gate.
+# See scripts/check_bare_tests_import_reference.py's module docstring for
+# the full design rationale (issue #4008).
+#
+# No diff/base-ref needed — a whole-tree scan against a baseline of zero,
+# same shape as file-depth-reference-gate.yml. A shallow checkout is enough.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  bare-tests-import-reference:
+    name: bare-tests-import-reference gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_bare_tests_import_reference.py is stdlib-only (ast /
+      # pathlib / sys). No pip install needed.
+      - name: Check no nested tests/ file bare-imports a flat module
+        run: |
+          python scripts/check_bare_tests_import_reference.py
