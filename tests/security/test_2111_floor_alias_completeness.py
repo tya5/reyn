@@ -56,12 +56,43 @@ def _all_floored_forms() -> list[str]:
 # ── completeness-invariant (SoT-derived) ────────────────────────────────────
 
 
+def test_no_floor_class_is_empty() -> None:
+    """Tier 2: vacuity guard — an emptied floor class (``frozenset()``) would
+    pass ``test_every_floored_name_is_in_the_floor`` vacuously (nothing to
+    check) while denying nothing, silently disabling that class's whole
+    threat coverage. Same shape as #4110's chain-field vacuity guard.
+
+    Named ahead of need: proposal 0067 P6 (#3978) retires ``delegate_to_agent``,
+    the ONLY member ``re-delegation`` had before this PR added
+    ``send_to_session`` — without that addition (architect ruling, #3978:
+    send_to_session/run_prompt reach another agent's context the same way
+    delegate_to_agent does), P6 would leave ``re-delegation`` empty and this
+    test would have caught it before merge."""
+    for cls, names in _FLOORED_TOOLS.items():
+        assert names, f"{cls}: floor class is empty — denies nothing, looks like a guard"
+
+
 def test_every_floored_name_is_in_the_floor() -> None:
     """Tier 2: each name declared in a floor class reaches the flat deny union
     the two builtin profiles are built from."""
     for cls, names in _FLOORED_TOOLS.items():
         for name in names:
             assert name in _BUILTIN_UNTRUSTED_DENY, f"{cls}: {name!r} missing from floor"
+
+
+def test_re_delegation_names_all_three_reach_effects() -> None:
+    """Tier 2: architect catch (#3978, on the #4117/#4122 merge-order
+    conflict) — the vacuity guard above catches a class going EMPTY, not one
+    losing a MEMBER while staying non-empty. #4117 (P4d) added
+    ``run_prompt`` and #4122 (this PR) added ``send_to_session`` to the same
+    ``"re-delegation"`` frozenset LITERAL, in two parallel PRs; resolving
+    that conflict by silently keeping only one side's addition would leave
+    the class non-empty (so the vacuity guard stays green) while a real
+    reach-another-agent's-context tool goes unfloored. Names all three
+    directly rather than relying on set-membership-implies-completeness."""
+    assert _FLOORED_TOOLS["re-delegation"] == frozenset({
+        "delegate_to_agent", "run_prompt", "send_to_session",
+    })
 
 
 def test_every_floored_name_is_a_registered_tool() -> None:

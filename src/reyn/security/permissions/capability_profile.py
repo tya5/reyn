@@ -384,25 +384,26 @@ _FLOORED_TOOLS: "dict[str, frozenset[str]]" = {
         "remember_agent",
         "forget_memory",
     }),
-    # re-delegation — no spawning peers from untrusted content. Proposal 0067
-    # P4d (#3978), architect ruling 2026-08-10: run_prompt joins here, same
-    # PR as the tool itself (landing the tool without its floor entry would
-    # open a window where the tool exists but nothing denies it from
-    # untrusted content). The reasoning that puts delegate_to_agent on this
-    # floor is not a single comment about THAT tool — it is the floor's own
-    # grammar, which names EFFECTS, not tool names (memory-write denies
-    # "persist", not "call remember_shared"; pipeline-install's own comment
-    # draws the identical distinction: the callee runs under its narrowed
-    # identity, but the REGISTRATION action itself must not be reachable).
-    # run_prompt drives a peer session's turn synchronously and returns its
-    # reply in-band — the same "reach another agent's context" effect
-    # delegate_to_agent has, argument-independent (an argument-conditioned
-    # deny would make the discriminator depend on the very input being
-    # classified, which the floor avoids by design). send_to_session
-    # belongs on this same floor for the identical reason — tracked
-    # separately (already on main; its own PR adds it here) rather than in
-    # this same change, since it predates this PR.
-    "re-delegation": frozenset({"delegate_to_agent", "run_prompt"}),
+    # re-delegation — no reaching into another agent's context from untrusted
+    # content. Architect ruling (2026-08-10, #3978): this floor's own
+    # constituent comments name an EFFECT ("no spawning peers from untrusted
+    # content"), not a specific mechanism — memory-write bars persistence,
+    # mcp/skill/pipeline-install bar registration REGARDLESS of whether the
+    # called tool's own work then runs under the invoker's narrowed identity
+    # (pipeline-install's own comment already draws that exact distinction).
+    # send_to_session (proposal 0067 P5, #4101) and run_prompt (P4d, #4117)
+    # both reach ANOTHER agent's context the same way delegate_to_agent
+    # does — only the name differs — and BOTH now land here, together with
+    # delegate_to_agent (#4117 added run_prompt in the same PR as the tool
+    # itself, avoiding a window where the tool exists but nothing denies it
+    # from untrusted content; this file's own #4122 added send_to_session
+    # separately, since it predates run_prompt's own PR). send_to_session
+    # (wake=False) is included: it queues a string into a peer's NEXT turn
+    # silently (no immediate wake), which is the quieter, not the safer,
+    # form of the same injection path. No argument-conditioned deny (e.g.
+    # wake= alone) — the classifier must not depend on input from the very
+    # content being classified.
+    "re-delegation": frozenset({"delegate_to_agent", "run_prompt", "send_to_session"}),
     # code execution. #3226 Phase 1: the #2593 pipeline DSL `shell` tool
     # (thin sugar over sandboxed_exec, same subprocess-exec threat surface)
     # was removed outright — it was the sole `/bin/sh -c <str>` injection
