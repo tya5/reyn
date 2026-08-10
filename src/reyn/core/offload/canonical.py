@@ -1566,6 +1566,27 @@ def cancel_task_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, result)
 
 
+def _render_run_prompt(result: dict) -> str:
+    # SUCCESS shape only ({status:"ok", result:<str|dict>}) — every failure
+    # shape run_prompt_result emits (target_session_not_found /
+    # target_session_busy / timeout) carries a truthy ``error`` field, so
+    # the shared error seam (is_error_result / error_to_canonical) routes it
+    # BEFORE this mapper ever runs (make_status_text_mapper's own contract —
+    # same reasoning as send_to_session's mapper above).
+    value = result.get("result")
+    text = value if isinstance(value, str) else json.dumps(value)
+    return text
+
+
+# ``run_prompt`` (tools/run_prompt.py) — proposal 0067 P4d (#3978) —
+# ``{status, result}`` on success. Unlike ``send_to_session``'s ack-style
+# render, ``result`` IS the payload the LLM asked for (the peer's reply),
+# so the mapper renders it verbatim rather than a status sentence — the
+# same "the value is the point" reasoning ``describe_task``/``list_tasks``
+# apply via ``_records_to_canonical``, just without a records list to wrap.
+run_prompt_to_canonical = make_status_text_mapper(render=_render_run_prompt)
+
+
 def pipeline_list_to_canonical(result: dict) -> CanonicalToolResult:
     """``pipeline_list`` result -> canonical (#3026). ``pipelines`` entries carry
     ``{name, description}`` — the discovery view of every REGISTERED pipeline.

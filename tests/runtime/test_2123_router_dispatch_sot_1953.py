@@ -33,6 +33,9 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     # Proposal 0067 P5 (#3978): send_to_session gained a router-dispatched
     # ToolDefinition (fire-and-forget delivery primitive).
     "send_to_session",
+    # Proposal 0067 P4d (#3978): run_prompt gained a router-dispatched
+    # ToolDefinition (sync run+collect against a live peer, collect="attached").
+    "run_prompt",
     "reyn_repo_list", "reyn_repo_read",
     "web_search", "web_fetch",
     "read_file", "write_file", "delete_file", "list_directory",

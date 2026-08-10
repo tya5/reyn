@@ -35,6 +35,13 @@ from reyn.security.permissions.capability_profile import compose_narrowing_mappi
 #: turn has run and the value is needed. See `_ensure_turn_budget_engine`.
 _TURN_BUDGET_ENGINE_UNSET = object()
 
+# Proposal 0067 P4d (#3978): the LLM-facing default for
+# run_prompt(collect="attached")'s ``timeout`` when the tool call omits it. Mirrors
+# ``session_api._DEFAULT_AGENT_STEP_TIMEOUT_S`` (same 120s figure,
+# duplicated rather than imported — that constant is module-private and this
+# is a different layer's own default, not a re-export of session_api's).
+_RUN_PROMPT_DEFAULT_TIMEOUT_S: float = 120.0
+
 if TYPE_CHECKING:
     from reyn.runtime.router_op_context import RouterOpContextSource
 
@@ -1403,6 +1410,59 @@ class RouterHostAdapter:
                 ),
             }
         return {"status": "delivered", "agent": agent, "session": session, "wake": wake}
+
+    async def run_prompt_result(
+        self, *, agent: str, session: str, prompt: str, timeout: "float | None" = None,
+    ) -> dict:
+        """Proposal 0067 P4d (#3978): ``run_prompt(collect="attached")`` —
+        deliver ``prompt`` to a LIVE peer ``(agent, session)`` and collect its
+        reply IN-BAND, synchronously.
+
+        Thin wiring layer only — resolution, the double-pump refusal, and the
+        ``MessageBus.request`` drive all live in ``session_api.run_prompt_result``
+        (see its docstring for the full rationale). This method's only job is
+        to supply the CALLER's own identity (``self._agent_name`` /
+        ``self.live_session_id``), mirroring ``send_to_session`` above.
+
+        ``timeout`` defaults to ``_RUN_PROMPT_DEFAULT_TIMEOUT_S`` when the
+        LLM-facing tool call omits it — ``session_api.run_prompt_result``
+        itself takes ``timeout`` as a REQUIRED, no-default kwarg (architect's
+        #3978 ruling: it bounds a genuine mutual-deadlock shape, not just a
+        slow reply — an unbounded default there would silently reintroduce
+        the hazard the requirement exists to close). This is the one layer
+        allowed to supply a convenience default, because it is the one layer
+        an omitting LLM caller actually reaches.
+
+        ⚠️ No ``schema`` param here (unlike ``run_agent_step``): 0062's
+        structured-output plumbing (a ``SchemaRegistry`` populated from a
+        pipeline's registered schemas) exists only on the PIPELINE executor's
+        ``agent``-step path today — there is no ``SchemaRegistry`` threaded to
+        the router-tool layer at all, for ANY tool, to constrain generation
+        against. Adding one is a real feature, out of scope for this PR;
+        ``session_api.run_prompt_result`` itself still accepts
+        ``schema``/``schema_registry`` (mirrors ``run_agent_step`` exactly)
+        for whenever that plumbing exists — this method just never passes
+        them."""
+        if self._registry is None:
+            raise RuntimeError(
+                "run_prompt(collect=\"result\") requires a registry "
+                "(multi-session host) — unavailable in this context."
+            )
+        from reyn.runtime.session_api import run_prompt_result as _run_prompt_result
+
+        return await _run_prompt_result(
+            self._registry,
+            caller_agent=self._agent_name,
+            # "main" fallback matches registry.get_session's own default
+            # (_DEFAULT_SID) — live_session_id is None only when no live-sid
+            # fn is wired AND the constructor's cached session_id is also
+            # unset, which the "main" single-session case never hits.
+            caller_sid=self.live_session_id or "main",
+            target_agent=agent,
+            target_session=session,
+            prompt=prompt,
+            timeout=timeout if timeout is not None else _RUN_PROMPT_DEFAULT_TIMEOUT_S,
+        )
 
     async def _spawn_limit_checkpoint(
         self, *, kind: str, prompt: str, detail: str,

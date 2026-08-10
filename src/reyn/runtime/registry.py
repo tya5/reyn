@@ -3526,6 +3526,41 @@ class AgentRegistry:
             out.extend(t for t in table.values() if not t.done())
         return out
 
+    def is_session_running(self, name: str, sid: str) -> bool:
+        """Whether ``(name, sid)`` has a LIVE ``session.run()`` background task —
+        the same predicate ``ensure_running``/``attach``/``ensure_session_running``
+        already each re-derive inline (``key not in self._tasks or
+        self._tasks[key].done()`` before creating a new task) to avoid double-
+        arming, exposed here as a public read for a caller that instead needs to
+        avoid double-*driving*.
+
+        proposal 0067 P4d (#3978), architect ruling 2026-08-10: ``run_prompt
+        (collect="attached")`` drives its target inline via ``MessageBus.request``
+        — safe ONLY when nothing else is concurrently pumping the same Session's
+        ``run_one_iteration`` (reyn's own invariant, ``a2a.py``'s routers state it
+        explicitly: "a session is EITHER self-running OR inline-driven, never
+        both"). A target this returns ``True`` for MUST be refused with a named
+        error, not raced against — the architect-ruled fix is refusal, not a new
+        lock (the production ``get_agent_lock`` acquire path does not cover a
+        session's own run-loop, so adding one here would not actually serialize
+        the two pumps; see issue #4113's measurement of the sibling MCP hazard).
+
+        ⚠️ **This predicate covers only HALF the invariant, and the name invites
+        the other half to be assumed.** It answers "is `(name, sid)` self-running
+        its own background loop" — it does NOT answer "is anyone driving this
+        session right now": a session someone ELSE is currently pumping INLINE
+        (e.g. a concurrent ``run_prompt`` call, or `mcp.server._get_session`'s
+        no-run-loop path) has no `self._tasks` entry at all, so this returns
+        ``False`` for it — a FALSE "nobody is driving this" reading. It is
+        therefore not a witness that a target is safe to drive; it is only a
+        witness that ONE particular way of being unsafe (self-running) is
+        absent. Issue #4113 is the registry-owned "who is driving this session
+        right now" marker that would cover BOTH axes — this method is the
+        interim, self-running-only half, and callers that need the full
+        invariant (this one included) must not treat it as more than that."""
+        key = (name, sid)
+        return key in self._tasks and not self._tasks[key].done()
+
     async def shutdown(self) -> None:
         """Best-effort: stop all loaded sessions, then await/cancel their tasks.
 

@@ -20,6 +20,15 @@ from reyn.tools import get_default_registry
 # — external network / external store / user-written disk.
 _EXTERNAL = {
     "list_memory", "read_memory_body",   # user/agent-written .md
+    # Proposal 0067 P4d (#3978): run_prompt(collect="attached") returns the
+    # PEER SESSION's own reply text SYNCHRONOUSLY as THIS tool's result —
+    # unlike delegate_to_agent (returns only a spawn ACK; the real reply is
+    # fenced later at the A3 inbound seam when it arrives) and send_to_session
+    # (fire-and-forget; there is no reply to relay at all). This IS the seam
+    # where that content needs fencing: the peer's own turn may have read
+    # web/file/exec content and folded it into its reply, same "agent-written"
+    # rationale as list_memory/read_memory_body above.
+    "run_prompt",
     "call_mcp_tool", "mcp_call_tool",    # external MCP server result
     "list_mcp_tools", "describe_mcp_tool",  # external server-authored descriptions
     "mcp_search_registry",               # external registry listing

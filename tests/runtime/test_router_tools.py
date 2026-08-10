@@ -25,6 +25,7 @@ EXPECTED_TOOL_NAMES = [
     "spawn_agent",     # #2103 B-tool: router-only org-design spawn primitive
     "create_topology",  # #2103 C1: router-only org-wiring primitive
     "send_to_session",  # proposal 0067 P5 (#3978): router-only delivery primitive
+    "run_prompt",  # proposal 0067 P4d (#3978): router-only sync run+collect primitive
     "remember_shared",
     "remember_agent",
     "forget_memory",
