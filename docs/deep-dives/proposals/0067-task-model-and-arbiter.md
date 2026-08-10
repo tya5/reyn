@@ -205,6 +205,25 @@ of the two leaves that surface under-denied — a real hole, and the direction n
 
 Put the check on whichever of P6 / P7 touches both files first.
 
+### Adding or retiring an LLM-visible tool re-records the same fixtures
+
+Every step of this arc that changes the tool surface has paid the same bill, and each one
+discovered it at CI rather than budgeting for it:
+
+| step | change | what went red |
+|---|---|---|
+| P5 (#4101) | `send_to_session` added | `fp0063_arc_witness` turn1/turn2, `test_router_tools` |
+| P7 (#4115) | three `run_pipeline_*` names retired | the same `fp0063_arc_witness` pair |
+| P4d (#4117) | `run_prompt` added | the same pair, plus two `router_tools` goldens |
+
+The cause is that the recorded LLM payloads embed the whole tool catalog, so a tool appearing
+or disappearing changes a hash in fixtures that have nothing to do with the feature. **P6 will
+hit this hardest** — retiring `delegate_to_agent` removes a tool that has been in every recorded
+catalog since those fixtures were made.
+
+Budget the re-record as part of any surface-changing step, and re-record rather than hand-edit:
+the fixtures are captured payloads, and an edited one no longer witnesses what it claims to.
+
 ### `input_required` is spelled three ways
 
 Grepping `src/` for `input_required` returns nothing, which reads as "D3 is unimplemented." It is
