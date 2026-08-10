@@ -823,6 +823,81 @@ This is the only sanctioned use of snapshot tests in the codebase.
 
 ---
 
+## Where a new test file goes
+
+`tests/<name>/` bucket placement is enforced by `scripts/check_tests_dir_names.py`
+(a CI gate — declared, not just described) but the *reasoning* behind that gate's
+rules lives only in its own docstring, which nobody reads before writing a test.
+This section is the human-readable form; #3879's bucket-reorganization arc
+(2026-08-09/10) is where each rule below was settled, several after a wrong
+first attempt corrected in the same thread.
+
+**Split by subject, not by mirroring `src/reyn/`.** Mirroring the real package
+tree (`tests/<name>/` for a real `src/reyn/<name>/`) is the *default* shape and
+covers most buckets, but it is not the only valid one — `tests/chat`/`tests/cli`/
+`tests/web` are pre-#3879 buckets that share a name with an unrelated
+`src/reyn/<name>/` package without actually testing it (grandfathered, not a
+template to extend), and `tests/repo/` is a deliberate, permanent special case
+for AST-guard/CI-structure tests that import zero `reyn.*` at all — there is no
+`src/reyn/repo/` and never will be. A same-night correction: a first attempt at
+this same bucket used the invented name `tests/structure/` before checking
+whether an existing, already-reserved name (`repo`) already covered the exact
+use case — grep the existing vocabulary before inventing a new word.
+
+**A new NON-MIRROR bucket name requires editing the gate, not just moving
+files.** `check_tests_dir_names.py`'s rule ① is a closed set: a real
+`src/reyn/<name>/` package, or the literal `repo` special case — nothing else
+passes. When a genuinely new subject (e.g. `tests/intervention/` for
+`user_intervention.py`/`intervention_choices.py`, both top-level single-file
+modules with no `src/reyn/intervention/` package to mirror) needs its own
+bucket, the fix is adding that name to the gate's explicit exception list —
+a deliberate, reviewed code change, not a baseline edit and not "rule ① now
+means whatever seems reasonable." The alternative (loosen ① to "any subject
+name is fine") was considered and rejected: it would make the vocabulary check
+meaningless, since nothing would ever fail it again. An explicit-list edit
+means a new non-mirror bucket only exists because someone deliberately added
+it and said why — "silently accumulates" cannot happen to a list you have to
+edit to grow.
+
+**3 files justifies a bucket; 1–2 does not.** Measured against the smallest
+existing buckets on `origin/main` (`observability`: 2, `chat`: 3, `scaffold`: 4)
+— 3 is within precedent, not a new low bar. The line stays at "don't create a
+bucket for 1–2 files"; 3 is where a bucket becomes worth the name.
+
+**`__init__.py` presence/absence is not a placement axis.** It decides a
+*different* question — the SHADOW check (same gate, same file): a
+`tests/<name>/` directory that HAS an `__init__.py` becomes a regular Python
+package, which can silently shadow a real top-level import if `<name>` collides
+with something real code imports (confirmed directly: adding
+`tests/scripts/__init__.py` broke two existing tests that `import scripts`).
+Whether to bundle a set of test files together is a subject-matching decision;
+whether the resulting directory needs (or must avoid) an `__init__.py` is a
+completely separate, mechanical safety check on top of that decision — treating
+"these files happen to share `__init__.py` status" as a reason to group them is
+answering the wrong question.
+
+**AST import-count is a starting hypothesis, not a verdict — read the file.**
+An AST scan of which `reyn.*` symbol a test imports most is a fast first pass,
+and it can still be wrong the same way a naive grep can: the winning import can
+be a repeated INGREDIENT (a fake/helper class instantiated 2–3 times inside the
+file) rather than the file's actual SUBJECT. Two files that "won" an
+intervention-related import count on this exact night turned out, on reading
+the module docstring and what the asserts actually check, to be about
+permission-decl / JIT-ask logic — `user_intervention` types only supplied a
+fake bus's vocabulary. Confirming the count against the file's own module
+docstring and the subject of its assertions is not optional extra rigor; it is
+the step that makes the count trustworthy.
+
+**"Can be moved" is not "should be moved."** A file whose subject genuinely
+fits a new or different bucket is still allowed to stay where a **prior**,
+already-settled placement decision put it, if moving it would only be
+justified by "it counted highest on one of several methods" rather than a
+clearer reason. Flag the judgment call in the PR body (which bucket it could
+also fit, and why it's staying) rather than resolving it silently — a
+placement's own reasoning is worth recording even when the answer is "leave it."
+
+---
+
 ## Filesystem isolation (= no real `~/.reyn/` pollution)
 
 Tests **must not** modify the developer's real `~/.reyn/` files. The repository's `tests/conftest.py` already enforces this for the secret store via an autouse fixture that sets `REYN_SECRETS_PATH` to `tmp_path / "secrets.env"` for every test. As a result:
