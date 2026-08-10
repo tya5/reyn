@@ -807,7 +807,9 @@ class MCPClient:
         if self._initialized:
             return
         try:
-            from fastmcp import Client as FastMCPClient
+            from reyn.mcp._fastmcp_boundary import import_fastmcp_client
+
+            FastMCPClient = import_fastmcp_client()
         except ImportError as exc:
             raise MCPError(
                 "The 'fastmcp' package is required for MCP support. "
@@ -1575,7 +1577,9 @@ class MCPClient:
         return wrapped.argv[0], list(wrapped.argv[1:])
 
     def _open_stdio(self) -> "Any":
-        from fastmcp.client.transports import StdioTransport
+        from reyn.mcp._fastmcp_boundary import import_stdio_transport
+
+        StdioTransport = import_stdio_transport()
 
         command = self._config.get("command")
         if not command:
@@ -1694,7 +1698,9 @@ class MCPClient:
                 "subsequent headless/non-interactive runs."
             )
 
-        from fastmcp.client.auth import OAuth
+        from reyn.mcp._fastmcp_boundary import import_oauth
+
+        OAuth = import_oauth()
 
         scopes = auth_cfg.get("scopes")
         return OAuth(
@@ -1734,7 +1740,9 @@ class MCPClient:
             SDK knob, applied as this transport's default instead of the
             old connect-level timeout.
         """
-        from fastmcp.client.transports import StreamableHttpTransport
+        from reyn.mcp._fastmcp_boundary import import_streamable_http_transport
+
+        StreamableHttpTransport = import_streamable_http_transport()
 
         url = self._config.get("url")
         if not url:
@@ -1756,7 +1764,9 @@ class MCPClient:
     def _open_sse(self) -> "Any":
         """Open the SSE transport (#2597 S1 free win — FastMCP ships it, so no
         incremental cost to wire vs. leaving the pre-swap ``NotImplementedError``)."""
-        from fastmcp.client.transports import SSETransport
+        from reyn.mcp._fastmcp_boundary import import_sse_transport
+
+        SSETransport = import_sse_transport()
 
         url = self._config.get("url")
         if not url:
