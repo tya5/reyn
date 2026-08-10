@@ -150,6 +150,46 @@ async def test_chain_update_modifies_waiting_on(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_chain_update_mirrors_a_non_waiting_on_field_into_the_snapshot(tmp_path):
+    """Tier 2b: #4108 bug ① — record_chain_update's live-snapshot write-back
+    was hardcoded to ``waiting_on`` only; any OTHER field a caller passed
+    (e.g. proposal 0067 P8's ``arm_at``) made it into the WAL event but was
+    silently dropped from the live in-memory snapshot. Field-name-independent
+    write-back means a new field needs no new hardcode to survive."""
+    j = make_journal(tmp_path)
+    await j.record_chain_register(
+        chain_id="chain-arm", fields={
+            "origin_agent": "root", "origin_depth": 0,
+            "original_request": "task", "waiting_on": ["a"],
+        },
+    )
+
+    await j.record_chain_update(chain_id="chain-arm", fields={"arm_at": 12345.0})
+
+    assert j.snapshot.pending_chains["chain-arm"]["arm_at"] == 12345.0
+
+
+@pytest.mark.asyncio
+async def test_chain_update_omitting_waiting_on_does_not_destroy_it(tmp_path):
+    """Tier 2b: #4108 bug ② (worse than ①) — the old code read
+    ``fields.get("waiting_on", [])`` UNCONDITIONALLY, so an update call that
+    didn't pass ``waiting_on`` at all (e.g. an arm_at-only update)
+    DESTRUCTIVELY overwrote real waiting_on state to ``[]``. Real state
+    from a PRIOR event must survive an update that doesn't name it."""
+    j = make_journal(tmp_path)
+    await j.record_chain_register(
+        chain_id="chain-preserve", fields={
+            "origin_agent": "root", "origin_depth": 0,
+            "original_request": "task", "waiting_on": ["a", "b"],
+        },
+    )
+
+    await j.record_chain_update(chain_id="chain-preserve", fields={"arm_at": 1.0})
+
+    assert j.snapshot.pending_chains["chain-preserve"]["waiting_on"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
 async def test_chain_resolve_removes_from_pending_chains(tmp_path):
     """Tier 2b: record_chain_resolve pops the chain entry."""
     j = make_journal(tmp_path)

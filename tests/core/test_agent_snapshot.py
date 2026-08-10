@@ -244,3 +244,55 @@ def test_chain_register_replay_defaults_origin_sid_and_task_kind_to_none():
     chain = snap.pending_chains["c-old"]
     assert chain["origin_sid"] is None
     assert chain["task_kind"] is None
+
+
+def test_chain_update_replay_mirrors_a_non_waiting_on_field():
+    """Tier 2: #4108 bug ① on the WAL-REPLAY side — apply_events's
+    chain_update branch was hardcoded to write back ``waiting_on`` only.
+    A field-name-independent mirror means a new field (e.g. proposal 0067
+    P8's ``arm_at``) survives pure WAL replay with no new hardcode."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-arm",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-arm", arm_at=99.5),
+    ])
+    assert snap.pending_chains["c-arm"]["arm_at"] == 99.5
+
+
+def test_chain_update_replay_omitting_waiting_on_does_not_destroy_it():
+    """Tier 2: #4108 bug ② on the WAL-REPLAY side — the old code read
+    ``event.get("waiting_on", [])`` unconditionally, so a chain_update
+    event that didn't carry ``waiting_on`` at all still overwrote it to
+    ``[]`` on replay, destroying state set by a PRIOR event."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-preserve",
+            origin_agent="a", origin_depth=0, original_request="x",
+            waiting_on=["p", "q"],
+        ),
+        _event("chain_update", seq=2, chain_id="c-preserve", arm_at=1.0),
+    ])
+    assert snap.pending_chains["c-preserve"]["waiting_on"] == ["p", "q"]
+
+
+def test_chain_update_replay_does_not_leak_routing_meta_keys():
+    """Tier 2: falsification pair for the field-independent rewrite — the
+    routing/meta keys every WAL event carries (kind/seq/target/agent/
+    session_id/chain_id) must NOT be mirrored into the pending_chains
+    entry as if they were chain state (they are excluded by
+    ``_CHAIN_EVENT_META_KEYS``, not merely absent from this probe)."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-meta",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-meta", waiting_on=["z"]),
+    ])
+    chain = snap.pending_chains["c-meta"]
+    for meta_key in ("kind", "seq", "target", "agent", "session_id"):
+        assert meta_key not in chain

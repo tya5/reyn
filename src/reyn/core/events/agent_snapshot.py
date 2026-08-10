@@ -18,6 +18,13 @@ from typing import Iterable
 
 SNAPSHOT_VERSION = 1
 
+# #4108: every routing/meta key SnapshotJournal's WAL-append chokepoint adds
+# to a "chain_update" event that is NOT itself chain state — excluded when
+# apply_events mirrors an event's fields back onto pending_chains (see that
+# branch's own comment for why field-name-independent write-back replaced
+# the old "waiting_on"-only hardcode).
+_CHAIN_EVENT_META_KEYS = frozenset({"kind", "seq", "target", "agent", "session_id", "chain_id"})
+
 
 class SchemaVersionError(Exception):
     """Raised when a snapshot file's schema version does not match the
@@ -280,9 +287,23 @@ class AgentSnapshot:
                 "task_kind": event.get("task_kind"),
             }
         elif kind == "chain_update":
+            # #4108: field-name-INDEPENDENT write-back — mirrors every
+            # non-routing key the event actually carries, rather than
+            # hardcoding "waiting_on" (which had two bugs: any OTHER field
+            # a caller passed — e.g. proposal 0067 P8's ``arm_at`` — was
+            # silently dropped from reconstruction, AND an update call that
+            # did NOT pass waiting_on at all still overwrote it to `[]`,
+            # destroying real state). Only touches keys the event actually
+            # names; a key absent from THIS event is left as whatever a
+            # PRIOR event already set. ``_CHAIN_EVENT_META_KEYS`` is every
+            # routing/meta field ``SnapshotJournal``'s WAL-append chokepoint
+            # adds that is NOT itself chain state.
             chain = self.pending_chains.get(event["chain_id"])
             if chain is not None:
-                chain["waiting_on"] = list(event.get("waiting_on", []))
+                for key, value in event.items():
+                    if key in _CHAIN_EVENT_META_KEYS:
+                        continue
+                    chain[key] = list(value) if key == "waiting_on" else value
         elif kind in ("chain_resolve", "chain_timeout_fired"):
             self.pending_chains.pop(event.get("chain_id"), None)
         elif kind == "intervention_dispatched":
