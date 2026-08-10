@@ -33,9 +33,13 @@ check for exactly that shape — a population scan, not an execution path.
    own measured lesson: anchoring a `tests/` literal detector to "the quote
    character is immediately followed by `tests/`" undercounted a real
    population by 17x (17 found vs. 287 actual) — a huge fraction of real
-   references are embedded mid-sentence (`` "the gate in tests/scripts/
-   test_foo.py fires" ``, `` `RED tests/test_x.py::test_y` ``), not
-   standalone path strings. This script's regex matches `tests/...` ANYWHERE
+   references are embedded mid-sentence ("the gate in a bucket subdirectory
+   fires", "RED at the failing test's own module path"), not standalone
+   path strings — deliberately not spelled out as a literal tests/-shaped
+   example here, so this docstring's own prose doesn't become a hit
+   against this gate's own scan (same reasoning below, and in the paired
+   test file's `_T` split).
+   This script's regex matches `tests/...` ANYWHERE
    inside a larger string/prose run, with a word boundary on the left, not
    only at a string literal's own start.
 
@@ -138,8 +142,11 @@ _SCAN_SUFFIXES = frozenset({".py", ".md", ".yml", ".yaml", ".rst", ".txt", ".jso
 # scripts/flat_tests_disposition.json (#3879 S2) is the SAME shape as
 # CHANGELOG.md, not the same shape as this gate's own baseline: its
 # `moved` entries are keyed on the file's OLD flat path by design — "this
-# WAS at tests/foo.py, now at tests/bar/foo.py" is the record, and the old
-# path correctly never resolves again. Counting that as gate debt would
+# file used to be at the flat root, now lives in a bucket subdirectory" is
+# the record (deliberately not spelled as a literal tests/-shaped example
+# here, so this docstring's own prose doesn't become a hit against this
+# gate's own scan), and the old path correctly never resolves again.
+# Counting that as gate debt would
 # charge #3879's own disposition-tracking artifact for doing its job
 # (lead-coder review, #4065 follow-up): every file it records as moved
 # would cost one baseline entry here, forever, which is backwards for the

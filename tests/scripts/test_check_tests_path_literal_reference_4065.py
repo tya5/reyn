@@ -28,22 +28,29 @@ from scripts.check_tests_path_literal_reference import (
     offending_references,
 )
 
-# ── the regex itself — #4006's own lesson (mid-sentence, not quote-anchored) ─
+# Every fixture literal below is a `tests/...py`-shaped example this file's
+# OWN tests deliberately construct to exercise the scanner — none of them
+# is a real path. Spelled as `_T + "..."` rather than one contiguous
+# string, so this file's own source text never contains a run this gate's
+# regex would itself match (lead-coder review, #4068: without the split,
+# this file's own fixture literals grew the gate's baseline every time a
+# test was added — 9 -> 10 in one PR, measured, not assumed).
+_T = "tests/"
 
 
 def test_a_mid_sentence_reference_is_matched() -> None:
     """Tier 1: #4006 measured 17x undercounting from anchoring to "right
     after a quote character" — the regex must match `tests/...py` embedded
     anywhere in a larger prose run, not only a standalone string literal."""
-    line = 'See the gate in tests/scripts/test_foo.py for the -O witness.'
+    line = "See the gate in " + _T + "scripts/test_foo.py for the -O witness."
     matches = [m.group(0) for m in _PATH_LITERAL_RE.finditer(line)]
-    assert matches == ["tests/scripts/test_foo.py"]
+    assert matches == [_T + "scripts/test_foo.py"]
 
 
 def test_a_bare_substring_without_a_word_boundary_is_not_matched() -> None:
     """Tier 1: "xtests/foo.py" must not match — the left word-boundary
     exists specifically to reject a `tests/` occurring mid-identifier."""
-    line = "xtests/foo.py"
+    line = "x" + _T + "foo.py"
     assert list(_PATH_LITERAL_RE.finditer(line)) == []
 
 
@@ -51,12 +58,13 @@ def test_a_bare_substring_without_a_word_boundary_is_not_matched() -> None:
 
 
 def test_a_literal_resolving_to_a_real_file_is_not_offending(tmp_path) -> None:
-    """Tier 1: `tests/services/test_x.py` existing on disk is not an
-    offender, even though the scan matched it."""
+    """Tier 1: a literal existing on disk (`services/test_x.py`, under
+    the `_T` root below) is not an offender, even though the scan
+    matched it."""
     (tmp_path / "tests" / "services").mkdir(parents=True)
     (tmp_path / "tests" / "services" / "test_x.py").write_text("", encoding="utf-8")
     (tmp_path / "note.md").write_text(
-        "see tests/services/test_x.py for details\n", encoding="utf-8"
+        "see " + _T + "services/test_x.py for details\n", encoding="utf-8"
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
@@ -65,15 +73,16 @@ def test_a_literal_resolving_to_a_real_file_is_not_offending(tmp_path) -> None:
 
 
 def test_a_literal_not_resolving_is_offending(tmp_path) -> None:
-    """Tier 1: `tests/services/test_gone.py` referenced but absent on disk
-    IS an offender — the gate's whole reason to exist."""
+    """Tier 1: a literal (`services/test_gone.py`, under the `_T` root
+    below) referenced but absent on disk IS an offender — the gate's
+    whole reason to exist."""
     (tmp_path / "note.md").write_text(
-        "see tests/services/test_gone.py for details\n", encoding="utf-8"
+        "see " + _T + "services/test_gone.py for details\n", encoding="utf-8"
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     offenders = offending_references(tmp_path)
-    assert offenders == [(tmp_path / "note.md", "tests/services/test_gone.py", 1)]
+    assert offenders == [(tmp_path / "note.md", _T + "services/test_gone.py", 1)]
 
 
 def test_an_untracked_file_is_not_scanned(tmp_path) -> None:
@@ -82,7 +91,7 @@ def test_an_untracked_file_is_not_scanned(tmp_path) -> None:
     like mkdocs' `site/`) must not contribute offenders, with zero
     exclusion rule naming it."""
     (tmp_path / "note.md").write_text(
-        "see tests/services/test_gone.py for details\n", encoding="utf-8"
+        "see " + _T + "services/test_gone.py for details\n", encoding="utf-8"
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     # note.md is never `git add`-ed — untracked.
@@ -95,7 +104,7 @@ def test_changelog_md_is_excluded_even_though_tracked(tmp_path) -> None:
     include it) but is explicitly excluded — a historical record naming a
     path that was real when written is not a defect."""
     (tmp_path / "CHANGELOG.md").write_text(
-        "- fixed tests/services/test_long_gone.py\n", encoding="utf-8"
+        "- fixed " + _T + "services/test_long_gone.py\n", encoding="utf-8"
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
@@ -112,7 +121,9 @@ def test_flat_tests_disposition_json_is_excluded_even_though_tracked(tmp_path) -
     baseline entry here forever (lead-coder review, #4065 follow-up)."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "flat_tests_disposition.json").write_text(
-        '{"tests/test_moved_away.py": {"disposition": "moved", "to": "tests/core/test_moved_away.py"}}\n',
+        json.dumps({
+            _T + "test_moved_away.py": {"disposition": "moved", "to": _T + "core/test_moved_away.py"},
+        }) + "\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
@@ -128,15 +139,15 @@ def test_a_literal_never_tracked_classifies_never_existed() -> None:
     """Tier 1: a literal absent from the full-history tracked-file set is
     `never-existed` — an illustrative example or an unbuilt promise, never
     a real file that moved."""
-    assert classify("tests/test_a.py", ever_tracked=set()) == "never-existed"
+    assert classify(_T + "test_a.py", ever_tracked=set()) == "never-existed"
 
 
 def test_a_literal_once_tracked_classifies_stale() -> None:
     """Tier 1: a literal present in the full-history tracked-file set is
     `stale` — it WAS a real file and the reference wasn't updated when it
     moved or was deleted."""
-    ever = {"tests/test_moved_away.py"}
-    assert classify("tests/test_moved_away.py", ever_tracked=ever) == "stale"
+    ever = {_T + "test_moved_away.py"}
+    assert classify(_T + "test_moved_away.py", ever_tracked=ever) == "stale"
 
 
 # ── new_pairs — the ratchet check itself ────────────────────────────────────
@@ -144,25 +155,25 @@ def test_a_literal_once_tracked_classifies_stale() -> None:
 
 def test_a_pair_in_the_baseline_is_not_new() -> None:
     """Tier 1: grandfathered debt does not fail the gate."""
-    baseline = {("docs/foo.md", "tests/test_gone.py")}
-    measured = {("docs/foo.md", "tests/test_gone.py")}
+    baseline = {("docs/foo.md", _T + "test_gone.py")}
+    measured = {("docs/foo.md", _T + "test_gone.py")}
     assert new_pairs(measured, baseline) == set()
 
 
 def test_a_pair_absent_from_the_baseline_is_new() -> None:
     """Tier 1: the load-bearing case — a reference that goes stale AFTER
     the baseline was written must be caught."""
-    baseline = {("docs/foo.md", "tests/test_gone.py")}
-    measured = {("docs/foo.md", "tests/test_gone.py"), ("docs/bar.md", "tests/test_new_gone.py")}
-    assert new_pairs(measured, baseline) == {("docs/bar.md", "tests/test_new_gone.py")}
+    baseline = {("docs/foo.md", _T + "test_gone.py")}
+    measured = {("docs/foo.md", _T + "test_gone.py"), ("docs/bar.md", _T + "test_new_gone.py")}
+    assert new_pairs(measured, baseline) == {("docs/bar.md", _T + "test_new_gone.py")}
 
 
 def test_a_pair_leaving_the_measured_set_is_not_reported() -> None:
     """Tier 1: a fix (or the referencing file itself moving away) silently
     drops out — nothing has to be edited in the baseline to let a fix
     "count", the same discipline `mypy_ratchet.py`'s own docstring names."""
-    baseline = {("docs/foo.md", "tests/test_gone.py"), ("docs/bar.md", "tests/test_also_gone.py")}
-    measured = {("docs/foo.md", "tests/test_gone.py")}
+    baseline = {("docs/foo.md", _T + "test_gone.py"), ("docs/bar.md", _T + "test_also_gone.py")}
+    measured = {("docs/foo.md", _T + "test_gone.py")}
     assert new_pairs(measured, baseline) == set()
 
 

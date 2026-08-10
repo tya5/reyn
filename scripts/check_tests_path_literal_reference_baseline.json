@@ -791,27 +791,22 @@
   },
   {
     "file": "scripts/check_migration_diff_shape.py",
+    "literal": "tests/foo/bar.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_migration_diff_shape.py",
+    "literal": "tests/old/path.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "scripts/check_migration_diff_shape.py",
     "literal": "tests/test_a.py",
     "class": "never-existed"
   },
   {
     "file": "scripts/check_tests_dir_names.py",
     "literal": "tests/scripts/__init__.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "scripts/check_tests_path_literal_reference.py",
-    "literal": "tests/bar/foo.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "scripts/check_tests_path_literal_reference.py",
-    "literal": "tests/foo.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "scripts/check_tests_path_literal_reference.py",
-    "literal": "tests/test_x.py",
     "class": "never-existed"
   },
   {
@@ -2148,56 +2143,6 @@
     "file": "tests/scripts/test_check_tests_dir_names_3879.py",
     "literal": "tests/test_verify_package_move_root_config.py",
     "class": "stale"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/core/test_moved_away.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/scripts/test_foo.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/services/test_gone.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/services/test_long_gone.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/services/test_x.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/test_a.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/test_also_gone.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/test_gone.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/test_moved_away.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_tests_path_literal_reference_4065.py",
-    "literal": "tests/test_new_gone.py",
-    "class": "never-existed"
   },
   {
     "file": "tests/scripts/test_flat_tests_disposition_check_3879.py",
