@@ -165,10 +165,10 @@ class _SiteDeclaration:
 
 
 _T3561 = "tests/test_3561_spawn_session_seam_reachability.py"
-_T3595_S1B = "tests/test_3595_step1b_external_producer_slash_reachability.py"
-_T3595_S2 = "tests/test_3595_s2_pipeline_nudge_origin.py"
-_TCLI = "tests/test_chat_cli_flags.py"
-_T3300 = "tests/test_3300_p2a_queue_state_publish.py"
+_T3595_S1B = "tests/runtime/test_3595_step1b_external_producer_slash_reachability.py"
+_T3595_S2 = "tests/runtime/test_3595_s2_pipeline_nudge_origin.py"
+_TCLI = "tests/interfaces/test_chat_cli_flags.py"
+_T3300 = "tests/interfaces/test_3300_p2a_queue_state_publish.py"
 
 #: Every site in ``src/`` that names the member, with the reason it may.
 #:
@@ -269,7 +269,7 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
             "origin cannot reach the permissive (inject) side."
         ),
         measured_by=(
-            "tests/test_3792_pr2_session_injection.py::"
+            "tests/core/test_3792_pr2_session_injection.py::"
             "test_only_client_input_origin_is_peek_eligible",
         ),
     ),
