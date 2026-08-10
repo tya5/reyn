@@ -1375,6 +1375,16 @@
     "class": "stale"
   },
   {
+    "file": "tests/core/test_3792_pr2_session_injection.py",
+    "literal": "tests/test_3300_p3_cancel_by_id.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/core/test_3792_pr2_session_injection.py",
+    "literal": "tests/test_3792_pr2_router_loop_injection.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/core/test_3846_image_fetch.py",
     "literal": "tests/test_ssrf_guard_1956.py",
     "class": "stale"
@@ -1610,6 +1620,11 @@
     "class": "never-existed"
   },
   {
+    "file": "tests/gateway/test_api.py",
+    "literal": "tests/test_3595_step1b_external_producer_slash_reachability.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/hooks/test_hook_composer.py",
     "literal": "tests/test_3180_durable_pending_store.py",
     "class": "stale"
@@ -1675,6 +1690,11 @@
     "class": "stale"
   },
   {
+    "file": "tests/interfaces/test_3300_p2a_queue_state_publish.py",
+    "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/interfaces/test_3300_p2b_sentqueue_render.py",
     "literal": "tests/test_user_submitted_render_3300.py",
     "class": "stale"
@@ -1690,6 +1710,11 @@
     "class": "stale"
   },
   {
+    "file": "tests/interfaces/test_3300_p3_cancel_by_id.py",
+    "literal": "tests/test_3300_p2a_queue_state_publish.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/interfaces/test_3310_n1_session_attached_barrier.py",
     "literal": "tests/test_agui_profile_completeness.py",
     "class": "stale"
@@ -1697,6 +1722,11 @@
   {
     "file": "tests/interfaces/test_3310_n2_reset_hydrate.py",
     "literal": "tests/test_2242_hard_cancel.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_3310_n2_reset_hydrate.py",
+    "literal": "tests/test_3300_p2a_queue_state_publish.py",
     "class": "stale"
   },
   {
@@ -1820,6 +1850,16 @@
     "class": "stale"
   },
   {
+    "file": "tests/interfaces/test_textual_chat_copy_rewind_3362.py",
+    "literal": "tests/test_agui_control_filter.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/interfaces/test_textual_chat_intervention_panel_3299.py",
+    "literal": "tests/test_textual_chat_copy_rewind_3362.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/interfaces/test_textual_chat_phase2_3273.py",
     "literal": "tests/test_textual_chat_row_contrast_3367.py",
     "class": "stale"
@@ -1857,6 +1897,11 @@
   {
     "file": "tests/llm/test_2608_run_loop_pickup.py",
     "literal": "tests/test_2608_h4_fs_watcher.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/llm/test_3792_pr2_router_loop_injection.py",
+    "literal": "tests/test_3792_pr2_session_injection.py",
     "class": "stale"
   },
   {
@@ -1930,6 +1975,11 @@
     "class": "stale"
   },
   {
+    "file": "tests/runtime/test_2708_p32a_spawn_bridge_intervention.py",
+    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/runtime/test_2946_item2_restore_all_bucketing.py",
     "literal": "tests/test_multi_session_restore.py",
     "class": "stale"
@@ -1972,6 +2022,11 @@
   {
     "file": "tests/runtime/test_3475_mcp_probe_priming_all_turn_kinds.py",
     "literal": "tests/test_session_refresh_mcp_servers.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3595_s2_pipeline_nudge_origin.py",
+    "literal": "tests/test_pipeline_is6_attached.py",
     "class": "stale"
   },
   {
@@ -2175,18 +2230,18 @@
     "class": "stale"
   },
   {
+    "file": "tests/security/test_sandbox_axis_contract_2983.py",
+    "literal": "tests/test_sandbox_axis_contract_2983.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/security/test_sandbox_axis_contract_2983.py",
+    "literal": "tests/test_sandbox_seccomp_network_3030.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/security/test_sandbox_seccomp_network_3030.py",
     "literal": "tests/test_plugin_install.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_2708_p32a_spawn_bridge_intervention.py",
-    "literal": "tests/test_2103_s1bc_exec_result_routing.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3300_p2a_queue_state_publish.py",
-    "literal": "tests/test_2242_hard_cancel.py",
     "class": "stale"
   },
   {
@@ -2207,31 +2262,6 @@
   {
     "file": "tests/test_3561_spawn_session_seam_reachability.py",
     "literal": "tests/test_pipeline_r5_run_agent_step.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3595_s2_pipeline_nudge_origin.py",
-    "literal": "tests/test_pipeline_is6_attached.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3792_pr2_session_injection.py",
-    "literal": "tests/test_3300_p3_cancel_by_id.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3792_pr2_session_injection.py",
-    "literal": "tests/test_3792_pr2_router_loop_injection.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_sandbox_axis_contract_2983.py",
-    "literal": "tests/test_sandbox_seccomp_network_3030.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_textual_chat_copy_rewind_3362.py",
-    "literal": "tests/test_agui_control_filter.py",
     "class": "stale"
   },
   {
