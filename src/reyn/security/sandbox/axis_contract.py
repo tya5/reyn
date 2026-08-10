@@ -49,7 +49,7 @@ supply) is decoupled from WHERE it runs.
     | Layer                                    | What runs           | Blast radius |
     |-------------------------------------------|----------------------|--------------|
     | production gate (``self_test.enforcement_self_test``) | DENY leg only, write + spawn axes only, unchanged by this module | every sandboxed op, every host |
-    | CI conformance (``tests/test_sandbox_axis_contract_2983.py``, Linux-only, same gating as ``sandbox_landlock_deny_gate.py``) | all 3 legs, all migrated axes, all backends | CI only |
+    | CI conformance (``tests/security/test_sandbox_axis_contract_2983.py``, Linux-only, same gating as ``sandbox_landlock_deny_gate.py``) | all 3 legs, all migrated axes, all backends | CI only |
 
 This is not a new pattern: ``scripts/sandbox_landlock_deny_gate.py`` (#2983
 stage 3) already runs real deny arms as a CI-only gate, never a production
@@ -208,7 +208,7 @@ class AxisContract:
     # FastMCP server) and lives in tests/, which src/ must not import — this
     # module stays importable from production code without pulling tests/ in.
     # CI conformance resolves and asserts the id exists (see
-    # tests/test_sandbox_axis_contract_2983.py) rather than invoking it
+    # tests/security/test_sandbox_axis_contract_2983.py) rather than invoking it
     # out of pytest's own fixture machinery.
     workload_test_id: "str | _NotMigratedMarker"
     # Per-backend name (e.g. "seccomp", "seatbelt") -> WitnessStrength for
@@ -304,7 +304,7 @@ _WRITE_CONTRACT = AxisContract(
     # TypeError, not a silent "none").
     exceptions=(),
     workload_test_id=(
-        "tests/test_sandbox_axis_contract_2983.py::"
+        "tests/security/test_sandbox_axis_contract_2983.py::"
         "test_write_workload_grant_write_succeeds"
     ),
     witness_strength={
@@ -325,7 +325,7 @@ _SPAWN_CONTRACT = AxisContract(
     # not left implicit (same reasoning as the write axis above).
     exceptions=(),
     workload_test_id=(
-        "tests/test_sandbox_axis_contract_2983.py::"
+        "tests/security/test_sandbox_axis_contract_2983.py::"
         "test_spawn_workload_permitted_child_process_launches"
     ),
     witness_strength={
@@ -348,7 +348,7 @@ _SPAWN_CONTRACT = AxisContract(
 #: construct (TypeError) instead of silently joining this tuple as if
 #: migrated.
 #:
-#: CI conformance (``tests/test_sandbox_axis_contract_2983.py``) asserts the
+#: CI conformance (``tests/security/test_sandbox_axis_contract_2983.py``) asserts the
 #: migrated COUNT directly against ``_EXPECTED_MIGRATED_AXES`` below — so
 #: shrinking a migrated axis back to NOT_MIGRATED, or a new axis silently
 #: reading as migrated when it is not, both fail that count check rather than
