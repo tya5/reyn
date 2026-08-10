@@ -410,3 +410,74 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
 
     op_ctx = adapter.make_router_op_context()
     assert op_ctx.intervention_bus is None
+
+
+# ---------------------------------------------------------------------------
+# Test: get_inbox_depth() tolerates a partial registry (#4127 CI falsify)
+# ---------------------------------------------------------------------------
+
+class _PartialAgentRegistry:
+    """A registry double implementing only PART of AgentRegistry — no
+    ``get_session``. This is a legitimate, deliberately-minimal stub (the
+    same shape as ``tests/llm/test_router_loop_chatsession.py``'s
+    ``_StubAgentRegistry``, which has ``get_or_load``/``exists``/etc. but no
+    ``get_session``), not a bug in the stub itself.
+
+    #4127 CI regression: ``RouterHostAdapter.get_inbox_depth()`` originally
+    called ``self._registry.get_session(...)`` directly, so a registry
+    double shaped exactly like this one raised ``AttributeError`` mid-turn
+    when ``build_resource_caller_state`` called it unconditionally — and
+    that propagated far enough to derail FOUR unrelated tests'
+    turn-dispatch flow in ``tests/llm/test_router_loop_chatsession.py`` and
+    ``tests/runtime/test_session_invariants.py``. This test falsifies that
+    regression directly against the adapter."""
+
+    def get_or_load(self, agent_name: str) -> object:
+        raise AssertionError("get_inbox_depth must not reach get_or_load")
+
+    def exists(self, agent_name: str) -> bool:
+        return True
+
+
+def test_get_inbox_depth_tolerates_a_registry_without_get_session(tmp_path):
+    """Tier 2: get_inbox_depth() degrades to None, not AttributeError, when
+    the wired registry lacks get_session — #4127 CI falsify regression."""
+    workspace = tmp_path / "agents" / "partial-registry-test"
+    events = EventLog(subscribers=[])
+    memory = MemoryService(
+        agent_workspace_dir=workspace,
+        events=events,
+        file_write=_null_file_write,
+        file_read=_null_file_read,
+        file_delete=_null_file_delete,
+        file_regenerate_index=_null_file_regen,
+    )
+    adapter = RouterHostAdapter(
+        agent_name="partial-registry-test",
+        agent_role="role",
+        output_language=None,
+        op_context_source=_EMPTY_OP_CTX,
+        permission_resolver=None,
+        mcp_servers=None,
+        project_context="",
+        events=events,
+        resolver=ModelResolver({}),
+        memory=memory,
+        journal=None,
+        agent_registry=_PartialAgentRegistry(),
+        agent_workspace_dir=workspace,
+        mcp_call_tool=_null_mcp_call_tool,
+        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
+        send_to_agent_inputs=SendToAgentInputs(
+            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
+        ),
+        put_outbox_inputs=PutOutboxInputs(
+            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
+        ),
+        append_history=_null_append_history,
+        live_session_id_inputs=LiveSessionIdInputs(
+            session_id=None, live_session_id_fn=None,
+        ),
+    )
+
+    assert adapter.get_inbox_depth() is None

@@ -52,6 +52,7 @@ class FakeRouterHost:
         mcp_servers: list[dict] | None = None,
         threat_scan: Any = None,
         chains: Any = None,  # proposal 0067 P4 (#3978): ChainManager | None
+        inbox_depth: "int | None" = None,  # proposal 0067 P9 (#3978)
     ):
         self._skills = skills or []
         self._agents = agents or []
@@ -59,6 +60,7 @@ class FakeRouterHost:
         self._file_permissions = file_permissions
         self._mcp_servers = mcp_servers or []
         self._chains = chains
+        self._inbox_depth = inbox_depth
 
         # Track calls
         self.outbox: list[dict] = []
@@ -138,6 +140,13 @@ class FakeRouterHost:
         ``chains=`` this fake was constructed with (None by default,
         matching a host that doesn't support the settle-path substrate)."""
         return self._chains
+
+    def get_inbox_depth(self) -> "int | None":
+        """proposal 0067 P9 (#3978): mirrors RouterHostAdapter.get_inbox_depth()
+        — the production seam ``build_resource_caller_state`` reads to
+        populate ``RouterCallerState.session_inbox_depth``. Returns whatever
+        ``inbox_depth=`` this fake was constructed with (None by default)."""
+        return self._inbox_depth
 
     def get_web_fetch_allowed(self) -> bool:
         return False

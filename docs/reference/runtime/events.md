@@ -209,6 +209,7 @@ skill_invoke_collision
 state_change_notified
 summary_resummarize_failed
 summary_resummarized
+task_settle_undelivered
 threat_block
 threat_scan_match
 token_refresh_failed
@@ -402,6 +403,7 @@ the AG-UI transport maps to `RUN_STARTED` / `TOOL_CALL_END` — see
 | `agent_response_received` | Originating agent pulled an `agent_response` from its inbox | `from_agent`, `depth`, `chain_id` |
 | `agent_message_refused` | A send was refused (e.g. exceeded `safety.loop.max_agent_hops`) | `reason`, `to_agent`, `depth`, `chain_id` |
 | `chain_timeout` | A pending chain exceeded `safety.timeout.chain_seconds` and was force-resolved with a synthetic error response upstream | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
+| `task_settle_undelivered` | A task's settle disposition executed, but its reply target `(agent, sid)` is no longer resolvable (agent removed / session not loaded) — the settle still goes terminal; delivery is dropped, fail-safe, NEVER rerouted to `main` (proposal 0067 P9, #3978) | `run_id`, `reply_to_agent`, `reply_to_sid`, `reason` |
 
 `chain_id` is uuid4 hex; one per top-level user submission, propagated unchanged across every hop. Cross-agent reconstruction is `grep <chain_id>` over each agent's `events.jsonl` plus `history.jsonl`.
 

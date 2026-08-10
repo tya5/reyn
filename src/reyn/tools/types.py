@@ -78,6 +78,18 @@ class RouterCallerState:
     # by build_resource_caller_state from host.get_chains()).
     chains: Any = None
 
+    # Proposal 0067 P9 (#3978), architect ruling 2026-08-10: THIS session's
+    # current inbox queue depth (a plain int — an INSTANTANEOUS read, taken
+    # when this caller-state was built; by the time describe_task/list_tasks
+    # returns it to the LLM the real value may already differ, hence why the
+    # field's own LLM-visible description says so explicitly rather than
+    # implying a live value). None when the host can't resolve it (e.g. no
+    # live session backing this call). Observation only — see
+    # AgentRegistry.is_session_running's docstring for the same "does not
+    # imply a valve" caveat class; check_pre_llm bounds spend regardless of
+    # this number.
+    session_inbox_depth: "int | None" = None
+
     # Async dispatch callbacks (= for delegate_to_agent / plan
     # handlers that need to interact with chain / task lifecycle)
     send_to_agent: Callable[..., Awaitable[Any]] | None = None
@@ -313,6 +325,9 @@ async def build_resource_caller_state(host: Any) -> "RouterCallerState":
         ),
         chains=(
             getattr(host, "get_chains", lambda: None)()
+        ),
+        session_inbox_depth=(
+            getattr(host, "get_inbox_depth", lambda: None)()
         ),
     )
 

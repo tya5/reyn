@@ -40,11 +40,11 @@ def _make_manager(tmp_path: Path) -> ChainManager:
     )
 
 
-def _ctx(chains) -> ToolContext:
+def _ctx(chains, *, inbox_depth: "int | None" = None) -> ToolContext:
     return ToolContext(
         events=_NullEvents(), permission_resolver=None, workspace=None,
         caller_kind="router",
-        router_state=RouterCallerState(chains=chains),
+        router_state=RouterCallerState(chains=chains, session_inbox_depth=inbox_depth),
     )
 
 
@@ -109,6 +109,39 @@ async def test_describe_task_with_no_chains_source_returns_error(tmp_path: Path)
     assert result["ok"] is False
 
 
+@pytest.mark.asyncio
+async def test_describe_task_reports_session_inbox_depth(tmp_path: Path):
+    """Tier 2: proposal 0067 P9 (#3978), architect ruling 2026-08-10 —
+    ``describe_task`` echoes ``RouterCallerState.session_inbox_depth``
+    verbatim (the instantaneous read is done at caller-state build time;
+    the handler itself does no resolution)."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-depth", from_user=False, depth=0, original_text="p", sender=None,
+        origin_agent="worker", origin_sid="s1", kind="pipeline",
+    )
+
+    result = await _handle_describe_task({"task_id": "run-depth"}, _ctx(mgr, inbox_depth=3))
+
+    assert result["session_inbox_depth"] == 3
+
+
+@pytest.mark.asyncio
+async def test_describe_task_session_inbox_depth_defaults_to_none(tmp_path: Path):
+    """Tier 2: falsify pair — when the caller state carries no depth (the
+    default), the field is explicitly None, never a silently-wrong 0 (which
+    would misread as "definitely empty")."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-nodepth", from_user=False, depth=0, original_text="p", sender=None,
+        kind="pipeline",
+    )
+
+    result = await _handle_describe_task({"task_id": "run-nodepth"}, _ctx(mgr))
+
+    assert result["session_inbox_depth"] is None
+
+
 # ── list_tasks ───────────────────────────────────────────────────────────────
 
 
@@ -134,6 +167,26 @@ async def test_list_tasks_lists_only_typed_running_tasks(tmp_path: Path):
     assert task["status"] == "running"
     assert task["session"] == "main"
     assert "requester" not in task  # list view omits it (describe_task carries it)
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_session_inbox_depth_same_for_every_entry(tmp_path: Path):
+    """Tier 2: proposal 0067 P9 (#3978) — every entry in list_tasks carries
+    the SAME session_inbox_depth, because ``chains`` is scoped to THIS
+    calling session's own ChainManager (module docstring) — every task
+    list_tasks can even see was registered with the same origin session."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-5", from_user=False, depth=0, original_text="p", sender=None, kind="pipeline",
+    )
+    await mgr.register(
+        chain_id="run-6b", from_user=False, depth=0, original_text="p", sender=None, kind="prompt",
+    )
+
+    result = await _handle_list_tasks({}, _ctx(mgr, inbox_depth=7))
+
+    depths = {t["session_inbox_depth"] for t in result["tasks"]}
+    assert depths == {7}
 
 
 @pytest.mark.asyncio
@@ -272,3 +325,28 @@ async def test_describe_task_reaches_a_real_chain_manager_through_the_real_route
     )
     assert result["task_id"] == "run-e2e"
     assert result["kind"] == "pipeline"
+
+
+@pytest.mark.asyncio
+async def test_describe_task_session_inbox_depth_reaches_production_wiring(
+    tmp_path: Path,
+):
+    """Tier 2: production-wiring witness for ``session_inbox_depth`` —
+    proposal 0067 P9 (#3978). Mirrors the ``chains`` witness above (same
+    class of gap: every OTHER test here builds ``RouterCallerState``
+    directly, bypassing ``build_resource_caller_state``'s own
+    ``host.get_inbox_depth()`` read entirely). Drives the SAME real
+    ``RouterLoop._invoke_router_tool`` path against a ``FakeRouterHost``
+    constructed with ``inbox_depth=``."""
+    mgr = _make_manager(tmp_path)
+    await mgr.register(
+        chain_id="run-depth-e2e", from_user=False, depth=0, original_text="p", sender=None,
+        origin_agent="worker", origin_sid="s1", kind="pipeline",
+    )
+    host = FakeRouterHost(chains=mgr, inbox_depth=5)
+    loop = RouterLoop(host=host, chain_id="chain-test")
+
+    result = await loop._invoke_router_tool("describe_task", {"task_id": "run-depth-e2e"})
+
+    assert result.get("ok") is True
+    assert result["session_inbox_depth"] == 5
