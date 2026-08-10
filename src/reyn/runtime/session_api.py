@@ -881,3 +881,221 @@ async def run_pipeline_attached(
         driver._notify_reply = True  # noqa: SLF001 — same-module runtime flag
     registry.ensure_session_running(reply_to_agent, sid)
     return {"status": "running_async", "run_id": rid}
+
+
+async def run_prompt_result(
+    registry: "AgentRegistry",
+    *,
+    caller_agent: str,
+    caller_sid: str,
+    target_agent: str,
+    target_session: str,
+    prompt: str,
+    timeout: float,
+    schema: "str | None" = None,
+    schema_registry: "SchemaRegistry | None" = None,
+) -> dict:
+    """proposal 0067 P4d (#3978): ``run_prompt(collect="attached")`` — deliver
+    ``prompt`` to a LIVE peer ``(target_agent, target_session)`` as a
+    ``TurnOrigin.PEER_SESSION`` message and collect its reply IN-BAND,
+    synchronously, via the SAME run+collect primitive ``run_agent_step`` uses
+    (``MessageBus.request``, pumping ``run_one_iteration`` on the CALLER's own
+    task).
+
+    Unlike ``run_agent_step``/``run_pipeline_attached``, the target here is
+    NOT a session THIS call spawns and therefore exclusively owns — it
+    addresses an existing peer, the same ``(agent, session)`` shape
+    ``send_to_session`` uses. Two refusals follow directly from that,
+    per architect's #3978 ruling (2026-08-10), and are NOT edge cases to
+    soften later — each maps to a real invariant this codebase already
+    states elsewhere:
+
+    1. **No live session found → refuse, never spawn.** ADR-0040 D5's own
+       precedent for ``send_to_session``: "tap the shoulder, not a spawn
+       primitive" — a target naming no LIVE session returns an error rather
+       than loading/spawning one. Resolution mirrors
+       ``Session._deliver_cross_session_message`` (colon-prefixed transport
+       ids resolve via ``registry.resolve_session``; a plain sid resolves via
+       ``registry.get_session``).
+    2. **A target ALREADY self-running its own turn loop → refuse, never
+       drive.** ``MessageBus.request`` pumps ``run_one_iteration`` on the
+       CALLER's task; reyn's own invariant (stated explicitly at the A2A
+       router: "a session is EITHER self-running OR inline-driven, never
+       both") would break if this call raced a background
+       ``ensure_session_running`` task pumping the SAME Session. Checked via
+       ``AgentRegistry.is_session_running`` — architect's ruling (2026-08-10)
+       is explicit that this check is INTERIM: the durable fix belongs to
+       issue #4113 (a registry-owned "who is driving this session right now"
+       marker covering BOTH the self-running axis and this one), not to a
+       feature PR. Do not read this as the finished mechanism — #4113 will
+       replace it.
+    3. **Two CONCURRENT ``run_prompt`` calls targeting the SAME (idle) peer**
+       — a DIFFERENT race than #2 (neither side is self-running, so
+       ``is_session_running`` sees both as free). Closed by the EXISTING
+       ``get_agent_lock(agent, sid)`` — unlike axis #2, BOTH callers here are
+       "the one acquiring", which is exactly what an ``asyncio.Lock``
+       serializes; the production MCP path (``mcp/server.py:255``) already
+       holds the SAME lock across its own ``MessageBus.request``, so
+       acquiring it here also serializes ``run_prompt`` against a
+       concurrent MCP call on the same peer, for free.
+
+       ⚠️ **This closes double-pump but OPENS a mutual-deadlock shape**
+       (architect's correction, #3978, 2026-08-10): if session A's turn
+       (holding ``lock(A)``) calls ``run_prompt`` targeting B while B's turn
+       (holding ``lock(B)``) calls ``run_prompt`` targeting A, each waits on
+       the other's lock while holding its own — classic AB/BA deadlock.
+       ``asyncio.Lock`` has no native timeout, so nothing but an EXTERNAL
+       bound can ever resolve this. That is why ``timeout`` is REQUIRED
+       here (not optional the way ``run_agent_step``'s is) and why it wraps
+       the LOCK ACQUISITION too, not just the pump below — a timeout that
+       only bounded ``MessageBus.request`` would leave the lock-wait itself
+       unbounded, i.e. would not actually close the deadlock it exists to
+       bound.
+
+    ``schema`` mirrors ``run_agent_step``'s 0062 contract exactly: constrains
+    generation (``configure_structured_output``) AND validates the parsed
+    reply post-hoc; raises ``AgentStepError`` on non-JSON or non-conforming
+    output. A ``schema`` without ``schema_registry`` is rejected before
+    touching the target at all (same ordering as ``run_agent_step`` — no
+    point resolving/refusing a peer for a call that can never complete).
+
+    Returns ``{"status": "ok", "result": <str|parsed-json>}`` on success, or
+    ``{"status": "error", "kind": ..., "error": ...}`` for either refusal —
+    never a success-shaped envelope for a prompt that was never delivered
+    (same B33 W5 F2 discipline ``delegate_to_agent``/``send_to_session``
+    follow: a silently-absent reply invites the LLM to fabricate one on the
+    peer's behalf)."""
+    import asyncio
+
+    from reyn.core.pipeline.schema import to_json_schema, validate
+    from reyn.runtime.agent_locks import get_agent_lock
+    from reyn.runtime.message_bus import MessageBus
+
+    if schema is not None and schema_registry is None:
+        raise AgentStepError(
+            f"run_prompt(schema={schema!r}) requires schema_registry "
+            "(no registry to validate against)."
+        )
+
+    try:
+        # architect ruling (#3978, 2026-08-10, "axis B" + the deadlock
+        # correction that followed it same day): the SAME lock the
+        # production MCP path takes (mcp/server.py:255) around its own
+        # resolve + MessageBus.request + history-read, keyed by the TARGET
+        # (agent, sid) — serializes two concurrent run_prompt calls (or a
+        # run_prompt racing an MCP call) against the SAME peer, closing the
+        # double-pump race. Does NOT cover the self-running axis (#2 above /
+        # issue #4113) — a session's own run-loop never acquires this lock.
+        #
+        # ``asyncio.timeout`` wraps the LOCK ACQUISITION as well as the pump
+        # (not just ``bus.request`` below) — this is what actually closes
+        # the mutual-deadlock shape #3 describes: A holding lock(A) while
+        # waiting on lock(B), B holding lock(B) while waiting on lock(A).
+        # ``asyncio.Lock`` has no native timeout; an outer deadline around
+        # the acquire is the ONLY thing that can ever un-stick that wait.
+        async with asyncio.timeout(timeout):
+            async with get_agent_lock(target_agent, target_session):
+                if ":" in target_session:
+                    transport, _, native = target_session.partition(":")
+                    target = registry.resolve_session(target_agent, transport, native)
+                else:
+                    target = registry.get_session(target_agent, target_session)
+                if target is None:
+                    return {
+                        "status": "error",
+                        "kind": "target_session_not_found",
+                        "error": (
+                            f"no live session ({target_agent!r}, {target_session!r}) — "
+                            'run_prompt(collect="attached") addresses an already-running '
+                            "peer, the same as send_to_session; it does not spawn one."
+                        ),
+                    }
+
+                if registry.is_session_running(target_agent, target_session):
+                    return {
+                        "status": "error",
+                        "kind": "target_session_busy",
+                        "error": (
+                            f"({target_agent!r}, {target_session!r}) is currently "
+                            'running its own turn loop — run_prompt(collect="attached") '
+                            "cannot drive it inline without double-pumping the same "
+                            "session; retry once it is idle, or use send_to_session "
+                            "instead."
+                        ),
+                    }
+
+                if schema is not None:
+                    json_schema = to_json_schema(schema, schema_registry)
+                    response_format = {
+                        "type": "json_schema",
+                        "json_schema": {"name": schema, "schema": json_schema},
+                    }
+
+                    def _validate_fn(parsed_value: Any) -> "list[str]":
+                        result = validate(parsed_value, schema, schema_registry)
+                        return [
+                            f"{e.path or '<root>'}: {e.message}" for e in result.errors
+                        ]
+
+                    target._loop_driver.configure_structured_output(  # noqa: SLF001 — production seam (RouterLoopDriver.configure_structured_output)
+                        response_format=response_format,
+                        schema_validate_fn=_validate_fn,
+                    )
+
+                bus = MessageBus()
+                replies = await bus.request(
+                    target,
+                    kind=TurnOrigin.PEER_SESSION,
+                    payload={
+                        "text": prompt,
+                        "chain_id": new_chain_id(),
+                        "from_agent": caller_agent,
+                        "from_session": caller_sid,
+                        "sender": f"peer_session:{caller_agent}/{caller_sid}",
+                        "name": f"{caller_agent}/{caller_sid}",
+                    },
+                    reply_to=SystemRef(),
+                    timeout=timeout,
+                )
+                text = "\n\n".join(r.text for r in replies if r.kind == "agent")
+    except TimeoutError:
+        # architect ruling (#3978, 2026-08-10, follow-up measurement): do
+        # NOT claim a mutual-lock deadlock was DETECTED here — no
+        # discriminator for "who/what this turn is waiting on" actually
+        # exists today (CurrentTask.requester is always None at its one
+        # construction site; _PendingChain.requester doesn't cover an
+        # MCP-originated turn either, since a chain is per-relay, not
+        # per-turn). Naming a specific cause this call cannot actually tell
+        # apart from an ordinary slow reply would be a false claim. Name
+        # only WHAT was being waited on (the lock acquisition + the peer's
+        # reply, as one combined budget) — never WHY it didn't arrive.
+        return {
+            "status": "error",
+            "kind": "timeout",
+            "error": (
+                f'run_prompt(collect="attached") to ({target_agent!r}, '
+                f"{target_session!r}) did not complete within {timeout}s "
+                "(waiting on that peer's serialization lock and/or its "
+                "reply — cause not distinguished)."
+            ),
+        }
+
+    if schema is None:
+        return {"status": "ok", "result": text}
+
+    # (schema_registry is None already rejected above, before resolving the target.)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise AgentStepError(
+            f"run_prompt(schema={schema!r}): reply is not valid JSON: "
+            f"{exc}. Output: {text!r}"
+        ) from exc
+    result = validate(parsed, schema, schema_registry)
+    if not result.conforming:
+        details = "; ".join(f"{e.path or '<root>'}: {e.message}" for e in result.errors)
+        raise AgentStepError(
+            f"run_prompt(schema={schema!r}): reply does not conform to "
+            f"schema: {details}"
+        )
+    return {"status": "ok", "result": parsed}

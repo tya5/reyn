@@ -110,6 +110,15 @@ class RouterCallerState:
     # at caller-state build, same pattern as spawn_session_fn above).
     send_to_session_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # Proposal 0067 P4d (#3978): run_prompt(collect="attached") dispatch — sends
+    # a prompt to a LIVE peer (agent, session) and collects the reply in-band,
+    # synchronously (session_api.run_prompt_result). Bound by RouterLoop with
+    # the caller's own (agent, sid) pre-bound (needed for the PEER_SESSION
+    # payload's from_agent/from_session/sender attribution — send_to_session's
+    # own send_to_session_fn does the same). None when the host doesn't
+    # support multi-session delivery.
+    run_prompt_result_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

@@ -4106,6 +4106,22 @@ class RouterLoop:
                 )
             _send_to_session_bound = _send_to_session_bound_impl
 
+        # Proposal 0067 P4d (#3978): run_prompt(collect="attached") binding
+        # (mirror send_to_session above). Only multi-session hosts implement
+        # it; a host without it leaves this None.
+        _run_prompt_result_bound: Any = None
+        if hasattr(self.host, "run_prompt_result") and callable(
+            getattr(self.host, "run_prompt_result", None)
+        ):
+            async def _run_prompt_result_bound_impl(
+                *, agent: str, session: str, prompt: str,
+                timeout: "float | None" = None,
+            ) -> dict:
+                return await self.host.run_prompt_result(
+                    agent=agent, session=session, prompt=prompt, timeout=timeout,
+                )
+            _run_prompt_result_bound = _run_prompt_result_bound_impl
+
         # #2103 C1: topology-create binding (mirror agent-spawn). Only multi-agent hosts
         # implement ``create_topology``; a host without it leaves this None.
         _topology_create_bound: Any = None
@@ -4141,6 +4157,9 @@ class RouterLoop:
             describe_agent_fn=self._describe_agent,
             # Async dispatch (= activated handlers)
             send_to_agent=_send_to_agent_bound,
+            # Proposal 0067 P4d (#3978): run_prompt(collect="attached") dispatch
+            # (None for non-multi-session hosts).
+            run_prompt_result_fn=_run_prompt_result_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
             spawn_session_fn=_spawn_session_bound,
             # Proposal 0067 P5 (#3978): send_to_session dispatch (None for

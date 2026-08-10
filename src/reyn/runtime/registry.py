@@ -3526,6 +3526,27 @@ class AgentRegistry:
             out.extend(t for t in table.values() if not t.done())
         return out
 
+    def is_session_running(self, name: str, sid: str) -> bool:
+        """Whether ``(name, sid)`` has a LIVE ``session.run()`` background task —
+        the same predicate ``ensure_running``/``attach``/``ensure_session_running``
+        already each re-derive inline (``key not in self._tasks or
+        self._tasks[key].done()`` before creating a new task) to avoid double-
+        arming, exposed here as a public read for a caller that instead needs to
+        avoid double-*driving*.
+
+        proposal 0067 P4d (#3978), architect ruling 2026-08-10: ``run_prompt
+        (collect="attached")`` drives its target inline via ``MessageBus.request``
+        — safe ONLY when nothing else is concurrently pumping the same Session's
+        ``run_one_iteration`` (reyn's own invariant, ``a2a.py``'s routers state it
+        explicitly: "a session is EITHER self-running OR inline-driven, never
+        both"). A target this returns ``True`` for MUST be refused with a named
+        error, not raced against — the architect-ruled fix is refusal, not a new
+        lock (the production ``get_agent_lock`` acquire path does not cover a
+        session's own run-loop, so adding one here would not actually serialize
+        the two pumps; see issue #4113's measurement of the sibling MCP hazard)."""
+        key = (name, sid)
+        return key in self._tasks and not self._tasks[key].done()
+
     async def shutdown(self) -> None:
         """Best-effort: stop all loaded sessions, then await/cancel their tasks.
 

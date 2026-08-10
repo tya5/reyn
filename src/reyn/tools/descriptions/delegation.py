@@ -132,12 +132,42 @@ send_to_session = ToolDescription(
     ),
 )
 
+run_prompt = ToolDescription(
+    tool_name="run_prompt",
+    surfaced="router (gates.router=allow) — proposal 0067 P4d (#3978)",
+    purpose=(
+        "Send a prompt to a LIVE peer (agent, session) and collect its "
+        "reply in-band, synchronously. Pairs with send_to_session (delivery "
+        "only, no reply) and delegate_to_agent (async — reply arrives in a "
+        "future turn)."
+    ),
+    text=(
+        "Run a prompt on a specific session of an agent and wait for its reply "
+        "in-band (collect=\"attached\" — currently the only supported value; an "
+        "async variant that returns a handle immediately is not yet available). "
+        "The target must already be a LIVE session that is not currently "
+        "running its own turn — this does not spawn a session, and refuses "
+        "with a named error if the target is busy. Use send_to_session instead "
+        "if you don't need to wait for a reply."
+    ),
+    ja=(
+        "指定した (agent, session) にプロンプトを送り、応答を待って同じ場で"
+        "受け取る（collect=\"attached\" — 現時点で対応する唯一の値。即座に"
+        "handle を返す非同期版はまだ利用できない）。対象は既に生きている"
+        "session でなければならず、かつ自分自身のターンを実行中でないこと"
+        "（このツールはセッションを生成しない。対象が busy なら、理由を"
+        "名指しした error を返す）。応答を待つ必要がなければ send_to_session"
+        "を使うこと。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "spawn_agent": agent_spawn,
     "delegate_to_agent": delegate_to_agent,
     "spawn_session": session_spawn,
     "create_topology": topology_create,
     "send_to_session": send_to_session,
+    "run_prompt": run_prompt,
 }
 
 
@@ -266,6 +296,38 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             ja=(
                 "True = 相手がこのメッセージで即座にターンを開始する。"
                 "False（既定）= 相手の次のターンのコンテキストとしてキューに入れる。"
+            ),
+        ),
+    },
+    "run_prompt": {
+        "agent": ParamDescription(
+            text="Target agent name as listed by list_agents.",
+            ja="list_agents に列挙される送信先エージェント名。",
+        ),
+        "session": ParamDescription(
+            text=(
+                "Target session id (e.g. 'main', or a sid from "
+                "list_tasks/describe_task). Must already be a LIVE session — "
+                "this does not spawn one."
+            ),
+            ja=(
+                "送信先のセッション id（例: 'main'、または "
+                "list_tasks/describe_task の sid）。既に生きている session で"
+                "なければならない——このツールはセッションを生成しない。"
+            ),
+        ),
+        "prompt": ParamDescription(
+            text="The prompt to run on the target session.",
+            ja="対象セッションで実行するプロンプト。",
+        ),
+        "collect": ParamDescription(
+            text=(
+                "How to receive the result. \"attached\" (the only supported "
+                "value today) waits inline and returns the reply text."
+            ),
+            ja=(
+                "結果の受け取り方。\"attached\"（現時点で対応する唯一の値）は"
+                "その場で待ち、応答テキストを返す。"
             ),
         ),
     },

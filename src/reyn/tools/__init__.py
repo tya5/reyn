@@ -114,6 +114,7 @@ def get_default_registry() -> ToolRegistry:
         REYN_REPO_LIST,
         REYN_REPO_READ,
     )
+    from reyn.tools.run_prompt import RUN_PROMPT
     from reyn.tools.send_to_session import SEND_TO_SESSION
     from reyn.tools.session_spawn import SESSION_SPAWN
     from reyn.tools.skill_verbs import (
@@ -214,6 +215,7 @@ def get_default_registry() -> ToolRegistry:
     registry.register(AGENT_SPAWN)
     registry.register(TOPOLOGY_CREATE)
     registry.register(SEND_TO_SESSION)  # proposal 0067 P5 (#3978)
+    registry.register(RUN_PROMPT)  # proposal 0067 P4d (#3978), collect="attached" only
     registry.register(REYN_REPO_LIST)
     registry.register(REYN_REPO_READ)
     # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron

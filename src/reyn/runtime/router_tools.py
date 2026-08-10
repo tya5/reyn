@@ -448,6 +448,21 @@ def build_tools(
             dispatch_kind=_send_to_session_def.dispatch_kind,
         ))
 
+    # ── B2f: run_prompt (proposal 0067 P4d, #3978) ─────────────────────────
+    # Router-only sync run+collect primitive against a live peer (static
+    # schema → render without state). Advertised alongside its delegation
+    # siblings so the router=allow tool is reachable (the #2120
+    # advertise-drift lesson — same reasoning as send_to_session above).
+    _run_prompt_def = _registry.lookup("run_prompt")
+    if _run_prompt_def is not None and _run_prompt_def.gates.router == "allow":
+        _run_prompt_rendered = _run_prompt_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_run_prompt_rendered["function"]["name"],
+            description=_run_prompt_rendered["function"]["description"],
+            parameters=_run_prompt_rendered["function"]["parameters"],
+            dispatch_kind=_run_prompt_def.dispatch_kind,
+        ))
+
     # ── B3: remember_shared ──────────────────────────────────────────────
     _remember_shared_def = _registry.lookup("remember_shared")
     if _remember_shared_def is not None and _remember_shared_def.gates.router == "allow":
