@@ -491,7 +491,7 @@ class MCPConnectionService:
         ``(point, template_vars)`` pair and wraps it into a
         :class:`~reyn.hooks.event.HookEvent` for delivery. Kept as a public
         entry point for exercising the bridge's queue/overflow/drain behaviour
-        directly (see ``tests/test_2608_h1_mcp_resource_updated_hook.py``); the
+        directly (see ``tests/hooks/test_2608_h1_mcp_resource_updated_hook.py``); the
         production MCP call path itself goes through :meth:`_mcp_to_hook_event`
         (which builds the event via ``McpIngressAdapter.to_event``, #2875 F1) —
         this method is NOT what ``ReynMCPMessageHandler`` calls any more.
