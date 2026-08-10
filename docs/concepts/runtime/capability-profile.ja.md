@@ -171,13 +171,11 @@ tool_deny:
   - send_to_session
 ```
 
-**どちらの綴りで書いても、両方が deny されます。** `delegate_to_agent` と
-`delegate_to_agent` は 1 つの操作の 2 つの名前で、モデルに現在 *見えている* のがどちらかは
-[tool-use のセル](../tools-integrations/tool-use-schemes.md)とホスト設定で変わります。
-`tool_deny` のエントリは gate になる前に **invocable な全形**へ展開されるため
-(`_expand_tool_forms` — 手書きリストではなく `invoke_action` の alias テーブルから導出)、
-たまたま目にした方の綴りを書けばもう一方も deny されます。モデルの現在のツール一覧から
-名前を写して構いません。逆に、片方の経路だけを deny する手段ではありません。
+**各ツールは invocable な名前を 1 つだけ持ちます。** `#3429` が、かつて全アクションが
+併せ持っていた第二の catalog-qualified な綴り（例: `read_file` と並んで存在した旧
+`file__read`）を削除しました — `tool_deny` のエントリは現在、それが名指す名前だけを
+展開なしで deny します。モデルの現在のツール一覧から名前を写せば安全かつ十分です:
+別綴りで同じ操作に到達する経路はもう存在しません。
 
 ## 参照
 
