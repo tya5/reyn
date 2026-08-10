@@ -51,33 +51,20 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+# #3978 P4: RunStatus moved to runtime/task_types.py (architect ruling,
+# 2026-08-10) — re-exported here unchanged so this module's own docstring
+# below (and its 3 existing consumers, all importing from THIS module) see
+# zero behavior/import-site change. See task_types.RunStatus's own
+# docstring for the layering-direction rationale.
+from reyn.runtime.task_types import RunStatus
 
 if TYPE_CHECKING:
     from reyn.runtime.channel_state import ChannelState
 
 logger = logging.getLogger(__name__)
-
-
-class RunStatus(str, Enum):
-    """The narrow, flat run-status vocabulary A2A needs (#2839 Phase 1).
-
-    Deliberately NOT the 7-state Task-tree ``TaskState`` (unassigned /
-    ready / running / blocked / done / failed / aborted) — this enum
-    only carries what an A2A async run's lifecycle actually produces:
-    the running default, the terminal outcomes, and the one
-    interactive state (``INPUT_REQUIRED`` — an ask_user escalation is
-    pending). ``str`` subclass so persisted JSON + wire comparisons
-    (``entry.status == "running"``) keep working without a shim.
-    """
-
-    RUNNING = "running"
-    INPUT_REQUIRED = "input-required"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 _TERMINAL_RUN_STATUSES: frozenset[RunStatus] = frozenset({
