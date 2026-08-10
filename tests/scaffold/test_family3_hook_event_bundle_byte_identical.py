@@ -97,13 +97,18 @@ def _make_session(
     )
 
 
-async def _wait_until(pred, *, timeout: float = _TIMEOUT) -> None:
-    """Poll ``pred`` to True within ``timeout`` (a broken wiring never
-    satisfies it, so the caller's assertion fails RED)."""
-    async def _loop() -> None:
-        while not pred():
-            await asyncio.sleep(0.01)
-    await asyncio.wait_for(_loop(), timeout=timeout)
+async def _wait_until(pred, *, delay: float = 0.01) -> None:
+    """Poll ``pred`` — waiting on a family hook_bus subscriber attaching or a
+    dispatched/published hook-event landing on its subscriber/inbox — to True.
+    A broken wiring never satisfies it, so the caller's own assertion fails
+    RED, not this poll. Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract.
+    """
+    while not pred():
+        await asyncio.sleep(delay)
 
 
 class TestFamily3HookEventBundleByteIdentical:

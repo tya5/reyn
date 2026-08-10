@@ -61,16 +61,16 @@ _POLL_TIMEOUT = 3.0
 _POLL_INTERVAL = 0.01
 
 
-async def _wait_until(predicate, *, timeout: float = _POLL_TIMEOUT) -> None:
-    """Poll ``predicate`` (a zero-arg callable) until it's true or ``timeout``
-    elapses — avoids a brittle fixed ``sleep(N)`` guess while staying
-    deterministic-enough for CI (no unbounded wait)."""
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
+async def _wait_until(predicate, *, delay: float = _POLL_INTERVAL) -> None:
+    """Poll ``predicate`` (a zero-arg callable) until it's true — waiting for
+    composer/consumer wiring (bus subscriber counts, a pushed turn landing, a
+    safety_limit_checkpoint firing) to become observable. Unbounded per the
+    owner's testing policy (docs/deep-dives/contributing/testing.md, ## Time):
+    no test carries a time budget, marker or in-body -- a slower environment
+    only makes this slower, never fail it; CI's --timeout=120 is the
+    blast-radius kill-switch, not a contract."""
     while not predicate():
-        if loop.time() >= deadline:
-            raise AssertionError(f"condition not met within {timeout}s")
-        await asyncio.sleep(_POLL_INTERVAL)
+        await asyncio.sleep(delay)
 
 
 def _make_session(

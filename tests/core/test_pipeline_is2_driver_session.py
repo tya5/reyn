@@ -212,13 +212,16 @@ def _three_step_pipeline(out_file: Path) -> Pipeline:
     )
 
 
-async def _wait_for(pred, timeout: float = 15.0) -> bool:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if pred():
-            return True
-        await asyncio.sleep(0.05)
-    return False
+async def _wait_for(predicate, *, delay: float = 0.05) -> None:
+    """Poll until a pipeline/driver-session async result (result.json,
+    scripted-agent delivery, or driver-session reclaim) lands. Unbounded per
+    the owner's testing policy (docs/deep-dives/contributing/testing.md,
+    ## Time): no test carries a time budget, marker or in-body -- a slower
+    environment only makes this slower, never fail it; CI's --timeout=120 is
+    the blast-radius kill-switch, not a contract.
+    """
+    while not predicate():
+        await asyncio.sleep(delay)
 
 
 def _result_json(run_dir: Path) -> "dict | None":
@@ -383,7 +386,7 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
     # returning and this check), so this observes registration, not a race.
     assert caller.chains.has(run_id)
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     # ADR-0040 D4 "immediate deletion": once settled, the handle is gone.
     assert not caller.chains.has(run_id)
     terminal = _result_json(run_dir)
@@ -391,10 +394,10 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
     # Real tool side effects: transform seeded 10 → 11, then the fixed line.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
     # The invoker actually CONSUMED the pipeline_result (a scripted-LLM turn ran).
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
     # A10: the driver-session vanishes after terminal.
     invocation = json.loads((run_dir / "invocation.json").read_text(encoding="utf-8"))
-    assert await _wait_for(
+    await _wait_for(
         lambda: reg.get_session("worker", invocation["driver_sid"]) is None
     )
 
@@ -457,14 +460,14 @@ async def test_the_registered_cancel_hook_actually_stops_a_running_async_run(
     # Anchor on real mid-flight execution: step 1's write landed, but its
     # tool call is still blocked on `gate` — the executor is genuinely
     # inside step 1, not merely queued to start it.
-    assert await _wait_for(lambda: out_file.is_file() and out_file.read_text() == "11\n")
+    await _wait_for(lambda: out_file.is_file() and out_file.read_text() == "11\n")
 
     chain = caller.chains.get(run_id)
     assert chain is not None and chain.cancel is not None
     chain.cancel()
     gate.set()  # let step 1's tool call return — the step boundary check follows
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "cancelled"
     # Step 2's side effect NEVER lands — stopped between steps, not after.
@@ -541,7 +544,7 @@ async def test_task_settled_fires_after_delivery_and_the_handle_is_then_gone(
 
     # Delivery-anchored: the issuer's own history actually carries the result
     # (a real scripted-LLM turn consumed the pipeline_result inbox message).
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
     # task_settled was dispatched — and, since _deliver awaits
     # submit_pipeline_result BEFORE dispatching it (source order), its
     # presence here is itself the ordering proof: it cannot have fired before
@@ -556,7 +559,7 @@ async def test_task_settled_fires_after_delivery_and_the_handle_is_then_gone(
     # gone. describe_task doesn't exist yet (P4) — the driver-session's A10
     # reclaim is the only "can this task still be found" surface today.
     invocation = json.loads((run_dir / "invocation.json").read_text(encoding="utf-8"))
-    assert await _wait_for(
+    await _wait_for(
         lambda: reg.get_session("worker", invocation["driver_sid"]) is None
     )
 
@@ -790,11 +793,11 @@ async def test_pipeline_run_async_reachable_via_invoke_action(
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
     assert (run_dir / "invocation.json").is_file()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "ok" and terminal["delivered"] is True
     assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 @pytest.mark.asyncio
@@ -947,7 +950,7 @@ async def test_registered_pipeline_enforces_verify_schema_async(
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "failed"
     assert "failed schema" in terminal["error"]
@@ -1009,13 +1012,13 @@ async def test_truncate_falsify_recovery_source_survives_wal_truncation(
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "ok" and terminal["delivered"] is True
     # Exactly-once: steps 0-1 replayed (no new "11" line), only step 2 ran.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
     # The invoker consumed the re-delivered result.
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 @pytest.mark.asyncio
@@ -1083,7 +1086,7 @@ async def test_truncate_falsify_schema_defs_survives_wal_truncation(
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     # The resumed step 2 hit a REAL schema violation (schema_defs survived
     # truncation intact) — not "no schema_registry was provided", which is
@@ -1095,7 +1098,7 @@ async def test_truncate_falsify_schema_defs_survives_wal_truncation(
     # step 2's tool call DOES execute (the schema check runs on its result,
     # AFTER the real side effect — same order as a live, non-recovered run).
     assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 @pytest.mark.asyncio
@@ -1124,7 +1127,7 @@ async def test_recovery_before_first_gen_preserves_original_input(
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     assert _result_json(run_dir)["status"] == "ok"
     assert out_file.read_text(encoding="utf-8").splitlines() == ["11", "second"]
 
@@ -1165,12 +1168,12 @@ async def test_recovery_steps_done_but_undelivered_redelivers_without_rerun(
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "ok" and terminal["delivered"] is True
     # Exactly-once: nothing re-ran.
     assert out_file.read_text(encoding="utf-8").splitlines() == lines_before
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 @pytest.mark.asyncio
@@ -1200,12 +1203,12 @@ async def test_poison_run_past_resume_cap_fails_terminally(tmp_path: Path, monke
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "failed"
     assert "resume" in terminal["error"]
     assert not out_file.exists(), "no step may execute past the poison cap"
-    assert await _wait_for(lambda: scripted.calls >= 1)  # failure IS delivered
+    await _wait_for(lambda: scripted.calls >= 1)  # failure IS delivered
 
 
 @pytest.mark.asyncio

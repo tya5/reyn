@@ -188,13 +188,16 @@ def _install_pipeline_to_disk(tmp_path: Path, *, key: str = "ns") -> None:
     )
 
 
-async def _wait_for(pred, timeout: float = 15.0) -> bool:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if pred():
-            return True
-        await asyncio.sleep(0.05)
-    return False
+async def _wait_for(predicate, *, delay: float = 0.05) -> None:
+    """Wait for the async-detached driver session's pipeline run to post its
+    terminal result file (``read_result(run_dir) is not None``). Unbounded per
+    the owner's testing policy (docs/deep-dives/contributing/testing.md, ##
+    Time): no test carries a time budget, marker or in-body -- a slower
+    environment only makes this slower, never fail it; CI's --timeout=120 is
+    the blast-radius kill-switch, not a contract.
+    """
+    while not predicate():
+        await asyncio.sleep(delay)
 
 
 @pytest.mark.asyncio
@@ -253,7 +256,7 @@ async def test_async_detached_run_resolves_sibling_via_family_gate(
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
 
-    assert await _wait_for(lambda: read_result(run_dir) is not None)
+    await _wait_for(lambda: read_result(run_dir) is not None)
     terminal = read_result(run_dir)
     assert terminal["status"] == "ok", terminal
     # The sibling's OWN step really ran (not just that `call` resolved a stub).
