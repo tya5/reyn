@@ -28,42 +28,59 @@ safety:
 
 See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block) for the full schema.
 
-> **No current producer** (architect ruling, #3978/#4135, 2026-08-10): the
-> multi-hop `messages_to_agents`/`_PendingChain` mechanism these two
-> settings gate is structurally unreachable today — its sole consumer,
-> `delegate_to_agent`, was retired in proposal 0067 P6. Both settings and
-> the enforcement code they configure remain in place. The multi-hop join
-> (`|waiting_on| >= 2`) this page describes below is permanently retired.
-> Read what follows as the pre-retirement shape, not current behavior.
+> **Multi-hop is permanently retired; `max_agent_hops` changed MEANING, not
+> gone** (architect ruling + lead-coder measurement, #3978/#4135,
+> 2026-08-10): `run_prompt(collect="async")` — the current agent-to-agent
+> producer (proposal 0067 P4e) — always registers a single-hop chain
+> (`depth=1`, `|waiting_on| == 1`); it has no mechanism for a target to
+> "further delegate" and extend the chain the way the pre-retirement model
+> below describes. `max_agent_hops`'s depth-refusal code is genuinely live
+> (`run_prompt(async)`'s delivery goes through the same
+> `InterAgentMessaging.send_to_agent` depth check, `depth > max_agent_hops`
+> at `inter_agent_messaging.py`) — but because `depth` is now the constant
+> `1`, the setting no longer caps a chain's depth (there is no chain to
+> traverse). Any value `>= 1` (including the default `3`) always passes;
+> `max_agent_hops: 0` (no lower-bound validation exists — it's passed
+> through `int()`) does NOT fail the call itself — `run_prompt_async`
+> registers the chain, arms the timeout, and returns `{"status":
+> "started"}` with a `task_id` BEFORE the depth check runs. The depth
+> check fires one step later, at delivery (`_send_to_agent`), refusing
+> DELIVERY only — the caller has already gotten a successful `task_id`
+> back and the chain then times out under `chain_seconds`, resolving as a
+> synthesized error rather than failing immediately. The setting still
+> guarantees eventual failure at `0`, just not an immediate one — not a
+> depth cap. `chain_seconds` (below) is fully live and unchanged in
+> meaning: a `run_prompt(async)` call that never gets a reply genuinely
+> times out under it.
 
 ## `safety.loop.max_agent_hops` (integer, default `3`)
 
-Caps how deep an agent-to-agent message chain may traverse before the runtime refuses further sends. Modeled after LangGraph's recursion limit.
+Caps how deep an agent-to-agent message chain may traverse before the runtime refuses further sends. Modeled after LangGraph's recursion limit — inherited from the pre-retirement multi-hop model (see the callout above). Today's sole producer always dispatches at `depth=1`, so any positive value keeps agent-to-agent messaging enabled; `0` (or lower) stops delivery instead (the call itself still returns a `task_id`, then resolves as a timeout error — see the callout above for the exact shape).
 
 **Depth meaning**:
 
 - `depth = 0` — the original user input
-- `depth = 1` — first agent-to-agent send (e.g., `default → researcher`)
-- `depth = 2` — researcher delegates further (e.g., `researcher → archivist`)
+- `depth = 1` — first agent-to-agent send (e.g., `default → researcher`) — where `run_prompt(async)` always registers today
+- `depth = 2` — researcher delegates further (e.g., `researcher → archivist`) — no current producer reaches this
 - `depth = N` — Nth hop
 
 A send with `depth > max_agent_hops` is refused: the originator gets an `error` outbox message ("agent message depth N exceeds limit M; chain refused") and an `agent_message_refused` event is recorded with `reason="max_hop_depth"`. The upstream pending chain stays registered until `chain_seconds` (see below) elapses, at which point it's resolved with a synthesized error response — so a hop refusal mid-tree degrades gracefully rather than hanging.
 
-The default of `3` allows `user → A → B → C` (= 3 hops) but stops `user → A → B → C → D`. Raise it for deeply hierarchical topologies (e.g., a 5-level tree expressed as overlapping teams).
+The default of `3` was sized for `user → A → B → C` (= 3 hops) under the pre-retirement multi-hop model. Today, any value `>= 1` behaves identically (agent-to-agent messaging enabled); raise it above `3` only once a producer exists that can create depth beyond 1. `0` does not reject a `run_prompt(async)` call outright — the caller still gets a `task_id` back — but delivery is refused and the chain resolves as a timeout error via `chain_seconds`, so it still guarantees the message never reaches the target, just not synchronously.
 
 ## `safety.timeout.chain_seconds` (float, default `60.0`)
 
-Wall-clock budget for a pending chain in a delegating agent. When a router decision emits `messages_to_agents`, the runtime registers a `_PendingChain` keyed by `chain_id` and arms a watchdog task. If every delegate responds, the watchdog is cancelled when the chain resolves; if not, after `chain_seconds` the runtime synthesizes an error response upstream:
+Wall-clock budget for a pending chain. `run_prompt(collect="async")`'s registered chain arms this watchdog the same way the pre-retirement model did; if the target never replies, after `chain_seconds` the runtime synthesizes an error response upstream:
 
 ```
 chain timeout: 1 delegate(s) (gamma) did not respond within 60s
 ```
 
-and emits a `chain_timeout` event with `chain_id`, `waiting_on`, `timeout_seconds`, `origin_agent`. The pending chain is cleared so the upstream agent's loop is no longer blocked.
+and emits a `chain_timeout` event with `chain_id`, `waiting_on`, `timeout_seconds`, `origin_agent`. The pending chain is cleared so the caller's loop is no longer blocked.
 
-Set `chain_seconds: 0` (or any non-positive value) to disable the watchdog — useful for tests and experiments where slow delegates are expected. Disabled chains can still hang indefinitely if a delegate never responds.
+Set `chain_seconds: 0` (or any non-positive value) to disable the watchdog — useful for tests and experiments where a slow peer is expected. Disabled chains can still hang indefinitely if the peer never responds.
 
-The default of `60.0` is a compromise: most chains finish in 10–30s for typical 3-hop trees with light/strong models. Raise it for agent chains that genuinely take longer (large web research fan-outs, long compaction passes); lower it for tighter SLAs.
+The default of `60.0` was sized for the pre-retirement multi-hop model's 3-hop trees; a single `run_prompt(async)` call typically settles faster. Raise it for calls that genuinely take longer (large web research, long compaction passes); lower it for tighter SLAs.
 
 ## Example
 

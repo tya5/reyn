@@ -69,36 +69,24 @@ A single `AgentRegistry` instance per process owns all loaded agents and the Ses
 
 ## Agent-to-agent messaging
 
-> **No current producer** (architect ruling, #3978/#4135, 2026-08-10): the
-> substrate this section describes (`RouterCallerState.send_to_agent`,
-> `InterAgentMessaging.send_to_agent`, `_PendingChain` registration) is
-> still present in code but structurally unreachable — its sole consumer,
-> `delegate_to_agent`, was retired in proposal 0067 P6. No tool wired today
-> populates `dispatched`, so `register(waiting_on=...)` never fires. The
-> multi-hop join (`|waiting_on| >= 2`) this section describes is
-> permanently retired. Read what follows as a description of the
-> mechanism's pre-retirement shape, not current behavior.
+`run_prompt(collect="async")` (proposal 0067 P4e, #3978) addresses a LIVE peer `(target_agent, target_session)` and returns a `task_id` immediately — the reply arrives later via the `task_settled` hook point, not in this call. `task_id` ≡ `chain_id`; no separate id is minted.
 
-When a router decision emits `messages_to_agents: [{to, request}, ...]`, the Session routes each entry to the target's inbox as an `agent_request` payload:
+`session_api.run_prompt_async` registers a `ChainManager` chain directly, once per call:
 
-```
-{from_agent, request, depth, chain_id}
-```
+- `waiting_on={target_agent}` — always exactly one member. `run_prompt(async)` is a 1:1 call, not a join: two calls in one turn register two independent chains, never a shared `waiting_on` that grows past one.
+- `kind="prompt"`, `requester` (the calling `(agent, session_id)`), `cancel` (wraps the target session's `cancel_inflight()`, fire-and-forget — without it a registered handle's `cancel` would be `None` and `cancel_task` would correctly, but permanently, report "cannot cancel").
 
-The receiving agent's `session.run()` consumes it, runs its own router, and either replies immediately (`agent_response` back to the sender) or **defers** if it wants to delegate further.
+The request reaches the target's inbox as an `agent_request` payload (`{from_agent, request, depth, chain_id}`, `depth=1` always) via `InterAgentMessaging.send_to_agent` — reused purely as delivery transport here, not through the older per-turn accumulation path described below.
 
-### Deferred reply
+### Settling the reply
 
-If the receiving agent's router emits its own `messages_to_agents`, the upstream reply is held back. A `_PendingChain` keyed by `chain_id` records:
+When the target's reply lands, `InterAgentMessaging.handle_agent_response` checks the registered chain's `kind`: a non-`None` kind (as `run_prompt(async)` always sets) routes to `ChainManager.settle()`, not the older relay-continue path. `settle()`'s `deliver` disposition appends the reply to the caller's history and runs exactly one router turn so the LLM can act on it; `task_settled` fires on the *fact* of settling, independent of the disposition's outcome (ADR-0040 D4④) — a future `on_settle="drop"` caller would still get the hook fired, just with nothing delivered.
 
-- `origin_agent` — who to reply to once the chain resolves
-- `origin_depth` — the depth at which to send back
-- `original_request` — the upstream request, replayed into the next router turn for synthesis
-- `waiting_on` — set of agents whose responses are still pending
+### What this replaces — permanently retired, not renamed
 
-As each delegate responds, the sender is removed from `waiting_on`. When the set empties, the agent re-runs its router with all delegate responses now in history; the resulting `reply_text` becomes the single synthesized reply sent upstream. If the second router pass emits more delegations, the chain stays pending with a fresh `waiting_on` set — bounded only by `max_hop_depth`.
+Before proposal 0067, a router decision emitting `messages_to_agents: [{to, request}, ...]` could defer its own reply if it wanted to delegate further: a `_PendingChain` accumulated `waiting_on` across multiple recipients, and when the set emptied, the agent re-ran its router with every delegate's response in history to synthesize ONE reply upstream — a "manager → delegate → synthesize" model, bounded by `max_hop_depth`, with the chain staying pending across further delegation rounds if the synthesis pass itself delegated again.
 
-This gives a "manager → delegate → synthesize" model: the user sees an interim `(working on it)` from their attached agent, then a single final answer that incorporates every delegate's input.
+This shape — a chain whose `waiting_on` can hold more than one member (a **join**) — does not exist today and will not return: `delegate_to_agent`, its sole producer, retired in proposal 0067 P6, and architect's ruling (#3978, 2026-08-10) fixes `|waiting_on| == 1` as a permanent structural invariant of a task-kind chain (`>= 2` was, and remains, outside the task vocabulary). `messages_to_agents` as a router-decision field no longer exists; the `RouterCallerState.send_to_agent`/`InterAgentMessaging.send_to_agent`-via-delegation-tracker path this old model used is unreachable code today, kept only because the underlying `ChainManager` substrate (register/settle/WAL shape/timeout arming) is shared with the still-live `run_prompt(async)` producer above.
 
 ### Reply routing across delegating sessions
 
