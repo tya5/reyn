@@ -80,10 +80,11 @@ class _PendingChain:
     # cancel_inflight / *Driver.request_cancel's own zero-arg shape; see
     # pipeline_executor_driver.PipelineExecutorDriver.request_cancel).
     # VOLATILE, held on THIS SAME dataclass rather than a second dict
-    # (lead-coder's ruling: "the hole where a callback survives after its
-    # chain is popped, and cancel_task can act on a task nothing runs
-    # anymore, is structurally impossible when there is only ONE store —
-    # not two that must be kept in sync"). `None` after a crash-recovered
+    # (architect's ruling, #3978 issue comments, 2026-08-10 — lead-coder's
+    # own contribution was narrower: that settle() clearing two stores in
+    # the SAME function is correct; collapsing to ONE store so the hole
+    # cannot exist structurally, rather than being closed by discipline,
+    # was architect's call). `None` after a crash-recovered
     # restore (the live callable belonged to the dead process) — a caller
     # (cancel_task) that finds `cancel is None` MUST NOT report success:
     # nothing is actually listening.

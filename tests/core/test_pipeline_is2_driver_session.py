@@ -399,14 +399,18 @@ async def test_the_registered_cancel_hook_actually_stops_a_running_async_run(
     spec — "cancel_task actually stops a running task". Before this PR,
     NOTHING forwarded a cancel signal to a DETACHED async pipeline run
     (only an ATTACHED caller's ``cancel_inflight`` ever reached
-    ``request_cancel``). Real mid-flight interruption, not a pre-empted
-    launch: step 1's real side effect (a real file write) is confirmed to
-    have landed, THEN cancel fires while step 1's tool call is still
-    in-flight (gated on an ``asyncio.Event`` — the plain pipeline's steps
-    have no internal ``await`` point, so without this gate every step lands
-    in the same event-loop tick, and there is no observable mid-flight
-    window at all), THEN step 1 is allowed to return — confirming step 2's
-    side effect NEVER lands (the run stopped BETWEEN steps, not after
+    ``request_cancel``). This test witnesses the registered HOOK stopping a
+    running task, driven directly via ``chain.cancel()`` — ``cancel_task``
+    (the LLM-facing tool) doesn't exist yet in this PR; its own reachability
+    from a tool call is a separate PR's witness. Real mid-flight
+    interruption, not a pre-empted launch: step 1's real side effect (a real
+    file write) is confirmed to have landed, THEN cancel fires while step
+    1's tool call is still in-flight (gated on an ``asyncio.Event`` — the
+    plain pipeline's steps have no internal ``await`` point, so without this
+    gate every step lands in the same event-loop tick, and there is no
+    observable mid-flight window at all), THEN step 1 is allowed to return
+    — confirming step 2's side effect NEVER lands (the run stopped BETWEEN
+    steps, not after
     completing) — plus the full settle-path contract: terminal status is
     "cancelled", task_settled fires with that status, and the handle is
     gone."""
