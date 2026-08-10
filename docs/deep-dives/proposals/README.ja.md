@@ -116,4 +116,10 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; Phase 1-4 landed(#2837/#2849/#2850)、Phase 5(任意 refactor fold)は未着手 | LARGE |
 | [0059](0059-hook-event-redesign.md) | Hook-Event Redesign(Event Bus / reactivity substrate) | owner-ratified; Phase 1-5 landed(#2871–#2885) | LARGE |
 | [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — agent が構築したものを実際に使うための基盤 | closed(2026-07-13); floor + show 済み、Addendum A/B/C 確定、enhancement/loop layer は owner により de-scope | LARGE |
+| [0061](0061-repo-self-access-and-packaging-standardization.md) | Repo self-access + packaging standardization | done — 追跡対象 3 PR 全て merge(#2923/#2924/#2925) | MEDIUM |
+| [0062](0062-structured-output-ephemeral-sessions-agent-steps.md) | Ephemeral session + pipeline agent step の構造化出力 | done — 即日 landed(2026-07-13、#2934) | SMALL |
+| [0063](0063-builtin-turnkey-user-rag.md) | Builtin turnkey user RAG(builtin mcp + skill + pipeline) | landed — PC/P2/P3/P4 merge(#2949/#2952/#2966/#3008)、0064 P5(#3078)へ統合 | LARGE |
+| [0064](0064-plugin-model.md) | reyn 向け Plugin model(author → test → promote reusable capabilities) | Accepted + Implemented — 全 5 phase landed、umbrella #3066 CLOSED | LARGE |
+| [0065](0065-orchestration-foundation.md) | Orchestration foundation — external-event plugins を first-class unit として | Proposed(owner review 待ち、2026-07-20) | LARGE |
+| [0066](0066-retrieval-two-groups-two-axes.md) | Retrieval 再設計: two groups(action / knowledge)× two axes(scheme × transport) | Proposed — owner design-of-record(2026-07-24/25)、owner GO 待ち | LARGE |
 | [0067](0067-task-model-and-arbiter.md) | タスクモデルと inbox arbiter — [ADR-0040](../decisions/0040-task-as-os-concept.md) の sequencing/interface | Accepted(2026-08-10、owner)— **未実装**; tracking #3978 | LARGE |
