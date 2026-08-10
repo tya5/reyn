@@ -2000,6 +2000,61 @@
     "class": "stale"
   },
   {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_3093_pipeline_registry_spawn_propagation.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_3556_session_spawn_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_3561_spawn_session_seam_reachability.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "literal": "tests/test_pipeline_a2_spawn_ephemeral_session.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3553_agent_step_worker_narrowing_inheritance.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3556_session_spawn_narrowing_inheritance.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3561_spawn_session_seam_reachability.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3561_spawn_session_seam_reachability.py",
+    "literal": "tests/test_pipeline_r5_run_agent_step.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py",
+    "literal": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
+    "class": "stale"
+  },
+  {
+    "file": "tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py",
+    "literal": "tests/test_3561_spawn_session_seam_reachability.py",
+    "class": "stale"
+  },
+  {
     "file": "tests/runtime/test_3595_s2_pipeline_nudge_origin.py",
     "literal": "tests/test_pipeline_is6_attached.py",
     "class": "stale"
@@ -2212,26 +2267,6 @@
   {
     "file": "tests/security/test_sandbox_seccomp_network_3030.py",
     "literal": "tests/test_plugin_install.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
-    "literal": "tests/test_2103_s1bc_session_spawn_tool.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
-    "literal": "tests/test_3093_pipeline_registry_spawn_propagation.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3546_pipeline_driver_narrowing_inheritance.py",
-    "literal": "tests/test_pipeline_a2_spawn_ephemeral_session.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/test_3561_spawn_session_seam_reachability.py",
-    "literal": "tests/test_pipeline_r5_run_agent_step.py",
     "class": "stale"
   },
   {
