@@ -213,3 +213,87 @@ async def test_security_readonly_rootfs_with_tmpfs_and_mount(mount_container) ->
         ["sh", "-c", f"echo x > {WORKSPACE_DEST_DEFAULT}/probe_rw"], policy
     )
     assert ws.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_security_deny_subprocess_has_no_effect_in_container(mount_container) -> None:
+    """Tier 2c: #4040 — ``policy.deny_subprocess=True`` does NOT stop a nested
+    subprocess spawn inside the container.
+
+    ``DockerEnvironmentBackend.run()``'s own docstring says it "honors only
+    policy.timeout_seconds and policy.max_output_bytes" — no other
+    ``SandboxPolicy`` field is consulted per call. This measures that claim
+    directly rather than trusting the docstring: a process launched via
+    ``run()`` spawns a CHILD process of its own (``echo`` via a nested
+    ``subprocess.run``) under a policy that would refuse this on every other
+    backend (Landlock/Seatbelt/Noop's own deny_subprocess enforcement). If
+    this backend actually enforced the field, the nested spawn would fail;
+    it does not, because nothing here reads it — the container's own
+    launch-time isolation (cap-drop ALL + non-root + Docker's unmodified
+    default seccomp) is the only boundary in effect, and none of those stop
+    an unprivileged process from forking/exec'ing another unprivileged one.
+
+    This is NOT a Docker-behavior test (Q1's third-party-property trap):
+    the claim under test is reyn's OWN documented boundary — that
+    ``DockerEnvironmentBackend`` deliberately does not read
+    ``deny_subprocess`` (#4040's doc scope). A failure here means that
+    documented boundary is now FALSE (reyn started reading the field, or
+    stopped, without the doc catching up) — not "Docker changed how nested
+    processes work".
+    """
+    backend, _, _ = mount_container
+    policy = SandboxPolicy(timeout_seconds=30, deny_subprocess=True)
+
+    res = await backend.run(
+        [
+            "python3",
+            "-c",
+            "import subprocess; "
+            "r = subprocess.run(['echo', 'nested-ok'], capture_output=True, text=True); "
+            "print(r.stdout.strip())",
+        ],
+        policy,
+    )
+    assert res.returncode == 0
+    assert res.stdout.strip() == b"nested-ok"
+
+
+@pytest.mark.asyncio
+async def test_security_env_deny_names_has_no_effect_and_host_env_does_not_leak(
+    mount_container, monkeypatch
+) -> None:
+    """Tier 2c: #4040 — ``policy.env_deny_names`` has no effect (nothing reads
+    it here), and separately, an arbitrary HOST env var does NOT leak into the
+    container exec by default (no ``-e`` forwarding in the exec argv).
+
+    Two distinct claims, measured together: (1) the in-container env is NOT
+    filtered through ``env_deny_names`` the way every other backend's
+    ``wrap_command()``/``run()`` filters it (``wrap_command()``'s own
+    docstring: "fabricating a filtered env here would be inventing a value
+    with nothing to scope") — set a HOST env var, put its name in
+    ``env_deny_names``, and confirm the "deny" has nothing to act on because
+    the var was never going to be visible in the first place; (2) the HOST
+    process's own env does not pass through into the container's exec
+    environment via ``docker exec`` (no ``-e``/``--env`` in the exec argv
+    construction) — a real fidelity-boundary check, not an inference from
+    reading the argv-building code.
+
+    This is NOT a Docker-behavior test (Q1's third-party-property trap):
+    the claim under test is reyn's OWN documented boundary — that
+    ``DockerEnvironmentBackend`` deliberately forwards no host env and does
+    not honor ``env_deny_names`` (#4040's doc scope). A failure here means
+    that documented boundary is now FALSE (reyn started forwarding host env,
+    or started filtering it, without the doc catching up) — not "Docker
+    changed its exec env-inheritance rules".
+    """
+    backend, _, _ = mount_container
+    monkeypatch.setenv("REYN_4040_HOST_ONLY_PROBE", "host-side-value")
+    policy = SandboxPolicy(timeout_seconds=30, env_deny_names=["REYN_4040_HOST_ONLY_PROBE"])
+
+    res = await backend.run(
+        ["sh", "-c", "echo \"[$REYN_4040_HOST_ONLY_PROBE]\""], policy
+    )
+    assert res.returncode == 0
+    # Empty, not "host-side-value" — the host var was never forwarded in, so
+    # env_deny_names had nothing to deny (both claims measured by one probe).
+    assert res.stdout.strip() == b"[]"
