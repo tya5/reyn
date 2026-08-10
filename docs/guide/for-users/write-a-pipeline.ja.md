@@ -54,20 +54,22 @@ pipeline が完了するまで block し、最終出力(ここでは叫ばれた
 
 ### 同期 vs 非同期
 
-手順が長時間実行され、それを待って block したくない場合は、非同期形式を使います:
+手順が長時間実行され、それを待って block したくない場合は、デフォルト(`collect="attached"`)ではなく `collect="async"` を渡します:
 
 ```
-run_pipeline_async(name="greet", input={name: "Reyn"})
+run_pipeline(name="greet", input={name: "Reyn"}, collect="async")
 ```
 
-これは即座に `{status: "started", run_id: "..."}` を返します。結果は後で会話の中に `[pipeline]` メッセージとして届きます。結果をインラインで受け取りたく、待つのが問題なければ `run_pipeline` を、fire-and-forget な起動には `run_pipeline_async` を使ってください。どちらも同等に crash-recoverable です — run の途中でのプロセス再起動は、完了済みステップを再実行するのではなく、中断した箇所からちょうど resume します([Pipeline § Crash recovery](../../concepts/runtime/pipelines.ja.md#crash-recovery)参照)。
+これは即座に `{status: "started", run_id: "..."}` を返します。結果は後で会話の中に `[pipeline]` メッセージとして届きます。結果をインラインで受け取りたく、待つのが問題なければデフォルトの `collect="attached"` のままにし、fire-and-forget な起動には `collect="async"` を渡してください。どちらも同等に crash-recoverable です — run の途中でのプロセス再起動は、完了済みステップを再実行するのではなく、中断した箇所からちょうど resume します([Pipeline § Crash recovery](../../concepts/runtime/pipelines.ja.md#crash-recovery)参照)。
+
+非同期起動では `on_settle=`(P4 の delivery 語彙)も指定でき、run が terminal 状態に達した後の結果の扱いを決めます: `"deliver"`(デフォルト)は上記の通り inbox メッセージとして届け、pipeline 名を渡すとその pipeline にルーティングし、`"drop"` は結果を破棄します。`on_settle` は `collect="attached"` でも受理はされますが無視されます — 呼び出し元へ結果がすでに in-band で返っているためです。
 
 ## 4. Ad-hoc な、登録不要の代替手段
 
-手順が一回限りのこともあります — crash-recovery と構造的な安全性のために pipeline として書く価値はあるが、ファイルとして登録する価値は無い場合です。`run_pipeline_inline`(とその非同期版 `run_pipeline_inline_async`)は `pipeline:` ドキュメントと同じ DSL を受け取りますが、呼び出し時にエージェントが生成する文字列としてです:
+手順が一回限りのこともあります — crash-recovery と構造的な安全性のために pipeline として書く価値はあるが、ファイルとして登録する価値は無い場合です。`name=` の代わりに `definition=` を渡すと、`pipeline:` ドキュメントと同じ DSL を受け取りますが、呼び出し時にエージェントが生成する文字列としてです(`name=` と `definition=` は排他的です — どちらか一方を指定します):
 
 ```
-run_pipeline_inline(
+run_pipeline(
   definition="""
     pipeline: adhoc_greet
     steps:
@@ -77,7 +79,7 @@ run_pipeline_inline(
 )
 ```
 
-定義は parse され、静的解析ゲートを通されます — schema 参照が解決すること、ツール名が解決すること、どのステップも別の pipeline を起動したり delegate したりしないこと、`agent` ステップが起動者自身の identity の下でのみ実行されること — **何かが spawn される前に**。不正な定義は明確に失敗し何も spawn しません。良い定義は、登録済み pipeline と全く同様に crash-recoverable です。その完全な定義が run 自身の recovery 状態と共に移動するためです。完全なゲートのチェックリストは [Ad-hoc inline 起動](../../reference/runtime/pipeline-dsl.ja.md#ad-hoc-inline) を参照してください。
+定義は parse され、静的解析ゲートを通されます — schema 参照が解決すること、ツール名が解決すること、どのステップも別の pipeline を起動したり delegate したりしないこと、`agent` ステップが起動者自身の identity の下でのみ実行されること — **何かが spawn される前に**。不正な定義は明確に失敗し何も spawn しません。良い定義は、登録済み pipeline と全く同様に crash-recoverable です。その完全な定義が run 自身の recovery 状態と共に移動するためです。同じ `collect=`/`on_settle=` の同期 vs 非同期の選択が、登録済み `name=` 起動と同様に inline `definition=` 起動にも適用されます。完全なゲートのチェックリストは [Ad-hoc inline 起動](../../reference/runtime/pipeline-dsl.ja.md#ad-hoc-inline) を参照してください。
 
 ## 実践例: fan out してから merge する
 

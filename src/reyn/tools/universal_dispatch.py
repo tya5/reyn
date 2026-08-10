@@ -162,17 +162,14 @@ _CATEGORY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
         "skill_list",
         "load_skill",
     ),
-    # IS-1 (sync, REGISTERED-only) / IS-2 (async launch in a crash-recoverable
-    # driver-session) / IS-4 (ad-hoc INLINE launches of an agent-GENERATED DSL,
-    # gated by a static-analysis pass). #3026 added ``pipeline_list``: before
-    # it, the only surface naming a registered pipeline was one action per
-    # pipeline.
+    # Proposal 0067 P7 (#3978): run_pipeline is the unified launch verb —
+    # collect="attached"|"async" (was 4 separate names: run_pipeline /
+    # run_pipeline_async / run_pipeline_inline / run_pipeline_inline_async,
+    # retired with 0 aliases). #3026 added ``pipeline_list``: before it, the
+    # only surface naming a registered pipeline was one action per pipeline.
     "pipeline": (
         "pipeline_list",
         "run_pipeline",
-        "run_pipeline_async",
-        "run_pipeline_inline",
-        "run_pipeline_inline_async",
     ),
     # The management plane for pipelines, mirroring ``skill_management``.
     "pipeline_management": ("pipeline_install_local", "pipeline_install_source"),

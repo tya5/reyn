@@ -99,30 +99,38 @@ rather than killing it mid-step.
 
 ### Sync vs async
 
-If the procedure is long-running and you don't want to block on it, use the
-async form instead:
+If the procedure is long-running and you don't want to block on it, pass
+`collect="async"` instead of relying on the default (`collect="attached"`):
 
 ```
-run_pipeline_async(name="greet", input={name: "Reyn"})
+run_pipeline(name="greet", input={name: "Reyn"}, collect="async")
 ```
 
 This returns `{status: "started", run_id: "..."}` immediately; the result
-arrives later as a `[pipeline]` message in your conversation. Use `run_pipeline`
-when you want the result inline and are fine waiting; use `run_pipeline_async`
-for a fire-and-forget launch. Both are equally crash-recoverable — a process
-restart mid-run resumes exactly where it left off rather than re-running
-completed steps (see [Pipelines § Crash recovery](../../concepts/runtime/pipelines.md#crash-recovery)).
+arrives later as a `[pipeline]` message in your conversation. Leave `collect`
+at its default (`"attached"`) when you want the result inline and are fine
+waiting; pass `collect="async"` for a fire-and-forget launch. Both are equally
+crash-recoverable — a process restart mid-run resumes exactly where it left
+off rather than re-running completed steps (see
+[Pipelines § Crash recovery](../../concepts/runtime/pipelines.md#crash-recovery)).
+
+An async launch also accepts `on_settle=` (P4's delivery vocabulary) to say
+what happens with the result once the run reaches a terminal state:
+`"deliver"` (default) delivers it as an inbox message as above, a pipeline
+name routes it into that pipeline instead, and `"drop"` discards it. `on_settle`
+is accepted but ignored for `collect="attached"`, since the result is already
+being returned in-band to the caller.
 
 ## 4. Ad-hoc, no-registration alternative
 
 Sometimes a procedure is one-off — worth writing as a pipeline for its
 crash-recovery and structural safety properties, but not worth registering as
-a file. `run_pipeline_inline` (and its async counterpart
-`run_pipeline_inline_async`) take the same DSL as a `pipeline:` document, but
-as a string an agent generates at call time:
+a file. Passing `definition=` instead of `name=` takes the same DSL as a
+`pipeline:` document, but as a string an agent generates at call time (`name=`
+and `definition=` are mutually exclusive — pick one):
 
 ```
-run_pipeline_inline(
+run_pipeline(
   definition="""
     pipeline: adhoc_greet
     steps:
@@ -131,6 +139,9 @@ run_pipeline_inline(
   input={name: "Reyn"},
 )
 ```
+
+The same `collect=`/`on_settle=` sync-vs-async choice applies to an inline
+`definition=` launch as it does to a registered `name=` launch.
 
 The definition is parsed and run through a static-analysis gate — schema
 references resolve, tool names resolve, no step launches another pipeline or

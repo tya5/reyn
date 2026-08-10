@@ -171,10 +171,11 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "pipeline_install_local, pipeline_install_local, "  # pipeline-install class (mirrors skill-install)
         "pipeline_install_source, pipeline_install_source, "  # pipeline source install
         "session_spawn, agent_spawn, topology_create, "  # #2103: the full spawn class (session + agent + topology)
-        "run_pipeline, run_pipeline, "  # IS-1: pipeline-run class (spawn-adjacent)
-        "run_pipeline_async, run_pipeline_async, "  # IS-2: async launch, same class
-        "run_pipeline_inline, run_pipeline_inline, "  # IS-4: inline launch, same class
-        "run_pipeline_inline_async, run_pipeline_inline_async]\n",  # IS-4: inline async
+        # IS-1/IS-2/IS-4 pipeline-run class (spawn-adjacent): proposal 0067 P7
+        # (#3978) unified the former 4 names (sync/async/inline/inline-async)
+        # into this one, 0 aliases — every collect=/definition= combination
+        # is reached through it, so one name now covers the whole class.
+        "run_pipeline, run_pipeline]\n",
         encoding="utf-8",
     )
     assert not _by(_findings(monkeypatch, tmp_path), contains="worker")

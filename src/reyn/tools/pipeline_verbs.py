@@ -1,22 +1,33 @@
 """Pipeline launch router tools — REGISTERED + ad-hoc INLINE, sync + async.
 
 Per ``docs/proposals/reyn-pipeline-v0.9-design-resolutions.md`` R6: an agent
-launches a pipeline and collects its result. This module hosts the four launch
-verbs plus the tool-step dispatch they share:
+launches a pipeline and collects its result. Proposal 0067 P7 (#3978) unified
+what used to be four separate launch verbs
+(``run_pipeline``/``run_pipeline_async``/``run_pipeline_inline``/
+``run_pipeline_inline_async``, 0 aliases kept) into ONE — ``run_pipeline`` —
+distinguished by two params instead of by name:
 
-  - ``run_pipeline`` / ``run_pipeline_async`` — launch a REGISTERED pipeline
-    (pre-built via :class:`reyn.core.pipeline.registry.PipelineRegistry`) by
-    name, sync-attached or fire-and-forget.
-  - ``run_pipeline_inline`` / ``run_pipeline_inline_async`` (IS-4) — launch an
-    ad-hoc, agent-GENERATED pipeline whose ``definition`` is a DSL STRING the
-    agent produced at runtime (Appendix B grammar). The string is parsed
+  - ``name=`` XOR ``definition=`` (exactly one, validated explicitly — never
+    inferred from which one happens to be present) selects REGISTERED (a
+    pipeline pre-built via :class:`reyn.core.pipeline.registry.PipelineRegistry`,
+    looked up by name) vs. ad-hoc INLINE (IS-4: a DSL STRING the agent
+    GENERATED at runtime, Appendix B grammar). The inline definition is parsed
     (``reyn.core.pipeline.parser.parse_pipeline_dsl``, IS-3 — including any
     inline ``schema:`` documents in the same string, into a fresh per-call
     :class:`~reyn.core.pipeline.schema.SchemaRegistry`) into a ``Pipeline``,
-    which then feeds the SAME downstream every registered launch uses. The
-    inline verbs SKIP the registry entirely — the only extra machinery over the
-    registered verbs is the parse ENTRY and a **static-analysis gate** (see
+    which then feeds the SAME downstream a registered launch uses. The inline
+    path SKIPS the registry entirely — the only extra machinery over the
+    registered path is the parse ENTRY and a **static-analysis gate** (see
     :func:`_static_analysis_gate`) that runs BEFORE anything is spawned.
+  - ``collect="attached"`` (default) vs. ``collect="async"`` selects
+    sync-attached vs. fire-and-forget, orthogonal to the ``name=``/
+    ``definition=`` choice above. ``on_settle=`` (P4's vocabulary —
+    ``"deliver"`` default | ``"<pipeline name>"`` | ``"drop"``) is accepted
+    but IGNORED for ``collect="attached"`` (ADR-0040 D4: attached creates no
+    settle handle at all) and threaded through for ``collect="async"``.
+
+This module hosts that single unified verb plus the tool-step dispatch it
+shares with every driver-session:
 
 The inline + registered verbs converge immediately after the pipeline is in
 hand: both call ``reyn.runtime.session_api.run_pipeline_attached`` (sync) /
@@ -85,10 +96,11 @@ all statically decidable over the parsed ``Pipeline`` + its ``SchemaRegistry``:
 A gate failure returns a clear tool error and spawns NOTHING (the checks run
 before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
 
-  - **Sync = async + an attached live view (IS-6).** ``run_pipeline`` no longer
-    runs the executor inline on the caller's turn (that was IS-1, which meant a
-    sync run could not crash-recover). It now spawns the SAME crash-recoverable
-    ``PipelineExecutorDriver`` driver-session as ``run_pipeline_async`` and
+  - **``collect="attached"`` = ``collect="async"`` + an attached live view
+    (IS-6).** The attached path no longer runs the executor inline on the
+    caller's turn (that was IS-1, which meant it could not crash-recover). It
+    now spawns the SAME crash-recoverable ``PipelineExecutorDriver``
+    driver-session as ``collect="async"`` and
     ATTACHES: ``reyn.runtime.session_api.run_pipeline_attached`` pumps the run on
     the caller's own task via ``MessageBus.request``, streams
     ``pipeline_step_started`` / ``pipeline_step_completed`` events (each carrying
@@ -104,9 +116,9 @@ before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
     which emits a ``pipeline_run_attached`` marker (``{tool, run_id, driver_sid,
     agent_name, pipeline_name}``) onto the CALLER's own ``EventLog`` right after
     the driver-session spawns — the signal a live view uses to bridge-subscribe
-    to the driver_sid's events for the run's duration. The async handlers
-    (``_handle_run_pipeline_async`` / ``_handle_run_pipeline_inline_async``) have
-    no attached live viewer and never pass these — no marker.
+    to the driver_sid's events for the run's duration. The ``collect="async"``
+    branch of the shared handler has no attached live viewer and never passes
+    these — no marker.
     Ctrl-C stops the run cooperatively at the next step BOUNDARY, leaving a
     resumable R4 journal under a terminal ``cancelled`` marker. #2588: the
     Ctrl-C hits ``cancel_inflight`` on the ATTACHED CALLER session, not the
@@ -124,9 +136,10 @@ before ``run_pipeline_attached`` / ``start_pipeline_run`` is called).
     slice) — enforced structurally in
     ``reyn.runtime.session_api._build_agent_step_narrowing``, not here.
 
-Dependencies the sync handler assembles for the attached driver-session launch
-(the SAME set ``run_pipeline_async`` needs — a driver-session spawns under an
-identity, anchors its work-order on a WAL, and replies to the caller):
+Dependencies the ``collect="attached"`` branch assembles for the driver-session
+launch (the SAME set the ``collect="async"`` branch needs — a driver-session
+spawns under an identity, anchors its work-order on a WAL, and replies to the
+caller):
   - ``agent_registry`` (spawn the driver-session under the invoker) from
     ``ctx.router_state.agent_registry``.
   - ``state_log`` (anchors ``invocation.json`` + the R4 recovery generations)
@@ -191,12 +204,29 @@ _RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": _pipeline_descriptions.PARAMS["run_pipeline"]["name"].text,
         },
+        "definition": {
+            "type": "string",
+            "description": _pipeline_descriptions.PARAMS["run_pipeline"]["definition"].text,
+        },
         "input": {
             "type": "object",
             "description": _pipeline_descriptions.PARAMS["run_pipeline"]["input"].text,
         },
+        "collect": {
+            "type": "string",
+            "enum": ["attached", "async"],
+            "default": "attached",
+            "description": _pipeline_descriptions.PARAMS["run_pipeline"]["collect"].text,
+        },
+        "on_settle": {
+            "type": "string",
+            "description": _pipeline_descriptions.PARAMS["run_pipeline"]["on_settle"].text,
+        },
     },
-    "required": ["name"],
+    # Proposal 0067 P7 (#3978): no ``required`` list — exactly one of `name`/
+    # `definition` is required, validated explicitly in the handler (never
+    # inferred from which one happens to be present, per architect ruling:
+    # both-given or neither-given must both fail loud, not silently pick).
 }
 
 # R6 S3 structural deny for pipeline TOOL steps (IS-2 sibling sweep of the
@@ -208,12 +238,17 @@ _RUN_PIPELINE_PARAMETERS: dict[str, Any] = {
 # step name is the whole check: there is no second spelling that could reach a
 # denied tool past this set.
 _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
-    "run_pipeline", "run_pipeline_async", "delegate_to_agent",
-    # IS-4 sibling sweep: the inline launch verbs are the same escape hatch as
-    # the registered ones — an inline pipeline is STILL non-grantable inside a
-    # pipeline step (nesting is call-only). Kept in lock-step with the
-    # ``_DELEGATION_DENY_TOOLS`` agent-step deny in ``runtime/session_api.py``.
-    "run_pipeline_inline", "run_pipeline_inline_async",
+    # Proposal 0067 P7 (#3978): run_pipeline_async / run_pipeline_inline /
+    # run_pipeline_inline_async retired (4 names -> 1, architect ruling: 0
+    # aliases). The single surviving name still needs the deny -- an inline
+    # OR registered pipeline is STILL non-grantable inside a pipeline step
+    # (nesting is call-only) regardless of collect=/definition= choice.
+    # Kept in lock-step with ``_DELEGATION_DENY_TOOLS`` in
+    # ``runtime/session_api.py`` — see ``test_pipeline_step_deny_sets_are_equal``
+    # (the equality gate architect required, since P6/P7 both edit these two
+    # sets and a drift here is silent: neither side's own test can see the
+    # other set at all).
+    "run_pipeline", "delegate_to_agent",
 })
 
 
@@ -303,19 +338,49 @@ def _make_tool_dispatch(
 async def _handle_run_pipeline(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Look up the registered pipeline, run it in an ATTACHED driver-session,
-    return its final output inline. See the module docstring for the wiring.
+    """Proposal 0067 P7 (#3978): the unified pipeline launch verb — replaces
+    ``run_pipeline`` / ``run_pipeline_async`` / ``run_pipeline_inline`` /
+    ``run_pipeline_inline_async`` (4 names -> 1, retired with 0 aliases,
+    architect ruling). See the module docstring for the shared wiring
+    (static-analysis gate for ``definition``, the driver-session launch, the
+    S3 nesting deny).
 
-    IS-6: reworked from IS-1's inline ``PipelineExecutor().run`` to spawn the
-    SAME crash-recoverable driver-session as ``run_pipeline_async`` and ATTACH
-    to it (``run_pipeline_attached`` — ``MessageBus.request`` pumps the run on
-    this task, live ``pipeline_step_*`` events flow to the driver-session's
-    EventLog, the terminal marker is read back in-band). Sync therefore inherits
-    crash auto-resume: if the process dies mid-run the recovery scan resumes it
-    and delivers to THIS caller's inbox (sync degrades to async-recovery)."""
-    name = str(args.get("name") or "").strip()
-    if not name:
-        return {"status": "error", "data": {"error": "name is required"}}
+    Exactly one of ``name`` (a REGISTERED pipeline) or ``definition`` (an
+    ad-hoc agent-GENERATED DSL string) selects the pipeline — validated
+    explicitly (both given or neither given is an error; the handler never
+    infers which one the caller meant from which happens to be present).
+    ``collect`` (default ``"attached"``) selects sync-attached vs
+    fire-and-forget ``"async"``. ``on_settle`` (P4's vocabulary: ``"deliver"``
+    | ``"<pipeline name>"`` | ``"drop"``) is threaded through for
+    ``collect="async"`` only — ADR-0040 D4 already established the attached
+    path creates no settle handle at all, so it is accepted but ignored
+    there (never silently rejected — a caller passing it for an attached run
+    made a real request the tool just has nothing to do with, not a mistake
+    to bounce)."""
+    name = args.get("name")
+    definition = args.get("definition")
+    has_name = isinstance(name, str) and bool(name.strip())
+    has_definition = isinstance(definition, str) and bool(definition.strip())
+    if has_name == has_definition:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "exactly one of 'name' (a registered pipeline) or "
+                    "'definition' (an ad-hoc DSL string) is required"
+                ),
+            },
+        }
+
+    collect = args.get("collect") or "attached"
+    if collect not in ("attached", "async"):
+        return {
+            "status": "error",
+            "data": {
+                "error": f"collect must be 'attached' or 'async', got {collect!r}",
+            },
+        }
+    on_settle = str(args.get("on_settle") or "deliver")
 
     raw_input = args.get("input")
     if raw_input is not None and not isinstance(raw_input, Mapping):
@@ -325,31 +390,6 @@ async def _handle_run_pipeline(
         }
 
     rs = ctx.router_state
-    pipeline_registry = rs.pipeline_registry if rs is not None else None
-    if pipeline_registry is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "no PipelineRegistry available — run_pipeline requires "
-                    "ctx.router_state.pipeline_registry to be populated"
-                ),
-            },
-        }
-
-    try:
-        pipeline = pipeline_registry.get(name)
-        schema_registry = pipeline_registry.get_schema_registry(name)
-    except PipelineNotFoundError:
-        return {
-            "status": "error",
-            "data": {"error": f"pipeline {name!r} is not registered"},
-        }
-
-    # IS-6: the attached driver-session needs the same wiring as the async path
-    # (agent_registry to spawn under + host for the caller identity/reply sid +
-    # a WAL to anchor the work-order/recovery files). A non-persistent context
-    # has no crash-recoverable run — same contract as run_pipeline_async.
     agent_registry = rs.agent_registry if rs is not None else None
     host = rs.host if rs is not None else None
     if agent_registry is None or host is None:
@@ -359,7 +399,7 @@ async def _handle_run_pipeline(
                 "error": (
                     "run_pipeline requires a fully-wired router context "
                     "(agent_registry + host on ctx.router_state) to spawn its "
-                    "attached driver-session"
+                    "driver-session"
                 ),
             },
         }
@@ -369,87 +409,146 @@ async def _handle_run_pipeline(
             "status": "error",
             "data": {
                 "error": (
-                    "run_pipeline requires WAL persistence (ctx.state_log) — the "
-                    "attached run is a crash-recoverable driver-session"
+                    "run_pipeline requires WAL persistence (ctx.state_log) — "
+                    "every launch is a crash-recoverable driver-session"
                 ),
             },
         }
 
-    from reyn.runtime.session_api import run_pipeline_attached
+    if has_name:
+        # Narrows for mypy: ``has_name`` is a derived bool, not a type guard on
+        # ``name`` itself — the ``isinstance`` check above already proved this
+        # at runtime, this just states it for the type checker too.
+        assert isinstance(name, str)
+        pipeline_registry = rs.pipeline_registry if rs is not None else None
+        if pipeline_registry is None:
+            return {
+                "status": "error",
+                "data": {
+                    "error": (
+                        "no PipelineRegistry available — run_pipeline requires "
+                        "ctx.router_state.pipeline_registry to be populated"
+                    ),
+                },
+            }
+        try:
+            pipeline = pipeline_registry.get(name)
+            schema_registry = pipeline_registry.get_schema_registry(name)
+        except PipelineNotFoundError:
+            return {
+                "status": "error",
+                "data": {"error": f"pipeline {name!r} is not registered"},
+            }
+        pipeline_name = name
+    else:
+        # Same narrowing as the ``has_name`` branch above, for ``definition``.
+        assert isinstance(definition, str)
+        error_result, launch = _prepare_inline_pipeline(
+            definition, invoker_agent=host.agent_name,
+        )
+        if error_result is not None:
+            return error_result
+        pipeline, schema_registry = launch
+        pipeline_name = "inline"
 
     reply_sid = getattr(host, "live_session_id", None) or "main"
+
+    if collect == "attached":
+        from reyn.runtime.session_api import run_pipeline_attached
+
+        try:
+            outcome = await run_pipeline_attached(
+                agent_registry,
+                pipeline=pipeline,
+                pipeline_name=pipeline_name,
+                input=dict(raw_input) if raw_input else None,
+                reply_to_agent=host.agent_name,
+                reply_to_sid=reply_sid,
+                state_log=state_log,
+                tool="run_pipeline",
+                caller_events=ctx.events,
+                schema_registry=schema_registry,
+            )
+        except ValueError as exc:
+            return {"status": "error", "data": {"error": str(exc)}}
+
+        status = outcome["status"]
+        if status == "failed":
+            # #2649: the standard dispatch-error shape ({status:error, error:{kind, message}})
+            # so ``router_loop.feedback()``'s error path renders ``Error (<kind>): <message>``
+            # like every other tool, instead of falling through to the generic canonical
+            # fallback (top-level ``error`` used to be a nested string, not a dict — see
+            # ``dispatcher.py``'s ``_error`` for the vocabulary this ``kind`` follows). No data
+            # lost: ``run_id`` stays reachable for the LLM, folded into the message text (the
+            # dispatch-error envelope carries no third field alongside ``kind``/``message``).
+            return {
+                "status": "error",
+                "error": {
+                    "kind": "pipeline_failed",
+                    "message": (
+                        f"pipeline {pipeline_name!r} failed (run_id: {outcome['run_id']}): "
+                        f"{outcome.get('error')}"
+                    ),
+                },
+            }
+        if status == "cancelled":
+            # #2649: distinguished from ``failed`` by ``kind`` (not by a separate top-level
+            # ``status`` value anymore) — same standard shape, same reasoning as above.
+            return {
+                "status": "error",
+                "error": {
+                    "kind": "pipeline_cancelled",
+                    "message": (
+                        f"pipeline {pipeline_name!r} cancelled (run_id: {outcome['run_id']}): "
+                        f"{outcome.get('error')}"
+                    ),
+                },
+            }
+        if status == "running_async":
+            # The attached wait did not reach terminal within the bound; the run was
+            # handed to detached completion + inbox delivery (never lost). ``kind`` marks it as an
+            # async start so the canonical mapper keeps ``run_id`` (the completion-message handle).
+            return {"status": "started",
+                    "data": {"kind": "run_pipeline_async", "run_id": outcome["run_id"]}}
+
+        # #2425 案B: ``kind`` drives the canonical mapper — the sync result's ``output`` is the whole
+        # thing the caller wants; ``run_id``/``named_stores`` are dropped from the LLM-visible side.
+        return {
+            "status": "ok",
+            "data": {
+                "kind": "run_pipeline",
+                "run_id": outcome["run_id"],
+                "output": outcome.get("output"),
+                "named_stores": outcome.get("named_stores"),
+            },
+        }
+
+    # collect == "async"
+    from reyn.runtime.session_api import start_pipeline_run
+
     try:
-        outcome = await run_pipeline_attached(
+        run_id = await start_pipeline_run(
             agent_registry,
             pipeline=pipeline,
-            pipeline_name=name,
+            pipeline_name=pipeline_name,
             input=dict(raw_input) if raw_input else None,
             reply_to_agent=host.agent_name,
             reply_to_sid=reply_sid,
             state_log=state_log,
-            tool="run_pipeline",
-            caller_events=ctx.events,
             schema_registry=schema_registry,
+            on_settle=on_settle,
         )
     except ValueError as exc:
         return {"status": "error", "data": {"error": str(exc)}}
 
-    status = outcome["status"]
-    if status == "failed":
-        # #2649: the standard dispatch-error shape ({status:error, error:{kind, message}})
-        # so ``router_loop.feedback()``'s error path renders ``Error (<kind>): <message>``
-        # like every other tool, instead of falling through to the generic canonical
-        # fallback (top-level ``error`` used to be a nested string, not a dict — see
-        # ``dispatcher.py``'s ``_error`` for the vocabulary this ``kind`` follows). No data
-        # lost: ``run_id`` stays reachable for the LLM, folded into the message text (the
-        # dispatch-error envelope carries no third field alongside ``kind``/``message``).
-        return {
-            "status": "error",
-            "error": {
-                "kind": "pipeline_failed",
-                "message": (
-                    f"pipeline {name!r} failed (run_id: {outcome['run_id']}): "
-                    f"{outcome.get('error')}"
-                ),
-            },
-        }
-    if status == "cancelled":
-        # #2649: distinguished from ``failed`` by ``kind`` (not by a separate top-level
-        # ``status`` value anymore) — same standard shape, same reasoning as above.
-        return {
-            "status": "error",
-            "error": {
-                "kind": "pipeline_cancelled",
-                "message": (
-                    f"pipeline {name!r} cancelled (run_id: {outcome['run_id']}): "
-                    f"{outcome.get('error')}"
-                ),
-            },
-        }
-    if status == "running_async":
-        # The attached wait did not reach terminal within the bound; the run was
-        # handed to detached completion + inbox delivery (never lost). ``kind`` marks it as an
-        # async start so the canonical mapper keeps ``run_id`` (the completion-message handle).
-        return {"status": "started",
-                "data": {"kind": "run_pipeline_async", "run_id": outcome["run_id"]}}
-
-    # #2425 案B: ``kind`` drives the canonical mapper — the sync result's ``output`` is the whole
-    # thing the caller wants; ``run_id``/``named_stores`` are dropped from the LLM-visible side.
-    return {
-        "status": "ok",
-        "data": {
-            "kind": "run_pipeline",
-            "run_id": outcome["run_id"],
-            "output": outcome.get("output"),
-            "named_stores": outcome.get("named_stores"),
-        },
-    }
+    # #2425 案B: ``kind`` drives the canonical mapper — the async result KEEPS ``run_id`` (the handle
+    # the caller matches against the later [pipeline] completion message).
+    return {"status": "started", "data": {"kind": "run_pipeline_async", "run_id": run_id}}
 
 
 from reyn.core.offload.canonical import (  # noqa: E402
     pipeline_list_to_canonical,
-    run_pipeline_async_to_canonical,
-    run_pipeline_to_canonical,
+    run_pipeline_unified_to_canonical,
 )
 
 # ── pipeline_list (#3026) ───────────────────────────────────────────────────
@@ -520,7 +619,7 @@ PIPELINE_LIST = ToolDefinition(
 )
 
 RUN_PIPELINE = ToolDefinition(
-    canonical=run_pipeline_to_canonical,
+    canonical=run_pipeline_unified_to_canonical,
     name="run_pipeline",
     # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
     # abolished this tool was reached only through ``invoke_action`` (the
@@ -535,135 +634,6 @@ RUN_PIPELINE = ToolDefinition(
     handler=_handle_run_pipeline,
     category="io",
     purity="side_effect",
-)
-
-
-# Relocated to reyn.tools.descriptions.pipeline (Phase 3 tool-description
-# package refactor — byte-identical, no LLM-facing text change).
-_RUN_PIPELINE_ASYNC_DESCRIPTION = _pipeline_descriptions.run_pipeline_async.text
-
-
-async def _handle_run_pipeline_async(
-    args: Mapping[str, Any], ctx: ToolContext,
-) -> ToolResult:
-    """IS-2: resolve the registered pipeline, hand it to
-    ``runtime.session_api.start_pipeline_run`` (spawn driver-session → persist
-    ``invocation.json`` BEFORE step 0 → inject ``PipelineExecutorDriver`` →
-    nudge), and return ``{status: started, run_id}`` without waiting. The
-    result routes back to THIS caller's (agent, live sid) as a
-    ``pipeline_result`` inbox message. Requires a WAL (``ctx.state_log``) —
-    the async architecture IS the crash-recovery architecture, so a
-    non-persistent context has no async launch."""
-    name = str(args.get("name") or "").strip()
-    if not name:
-        return {"status": "error", "data": {"error": "name is required"}}
-    raw_input = args.get("input")
-    if raw_input is not None and not isinstance(raw_input, Mapping):
-        return {
-            "status": "error",
-            "data": {"error": "input must be an object (mapping), if given"},
-        }
-
-    rs = ctx.router_state
-    pipeline_registry = rs.pipeline_registry if rs is not None else None
-    agent_registry = rs.agent_registry if rs is not None else None
-    host = rs.host if rs is not None else None
-    if pipeline_registry is None or agent_registry is None or host is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "run_pipeline_async requires a fully-wired router context "
-                    "(pipeline_registry + agent_registry + host on "
-                    "ctx.router_state)"
-                ),
-            },
-        }
-    state_log = ctx.state_log
-    if state_log is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "run_pipeline_async requires WAL persistence "
-                    "(ctx.state_log) — the async run is crash-recoverable by "
-                    "construction; use run_pipeline for a non-persistent sync run"
-                ),
-            },
-        }
-
-    try:
-        pipeline = pipeline_registry.get(name)
-        schema_registry = pipeline_registry.get_schema_registry(name)
-    except PipelineNotFoundError:
-        return {
-            "status": "error",
-            "data": {"error": f"pipeline {name!r} is not registered"},
-        }
-
-    from reyn.runtime.session_api import start_pipeline_run
-
-    reply_sid = getattr(host, "live_session_id", None) or "main"
-    try:
-        run_id = await start_pipeline_run(
-            agent_registry,
-            pipeline=pipeline,
-            pipeline_name=name,
-            input=dict(raw_input) if raw_input else None,
-            reply_to_agent=host.agent_name,
-            reply_to_sid=reply_sid,
-            state_log=state_log,
-            schema_registry=schema_registry,
-        )
-    except ValueError as exc:
-        return {"status": "error", "data": {"error": str(exc)}}
-
-    # #2425 案B: ``kind`` drives the canonical mapper — the async result KEEPS ``run_id`` (the handle
-    # the caller matches against the later [pipeline] completion message).
-    return {"status": "started", "data": {"kind": "run_pipeline_async", "run_id": run_id}}
-
-
-RUN_PIPELINE_ASYNC = ToolDefinition(
-    canonical=run_pipeline_async_to_canonical,
-    name="run_pipeline_async",
-    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
-    # abolished this tool was reached only through ``invoke_action`` (the
-    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
-    # flag; with one name, an advertised action that lacks it lands on the
-    # "unhandled tool" safety return. Pinned by
-    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
-    router_dispatched=True,
-    description=_RUN_PIPELINE_ASYNC_DESCRIPTION,
-    parameters=_RUN_PIPELINE_PARAMETERS,  # same surface: name + optional input
-    gates=ToolGates(router="allow"),
-    handler=_handle_run_pipeline_async,
-    category="io",
-    purity="side_effect",
-)
-
-# ── IS-4: ad-hoc INLINE launch (agent-GENERATED DSL + static-analysis gate) ──
-
-_RUN_PIPELINE_INLINE_PARAMETERS: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "definition": {
-            "type": "string",
-            "description": _pipeline_descriptions.PARAMS["run_pipeline_inline"]["definition"].text,
-        },
-        "input": {
-            "type": "object",
-            "description": _pipeline_descriptions.PARAMS["run_pipeline_inline"]["input"].text,
-        },
-    },
-    "required": ["definition"],
-}
-
-# Relocated to reyn.tools.descriptions.pipeline (Phase 3 tool-description
-# package refactor — byte-identical, no LLM-facing text change).
-_RUN_PIPELINE_INLINE_DESCRIPTION = _pipeline_descriptions.run_pipeline_inline.text
-
-_RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION = (
-    _pipeline_descriptions.run_pipeline_inline_async.text
 )
 
 
@@ -729,18 +699,19 @@ def _static_analysis_gate(
     return None
 
 
-def _prepare_inline_launch(
-    args: Mapping[str, Any], ctx: ToolContext,
-) -> "tuple[dict | None, tuple | None]":
-    """Shared inline prelude for both inline verbs: validate args, require a
-    fully-wired persistent context, parse the ``definition`` DSL string into a
-    ``Pipeline`` (with a FRESH per-call ``SchemaRegistry`` populated from the
-    definition's own inline ``schema:`` docs), and run the static-analysis gate.
+def _prepare_inline_pipeline(
+    definition: str, *, invoker_agent: str,
+) -> "tuple[dict | None, tuple[Pipeline, SchemaRegistry] | None]":
+    """Parse + statically gate an ad-hoc ``definition`` DSL string (IS-4)
+    into a ready-to-launch ``(Pipeline, SchemaRegistry)`` pair, or a clear
+    tool error.
 
-    Returns ``(error_result, None)`` on any validation / parse / gate failure
-    (the caller returns ``error_result`` verbatim, having spawned NOTHING), or
-    ``(None, (pipeline, schema_registry, agent_registry, host, state_log,
-    raw_input))`` when the definition is clean and ready to launch.
+    Proposal 0067 P7 (#3978): narrowed from the pre-unification
+    ``_prepare_inline_launch`` — the shared router-context validation
+    (agent_registry/host/state_log) now lives ONCE in
+    ``_handle_run_pipeline``'s prelude (both the ``name`` and ``definition``
+    branches need it identically), so this helper's only job is the
+    DSL-specific work: parse + static-analysis gate.
 
     ``schema_registry`` is NOT threaded onto ``ctx.router_state`` or any
     persistent registry — an inline definition is self-contained (its schemas
@@ -748,51 +719,9 @@ def _prepare_inline_launch(
     registry" design decision. It IS (#2572) threaded to the launch call
     (``run_pipeline_attached``/``start_pipeline_run``), which persists it onto
     the work-order (``schema_defs``) so the driver-session's ``verify:
-    schema`` steps are actually enforced — the per-call registry was
-    previously parsed and then discarded, so an inline ``verify: schema`` step
-    crashed the driver with "no schema_registry" instead of validating."""
+    schema`` steps are actually enforced."""
     from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
     from reyn.core.pipeline.schema import SchemaError, SchemaRegistry
-
-    definition = args.get("definition")
-    if not isinstance(definition, str) or not definition.strip():
-        return {
-            "status": "error",
-            "data": {"error": "definition is required (a pipeline DSL string)"},
-        }, None
-
-    raw_input = args.get("input")
-    if raw_input is not None and not isinstance(raw_input, Mapping):
-        return {
-            "status": "error",
-            "data": {"error": "input must be an object (mapping), if given"},
-        }, None
-
-    rs = ctx.router_state
-    agent_registry = rs.agent_registry if rs is not None else None
-    host = rs.host if rs is not None else None
-    if agent_registry is None or host is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "run_pipeline_inline requires a fully-wired router context "
-                    "(agent_registry + host on ctx.router_state) to spawn its "
-                    "driver-session"
-                ),
-            },
-        }, None
-    state_log = ctx.state_log
-    if state_log is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "run_pipeline_inline requires WAL persistence (ctx.state_log) "
-                    "— an inline run is a crash-recoverable driver-session"
-                ),
-            },
-        }, None
 
     # Check 1 (parse): a fresh registry so an inline definition is self-contained
     # (its schemas never leak across calls). Malformed DSL / expression / a
@@ -808,7 +737,7 @@ def _prepare_inline_launch(
 
     # Checks 2/3/5/6 (schema refs, tool names, S3, agent identity).
     gate_error = _static_analysis_gate(
-        pipeline, schema_registry, invoker_agent=host.agent_name,
+        pipeline, schema_registry, invoker_agent=invoker_agent,
     )
     if gate_error is not None:
         return {
@@ -816,163 +745,10 @@ def _prepare_inline_launch(
             "data": {"error": f"inline pipeline rejected by static gate: {gate_error}"},
         }, None
 
-    return None, (pipeline, schema_registry, agent_registry, host, state_log, raw_input)
+    return None, (pipeline, schema_registry)
 
-
-async def _handle_run_pipeline_inline(
-    args: Mapping[str, Any], ctx: ToolContext,
-) -> ToolResult:
-    """IS-4 sync INLINE launch: parse + statically gate the agent-generated
-    ``definition``, then run it in the SAME attached driver-session
-    ``run_pipeline`` uses (``run_pipeline_attached``) — so the inline run is
-    crash-recoverable and returns its output inline, exactly like a registered
-    run. A gate failure returns a clear error and spawns nothing."""
-    error_result, launch = _prepare_inline_launch(args, ctx)
-    if error_result is not None:
-        return error_result
-    pipeline, schema_registry, agent_registry, host, state_log, raw_input = launch
-
-    from reyn.runtime.session_api import run_pipeline_attached
-
-    reply_sid = getattr(host, "live_session_id", None) or "main"
-    try:
-        outcome = await run_pipeline_attached(
-            agent_registry,
-            pipeline=pipeline,
-            pipeline_name="inline",
-            input=dict(raw_input) if raw_input else None,
-            reply_to_agent=host.agent_name,
-            reply_to_sid=reply_sid,
-            state_log=state_log,
-            tool="run_pipeline_inline",
-            caller_events=ctx.events,
-            schema_registry=schema_registry,
-        )
-    except ValueError as exc:
-        return {"status": "error", "data": {"error": str(exc)}}
-
-    status = outcome["status"]
-    if status == "failed":
-        # #2649: standard dispatch-error shape — see the ``run_pipeline`` sync handler
-        # above for the full rationale (kind vocabulary, run_id-in-message reachability).
-        return {
-            "status": "error",
-            "error": {
-                "kind": "pipeline_failed",
-                "message": (
-                    f"inline pipeline failed (run_id: {outcome['run_id']}): "
-                    f"{outcome.get('error')}"
-                ),
-            },
-        }
-    if status == "cancelled":
-        return {
-            "status": "error",
-            "error": {
-                "kind": "pipeline_cancelled",
-                "message": (
-                    f"inline pipeline cancelled (run_id: {outcome['run_id']}): "
-                    f"{outcome.get('error')}"
-                ),
-            },
-        }
-    if status == "running_async":
-        return {"status": "started",
-                "data": {"kind": "run_pipeline_async", "run_id": outcome["run_id"]}}
-
-    # #2425 案B: ``kind`` drives the canonical mapper (sync output → text/structured, run_id dropped).
-    return {
-        "status": "ok",
-        "data": {
-            "kind": "run_pipeline",
-            "run_id": outcome["run_id"],
-            "output": outcome.get("output"),
-            "named_stores": outcome.get("named_stores"),
-        },
-    }
-
-
-async def _handle_run_pipeline_inline_async(
-    args: Mapping[str, Any], ctx: ToolContext,
-) -> ToolResult:
-    """IS-4 async INLINE launch: parse + statically gate the agent-generated
-    ``definition``, then hand it to the SAME background driver-session
-    ``run_pipeline_async`` uses (``start_pipeline_run``) and return
-    ``{status: started, run_id}`` immediately; the result arrives later as a
-    ``pipeline_result`` inbox message. A gate failure returns a clear error and
-    spawns nothing."""
-    error_result, launch = _prepare_inline_launch(args, ctx)
-    if error_result is not None:
-        return error_result
-    pipeline, schema_registry, agent_registry, host, state_log, raw_input = launch
-
-    from reyn.runtime.session_api import start_pipeline_run
-
-    reply_sid = getattr(host, "live_session_id", None) or "main"
-    # #3097: an inline definition can still `call`/`match` a REGISTERED sibling by
-    # name — resolved correctly because the detached driver-session's OWN registry
-    # is refreshed at ITS spawn by the config-projection family gate (folds out
-    # #3093/#3094's explicit caller-registry hand-off).
-    try:
-        run_id = await start_pipeline_run(
-            agent_registry,
-            pipeline=pipeline,
-            pipeline_name="inline",
-            input=dict(raw_input) if raw_input else None,
-            reply_to_agent=host.agent_name,
-            reply_to_sid=reply_sid,
-            state_log=state_log,
-            schema_registry=schema_registry,
-        )
-    except ValueError as exc:
-        return {"status": "error", "data": {"error": str(exc)}}
-
-    # #2425 案B: ``kind`` drives the canonical mapper — the async result KEEPS ``run_id`` (the handle
-    # the caller matches against the later [pipeline] completion message).
-    return {"status": "started", "data": {"kind": "run_pipeline_async", "run_id": run_id}}
-
-
-RUN_PIPELINE_INLINE = ToolDefinition(
-    canonical=run_pipeline_to_canonical,
-    name="run_pipeline_inline",
-    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
-    # abolished this tool was reached only through ``invoke_action`` (the
-    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
-    # flag; with one name, an advertised action that lacks it lands on the
-    # "unhandled tool" safety return. Pinned by
-    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
-    router_dispatched=True,
-    description=_RUN_PIPELINE_INLINE_DESCRIPTION,
-    parameters=_RUN_PIPELINE_INLINE_PARAMETERS,
-    gates=ToolGates(router="allow"),
-    handler=_handle_run_pipeline_inline,
-    category="io",
-    purity="side_effect",
-)
-
-
-RUN_PIPELINE_INLINE_ASYNC = ToolDefinition(
-    canonical=run_pipeline_async_to_canonical,
-    name="run_pipeline_inline_async",
-    # #3429: dispatched DIRECTLY by name. Before the qualified spelling was
-    # abolished this tool was reached only through ``invoke_action`` (the
-    # ``"__" in name`` arm of ``_invoke_router_tool``), so it never needed the
-    # flag; with one name, an advertised action that lacks it lands on the
-    # "unhandled tool" safety return. Pinned by
-    # ``test_universal_catalog.py::test_every_catalog_action_is_directly_dispatchable``.
-    router_dispatched=True,
-    description=_RUN_PIPELINE_INLINE_ASYNC_DESCRIPTION,
-    parameters=_RUN_PIPELINE_INLINE_PARAMETERS,  # same surface: definition + input
-    gates=ToolGates(router="allow"),
-    handler=_handle_run_pipeline_inline_async,
-    category="io",
-    purity="side_effect",
-)
 
 __all__ = [
     "PIPELINE_LIST",
     "RUN_PIPELINE",
-    "RUN_PIPELINE_ASYNC",
-    "RUN_PIPELINE_INLINE",
-    "RUN_PIPELINE_INLINE_ASYNC",
 ]

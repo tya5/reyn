@@ -1,26 +1,20 @@
 """Tool descriptions for the ``pipeline`` bucket (pipeline launch verbs).
 
-Phase 3 of the tool-description package refactor (byte-identical
-relocation — no LLM-facing text change): the four pipeline-launch verbs
-from ``tools/pipeline_verbs.py`` — ``run_pipeline`` / ``run_pipeline_async``
-(a REGISTERED pipeline by name) and ``run_pipeline_inline`` /
-``run_pipeline_inline_async`` (an agent-GENERATED ad-hoc DSL string,
-statically validated before spawn). Each ``.text`` value is copied verbatim
-from its origin constant; the origin module now aliases its
-``_RUN_PIPELINE*_DESCRIPTION`` constants to ``pipeline.NAME.text``.
+Proposal 0067 P7 (#3978): unified the four pipeline-launch verbs
+(``run_pipeline`` / ``run_pipeline_async`` — a REGISTERED pipeline by name —
+and ``run_pipeline_inline`` / ``run_pipeline_inline_async`` — an
+agent-GENERATED ad-hoc DSL string) into ONE ``run_pipeline`` tool, retired
+with 0 aliases (architect ruling). ``collect`` (default ``"attached"``)
+replaces the sync/async split; ``on_settle`` (P4's vocabulary) is new,
+accepted for ``collect="async"`` only. ``name``/``definition`` stay as their
+pre-unification param names (no rename — architect ruling: the "inline as
+arguments" line in the proposal's own interface table named the AXIS, not a
+param spelling). This description is authored fresh, not a relocation — the
+pre-unification texts described four SEPARATE tools, and reusing one
+verbatim would misdescribe the merged surface.
 
-Note: all four carry ``ToolDefinition.category="io"`` — this module groups
-them by feature-area (pipeline launch), matching the ``mcp`` / ``io``
-precedent set in Phase 2 (module grouping is conceptual, not a literal
-mirror of the ``category`` field).
-
-#3026 adds a fifth, ``pipeline_list`` — the read-only discovery verb
-(``category="discovery"``, grouped here by feature-area like the rest). Its
-text is NOT a relocation (the tool is new): it replaced the per-pipeline
-catalog actions, which were the only surface naming a
-REGISTERED pipeline but put one action per pipeline into the LLM's
-``tools=``. A required ``name`` argument the model has no stated way to
-enumerate is the same reachability gap #2971 closed for skills.
+``pipeline_list`` (#3026) is unaffected by P7 — the read-only discovery verb
+that names the REGISTERED pipelines ``run_pipeline(name=...)`` can launch.
 """
 from __future__ import annotations
 
@@ -55,120 +49,74 @@ run_pipeline = ToolDescription(
     tool_name="run_pipeline",
     surfaced="router (gates.router=allow)",
     purpose=(
-        "Launch a REGISTERED pipeline by name and block for its final "
-        "output — the sync entry point for a pre-built multi-step "
-        "workflow."
+        "Launch a pipeline — REGISTERED (by name) or ad-hoc (an inline DSL "
+        "definition you generate) — either attached (block for the result) "
+        "or async (return immediately, result arrives later as a [pipeline] "
+        "message)."
     ),
     text=(
-        "Run a REGISTERED pipeline by name to completion and return its final "
-        "output. Blocks until the pipeline finishes (sync). 'input' seeds the "
-        "pipeline's initial named context (ctx.*) for its first step. Fails "
-        "clearly if 'name' is not a registered pipeline, or if any step fails."
+        "Run a pipeline: pass exactly one of 'name' (a REGISTERED pipeline) or "
+        "'definition' (an ad-hoc pipeline you define inline as a DSL string, "
+        "Appendix B grammar — statically validated: parse, schema refs, tool "
+        "names, no nested pipeline launch, agent steps run as you — BEFORE "
+        "anything is spawned). 'collect' picks how you get the result: "
+        "'attached' (default) blocks until the pipeline finishes and returns "
+        "its final output; 'async' returns immediately with "
+        "{status: started, run_id} and the result arrives later as a "
+        "[pipeline] message. 'input' seeds the pipeline's initial named "
+        "context (ctx.*) for its first step. 'on_settle' ('deliver' default | "
+        "a pipeline name | 'drop') controls what happens to the result — "
+        "only meaningful for collect='async' (ignored for 'attached', which "
+        "always delivers inline). Fails clearly if 'name' is not registered, "
+        "'definition' is invalid, or a step fails."
     ),
     ja=(
-        "登録済みパイプラインを名前で実行し、完了まで待って最終出力を返"
-        "す（同期）。'input' はパイプライン最初のステップの初期名前付き"
-        "コンテキスト（ctx.*）を与える。'name' が未登録、またはいずれか"
-        "のステップが失敗した場合は明確に失敗する。"
-    ),
-)
-
-run_pipeline_async = ToolDescription(
-    tool_name="run_pipeline_async",
-    surfaced="router (gates.router=allow)",
-    purpose=(
-        "Launch a REGISTERED pipeline in the background and return "
-        "immediately, for a long-running workflow whose result arrives "
-        "later as a [pipeline] message."
-    ),
-    text=(
-        "Launch a REGISTERED pipeline by name in the background and return "
-        "immediately with {status: started, run_id}. The pipeline runs in a "
-        "dedicated crash-recoverable driver session; its final result arrives "
-        "later as a [pipeline] message on your conversation. 'input' seeds the "
-        "pipeline's initial named context (ctx.*) for its first step."
-    ),
-    ja=(
-        "登録済みパイプラインを名前でバックグラウンド起動し、即座に "
-        "{status: started, run_id} を返す。パイプラインは専用のクラッシ"
-        "ュ復旧可能なドライバーセッションで実行され、最終結果は後で "
-        "[pipeline] メッセージとして会話に届く。"
-    ),
-)
-
-run_pipeline_inline = ToolDescription(
-    tool_name="run_pipeline_inline",
-    surfaced="router (gates.router=allow)",
-    purpose=(
-        "Run an ad-hoc, agent-GENERATED DSL-string pipeline to completion, "
-        "statically validated (parse / schema refs / tool names / no "
-        "nested launch / identity==invoker) before anything spawns."
-    ),
-    text=(
-        "Run an ad-hoc pipeline you DEFINE inline (no pre-registration) to "
-        "completion and return its final output. Blocks until it finishes (sync). "
-        "'definition' is a pipeline DSL string (Appendix B); 'input' seeds the "
-        "first step's ctx.*. The definition is statically validated (parse, schema "
-        "refs, tool names, no nested pipeline launch, agent steps run as you) "
-        "BEFORE anything is spawned — a bad definition fails clearly and runs "
-        "nothing."
-    ),
-    ja=(
-        "事前登録なしでインラインに定義したアドホックなパイプラインを完"
-        "了まで実行し、最終出力を返す（同期）。'definition' はパイプラ"
-        "イン DSL 文字列。何かが起動される前に静的検証（パース、スキー"
-        "マ参照、ツール名、パイプラインのネスト起動禁止、agent ステップ"
-        "は呼び出し元として実行）が行われる — 不正な定義は明確に失敗し"
-        "何も実行しない。"
-    ),
-)
-
-run_pipeline_inline_async = ToolDescription(
-    tool_name="run_pipeline_inline_async",
-    surfaced="router (gates.router=allow)",
-    purpose=(
-        "Launch an ad-hoc, agent-GENERATED DSL-string pipeline in the "
-        "background, statically validated before spawn, result arriving "
-        "later as a [pipeline] message."
-    ),
-    text=(
-        "Launch an ad-hoc pipeline you DEFINE inline in the background and return "
-        "immediately with {status: started, run_id}. It runs in a dedicated "
-        "crash-recoverable driver session; its final result arrives later as a "
-        "[pipeline] message on your conversation. 'definition' is a pipeline DSL "
-        "string (Appendix B), statically validated before spawn; 'input' seeds the "
-        "first step's ctx.*."
-    ),
-    ja=(
-        "インラインに定義したアドホックなパイプラインをバックグラウンド"
-        "起動し、即座に {status: started, run_id} を返す。専用のクラッ"
-        "シュ復旧可能なドライバーセッションで実行され、最終結果は後で "
-        "[pipeline] メッセージとして届く。'definition' は起動前に静的検"
-        "証されるパイプライン DSL 文字列。"
+        "パイプラインを実行する: 'name'（登録済みパイプライン）か "
+        "'definition'（DSL文字列でインラインに定義するアドホックなパイプ"
+        "ライン、Appendix B 文法 — 何かが起動される前にパース・スキーマ"
+        "参照・ツール名・パイプラインのネスト起動禁止・agent ステップは"
+        "呼び出し元として実行、を静的検証）のどちらか一方を渡す。"
+        "'collect' で結果の受け取り方を選ぶ: 'attached'（既定）はパイプ"
+        "ライン完了まで待ち最終出力を返す。'async' は即座に "
+        "{status: started, run_id} を返し、結果は後で [pipeline] メッセ"
+        "ージとして届く。'input' はパイプライン最初のステップの初期名前"
+        "付きコンテキスト（ctx.*）。'on_settle'（既定 'deliver' | パイプ"
+        "ライン名 | 'drop'）は結果の扱いを制御する — collect='async' の"
+        "ときのみ意味を持つ（'attached' では常にインライン配送のため無視"
+        "される）。'name' が未登録、'definition' が不正、いずれかのステ"
+        "ップが失敗した場合は明確に失敗する。"
     ),
 )
 
 ALL: dict[str, ToolDescription] = {
     "run_pipeline": run_pipeline,
-    "run_pipeline_async": run_pipeline_async,
-    "run_pipeline_inline": run_pipeline_inline,
-    "run_pipeline_inline_async": run_pipeline_inline_async,
+    "pipeline_list": pipeline_list,
 }
 
 
-# ── Phase 4: per-parameter descriptions (byte-identical relocation) ──────────
-#
-# run_pipeline / run_pipeline_async share ONE parameters schema in the origin
-# module (``_RUN_PIPELINE_PARAMETERS``); run_pipeline_inline /
-# run_pipeline_inline_async likewise share ``_RUN_PIPELINE_INLINE_PARAMETERS``.
-# Keyed here by the base verb name; the origin module reuses the same dict
-# object for both the sync and async ToolDefinition.
+# ── Phase 4: per-parameter descriptions ───────────────────────────────────
 
 PARAMS: dict[str, dict[str, ParamDescription]] = {
     "run_pipeline": {
         "name": ParamDescription(
-            text="The registered pipeline's name.",
-            ja="登録済みパイプラインの名前。",
+            text="The registered pipeline's name. Exactly one of name/definition.",
+            ja="登録済みパイプラインの名前。name/definition のどちらか一方。",
+        ),
+        "definition": ParamDescription(
+            text=(
+                "The pipeline as a DSL string (Appendix B grammar): one or "
+                "more '---'-separated YAML documents — exactly one 'pipeline:' "
+                "document plus any 'schema:' documents its steps reference. "
+                "Generated at call time; parsed + statically validated before "
+                "anything runs. Exactly one of name/definition."
+            ),
+            ja=(
+                "DSL文字列としてのパイプライン（Appendix B 文法）。1つ以上の "
+                "'---' 区切り YAML ドキュメント — 'pipeline:' ドキュメントが"
+                "1つ必須、ステップが参照する 'schema:' ドキュメントは任意。"
+                "呼び出し時に生成され、実行前にパースと静的検証を受ける。"
+                "name/definition のどちらか一方。"
+            ),
         ),
         "input": ParamDescription(
             text=(
@@ -180,31 +128,29 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "（ctx.*）。シード入力が不要なパイプラインなら省略可。"
             ),
         ),
-    },
-    "run_pipeline_inline": {
-        "definition": ParamDescription(
+        "collect": ParamDescription(
             text=(
-                "The pipeline as a DSL string (Appendix B grammar): one or "
-                "more '---'-separated YAML documents — exactly one 'pipeline:' "
-                "document plus any 'schema:' documents its steps reference. "
-                "Generated at call time; parsed + statically validated before "
-                "anything runs."
+                "'attached' (default): block until the pipeline finishes, "
+                "return its final output inline. 'async': return immediately "
+                "with {status: started, run_id}; the result arrives later as "
+                "a [pipeline] message."
             ),
             ja=(
-                "DSL文字列としてのパイプライン（Appendix B 文法）。1つ以上の "
-                "'---' 区切り YAML ドキュメント — 'pipeline:' ドキュメントが"
-                "1つ必須、ステップが参照する 'schema:' ドキュメントは任意。"
-                "呼び出し時に生成され、実行前にパースと静的検証を受ける。"
+                "'attached'（既定）: パイプライン完了まで待ち最終出力を"
+                "インラインで返す。'async': 即座に {status: started, run_id} "
+                "を返し、結果は後で [pipeline] メッセージとして届く。"
             ),
         ),
-        "input": ParamDescription(
+        "on_settle": ParamDescription(
             text=(
-                "Initial named context (ctx.*) for the pipeline's first step. "
-                "Omit for a pipeline that needs no seed input."
+                "'deliver' (default) | a pipeline name | 'drop' — what "
+                "happens to the result. Only meaningful for collect='async' "
+                "(ignored for 'attached', which always delivers inline)."
             ),
             ja=(
-                "パイプライン最初のステップ向けの初期名前付きコンテキスト"
-                "（ctx.*）。シード入力が不要なパイプラインなら省略可。"
+                "'deliver'（既定）| パイプライン名 | 'drop' — 結果の扱い。"
+                "collect='async' のときのみ意味を持つ（'attached' では常に"
+                "インライン配送のため無視される）。"
             ),
         ),
     },

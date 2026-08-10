@@ -54,8 +54,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import (
-    _handle_run_pipeline_inline,
-    _handle_run_pipeline_inline_async,
+    _handle_run_pipeline,
     _make_tool_dispatch,
 )
 from reyn.tools.types import RouterCallerState, ToolContext
@@ -225,7 +224,7 @@ async def test_inline_sync_happy_path_runs_and_returns_inline(
     caller = reg.get_or_load("worker")
     out_file = tmp_path / "out.txt"
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": _GOOD_DEF, "input": {"name": "world", "out_path": str(out_file)}},
         _ctx(reg, caller, state_log),
     )
@@ -257,9 +256,10 @@ async def test_inline_async_happy_path_launches_and_delivers(
     caller = reg.get_or_load("worker")
     out_file = tmp_path / "out.txt"
 
-    result = await _handle_run_pipeline_inline_async(
+    result = await _handle_run_pipeline(
         {"definition": _GOOD_DEF_TOOL_ONLY,
-         "input": {"name": "async", "out_path": str(out_file)}},
+         "input": {"name": "async", "out_path": str(out_file)},
+         "collect": "async"},
         _ctx(reg, caller, state_log),
     )
     assert result["status"] == "started"
@@ -322,14 +322,14 @@ async def test_inline_sync_enforces_verify_schema_pass_and_fail(
     caller = reg.get_or_load("worker")
     out_file = tmp_path / "out.txt"
 
-    ok_result = await _handle_run_pipeline_inline(
+    ok_result = await _handle_run_pipeline(
         {"definition": _SCHEMA_OK_DEF, "input": {"out_path": str(out_file)}},
         _ctx(reg, caller, state_log),
     )
     assert ok_result["status"] == "ok"
     assert out_file.read_text(encoding="utf-8").splitlines() == ["hello"]
 
-    bad_result = await _handle_run_pipeline_inline(
+    bad_result = await _handle_run_pipeline(
         {"definition": _SCHEMA_BAD_DEF, "input": {"out_path": str(out_file)}},
         _ctx(reg, caller, state_log),
     )
@@ -353,8 +353,8 @@ async def test_inline_async_enforces_verify_schema_failure(
     caller = reg.get_or_load("worker")
     out_file = tmp_path / "out.txt"
 
-    result = await _handle_run_pipeline_inline_async(
-        {"definition": _SCHEMA_BAD_DEF, "input": {"out_path": str(out_file)}},
+    result = await _handle_run_pipeline(
+        {"definition": _SCHEMA_BAD_DEF, "input": {"out_path": str(out_file)}, "collect": "async"},
         _ctx(reg, caller, state_log),
     )
     assert result["status"] == "started"
@@ -381,7 +381,7 @@ async def test_gate_rejects_malformed_dsl_nothing_spawned(
     reg = _agent_registry(tmp_path, state_log, None)
     caller = reg.get_or_load("worker")
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": "schema: S\nfields: {a: {type: string}}"},
         _ctx(reg, caller, state_log),
     )
@@ -405,7 +405,7 @@ async def test_gate_rejects_unresolvable_schema_ref_nothing_spawned(
         "  - tool: {name: web_search, args: {query: hi}, schema: NoSuchSchema}\n"
     )
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": definition}, _ctx(reg, caller, state_log),
     )
     assert result["status"] == "error"
@@ -422,7 +422,7 @@ async def test_gate_rejects_unknown_tool_nothing_spawned(tmp_path: Path) -> None
     caller = reg.get_or_load("worker")
     definition = "pipeline: p\nsteps:\n  - tool: {name: does_not_exist_xyz, args: {}}\n"
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": definition}, _ctx(reg, caller, state_log),
     )
     assert result["status"] == "error"
@@ -433,14 +433,15 @@ async def test_gate_rejects_unknown_tool_nothing_spawned(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_gate_rejects_s3_nested_launch_nothing_spawned(tmp_path: Path) -> None:
     """Tier 2: check 5 (R6 S3) — a ``tool`` step that would itself launch a
-    pipeline (here the inline verb, closing the sibling loophole) is rejected
-    statically before spawn (nesting is call-only)."""
+    pipeline (the unified ``run_pipeline`` verb, proposal 0067 P7 #3978 —
+    formerly the dedicated inline verb, now the same name an inline launch
+    uses too) is rejected statically before spawn (nesting is call-only)."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log, None)
     caller = reg.get_or_load("worker")
-    definition = "pipeline: p\nsteps:\n  - tool: {name: run_pipeline_inline, args: {}}\n"
+    definition = "pipeline: p\nsteps:\n  - tool: {name: run_pipeline, args: {}}\n"
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": definition}, _ctx(reg, caller, state_log),
     )
     assert result["status"] == "error"
@@ -469,7 +470,7 @@ async def test_gate_rejects_non_invoker_agent_identity_nothing_spawned(
         "  - agent: {prompt: do it, identity: privileged_agent}\n"
     )
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": definition}, _ctx(reg, caller, state_log),
     )
     assert result["status"] == "error"
@@ -496,7 +497,7 @@ async def test_gate_allows_invoker_identity_and_unset(tmp_path: Path, monkeypatc
         "  - agent: {prompt: explicit invoker, identity: worker}\n"
     )
 
-    result = await _handle_run_pipeline_inline(
+    result = await _handle_run_pipeline(
         {"definition": definition}, _ctx(reg, caller, state_log),
     )
     assert result["status"] == "ok"
@@ -513,10 +514,10 @@ async def test_inline_missing_definition_and_wiring_errors(tmp_path: Path) -> No
     reg = _agent_registry(tmp_path, state_log, None)
     caller = reg.get_or_load("worker")
 
-    empty = await _handle_run_pipeline_inline({}, _ctx(reg, caller, state_log))
+    empty = await _handle_run_pipeline({}, _ctx(reg, caller, state_log))
     assert empty["status"] == "error" and "definition" in empty["data"]["error"]
 
-    no_wire = await _handle_run_pipeline_inline(
+    no_wire = await _handle_run_pipeline(
         {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"},
         _ctx(reg, caller, state_log, wired=False),
     )
@@ -531,27 +532,29 @@ async def test_inline_missing_definition_and_wiring_errors(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_tool_step_dispatch_denies_inline_launch() -> None:
     """Tier 2b: the SHARED tool-step dispatch (both the sync tool path and the
-    driver path build it here) structurally denies the inline launch verbs — a
-    ToolStep may not launch an inline pipeline (bare AND qualified names)."""
+    driver path build it here) structurally denies the pipeline-launch verb —
+    a ToolStep may not launch a pipeline, inline or registered (proposal 0067
+    P7, #3978: the dedicated ``run_pipeline_inline``/``run_pipeline_inline_async``
+    names are retired; an inline launch now goes through the same unified
+    ``run_pipeline`` name a registered launch does, so there is only one name
+    left to deny)."""
     from reyn.core.pipeline.executor import PipelineExecutionError
 
     dispatch = _make_tool_dispatch(_bare_ctx())
-    for denied in ("run_pipeline_inline", "run_pipeline_inline_async",
-                   "run_pipeline_inline", "run_pipeline_inline_async"):
-        with pytest.raises(PipelineExecutionError) as exc:
-            await dispatch(denied, {})
-        assert "structurally denied" in str(exc.value)
+    with pytest.raises(PipelineExecutionError) as exc:
+        await dispatch("run_pipeline", {})
+    assert "structurally denied" in str(exc.value)
 
 
 def test_agent_step_narrowing_denies_inline_launch() -> None:
     """Tier 2b: OS invariant (R6 S3 sibling sweep) — the agent-step spawn
-    narrowing denies the inline launch verbs alongside the registered ones, so
-    an agent step cannot re-open the inline escape hatch."""
+    narrowing denies the unified ``run_pipeline`` verb, so an agent step
+    cannot re-open the inline escape hatch (proposal 0067 P7, #3978: inline
+    launch is no longer a separate name to enumerate)."""
     from reyn.runtime.session_api import _build_agent_step_narrowing
 
     deny = _build_agent_step_narrowing(["read_file"])["tool_deny"]
-    assert "run_pipeline_inline" in deny
-    assert "run_pipeline_inline_async" in deny
+    assert "run_pipeline" in deny
 
 
 # ── inline crash-resume e2e (truncate-falsify: generated def survives) ───────

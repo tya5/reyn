@@ -6,9 +6,11 @@ is the scripted LLM callable injected through the real ``RouterLoopDriver``
 ``_loop_observer`` seam, the same discipline as
 ``test_run_pipeline_tool_is1.py``):
 
-- ``run_pipeline_async`` returns ``{status: started, run_id}`` immediately;
-  the run completes in its driver-session and the result arrives on the
-  invoker's inbox as a ``pipeline_result`` turn (scripted LLM consumed it).
+- ``run_pipeline(collect="async")`` (proposal 0067 P7, #3978 — unified from
+  the retired ``run_pipeline_async``) returns ``{status: started, run_id}``
+  immediately; the run completes in its driver-session and the result
+  arrives on the invoker's inbox as a ``pipeline_result`` turn (scripted LLM
+  consumed it).
 - the CLAUDE.md recovery gate: truncate-falsify (invocation.json + R4 gens
   survive WAL truncation below their source events; recovery resumes
   EXACTLY-ONCE — completed steps replay, only the remaining step executes).
@@ -63,7 +65,6 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import (
     _handle_run_pipeline,
-    _handle_run_pipeline_async,
     _make_tool_dispatch,
 )
 from reyn.tools.types import RouterCallerState, ToolContext
@@ -310,24 +311,27 @@ def test_serde_exprref_marker_collision_is_refused_both_directions() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_step_dispatch_structurally_denies_launch_and_delegation() -> None:
-    """Tier 2b: a pipeline ToolStep must not launch a pipeline (sync OR async)
-    or delegate — R6 S3 (nesting is call-only). Checked through the SHARED
-    ``_make_tool_dispatch`` (both the sync run_pipeline path and the IS-2
-    driver path build their dispatch here), for bare AND qualified names."""
+    """Tier 2b: a pipeline ToolStep must not launch a pipeline (attached OR
+    async collect=) or delegate — R6 S3 (nesting is call-only). Checked
+    through the SHARED ``_make_tool_dispatch`` (both the sync run_pipeline
+    path and the IS-2 driver path build their dispatch here). Proposal 0067
+    P7 (#3978): the unified ``run_pipeline`` name is the only pipeline-launch
+    verb left to deny — ``collect=`` is an argument to it, not a second name,
+    so there is no longer a separate "async" spelling to enumerate."""
     dispatch = _make_tool_dispatch(_bare_ctx())
-    for denied in ("run_pipeline", "run_pipeline_async", "delegate_to_agent",
-                   "run_pipeline", "delegate_to_agent"):
+    for denied in ("run_pipeline", "delegate_to_agent"):
         with pytest.raises(PipelineExecutionError) as exc:
             await dispatch(denied, {})
         assert "structurally denied" in str(exc.value)
 
 
-def test_agent_step_narrowing_denies_async_launch() -> None:
-    """Tier 2b: the agent-step spawn narrowing (R5/R6 S3) denies the ASYNC
-    launch alongside the sync one — the sibling escape hatch is closed."""
+def test_agent_step_narrowing_denies_pipeline_launch() -> None:
+    """Tier 2b: the agent-step spawn narrowing (R5/R6 S3) denies the unified
+    ``run_pipeline`` verb regardless of the ``collect=`` it would be called
+    with — the sibling escape hatch is closed."""
     from reyn.runtime.session_api import _build_agent_step_narrowing
     deny = _build_agent_step_narrowing(["read_file"])["tool_deny"]
-    assert "run_pipeline_async" in deny and "run_pipeline" in deny
+    assert "run_pipeline" in deny and "delegate_to_agent" in deny
 
 
 # ── async launch e2e: tool → driver-session → pipeline_result ───────────────
@@ -363,7 +367,9 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
         state_log=state_log,
     )
 
-    result = await _handle_run_pipeline_async({"name": "p", "input": {"seed": 10}}, ctx)
+    result = await _handle_run_pipeline(
+        {"name": "p", "input": {"seed": 10}, "collect": "async"}, ctx,
+    )
     assert result["status"] == "started"
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
@@ -440,7 +446,9 @@ async def test_the_registered_cancel_hook_actually_stops_a_running_async_run(
         state_log=state_log,
     )
 
-    result = await _handle_run_pipeline_async({"name": "p", "input": {"seed": 10}}, ctx)
+    result = await _handle_run_pipeline(
+        {"name": "p", "input": {"seed": 10}, "collect": "async"}, ctx,
+    )
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
 
@@ -523,7 +531,9 @@ async def test_task_settled_fires_after_delivery_and_the_handle_is_then_gone(
         state_log=state_log,
     )
 
-    result = await _handle_run_pipeline_async({"name": "p", "input": {"seed": 10}}, ctx)
+    result = await _handle_run_pipeline(
+        {"name": "p", "input": {"seed": 10}, "collect": "async"}, ctx,
+    )
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
 
@@ -656,14 +666,14 @@ async def test_task_settled_does_not_fire_on_the_sync_attached_path(
 async def test_pipeline_run_async_reachable_via_invoke_action(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2c: #2589 — ``run_pipeline_async`` (one of the 4 verbs that were
-    dispatch-wired but NEVER enumerated for a default agent) is reachable
-    end-to-end through ``invoke_action``, not just the direct handler call
-    the test above exercises. Drives the SAME production entry point a
-    default enumerate-all agent would use (``INVOKE_ACTION.handler({
-    "action_name": "run_pipeline_async", ...})``), proving resolve →
-    lookup → dispatch → real async driver-session launch all connect for
-    the previously-unreachable verb."""
+    """Tier 2c: #2589 (updated for proposal 0067 P7, #3978, which retired
+    ``run_pipeline_async`` into the unified ``run_pipeline`` verb's
+    ``collect="async"``) — the async collect path is reachable end-to-end
+    through ``invoke_action``, not just the direct handler call the test
+    above exercises. Drives the SAME production entry point a default
+    enumerate-all agent would use (``INVOKE_ACTION.handler({"action_name":
+    "run_pipeline", "args": {..., "collect": "async"}})``), proving resolve →
+    lookup → dispatch → real async driver-session launch all connect."""
     from reyn.tools.universal_catalog import INVOKE_ACTION
 
     _install_side_effect_tool(monkeypatch)
@@ -690,7 +700,10 @@ async def test_pipeline_run_async_reachable_via_invoke_action(
     )
 
     result = await INVOKE_ACTION.handler(
-        {"action_name": "run_pipeline_async", "args": {"name": "p", "input": {"seed": 10}}},
+        {
+            "action_name": "run_pipeline",
+            "args": {"name": "p", "input": {"seed": 10}, "collect": "async"},
+        },
         ctx,
     )
     assert result["status"] == "started"
@@ -725,12 +738,14 @@ async def test_run_pipeline_async_error_contracts(tmp_path: Path) -> None:
             state_log=sl,
         )
 
-    missing = await _handle_run_pipeline_async({"name": "nope"}, _ctx(state_log))
+    missing = await _handle_run_pipeline(
+        {"name": "nope", "collect": "async"}, _ctx(state_log),
+    )
     assert missing["status"] == "error"
     assert "not registered" in missing["data"]["error"]
 
     registry.register("p", Pipeline(steps=[TransformStep(value="1")]))
-    no_wal = await _handle_run_pipeline_async({"name": "p"}, _ctx(None))
+    no_wal = await _handle_run_pipeline({"name": "p", "collect": "async"}, _ctx(None))
     assert no_wal["status"] == "error"
     assert "state_log" in no_wal["data"]["error"]
 
@@ -846,7 +861,9 @@ async def test_registered_pipeline_enforces_verify_schema_async(
         state_log=state_log,
     )
 
-    result = await _handle_run_pipeline_async({"name": "bad-async"}, ctx)
+    result = await _handle_run_pipeline(
+        {"name": "bad-async", "collect": "async"}, ctx,
+    )
     assert result["status"] == "started"
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
