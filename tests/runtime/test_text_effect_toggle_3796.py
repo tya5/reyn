@@ -20,7 +20,7 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp, text_effect
-from tests.test_textual_chat_copy_rewind_3362 import (
+from tests.interfaces.test_textual_chat_copy_rewind_3362 import (
     ScriptedTransport,
     _PickerReadModel,
     _texts,

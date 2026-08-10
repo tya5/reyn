@@ -27,7 +27,7 @@ import stat
 import pytest
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from tests.test_textual_chat_copy_rewind_3362 import (
+from tests.interfaces.test_textual_chat_copy_rewind_3362 import (
     ScriptedTransport,
     _PickerReadModel,
     _texts,
