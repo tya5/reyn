@@ -88,6 +88,11 @@ Before proposal 0067, a router decision emitting `messages_to_agents: [{to, requ
 
 This shape — a chain whose `waiting_on` can hold more than one member (a **join**) — does not exist today and will not return: `delegate_to_agent`, its sole producer, retired in proposal 0067 P6, and architect's ruling (#3978, 2026-08-10) fixes `|waiting_on| == 1` as a permanent structural invariant of a task-kind chain (`>= 2` was, and remains, outside the task vocabulary). `messages_to_agents` as a router-decision field no longer exists; the `RouterCallerState.send_to_agent`/`InterAgentMessaging.send_to_agent`-via-delegation-tracker path this old model used is unreachable code today, kept only because the underlying `ChainManager` substrate (register/settle/WAL shape/timeout arming) is shared with the still-live `run_prompt(async)` producer above.
 
+Two more pieces of the retired model, for the same reason:
+
+- **Fan-out.** `messages_to_agents` could name multiple entries; `waiting_on` held all of them, and the synthesized reply waited for **every** delegate (wait-for-all) or `safety.timeout.chain_seconds` — a direct consequence of the join shape above, retired with it.
+- **User-initiated vs. agent-initiated UX.** The deferred-reply mechanic distinguished a chain with another agent waiting upstream (synthesized reply, one message) from a user-initiated one (interim ack immediately, final answer in a second pass — two visible messages). `run_prompt(async)`'s own shape is simpler: the tool call itself returns immediately (the interim ack), and `task_settled` delivers the one reply later — there is no second "waiting agent" case to distinguish from, because there is no longer a chain that stays pending across further delegation rounds.
+
 ### Reply routing across delegating sessions
 
 `Session` vs `Agent` are distinct (see [Sessions](../multi-agent/sessions.md)): a single Agent can run several Sessions in parallel. When a **non-main Session** on an Agent DELEGATES to a peer (not just spawns a sub-agent), the delegating Session's own `session_id` (`from_sid`) is threaded into the outgoing `submit_agent_request` call (`#2130`). This lets `_a2a_send_response` route the peer's reply back to `(from_agent, from_sid)` — the delegating Session specifically — instead of to the Agent's default `main` Session.
@@ -110,19 +115,9 @@ Every top-level user submission mints a `chain_id` (uuid4 hex) at `submit_user_t
 
 `chain_id` is **audit-only** — the router LLM does not see it, the CLI does not display it. To trace a chain end-to-end across agents, `grep <chain_id>` over each agent's `events.jsonl` and `history.jsonl`.
 
-### Fan-out
-
-`messages_to_agents` may contain multiple entries. The pending chain's `waiting_on` set holds all of them; the synthesized reply happens only after **every** delegate responds (wait-for-all). A single slow delegate delays the whole synthesis until either it responds or `safety.timeout.chain_seconds` (default 60s) elapses — at which point a `chain_timeout` event fires and a synthesized error response unblocks the upstream agent.
-
-## User-initiated vs agent-initiated chains
-
-The deferred-reply mechanic applies only to chains where another agent is waiting upstream. For **user-initiated** chains, the originating agent ships its router's `reply_text` to the user immediately (interim acknowledgement), then a second pass after delegate responses produces the final answer. Two visible messages, never one synthesized lump.
-
-That preserves the existing chat UX ("you'll see I'm working on it") while letting agent-to-agent chains compose cleanly into one reply per request.
-
 ## max_hop_depth
 
-`safety.loop.max_agent_hops` (default 3) caps how far a chain can extend. `depth = 0` is the user input; each `_send_to_agent` increments. A send with `depth > max_agent_hops` is refused with an `agent_message_refused` event. See [reference: multi-agent config](../../reference/config/multi-agent.md).
+`safety.loop.max_agent_hops` (default `3`) is a depth cap inherited from the retired multi-hop model above. `run_prompt(async)` always registers at `depth=1` and has no mechanism to increment it further, so any positive value behaves identically today; the setting's live effect is now a `run_prompt(async)`-delivery on/off switch (`0` refuses delivery, resolving the call as a timeout error rather than failing it outright), not a depth limit. See [reference: multi-agent config](../../reference/config/multi-agent.md) for the exact mechanics.
 
 ## What the OS does NOT manage
 
