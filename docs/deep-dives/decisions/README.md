@@ -15,6 +15,20 @@ ADRs are immutable once accepted. New facts that contradict a decision
 get a new ADR that supersedes the old one (the old one keeps its
 historical value with status updated to "superseded by ADR-XXXX").
 
+One consequence, because it has been missed: **an ADR that names a string
+makes renaming that string an ADR decision, not a sweep.** If `collect="attached"`
+appears in an accepted ADR's body, changing the value to something else falsifies
+a sentence in a document nobody may edit — so the cost is a superseding ADR, not a
+rename PR across code, catalog, prompt and fixtures. Before proposing to rename an
+LLM-visible string, grep `decisions/` for it.
+
+The distinction that matters is whether the ADR **decides** the change or
+**states** the thing being changed. ADR-0040 names `delegate_to_agent` as a tool it
+decides to retire; retiring it implements the ADR. The same ADR also states that
+`collect="attached"` creates nothing at all; renaming that value would make the
+sentence false. Same file, opposite relationship, and only the second one needs a
+new ADR.
+
 ## Index
 
 ### Persistence model
