@@ -57,6 +57,84 @@ def test_the_child_directory_check_needs_no_curated_name(tmp_path: Path) -> None
     assert offenders == [tmp_path / "test_a.py"]
 
 
+# ── #4019 — nested INSIDE a peer directory, not just directly under it ──────
+# tui-coder's pre-move audit found a real miss: `Path(__file__).parent /
+# "fixtures" / "llm" / "fp0063_arc_witness"` resolves to `tests/fixtures/llm/
+# fp0063_arc_witness` — nested several levels inside the peer `tests/fixtures`
+# directory, not sitting directly under tests_dir. The first version of (b)
+# only checked `target.parent == tests_dir`, which never fires for a target
+# this deep; it required generalizing to "does the target stay inside the
+# file's own home subdirectory, at any depth" (see `_own_home`).
+
+
+def test_a_target_nested_several_levels_inside_a_peer_is_flagged(tmp_path: Path) -> None:
+    """Tier 2: #4019 — THE real miss (`tests/test_fp0063_arc_witness.py`'s
+    `Path(__file__).parent / "fixtures" / "llm" / "fp0063_arc_witness"`).
+    A target several levels inside a peer directory is exactly as
+    position-dependent as one directly under tests_dir — moving the file
+    changes where the WHOLE chain resolves, not just its first segment."""
+    (tmp_path / "fixtures" / "llm" / "fp0063_arc_witness").mkdir(parents=True)
+    (tmp_path / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_DIR = Path(__file__).parent / "fixtures" / "llm" / "fp0063_arc_witness"\n',
+        encoding="utf-8",
+    )
+    offenders = offending_files(tmp_path)
+    assert offenders == [tmp_path / "test_a.py"]
+
+
+def test_a_target_nested_inside_the_files_own_bucket_is_not_flagged(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: non-vacuity for #4019's generalization — a file ALREADY
+    living in a subdirectory (a bucket) referencing something nested
+    several levels inside THAT SAME bucket is safe: the whole bucket moves
+    together under M4, so a reference deep inside it travels with the
+    file just as much as a shallow one does."""
+    sub = tmp_path / "core"
+    (sub / "data" / "nested").mkdir(parents=True)
+    (sub / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        '_DIR = Path(__file__).parent / "data" / "nested"\n',
+        encoding="utf-8",
+    )
+    assert offending_files(tmp_path) == []
+
+
+def test_a_bare_parent_reference_alone_is_never_flagged_even_for_a_flat_file(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: non-vacuity for the #4019 fix's own precision — a BARE
+    `Path(__file__).parent` (no further join at all) must stay safe even
+    for a flat file, where it resolves to tests_dir itself. This is a
+    trivial self-reference ("my own current directory"), not a peer
+    reference — the #4019 generalization must not regress this into a
+    false positive (a real regression caught locally before this was
+    corrected: an early version flagged this)."""
+    (tmp_path / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        "_HERE = Path(__file__).parent\n",
+        encoding="utf-8",
+    )
+    assert offending_files(tmp_path) == []
+
+
+def test_a_bare_parent_reference_alone_is_never_flagged_for_a_nested_file(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: non-vacuity, the nested-file sibling of the case above — a
+    bare `Path(__file__).parent` for a file already in a subdirectory
+    resolves to that subdirectory itself, also a trivial self-reference."""
+    sub = tmp_path / "core"
+    sub.mkdir()
+    (sub / "test_a.py").write_text(
+        "from pathlib import Path\n"
+        "_HERE = Path(__file__).parent\n",
+        encoding="utf-8",
+    )
+    assert offending_files(tmp_path) == []
+
+
 def test_a_co_located_reference_from_a_subdirectory_file_is_not_flagged(
     tmp_path: Path,
 ) -> None:

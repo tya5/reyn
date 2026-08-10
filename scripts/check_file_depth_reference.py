@@ -38,6 +38,35 @@ check — a plain co-located reference (``Path(__file__).parent /
 touching ``tests/`` or one of its direct children) is not flagged, the
 same as it always was.
 
+## #4019 — (b) generalized from "direct child of tests/" to "outside the
+## file's own home subdirectory" (lead-coder + tui-coder, same night)
+
+The FIRST version of (b) only caught a target sitting DIRECTLY under
+``tests_dir`` (``target.parent == tests_dir``) — real for #4002's
+``Path(__file__).parent / "_support"`` (one join, lands one level under
+``tests/``), but tui-coder's pre-move audit found a real miss:
+``tests/test_fp0063_arc_witness.py``'s ``Path(__file__).parent / "fixtures"
+/ "llm" / "fp0063_arc_witness"`` resolves to ``tests/fixtures/llm/
+fp0063_arc_witness`` — a target NESTED *inside* the peer directory
+``tests/fixtures``, not sitting directly under ``tests_dir`` itself, so
+the old (b) (checking only ``target.parent == tests_dir``) never fired,
+even though the reference is exactly as position-dependent: moving the
+file to ``tests/runtime/`` makes it resolve to ``tests/runtime/fixtures/
+llm/...``, which does not exist.
+
+The generalization: instead of asking "is the target a direct child of
+``tests_dir``", ask "does the target stay inside the file's OWN home
+subdirectory" — where "home" is the first path component under
+``tests_dir`` (``tests_dir`` itself for a flat file; ``tests_dir/runtime``
+for a file already living in ``tests/runtime/...``). A target inside the
+file's own home travels with it (the M4 migration moves a file's whole
+home subdirectory as a unit, not individual files within it); a target
+OUTSIDE the home — whether one level under ``tests_dir`` or nested many
+levels inside some OTHER top-level peer — does not. The old direct-child
+check is the DEPTH-1 special case of this same rule (a flat file's own
+home already equals ``tests_dir``, so a direct-child target is trivially
+"outside home" too) — see :func:`_own_home` / :func:`_references_a_fixed_tests_location`.
+
 ★ One deliberate over-flag: for a FILE THAT ITSELF LIVES DIRECTLY IN
 ``tests/``, its own directory already IS ``tests_dir`` — so ANY ``.parent
 / <name>`` reference it makes is structurally IDENTICAL to a reference to
@@ -105,41 +134,73 @@ _TESTS_DIR = _ROOT / "tests"
 _STRUCTURALLY_EXEMPT = frozenset({"conftest.py"})
 
 
+def _own_home(path: Path, tests_dir: Path) -> "Path | None":
+    """The subdirectory that travels with *path* as a unit under the M4
+    migration — ``tests_dir/<first component>`` for a file already living
+    in a subdirectory (``tests/runtime/x.py`` → ``tests/runtime``: the
+    WHOLE bucket moves together, so anything nested inside it is safe).
+
+    ``None`` for a flat file (``tests/x.py``, ``path.parent == tests_dir``)
+    — a flat file has no established subdirectory yet (it hasn't been
+    bucketed), so nothing has been shown to travel with it except the file
+    itself and its own bare containing directory (``tests_dir`` — handled
+    separately, see :func:`_references_a_fixed_tests_location`'s
+    ``target == path.parent`` exclusion). Returning ``tests_dir`` itself
+    here would make "inside home" trivially true for anything anywhere
+    under ``tests/``, defeating the check entirely for exactly the file
+    shape #4019's real instance was (a flat file's ``Path(__file__).parent
+    / "fixtures" / "llm" / "..."`` — one join beyond the bare ``.parent``
+    this function does not cover)."""
+    if path.parent == tests_dir:
+        return None
+    rel = path.parent.relative_to(tests_dir)
+    return tests_dir / rel.parts[0]
+
+
 def _references_a_fixed_tests_location(path: Path, tests_dir: Path) -> bool:
-    """#4002: does *path*'s content contain a ``__file__``-rooted
+    """#4002/#4019: does *path*'s content contain a ``__file__``-rooted
     expression that, resolved using *path*'s OWN current location, reaches
-    ``tests_dir`` itself (or above it — a repo-root-or-higher escape), or
-    lands on one of ``tests_dir``'s CURRENT direct children? Both are
-    locations that do not travel with an individual file's future move.
-    The child-directory check needs no name list: it is a structural
-    comparison (``target.parent == tests_dir``) against the real
-    filesystem, so a not-yet-existing future ``tests/`` subdirectory is
-    covered automatically, the same way ``_support``/``fixtures`` were
-    found without either being hardcoded anywhere."""
+    outside ``tests_dir`` entirely (a repo-root-or-higher escape), or
+    lands anywhere OUTSIDE *path*'s own home subdirectory (see
+    :func:`_own_home`) — a peer reference, whether it sits directly under
+    ``tests_dir`` (#4002's original ``.parent / "_support"`` shape) or
+    nested several levels inside a peer directory (#4019's ``.parent /
+    "fixtures" / "llm" / "..."`` shape, missed by the FIRST version of
+    this check, which only asked "is target a DIRECT child of tests_dir").
+    Both are locations that do not travel with an individual file's future
+    move. Needs no name list: it is a structural comparison against the
+    real filesystem (the file's own current path + the real ``tests_dir``),
+    so a not-yet-existing future ``tests/`` subdirectory is covered
+    automatically, the same way ``_support``/``fixtures`` were found
+    without either being hardcoded anywhere."""
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
+    home = _own_home(path, tests_dir)
     for target in parse_file_relative_targets(content, path):
+        # Trivial self-references are always safe, flat or nested: the
+        # bare file itself (`Path(__file__)`/`.resolve()`, no navigation),
+        # and the bare containing directory (`Path(__file__).parent`
+        # alone, no further join) — "my own directory" is not "a peer",
+        # regardless of whether that directory happens to be an
+        # established bucket or still `tests_dir` itself for a flat file.
+        if target in (path, path.parent):
+            continue
         # (a) the target is not tests_dir itself and not nested anywhere
         # inside it — an unambiguous escape (repo root, a sibling of
         # tests_dir, anything outside the tests/ subtree entirely).
         if tests_dir not in (target, *target.parents):
             return True
-        # (b) the target IS still inside tests/, but sits directly at its
-        # root level — a fixed, shared peer directory (_support,
-        # fixtures, ...) rather than something nested under the file's
-        # own subdirectory. FS-derived: no name list, just a structural
-        # comparison against the real tests_dir. Excludes `target == path`
-        # (a bare `Path(__file__)`/`.resolve()`, no navigation at all) —
-        # for a file living directly in tests/, its OWN path trivially has
-        # tests_dir as its parent; that is not "referencing a tests-root
-        # peer directory", it's just where the file itself happens to
-        # live (a real false positive this exclusion fixes: a marker-walk
-        # helper doing `for ancestor in Path(__file__).resolve().parents:
-        # ...` starts from the bare resolved file, which this predicate
-        # must not itself flag before the loop even navigates anywhere).
-        if target != path and target.parent == tests_dir:
+        # (b) the target descends past the bare containing directory
+        # (some `.parent / X` join, at any further depth) INTO territory
+        # outside the file's own established home. For a NESTED file
+        # (home is its own bucket), anything under that bucket is safe —
+        # the whole bucket moves as a unit. For a FLAT file (home is
+        # `None` — no bucket established yet), ANY descent past the bare
+        # `.parent` already excluded above is a peer reference: nothing
+        # has been shown to travel with a flat file except itself.
+        if home is None or home not in (target, *target.parents):
             return True
     return False
 
@@ -166,20 +227,21 @@ def main(argv: "list[str] | None" = None) -> int:
 
     if not offenders:
         print(
-            "OK: no tests/ file references tests/ itself, above it, or one "
-            "of its direct children via __file__."
+            "OK: no tests/ file references tests/ itself, above it, or "
+            "outside its own home subdirectory via __file__."
         )
         return 0
 
     print("file-depth-reference gate FAILED:\n", file=sys.stderr)
     print(
         f"{len(offenders)} file(s) under tests/ contain a __file__-rooted "
-        "expression that reaches tests/ itself (or above it), or lands on "
-        "one of tests/'s direct child directories (e.g. _support, "
-        "fixtures) — this SILENTLY BREAKS the moment the file is moved to "
-        "a different depth (the exact M4 failure class, #3989/#3994/#4002), "
-        "and this gate's own starting population is zero, so any hit here "
-        "is a new regression, not inherited debt:",
+        "expression that reaches tests/ itself (or above it), or lands "
+        "outside the file's own home subdirectory — at any depth, not "
+        "just directly under tests/ (e.g. _support, fixtures/llm/...) — "
+        "this SILENTLY BREAKS the moment the file is moved to a different "
+        "depth (the exact M4 failure class, #3989/#3994/#4002/#4019), and "
+        "this gate's own starting population is zero, so any hit here is "
+        "a new regression, not inherited debt:",
         file=sys.stderr,
     )
     for path in offenders:
