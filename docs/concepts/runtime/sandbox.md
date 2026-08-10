@@ -126,30 +126,37 @@ audit-event fires (paired with a WARN log, `#3949`), naming the axis and why
 
 **This is deny-list visibility only, not a general "does this backend
 enforce everything configured" report (`#3951`).** A backend that simply
-does not enforce an axis at all — `NoopBackend`, which enforces none of
-`write_paths`/`network`/`subprocess` (its docstring: argv is returned
-UNCHANGED, no enforcement; all other policy fields are recorded for audit
-only) — produces no `sandbox_axis_unenforced` event and no WARN, because it
-isn't in the deny-list-incapable set `unenforced_axes()` checks (that set
-names Landlock specifically, not "any backend that under-enforces"). A
-clean/absent report from this mechanism does not mean every configured axis
-is being enforced; it means Landlock's specific deny-list limitation didn't
-fire on this call. A quiet run under `NoopBackend` and a quiet run under
+does not enforce an axis at all produces no `sandbox_axis_unenforced` event
+and no WARN, because it isn't in the deny-list-incapable set
+`unenforced_axes()` checks (that set names Landlock specifically, not "any
+backend that under-enforces"). Two real examples, reached two different
+ways:
+
+- **`NoopBackend`** — the intentional no-enforcement fallback. Enforces none
+  of `write_paths`/`network`/`subprocess` (its own docstring: argv is
+  returned UNCHANGED; all other policy fields are recorded for audit only).
+- **`DockerEnvironmentBackend`** (`sandbox.backend`'s container-mode path,
+  `src/reyn/environment/container_backend.py`) — reached via the
+  single-shared-sandbox-instance invariant (`#1200`): a caller that builds
+  one Docker backend for both the FS seam (`environment_backend`) and the
+  exec seam (`sandbox_backend`, `env_backend.py`'s own module docstring)
+  passes it straight into `sandboxed_exec.py`'s `resolve_backend(ctx.
+  sandbox_backend, ...)`, whose result flows to `unenforced_axes(backend.
+  name, policy)` with `backend.name == "docker"` — the same call site the
+  two Seatbelt/Landlock/Noop backends reach, just with an instance the
+  name-based auto-selector never builds on its own. Docker enforces none of
+  `write_paths`/`network`/`subprocess` either, while being a real,
+  operator-selectable execution path — not merely a fallback state, which
+  is what makes it the sharper of the two examples.
+
+Both produce a clean `unenforced_axes()` report while enforcing nothing —
+a clean/absent report from this mechanism does not mean every configured
+axis is being enforced; it means Landlock's specific deny-list limitation
+didn't fire on this call. A quiet run under either and a quiet run under
 `SeatbeltBackend` are indistinguishable from this signal alone — the
 per-backend table above, not this mechanism, is what answers "what does my
-backend actually enforce."
-
-Container (mount) mode is a **different mechanism entirely, not a sandbox
-backend** — `unenforced_axes()` is only ever called with one of the 3 real
-`SandboxBackend` names (`seatbelt`/`landlock`/`noop`, `sandboxed_exec.py`'s
-own call site), and `DockerEnvironmentBackend`
-(`src/reyn/environment/container_backend.py`) lives on a completely separate
-dispatch path this function never sees. An earlier draft of this paragraph
-named "the Docker launch backend" as an example of the same silent gap —
-category error, corrected by `#3951`'s own investigation
-([guide: configure-sandbox](../../guide/for-users/configure-sandbox.md)):
-container mode was never a candidate input to this function in the first
-place, so there is no coverage question to extend here for it.
+backend actually enforce." Whether to extend `unenforced_axes()`'s own
+coverage to Docker is tracked in `#3951`/`#4039`.
 
 ## `reyn.yaml` configuration
 
