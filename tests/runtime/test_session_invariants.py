@@ -397,7 +397,7 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
         requester=Requester(agent_name="upstream_agent", session_id="main"),
         origin_depth=1,
     )
-    session.chains.arm_timeout(
+    await session.chains.arm_timeout(
         "chain-timeout-001", on_fire=session._on_chain_timeout_fire,
     )
 

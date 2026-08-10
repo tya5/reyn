@@ -2136,7 +2136,9 @@ class Session:
         # 2. cancel + join chain-timeout watchdogs. A cancelled timer cannot fire
         #    (no chain_timeout_fired append); join settles any callback already
         #    in-progress before this returns. On reconstruct, restore() re-arms a
-        #    fresh watchdog from the recovered snapshot, so cancelling is reversible.
+        #    watchdog from the recovered snapshot (proposal 0067 P8, #3978:
+        #    against the REMAINING time on a persisted arm_at deadline, not
+        #    necessarily a fresh window), so cancelling is reversible.
         await self._chains.cancel_and_join_timers()
         # 3-4. RE-DRAIN LOOP (#2115): cancel the tracked fire-and-forget WAL tasks
         #    (cancel — not join-only — is required: the intervention-dispatch task
@@ -2146,8 +2148,9 @@ class Session:
         #    tracked append (or re-spawn) DURING the gather — which the prior
         #    one-shot snapshot would miss (#2115). Loop to a fixpoint (both sets fully
         #    drained) so no append can land after this returns. On reconstruct,
-        #    restore() re-arms timers from the recovered snapshot, so cancelling is
-        #    reversible.
+        #    restore() re-arms timers from the recovered snapshot (proposal 0067
+        #    P8, #3978: against the REMAINING time on a persisted arm_at deadline,
+        #    not necessarily a fresh window), so cancelling is reversible.
         for _ in range(_QUIESCE_MAX_ROUNDS):
             for task in list(self._inflight_wal_tasks):
                 if not task.done():

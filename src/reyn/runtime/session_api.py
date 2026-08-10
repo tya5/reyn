@@ -1212,7 +1212,7 @@ async def run_prompt_async(
         kind="prompt",
         cancel=_cancel_hook,
     )
-    caller_session.chains.arm_timeout(
+    await caller_session.chains.arm_timeout(
         chain_id, on_fire=caller_session._on_chain_timeout_fire,  # noqa: SLF001 — same shape as InterAgentMessaging's own register()+arm_timeout pairing (chain_manager.py callers)
     )
 
