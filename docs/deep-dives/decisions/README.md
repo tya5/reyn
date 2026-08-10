@@ -66,8 +66,9 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0017](0017-parent-run-id-nested-skill-path.md) | parent_run_id for nested skill path display |
 | [0018](0018-cross-agent-discard-notify.md) | Cross-agent discard chain notification |
-| [0034](0034-a2a-task-lifecycle.md) | A2A task lifecycle (FP-0001) (**Accepted + Implemented** 2026-05-16) |
+| [0034](0034-a2a-task-lifecycle.md) | A2A task lifecycle (FP-0001) (**Accepted + Implemented** 2026-05-16) — Components 1–3 (intervention override, RunEntry persistence) superseded by [0041](0041-intervention-ownership-and-channel-pinning.md); Components 4–5 (router endpoints, Agent Card capabilities) stand unchanged |
 | [0040](0040-task-as-os-concept.md) | `task` as an OS-level concept — vocabulary, collection, and who authors state (**Accepted** 2026-08-10, not yet implemented; extends 0034) — sequencing in [proposal 0067](../proposals/0067-task-model-and-arbiter.md) |
+| [0041](0041-intervention-ownership-and-channel-pinning.md) | Intervention ownership and channel pinning — supersedes 0034 Components 1–3 only (**Accepted + Implemented**, written after the fact 2026-08-10 to close a 3-month doc/code gap; see [#4016](https://github.com/tya5/reyn/issues/4016)) |
 
 ### Web UI scope
 
