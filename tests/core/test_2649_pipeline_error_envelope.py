@@ -276,7 +276,7 @@ async def test_run_pipeline_cancelled_renders_error_kind_message(tmp_path: Path,
 
     dispatch_task = asyncio.ensure_future(_dispatch_run_pipeline({"name": "gated"}, ctx, events))
     try:
-        assert await _wait_for_event(step0_running)
+        await _wait_for_event(step0_running)
         assert caller is agent_reg.get_session("worker", "main")
         await caller.cancel_inflight()
         release_step0.set()
@@ -294,12 +294,17 @@ async def test_run_pipeline_cancelled_renders_error_kind_message(tmp_path: Path,
     assert f"run_id: {run_id}" in content, "run_id must stay reachable for the LLM"
 
 
-async def _wait_for_event(evt: asyncio.Event, timeout: float = 15.0) -> bool:
-    try:
-        await asyncio.wait_for(evt.wait(), timeout=timeout)
-        return True
-    except asyncio.TimeoutError:
-        return False
+async def _wait_for_event(evt: asyncio.Event, *, delay: float = 0.02) -> None:
+    """The pipeline-cancel test's step-0 handler and the awaiting test body run
+    off separate tasks (the handler sets ``step0_running`` from inside the
+    dispatched pipeline step). Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract.
+    """
+    while not evt.is_set():
+        await asyncio.sleep(delay)
 
 
 # ── secondary blast radius: the memory-write threat_blocked (co-vet finding) ──

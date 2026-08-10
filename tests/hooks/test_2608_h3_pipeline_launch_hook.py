@@ -363,13 +363,17 @@ def _agent_registry_with_hooks(
     return reg
 
 
-async def _wait_for(pred, timeout: float = 15.0) -> bool:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if pred():
-            return True
-        await asyncio.sleep(0.05)
-    return False
+async def _wait_for(predicate, *, delay: float = 0.05) -> None:
+    """Poll until the launched pipeline's side effect (and the invoking
+    session's ``pipeline_result``-driven scripted turn) becomes observable.
+    Unbounded per the owner's testing policy
+    (docs/deep-dives/contributing/testing.md, ## Time): no test carries a time
+    budget, marker or in-body -- a slower environment only makes this slower,
+    never fail it; CI's --timeout=120 is the blast-radius kill-switch, not a
+    contract.
+    """
+    while not predicate():
+        await asyncio.sleep(delay)
 
 
 @pytest.mark.asyncio
@@ -407,10 +411,10 @@ async def test_e2e_hook_launches_registered_pipeline_with_threaded_input(
 
     await caller._hook_dispatcher.dispatch("session_start", {"event": {"count": 7}})
 
-    assert await _wait_for(lambda: out_file.exists() and out_file.read_text(encoding="utf-8").strip())
+    await _wait_for(lambda: out_file.exists() and out_file.read_text(encoding="utf-8").strip())
     assert out_file.read_text(encoding="utf-8").splitlines() == ["7"]
     # The invoker actually consumed the pipeline_result (a scripted-LLM turn ran).
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 @pytest.mark.asyncio

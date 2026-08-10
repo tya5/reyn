@@ -84,13 +84,16 @@ _POLL_TIMEOUT = 3.0
 _POLL_INTERVAL = 0.01
 
 
-async def _wait_until(predicate, *, timeout: float = _POLL_TIMEOUT) -> None:
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
+async def _wait_until(predicate, *, delay: float = _POLL_INTERVAL) -> None:
+    """Poll until a hook-driven-turn condition (subscriber attached, a
+    ``safety_limit_checkpoint`` recorded) becomes true. Unbounded per the
+    owner's testing policy (docs/deep-dives/contributing/testing.md, ## Time):
+    no test carries a time budget, marker or in-body -- a slower environment
+    only makes this slower, never fail it; CI's --timeout=120 is the
+    blast-radius kill-switch, not a contract.
+    """
     while not predicate():
-        if loop.time() >= deadline:
-            raise AssertionError(f"condition not met within {timeout}s")
-        await asyncio.sleep(_POLL_INTERVAL)
+        await asyncio.sleep(delay)
 
 
 def _op_context(*, session_id: str, hook_bus: HookBus, events: EventLog) -> OpContext:

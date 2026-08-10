@@ -207,13 +207,17 @@ def _result_json(run_dir: Path) -> "dict | None":
     return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
 
 
-async def _wait_for(pred, timeout: float = 15.0) -> bool:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if pred():
-            return True
-        await asyncio.sleep(0.05)
-    return False
+async def _wait_for(predicate, *, delay: float = 0.05) -> None:
+    """Waits for a driver-spawned pump/recovery task (a scripted LLM callable
+    fired, a step gate observed, a crash-recovery result marker written to
+    disk) to reach its condition on its own schedule. Unbounded per the
+    owner's testing policy (docs/deep-dives/contributing/testing.md, ## Time):
+    no test carries a time budget, marker or in-body -- a slower environment
+    only makes this slower, never fail it; CI's --timeout=120 is the
+    blast-radius kill-switch, not a contract.
+    """
+    while not predicate():
+        await asyncio.sleep(delay)
 
 
 # ── attached happy path: live events + inline result ─────────────────────────
@@ -339,7 +343,7 @@ async def test_notify_reply_true_driver_DOES_deliver_positive_control(
     assert marker["status"] == "ok" and marker["delivered"] is True
     # The reply session (worker, main) actually consumed the pipeline_result.
     reg.ensure_session_running("worker", "main")
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 # ── §3: cancel is terminal + the R4 journal stays resumable ──────────────────
@@ -527,7 +531,7 @@ async def test_attached_caller_cancel_inflight_stops_pipeline_at_boundary(
     ))
     try:
         # Wait until step 0 is really in flight (started + awaiting the gate).
-        assert await _wait_for(step0_running.is_set)
+        await _wait_for(step0_running.is_set)
         # THE BUG UNDER TEST: cancel via the CALLER session's public seam — the
         # SAME instance run_pipeline_attached resolves as the reply address. Not
         # a direct driver.request_cancel.
@@ -596,7 +600,7 @@ async def test_crash_while_attached_recovers_and_delivers_via_inbox(
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     marker = _result_json(run_dir)
     assert marker["status"] == "ok"
     # Recovery delivered via inbox (notify_reply flipped to True on re-wake).
@@ -604,7 +608,7 @@ async def test_crash_while_attached_recovers_and_delivers_via_inbox(
     # Exactly-once: steps 0-1 replayed from the snapshot, only step 2 executed.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]
     # The caller consumed the re-delivered pipeline_result.
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 # ── §5: TUI bridge marker + total_steps (#2570) ───────────────────────────────
@@ -709,5 +713,5 @@ async def test_async_launch_does_not_emit_bridge_marker(
     # Let the detached pump run to completion so the async result actually
     # reaches the caller's inbox — the marker-absence check covers the whole
     # async lifecycle, not just the launch instant.
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
     assert not any(e.type == "pipeline_run_attached" for e in caller_events)

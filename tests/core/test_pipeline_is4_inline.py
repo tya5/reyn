@@ -175,13 +175,16 @@ def _result_json(run_dir: Path) -> "dict | None":
     return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
 
 
-async def _wait_for(pred, timeout: float = 15.0) -> bool:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        if pred():
-            return True
-        await asyncio.sleep(0.05)
-    return False
+async def _wait_for(predicate, *, delay: float = 0.05) -> None:
+    """Wait for an async-launched inline run's terminal marker (result.json) or
+    the invoker's scripted LLM callback count to reach the expected condition.
+    Unbounded per the owner's testing policy (docs/deep-dives/contributing/testing.md,
+    ## Time): no test carries a time budget, marker or in-body -- a slower
+    environment only makes this slower, never fail it; CI's --timeout=120 is the
+    blast-radius kill-switch, not a contract.
+    """
+    while not predicate():
+        await asyncio.sleep(delay)
 
 
 # A generated definition an agent might emit: transform -> tool -> agent, plus a
@@ -266,11 +269,11 @@ async def test_inline_async_happy_path_launches_and_delivers(
     run_dir = pipeline_run_dir(tmp_path / ".reyn", result["data"]["run_id"])
     assert (run_dir / "invocation.json").is_file()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "ok" and terminal["delivered"] is True
     assert out_file.read_text(encoding="utf-8").splitlines() == ["hi async"]
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
 
 
 # ── #2572: inline pipeline runtime verify:schema enforcement ────────────────
@@ -360,7 +363,7 @@ async def test_inline_async_enforces_verify_schema_failure(
     assert result["status"] == "started"
     run_dir = pipeline_run_dir(tmp_path / ".reyn", result["data"]["run_id"])
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "failed"
     assert "failed schema" in terminal["error"]
@@ -624,9 +627,9 @@ async def test_inline_run_crash_resumes_exactly_once_after_wal_truncation(
     reg2 = _agent_registry(tmp_path, state_log2, scripted)
     await reg2.restore_all()
 
-    assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    await _wait_for(lambda: _result_json(run_dir) is not None)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "ok" and terminal["delivered"] is True
     # Exactly-once: steps 0-1 replayed (no duplicate a/b), only step 2 executed.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["a", "b", "c"]
-    assert await _wait_for(lambda: scripted.calls >= 1)
+    await _wait_for(lambda: scripted.calls >= 1)
