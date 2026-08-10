@@ -171,7 +171,7 @@ Measured during design; each has bitten or would bite:
 | chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
 | hook points | eight, not ten (#3996). |
 | S3 deny sets | the launch-verb deny exists **twice** — `_PIPELINE_STEP_DENY_TOOLS` (`tools/pipeline_verbs.py`, R6 S3, pipeline tool steps) and `_DELEGATION_DENY_TOOLS` (`runtime/session_api.py`, R5, agent steps). Same five names today. Both files say "kept in lock-step" and **nothing enforces it**: the only place `tests/` names both is a module docstring, and no test compares them. P6 and P7 each touch both. See the note below. |
-| `RunStatus` | the status vocabulary D3 describes **already exists** — `run_registry.py`, five members, and the `input_required` transition is live in `a2a_intervention.py` (`self._registry.update(self._run_id, status="input-required")`). What is missing is a bridge to the chain handle, not a state machine. Reusing it from `runtime/` would be a new layering inversion (`runtime/ → interfaces/web/` is currently 0 imports; the reverse is 10), so it moves to `runtime/task_types.py` beside `TaskKind` / `Requester`. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
+| `RunStatus` | the status vocabulary D3 describes **already existed** — five members, with the `input_required` transition live in `a2a_intervention.py` (`self._registry.update(self._run_id, status="input-required")`). What was missing was a bridge to the chain handle, not a state machine. It lived in `interfaces/web/run_registry.py`, and reading it from `runtime/` would have been a new layering inversion (`runtime/ → interfaces/web/` was 0 imports; the reverse, 10), so **P4 moved it to `runtime/task_types.py`** beside `TaskKind` / `Requester`; `run_registry.py` re-exports it. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
 
 ### The two S3 deny sets stay two, and get an equality check
 
@@ -206,7 +206,7 @@ implemented; the underscore is the wrong needle.
 | where | spelling | whose convention |
 |---|---|---|
 | ADR-0040 §D3 prose, and its MCP-Tasks quote | `input_required` | MCP's |
-| the `RunStatus` member name (`run_registry.py`) | `INPUT_REQUIRED` | Python's |
+| the `RunStatus` member name (`runtime/task_types.py`) | `INPUT_REQUIRED` | Python's |
 | that member's **value**, and `_A2A_TASK_STATES` (`a2a_task_view.py`) | `"input-required"` | A2A's — this is what reaches the wire |
 
 Write `RunStatus.INPUT_REQUIRED`, never the string. This cost a reviewer a false "D3 is
