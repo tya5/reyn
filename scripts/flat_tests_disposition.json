@@ -1,0 +1,488 @@
+{
+  "tests/test_2081_s1_delegation_config.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_2081_s1_delegation_config.py"
+  },
+  "tests/test_2421_mcp_seam_completeness.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_2421_mcp_seam_completeness.py"
+  },
+  "tests/test_3024_env_identity.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_3024_env_identity.py"
+  },
+  "tests/test_3126_doc_anchor_gate.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_3126_doc_anchor_gate.py"
+  },
+  "tests/test_3233_inprocess_env_identity.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_3233_inprocess_env_identity.py"
+  },
+  "tests/test_3237_worktree_clean_gate.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_3237_worktree_clean_gate.py"
+  },
+  "tests/test_3723_flowview_pin_check.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_3723_flowview_pin_check.py"
+  },
+  "tests/test_3726_mypy_ratchet.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_3726_mypy_ratchet.py"
+  },
+  "tests/test_3794_p2_no_audit_event_prose.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_3794_p2_no_audit_event_prose.py"
+  },
+  "tests/test_3794_p3_audit_event_identifier_rename.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_3794_p3_audit_event_identifier_rename.py"
+  },
+  "tests/test_action_retrieval_config.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_action_retrieval_config.py"
+  },
+  "tests/test_agent_construction_via_factory_997.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_agent_construction_via_factory_997.py"
+  },
+  "tests/test_artifact_validator_resolve_path.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_artifact_validator_resolve_path.py"
+  },
+  "tests/test_audit_events_single_assignment_3408.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_audit_events_single_assignment_3408.py"
+  },
+  "tests/test_builtin_skill_tool_name_drift_3092.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_builtin_skill_tool_name_drift_3092.py"
+  },
+  "tests/test_charter_citations_reference_live_content_3592.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_charter_citations_reference_live_content_3592.py"
+  },
+  "tests/test_check_pr_closing_intent.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_check_pr_closing_intent.py"
+  },
+  "tests/test_compaction_outcome_dist.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_compaction_outcome_dist.py"
+  },
+  "tests/test_config_cascade.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_config_cascade.py"
+  },
+  "tests/test_config_loader_malformed.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_config_loader_malformed.py"
+  },
+  "tests/test_config_loader_pure_helpers.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_config_loader_pure_helpers.py"
+  },
+  "tests/test_config_mcp_merge_1146.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_config_mcp_merge_1146.py"
+  },
+  "tests/test_config_mirror_coverage_1056.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_config_mirror_coverage_1056.py"
+  },
+  "tests/test_config_package_reexport_1682.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_config_package_reexport_1682.py"
+  },
+  "tests/test_cost_chokepoint_ast_guard_1190.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_cost_chokepoint_ast_guard_1190.py"
+  },
+  "tests/test_cwd_sandbox_aware_1477.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/runtime/test_cwd_sandbox_aware_1477.py"
+  },
+  "tests/test_detect_attractor.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_detect_attractor.py"
+  },
+  "tests/test_dogfood_batch_compaction_grant_opt_in.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_batch_compaction_grant_opt_in.py"
+  },
+  "tests/test_dogfood_batch_config_scenario_count_autoderive.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_batch_config_scenario_count_autoderive.py"
+  },
+  "tests/test_dogfood_batch_tools.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_batch_tools.py"
+  },
+  "tests/test_dogfood_dispatch_absolute_deliverable.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_dispatch_absolute_deliverable.py"
+  },
+  "tests/test_dogfood_dispatch_verdict_scoping_guidance.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_dispatch_verdict_scoping_guidance.py"
+  },
+  "tests/test_dogfood_enforcement_profile.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_enforcement_profile.py"
+  },
+  "tests/test_dogfood_long_session_skill_wait.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_long_session_skill_wait.py"
+  },
+  "tests/test_dogfood_trace_llm_modes.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_trace_llm_modes.py"
+  },
+  "tests/test_dogfood_trace_multi_file.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_trace_multi_file.py"
+  },
+  "tests/test_dogfood_trace_tool.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_trace_tool.py"
+  },
+  "tests/test_dogfood_variant_replay.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_dogfood_variant_replay.py"
+  },
+  "tests/test_dogfood_workspace_rooting_1431.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_dogfood_workspace_rooting_1431.py"
+  },
+  "tests/test_embedding_config.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_embedding_config.py"
+  },
+  "tests/test_embedding_provider.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_embedding_provider.py"
+  },
+  "tests/test_environment_import_no_circular_3867.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/environment/test_environment_import_no_circular_3867.py"
+  },
+  "tests/test_fastmcp_core_dep_import_chain.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/mcp/test_fastmcp_core_dep_import_chain.py"
+  },
+  "tests/test_fp0009_b_cron_config.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_fp0009_b_cron_config.py"
+  },
+  "tests/test_httpx_lazy_load_cli_entry.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/cli/test_httpx_lazy_load_cli_entry.py"
+  },
+  "tests/test_index_backend.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_index_backend.py"
+  },
+  "tests/test_litellm_api_base_single_writer_ast_guard_2683.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_litellm_api_base_single_writer_ast_guard_2683.py"
+  },
+  "tests/test_llm_replay_diff.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_llm_replay_diff.py"
+  },
+  "tests/test_llm_replay_from_attractor.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_llm_replay_from_attractor.py"
+  },
+  "tests/test_llm_replay_patch.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_llm_replay_patch.py"
+  },
+  "tests/test_llm_replay_script.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_llm_replay_script.py"
+  },
+  "tests/test_mcp_gateway_cancel_event_completeness_2813.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_mcp_gateway_cancel_event_completeness_2813.py"
+  },
+  "tests/test_media_store.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_media_store.py"
+  },
+  "tests/test_media_store_pure_helpers.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_media_store_pure_helpers.py"
+  },
+  "tests/test_memory_rewrite_index_e2e.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_memory_rewrite_index_e2e.py"
+  },
+  "tests/test_missing_fixture_fails_loud_3662.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/dev/test_missing_fixture_fails_loud_3662.py"
+  },
+  "tests/test_pipe_proxy_bootstrap_2682.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_pipe_proxy_bootstrap_2682.py"
+  },
+  "tests/test_present_sink_ast_guard_2708.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_present_sink_ast_guard_2708.py"
+  },
+  "tests/test_project_context_agents_md.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_project_context_agents_md.py"
+  },
+  "tests/test_python_harness_no_litellm_import.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/core/test_python_harness_no_litellm_import.py"
+  },
+  "tests/test_reyn_web_proc.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_reyn_web_proc.py"
+  },
+  "tests/test_root_markdown_relative_links.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_root_markdown_relative_links.py"
+  },
+  "tests/test_router_op_context_single_source_1412.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_router_op_context_single_source_1412.py"
+  },
+  "tests/test_scheme_self_register_1608.py": {
+    "bundle": "A",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/tools/test_scheme_self_register_1608.py"
+  },
+  "tests/test_session_shutdown_acompletion_warning.py": {
+    "disposition": "deleted",
+    "reason": "Mirrored Session._drain_on_shutdown's warnings.catch_warnings() suppression filter, but that mechanism was removed by #2435 on 2026-07-03; the test only verified its own local regex copy, never live reyn code, and had zero consumers (#4059)",
+    "bundle": "F",
+    "pr": 4059
+  },
+  "tests/test_source_manifest.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_source_manifest.py"
+  },
+  "tests/test_source_manifest_chunk_count_coerce.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_source_manifest_chunk_count_coerce.py"
+  },
+  "tests/test_sqlite_index_pure_helpers.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_sqlite_index_pure_helpers.py"
+  },
+  "tests/test_st_removal_grep_zero_3128.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_st_removal_grep_zero_3128.py"
+  },
+  "tests/test_stream_client_single_writer_boundary.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_stream_client_single_writer_boundary.py"
+  },
+  "tests/test_swe_bench_runner.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_swe_bench_runner.py"
+  },
+  "tests/test_swe_bench_runner_chat_187.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_swe_bench_runner_chat_187.py"
+  },
+  "tests/test_swe_bench_runner_venv_183.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_swe_bench_runner_venv_183.py"
+  },
+  "tests/test_text_codec.py": {
+    "bundle": "data",
+    "disposition": "moved",
+    "pr": 4060,
+    "to": "tests/data/test_text_codec.py"
+  },
+  "tests/test_threat_scan_config_1822.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_threat_scan_config_1822.py"
+  },
+  "tests/test_tier_audit_format_pin.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_tier_audit_format_pin.py"
+  },
+  "tests/test_tier_audit_private_state_ast.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_tier_audit_private_state_ast.py"
+  },
+  "tests/test_tier_audit_source_segment_cache_3670.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_tier_audit_source_segment_cache_3670.py"
+  },
+  "tests/test_verify_package_move_root_config.py": {
+    "bundle": "B",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/scripts/test_verify_package_move_root_config.py"
+  },
+  "tests/test_web_auth_config_contract.py": {
+    "bundle": "config",
+    "disposition": "moved",
+    "pr": 4058,
+    "to": "tests/config/test_web_auth_config_contract.py"
+  },
+  "tests/test_ws_consolidation_complete.py": {
+    "bundle": "C",
+    "disposition": "moved",
+    "pr": 4062,
+    "to": "tests/repo/test_ws_consolidation_complete.py"
+  }
+}
