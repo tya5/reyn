@@ -333,12 +333,20 @@ disposition. Proposal 0067 P3 adds the first (and today, only) one.
 
 ### `task_settled`
 
-Fires after a `run_pipeline`-launched async pipeline's result has been
-delivered to the issuing session's history (delivery-anchored — the hook
-fires only once `submit_pipeline_result` has succeeded). `delegate_to_agent`'s
-own chain-resolve completion path is a separate, still-unwired "settle"-shaped
-mechanism today — folding it into this same point is deferred (recorded as an
-open remainder in `BUILTIN_HOOK_SCHEMAS`'s own code comment, not silently
+Fires when a `run_pipeline`-launched async pipeline's task reaches a
+terminal disposition — **independent of whether delivery to the issuing
+session actually succeeded** (ADR-0040 D4④). A task's `on_settle`
+disposition (`"deliver"` | `"<pipeline name>"` | `"drop"`) executes first,
+then `task_settled` fires unconditionally, even when delivery was dropped
+by a fail-safe (the reply agent no longer exists, or the reply session
+isn't loaded) or when the disposition itself was `"drop"`. This is
+deliberate: a Composer's `all` combinator waits for every one of N tasks to
+settle, and if the hook were gated on delivery success, a single dropped
+or undeliverable task would mean `all` never fires — composition rests on
+"settled", not on "delivered". `delegate_to_agent`'s own chain-resolve
+completion path is a separate, still-unwired "settle"-shaped mechanism
+today — folding it into this same point is deferred (recorded as an open
+remainder in `BUILTIN_HOOK_SCHEMAS`'s own code comment, not silently
 dropped).
 
 Template vars:

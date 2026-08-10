@@ -335,8 +335,15 @@ async def test_run_pipeline_async_launches_and_delivers_result(tmp_path: Path, m
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)
     # invocation.json is on disk BEFORE completion (work-order-at-birth).
     assert (run_dir / "invocation.json").is_file()
+    # proposal 0067 settle path (#3978): the collection handle is registered
+    # on the REPLY session's ChainManager as part of launch itself — before
+    # the background pump has had a chance to run (no await between launch
+    # returning and this check), so this observes registration, not a race.
+    assert caller.chains.has(run_id)
 
     assert await _wait_for(lambda: _result_json(run_dir) is not None)
+    # ADR-0040 D4 "immediate deletion": once settled, the handle is gone.
+    assert not caller.chains.has(run_id)
     terminal = _result_json(run_dir)
     assert terminal["status"] == "ok" and terminal["delivered"] is True
     # Real tool side effects: transform seeded 10 → 11, then the fixed line.
@@ -435,14 +442,17 @@ async def test_task_settled_fires_after_delivery_and_the_handle_is_then_gone(
 
 
 @pytest.mark.asyncio
-async def test_task_settled_never_fires_when_reply_agent_no_longer_exists(
+async def test_task_settled_still_fires_when_reply_agent_no_longer_exists(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2c: strip-falsify direction 1 of 2 — ``_deliver``'s pre-existing
-    fail-safe (module docstring: "a vanished reply target is LOGGED and
-    dropped ... NEVER rerouted to main") returns False before ever reaching
-    the new P3 dispatch call. Proves the new call sits AFTER this early
-    return in ``_deliver``'s control flow, not before it."""
+    """Tier 2c: settle-path (#3978) — ADR-0040 D4④, architect ruling "B"
+    (adopted 2026-08-10, overturning P3's own strip-falsify pair as merged):
+    ``task_settled`` fires on the FACT of settling, independent of whether
+    delivery succeeded. ``_deliver``'s pre-existing fail-safe (a vanished
+    reply agent — module docstring: "LOGGED and dropped ... NEVER rerouted
+    to main") still returns False/no inbox delivery, but ``_finish`` fires
+    task_settled anyway — a Composer's ``all`` combinator waiting on N
+    tasks must see this one settle too, or composition never fires."""
     from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 
     captured: list[tuple[str, dict]] = []
@@ -456,28 +466,27 @@ async def test_task_settled_never_fires_when_reply_agent_no_longer_exists(
         reply_to_agent="does-not-exist",
     )
     driver = PipelineExecutorDriver(wo, registry=reg, state_log=state_log)
-    # Bind a real, live driver-session (production always does this before the
-    # first nudge — module docstring) so a falsified dispatch call reachable
-    # via ``self._session`` would genuinely fire, not merely crash on a None
-    # attribute — the falsify-verification for this pair uses this binding.
     worker = reg.get_or_load("worker")
     driver.bind_session(worker, worker._router_host)
 
-    delivered = await driver._deliver(status="ok", output={"x": 1}, error=None)
+    await driver._finish(status="ok", output={"x": 1})
 
-    assert delivered is False
-    assert not any(point == "task_settled" for point, _ in captured)
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "gone-agent-run")
+    terminal = _result_json(run_dir)
+    assert terminal["delivered"] is False  # the fail-safe still drops delivery
+    (payload,) = [p for point, p in captured if point == "task_settled"]
+    assert payload["task_id"] == "gone-agent-run"
+    assert payload["status"] == "ok"
 
 
 @pytest.mark.asyncio
-async def test_task_settled_never_fires_when_reply_session_is_not_loaded(
+async def test_task_settled_still_fires_when_reply_session_is_not_loaded(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2c: strip-falsify direction 2 of 2 — the SIBLING fail-safe branch
-    (a non-main ``reply_to_sid`` that isn't a live loaded session) also
-    returns False before the new P3 dispatch call, matching direction 1
-    above. Both early-exit branches of ``_deliver`` are covered, not just
-    one — a single-branch test would leave the other unguarded."""
+    """Tier 2c: settle-path (#3978) — the SIBLING fail-safe branch (a
+    non-main ``reply_to_sid`` that isn't a live loaded session) also still
+    fires task_settled, matching the direction above. Both early-exit
+    branches of ``_deliver`` are covered, not just one."""
     from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 
     captured: list[tuple[str, dict]] = []
@@ -495,9 +504,43 @@ async def test_task_settled_never_fires_when_reply_session_is_not_loaded(
     worker = reg.get_or_load("worker")
     driver.bind_session(worker, worker._router_host)
 
-    delivered = await driver._deliver(status="ok", output={"x": 1}, error=None)
+    await driver._finish(status="ok", output={"x": 1})
 
-    assert delivered is False
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "unloaded-sid-run")
+    terminal = _result_json(run_dir)
+    assert terminal["delivered"] is False
+    (payload,) = [p for point, p in captured if point == "task_settled"]
+    assert payload["task_id"] == "unloaded-sid-run"
+    assert payload["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_task_settled_does_not_fire_on_the_sync_attached_path(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: strip-falsify, accept-side sibling — ``notify_reply=False``
+    (the sync ATTACHED path, IS-6) fires NO task_settled at all (ADR-0040
+    D4: "collect='attached' creates nothing at all — there is nothing to
+    retain, and on_settle is ignored"). Without this, "task_settled fires
+    on settling independent of delivery" could be misread as "always fires
+    unconditionally" — this pins the one real case where it must not."""
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    captured: list[tuple[str, dict]] = []
+    _capture_hook_dispatch(monkeypatch, captured)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    wo = _crash_state_work_order(
+        "attached-run", _three_step_pipeline(tmp_path / "o.txt"), input={"seed": 1},
+    )
+    driver = PipelineExecutorDriver(
+        wo, registry=reg, state_log=state_log, notify_reply=False,
+    )
+    worker = reg.get_or_load("worker")
+    driver.bind_session(worker, worker._router_host)
+
+    await driver._finish(status="ok", output={"x": 1})
+
     assert not any(point == "task_settled" for point, _ in captured)
 
 

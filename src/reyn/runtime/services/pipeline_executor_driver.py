@@ -117,6 +117,34 @@ logger = logging.getLogger(__name__)
 MAX_RESUME_ATTEMPTS = 3
 
 
+async def resolve_reply_target(
+    registry: "AgentRegistry", agent: str, sid: str,
+) -> "tuple[Any | None, str | None]":
+    """Resolve a live (agent, sid) reply target through the registry.
+
+    Mirrors ``Session._a2a_send_response``'s routing (non-main sid -> the
+    specific live session, fail-closed if not loaded and NEVER rerouted to
+    main; main -> cold-load + ensure_running). Shared by the settle-path's
+    two symmetric call sites — launch-time handle registration
+    (``_spawn_pipeline_driver_session``) and settle-time delivery
+    (``PipelineExecutorDriver._deliver``) — so a task's collection handle
+    only ever exists where a delivery would actually be attempted.
+
+    Returns ``(target, None)`` on success or ``(None, reason)`` on failure
+    (never raises — the fail-safe IS the return value)."""
+    if not registry.exists(agent):
+        return None, f"reply agent {agent!r} no longer exists"
+    if sid and sid != "main":
+        target = registry.get_session(agent, sid)
+        if target is None:
+            return None, f"reply session ({agent!r}, {sid!r}) is not loaded"
+        registry.ensure_session_running(agent, sid)
+        return target, None
+    target = registry.get_or_load(agent)
+    await registry.ensure_running(agent)
+    return target, None
+
+
 class PipelineExecutorDriver:
     """ExecutionDriver that runs/resumes ONE pipeline work-order per nudge."""
 
@@ -369,8 +397,9 @@ class PipelineExecutorDriver:
         named_stores: "dict | None" = None,
     ) -> None:
         """Deliver the result to the reply address (when ``notify_reply``), THEN
-        write the terminal marker, then arm the standard ephemeral vanish for
-        this session (A10: the driver-session must not leak past terminal).
+        write the terminal marker, THEN fire ``task_settled`` (settle-path,
+        #3978), then arm the standard ephemeral vanish for this session (A10:
+        the driver-session must not leak past terminal).
 
         IS-6: on the sync ATTACHED path ``notify_reply`` is False — the attached
         caller reads the terminal marker in-band via ``read_result``, so posting
@@ -389,6 +418,30 @@ class PipelineExecutorDriver:
             output=_json_safe(output), error=error,
             named_stores=_json_safe(named_stores) if named_stores is not None else None,
         )
+        # proposal 0067 settle path (#3978): task_settled fires on the FACT
+        # of settling — independent of whether delivery succeeded (ADR-0040
+        # D4④, architect ruling "B", adopted 2026-08-10). Decisive reason,
+        # not "separately"'s wording alone: §4-b's Composer `all` combinator
+        # waits for every one of N tasks to settle; if task_settled were
+        # gated on delivery success, a single on_settle="drop" (or a
+        # vanished-reply-target fail-safe) would mean that task NEVER fires
+        # its settle event, and `all` would wait forever — composition rests
+        # on "settled", not on "delivered". Dispatched through THIS
+        # driver-session (`self._session`, always live at this point in the
+        # run), not the possibly-unresolvable reply `target` — the payload's
+        # own `session` field already records WHICH session the settle
+        # concerns; the DISPATCH surface does not need to be that session.
+        # kind="pipeline" is a placeholder value (P4 has not landed the
+        # prompt|pipeline|exec vocabulary yet).
+        if self._notify_reply and self._session is not None:
+            await self._session.dispatch_external_event(
+                "task_settled",
+                build_hook_payload(
+                    "task_settled", task_id=self._work_order.run_id, kind="pipeline",
+                    status=status, session=self._work_order.reply_to_sid or "main",
+                    result=self._format_result_text(status=status, output=output, error=error),
+                ),
+            )
         # Reuse the existing ephemeral auto-vanish teardown (quiesce + cancel
         # run-loop + drop + session_vanished + per-session dir purge) instead of
         # a second teardown path. Same private poke spawn_session_recorded uses.
@@ -398,54 +451,36 @@ class PipelineExecutorDriver:
     async def _deliver(
         self, *, status: str, output: Any, error: "str | None",
     ) -> bool:
-        """Post the ``pipeline_result`` to the reply (agent, sid). Mirrors
-        ``Session._a2a_send_response``'s routing (non-main sid → the specific
-        live session; main → cold-load + ensure_running) including its
-        fail-safe: a vanished reply target is LOGGED and dropped (never
-        rerouted to main), and the run still goes terminal (``delivered:
-        false`` in result.json) so it cannot re-wake forever."""
+        """Post the ``pipeline_result`` to the reply (agent, sid) via the
+        settle path (proposal 0067 § "the settle path"): resolve the reply
+        target (``resolve_reply_target`` — fail-safe: a vanished reply
+        target is LOGGED and dropped, never rerouted to main, and the run
+        still goes terminal so it cannot re-wake forever), then execute
+        this run's ``on_settle`` disposition through the reply session's
+        OWN ``ChainManager.settle()`` — the same pop+cancel_timeout+journal
+        operation ``delegate_to_agent``'s chain-resolve already uses
+        (D4: "immediate deletion", same function as delivery, not a
+        separate later step). ``task_settled`` is NOT dispatched here — see
+        ``_finish``, which fires it independent of this method's outcome."""
         wo = self._work_order
-        registry = self._registry
-        if not registry.exists(wo.reply_to_agent):
+        target, reason = await resolve_reply_target(
+            self._registry, wo.reply_to_agent, wo.reply_to_sid,
+        )
+        if target is None:
             logger.warning(
-                "pipeline_result for run %r dropped: reply agent %r no longer exists",
-                wo.run_id, wo.reply_to_agent,
+                "pipeline_result for run %r dropped: %s "
+                "(fail-safe — NOT rerouted to main)", wo.run_id, reason,
             )
             return False
-        if wo.reply_to_sid and wo.reply_to_sid != "main":
-            target = registry.get_session(wo.reply_to_agent, wo.reply_to_sid)
-            if target is None:
-                logger.warning(
-                    "pipeline_result for run %r dropped: reply session (%r, %r) is "
-                    "no longer loaded (fail-safe — NOT rerouted to main)",
-                    wo.run_id, wo.reply_to_agent, wo.reply_to_sid,
-                )
-                return False
-            registry.ensure_session_running(wo.reply_to_agent, wo.reply_to_sid)
-        else:
-            target = registry.get_or_load(wo.reply_to_agent)
-            await registry.ensure_running(wo.reply_to_agent)
         text = self._format_result_text(status=status, output=output, error=error)
-        await target.submit_pipeline_result(
-            run_id=wo.run_id, pipeline_name=wo.pipeline_name, status=status,
-            text=text, chain_id=new_chain_id(),
-        )
-        # proposal 0067 P3: task_settled fires AFTER delivery succeeds
-        # (delivery-anchored, matching the point's own name — "settled"
-        # means the result already reached its destination, not merely
-        # that this driver decided to send it). kind="pipeline" is a
-        # placeholder value (P4 has not landed the prompt|pipeline|exec
-        # vocabulary yet) — the ONLY producer wired today, per lead-coder's
-        # ruling (delegate_to_agent's chain-resolve path is a separate,
-        # still-unwired "settle"-shaped completion; folding it in is P6's
-        # job, see BUILTIN_HOOK_SCHEMAS's own comment on this point).
-        await target.dispatch_external_event(
-            "task_settled",
-            build_hook_payload(
-                "task_settled", task_id=wo.run_id, kind="pipeline",
-                status=status, session=wo.reply_to_sid or "main", result=text,
-            ),
-        )
+
+        async def _post() -> None:
+            await target.submit_pipeline_result(
+                run_id=wo.run_id, pipeline_name=wo.pipeline_name, status=status,
+                text=text, chain_id=new_chain_id(),
+            )
+
+        await target.chains.settle(wo.run_id, on_settle=wo.on_settle, deliver=_post)
         return True
 
     def _format_result_text(
