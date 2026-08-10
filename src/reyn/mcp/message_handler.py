@@ -58,8 +58,18 @@ import logging
 import weakref
 from typing import Any, Callable
 
-from fastmcp.client.messages import MessageHandler
-from fastmcp.client.tasks import TaskNotificationHandler
+# #3698 P2: imported via the boundary module for import-LOCATION
+# consistency only — this is a RELOCATION, not a decoupling. The base
+# class below is still directly INHERITED (see ReynMCPMessageHandler's
+# class statement + this module's own docstring: dispatch()'s routing
+# logic + the _client_ref attribute contract are both real, unremoved
+# coupling to fastmcp's class hierarchy). A future SDK swap still needs
+# either an equivalent base class or a composition rewrite here — this
+# import alone does not provide that boundary (contrast client.py's/
+# elicitation.py's accessor functions in _fastmcp_boundary.py, which DO
+# fully decouple their callers). See _fastmcp_boundary.py's module
+# docstring for the full reasoning.
+from reyn.mcp._fastmcp_boundary import MessageHandler, TaskNotificationHandler
 
 logger = logging.getLogger(__name__)
 

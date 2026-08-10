@@ -269,7 +269,9 @@ def build_elicitation_handler(
     ``"auto_decline"`` (per-server config override ``elicitation:
     auto_decline``) always auto-declines, even with a live listener attached.
     """
-    from fastmcp.client.elicitation import ElicitResult
+    from reyn.mcp._fastmcp_boundary import import_elicit_result
+
+    ElicitResult = import_elicit_result()
     from mcp.types import ElicitRequestFormParams
 
     async def _emit(event: str, **fields: Any) -> None:
