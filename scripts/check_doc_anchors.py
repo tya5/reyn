@@ -250,9 +250,112 @@ def check_deep_dives_link_existence() -> int:
     return 0
 
 
+def check_deep_dives_incoming_link_existence() -> int:
+    """Existence-only check for relative `.md` links whose TARGET resolves
+    into `docs/deep-dives/{decisions,proposals,contributing,spec}/`, from a
+    SOURCE outside all 4 gated subdirs and outside `deep-dives/{journal,
+    research}/` — the other direction from `check_deep_dives_link_existence`
+    above (#4021 follow-up, lead-coder ruling 2026-08-10; narrowed after
+    lead-coder's own review, same day — see below).
+
+    `check_deep_dives_link_existence` only sees the OUTGOING side: a link
+    breaks just as easily from the side that never moved (lead-coder,
+    same night: 「母集団は動く集合でなく動く集合を指す全体」, #4025's
+    `tests/builtin/` incident is the same shape one layer down) — a page
+    under `concepts/` or `reference/` naming a proposal by path, where the
+    proposal itself is what moves or gets renumbered.
+
+    **Target**: must resolve into one of the 4 gated subdirs (architect's
+    original recommendation, adopted as-is — `research/`-only targets stay
+    out of scope, matching journal/research's own point-in-time-record
+    exemption on the source side).
+
+    **Source**: every `.md` file under `docs/` EXCEPT the 4 gated subdirs
+    THEMSELVES and EXCEPT `deep-dives/{journal,research}/`. The 4-dirs-
+    themselves exclusion was added after landing: lead-coder's review
+    caught that including them (an ADR citing another ADR) let the
+    function's OWN vacuity floor be satisfied by that internal traffic
+    alone — 236 of the first 283 measured were such internal links, so a
+    total regression of the genuinely-external source enumeration (the
+    only reason this function exists; those links are already covered by
+    `check_deep_dives_link_existence`'s own outgoing pass) could still
+    clear a floor sized for the combined total, exactly the "partial
+    regression passes as green" failure both existing floors in this file
+    already guard against. Excluding the 4 dirs from source here makes the
+    floor test what the function is FOR.
+    """
+    total_links = 0
+    broken: list[tuple[str, str]] = []
+
+    for md_file in sorted(DOCS.rglob("*.md")):
+        rel = md_file.relative_to(DOCS)
+        parts = rel.parts
+        is_gated_or_excluded_source = len(parts) >= 2 and parts[0] == "deep-dives" and (
+            parts[1] in DEEP_DIVES_LINK_EXISTENCE_SUBDIRS or parts[1] in ("journal", "research")
+        )
+        if is_gated_or_excluded_source:
+            continue
+        text = md_file.read_text(encoding="utf-8", errors="replace")
+        for m in MD_LINK_RE.finditer(text):
+            link = m.group(1)
+            target = (md_file.parent / link).resolve()
+            try:
+                target_rel = target.relative_to(DOCS)
+            except ValueError:
+                continue
+            tparts = target_rel.parts
+            if not (
+                len(tparts) >= 2
+                and tparts[0] == "deep-dives"
+                and tparts[1] in DEEP_DIVES_LINK_EXISTENCE_SUBDIRS
+            ):
+                continue
+            total_links += 1
+            if not target.is_file():
+                broken.append((str(rel), link))
+
+    # Same shape as the two floors above (#3667, #4021) — a silent regex
+    # regression must fail loud, not report "0 broken" as "all fine." 47
+    # measured at this function's landing (2026-08-10, #4021 follow-up,
+    # narrowed-source revision; `git rev-parse HEAD` at measurement time:
+    # ca1666da9), counted by: every `.md` file under docs/ EXCEPT the 4
+    # gated subdirs and EXCEPT deep-dives/{journal,research}/, counting a
+    # link only when its target resolves into one of the 4 gated subdirs
+    # (MD_LINK_RE, anchor optional — an anchored link into a gated subdir
+    # counts too, since anchors aren't checked either way here).
+    _require_vacuity_floor(
+        total_links, 30,
+        f"Extracted only {total_links} relative .md links from outside "
+        "docs/deep-dives/"
+        f"{{{','.join(DEEP_DIVES_LINK_EXISTENCE_SUBDIRS)}}}/ and outside "
+        "docs/deep-dives/{journal,research}/, whose target resolves into "
+        "one of the 4 gated subdirs — 47 measured when this function "
+        "landed (#4021 follow-up). A `> 0` guard only catches total regex "
+        "breakage; a partial regression would still pass while quietly "
+        "checking a fraction of the real (external) source set.",
+    )
+
+    print(
+        f"checked {total_links} EXTERNAL relative .md links INTO "
+        f"deep-dives/{{{','.join(DEEP_DIVES_LINK_EXISTENCE_SUBDIRS)}}}/ "
+        "(source outside those 4 dirs and outside deep-dives/{journal,research}/)"
+    )
+    if broken:
+        print(f"\nBROKEN_INCOMING_LINK: {len(broken)}")
+        for src, link in broken:
+            print(f"  {src} -> {link}")
+        return 1
+
+    print("no broken external incoming links into decisions/proposals/contributing/spec")
+    return 0
+
+
 def main() -> int:
-    # Runs before the SITE check below — needs no mkdocs build (#4021).
+    # Both run before the SITE check below — neither needs a mkdocs build
+    # (#4021 + its follow-up).
     deep_dives_exit = check_deep_dives_link_existence()
+    print()
+    deep_dives_incoming_exit = check_deep_dives_incoming_link_existence()
     print()
 
     if not SITE.is_dir():
@@ -342,7 +445,7 @@ def main() -> int:
         return 1
 
     print("\nno dangling anchors into published pages")
-    return 1 if deep_dives_exit else 0
+    return 1 if (deep_dives_exit or deep_dives_incoming_exit) else 0
 
 
 if __name__ == "__main__":
