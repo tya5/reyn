@@ -1380,6 +1380,16 @@ class RouterHostAdapter:
                 "from_agent": self._agent_name,
                 "from_session": caller_sid,
                 "sender": f"peer_session:{self._agent_name}/{caller_sid}",
+                # architect review (#4101): without this, a wake=false
+                # ride-along's flush attribution falls back to the entry's
+                # own kind for its label ("[peer_session:peer_session]"),
+                # naming no peer at all — the flush's fallback is correct
+                # by construction (proven, but only exercises this default
+                # when a producer omits `name`), it is THIS producer's job
+                # to supply the identifier, same two OS-side components
+                # `sender` above already computes (never LLM/text-derived,
+                # so no forgery surface).
+                "name": f"{self._agent_name}/{caller_sid}",
             },
             wake=wake,
         )

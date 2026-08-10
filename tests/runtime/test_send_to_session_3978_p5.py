@@ -95,6 +95,14 @@ async def test_delivers_and_reports_status(tmp_path):
     assert kind == TurnOrigin.PEER_SESSION
     assert payload["text"] == "hi from alpha"
     assert payload["from_agent"] == "alpha"
+    # architect review (#4101): without this, a wake=false ride-along's
+    # flush attribution falls back to the entry's own KIND for its label
+    # ("[peer_session:peer_session]"), naming no peer at all — the
+    # formatter's fallback is correct by construction, but this producer
+    # must actually supply `name` for it to say anything useful. Falsify-
+    # verified: dropping the `"name": ...` line from
+    # RouterHostAdapter.send_to_session's payload makes this go RED.
+    assert payload["name"] == "alpha/main"
 
 
 @pytest.mark.asyncio
