@@ -743,6 +743,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4025
   },
+  "tests/test_2708_p32a_spawn_bridge_intervention.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_2708_p32a_spawn_bridge_intervention.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_2714_mcp_shutdown_teardown.py": {
     "disposition": "moved",
     "to": "tests/runtime/test_2714_mcp_shutdown_teardown.py",
@@ -1097,6 +1103,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4011
   },
+  "tests/test_3300_p2a_queue_state_publish.py": {
+    "disposition": "moved",
+    "to": "tests/interfaces/test_3300_p2a_queue_state_publish.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_3300_p2b_sentqueue_render.py": {
     "disposition": "moved",
     "to": "tests/interfaces/test_3300_p2b_sentqueue_render.py",
@@ -1265,6 +1277,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4018
   },
+  "tests/test_3595_s2_pipeline_nudge_origin.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3595_s2_pipeline_nudge_origin.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_3595_s4_slash_handler_seam.py": {
     "disposition": "moved",
     "to": "tests/interfaces/test_3595_s4_slash_handler_seam.py",
@@ -1276,6 +1294,12 @@
     "to": "tests/interfaces/test_3595_s5_session_does_not_interpret_text.py",
     "bundle": "backfill-3879-arc-start",
     "pr": 4011
+  },
+  "tests/test_3595_step1b_external_producer_slash_reachability.py": {
+    "disposition": "moved",
+    "to": "tests/runtime/test_3595_step1b_external_producer_slash_reachability.py",
+    "bundle": "F",
+    "pr": 4071
   },
   "tests/test_3611_cui_echo_wiring.py": {
     "disposition": "moved",
@@ -1354,6 +1378,12 @@
     "to": "tests/llm/test_3792_pr2_router_loop_injection.py",
     "bundle": "backfill-3879-arc-start",
     "pr": 4010
+  },
+  "tests/test_3792_pr2_session_injection.py": {
+    "disposition": "moved",
+    "to": "tests/core/test_3792_pr2_session_injection.py",
+    "bundle": "F",
+    "pr": 4071
   },
   "tests/test_3793_stage1_attached_connection.py": {
     "disposition": "moved",
@@ -1757,6 +1787,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4025
   },
+  "tests/test_api_safe.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_api_safe.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_artifact_validator_resolve_path.py": {
     "bundle": "data",
     "disposition": "moved",
@@ -2008,6 +2044,12 @@
     "disposition": "moved",
     "pr": 4062,
     "to": "tests/repo/test_charter_citations_reference_live_content_3592.py"
+  },
+  "tests/test_chat_cli_flags.py": {
+    "disposition": "moved",
+    "to": "tests/interfaces/test_chat_cli_flags.py",
+    "bundle": "F",
+    "pr": 4071
   },
   "tests/test_chat_compaction_engine.py": {
     "disposition": "moved",
@@ -5027,6 +5069,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4025
   },
+  "tests/test_reyn_api_relocate_311.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_reyn_api_relocate_311.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_reyn_audit_1864.py": {
     "disposition": "moved",
     "to": "tests/interfaces/test_reyn_audit_1864.py",
@@ -5279,6 +5327,36 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4011
   },
+  "tests/test_safe_file_api.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_safe_file_api.py",
+    "bundle": "F",
+    "pr": 4071
+  },
+  "tests/test_safe_file_symlink_traversal.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_safe_file_symlink_traversal.py",
+    "bundle": "F",
+    "pr": 4071
+  },
+  "tests/test_safe_http_ssrf_redirect_1956.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_safe_http_ssrf_redirect_1956.py",
+    "bundle": "F",
+    "pr": 4071
+  },
+  "tests/test_safe_mcp_registry.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_safe_mcp_registry.py",
+    "bundle": "F",
+    "pr": 4071
+  },
+  "tests/test_safe_process.py": {
+    "disposition": "moved",
+    "to": "tests/api/test_safe_process.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_safety_limit_handler.py": {
     "disposition": "moved",
     "to": "tests/runtime/test_safety_limit_handler.py",
@@ -5296,6 +5374,12 @@
     "to": "tests/security/test_sandbox_argv0_resolve_2820.py",
     "bundle": "backfill-3879-arc-start",
     "pr": 4005
+  },
+  "tests/test_sandbox_axis_contract_2983.py": {
+    "disposition": "moved",
+    "to": "tests/security/test_sandbox_axis_contract_2983.py",
+    "bundle": "F",
+    "pr": 4071
   },
   "tests/test_sandbox_denial_class_2820.py": {
     "disposition": "moved",
@@ -6029,6 +6113,12 @@
     "bundle": "backfill-3879-arc-start",
     "pr": 4018
   },
+  "tests/test_template_env_2673.py": {
+    "disposition": "moved",
+    "to": "tests/security/test_template_env_2673.py",
+    "bundle": "F",
+    "pr": 4071
+  },
   "tests/test_text_codec.py": {
     "bundle": "data",
     "disposition": "moved",
@@ -6052,6 +6142,12 @@
     "to": "tests/interfaces/test_textual_chat_attach_state_3671_p3.py",
     "bundle": "backfill-3879-arc-start",
     "pr": 4011
+  },
+  "tests/test_textual_chat_copy_rewind_3362.py": {
+    "disposition": "moved",
+    "to": "tests/interfaces/test_textual_chat_copy_rewind_3362.py",
+    "bundle": "F",
+    "pr": 4071
   },
   "tests/test_textual_chat_esc_sufficiency_3365.py": {
     "disposition": "moved",
@@ -6592,6 +6688,12 @@
     "to": "tests/security/test_windows_subprocess_broken_pipe.py",
     "bundle": "backfill-3879-arc-start",
     "pr": 4005
+  },
+  "tests/test_wire_toolpair_repair.py": {
+    "disposition": "moved",
+    "to": "tests/llm/test_wire_toolpair_repair.py",
+    "bundle": "F",
+    "pr": 4071
   },
   "tests/test_workspace_basedir_docker_187.py": {
     "disposition": "moved",
