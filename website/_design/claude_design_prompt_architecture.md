@@ -163,28 +163,13 @@ SECTION 04 — Beyond a single agent
   - Section number + label: {{ARCH_S04_NUM}} / {{ARCH_S04_LABEL}}
   - Heading: {{ARCH_S04_HEADING_HTML}}
   - Body paragraph: {{ARCH_S04_BODY}}
-  - Two diagrams side by side on desktop, stacked on mobile.
-    Left = A2A delegation chain. Right = MCP server/client symmetry.
-    Each in its own white card with 1px border.
-    Left diagram code:
-    ```
-    sequenceDiagram
-        participant U as User (depth=0)
-        participant A as Agent A (depth=1)
-        participant B as Agent B (depth=2)
-        participant C as Agent C (depth=3=limit)
-        U->>A: message
-        Note over A: RouterLoop → delegate_to_agent
-        A->>B: send(to=B, depth=1, chain_id=xyz)
-        Note over B: RouterLoop → delegate_to_agent
-        B->>C: send(to=C, depth=2, chain_id=xyz)
-        Note over C: depth=3 = max_hop_depth
-        C-->>B: result (chain_id=xyz)
-        B-->>A: result (chain_id=xyz)
-        A-->>U: final reply
-        Note over A,C: chain timeout = 60s
-    ```
-    Right diagram code:
+  - One diagram: MCP server/client symmetry, in its own white card with
+    1px border. (A second diagram depicting an A2A delegation chain via
+    `delegate_to_agent` was removed — that capability retired without a
+    like-for-like successor in proposal 0067 P6, #3978; `run_prompt` is
+    a 1:1 sync call with no depth/chain-hop/fan-out. Redraw once the
+    task-model arc lands a replacement for that shape, if one arrives.)
+    Diagram code:
     ```
     flowchart LR
         subgraph SRV["MCP Server — implemented (reyn mcp serve)"]
