@@ -140,6 +140,15 @@ P5    send_to_session
 P6    retire delegate_to_agent (its own PR; 129 files mention it, whole-repo, at 5f80e0a6 —
       re-measure before starting, and see the scope note below for what is NOT work)
       pending_chains is repurposed as P3/P4's collection substrate
+      Acceptance, settled during P4 and recorded here because P6 is where they come due:
+        - no field on `_PendingChain` carries a delegate-specific NAME and is still required.
+          P4 left `origin_agent` / `origin_depth` / `origin_sid` in place with a derived
+          `requester` property over them; P6 is when the storage itself is renamed, and this
+          condition is how "the generalization actually happened" gets checked.
+        - `register()` accepts `from_user` and never stores it — the `_PendingChain(...)`
+          construction does not reference it. Either it feeds something P6 keeps, or it goes.
+        - both S3 deny sets shed `delegate_to_agent` in the same PR, and the equality gate
+          added in P7 stays green (see the deny-set note below).
 
 P7    run_pipeline: four names → one (`collect` carries the attached/async axis)
       The two SOURCE params are unchanged: `name` (a registered pipeline) and `definition`
