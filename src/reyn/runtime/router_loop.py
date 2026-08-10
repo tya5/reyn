@@ -4036,9 +4036,6 @@ class RouterLoop:
         * Catalog ``_fn`` callables wrap RouterLoop's private helpers
           (``_list_agents`` / ``_describe_agent``) so the registry handlers
           stay decoupled from RouterLoopHost type.
-        * ``send_to_agent`` is bound with ``chain_id`` and ``depth=0`` at
-          population time so the delegate handler signature stays pure
-          ``(to, request)``.
 
         Forward-looking fields (``available_agents`` for schema enrichment,
         identity / cost / model context) are also populated so future handler
@@ -4062,11 +4059,6 @@ class RouterLoop:
         from reyn.tools.types import build_resource_caller_state
 
         resource_state = await build_resource_caller_state(self.host)
-
-        async def _send_to_agent_bound(*, to: str, request: str) -> None:
-            await self.host.send_to_agent(
-                to=to, request=request, depth=0, chain_id=self.chain_id,
-            )
 
         # #2103 S1bc: session-spawn binding. Only multi-session hosts (the chat
         # RouterHostAdapter) implement ``spawn_session``; a host without it leaves
@@ -4174,8 +4166,6 @@ class RouterLoop:
             # Catalog access (= activated handlers)
             list_agents_fn=self._list_agents,
             describe_agent_fn=self._describe_agent,
-            # Async dispatch (= activated handlers)
-            send_to_agent=_send_to_agent_bound,
             # Proposal 0067 P4d (#3978): run_prompt(collect="attached") dispatch
             # (None for non-multi-session hosts).
             run_prompt_result_fn=_run_prompt_result_bound,
