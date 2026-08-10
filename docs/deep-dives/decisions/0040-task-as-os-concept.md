@@ -249,9 +249,28 @@ bug — it relocates it.
 **Undesirable / accepted**
 
 - **`cancel` is added to the canonical verb lexicon.** It is not a fifth removal verb — R2's four
-  (`delete` / `drop` / `forget` / `uninstall`) all mean "a thing ceases to exist", while a
-  cancelled task's record persists with `status="cancelled"`. The gate keeps `CANONICAL_VERBS`
-  and `REMOVAL_VERBS` as separate frozensets, so R2 is untouched.
+  (`delete` / `drop` / `forget` / `uninstall`) name the *disappearance of a thing* as their whole
+  purpose, while `cancel` names **stopping work that is in progress**. What a cancel produces is a
+  **settle** carrying `status="cancelled"`, delivered on the same `on_settle` path as any other
+  settle — not a second teardown route. The gate keeps `CANONICAL_VERBS` and `REMOVAL_VERBS` as
+  separate frozensets, so R2 is untouched.
+
+  ⚠️ Read this against D4, which it otherwise appears to contradict. An earlier wording here said
+  "a cancelled task's record persists", which reads as *registry* retention and so as an exception
+  to D4's immediate deletion. It is not one. Two different things are being named:
+
+  | | at settle |
+  |---|---|
+  | the **handle** (`task_id` → the pending entry) | **deleted**, D4, uniformly for every settle — cancelled included |
+  | the **audit-event record** (P6 `.reyn/events`) | **persists** — this is what "the record" meant |
+
+  `cancel` causes no deletion that a normal settle would not also cause; the handle's disappearance
+  is D4's behaviour, not the verb's. This is the same distinction §D4 already draws when it says
+  reyn "records it; that is observation, not retention" — stated there about delivery, and it holds
+  identically here. A consequence worth stating explicitly, because it decides an implementation
+  question: since handles are gone at settle, `describe_task` can only ever observe a **non-terminal**
+  status. `completed` / `failed` / `cancelled` exist in the vocabulary and reach the audit trail and
+  the requester's delivery, but never a `describe_task` reply.
 - **Four LLM-visible tools retire**: `delegate_to_agent`, and `run_pipeline_{async,inline,inline_async}`
   collapsing into `run_pipeline(collect=…, inline=…)`. Renames of LLM-visible strings require the
   system prompt and tool descriptions to move in the same PR.
