@@ -60,7 +60,6 @@ from reyn.runtime.a2a_routing import (
     a2a_session_id,
     resolve_a2a_session,
 )
-from reyn.runtime.agent_locks import get_agent_lock
 from reyn.runtime.session_pure import new_chain_id
 
 logger = logging.getLogger(__name__)
