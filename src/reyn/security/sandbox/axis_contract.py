@@ -265,7 +265,7 @@ _NETWORK_CONTRACT = AxisContract(
     deny_probe=_network_deny_probe,
     exceptions=_NETWORK_EXCEPTIONS,
     workload_test_id=(
-        "tests/test_sandbox_seccomp_network_3030.py::"
+        "tests/security/test_sandbox_seccomp_network_3030.py::"
         "test_chunker_server_reaches_serving_under_network_false"
     ),
     witness_strength={
