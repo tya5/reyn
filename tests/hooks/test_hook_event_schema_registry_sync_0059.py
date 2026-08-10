@@ -70,7 +70,7 @@ from reyn.runtime.cron.routing import dispatch_cron_fired
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.webhook_routing import dispatch_webhook_received
-from reyn.tools.pipeline_verbs import _handle_run_pipeline_async
+from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
 
@@ -197,7 +197,8 @@ async def test_every_builtin_point_dispatches_schema_matching_payload(
     ))
 
     # ── task_settled (#3978 P3, pipeline-async terminal-delivery producer) ──
-    # driven via a REAL run_pipeline_async through to completion — the same
+    # driven via a REAL run_pipeline(collect="async") through to completion —
+    # the unified handler post proposal 0067 P7 (#3978); the same
     # AgentRegistry-backed setup test_pipeline_is2_driver_session.py's own
     # delivery test uses, minimized to a single pure TransformStep (no tool
     # needed to reach a terminal, schema-matching payload).
@@ -224,7 +225,9 @@ async def test_every_builtin_point_dispatches_schema_matching_payload(
         ),
         state_log=StateLog(tmp_path / "task-settled-arc" / ".reyn" / "wal.jsonl"),
     )
-    launch = await _handle_run_pipeline_async({"name": "p", "input": {}}, ctx)
+    launch = await _handle_run_pipeline(
+        {"name": "p", "input": {}, "collect": "async"}, ctx,
+    )
     assert launch["status"] == "started"
     await _wait_for(lambda: any(p == "task_settled" for p, _ in captured))
 

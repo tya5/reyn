@@ -541,21 +541,21 @@ steps:
 
 
 _PIPELINE_LAUNCH_VERBS = (
-    "run_pipeline", "run_pipeline",
-    "run_pipeline_async", "run_pipeline_async",
-    "run_pipeline_inline", "run_pipeline_inline",
-    "run_pipeline_inline_async", "run_pipeline_inline_async",
+    # Proposal 0067 P7 (#3978): the 4 former launch verbs (sync/async/
+    # inline/inline-async) unified into this one name, 0 aliases — every
+    # collect=/definition= combination is reached through it.
+    "run_pipeline",
 )
 
 
 @pytest.mark.parametrize("profile_factory_name", ["builtin_untrusted_profile", "builtin_delegate_profile"])
 def test_floor_still_denies_pipeline_launch_verbs(profile_factory_name: str) -> None:
     """Tier 2: BOTH the untrusted-content floor and the unbound-delegate floor
-    deny every pipeline launch verb (bare + qualified, sync/async/inline) — the
-    #2575 security invariant. This slice adds a POPULATION path; it must not
-    loosen the floor. A regression here (floor drops a pipeline verb) means an
-    untrusted-content turn / an unbound delegate could launch a pipeline (a
-    cost-bound multi-step spawn)."""
+    deny the unified pipeline launch verb (bare + qualified, every collect=/
+    definition= combination) — the #2575 security invariant. This slice adds
+    a POPULATION path; it must not loosen the floor. A regression here (floor
+    drops the pipeline verb) means an untrusted-content turn / an unbound
+    delegate could launch a pipeline (a cost-bound multi-step spawn)."""
     import reyn.security.permissions.capability_profile as cp
     from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
 

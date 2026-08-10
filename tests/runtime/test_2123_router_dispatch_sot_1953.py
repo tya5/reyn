@@ -82,8 +82,11 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "mcp_install_local", "mcp_install_package", "mcp_install_registry",
     "mcp_search_registry",
     "pipeline_install_local", "pipeline_install_source",
-    "pipeline_list", "run_pipeline", "run_pipeline_async",
-    "run_pipeline_inline", "run_pipeline_inline_async",
+    "pipeline_list",
+    # Proposal 0067 P7 (#3978): run_pipeline_async / run_pipeline_inline /
+    # run_pipeline_inline_async unified into run_pipeline (4 names -> 1, 0
+    # aliases) — collect=/name=/definition= select the former verbs.
+    "run_pipeline",
     # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task —
     # router_dispatched=True, dispatched via invoke_action like the catalog
     # actions above.

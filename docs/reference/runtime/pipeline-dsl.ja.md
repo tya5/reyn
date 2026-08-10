@@ -2,7 +2,7 @@
 type: reference
 topic: runtime
 audience: [human, agent]
-search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, run_pipeline_async, run_pipeline_inline, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns, parse_json]
+search_hints: [pipeline DSL, pipeline grammar, EBNF, formal grammar, agent generation grammar, transform step, tool step, agent step, call step, match step, fold step, for_each step, parallel step, expr, R1 expression, verify schema, run_pipeline, collect, on_settle, safety.spawn.max_pipeline_fan_out_depth, safety.spawn.max_pipeline_spawns, parse_json]
 ---
 
 # Pipeline DSL リファレンス
@@ -509,27 +509,28 @@ fields:
 
 ## 起動
 
-pipeline を起動するツールは 4 つあります。いずれも同じ実行に収束します: 起動は専用の `PipelineExecutorDriver` セッションを spawn し、pipeline はその中で走ります([Driver-as-session](../../concepts/runtime/pipelines.ja.md#driver-as-session)参照)— これら 4 つのどれも、呼び出し元自身のターン上でインラインに pipeline を実行しません。
+pipeline を起動するツールは `run_pipeline` 1 つだけです。Proposal 0067 P7 は、以前の 4 つの起動 verb(`run_pipeline`、`run_pipeline_async`、`run_pipeline_inline`、`run_pipeline_inline_async`、alias は 0 個)をこの単一 verb と 3 つの直交パラメータに統合しました:
 
-| ツール | 登録済み / inline | 同期 / 非同期 |
-|------|---------------------|---------------|
-| `run_pipeline` | 登録済み、`name` 指定 | 同期 — attached、terminal まで block |
-| `run_pipeline_async` | 登録済み、`name` 指定 | 非同期 — detached、即座に返る |
-| `run_pipeline_inline` | inline、ad-hoc な `definition` 文字列 | 同期 — attached、terminal まで block |
-| `run_pipeline_inline_async` | inline、ad-hoc な `definition` 文字列 | 非同期 — detached、即座に返る |
+| パラメータ | 値 | 選ぶもの |
+|-----------|-----|---------|
+| `name=` **xor** `definition=` | 登録済み pipeline 名 / ad-hoc な DSL 文字列 | 登録済み起動 vs inline 起動 |
+| `collect=` | `"attached"`(デフォルト) \| `"async"` | 同期 block vs fire-and-forget |
+| `on_settle=` | `"deliver"`(デフォルト) \| `"<pipeline 名>"` \| `"drop"` | settle 時の結果の扱い — P4 の delivery 語彙。`collect="attached"` では受理されるが無視される(結果はすでに in-band で返っているため) |
+
+どの組み合わせも同じ実行に収束します: 起動は専用の `PipelineExecutorDriver` セッションを spawn し、pipeline はその中で走ります([Driver-as-session](../../concepts/runtime/pipelines.ja.md#driver-as-session)参照)— `run_pipeline` は呼び出し元自身のターン上でインラインに pipeline を実行することはありません。
 
 ### 登録済み起動 {#registered-launch}
 
-`run_pipeline(name, input?)` と `run_pipeline_async(name, input?)` は登録された名前で pipeline を検索します([Pipeline registration](../../concepts/runtime/pipeline-registration.md)参照)。`input` は pipeline の最初のステップの初期 named context(`ctx.*`)をシードします — シード入力を必要としない pipeline では省略できます。登録されていない `name` は明確に失敗します。
+`run_pipeline(name, input?, collect?, on_settle?)` は登録された名前で pipeline を検索します([Pipeline registration](../../concepts/runtime/pipeline-registration.md)参照)。`input` は pipeline の最初のステップの初期 named context(`ctx.*`)をシードします — シード入力を必要としない pipeline では省略できます。登録されていない `name` は明確に失敗します。
 
 ### 同期 vs 非同期
 
-- **同期**(`run_pipeline`、`run_pipeline_inline`): 呼び出し元は driver-session の run に attach し、terminal 状態に達するまで block して、結果を in-band で読み戻します(成功時は `{status: "ok", data: {run_id, output, named_stores}}`。失敗/キャンセル時は標準の dispatch-error 形式 `{status: "error", error: {kind, message}}` — `kind` は `pipeline_failed` または `pipeline_cancelled`(`run_id` は独立フィールドではなく `message` に埋め込まれる)で、`router_loop.feedback()` が他の全ツールエラーと同じ `Error (<kind>): <message>` 形式でレンダリングする、#2649)。ライブな `pipeline_step_started` / `pipeline_step_completed` audit-event が run の間、呼び出し元にストリームされ(TUI のライブビューが描画するもの)、協調的な Ctrl-C は次のステップ境界で run をクリーンに停止させます。attach 自体がクラッシュで中断された場合、run は失われません — 非同期と同じ recovery パスに引き渡され、結果は代わりに後で inbox メッセージとして届きます(`{status: "started", data: {run_id}}`)。
-- **非同期**(`run_pipeline_async`、`run_pipeline_inline_async`): 即座に `{status: "started", data: {run_id}}` を返します。最終結果は後で `[pipeline]` inbox メッセージとして届きます。
+- **同期**(`collect="attached"`、デフォルト): 呼び出し元は driver-session の run に attach し、terminal 状態に達するまで block して、結果を in-band で読み戻します(成功時は `{status: "ok", data: {run_id, output, named_stores}}`。失敗/キャンセル時は標準の dispatch-error 形式 `{status: "error", error: {kind, message}}` — `kind` は `pipeline_failed` または `pipeline_cancelled`(`run_id` は独立フィールドではなく `message` に埋め込まれる)で、`router_loop.feedback()` が他の全ツールエラーと同じ `Error (<kind>): <message>` 形式でレンダリングする、#2649)。ライブな `pipeline_step_started` / `pipeline_step_completed` audit-event が run の間、呼び出し元にストリームされ(TUI のライブビューが描画するもの)、協調的な Ctrl-C は次のステップ境界で run をクリーンに停止させます。attach 自体がクラッシュで中断された場合、run は失われません — 非同期と同じ recovery パスに引き渡され、結果は代わりに後で inbox メッセージとして届きます(`{status: "started", data: {run_id}}`)。このモードでは `on_settle=` は受理されるが無視されます。
+- **非同期**(`collect="async"`): 即座に `{status: "started", data: {run_id}}` を返します。run が terminal 状態に達すると、結果は `on_settle=` に従って処理されます — `[pipeline]` inbox メッセージとして届く(`"deliver"`、デフォルト)、別の pipeline にルーティングされる(pipeline 名)、または破棄される(`"drop"`)。
 
 ### Ad-hoc inline 起動
 
-`run_pipeline_inline(definition, input?)` と `run_pipeline_inline_async(definition, input?)` は、呼び出しているエージェントが実行時に生成する pipeline DSL 文字列を受け取ります — 登録済み pipeline ファイルと同じ Appendix-B 文法で、その定義自身のステップが参照する `schema:` ドキュメントも含みます。事前登録は不要です: 文字列は parse され、何かが spawn される前に**静的解析ゲート**を通されます。そのため不正な定義は明確に失敗し、何も spawn しません:
+`run_pipeline(definition, input?, collect?, on_settle?)` — `name=` の代わりに `definition=` を渡す — は、呼び出しているエージェントが実行時に生成する pipeline DSL 文字列を受け取ります — 登録済み pipeline ファイルと同じ Appendix-B 文法で、その定義自身のステップが参照する `schema:` ドキュメントも含みます。`name=` と `definition=` は排他的です — どちらか一方を必ず指定します。事前登録は不要です: 文字列は parse され、何かが spawn される前に**静的解析ゲート**を通されます。そのため不正な定義は明確に失敗し、何も spawn しません:
 
 1. 定義が parse できる。
 2. すべてのステップの `schema:` 参照が、定義自身の schema 内で解決する。
@@ -561,11 +562,11 @@ safety:
 
 ## セキュリティ
 
-[Pipeline registration § セキュリティ](../../concepts/runtime/pipeline-registration.md#security-launching-a-pipeline-stays-gated)参照: pipeline を起動すること(上記 4 ツールのいずれでも)は、別のエージェントへの delegate と同じ `HIGH` severity の、spawn-adjacent な capability floor に位置します。untrusted-content floor、または unbound な delegate の floor に narrowing されたコンテキストは、登録済みであれ inline であれ、pipeline を起動できません。
+[Pipeline registration § セキュリティ](../../concepts/runtime/pipeline-registration.md#security-launching-a-pipeline-stays-gated)参照: pipeline を起動すること(`name=`/`definition=`/`collect=` のどの組み合わせでも)は、別のエージェントへの delegate と同じ `HIGH` severity の、spawn-adjacent な capability floor に位置します。untrusted-content floor、または unbound な delegate の floor に narrowing されたコンテキストは、登録済みであれ inline であれ、pipeline を起動できません。
 
 ## 文法(生成用)
 
-実行時に pipeline 定義を作成するエージェント(例: `run_pipeline_inline`)向けの、コンパクトで自己完結したブロックです — 文法そのものに加え、文法だけからは導けないルール、そして 1 つの規範的な例。このセクションは単独で成立します。上記の文章を読んでいることを前提としません。
+実行時に pipeline 定義を作成するエージェント(例: `run_pipeline(definition=...)`)向けの、コンパクトで自己完結したブロックです — 文法そのものに加え、文法だけからは導けないルール、そして 1 つの規範的な例。このセクションは単独で成立します。上記の文章を読んでいることを前提としません。
 
 **文法** — 上記の形式文法と同じ EBNF を、参照の便宜のため再掲します:
 

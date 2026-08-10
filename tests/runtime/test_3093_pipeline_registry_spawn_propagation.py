@@ -41,21 +41,22 @@ finds a just-installed sibling without needing the caller's in-memory copy.
 
 Real ``AgentRegistry``/``Session``/``StateLog``/``PipelineExecutor`` throughout (no
 mocks) — mirrors ``tests/core/test_pipeline_is2_driver_session.py``'s harness, driving
-the REAL production tool-verb entry points (``_handle_run_pipeline`` /
-``_handle_run_pipeline_async``) rather than the lower-level ``session_api``
-functions directly, so the exact code path a real chat session takes is exercised.
+the REAL production tool-verb entry point (``_handle_run_pipeline``, the
+unified handler post proposal 0067 P7 #3978 — ``collect="async"`` for the
+detached case, ``collect="attached"`` for the sync one) rather than the
+lower-level ``session_api`` functions directly, so the exact code path a real
+chat session takes is exercised.
 Pipelines are installed the PRODUCTION way — an on-disk DSL file + a
 ``.reyn/config/pipelines.yaml`` entry (mirrors ``tests/core/test_2581_pipeline_hotreload.py``'s
 ``_write_pipeline``/``_write_dynamic_entries`` helpers) — so the family-gate's
 disk-cascade rebuild has something real to find.
 
 Coverage:
-  1. Async detached (``_handle_run_pipeline_async`` — the ``run_pipeline_async``
-     tool's real handler): a main pipeline ``call``ing a same-file sibling,
-     installed to disk before the spawn, launches successfully and the sibling
-     actually runs.
-  2. Sync attached (``_handle_run_pipeline`` — the ``run_pipeline`` tool's real
-     handler): same scenario, attached path.
+  1. Async detached (``_handle_run_pipeline`` with ``collect="async"``): a
+     main pipeline ``call``ing a same-file sibling, installed to disk before
+     the spawn, launches successfully and the sibling actually runs.
+  2. Sync attached (``_handle_run_pipeline`` with the default
+     ``collect="attached"``): same scenario, attached path.
   3. Strip-falsify (CLAUDE.md testing policy): spawning the driver-session via
      the LOWER-LEVEL ``spawn_session`` (the crash-recovery re-wake call shape,
      which never fires the family gate) instead of ``spawn_session_recorded``
@@ -78,7 +79,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
-from reyn.tools.pipeline_verbs import _handle_run_pipeline, _handle_run_pipeline_async
+from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
 
@@ -200,8 +201,9 @@ async def _wait_for(pred, timeout: float = 15.0) -> bool:
 async def test_async_detached_run_resolves_sibling_via_family_gate(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2: the REAL ``run_pipeline_async`` tool handler
-    (``_handle_run_pipeline_async``) — a driver-session spawned to run
+    """Tier 2: the REAL unified ``run_pipeline`` tool handler
+    (``_handle_run_pipeline`` with ``collect="async"``) — a driver-session
+    spawned to run
     ``ns.main`` resolves its ``call`` to ``ns.sibling`` because
     ``spawn_session_recorded`` fires ``refresh_config_projections()`` on the
     freshly-spawned driver-session, which rebuilds its pipeline registry from
@@ -244,7 +246,9 @@ async def test_async_detached_run_resolves_sibling_via_family_gate(
         state_log=state_log,
     )
 
-    result = await _handle_run_pipeline_async({"name": "ns.main", "input": None}, ctx)
+    result = await _handle_run_pipeline(
+        {"name": "ns.main", "input": None, "collect": "async"}, ctx,
+    )
     assert result["status"] == "started", result
     run_id = result["data"]["run_id"]
     run_dir = pipeline_run_dir(tmp_path / ".reyn", run_id)

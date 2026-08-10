@@ -584,6 +584,27 @@ def run_pipeline_async_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta={})
 
 
+def run_pipeline_unified_to_canonical(result: dict) -> CanonicalToolResult:
+    """Proposal 0067 P7 (#3978): the single ``run_pipeline`` tool now returns
+    EITHER the sync-ok shape (``kind == "run_pipeline"``) or the
+    async-started shape (``kind == "run_pipeline_async"``), selected at call
+    time by ``collect=``. Dispatches to the two pre-existing, unchanged
+    mappers by the result's own declared kind rather than merging their
+    logic — each keeps its own shape-specific behavior (sync drops ``run_id``
+    from the LLM-visible text, async keeps it as the completion-message
+    correlation handle). ``result`` here is already the UNWRAPPED handler
+    payload — the same flat shape ``run_pipeline_to_canonical``/
+    ``run_pipeline_async_to_canonical`` read directly (``result.get("output")``/
+    ``result.get("run_id")`` at the top level, matching every other mapper in
+    this module) — NOT the handler's own two-level ``{"status", "data":
+    {"kind": ...}}`` return envelope, which ``to_canonical``'s caller unwraps
+    to ``data`` before any mapper runs."""
+    kind = result.get("kind")
+    if kind == "run_pipeline_async":
+        return run_pipeline_async_to_canonical(result)
+    return run_pipeline_to_canonical(result)
+
+
 def _file_signal_meta(result: dict) -> "dict[str, Any]":
     """High-signal meta for a ``file`` op result: ``op`` + ``status`` (a ``truncated`` read tells the
     LLM there is more; a ``not_found`` tells it to retry another path) + ``path`` (which file). Transport

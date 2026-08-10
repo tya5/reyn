@@ -309,16 +309,14 @@ _ACTION_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # install requires name + blueprint (no source/git-fetch counterpart).
     ("presentation_install_local",
      {"name": "status_card", "blueprint": {"component": "text", "text": "hi"}}),
-    # pipeline category (IS-1) — run_pipeline requires name; input is optional.
+    # pipeline category — unified launch verb (proposal 0067 P7, #3978: 4
+    # names -> 1). exactly one of name=/definition= (validated in the
+    # handler, not the schema, so ``required`` names neither); input and
+    # collect are both optional (collect defaults to "attached"). This
+    # sample uses the REGISTERED (name=) form — IS-4's ad-hoc definition=
+    # form is covered by its own dedicated tests, not the catalog contract
+    # pin (one sample per action name here, not one per param combination).
     ("run_pipeline", {"name": "my_pipeline", "input": {"topic": "x"}}),
-    # pipeline category (IS-2) — async launch, same surface as the sync verb.
-    ("run_pipeline_async", {"name": "my_pipeline", "input": {"topic": "x"}}),
-    # pipeline category (IS-4) — ad-hoc INLINE launches: a DSL 'definition'
-    # string (+ optional input), sync-attached and async.
-    ("run_pipeline_inline",
-     {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
-    ("run_pipeline_inline_async",
-     {"definition": "pipeline: p\nsteps:\n  - transform: {value: \"1\"}\n"}),
     # task category (proposal 0067 P4, #3978) — describe/cancel require the
     # task's handle; list_tasks takes an optional kind filter.
     ("describe_task", {"task_id": "pipeline-my_pipeline-abc123"}),

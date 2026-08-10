@@ -103,9 +103,6 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.pipeline_verbs import (
         PIPELINE_LIST,
         RUN_PIPELINE,
-        RUN_PIPELINE_ASYNC,
-        RUN_PIPELINE_INLINE,
-        RUN_PIPELINE_INLINE_ASYNC,
     )
     from reyn.tools.plugin_management_verbs import PLUGIN_INSTALL, PLUGIN_LIST, PLUGIN_UNINSTALL
     from reyn.tools.present import PRESENT
@@ -292,6 +289,11 @@ def get_default_registry() -> ToolRegistry:
     # ``run_pipeline``) — the same PR-3b-shipped path every other
     # universal-catalog wrapper uses, NOT build_tools() (which is
     # hand-assembled and strips direct tools once wrappers are on).
+    # Proposal 0067 P7 (#3978): run_pipeline is now the unified launch verb —
+    # collect="attached"|"async" replaces the sync/async name split, and
+    # name=/definition= (exactly one) replaces the registered/inline split.
+    # run_pipeline_async / run_pipeline_inline / run_pipeline_inline_async
+    # are retired (4 names -> 1, 0 aliases, architect ruling).
     registry.register(RUN_PIPELINE)
     # #3026: pipeline discovery verb — the surface that NAMES the registered
     # pipelines. Constant-count replacement for the per-pipeline
@@ -299,17 +301,6 @@ def get_default_registry() -> ToolRegistry:
     # the operator's pipeline count); ``run_pipeline``'s ``name`` argument is
     # unguessable without it.
     registry.register(PIPELINE_LIST)
-    # IS-2: run_pipeline_async — background launch in a crash-recoverable
-    # driver-session; returns {status: started, run_id} immediately, the
-    # result arrives later as a pipeline_result inbox message.
-    registry.register(RUN_PIPELINE_ASYNC)
-    # IS-4: run_pipeline_inline / run_pipeline_inline_async — launch an ad-hoc,
-    # agent-GENERATED pipeline (a DSL string in 'definition'), parsed + put
-    # through a static-analysis gate before spawn, then run through the SAME
-    # attached / background driver-session the registered verbs use. Recovery is
-    # identical (invocation.json carries the full serialized Pipeline).
-    registry.register(RUN_PIPELINE_INLINE)
-    registry.register(RUN_PIPELINE_INLINE_ASYNC)
     # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task —
     # read/act against the settle-path handle substrate (ChainManager),
     # threaded via RouterCallerState.chains.

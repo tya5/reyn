@@ -226,11 +226,7 @@ async def test_list_actions_pipeline_category_surfaces_registered_pipeline() -> 
     )
     # #2589: the static launch verbs are surfaced; #3026 adds the list verb that
     # replaces the per-name entries as the naming surface.
-    assert {
-        "run_pipeline", "run_pipeline_async",
-        "run_pipeline_inline", "run_pipeline_inline_async",
-        "pipeline_list",
-    } <= items.keys()
+    assert {"run_pipeline", "pipeline_list"} <= items.keys()
 
     # The registered pipeline's name + its OWN description are still reachable —
     # through the verb, whose result carries them (drives the real handler).
@@ -262,11 +258,7 @@ async def test_list_actions_pipeline_category_empty_registry_returns_static_verb
     result = await LIST_ACTIONS.handler({"category": ["pipeline"]}, ctx)
 
     names = {it["action_name"] for it in result["items"]}
-    assert names == {
-        "run_pipeline", "run_pipeline_async",
-        "run_pipeline_inline", "run_pipeline_inline_async",
-        "pipeline_list",
-    }
+    assert names == {"run_pipeline", "pipeline_list"}
 
 
 # ---------------------------------------------------------------------------

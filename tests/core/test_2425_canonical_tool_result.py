@@ -4,7 +4,8 @@
 LLM body by construction and non-text (structured/media) is an ``attachment`` kept OUT of the offload
 decision — the owner whole-envelope case cannot structurally occur. Every op that once declared
 ``_offload_payload_field`` now has a mapper (MCP + web fetch/search + exec + recall/index_query +
-run_pipeline(_async)); ``meta`` is signal-only (transport echo dropped, ``isError`` kept as the
+run_pipeline, whose ``kind`` field selects the sync/async shape post proposal 0067 P7 #3978's
+unification); ``meta`` is signal-only (transport echo dropped, ``isError`` kept as the
 error-path driver).
 """
 from __future__ import annotations
@@ -23,7 +24,8 @@ def _registered_producers() -> None:
     ``to_canonical`` resolves the mapper from a declaration table populated by
     ``op_runtime.register(kind, …, canonical=…)`` at op-module import and by ``ToolRegistry.register``
     when the router registry is built. Neither happens as a side effect of importing this module, so the
-    ROUTER-TOOL sources below (``run_pipeline`` / ``run_pipeline_async``) resolve to ``None`` — and take
+    ROUTER-TOOL source below (``run_pipeline`` — the sole surviving pipeline-launch name post
+    proposal 0067 P7, #3978) resolves to ``None`` — and takes
     the whole-dict fallback these tests exist to forbid — unless the registry has been built. This
     module used to rely on a sibling test module having done that first (3 failed / 8 passed when run
     alone). Both calls are idempotent for an identical re-declaration."""
@@ -134,9 +136,12 @@ def test_run_pipeline_sync_nonstr_output_is_structured():
 
 
 def test_run_pipeline_async_keeps_run_id_in_text():
-    """Tier 1: CONTRAST — async run_pipeline_async KEEPS ``run_id`` (the correlation handle for the
-    later [pipeline] completion message), unlike the sync result which drops it."""
-    c = to_canonical({"kind": "run_pipeline_async", "run_id": "R42"}, source="run_pipeline_async")
+    """Tier 1: CONTRAST — the unified ``run_pipeline`` verb's async (``collect="async"``) result KEEPS
+    ``run_id`` (the correlation handle for the later [pipeline] completion message), unlike the sync
+    result which drops it. Proposal 0067 P7 (#3978): ``run_pipeline_async`` is no longer a registered
+    tool name (4 -> 1) — ``source`` is now always ``"run_pipeline"``, and the ``kind`` field on the
+    unwrapped result (not the source name) is what selects the async shape."""
+    c = to_canonical({"kind": "run_pipeline_async", "run_id": "R42"}, source="run_pipeline")
     assert "R42" in c["text"], "async result keeps run_id (the completion-message handle)"
     assert "[pipeline]" in c["text"]
     assert c["attachments"] == []
