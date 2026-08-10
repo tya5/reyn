@@ -164,7 +164,7 @@ class _SiteDeclaration:
     measured_by: "tuple[str, ...]" = field(default=())
 
 
-_T3561 = "tests/test_3561_spawn_session_seam_reachability.py"
+_T3561 = "tests/runtime/test_3561_spawn_session_seam_reachability.py"
 _T3595_S1B = "tests/runtime/test_3595_step1b_external_producer_slash_reachability.py"
 _T3595_S2 = "tests/runtime/test_3595_s2_pipeline_nudge_origin.py"
 _TCLI = "tests/interfaces/test_chat_cli_flags.py"

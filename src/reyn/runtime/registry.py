@@ -2959,7 +2959,7 @@ class AgentRegistry:
         # tool denied, because THAT surface re-resolves with the sid on every read and
         # the enforcement path does not. Two surfaces, one of them decorative; the gap is
         # invisible from the operator's status bar.
-        # See tests/test_3561_spawn_session_seam_reachability.py.
+        # See tests/runtime/test_3561_spawn_session_seam_reachability.py.
         #
         # Injecting here rather than at each recovery site closes the class at the one
         # place every path shares: this is where the sid becomes known, so it is where

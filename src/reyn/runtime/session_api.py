@@ -199,7 +199,7 @@ def _build_agent_step_narrowing(
     nothing on it and the two keys built here were the child's WHOLE envelope. An
     invoker narrowed to ``tool_allow: [A]`` therefore handed a ``capabilities``-less
     agent step a worker with no allow-list at all — a widening, not a restriction,
-    and measured (``tests/test_3553_agent_step_worker_narrowing_inheritance.py``) as
+    and measured (``tests/runtime/test_3553_agent_step_worker_narrowing_inheritance.py``) as
     a denied tool's real side effect happening inside an agent step. The
     composition, not this function's own two keys, is what makes the claim true now,
     and only for the layers ``per_session_narrowing`` carries — see
