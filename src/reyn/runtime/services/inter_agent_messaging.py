@@ -492,7 +492,7 @@ class InterAgentMessaging:
                 requester=Requester(agent_name=from_agent, session_id=from_sid or "main"),
                 origin_depth=depth,
             )
-            self._chains.arm_timeout(
+            await self._chains.arm_timeout(
                 chain_id, on_fire=self._on_chain_timeout_fire,
             )
             return
@@ -830,7 +830,7 @@ class InterAgentMessaging:
             pending.waiting_on = {d["to"] for d in new_dispatched}
             await self._chains.update(chain_id, waiting_on=pending.waiting_on)
             # PR18: re-arm watchdog for the continued chain.
-            self._chains.arm_timeout(
+            await self._chains.arm_timeout(
                 chain_id, on_fire=self._on_chain_timeout_fire,
             )
             return

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, runtime_checkable
 
 from reyn.runtime.task_types import Requester, RunStatus
@@ -102,6 +103,19 @@ class _PendingChain:
     # (cancel_task) that finds `cancel is None` MUST NOT report success:
     # nothing is actually listening.
     cancel: "Callable[[], None] | None" = field(default=None, compare=False, repr=False)
+    # proposal 0067 P8 (#3978): the watchdog's absolute wall-clock deadline
+    # (aware UTC datetime) — persisted so a crash+restart RECOVERS the
+    # original deadline instead of extending it. Before P8, `restore()`
+    # called `arm_timeout()` exactly like a fresh arm, sleeping the FULL
+    # `chain_timeout_seconds` again regardless of how much of that window
+    # had already elapsed pre-crash — a crash near a chain's deadline could
+    # push it arbitrarily far out, silently. `None` for a chain that has
+    # never been armed (timeouts disabled, or armed before this field
+    # existed — pre-P8 WAL entries have no `arm_at` key; `restore()` falls
+    # back to a fresh full-duration arm for those, matching the pre-P8
+    # behavior exactly rather than guessing a deadline that was never
+    # recorded).
+    arm_at: "datetime | None" = None
 
 
 # ── Journal protocol ──────────────────────────────────────────────────────────
@@ -146,6 +160,14 @@ class ChainManager:
     max_hop_depth:
         Maximum allowed hop depth.  ChainManager stores this for callers;
         depth enforcement is the caller's responsibility.
+    clock_fn:
+        proposal 0067 P8 (#3978): callable returning an aware UTC
+        ``datetime`` — injectable for tests (mirrors
+        ``cron.scheduler.CronScheduler``'s identical seam: production omits
+        it and gets ``datetime.now(timezone.utc)``; a test advances a fake
+        clock instead of sleeping real wall-clock seconds — CLAUDE.md's
+        testing policy bans a wait-budget constant or a straight-line
+        ``sleep(N)`` as the thing that makes an assertion pass).
     """
 
     def __init__(
@@ -155,11 +177,13 @@ class ChainManager:
         events: Any,
         chain_timeout_seconds: float,
         max_hop_depth: int,
+        clock_fn: "Callable[[], datetime] | None" = None,
     ) -> None:
         self._journal = journal
         self._events = events
         self._chain_timeout_seconds = chain_timeout_seconds
         self.max_hop_depth = max_hop_depth
+        self._clock = clock_fn or (lambda: datetime.now(timezone.utc))
 
         self._chains: dict[str, _PendingChain] = {}
         self._timers: dict[str, asyncio.Task] = {}
@@ -389,25 +413,61 @@ class ChainManager:
 
     # ── timeout watchdog ──────────────────────────────────────────────────
 
-    def arm_timeout(
+    async def arm_timeout(
         self,
         chain_id: str,
         *,
         on_fire: Callable[[str], Awaitable[None]],
     ) -> None:
-        """Start a watchdog task for ``chain_id``.
+        """Start a FRESH watchdog task for ``chain_id`` — full
+        ``chain_timeout_seconds`` from now.
 
         No-op when timeouts are disabled (chain_timeout_seconds <= 0).
         Idempotent — replaces any existing timer for the same chain_id
         by cancelling it first.
+
+        proposal 0067 P8 (#3978): computes and PERSISTS ``arm_at`` (the
+        absolute wall-clock deadline this arm targets) via ``update()``
+        before scheduling the watchdog — async for this reason (was sync
+        pre-P8; all 4 call sites already run inside an ``async def`` with
+        nearby ``await``s). This is the FRESH-arm path: a chain being
+        armed for the first time, or re-armed with a full new window
+        (continuation / FP-0005 extension) — NOT the recovery path, which
+        must schedule against the ALREADY-persisted deadline instead of
+        computing a new one (see ``restore()``).
         """
         if self._chain_timeout_seconds <= 0:
             return
+        arm_at = self._clock() + timedelta(seconds=self._chain_timeout_seconds)
+        chain = self._chains.get(chain_id)
+        if chain is not None:
+            chain.arm_at = arm_at
+            await self._journal.record_chain_update(
+                chain_id=chain_id, fields={"arm_at": arm_at.isoformat()}
+            )
+        self._start_watchdog(
+            chain_id, on_fire=on_fire, duration_seconds=self._chain_timeout_seconds
+        )
+
+    def _start_watchdog(
+        self,
+        chain_id: str,
+        *,
+        on_fire: Callable[[str], Awaitable[None]],
+        duration_seconds: float,
+    ) -> None:
+        """Schedule the watchdog task for ``chain_id`` — no persistence,
+        no ``arm_at`` computation, just the ``asyncio.Task`` bookkeeping
+        ``arm_timeout()`` and ``restore()`` both need. Idempotent —
+        replaces any existing timer for the same chain_id by cancelling
+        it first."""
         existing = self._timers.pop(chain_id, None)
         if existing is not None and not existing.done():
             existing.cancel()
         self._timers[chain_id] = asyncio.create_task(
-            self._chain_timeout_watch(chain_id, on_fire=on_fire)
+            self._chain_timeout_watch(
+                chain_id, on_fire=on_fire, duration_seconds=duration_seconds
+            )
         )
 
     def cancel_timeout(self, chain_id: str) -> None:
@@ -423,7 +483,10 @@ class ChainManager:
         ``chain_timeout_fired`` append), and any callback already in-progress
         has settled. The chain state itself is untouched — ADR-0038 Stage 1c
         rewind quiescence uses this so no timeout append lands past the reset
-        seq; ``restore()`` re-arms fresh watchdogs from the recovered snapshot.
+        seq; ``restore()`` re-arms watchdogs from the recovered snapshot —
+        against the REMAINING time on each chain's persisted ``arm_at``
+        deadline where one exists (proposal 0067 P8, #3978), a fresh
+        window only for a chain with no persisted deadline to recover.
         """
         for task in list(self._timers.values()):
             if not task.done():
@@ -458,11 +521,21 @@ class ChainManager:
         chain_id: str,
         *,
         on_fire: Callable[[str], Awaitable[None]],
+        duration_seconds: float,
     ) -> None:
         """Internal watchdog coroutine.
 
-        Sleeps for ``chain_timeout_seconds``; if the chain is still pending
+        Sleeps for ``duration_seconds``; if the chain is still pending
         on wake, fires the timeout by calling ``on_fire(chain_id)``.
+
+        proposal 0067 P8 (#3978): ``duration_seconds`` is a PARAMETER, not
+        always ``self._chain_timeout_seconds`` — a fresh arm passes the
+        full window, but ``restore()`` passes whatever's LEFT of an
+        already-persisted ``arm_at`` deadline (possibly 0, if the deadline
+        already passed while the process was down — ``asyncio.sleep(0)``
+        yields once then fires immediately, so a past-due restored chain
+        times out on its very next scheduler tick rather than getting a
+        fresh full window).
 
         Cancellation (normal resolve path) raises CancelledError out of the
         sleep — this coroutine just exits cleanly.  Shutdown() gathers these
@@ -470,7 +543,7 @@ class ChainManager:
         is harmless.
         """
         try:
-            await asyncio.sleep(self._chain_timeout_seconds)
+            await asyncio.sleep(duration_seconds)
         except asyncio.CancelledError:
             return
         # Chain may have been resolved between sleep wake and pop.
@@ -491,8 +564,43 @@ class ChainManager:
     ) -> None:
         """Re-populate chains from journal.snapshot.pending_chains.
 
-        Reconstructs each _PendingChain and arms a fresh timeout watchdog.
+        Reconstructs each _PendingChain and arms its timeout watchdog.
         Call this after the journal has installed a recovered snapshot.
+
+        Stays SYNC deliberately (unlike ``arm_timeout()``, made async by
+        P8 to persist ``arm_at``): this method's own caller,
+        ``Session.restore_state()``, is reached from
+        ``AgentRegistry.get_or_load()`` — a synchronous method with its
+        own wide, largely-synchronous caller graph (11 call sites across
+        ``session.py``/``mcp/server.py``/``pipeline_executor_driver.py``/
+        CLI commands). Making ``restore()`` async here would cascade into
+        making ``get_or_load()`` async, a change with a blast radius far
+        outside P8's own scope — not attempted without an explicit design
+        decision (none was needed: the fix below needs no `await` at all).
+
+        proposal 0067 P8 (#3978): a chain with a persisted ``arm_at``
+        (present on every chain armed post-P8) schedules its watchdog for
+        WHATEVER REMAINS of that deadline — ``max(0.0, arm_at - now)`` —
+        via the low-level ``_start_watchdog()`` (no persistence, no new
+        ``arm_at`` — the already-correct one from the snapshot is kept
+        as-is). This is the fix P8 exists for: pre-P8, ``restore()``
+        called ``arm_timeout()`` exactly like a brand-new arm, so a crash
+        near a chain's deadline silently pushed it out by up to a full
+        ``chain_timeout_seconds`` window every time the process
+        restarted. A chain already past its deadline when restored
+        (``remaining <= 0``) still gets a watchdog —
+        ``asyncio.sleep(0)`` yields once then fires on the very next
+        tick, rather than either firing synchronously inside restore() (a
+        crash-recovery path has no business blocking on an on_fire
+        callback) or silently dropping the now-overdue timeout.
+
+        A chain with NO persisted ``arm_at`` (pre-P8 WAL entry, or armed
+        while timeouts were disabled) falls back to a fresh full-window
+        watchdog via ``_start_watchdog()`` directly — the exact pre-P8
+        behavior for that one case, unchanged (no deadline was ever
+        recorded to recover, and this path deliberately does NOT call
+        the now-async ``arm_timeout()``, precisely so ``restore()`` never
+        needs an ``await``).
         """
         for cid, chain_dict in self._journal.snapshot.pending_chains.items():
             # proposal 0067 P4e (#3978): the persisted "requester" key is a
@@ -514,6 +622,13 @@ class ChainManager:
                     agent_name=chain_dict.get("origin_agent", ""),
                     session_id=chain_dict.get("origin_sid") or "main",
                 )
+            # proposal 0067 P8 (#3978): "arm_at" is an ISO-8601 string on
+            # the wire (JSON has no datetime type); absent on a pre-P8
+            # entry or a chain never armed (timeouts were disabled at
+            # arm-time). fromisoformat() round-trips isoformat()'s own
+            # output exactly (both sides of this pair are this module).
+            arm_at_raw = chain_dict.get("arm_at")
+            arm_at = datetime.fromisoformat(arm_at_raw) if arm_at_raw else None
             self._chains[cid] = _PendingChain(
                 chain_id=chain_dict["chain_id"],
                 requester=requester,
@@ -521,5 +636,16 @@ class ChainManager:
                 original_request=chain_dict["original_request"],
                 waiting_on=set(chain_dict.get("waiting_on", [])),
                 kind=chain_dict.get("task_kind"),  # #3978 P4 (None for pre-P4 entries)
+                arm_at=arm_at,
             )
-            self.arm_timeout(cid, on_fire=on_fire)
+            if self._chain_timeout_seconds <= 0:
+                continue
+            if arm_at is not None:
+                remaining = max(0.0, (arm_at - self._clock()).total_seconds())
+                self._start_watchdog(
+                    cid, on_fire=on_fire, duration_seconds=remaining
+                )
+            else:
+                self._start_watchdog(
+                    cid, on_fire=on_fire, duration_seconds=self._chain_timeout_seconds
+                )
