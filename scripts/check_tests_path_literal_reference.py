@@ -151,10 +151,19 @@ _SCAN_SUFFIXES = frozenset({".py", ".md", ".yml", ".yaml", ".rst", ".txt", ".jso
 # (lead-coder review, #4065 follow-up): every file it records as moved
 # would cost one baseline entry here, forever, which is backwards for the
 # same reason rewriting CHANGELOG.md's history would be.
+#
+# scripts/flat_tests_arc_population.json (#3879 S5, #4072) is the SAME
+# shape again: a FROZEN, point-in-time snapshot of every flat filename
+# Stage 0 committed — most of them have since moved into a bucket by
+# design, so most of the 1,129 entries never resolve, and never should.
+# It carries no `to` field pointing anywhere current to fall back on
+# (unlike disposition.json's `moved` entries) — it is pure historical
+# population data, read-only, the same class as CHANGELOG.md.
 _EXCLUDED_FILES = frozenset({
     "CHANGELOG.md",
     "check_tests_path_literal_reference_baseline.json",
     "flat_tests_disposition.json",
+    "flat_tests_arc_population.json",
 })
 
 

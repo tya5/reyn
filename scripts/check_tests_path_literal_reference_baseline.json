@@ -1620,11 +1620,6 @@
     "class": "never-existed"
   },
   {
-    "file": "tests/gateway/test_api.py",
-    "literal": "tests/test_3595_step1b_external_producer_slash_reachability.py",
-    "class": "stale"
-  },
-  {
     "file": "tests/hooks/test_hook_composer.py",
     "literal": "tests/test_3180_durable_pending_store.py",
     "class": "stale"
@@ -1710,11 +1705,6 @@
     "class": "stale"
   },
   {
-    "file": "tests/interfaces/test_3300_p3_cancel_by_id.py",
-    "literal": "tests/test_3300_p2a_queue_state_publish.py",
-    "class": "stale"
-  },
-  {
     "file": "tests/interfaces/test_3310_n1_session_attached_barrier.py",
     "literal": "tests/test_agui_profile_completeness.py",
     "class": "stale"
@@ -1722,11 +1712,6 @@
   {
     "file": "tests/interfaces/test_3310_n2_reset_hydrate.py",
     "literal": "tests/test_2242_hard_cancel.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/interfaces/test_3310_n2_reset_hydrate.py",
-    "literal": "tests/test_3300_p2a_queue_state_publish.py",
     "class": "stale"
   },
   {
@@ -1855,11 +1840,6 @@
     "class": "stale"
   },
   {
-    "file": "tests/interfaces/test_textual_chat_intervention_panel_3299.py",
-    "literal": "tests/test_textual_chat_copy_rewind_3362.py",
-    "class": "stale"
-  },
-  {
     "file": "tests/interfaces/test_textual_chat_phase2_3273.py",
     "literal": "tests/test_textual_chat_row_contrast_3367.py",
     "class": "stale"
@@ -1897,11 +1877,6 @@
   {
     "file": "tests/llm/test_2608_run_loop_pickup.py",
     "literal": "tests/test_2608_h4_fs_watcher.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/llm/test_3792_pr2_router_loop_injection.py",
-    "literal": "tests/test_3792_pr2_session_injection.py",
     "class": "stale"
   },
   {
@@ -2227,11 +2202,6 @@
   {
     "file": "tests/security/test_codeact_runner_1593.py",
     "literal": "tests/test_sandbox_landlock.py",
-    "class": "stale"
-  },
-  {
-    "file": "tests/security/test_sandbox_axis_contract_2983.py",
-    "literal": "tests/test_sandbox_axis_contract_2983.py",
     "class": "stale"
   },
   {

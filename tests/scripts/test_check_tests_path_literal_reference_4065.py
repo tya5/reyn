@@ -132,6 +132,25 @@ def test_flat_tests_disposition_json_is_excluded_even_though_tracked(tmp_path) -
     assert offenders == []
 
 
+def test_flat_tests_arc_population_json_is_excluded_even_though_tracked(tmp_path) -> None:
+    """Tier 1: scripts/flat_tests_arc_population.json (#3879 S5, #4072) is
+    the same shape again — a FROZEN, point-in-time snapshot of every flat
+    filename Stage 0 committed. Most of its entries have since moved into
+    a bucket by design, so most never resolve, and never should; it has
+    no `to` field to fall back on (unlike disposition.json's `moved`
+    entries). Discovered live: rebasing #4068 onto #4072 turned this
+    single file into 1,121 offenders (lead-coder-independent, caught by
+    running the gate against the real post-#4072 tree)."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "flat_tests_arc_population.json").write_text(
+        json.dumps([_T + "test_long_since_moved.py"]) + "\n", encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    offenders = offending_references(tmp_path)
+    assert offenders == []
+
+
 # ── classify — the never-existed vs. stale discriminator ───────────────────
 
 
