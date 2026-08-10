@@ -156,8 +156,13 @@ async def test_resource_caller_state_factory_matches_router_loop_build(
     # side — proving the factory does NOT reach into loop-local state.
     assert from_loop.chain_id == "c1"
     assert from_factory.chain_id is None
-    assert from_loop.send_to_agent is not None
-    assert from_factory.send_to_agent is None
+    # send_to_agent (the original example here) removed in #4142 C — a
+    # RouterCallerState field with zero readers in src/reyn/tools/ (its
+    # sole prior consumer, delegate_to_agent, retired in proposal 0067 P6,
+    # #3978); list_agents_fn is the same "unconditionally loop-bound, no
+    # hasattr guard" shape _FakeHost above still exercises.
+    assert from_loop.list_agents_fn is not None
+    assert from_factory.list_agents_fn is None
 
 
 # ---------------------------------------------------------------------------
