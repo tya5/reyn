@@ -1127,18 +1127,6 @@ session_spawn_to_canonical = make_status_text_mapper(
 )
 
 
-def _render_delegate_to_agent(result: dict) -> str:
-    text = f"Dispatched to '{result.get('to', '')}'."
-    note = result.get("note")
-    return f"{text}\n{note}" if note else text
-
-
-# ``delegate_to_agent`` (tools/delegate_to_agent.py) — ``{status, to, note}``.
-delegate_to_agent_to_canonical = make_status_text_mapper(
-    render=_render_delegate_to_agent, meta_keys=("to",),
-)
-
-
 def _render_send_to_session(result: dict) -> str:
     # SUCCESS shape only ({status:"delivered", agent, session, wake}) — a
     # not-delivered result carries a truthy ``error`` field, so the shared

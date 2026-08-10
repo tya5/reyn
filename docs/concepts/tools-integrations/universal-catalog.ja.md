@@ -24,7 +24,7 @@ tool / memory entry / file op / indexed corpus / … — は **1 つの名前**
 **状態の更新: ツール提示は今や pluggable な scheme であり、単一の固定パスではありません。** Phase 6 (2026-05-16) 以降、wrapper-only path は一時的に唯一の production 挙動でしたが、後に owner による H1 fix が `chat` レイヤー自身のデフォルトを `enumerate-all`(wrapper なしの flat なツールリスト)に切り替えました — flat listing が `invoke_action` の name-hallucination を防ぐためです(30%→100% の non-hot-list tool-use 精度)。`universal-category`(このページの wrapper path)は登録済み scheme として残存し、operator が `reyn.yaml` で `tool_use.scheme: category` を設定すれば到達できます(FP-0066 P4b #3247 — presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。完全で現行のモデルは [Tool-Use Schemes](tool-use-schemes.md) を参照してください。以下のセクションは `universal-category` scheme 自体の仕組みを説明するものであり、どのレイヤーがそれをデフォルトで使うかではありません。(#2768 が死んだ phase-graph era の `step`/`phase` tool-use レイヤーを削除しました。)
 
 この wrapper path があるレイヤーで有効なとき、handler
-(`invoke_skill` / `delegate_to_agent` / `call_mcp_tool` / …) は wrapper
+(`invoke_skill` / `call_mcp_tool` / …) は wrapper
 の **backing implementation** として registry に残存 — `invoke_action`
 が `universal_dispatch.py` 経由で dispatch する。 Validation: dogfood
 batch 26 N=5 stability (= 32/35 = 91.4% verified、 Brier 0.177、

@@ -59,11 +59,14 @@ class _PendingChain:
     # main-case (user-initiated / external peer / pre-#2130 journal entries).
     origin_sid: "str | None" = None
     # proposal 0067 P4 (#3978): the task kind (prompt/pipeline/exec) this
-    # handle represents — None for a legacy delegate-relay chain (no typed
-    # task kind exists for that flow yet; P6 assigns one when
-    # delegate_to_agent's own completion is folded into this same
-    # substrate). ``describe_task``/``list_tasks`` read this; a handle
-    # registered with no ``kind`` is not yet describable as a typed task.
+    # handle represents — None for a delegate-relay chain, which stays
+    # OUTSIDE the task vocabulary permanently (architect ruling, #3978: a
+    # chain with |waiting_on| >= 1 registered via the old delegate_to_agent
+    # relay path is not a D1 task and never gets folded in — P6 retired the
+    # tool with no replacement producer, so no new such chains form, but
+    # already-registered/restored ones keep kind=None for their remaining
+    # lifetime). ``describe_task``/``list_tasks`` read this; a handle
+    # registered with no ``kind`` is not describable as a typed task.
     kind: "str | None" = None
     # proposal 0067 P4 (#3978): describe_task's status field (architect
     # ruling, 2026-08-10) — typed RunStatus, not a bare string, so a LATER
@@ -101,11 +104,12 @@ class _PendingChain:
         separate ``requester`` field would duplicate storage for the same
         fact. The RENAME (making ``origin_agent``/``origin_sid`` literally
         ``requester.agent_name``/``requester.session_id``) is deferred to
-        P6 (no consumer needs it before delegate_to_agent's own completion
-        folds into this substrate) — this read accessor lets P4's
-        ``describe_task`` consumer be satisfied today without committing to
-        that rename now; P6 changing the field names underneath won't
-        change this property's callers."""
+        run_prompt(collect="async")'s own PR (architect ruling, #3978: P6
+        retired delegate_to_agent with no fold — nothing consumes this
+        field's rename before that async producer exists) — this read
+        accessor lets P4's ``describe_task`` consumer be satisfied today
+        without committing to that rename now; a later PR changing the
+        field names underneath won't change this property's callers."""
         from reyn.runtime.task_types import Requester
 
         return Requester(agent_name=self.origin_agent, session_id=self.origin_sid or "main")
@@ -225,9 +229,10 @@ class ChainManager:
         kind:
             proposal 0067 P4 (#3978): the task kind (``"prompt"`` /
             ``"pipeline"`` / ``"exec"``) this handle represents, or
-            ``None`` for a legacy delegate-relay chain (no producer sets
-            this today — P6 assigns one when ``delegate_to_agent``'s own
-            completion folds into this substrate).
+            ``None`` for a delegate-relay chain — permanently outside the
+            task vocabulary (architect ruling, #3978: P6 retired
+            delegate_to_agent, the sole producer, with no fold; nothing
+            assigns this field for that flow, and nothing ever will).
         cancel:
             proposal 0067 P4 (#3978): the task's cooperative cancel hook
             (argument-zero), or ``None`` if this task cannot be cancelled
@@ -310,8 +315,11 @@ class ChainManager:
         (ADR-0040 D4: "push-at-settle with immediate deletion", "no
         retention, no clock"; the settle-path acceptance condition is
         exactly this — ONE settle function, no ``pipeline``/``run_id`` in
-        its signature, so P6 can point ``delegate_to_agent``'s own
-        chain-resolve completion at this SAME function later).
+        its signature). delegate_to_agent's own chain-resolve completion
+        never folds in here — architect ruling, #3978: P6 retired the tool
+        with no replacement producer, so its (already permanently
+        non-task, ``kind=None``) chains stay on ``resolve()``, not
+        ``settle()``.
 
         ``on_settle`` (proposal 0067 § Issuing / ADR-0040 D4①):
           - ``"deliver"`` — await ``deliver()`` (the caller's own delivery

@@ -89,7 +89,7 @@ async def test_orphaned_phase_only_tool_absent_under_enumerate_all(tmp_path, mon
     )
     # Sanity: the census is non-trivial (not accidentally emptied).
     assert "list_agents" in authorized_tools
-    assert "delegate_to_agent" in authorized_tools
+    assert "send_to_session" in authorized_tools
 
 
 @pytest.mark.asyncio
@@ -137,9 +137,11 @@ async def test_universal_category_expands_wrapper_to_reachable_capabilities(tmp_
     # tools= while the same capability stays reachable under its qualified
     # catalog name (``multi_agent__delegate``). Both names were the same
     # capability, so what that arm actually distinguished was two SPELLINGS of
-    # it, and with one spelling the distinction is not observable by name. The
-    # capability is reachable either way, which is what the census is for:
-    assert "delegate_to_agent" in authorized_tools
+    # it, and with one spelling the distinction is not observable by name.
+    # delegate_to_agent itself retired in proposal 0067 P6 (#3978) --
+    # send_to_session stands in as another router-only primitive reachable
+    # either way, which is what the census is for:
+    assert "send_to_session" in authorized_tools
     # ...and the wrapper's own plumbing name is still not (asserted above).
 
 
@@ -166,7 +168,9 @@ async def test_enumerate_all_shows_flattened_legacy_and_catalog_names(tmp_path, 
     authorized_tools = {i["name"] for i in state["authorized"] if i["kind"] == "tool"}
 
     # Legacy native name (literally advertised under enumerate-all).
-    assert "delegate_to_agent" in authorized_tools
+    # delegate_to_agent (the original example here) retired in proposal 0067
+    # P6 (#3978).
+    assert "send_to_session" in authorized_tools
     # Qualified catalog action (also literally advertised, flattened alongside it).
     assert "list_mcp_servers" in authorized_tools
     # #3224: enumerate-all's OWN build_presentation excludes this one qualified

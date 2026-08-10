@@ -105,12 +105,15 @@ def test_invoke_action_description_contains_agent_delegation_pattern() -> None:
     """Tier 2: invoke_action description carries the agent-delegation pattern.
 
     B23-PRE-1: ## Agent delegation SP subsection moved to invoke_action.description.
-    #1456: the pattern now names the canonical ``delegate_to_agent`` action
+    #1456: the pattern used to name the canonical ``delegate_to_agent`` action
     (the legacy ``agent.peer__<agent_name>`` was a collapsed category that no
     longer resolves — UnknownActionError — so the guidance pointed the LLM at a
-    dead name)."""
+    dead name). delegate_to_agent itself retired in proposal 0067 P6 (#3978) —
+    the guidance now redirects the LLM to run_prompt/send_to_session, which
+    are NOT invoke_action actions at all (router-only top-level tools), so
+    the description correctly says NOT to route delegation through here."""
     desc = _INVOKE_ACTION_DESCRIPTION
-    assert "delegate_to_agent" in desc
+    assert "run_prompt" in desc and "send_to_session" in desc
     assert "agent.peer__" not in desc  # #1456: stale dead-name removed
     # The description key or pattern
     assert "AGENT DELEGATION" in desc or "delegation" in desc.lower()

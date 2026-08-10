@@ -7,12 +7,11 @@ the network.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.session import Session, _PendingChain
+from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
@@ -27,26 +26,6 @@ def _text_result(text: str) -> LLMToolCallResult:
         content=text,
         tool_calls=[],
         finish_reason="stop",
-        usage=_EMPTY_USAGE,
-    )
-
-
-def _tool_result(calls: list[dict]) -> LLMToolCallResult:
-    tool_calls = [
-        {
-            "id": c.get("id", f"tc_{i}"),
-            "type": "function",
-            "function": {
-                "name": c["name"],
-                "arguments": json.dumps(c.get("args", {})),
-            },
-        }
-        for i, c in enumerate(calls)
-    ]
-    return LLMToolCallResult(
-        content=None,
-        tool_calls=tool_calls,
-        finish_reason="tool_calls",
         usage=_EMPTY_USAGE,
     )
 
@@ -67,49 +46,6 @@ def _drain_outbox(session: Session) -> list:
 
 def _run(coro):
     return asyncio.run(coro)
-
-
-class _StubSession:
-    """Minimal peer Session stub for delegate_to_agent tests.
-
-    Records submit_agent_request calls without invoking real session lifecycle.
-    Real Session instantiation pulls in the full agent/event/loop stack;
-    a stub is sufficient because the test only verifies the chain registration.
-    """
-
-    def __init__(self) -> None:
-        self.submitted_requests: list[tuple] = []
-
-    async def submit_agent_request(self, *args, **kwargs) -> None:
-        self.submitted_requests.append((args, kwargs))
-
-
-class _StubAgentRegistry:
-    """Minimal AgentRegistry stub for delegate_to_agent tests.
-
-    Pre-loads a single reachable peer agent and returns the supplied
-    target session from get_or_load. Real AgentRegistry boots the on-disk
-    registry catalog + permission graph; a stub is sufficient because the
-    test only verifies the chain registration side-effect.
-    """
-
-    def __init__(self, target_session: _StubSession) -> None:
-        self._target = target_session
-
-    def iter_reachable_agents(self, self_name: str) -> list[dict]:
-        return [{"name": "peer_agent", "role": "data analyst"}]
-
-    def exists(self, name: str) -> bool:
-        return True
-
-    def permit(self, from_agent: str, to_agent: str) -> bool:
-        return True
-
-    def get_or_load(self, name: str, *, is_delegate: bool = False) -> _StubSession:
-        return self._target
-
-    async def ensure_running(self, name: str) -> None:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -163,63 +99,21 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 3: delegate_to_agent registers pending chain
+# Test 3: (formerly) delegate_to_agent registers pending chain — deleted in
+# proposal 0067 P6 (#3978). This test dispatched `invoke_action(action_name=
+# "delegate_to_agent", ...)` inside `_handle_agent_request` and asserted a
+# nested PendingChain got registered via `inter_agent_messaging.py`'s
+# `dispatched = self._get_router_loop_delegations()` branch — a list
+# populated ONLY by RouterLoop's `send_to_agent` dispatch, which was
+# delegate_to_agent's own handler. With delegate_to_agent retired and no
+# replacement producer for this exact nested-delegation path (architect
+# ruling, #3978 P6), `_get_router_loop_delegations()` is now permanently
+# empty — the code this test exercised has no live producer. Six-question
+# test review: "who would miss this test" → nobody; the mechanism it probed
+# is dead, not merely relocated. run_pipeline(collect="async")'s own
+# ChainManager.register() call site (session_api.py) is covered separately
+# by tests/runtime/test_session_invariants.py, which drives it directly.
 # ---------------------------------------------------------------------------
-
-def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
-    """Tier 2: OS invariant — delegate_to_agent in _handle_agent_request registers a PendingChain with correct origin_agent and waiting_on fields.
-
-    Script: delegate_to_agent tool_call in _handle_agent_request context.
-    Assert _PendingChain registered with correct chain_id.
-    """
-    monkeypatch.chdir(tmp_path)
-
-    # Stub a registry with a single reachable peer.
-    target_session = _StubSession()
-    registry = _StubAgentRegistry(target_session)
-
-    session = make_session(
-        agent_name="test_agent",
-        registry=registry,
-        chat_tool_use_scheme="universal-category",  # #1657
-    )
-
-    rounds = [
-        _tool_result([{"name": "invoke_action", "args": {
-            "action_name": "delegate_to_agent",
-            "args": {"to": "peer_agent", "request": "process the data please"},
-        }}]),
-        _text_result("Delegated."),
-    ]
-
-    call_count = {"n": 0}
-
-    async def fake_llm(*args, **kwargs):
-        result = rounds[call_count["n"]]
-        call_count["n"] += 1
-        return result
-
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", fake_llm)
-
-    async def run():
-        await session._handle_agent_request({
-            "from_agent": "origin_agent",
-            "request": "can you delegate this?",
-            "depth": 1,
-            "chain_id": "chain-del-001",
-        })
-
-    _run(run())
-
-    # PR-refactor-session-1 wave 2: pending chains live in ChainManager.
-    # Observe via public ChainManager.get() — returns None if not registered.
-    pc = session._chains.get("chain-del-001")
-    assert pc is not None, (
-        f"_PendingChain not registered; registered chains: {session._chains.all_chain_ids()}"
-    )
-    assert isinstance(pc, _PendingChain)
-    assert pc.origin_agent == "origin_agent"
-    assert "peer_agent" in pc.waiting_on
 
 
 # ---------------------------------------------------------------------------

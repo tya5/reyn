@@ -8,9 +8,6 @@ used. patch() is only called with real callables (policy: Mock vs Fake).
 """
 from __future__ import annotations
 
-import json
-from typing import Any
-
 import pytest
 
 from reyn.runtime.router_loop import _UNIVERSAL_WRAPPER_NAMES, RouterLoop, _build_hot_list_aliases
@@ -166,36 +163,38 @@ async def test_list_memory_top_level():
 
 
 @pytest.mark.asyncio
-async def test_delegate_to_agent(monkeypatch):
-    """Tier 2: OS invariant — RouterLoop exits after first delegate_to_agent dispatch and emits awaiting-peer-reply status; does not iterate further in the same turn.
+async def test_async_tool_dispatch_exits_the_loop(monkeypatch):
+    """Tier 2: OS invariant — RouterLoop exits after first async-dispatch-kind
+    tool call and does not iterate further in the same turn.
 
-    Earlier (pre-PR-tui-4-followup) the loop continued and the LLM
-    re-delegated each iteration until the cap was exhausted. Fix:
-    after a successful delegate dispatch, RouterLoop emits a status
-    note and returns; PR14 pending_chain re-invokes router with the
-    peer reply later.
+    delegate_to_agent (the original async tool this test drove) retired in
+    proposal 0067 P6 (#3978) — spawn_session is the surviving async tool
+    (dispatch_kind="async") and exercises the SAME generic RouterLoop
+    mechanism this test targets: after a successful async dispatch,
+    RouterLoop returns without consuming further rounds; the actual
+    completion arrives via a separate later mechanism.
     """
-    host = FakeRouterHost(agents=[{"name": "peer_agent", "role": "data agent"}])
+    host = FakeRouterHost()
     loop = make_loop(host)
 
     rounds = [
         tool_result([{
-            "name": "delegate_to_agent",
-            "args": {"to": "peer_agent", "request": "please process the data"},
+            "name": "spawn_session",
+            "args": {"request": "please process the data", "mode": "ephemeral"},
         }]),
         # Subsequent rounds intentionally not consumed — loop must exit
-        # after the delegate dispatch.
+        # after the async dispatch.
         text_result("Should not reach this round."),
     ]
     scripted = _ScriptedLLM(rounds)
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("send to peer", [])
+    await loop.run("spawn a session", [])
 
-    (agent_send,) = host.agent_sends
-    assert agent_send["to"] == "peer_agent"
-    assert agent_send["request"] == "please process the data"
-    assert agent_send["chain_id"] == "chain-test"
+    (spawn_call,) = host.spawn_calls
+    assert spawn_call["request"] == "please process the data"
+    assert spawn_call["mode"] == "ephemeral"
+    assert spawn_call["chain_id"] == "chain-test"
     # Only the first LLM call ran; the second round was never consumed.
     assert scripted.call_count == 1
     # B55 R-7: outbox shows a `[task_spawned] kind=prompt ...`
@@ -213,29 +212,28 @@ async def test_delegate_to_agent(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_delegate_does_not_re_delegate_in_same_turn(monkeypatch):
-    """Tier 2: OS invariant — RouterLoop.run() exits after first delegate dispatch even if LLM keeps emitting delegate calls; exactly one dispatch occurs regardless of max_iterations.
-
-    Real LLM behavior (dogfood verify): with the old code the LLM saw
-    `{status: dispatched}`, didn't realize the peer reply would arrive
-    asynchronously, and re-delegated each iteration until the cap fired.
-    Now we exit after the first delegate so pending_chain can take over.
-    """
-    host = FakeRouterHost(agents=[{"name": "peer", "role": "x"}])
+async def test_async_tool_does_not_redispatch_in_same_turn(monkeypatch):
+    """Tier 2: OS invariant — RouterLoop.run() exits after first async
+    dispatch even if the LLM keeps emitting the same async tool call;
+    exactly one dispatch occurs regardless of max_iterations.
+    delegate_to_agent (the original async tool this test drove) retired in
+    proposal 0067 P6 (#3978) — spawn_session exercises the same generic
+    exit-after-async-dispatch mechanism."""
+    host = FakeRouterHost()
     loop = make_loop(host, max_iterations=5)
 
-    # If the loop kept iterating it would call delegate 5 times.
-    delegate_round = tool_result([{
-        "name": "delegate_to_agent",
-        "args": {"to": "peer", "request": "do work"},
+    # If the loop kept iterating it would call spawn_session 5 times.
+    spawn_round = tool_result([{
+        "name": "spawn_session",
+        "args": {"request": "do work", "mode": "ephemeral"},
     }])
-    scripted = _ScriptedLLM([delegate_round] * 5)
+    scripted = _ScriptedLLM([spawn_round] * 5)
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
-    await loop.run("delegate", [])
+    await loop.run("spawn", [])
 
-    # Exactly one delegate dispatch; loop exited after the first iteration.
-    (only_send,) = host.agent_sends
+    # Exactly one spawn dispatch; loop exited after the first iteration.
+    (only_spawn,) = host.spawn_calls
     assert scripted.call_count == 1
 
 
@@ -244,59 +242,61 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round(monkeypatch):
     """Tier 2: OS invariant — duplicate async tool_calls (same name, same
     args) in a single LLM round are deduped before dispatch (F5 fix).
 
-    Weak models (e.g. gemini-2.5-flash-lite) sometimes emit
-    `delegate_to_agent` twice with identical arguments in one tool_calls
-    list. Without dedupe, the peer's inbox would receive the same
-    request twice, doubling cost and confusing the chain. After dedupe,
-    exactly one send_to_agent runs and a `tool_call_deduped` audit event
-    is emitted for the suppressed call.
+    delegate_to_agent (the original async tool this test drove) retired in
+    proposal 0067 P6 (#3978) — spawn_session is the surviving async tool
+    and exercises the SAME generic dedupe mechanism. Weak models (e.g.
+    gemini-2.5-flash-lite) sometimes emit the same async tool call twice
+    with identical arguments in one tool_calls list. Without dedupe, the
+    dispatch would run twice, doubling cost. After dedupe, exactly one
+    dispatch runs and a `tool_call_deduped` audit event is emitted for the
+    suppressed call.
     """
-    host = FakeRouterHost(agents=[{"name": "peer", "role": "x"}])
+    host = FakeRouterHost()
     loop = make_loop(host)
 
-    # Two identical delegate_to_agent calls in the same round.
+    # Two identical spawn_session calls in the same round.
     duplicate_round = tool_result([
-        {"id": "tc_a", "name": "delegate_to_agent",
-         "args": {"to": "peer", "request": "do work"}},
-        {"id": "tc_b", "name": "delegate_to_agent",
-         "args": {"to": "peer", "request": "do work"}},
+        {"id": "tc_a", "name": "spawn_session",
+         "args": {"request": "do work", "mode": "ephemeral"}},
+        {"id": "tc_b", "name": "spawn_session",
+         "args": {"request": "do work", "mode": "ephemeral"}},
     ])
     scripted = _ScriptedLLM([duplicate_round])
 
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
     await loop.run("send", [])
 
-    # Only one send_to_agent — duplicate suppressed.
-    (agent_send,) = host.agent_sends
-    assert agent_send["to"] == "peer"
-    assert agent_send["request"] == "do work"
+    # Only one spawn_session dispatch — duplicate suppressed.
+    (spawn_call,) = host.spawn_calls
+    assert spawn_call["request"] == "do work"
+    assert spawn_call["mode"] == "ephemeral"
     # Audit event records the suppressed call.
     deduped_events = [
         e for e in host.events.emitted  # type: ignore[attr-defined]
         if e["type"] == "tool_call_deduped"
     ]
     (deduped_evt,) = deduped_events
-    assert deduped_evt["name"] == "delegate_to_agent"
+    assert deduped_evt["name"] == "spawn_session"
     assert deduped_evt["reason"] == "duplicate_async_in_round"
 
 
 @pytest.mark.asyncio
 async def test_dedupe_does_not_collapse_distinct_async_args(monkeypatch):
     """Tier 2: OS invariant — async tool_calls with different args are
-    NOT deduped (F5 false-positive guard).
-
-    Two `delegate_to_agent` calls to the same peer with different
-    `request` payloads must both dispatch — they're legitimately distinct
-    work items.
+    NOT deduped (F5 false-positive guard). delegate_to_agent (the original
+    async tool this test drove) retired in proposal 0067 P6 (#3978) —
+    spawn_session exercises the same generic mechanism: two calls with
+    different `request` payloads must both dispatch — they're legitimately
+    distinct work items.
     """
-    host = FakeRouterHost(agents=[{"name": "peer", "role": "x"}])
+    host = FakeRouterHost()
     loop = make_loop(host)
 
     distinct_round = tool_result([
-        {"id": "tc_a", "name": "delegate_to_agent",
-         "args": {"to": "peer", "request": "task A"}},
-        {"id": "tc_b", "name": "delegate_to_agent",
-         "args": {"to": "peer", "request": "task B"}},
+        {"id": "tc_a", "name": "spawn_session",
+         "args": {"request": "task A", "mode": "ephemeral"}},
+        {"id": "tc_b", "name": "spawn_session",
+         "args": {"request": "task B", "mode": "ephemeral"}},
     ])
     scripted = _ScriptedLLM([distinct_round])
 
@@ -304,7 +304,7 @@ async def test_dedupe_does_not_collapse_distinct_async_args(monkeypatch):
     await loop.run("send two tasks", [])
 
     # Both dispatch — different args.
-    requests = sorted(s["request"] for s in host.agent_sends)
+    requests = sorted(s["request"] for s in host.spawn_calls)
     assert requests == ["task A", "task B"]
     # No dedupe events.
     deduped_events = [

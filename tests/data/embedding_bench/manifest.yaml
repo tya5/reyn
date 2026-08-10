@@ -119,13 +119,27 @@ fixtures:
 
   # ── multi_agent (1 entry) ─────────────────────────────────────────────────
 
+  # delegate_to_agent (the original expected_action here) retired in
+  # proposal 0067 P6 (#3978) — run_prompt is its successor for "ask a
+  # peer agent to do X and get the reply back" (delegation-policy.md's
+  # re-delegation floor pairs run_prompt + send_to_session as the two
+  # survivors). Both require an already-live target session rather than
+  # delegate_to_agent's bare agent-name addressing, so the realistic
+  # reach path now resolves the agent's session first — and, unlike
+  # delegate_to_agent, run_prompt does not enumerate in the STATIC
+  # (router_state=None) catalog, so this fixture moved from
+  # axis:[precision] to axis:[call_rate] (test_embedding_bench_manifest.py's
+  # own documented escape hatch: "move to a non-precision axis" for
+  # dynamic-enumeration-only actions), matching the existing call_rate-only
+  # convention used below for discovery-path-matters-more-than-invoke cases.
   - id: agent_delegation_simple
     source: dogfood/scenarios/multi_agent_and_mcp.yaml
     prompt: "researcher エージェントに FP-0001 の概要を要約してもらって。"
-    expected_action: delegate_to_agent
+    expected_action: run_prompt
     expected_reach_path:
-      - 'delegate_to_agent({to: "researcher", request: "FP-0001 の概要を要約"})'
-    axis: [precision]
+      - 'describe_agent({name: "researcher"})'
+      - 'run_prompt({agent: "researcher", session: "main", prompt: "FP-0001 の概要を要約"})'
+    axis: [call_rate]
 
   # ── multi_agent (additional 2 entries) ────────────────────────────────────
 

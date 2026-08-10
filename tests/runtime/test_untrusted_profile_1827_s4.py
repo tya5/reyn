@@ -33,8 +33,8 @@ def test_builtin_denies_side_effecting_surfaces():
     contextual, _ = resolve_profile(prof)
     layer = ContextualLayer(contextual)
     for denied in (
-        "remember_shared", "delegate_to_agent",
-        "delegate_to_agent", "exec", "mcp_install_registry",
+        "remember_shared", "run_prompt",
+        "send_to_session", "exec", "mcp_install_registry",
     ):
         assert layer.allows(CapabilityAxis.TOOL, denied) is False, denied
     # a read/query tool is NOT denied by the built-in (read + reason is allowed)
@@ -45,7 +45,7 @@ def test_load_untrusted_returns_builtin_when_no_override(tmp_path: Path):
     """Tier 2: with no _untrusted.yaml the secure built-in default is used."""
     prof = load_untrusted_profile(tmp_path)
     assert prof.name == UNTRUSTED_PROFILE_NAME
-    assert "delegate_to_agent" in prof.tool_deny
+    assert "run_prompt" in prof.tool_deny and "send_to_session" in prof.tool_deny
 
 
 def test_load_untrusted_honors_override(tmp_path: Path):
@@ -65,7 +65,7 @@ def test_load_untrusted_malformed_falls_back_to_builtin(tmp_path: Path):
     d.mkdir(parents=True)
     (d / "_untrusted.yaml").write_text("name: [unclosed\n", encoding="utf-8")
     prof = load_untrusted_profile(tmp_path)
-    assert "delegate_to_agent" in prof.tool_deny  # built-in restored
+    assert "run_prompt" in prof.tool_deny  # built-in restored
 
 
 # ── the seam-agnostic tainted derivation ────────────────────────────────────

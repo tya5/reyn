@@ -167,7 +167,8 @@ tool_allow: null       # 拒否リストのみ
 tool_deny:
   - exec
   - remember_shared
-  - delegate_to_agent
+  - run_prompt
+  - send_to_session
 ```
 
 **どちらの綴りで書いても、両方が deny されます。** `delegate_to_agent` と

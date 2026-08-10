@@ -76,34 +76,16 @@ def test_invoke_action_does_not_map_cluster_onto_path() -> None:
     )
 
 
-def test_invoke_action_does_not_rename_message_to_request() -> None:
-    """Tier 2: #3429 — the undeclared ``message`` → ``request`` remap is gone.
-
-    ``delegate_to_agent``'s schema declares ``request``; ``message`` was a
-    pre-#882 compatibility alias that only the qualified spelling honoured, so
-    a ``message`` call must NOT arrive at the handler as a ``request``."""
-    observed: list[dict] = []
-
-    async def _send_to_agent(*args, **kwargs):
-        observed.append({"args": args, "kwargs": dict(kwargs)})
-        return {"status": "ok"}
-
-    ctx = _ctx(send_to_agent=_send_to_agent)
-    try:
-        asyncio.run(_handle_invoke_action(
-            {
-                "action_name": "delegate_to_agent",
-                "args": {"to": "agent1", "message": "hello"},
-            },
-            ctx,
-        ))
-    except KeyError:
-        # The handler reads its schema-declared ``request`` and does not find
-        # one, which is the observable form of "nothing renamed ``message``".
-        # (A missing REQUIRED arg surfacing as a raise is the handler's
-        # pre-existing behaviour on every route, not something #3429 changed.)
-        pass
-    assert observed == [], (
-        "delegate_to_agent was reached with a request built from 'message' — "
-        f"the transform layer #3429 removed is back: {observed!r}"
-    )
+# test_invoke_action_does_not_rename_message_to_request (formerly here) —
+# deleted in proposal 0067 P6 (#3978). It dispatched
+# ``action_name="delegate_to_agent"`` to pin that #3429's undeclared
+# ``message`` → ``request`` remap stayed gone. delegate_to_agent retired
+# with no replacement action_name sharing that specific historical
+# message/request alias, so the route this test dispatched through is now
+# unreachable from any live caller — the six-question test-review
+# discriminator ("who would miss this test") answers nobody: the transform
+# layer it guarded against can't be exercised through a dead action_name
+# either way. test_invoke_action_forwards_args_verbatim and
+# test_invoke_action_does_not_map_cluster_onto_path above still cover the
+# general "invoke_action does not remap undeclared args" property through
+# live routes.

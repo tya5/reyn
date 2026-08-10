@@ -40,7 +40,7 @@ from `_FLOORED_DENY_CLASSES`):
 
 | Class | Denied tools | Rationale |
 |-------|-------------|-----------|
-| `re-delegation` | `delegate_to_agent`, `run_prompt`, `send_to_session` | Prevent an unbound delegate from reaching into another agent's context — `run_prompt` (proposal 0067 P4d, #4117) and `send_to_session` (P5, #4101) both do this the same way `delegate_to_agent` does; `send_to_session`'s `wake=False` is included (architect ruling, 2026-08-10) |
+| `re-delegation` | `run_prompt`, `send_to_session` | Prevent an unbound delegate from reaching into another agent's context (formerly `delegate_to_agent`, retired proposal 0067 P6, #3978) — `run_prompt` (P4d, #4117) and `send_to_session` (P5, #4101) both do this the same way, `send_to_session`'s `wake=False` included (architect ruling, 2026-08-10) |
 | `exec` | `exec` | Execution requires explicit operator authorization |
 | `mcp-install` | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` | MCP server installation is a high-privilege, operator-controlled action |
 | `skill-install` | `skill_install_local`, `skill_install_source` | Registering skills from untrusted content is a persistence vector (#2548); mirrors `mcp-install` |
@@ -97,8 +97,8 @@ capability profiles for re-grants of dangerous classes.
 **OPT-A reachability-precise scoping**: only roles with an inbound `can_send`
 edge (= actual delegation targets in the A2A request path) are flagged. An
 outbound-only role (e.g. a hierarchy's top coordinator that legitimately holds
-`delegate_to_agent`) has no inbound delegation path and is not a delegation
-target — it is not flagged, avoiding a false HIGH exit.
+`run_prompt`/`send_to_session`) has no inbound delegation path and is not a
+delegation target — it is not flagged, avoiding a false HIGH exit.
 
 **`_delegate.yaml` override**: the override file is scanned unconditionally
 (no reachability check needed — it is the global unbound-delegate floor).
@@ -126,7 +126,7 @@ the runtime floor uses, so the audit and the floor cannot drift apart.
 
 | Class | Severity | Tools |
 |-------|----------|-------|
-| `re-delegation` | HIGH | `delegate_to_agent`, `run_prompt`, `send_to_session` |
+| `re-delegation` | HIGH | `run_prompt`, `send_to_session` |
 | `exec` | HIGH | `exec` |
 | `mcp-install` | HIGH | `mcp_install_registry`, `mcp_install_package`, `mcp_install_local` |
 | `skill-install` | HIGH | `skill_install_local`, `skill_install_source` |

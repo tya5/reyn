@@ -80,18 +80,20 @@ def test_every_floored_name_is_in_the_floor() -> None:
             assert name in _BUILTIN_UNTRUSTED_DENY, f"{cls}: {name!r} missing from floor"
 
 
-def test_re_delegation_names_all_three_reach_effects() -> None:
+def test_re_delegation_names_both_reach_effects() -> None:
     """Tier 2: architect catch (#3978, on the #4117/#4122 merge-order
     conflict) — the vacuity guard above catches a class going EMPTY, not one
     losing a MEMBER while staying non-empty. #4117 (P4d) added
-    ``run_prompt`` and #4122 (this PR) added ``send_to_session`` to the same
+    ``run_prompt`` and #4122 added ``send_to_session`` to the same
     ``"re-delegation"`` frozenset LITERAL, in two parallel PRs; resolving
     that conflict by silently keeping only one side's addition would leave
     the class non-empty (so the vacuity guard stays green) while a real
-    reach-another-agent's-context tool goes unfloored. Names all three
-    directly rather than relying on set-membership-implies-completeness."""
+    reach-another-agent's-context tool goes unfloored. Names both directly
+    rather than relying on set-membership-implies-completeness.
+    delegate_to_agent (the original third member) retired in proposal 0067
+    P6 (#3978)."""
     assert _FLOORED_TOOLS["re-delegation"] == frozenset({
-        "delegate_to_agent", "run_prompt", "send_to_session",
+        "run_prompt", "send_to_session",
     })
 
 

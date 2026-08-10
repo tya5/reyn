@@ -277,8 +277,8 @@ async def test_run_pipeline_unknown_tool_step_fails_clearly(tmp_path: Path) -> N
 def test_agent_step_narrowing_denies_run_pipeline() -> None:
     """Tier 2: OS invariant (R6 S3) — a pipeline's agent step is a spawn-tree
     LEAF: its narrowing structurally denies run_pipeline (nesting is
-    call-only), same posture as the pre-existing delegate_to_agent deny.
-    Purely structural — inspects the deny-set the narrowing builds."""
+    call-only). Purely structural — inspects the deny-set the narrowing
+    builds. delegate_to_agent (the deny-set's former other member) retired
+    in proposal 0067 P6 (#3978), with no replacement here."""
     narrowing = _build_agent_step_narrowing(None)
     assert "run_pipeline" in narrowing["tool_deny"]
-    assert "delegate_to_agent" in narrowing["tool_deny"]

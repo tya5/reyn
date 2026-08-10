@@ -64,8 +64,8 @@ def test_tainted_composes_untrusted_and_denies(tmp_path):
     eff = s._effective_contextual_for_turn()
     assert eff is not None
     # the dangerous side-effecting surfaces are now denied (context-auto)
-    for denied in ("remember_shared", "delegate_to_agent",
-                   "exec", "exec"):
+    for denied in ("remember_shared", "run_prompt",
+                   "send_to_session", "exec"):
         assert tool_contextually_denied(eff, denied), denied
     # a read tool stays allowed
     assert not tool_contextually_denied(eff, "web_fetch")

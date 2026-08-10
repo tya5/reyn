@@ -96,12 +96,14 @@ class UnknownActionError(ValueError):
 _CATEGORY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     # Phase 1 follow-up (2026-05-25): the old ``agent.peer`` resource category
     # collapsed into three verbs whose args carry the agent name explicitly.
-    # #3429: ``list_agents`` used to accept a ``cluster`` arg and
-    # ``delegate_to_agent`` a ``message`` arg through this category's two arg
-    # transformers — neither appeared in the advertised schema, so they were
-    # capability only the qualified spelling had. Both are dropped with the
-    # spelling; the schemas (``path``, ``request``) are the contract.
-    "multi_agent": ("list_agents", "describe_agent", "delegate_to_agent"),
+    # #3429: ``list_agents`` used to accept a ``cluster`` arg through this
+    # category's arg transformer — it never appeared in the advertised
+    # schema, so it was capability only the qualified spelling had. Dropped
+    # with the spelling; the schema (``path``) is the contract.
+    # ``delegate_to_agent`` retired (proposal 0067 P6, #3978) — see
+    # ``send_to_session``/``run_prompt`` for the surviving reach-another-
+    # agent's-context verbs.
+    "multi_agent": ("list_agents", "describe_agent"),
     # Issue #879 — a single ``mcp`` category. 2026-05-25 install-surface
     # refactor: ``install_server`` split along the SOURCE axis into three verbs
     # (registry / public package channel / local script), and

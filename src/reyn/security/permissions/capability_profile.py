@@ -391,19 +391,16 @@ _FLOORED_TOOLS: "dict[str, frozenset[str]]" = {
     # mcp/skill/pipeline-install bar registration REGARDLESS of whether the
     # called tool's own work then runs under the invoker's narrowed identity
     # (pipeline-install's own comment already draws that exact distinction).
-    # send_to_session (proposal 0067 P5, #4101) and run_prompt (P4d, #4117)
-    # both reach ANOTHER agent's context the same way delegate_to_agent
-    # does — only the name differs — and BOTH now land here, together with
-    # delegate_to_agent (#4117 added run_prompt in the same PR as the tool
-    # itself, avoiding a window where the tool exists but nothing denies it
-    # from untrusted content; this file's own #4122 added send_to_session
-    # separately, since it predates run_prompt's own PR). send_to_session
-    # (wake=False) is included: it queues a string into a peer's NEXT turn
-    # silently (no immediate wake), which is the quieter, not the safer,
-    # form of the same injection path. No argument-conditioned deny (e.g.
-    # wake= alone) — the classifier must not depend on input from the very
-    # content being classified.
-    "re-delegation": frozenset({"delegate_to_agent", "run_prompt", "send_to_session"}),
+    # delegate_to_agent retired in proposal 0067 P6 (#3978) — run_prompt
+    # (P4d, #4117) and send_to_session (P5, #4101) already carried this
+    # floor's own rationale forward (#4117/#4122), so retiring the original
+    # namesake tool leaves the class non-empty. send_to_session (wake=False)
+    # stays included: it queues a string into a peer's NEXT turn silently
+    # (no immediate wake), which is the quieter, not the safer, form of the
+    # same injection path. No argument-conditioned deny (e.g. wake= alone)
+    # — the classifier must not depend on input from the very content being
+    # classified.
+    "re-delegation": frozenset({"run_prompt", "send_to_session"}),
     # code execution. #3226 Phase 1: the #2593 pipeline DSL `shell` tool
     # (thin sugar over sandboxed_exec, same subprocess-exec threat surface)
     # was removed outright — it was the sole `/bin/sh -c <str>` injection

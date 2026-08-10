@@ -34,7 +34,7 @@ for the full, current model — the sections below describe the
 (#2768 removed the dead phase-graph-era `step`/`phase` tool-use layers.)
 
 When this wrapper path is active for a layer, the handlers (`invoke_skill` /
-`delegate_to_agent` / `call_mcp_tool` / …) remain in the registry as
+`call_mcp_tool` / …) remain in the registry as
 **backing implementations** of the universal wrappers — `invoke_action`
 dispatches to them through `universal_dispatch.py`. Validation:
 dogfood batch 26 N=5 stability (= 32/35 = 91.4% verified, Brier 0.177,

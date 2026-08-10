@@ -49,12 +49,12 @@ describe_agent = ToolDescription(
     ),
     text=(
         "Fetch full role / capabilities profile for one agent. "
-        "Call before delegate_to_agent if uncertain."
+        "Call before run_prompt/send_to_session if uncertain it fits."
     ),
     ja=(
         "1つのエージェントの完全な役割・能力プロファイルを取得する。"
-        "delegate_to_agent の前に、そのエージェントが適任か不確かな場合"
-        "に呼ぶ。"
+        "run_prompt/send_to_session の前に、そのエージェントが適任か"
+        "不確かな場合に呼ぶ。"
     ),
 )
 
@@ -106,21 +106,19 @@ invoke_action = ToolDescription(
         "'error', or any non-'finished' value with result.error present) "
         "indicate the task did not complete normally. "
         ""
-        "AGENT DELEGATION: For peer agent delegation, use "
-        "action_name='delegate_to_agent' with args {to: '<agent_name>', "
-        "request: ...}; get its canonical args via "
-        "describe_action(action_name='delegate_to_agent'). "
-        "Use when task is outside available actions but matches a peer agent's role, "
-        "or when user explicitly addresses a named agent. "
-        "Acknowledge delegation in 1 sentence."
+        "AGENT DELEGATION: peer agent delegation is NOT an invoke_action "
+        "action — call run_prompt (wait for a reply) or send_to_session "
+        "(fire-and-forget) directly as their own top-level tools, not "
+        "through invoke_action."
     ),
     ja=(
         "名前でアクションを実行する。MCP ツー"
         "ル・ファイル操作・ウェブ検索・メモリ書き込み・意味検索など、"
         "あらゆるカテゴリのアクションはこの単一のディスパッチ入口を通"
         "して実行される。未知の action_name にはエラーと類似名の提案が"
-        "返る。ピアエージェントへの委任は "
-        "action_name='delegate_to_agent' を使う。"
+        "返る。ピアエージェントへの委任は invoke_action のアクションでは"
+        "なく、run_prompt（応答を待つ）または send_to_session（配送のみ）"
+        "を、それぞれの単独のトップレベルツールとして直接呼ぶ。"
     ),
 )
 
@@ -141,12 +139,12 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "action_name": ParamDescription(
             text=(
                 "Name of the action to invoke (e.g. 'read_file', "
-                "'delegate_to_agent'), as returned by list_actions or "
+                "'web_search'), as returned by list_actions or "
                 "search_actions."
             ),
             ja=(
                 "呼び出すアクションの名前（例 'read_file', "
-                "'delegate_to_agent'）。list_actions / search_actions が返す名前。"
+                "'web_search'）。list_actions / search_actions が返す名前。"
             ),
         ),
         "args": ParamDescription(

@@ -18,7 +18,7 @@ Reyn does not have a single multi-agent feature. It has two distinct composition
 │            (external MCP clients call INTO Reyn agents)          │
 │              ↑ list_agents()  ↑ send_to_agent(name, msg)         │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 3:  delegate_to_agent                                     │
+│  Layer 3:  run_prompt / send_to_session                          │
 │            (agent → agent, in-process, chain_id correlated)      │
 └──────────────────────────────────────────────────────────────────┘
                 Both layers enforce: P4 + P6 + permissions
@@ -28,7 +28,7 @@ Reyn does not have a single multi-agent feature. It has two distinct composition
 
 | Layer | Mechanism | Wiring | Boundary | Typical use | Reference |
 |-------|-----------|--------|----------|-------------|-----------|
-| 3 | `delegate_to_agent` | runtime + topology | same-process | specialist hand-off ("research agent → writer agent") | [../multi-agent/topology.md](../multi-agent/topology.md) |
+| 3 | `run_prompt` / `send_to_session` | runtime + topology | same-process | specialist hand-off ("research agent → writer agent") | [../multi-agent/topology.md](../multi-agent/topology.md) |
 | 4 | `reyn mcp serve` | runtime | external client | exposing agent fleet to Claude Code, Cursor, or any MCP-aware client | [../tools-integrations/mcp.md](../tools-integrations/mcp.md) |
 
 ### What stays the same across both layers
@@ -39,7 +39,7 @@ Reyn does not have a single multi-agent feature. It has two distinct composition
 
 ### When to pick which layer
 
-- "Different specialist roles, each talking to each other" → **Layer 3** (`delegate_to_agent`)
+- "Different specialist roles, each talking to each other" → **Layer 3** (`run_prompt` / `send_to_session`)
 - "Outside MCP-aware tools (Claude Code, Cursor, OpenAI Agents SDK, etc.) need to call my agents" → **Layer 4** (`reyn mcp serve`)
 
 ## What is an agent?

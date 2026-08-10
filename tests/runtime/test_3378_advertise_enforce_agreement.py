@@ -151,7 +151,7 @@ def test_ephemeral_contextual_denied_tool_is_rejected_on_every_call_shape() -> N
         max_iterations=3,
         contextual_permission=contextual,
     )
-    target = "delegate_to_agent"
+    target = "run_prompt"
     assert target in contextual.tool_deny
 
     native = _call(loop, target, {"to": "peer", "request": "leak"})
@@ -241,7 +241,7 @@ def test_falsify_target_is_absent_from_exclude_tools(shape: str) -> None:
     the rejection in the sibling test comes solely from the ephemeral contextual.
     """
     loop = RouterLoop(host=FakeRouterHost(), chain_id="c-3378", max_iterations=3)
-    target = "delegate_to_agent"
+    target = "run_prompt"
     if shape == "native":
         result = _call(loop, target, {"to": "peer", "request": "hi"})
     else:
@@ -271,7 +271,7 @@ def test_intra_turn_narrowing_re_filters_the_advertised_catalog() -> None:
     )
 
     contextual = _untrusted_contextual()
-    target = "delegate_to_agent"
+    target = "run_prompt"
     assert target in contextual.tool_deny
 
     class _TwoRoundScheme:
@@ -499,7 +499,7 @@ async def test_envelope_denied_tool_is_reported_as_denied_not_dropped(
     from tests._support.agent_session import make_session
 
     monkeypatch.chdir(tmp_path)
-    denied_tool = "delegate_to_agent"
+    denied_tool = "run_prompt"
     _bind_topology_profile(
         tmp_path, member="alice", body=f"name: narrowed\ntool_deny: [{denied_tool}]\n",
     )

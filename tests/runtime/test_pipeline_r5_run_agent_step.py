@@ -224,28 +224,27 @@ async def test_run_agent_step_schema_nonconforming_raises(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Path) -> None:
+async def test_agent_step_narrowing_denies_pipeline_launch_when_spawned(tmp_path: Path) -> None:
     """Tier 2: OS invariant — the SAME narrowing run_agent_step builds
     (``_build_agent_step_narrowing``), spawned via ``spawn_ephemeral_session``,
     is LIVE-enforced (``registry.resolved_profile_for``) to deny
-    ``delegate_to_agent`` (+ its qualified ``delegate_to_agent`` alias)
-    AND ``run_pipeline`` (+ its qualified ``run_pipeline`` alias, IS-1 R6 S3:
-    an agent step is a spawn-tree LEAF — no launching a nested pipeline)
-    even when the caller's own ``capabilities`` list explicitly names them —
-    ``capability_profile`` resolution is deny-always-wins
-    (``profile_permits``), so an ``agent`` step cannot re-open either via its
-    ``capabilities`` argument. Purely structural: no LLM turn / actual
-    delegation or pipeline-launch attempt needed to prove the gate."""
+    ``run_pipeline`` (IS-1 R6 S3: an agent step is a spawn-tree LEAF — no
+    launching a nested pipeline) even when the caller's own ``capabilities``
+    list explicitly names it — ``capability_profile`` resolution is
+    deny-always-wins (``profile_permits``), so an ``agent`` step cannot
+    re-open it via its ``capabilities`` argument. Purely structural: no LLM
+    turn / actual pipeline-launch attempt needed to prove the gate.
+    delegate_to_agent (this deny-set's former other member) retired in
+    proposal 0067 P6 (#3978), with no replacement here."""
     reg = _registry(tmp_path, scripted=None)
     narrowing = _build_agent_step_narrowing(
-        ["delegate_to_agent", "run_pipeline", "read_file"]
+        ["run_pipeline", "read_file"]
     )
 
     sid = await spawn_ephemeral_session(reg, identity="worker", narrowing=narrowing, presentation_consumer=None, intervention_bridge=None)
     contextual, _excluded = reg.resolved_profile_for("worker", sid=sid)
 
     assert contextual is not None
-    assert {"delegate_to_agent"} <= contextual.tool_deny
     # Proposal 0067 P7 (#3978): the unified run_pipeline verb is denied
     # regardless of collect= — the async launch is the same S3 escape hatch.
     assert {"run_pipeline"} <= contextual.tool_deny
@@ -254,13 +253,14 @@ async def test_agent_step_narrowing_denies_delegation_when_spawned(tmp_path: Pat
 def test_build_agent_step_narrowing_no_capabilities_is_restrict_only(tmp_path: Path) -> None:
     """Tier 2: OS invariant — omitting ``capabilities`` (None) leaves
     ``tool_allow`` unset (no re-grant beyond the agent's normal envelope);
-    only the structural leaf-worker deny (delegation + the unified pipeline
-    launch — registered AND inline, sync AND async, all reached through the
-    one surviving name post proposal 0067 P7 #3978 — R6 S3) is imposed.
-    Pure function, no session needed."""
+    only the structural leaf-worker deny (the unified pipeline launch —
+    registered AND inline, sync AND async, all reached through the one
+    surviving name post proposal 0067 P7 #3978 — R6 S3) is imposed.
+    Pure function, no session needed. delegate_to_agent (this deny-set's
+    former other member) retired in P6 (#3978), with no replacement here."""
     narrowing = _build_agent_step_narrowing(None)
     assert "tool_allow" not in narrowing
-    assert set(narrowing["tool_deny"]) == {"delegate_to_agent", "run_pipeline"}
+    assert set(narrowing["tool_deny"]) == {"run_pipeline"}
 
 
 # ── ephemeral cleanup ────────────────────────────────────────────────────────

@@ -47,7 +47,7 @@ from tests._support.untrusted_narrowing import narrowing_on
 # what ``test_both_spellings_of_a_floored_tool_stay_denied`` below keeps true, so
 # this constant naming one of them is a choice of witness and not a narrowing of
 # the claim.
-_UNTRUSTED_DENIED_TOOL = "delegate_to_agent"
+_UNTRUSTED_DENIED_TOOL = "run_prompt"
 
 
 def _session(tmp_path: Path) -> Session:
@@ -230,7 +230,7 @@ async def test_an_envelope_denial_keeps_its_durable_reason_while_tainted(
     from reyn.runtime.registry import AgentRegistry
 
     monkeypatch.chdir(tmp_path)
-    envelope_denied = "delegate_to_agent"
+    envelope_denied = "run_prompt"
     _bind_topology_profile(
         tmp_path, member="alice", body=f"name: narrowed\ntool_deny: [{envelope_denied}]\n",
     )
@@ -266,9 +266,9 @@ async def test_an_envelope_denial_keeps_its_durable_reason_while_tainted(
         "a durable envelope denial was re-attributed to the transient per-turn axis"
     )
     assert envelope_denied not in _tools(state, "denied_by_turn_context")
-    # ``delegate_to_agent`` is not in the enumerate-all census this arm composes;
-    # ``spawn_agent`` is, and the topology profile above denies neither it nor anything
-    # but ``delegate_to_agent`` — so it is ephemeral-only here.
+    # ``spawn_agent`` is in the enumerate-all census this arm composes, and the
+    # topology profile above denies neither it nor anything but ``run_prompt``
+    # (``envelope_denied``) — so ``spawn_agent`` is ephemeral-only here.
     assert "spawn_agent" in _tools(state, "denied_by_turn_context"), (
         "control: a tool denied ONLY by the ephemeral profile still lands on the "
         "per-turn axis, so the split above is a split and not a collapse"

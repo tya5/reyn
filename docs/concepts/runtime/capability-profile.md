@@ -320,7 +320,8 @@ tool_allow: null       # deny-list only
 tool_deny:
   - exec
   - remember_shared
-  - delegate_to_agent
+  - run_prompt
+  - send_to_session
 ```
 
 **Each tool has exactly one invocable name.** #3429 removed the second,

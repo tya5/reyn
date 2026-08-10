@@ -337,4 +337,6 @@ def test_agent_step_narrowing_without_an_invoker_is_unchanged() -> None:
     plain = _build_agent_step_narrowing([_OTHER_TOOL], None)
     assert plain is not None
     assert set(plain["tool_allow"]) == {_OTHER_TOOL}
-    assert "delegate_to_agent" in plain["tool_deny"]
+    # delegate_to_agent (this deny-set's former other member) retired in
+    # proposal 0067 P6 (#3978), with no replacement here.
+    assert "run_pipeline" in plain["tool_deny"]

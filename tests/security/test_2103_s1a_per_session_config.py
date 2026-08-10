@@ -144,7 +144,7 @@ def test_composes_with_delegate_floor(tmp_path: Path) -> None:
     reg = _registry(tmp_path, default="deny")
     _write_per_session(reg, "worker", "task1", "name: s\ntool_deny: [read_file]\n")
     contextual, _ = reg.resolved_profile_for("worker", sid="task1", is_delegate=True)
-    assert "delegate_to_agent" in contextual.tool_deny  # the _delegate floor
+    assert "run_prompt" in contextual.tool_deny  # the _delegate floor
     assert "read_file" in contextual.tool_deny           # the per-session narrowing
 
 

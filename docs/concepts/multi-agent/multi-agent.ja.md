@@ -18,7 +18,7 @@ Reyn はマルチ agent 機能を 1 つ持つのではなく、**2 つの独立�
 │            (external MCP clients call INTO Reyn agents)          │
 │              ↑ list_agents()  ↑ send_to_agent(name, msg)         │
 ├──────────────────────────────────────────────────────────────────┤
-│  Layer 3:  delegate_to_agent                                     │
+│  Layer 3:  run_prompt / send_to_session                          │
 │            (agent → agent, in-process, chain_id correlated)      │
 └──────────────────────────────────────────────────────────────────┘
                 Both layers enforce: P4 + P6 + permissions
@@ -28,7 +28,7 @@ Reyn はマルチ agent 機能を 1 つ持つのではなく、**2 つの独立�
 
 | Layer | メカニズム | 配線タイミング | プロセス境界 | 典型的な用途 | 参照 |
 |-------|-----------|--------------|-------------|-------------|------|
-| 3 | `delegate_to_agent` | runtime + topology | same-process | 専門家への委譲（「research agent → writer agent」） | [../multi-agent/topology.md](../multi-agent/topology.md) |
+| 3 | `run_prompt` / `send_to_session` | runtime + topology | same-process | 専門家への委譲（「research agent → writer agent」） | [../multi-agent/topology.md](../multi-agent/topology.md) |
 | 4 | `reyn mcp serve` | runtime | external client | agent fleet を Claude Code、Cursor などの MCP 対応クライアントに公開する | [../tools-integrations/mcp.md](../tools-integrations/mcp.md) |
 
 ### 両 layer で変わらないもの
@@ -39,7 +39,7 @@ Reyn はマルチ agent 機能を 1 つ持つのではなく、**2 つの独立�
 
 ### どの layer を選ぶか
 
-- 「それぞれ独自のカタログを持つ複数の専門 role が互いに通信する」 → **Layer 3**（`delegate_to_agent`）
+- 「それぞれ独自のカタログを持つ複数の専門 role が互いに通信する」 → **Layer 3**（`run_prompt` / `send_to_session`）
 - 「外部の MCP 対応ツール（Claude Code、Cursor、OpenAI Agents SDK 等）が agent を呼べるようにしたい」 → **Layer 4**（`reyn mcp serve`）
 
 ## agent とは何か

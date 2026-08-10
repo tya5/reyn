@@ -68,28 +68,6 @@ def _text_result(text: str) -> LLMToolCallResult:
     )
 
 
-def _delegate_result(to: str, request: str) -> LLMToolCallResult:
-    """LLMToolCallResult that makes RouterLoop call delegate_to_agent via invoke_action wrapper."""
-    return LLMToolCallResult(
-        content=None,
-        tool_calls=[
-            {
-                "id": "tc_delegate_001",
-                "type": "function",
-                "function": {
-                    "name": "invoke_action",
-                    "arguments": json.dumps({
-                        "action_name": "delegate_to_agent",
-                        "args": {"to": to, "request": request},
-                    }),
-                },
-            }
-        ],
-        finish_reason="tool_calls",
-        usage=_EMPTY_USAGE,
-    )
-
-
 class _FakeRegistry:
     """Minimal fake AgentRegistry satisfying the session's send/receive surface.
 
@@ -242,32 +220,28 @@ def _make_llm_stub(result: LLMToolCallResult | list):
 async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     """Tier 2: chain_register WAL event emitted with required payload fields.
 
-    Scenario: receive agent_request → router returns messages_to_agents →
-    ChainManager registers a chain.
+    Scenario: ChainManager registers a chain (the real registration site
+    every producer shares — delegate_to_agent's own dispatch used to drive
+    this before retiring in proposal 0067 P6, #3978; run_pipeline
+    (collect="async") is the currently-live producer, session_api.py:631).
+    Driven directly through ``session.chains.register`` (a public surface
+    per this file's own testing-policy docstring), the same real
+    ``ChainManager`` method every producer calls — not a parallel
+    reimplementation of it.
 
-    P6 invariant: every state change (chain registration) must emit a WAL
-    event.  Missing event = state invisible to crash recovery.
+    P6 invariant [historical numbering, predates proposal 0067's own P6]:
+    every state change (chain registration) must emit a WAL event. Missing
+    event = state invisible to crash recovery.
     """
     monkeypatch.chdir(tmp_path)
 
-    registry = _FakeRegistry()
-    peer_session = make_session(agent_name="peer_agent")
-    registry.register("peer_agent", peer_session)
+    session = _make_session(tmp_path, on_limit=OnLimitConfig(mode="unattended"))
 
-    session = _make_session(tmp_path, registry=registry,
-                            on_limit=OnLimitConfig(mode="unattended"))
-
-    # Round 1: router asks to delegate; round 2 is never reached in this test
-    # because send_to_agent is async (loop exits after delegation).
-    stub = _make_llm_stub(_delegate_result("peer_agent", "please help"))
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
-
-    await session._handle_agent_request({
-        "from_agent": "origin_agent",
-        "request": "do something",
-        "depth": 1,
-        "chain_id": "chain-reg-001",
-    })
+    await session.chains.register(
+        chain_id="chain-reg-001", from_user=False, depth=1,
+        original_text="do something", sender="origin_agent",
+        waiting_on={"peer_agent"}, origin_agent="origin_agent", origin_depth=1,
+    )
 
     await session._journal.flush()  # #2259 PR-2b: drain async WAL writes
     events = _wal_events(tmp_path)
@@ -301,35 +275,30 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
 async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeypatch):
     """Tier 2: chain_resolve removes chain from snapshot; WAL order is register → resolve.
 
-    Scenario: register a chain (agent_request + delegation) → peer replies
-    (agent_response) → router produces text reply → chain resolved.
+    Scenario: register a chain directly (the real registration site every
+    producer shares — see ``test_chain_register_emits_wal_event`` for why
+    this drives ``session.chains.register`` rather than the retired
+    delegate_to_agent dispatch) → peer replies (agent_response) → router
+    produces text reply → chain resolved via the REAL
+    ``session._handle_agent_response`` path (unaffected by P6 — it resolves
+    by chain_id lookup, not by which producer registered the chain).
 
-    P6 invariant: chain_register and chain_resolve must both appear in the WAL
-    in order; snapshot must show no pending chain after resolution.
+    P6 invariant [historical numbering, predates proposal 0067's own P6]:
+    chain_register and chain_resolve must both appear in the WAL in order;
+    snapshot must show no pending chain after resolution.
     """
     monkeypatch.chdir(tmp_path)
 
-    # Peer session: receives agent_request from us, we feed agent_response back.
-    peer_session = make_session(agent_name="peer_agent")
-    registry = _FakeRegistry()
-    registry.register("peer_agent", peer_session)
+    session = _make_session(tmp_path, on_limit=OnLimitConfig(mode="unattended"))
 
-    session = _make_session(tmp_path, registry=registry,
-                            on_limit=OnLimitConfig(mode="unattended"))
-
-    # Phase 1: router delegates to peer_agent.
-    stub_round1 = _make_llm_stub(_delegate_result("peer_agent", "help me"))
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub_round1)
-    await session._handle_agent_request({
-        "from_agent": "origin_agent",
-        "request": "synthesize",
-        "depth": 1,
-        "chain_id": "chain-res-001",
-    })
-
-    # Verify chain is registered.
+    # Phase 1: register a pending chain directly.
+    await session.chains.register(
+        chain_id="chain-res-001", from_user=False, depth=1,
+        original_text="synthesize", sender="origin_agent",
+        waiting_on={"peer_agent"}, origin_agent="origin_agent", origin_depth=1,
+    )
     assert session.chains.has("chain-res-001"), (
-        "Chain should be pending after delegation"
+        "Chain should be pending after registration"
     )
 
     # Phase 2: peer_agent responds → router re-runs and produces text reply.
@@ -370,7 +339,14 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
 async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monkeypatch):
     """Tier 2: chain timeout emits chain_timeout_fired WAL event + upstream error response.
 
-    P6 invariant: chain_timeout_fired must be recorded in the WAL.
+    Registers a pending chain directly (the real registration site every
+    producer shares — see ``test_chain_register_emits_wal_event`` for why
+    this drives ``session.chains.register``/``arm_timeout`` rather than the
+    retired delegate_to_agent dispatch) with a real, short-fused timeout
+    watchdog, then lets it fire for real.
+
+    P6 invariant [historical numbering, predates proposal 0067's own P6]:
+    chain_timeout_fired must be recorded in the WAL.
     PR18 contract: on timeout, an error response is sent upstream AND a WAL
     event is appended — no silent failures.
     """
@@ -391,9 +367,6 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
 
     registry = _FakeRegistry()
     registry.register("upstream_agent", upstream_session)
-    # Also add a peer so delegation succeeds.
-    peer_session = make_session(agent_name="slow_peer")
-    registry.register("slow_peer", peer_session)
 
     # Short timeout so it fires fast. Use unattended mode so the chain
     # timeout fires as an abort + emits chain_timeout_fired event, rather
@@ -407,15 +380,17 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
         on_limit=OnLimitConfig(mode="unattended"),
     )
 
-    # Router delegates to slow_peer (which never responds).
-    stub = _make_llm_stub(_delegate_result("slow_peer", "process this"))
-    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
-    await session._handle_agent_request({
-        "from_agent": "upstream_agent",
-        "request": "do slow work",
-        "depth": 1,
-        "chain_id": "chain-timeout-001",
-    })
+    # Register a chain waiting on a peer that never responds, and arm its
+    # timeout watchdog — the same two-call pairing every real producer uses
+    # (inter_agent_messaging.py's own delegation registration site).
+    await session.chains.register(
+        chain_id="chain-timeout-001", from_user=False, depth=1,
+        original_text="do slow work", sender="upstream_agent",
+        waiting_on={"slow_peer"}, origin_agent="upstream_agent", origin_depth=1,
+    )
+    session.chains.arm_timeout(
+        "chain-timeout-001", on_fire=session._on_chain_timeout_fire,
+    )
 
     # Wait for the watchdog to ACTUALLY fire, not for a fixed span to elapse.
     # `upstream_received` is the fire's observable effect and it happens-after the

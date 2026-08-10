@@ -2258,7 +2258,7 @@ class RouterLoop:
                 # registry (router_tools.get_dispatch_kind() →
                 # ToolDefinition.dispatch_kind).  Async tools'
                 # results arrive via a separate channel (e.g.
-                # delegate_to_agent → PR14 pending_chain re-invokes router
+                # spawn_session → PR14 pending_chain re-invokes router
                 # in a future turn). The current loop can't wait for the
                 # result; if we continue, the LLM would see only "dispatched"
                 # status and re-dispatch (per dogfood verify_lead repro).
@@ -2279,7 +2279,7 @@ class RouterLoop:
                     # message_bus.py's _is_quiescent).
                     self.host.mark_task_pending()
                     # B55 R-7 (2026-05-25): non-plan async dispatch (=
-                    # delegate_to_agent or other peer-async tools). Mirror
+                    # spawn_session or other peer-async tools). Mirror
                     # task / plan spawn_ack format: `[task_spawned]
                     # kind=prompt ...` header + user-facing trailer so the
                     # SP TASK_SPAWNED rule covers this path too. Prior
@@ -2289,10 +2289,11 @@ class RouterLoop:
                     # `[task_completed] kind=prompt ...` injection arrives.
                     #
                     # Extract peer / request hint from the first async
-                    # tool call (= delegate_to_agent's `to` + `request`
-                    # arguments). Fallback to a generic "peer agent"
-                    # header when arguments aren't parseable (= defensive
-                    # for non-delegate async tools or malformed args).
+                    # tool call (= spawn_session's `request` argument, or
+                    # delegate_to_agent's retired `to` + `request` shape
+                    # for any still-async peer tool). Fallback to a
+                    # generic "peer agent" header when arguments aren't
+                    # parseable (= defensive for malformed args).
                     tc_first_async = None
                     for tc_a, r_a in zip(tool_calls, tool_results):
                         if (
@@ -2614,7 +2615,7 @@ class RouterLoop:
     def _dedupe_tool_calls_round(self, tool_calls: list[dict]) -> list[dict]:
         """Dedupe duplicate async tool_calls within the same round (F5).
 
-        Async tools (e.g. `delegate_to_agent`) — F5 fix (batch 1).
+        Async tools (e.g. `spawn_session`) — F5 fix (batch 1).
         Duplicates would inbox_put the same request twice, doubling peer
         cost and confusing the chain.
 
@@ -3090,7 +3091,7 @@ class RouterLoop:
             actually advertised in ``tools=`` (#241).
           - ``"ars_direct"``: a bare catalog-action name NOT advertised —
             reached only via the #229/#3429 salvage.
-          - anything else (e.g. ``delegate_to_agent``, an async peer tool):
+          - anything else (e.g. ``spawn_session``, an async peer tool):
             not a catalog action — no routing decision to record.
         """
         surface = raw_name if raw_name is not None else name

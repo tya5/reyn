@@ -42,15 +42,15 @@ CodeAct には JSON tool channel が **そもそも存在しない** — 「chan
 呼べる理由でもある。
 
 **何が載るか**: `enumerate-all` scheme が `tool_calls` で advertise するのと同じ
-集合 — base tool（`read_file` / `delegate_to_agent` / `spawn_session` …）と
+集合 — base tool（`read_file` / `call_mcp_tool` / `spawn_session` …）と
 [universal catalog](universal-catalog.md) の全 action（`glob_files` /
 `run_pipeline` …）。
 
 base tool が既に名前を持つ capability は、 非修飾名で **1 回だけ** 載る。
-catalog の `delegate_to_agent` と base の `delegate_to_agent` は同じ操作
-なので、 code API に書かれるのは `delegate_to_agent` だけ。 修飾名の方も
+catalog の `call_mcp_tool` と base の `call_mcp_tool` は同じ操作
+なので、 code API に書かれるのは `call_mcp_tool` だけ。 修飾名の方も
 **呼べる** ままである — dispatchable set には残っているので snippet 内からの
-`tool('delegate_to_agent', …)` は通常どおり応答される — 単に 2 度目の
+`tool('call_mcp_tool', …)` は通常どおり応答される — 単に 2 度目の
 advertise をしないだけ。
 
 ### sandboxed subprocess

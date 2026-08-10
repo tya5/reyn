@@ -9,11 +9,20 @@ its origin tool module; the origin module now aliases its
 call site is unchanged.
 
 Covers: spawn_agent (#2103 B-tool, renamed from agent_spawn — #4004),
-delegate_to_agent (ADR-0026 M4), spawn_session (#2103 S1bc, renamed from
-session_spawn — #4004), create_topology (#2103 C1, renamed from
-topology_create — #4004), send_to_session (proposal 0067 P5, #3978 — new,
-not a relocation: authored directly here). All five are router-only —
-org-design / delegation / peer-messaging primitives the LLM drives directly.
+spawn_session (#2103 S1bc, renamed from session_spawn — #4004),
+create_topology (#2103 C1, renamed from topology_create — #4004),
+send_to_session (proposal 0067 P5, #3978 — new, not a relocation: authored
+directly here), run_prompt (proposal 0067 P4d, #3978). All are router-only
+— org-design / peer-messaging primitives the LLM drives directly.
+
+delegate_to_agent (formerly here, ADR-0026 M4) retired in proposal 0067 P6
+(#3978) — send_to_session (fire-and-forget) and run_prompt (synchronous,
+collect="attached") together cover what it did, minus one gap: no
+fire-and-forget-with-a-later-collected-reply verb exists yet (that is
+run_prompt's own eventual collect="async", deliberately sequenced AFTER P6
+per the proposal's own P4/P6 ordering note, to avoid building a second
+async-collection path P6 would immediately have to fold into the same one
+delegate_to_agent used).
 """
 from __future__ import annotations
 
@@ -39,24 +48,6 @@ agent_spawn = ToolDescription(
         "セットに制限される（自分にできないことはできない）。エージェント"
         "チーム/組織を設計する用途。メンバーの権限をさらに絞ったり、誰が"
         "誰にメッセージできるかを配線するには create_topology を使う。"
-    ),
-)
-
-delegate_to_agent = ToolDescription(
-    tool_name="delegate_to_agent",
-    surfaced=(
-        "router (gates.router=allow) — async-dispatch "
-        "(ADR-0026 §6): reply arrives in a future RouterLoop turn via "
-        "PR14 pending_chain"
-    ),
-    purpose=(
-        "Forward the current request to a peer agent for it to handle, "
-        "without waiting inline for the reply."
-    ),
-    text="Forward the request to a peer agent.",
-    ja=(
-        "現在のリクエストをピアエージェントに転送する。応答はこの場では"
-        "待たず、将来の RouterLoop ターンで届く（非同期ディスパッチ）。"
     ),
 )
 
@@ -115,20 +106,20 @@ send_to_session = ToolDescription(
     surfaced="router (gates.router=allow) — proposal 0067 P5 (#3978)",
     purpose=(
         "Deliver a message to a specific (agent, session) pair — "
-        "fire-and-forget, no reply is collected. Pairs with delegate_to_agent, "
+        "fire-and-forget, no reply is collected. Pairs with run_prompt, "
         "which waits for a reply."
     ),
     text=(
         "Send a message to a specific session of an agent (delivery only — no reply is "
-        "collected; use delegate_to_agent if you need one). Set wake=True to have the "
-        "target start a turn on it now; wake=False (default) queues it as context for "
-        "whenever the target next runs a turn on its own."
+        "collected; use run_prompt if you need one, on a session that's currently idle). "
+        "Set wake=True to have the target start a turn on it now; wake=False (default) "
+        "queues it as context for whenever the target next runs a turn on its own."
     ),
     ja=(
         "指定した (agent, session) にメッセージを配送する（配送のみ——応答は"
-        "収集しない。応答が必要なら delegate_to_agent を使う）。wake=True で"
-        "相手に今すぐターンを開始させる。wake=False（既定）は相手が次に自分で"
-        "ターンを実行するまでのコンテキストとしてキューに入れる。"
+        "収集しない。応答が必要で対象セッションが待機中なら run_prompt を使う）。"
+        "wake=True で相手に今すぐターンを開始させる。wake=False（既定）は相手が"
+        "次に自分でターンを実行するまでのコンテキストとしてキューに入れる。"
     ),
 )
 
@@ -138,8 +129,7 @@ run_prompt = ToolDescription(
     purpose=(
         "Send a prompt to a LIVE peer (agent, session) and collect its "
         "reply in-band, synchronously. Pairs with send_to_session (delivery "
-        "only, no reply) and delegate_to_agent (async — reply arrives in a "
-        "future turn)."
+        "only, no reply)."
     ),
     text=(
         "Run a prompt on a specific session of an agent and wait for its reply "
@@ -163,7 +153,6 @@ run_prompt = ToolDescription(
 
 ALL: dict[str, ToolDescription] = {
     "spawn_agent": agent_spawn,
-    "delegate_to_agent": delegate_to_agent,
     "spawn_session": session_spawn,
     "create_topology": topology_create,
     "send_to_session": send_to_session,
@@ -182,19 +171,6 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "role": ParamDescription(
             text="The new agent's role/purpose (free text).",
             ja="新しいエージェントの役割・目的（自由記述）。",
-        ),
-    },
-    "delegate_to_agent": {
-        "to": ParamDescription(
-            text="Target agent name as listed by list_agents.",
-            ja="list_agents に列挙される委任先エージェント名。",
-        ),
-        "request": ParamDescription(
-            text=(
-                "Natural-language request paraphrased "
-                "for the peer's context."
-            ),
-            ja="相手エージェントの文脈向けに言い換えた自然言語のリクエスト。",
         ),
     },
     "spawn_session": {

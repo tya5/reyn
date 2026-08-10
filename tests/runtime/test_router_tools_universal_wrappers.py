@@ -153,8 +153,17 @@ def test_flag_on_strips_legacy_and_adds_wrappers() -> None:
     """Tier 2: flag=True strips legacy per-kind tools and adds wrappers.
 
     Phase 6: universal_wrappers_enabled=True is now the exclusive-wrapper mode.
-    Legacy per-kind tools (invoke_skill, delegate_to_agent, etc.) are stripped
+    Legacy per-kind tools (invoke_skill, spawn_session, etc.) are stripped
     and only the universal wrappers remain as the addressing surface.
+
+    delegate_to_agent (the original second example here) retired in
+    proposal 0067 P6 (#3978) — spawn_session is a still-registered legacy
+    per-kind tool that this stripping mechanism still applies to (confirmed
+    directly: send_to_session/run_prompt/spawn_agent/create_topology stay
+    advertised even under wrapper mode, so they're not valid substitutes;
+    spawn_session is). Asserting delegate_to_agent's absence would now be
+    vacuous — it's absent from the catalog everywhere, not just under
+    wrapper mode.
     """
     on_names = _tool_names(build_tools(
         _SAMPLE_AGENTS, universal_wrappers_enabled=True,
@@ -165,7 +174,7 @@ def test_flag_on_strips_legacy_and_adds_wrappers() -> None:
     assert "invoke_action" in on_names
     # Legacy tools stripped
     assert "invoke_skill" not in on_names
-    assert "delegate_to_agent" not in on_names
+    assert "spawn_session" not in on_names
 
 
 # ── 3. Wrapper schemas pass OpenAI tool[] contract ───────────────────────
@@ -276,10 +285,14 @@ def test_wrappers_on_strips_all_legacy_tools() -> None:
     assert "list_actions" in names
     assert "describe_action" in names
     assert "invoke_action" in names
-    # Legacy stripped unconditionally
+    # Legacy stripped unconditionally. delegate_to_agent (the original
+    # entry here) retired in proposal 0067 P6 (#3978) — spawn_session is a
+    # still-registered legacy per-kind tool the same stripping mechanism
+    # applies to (send_to_session/run_prompt/spawn_agent/create_topology
+    # stay advertised even under wrapper mode, so they aren't substitutes).
     for legacy in (
         "list_skills", "describe_skill", "invoke_skill",
-        "list_agents", "describe_agent", "delegate_to_agent",
+        "list_agents", "describe_agent", "spawn_session",
         "list_memory", "read_memory_body",
         "read_file", "write_file", "delete_file", "list_directory",
         "web_search", "web_fetch",

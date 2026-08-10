@@ -247,8 +247,10 @@ _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
     # ``runtime/session_api.py`` — see ``test_pipeline_step_deny_sets_are_equal``
     # (the equality gate architect required, since P6/P7 both edit these two
     # sets and a drift here is silent: neither side's own test can see the
-    # other set at all).
-    "run_pipeline", "delegate_to_agent",
+    # other set at all). Proposal 0067 P6 (#3978) retired the other former
+    # member, ``delegate_to_agent`` — see ``_DELEGATION_DENY_TOOLS``'s own
+    # comment for why nothing replaces it here.
+    "run_pipeline",
 })
 
 
