@@ -79,7 +79,7 @@ and the subprocess-spawn deny, both through ``wrap_command``. It does NOT
 witness the network gate (covered by the separate, uncached
 :func:`probe_network_enforcement`), ``read_deny_paths`` (not expressible on
 Landlock at all), io_uring specifically (covered instead by
-``tests/test_sandbox_seccomp_network_3030.py``'s dedicated probe, since it needs
+``tests/security/test_sandbox_seccomp_network_3030.py``'s dedicated probe, since it needs
 a raw-syscall oracle rather than a marker file), or the one-shot ``run()``
 path's separate preexec ruleset — which loads its filter through a DIFFERENT
 code path than the shim ``wrap_command`` re-execs, so passing here does not
@@ -383,7 +383,7 @@ def probe_network_enforcement(backend: "SandboxBackend") -> str | None:
     :func:`enforcement_self_test`'s cached, production-gating suite; see that
     function's and the module's docstrings for why. Called directly by CI
     (``scripts/sandbox_landlock_deny_gate.py``'s ``network`` deny arm) and by
-    ``tests/test_sandbox_seccomp_network_3030.py``.
+    ``tests/security/test_sandbox_seccomp_network_3030.py``.
 
     **Why ``connect()``, not ``socket()`` (#3060).** This probe originally
     witnessed the deny at ``socket()`` creation. #3060 moved ``socket``/

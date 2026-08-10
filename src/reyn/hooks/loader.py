@@ -226,7 +226,7 @@ def _parse_entry(
     # ratified in #2880's §9 annotation): ``composed:<name>`` is an OPEN
     # namespace (one entry per ``composers:`` config's ``emit.kind``, not a
     # fixed enum), so it is accepted by PREFIX here rather than being added to
-    # ``ALLOWED_HOOK_POINTS`` (a closed frozenset of the 10 builtin points).
+    # ``ALLOWED_HOOK_POINTS`` (a closed frozenset of the builtin points).
     # Its consumer is ``reyn.hooks.composed_consumer.
     # ComposedEventConsumer``, not ``HookDispatcher.dispatch()``'s Sync loop.
     # #2889: a composed-kind hook's ``matcher`` IS now schema-validated below,

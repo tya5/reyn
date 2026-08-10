@@ -37,7 +37,7 @@ jobs:
       # True, the stdio-MCP default), so every such MCP server is now under a
       # default-deny syscall filter for the first time — the #2962 correctness
       # risk (its first live load killed /bin/echo). Installing this extra is
-      # what lets tests/test_sandbox_seccomp_network_3030.py's representative-
+      # what lets tests/security/test_sandbox_seccomp_network_3030.py's representative-
       # real-MCP-server probes (the builtin rag plugin's chunker_server.py /
       # vector_store_server.py, launched directly since ADR 0064 P5 retired
       # the reyn-rag-chunker / reyn-rag-vector-store console scripts) RUN
@@ -91,4 +91,4 @@ jobs:
       # runner's own PyPI egress, orthogonal to allowlist completeness) is
       # visible rather than silently absorbed into a pass count.
       - name: Network-gate + io_uring + representative-MCP-server tests (#3030)
-        run: python -m pytest tests/test_sandbox_seccomp_network_3030.py -v -rs --timeout=180
+        run: python -m pytest tests/security/test_sandbox_seccomp_network_3030.py -v -rs --timeout=180

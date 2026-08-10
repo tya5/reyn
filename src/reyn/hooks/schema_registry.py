@@ -75,8 +75,8 @@ def canonical_kind(point: str) -> str:
     namespaced kind (``"builtin:lifecycle:turn_end"``) to the canonical
     namespaced kind. An unrecognised ``point`` (a non-builtin / future /
     test-only point) is returned UNCHANGED — the schema-driven open set: only
-    the 10 shipped builtin points are known here, everything else is simply
-    unvalidated (not an error)."""
+    the shipped builtin points (``BARE_TO_KIND``) are known here, everything
+    else is simply unvalidated (not an error)."""
     if point in KIND_TO_BARE:
         return point
     return BARE_TO_KIND.get(point, point)
