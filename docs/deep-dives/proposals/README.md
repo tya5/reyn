@@ -120,4 +120,10 @@ Links to related ADRs, PRs, and docs.
 | [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; Phases 1-4 landed (#2837/#2849/#2850), Phase 5 (optional refactor fold) open | LARGE |
 | [0059](0059-hook-event-redesign.md) | Hook-Event Redesign (Event Bus / reactivity substrate) | owner-ratified; Phases 1-5 landed (#2871–#2885) | LARGE |
 | [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — making the agent actually use what it can build | closed (2026-07-13); floor + show delivered, Addenda A/B/C settled, enhancement/loop layers de-scoped by owner | LARGE |
+| [0061](0061-repo-self-access-and-packaging-standardization.md) | Repo self-access + packaging standardization | done — all 3 tracked PRs merged (#2923/#2924/#2925) | MEDIUM |
+| [0062](0062-structured-output-ephemeral-sessions-agent-steps.md) | Structured output for ephemeral sessions + pipeline agent steps | done — landed same day (2026-07-13, #2934) | SMALL |
+| [0063](0063-builtin-turnkey-user-rag.md) | Builtin turnkey user RAG (builtin mcp + skill + pipeline) | landed — PC/P2/P3/P4 merged (#2949/#2952/#2966/#3008), folded into 0064 P5 (#3078) | LARGE |
+| [0064](0064-plugin-model.md) | Plugin model for reyn (author → test → promote reusable capabilities) | Accepted + Implemented — all 5 phases landed, umbrella #3066 CLOSED | LARGE |
+| [0065](0065-orchestration-foundation.md) | Orchestration foundation — external-event plugins as a first-class unit | Proposed (awaiting owner review, 2026-07-20) | LARGE |
+| [0066](0066-retrieval-two-groups-two-axes.md) | Retrieval redesign: two groups (action / knowledge) × two axes (scheme × transport) | Proposed — owner design-of-record (2026-07-24/25), awaiting owner GO to phase-implement | LARGE |
 | [0067](0067-task-model-and-arbiter.md) | Task model and the inbox arbiter — sequencing and interface for [ADR-0040](../decisions/0040-task-as-os-concept.md) | Accepted (2026-08-10, owner) — **not yet implemented**; tracking #3978 | LARGE |

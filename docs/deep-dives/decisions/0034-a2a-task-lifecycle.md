@@ -166,11 +166,17 @@ to `true` once the router extensions land.
 
 ## References
 
-- `src/reyn/web/run_registry.py` — `RunRegistry`, `RunEntry`
-- `src/reyn/web/a2a_intervention.py` — `A2AInterventionBus`
-- `src/reyn/web/notifications.py` — `post_webhook`
-- `src/reyn/web/routers/a2a.py` — router extensions
-- `src/reyn/chat/session.py` — `register_intervention_override`
+- `src/reyn/interfaces/web/run_registry.py` — `RunRegistry`, `RunEntry`
+- `src/reyn/interfaces/web/a2a_intervention.py` — `A2AInterventionBus`
+- `src/reyn/interfaces/web/notifications.py` — `post_webhook`
+- `src/reyn/interfaces/web/routers/a2a.py` — router extensions
+- `register_intervention_override` (path unresolvable as of 2026-08-10 — no `def
+  register_intervention_override` anywhere in `src/`, only 3 stale comment/docstring
+  references; the actual call site now passes the bus directly,
+  `send_to_agent_impl(..., intervention_override=bus, ...)` in
+  `src/reyn/interfaces/web/routers/a2a.py`. The Decision/Consequences prose above
+  is untouched per the ADR immutable gate — this is a citation-currency note, not
+  a claim the mechanism no longer works)
 - `docs/concepts/multi-agent/a2a.md` — user-facing protocol documentation
 - ADR-0008 / ADR-0016 — intervention buffering precedent (`InterventionBus`
   contract that `A2AInterventionBus` implements)
