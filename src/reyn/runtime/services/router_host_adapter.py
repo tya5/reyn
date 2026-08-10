@@ -857,6 +857,27 @@ class RouterHostAdapter:
         (mirrors ``get_pipeline_registry()``, same threading shape)."""
         return self._chains
 
+    def get_inbox_depth(self) -> "int | None":
+        """THIS session's current inbox queue depth (or None if unresolvable)
+        — proposal 0067 P9 (#3978), architect ruling 2026-08-10: read by
+        ``build_resource_caller_state`` to populate
+        ``RouterCallerState.session_inbox_depth``.
+
+        Resolves the live Session the SAME way ``send_to_session``'s caller
+        resolution does (``self._registry.get_session(self._agent_name,
+        caller_sid)``) rather than threading a NEW constructor param — no new
+        wiring needed, ``self._registry``/``self._agent_name`` already exist
+        for exactly this shape. Instantaneous read (``asyncio.Queue.qsize()``)
+        — see ``RouterCallerState.session_inbox_depth``'s own docstring for
+        the staleness caveat this value's field description must also carry."""
+        if self._registry is None:
+            return None
+        sid = self.live_session_id or "main"
+        session = self._registry.get_session(self._agent_name, sid)
+        if session is None:
+            return None
+        return session.inbox.qsize()
+
     def get_presentation_registry(self) -> Any:
         """The adapter's captured PresentationRegistry (or None) — FP-0054 PR-C.
         ``make_router_op_context`` reads it into each router OpContext's

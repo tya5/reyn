@@ -484,6 +484,20 @@ class PipelineExecutorDriver:
                 "pipeline_result for run %r dropped: %s "
                 "(fail-safe — NOT rerouted to main)", wo.run_id, reason,
             )
+            # Proposal 0067 P9 (#3978), architect ruling 2026-08-10: a durable
+            # record of this ALREADY-EXISTING drop, alongside the log line
+            # above — not a new delivery path (the drop behavior itself is
+            # unchanged; lead-coder's framing: "follow each producer's
+            # existing default, don't invent a new destination"). Best-effort
+            # (self._session may be None — should not happen at this point in
+            # the driver's own lifecycle, but this emit must never be why a
+            # settle fails): the run still goes terminal regardless.
+            if self._session is not None:
+                self._session._audit_events.emit(  # noqa: SLF001 — same-module driver/session pairing
+                    "task_settle_undelivered",
+                    run_id=wo.run_id, reply_to_agent=wo.reply_to_agent,
+                    reply_to_sid=wo.reply_to_sid, reason=reason,
+                )
             return False
         text = self._format_result_text(status=status, output=output, error=error)
 

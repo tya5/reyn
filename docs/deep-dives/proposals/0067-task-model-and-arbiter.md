@@ -197,6 +197,21 @@ P8    ttl expiry: reuse the chain-timeout shape, plus persist `arm_at`
 P9    inbox depth on the monitoring read surface; an audit-event for a settle whose destination
       is gone
       ⚠️ Neither is a valve. `check_pre_llm` already bounds spend regardless of producer.
+      ✅ Half 1: `describe_task`/`list_tasks` gain `session_inbox_depth` (architect ruling
+         2026-08-10 — named to make clear it's a SESSION property, not a task property, per
+         lead-coder's review; an instantaneous `asyncio.Queue.qsize()` read, documented as such
+         in the field's own LLM-visible description).
+      🔴 Known scope limit (architect, not a defect — record here rather than silently accept):
+         this surface only reflects sessions that HAVE a running task. `send_to_session`
+         (P5) pushes onto a peer's inbox WITHOUT creating a task, so "queued but no task"
+         is a normal, unobservable-by-this-surface state. Closing that gap needs a
+         session-subject read surface (not a task-subject one) and is out of P9's range.
+      ✅ Half 2: `task_settle_undelivered` audit-event (renamed from an earlier
+         `task_settle_undeliverable` draft — architect: existing kinds follow
+         `<subject>_<past-participle>`, not an adjective), emitted alongside the existing
+         `logger.warning` in `PipelineExecutorDriver._deliver`'s `target is None` branch —
+         the DROP behavior itself is unchanged (0067's own arc-wide rule: observe a
+         vanished destination, never invent a new one for it).
 ```
 
 ## Verification notes for implementers

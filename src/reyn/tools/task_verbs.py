@@ -35,13 +35,33 @@ def _chains(ctx: ToolContext) -> Any:
     return getattr(rs, "chains", None) if rs is not None else None
 
 
-def _describe(chain: Any) -> dict[str, Any]:
+def _inbox_depth(ctx: ToolContext) -> "int | None":
+    """THIS session's current inbox depth — proposal 0067 P9 (#3978).
+
+    ``chains`` is scoped to THE CALLING session's own ChainManager (module
+    docstring), so every task these tools can even see was registered with
+    ``origin_sid`` equal to this same calling session — the depth is
+    therefore homogeneous across every task in a given response; no
+    per-task resolution is needed."""
+    rs = getattr(ctx, "router_state", None)
+    return getattr(rs, "session_inbox_depth", None) if rs is not None else None
+
+
+def _describe(chain: Any, *, inbox_depth: "int | None" = None) -> dict[str, Any]:
     requester = chain.requester
     return {
         "task_id": chain.chain_id,
         "kind": chain.kind,
         "status": chain.status.value,
         "session": chain.origin_sid or "main",
+        # Proposal 0067 P9 (#3978), architect ruling 2026-08-10: an
+        # INSTANTANEOUS read of the task's own (= this calling session's)
+        # inbox queue depth — by the time this reply reaches the LLM the
+        # real value may already differ (see the field description surfaced
+        # to the model, task_verbs.py's tool-description constants below).
+        # None when unresolvable (e.g. no live registry in this context) —
+        # never a silent 0, which would misread as "definitely empty".
+        "session_inbox_depth": inbox_depth,
         "requester": {
             "agent_name": requester.agent_name,
             "session_id": requester.session_id,
@@ -56,7 +76,10 @@ _DESCRIBE_TASK_DESCRIPTION = (
     "run_prompt/run_pipeline async launch returned). A settled task's "
     "handle no longer exists — use this for progress checking or anomaly "
     "detection, not to retrieve a finished result (results arrive via a "
-    "task_settled push, not a poll)."
+    "task_settled push, not a poll). session_inbox_depth is a snapshot of "
+    "this task's own session's inbox queue depth at the moment of this "
+    "call — it may already be stale by the time you read it, and null "
+    "means it could not be resolved."
 )
 
 _DESCRIBE_TASK_PARAMETERS: dict[str, Any] = {
@@ -77,7 +100,7 @@ async def _handle_describe_task(args: Mapping[str, Any], ctx: ToolContext) -> To
     chain = chains.get(task_id) if chains is not None else None
     if chain is None or chain.kind is None:
         return {"ok": False, "error": f"no running task {task_id!r}"}
-    return {"ok": True, **_describe(chain)}
+    return {"ok": True, **_describe(chain, inbox_depth=_inbox_depth(ctx))}
 
 
 DESCRIBE_TASK = ToolDefinition(
@@ -98,7 +121,12 @@ DESCRIBE_TASK = ToolDefinition(
 _LIST_TASKS_DESCRIPTION = (
     "List currently RUNNING tasks (async run_prompt/run_pipeline launches "
     "not yet settled), optionally filtered by kind. Settled tasks are not "
-    "listed — their handle no longer exists (ADR-0040 D4)."
+    "listed — their handle no longer exists (ADR-0040 D4). Each entry's "
+    "session_inbox_depth is a snapshot of this session's own inbox queue "
+    "depth at the moment of this call (may already be stale by the time "
+    "you read it; null means it could not be resolved) — the SAME value "
+    "for every entry, since list_tasks only ever sees tasks registered on "
+    "this same calling session."
 )
 
 _LIST_TASKS_PARAMETERS: dict[str, Any] = {
@@ -120,6 +148,7 @@ async def _handle_list_tasks(args: Mapping[str, Any], ctx: ToolContext) -> ToolR
     if chains is None:
         return {"tasks": []}
     kind_filter = args.get("kind")
+    inbox_depth = _inbox_depth(ctx)
     tasks = []
     for chain_id in chains.all_chain_ids():
         chain = chains.get(chain_id)
@@ -127,8 +156,8 @@ async def _handle_list_tasks(args: Mapping[str, Any], ctx: ToolContext) -> ToolR
             continue
         if kind_filter is not None and chain.kind != kind_filter:
             continue
-        described = _describe(chain)
-        del described["requester"]  # list view: {task_id, kind, status, session} only
+        described = _describe(chain, inbox_depth=inbox_depth)
+        del described["requester"]  # list view: {task_id, kind, status, session, session_inbox_depth}
         tasks.append(described)
     return {"tasks": tasks}
 

@@ -633,6 +633,83 @@ async def test_task_settled_still_fires_when_reply_session_is_not_loaded(
 
 
 @pytest.mark.asyncio
+async def test_deliver_emits_task_settle_undelivered_when_reply_agent_gone(
+    tmp_path: Path,
+) -> None:
+    """Tier 2c: proposal 0067 P9 (#3978), architect ruling 2026-08-10 — the
+    SAME vanished-reply-agent fail-safe as the sibling test above ALSO emits
+    a durable ``task_settle_undelivered`` audit-event, alongside the
+    pre-existing ``logger.warning``. The drop behavior itself is unchanged
+    (``delivered`` still False) — this only adds an observable record of it.
+
+    Real ``EventLog`` subscriber (no mock) — the same seam
+    ``_on_chain_peer_discarded``'s own emit is verified through elsewhere in
+    this test suite."""
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    wo = replace(
+        _crash_state_work_order(
+            "gone-agent-audit-run", _three_step_pipeline(tmp_path / "o.txt"), input={"seed": 1},
+        ),
+        reply_to_agent="does-not-exist",
+    )
+    driver = PipelineExecutorDriver(wo, registry=reg, state_log=state_log)
+    worker = reg.get_or_load("worker")
+    driver.bind_session(worker, worker._router_host)
+
+    captured_events: list = []
+    worker._audit_events.add_subscriber(lambda ev: captured_events.append(ev))
+
+    await driver._finish(status="ok", output={"x": 1})
+
+    matching = [ev for ev in captured_events if ev.type == "task_settle_undelivered"]
+    assert matching, f"expected a task_settle_undelivered event; got: {captured_events}"
+    event = matching[0]
+    assert event.data["run_id"] == "gone-agent-audit-run"
+    assert event.data["reply_to_agent"] == "does-not-exist"
+    assert "reply agent" in event.data["reason"]
+
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "gone-agent-audit-run")
+    terminal = _result_json(run_dir)
+    assert terminal["delivered"] is False  # drop behavior itself is unchanged
+
+
+@pytest.mark.asyncio
+async def test_deliver_does_not_emit_task_settle_undelivered_on_successful_delivery(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2c: falsify pair for the test above — a NORMAL delivery (reply
+    target resolves) must NOT emit ``task_settle_undelivered``. Without this,
+    a bug that fires the event unconditionally would pass the positive test
+    alone."""
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    captured: list[tuple[str, dict]] = []
+    _capture_hook_dispatch(monkeypatch, captured)
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+    wo = _crash_state_work_order(
+        "delivered-audit-run", _three_step_pipeline(tmp_path / "o.txt"), input={"seed": 1},
+    )
+    driver = PipelineExecutorDriver(wo, registry=reg, state_log=state_log)
+    worker = reg.get_or_load("worker")
+    driver.bind_session(worker, worker._router_host)
+
+    captured_events: list = []
+    worker._audit_events.add_subscriber(lambda ev: captured_events.append(ev))
+
+    await driver._finish(status="ok", output={"x": 1})
+
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "delivered-audit-run")
+    terminal = _result_json(run_dir)
+    assert terminal["delivered"] is True  # sanity: this run's delivery actually succeeded
+    matching = [ev for ev in captured_events if ev.type == "task_settle_undelivered"]
+    assert matching == []
+
+
+@pytest.mark.asyncio
 async def test_task_settled_does_not_fire_on_the_sync_attached_path(
     tmp_path: Path, monkeypatch,
 ) -> None:

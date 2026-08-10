@@ -381,6 +381,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "state_change_notified",
     "summary_resummarize_failed",
     "summary_resummarized",
+    "task_settle_undelivered",
     "threat_block",
     "threat_scan_match",
     "token_refresh_failed",
