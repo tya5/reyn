@@ -194,8 +194,9 @@ ARCH_S04_NUM: "04"
 ARCH_S04_LABEL: "Beyond a single agent"
 ARCH_S04_HEADING_HTML: "Reyn talks <em>out.</em><br/>Reyn is talked <em>to.</em>"
 ARCH_S04_BODY: >-
-  Agents delegate to other Agents through a topology gate
-  — network, team, or pipeline.
+  Agents reach other Agents through a topology gate
+  — network, team, or pipeline — permission-scoped the same way any
+  other capability is.
   From outside, Reyn exposes itself as an MCP server: Claude Code, Cursor,
   and any MCP-aware client can call list_agents() and send_to_agent().
   Inside Phases, Control IR ops can call external MCP servers as well —
