@@ -244,3 +244,164 @@ def test_chain_register_replay_defaults_origin_sid_and_task_kind_to_none():
     chain = snap.pending_chains["c-old"]
     assert chain["origin_sid"] is None
     assert chain["task_kind"] is None
+
+
+def test_chain_update_replay_mirrors_a_non_waiting_on_field():
+    """Tier 2: #4108 bug ① on the WAL-REPLAY side — apply_events's
+    chain_update branch was hardcoded to write back ``waiting_on`` only.
+    A field-name-independent mirror means a new field (e.g. proposal 0067
+    P8's ``arm_at``) survives pure WAL replay with no new hardcode."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-arm",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-arm", arm_at=99.5),
+    ])
+    assert snap.pending_chains["c-arm"]["arm_at"] == 99.5
+
+
+def test_chain_update_replay_omitting_waiting_on_does_not_destroy_it():
+    """Tier 2: #4108 bug ② on the WAL-REPLAY side — the old code read
+    ``event.get("waiting_on", [])`` unconditionally, so a chain_update
+    event that didn't carry ``waiting_on`` at all still overwrote it to
+    ``[]`` on replay, destroying state set by a PRIOR event."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-preserve",
+            origin_agent="a", origin_depth=0, original_request="x",
+            waiting_on=["p", "q"],
+        ),
+        _event("chain_update", seq=2, chain_id="c-preserve", arm_at=1.0),
+    ])
+    assert snap.pending_chains["c-preserve"]["waiting_on"] == ["p", "q"]
+
+
+def test_chain_update_replay_does_not_leak_routing_meta_keys():
+    """Tier 2: falsification pair for the field-independent rewrite — the
+    routing/meta keys every WAL event carries (kind/seq/target/agent/
+    session_id/chain_id) must NOT be mirrored into the pending_chains
+    entry as if they were chain state (they are excluded by
+    ``_CHAIN_EVENT_META_KEYS``, not merely absent from this probe)."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-meta",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-meta", waiting_on=["z"]),
+    ])
+    chain = snap.pending_chains["c-meta"]
+    for meta_key in ("kind", "seq", "target", "agent", "session_id"):
+        assert meta_key not in chain
+
+
+def test_truncate_falsify_chain_update_field_survives_wal_truncation(tmp_path: Path):
+    """Tier 2c: CLAUDE.md's recovery-feature PR gate — #4108 fixes a PR that
+    makes a ``chain_update``-carried field (any field, not just
+    ``waiting_on``) actually reach the reconstruction source; the gate
+    requires a truncate-falsify test in the SAME PR, not a follow-up. Same
+    shape as ``test_truncate_falsify_snapshot_backed_kept_state_survives``
+    above (#2259's own precedent): set a field via a real
+    chain_register+chain_update pair, bake BOTH into a saved snapshot
+    (``applied_seq`` past both), then reload and replay an EMPTY tail
+    (simulating the source WAL events truncated below the snapshot's own
+    seq) — the field must still be correct, because it survives via the
+    snapshot, not via replaying the (now-gone) WAL entries. The WAL-only
+    control at the end proves this isn't trivially passing (an un-fixed
+    field would ALSO be "gone" whether truncated or not, for the wrong
+    reason — never wrote back at all)."""
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-ttl",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-ttl", arm_at=42.0),
+    ])
+    assert snap.applied_seq == 2
+    assert snap.pending_chains["c-ttl"]["arm_at"] == 42.0
+
+    # Serialize → the snapshot carries arm_at + applied_seq=2.
+    snap.save(tmp_path / "snap-ttl.json")
+
+    # TRUNCATE: replay an EMPTY tail (both source WAL events, seq 1 and 2,
+    # are gone below the truncation floor) — apply_events skips seq<=applied_seq
+    # regardless, so this simulates "the events aren't even offered" faithfully.
+    reloaded = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
+    reloaded.apply_events([])
+    assert reloaded.pending_chains["c-ttl"]["arm_at"] == 42.0, (
+        "arm_at must survive WAL truncation below its chain_update's seq — "
+        "it is baked into the SAVED snapshot, not replayed from the (now-gone) event"
+    )
+
+    # WAL-only CONTROL: a DIFFERENT chain, registered+updated entirely AFTER
+    # the snapshot's applied_seq, is WAL-only — present when its events are
+    # replayed, LOST when they're truncated instead. Proves the assertion
+    # above is snapshot-backed survival, not something that always passes.
+    later_events = [
+        _event(
+            "chain_register", seq=3, chain_id="c-walonly",
+            origin_agent="a", origin_depth=0, original_request="y",
+        ),
+        _event("chain_update", seq=4, chain_id="c-walonly", arm_at=7.0),
+    ]
+    replayed = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
+    replayed.apply_events(later_events)
+    assert replayed.pending_chains["c-walonly"]["arm_at"] == 7.0  # present WITH its events
+    truncated = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
+    truncated.apply_events([])  # seq 3/4 events truncated
+    assert "c-walonly" not in truncated.pending_chains  # WAL-only state LOST
+
+
+def test_chain_update_replay_writes_only_real_pending_chain_fields():
+    """Tier 2: architect's #4110 co-vet, non-blocking residue — closes it in
+    this same PR rather than deferring to P8.
+
+    ``test_chain_update_replay_does_not_leak_routing_meta_keys`` above checks
+    against ``_CHAIN_EVENT_META_KEYS`` itself — a deny-list a future chokepoint
+    change could grow without this probe ever noticing, since the probe and the
+    code it's checking would drift in lockstep. This test checks against a
+    DIFFERENT, independent source of truth instead: ``_PendingChain``'s own
+    dataclass field names, read via ``dataclasses.fields`` — the one place the
+    real schema is declared. ``core/events/`` (where ``agent_snapshot.py``
+    lives) cannot import ``runtime/services/chain_manager.py`` at the MODULE
+    level (the established layering direction is the reverse — see
+    ``_CHAIN_EVENT_META_KEYS``'s comment), but a TEST has no such constraint,
+    so the allow-list inversion architect proposed for the module is done here
+    instead, at the seam where it's actually reachable."""
+    import dataclasses
+
+    from reyn.runtime.services.chain_manager import _PendingChain
+
+    # `status`/`cancel` are VOLATILE (chain_manager.py's own field comments:
+    # "deliberately NOT threaded through register()'s persisted `fields`
+    # dict") — they never reach a WAL event or a pending_chains snapshot
+    # entry, so a real replay can never write them; excluding them keeps this
+    # an allow-list of what CAN legitimately appear, not "every declared
+    # field regardless of whether it's ever persisted".
+    # `kind` persists under the dict key "task_kind" (agent_snapshot.py's own
+    # chain_register branch, same collision note as `_CHAIN_EVENT_META_KEYS`:
+    # "kind" is already the WAL event's own type-discriminator key).
+    allowed = {
+        ("task_kind" if f.name == "kind" else f.name)
+        for f in dataclasses.fields(_PendingChain)
+        if f.name not in ("status", "cancel")
+    }
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-schema",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-schema", waiting_on=["z"]),
+    ])
+    chain = snap.pending_chains["c-schema"]
+    leaked = set(chain) - allowed
+    assert not leaked, (
+        f"chain_update replay wrote key(s) {leaked} into pending_chains that "
+        "_PendingChain has no field for — a real schema mismatch, not just "
+        "absence from the deny-list"
+    )

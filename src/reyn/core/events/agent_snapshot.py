@@ -18,6 +18,28 @@ from typing import Iterable
 
 SNAPSHOT_VERSION = 1
 
+# #4108: every routing/meta key a "chain_update" WAL event carries that is
+# NOT itself chain state — excluded when apply_events mirrors an event's
+# fields back onto pending_chains (field-name-independent write-back, see
+# that branch's own comment). This is a closed, explicit list rather than a
+# structurally-derived one (lead-coder's review, #4108): the alternative —
+# an ALLOW-list of known chain-state field names (waiting_on/arm_at/...) —
+# has the identical maintenance burden this fix exists to remove (a new
+# _PendingChain field would need THAT list updated too), and _PendingChain
+# lives in runtime/services/chain_manager.py, which this module (core/events/)
+# does not import (the reverse direction is the established one — chain_manager
+# only imports AgentSnapshot under TYPE_CHECKING). Origin of each key, so a
+# future addition to either source is recognizable as "another one of these":
+#   kind, seq, session_id — added by every WAL entry unconditionally
+#     (StateLog.append_nowait / SnapshotJournal._wal_append_nowait's own
+#     chokepoint, never caller-supplied).
+#   target, agent          — the (agent_name, session_id) routing pair
+#     record_chain_register/record_chain_update pass explicitly, alongside
+#     (not as part of) the chain-state ``fields`` dict.
+#   chain_id               — the dict key pending_chains is keyed by; carried
+#     IN the event for WAL readability, but redundant with the key itself.
+_CHAIN_EVENT_META_KEYS = frozenset({"kind", "seq", "target", "agent", "session_id", "chain_id"})
+
 
 class SchemaVersionError(Exception):
     """Raised when a snapshot file's schema version does not match the
@@ -280,9 +302,23 @@ class AgentSnapshot:
                 "task_kind": event.get("task_kind"),
             }
         elif kind == "chain_update":
+            # #4108: field-name-INDEPENDENT write-back — mirrors every
+            # non-routing key the event actually carries, rather than
+            # hardcoding "waiting_on" (which had two bugs: any OTHER field
+            # a caller passed — e.g. proposal 0067 P8's ``arm_at`` — was
+            # silently dropped from reconstruction, AND an update call that
+            # did NOT pass waiting_on at all still overwrote it to `[]`,
+            # destroying real state). Only touches keys the event actually
+            # names; a key absent from THIS event is left as whatever a
+            # PRIOR event already set. ``_CHAIN_EVENT_META_KEYS`` is every
+            # routing/meta field ``SnapshotJournal``'s WAL-append chokepoint
+            # adds that is NOT itself chain state.
             chain = self.pending_chains.get(event["chain_id"])
             if chain is not None:
-                chain["waiting_on"] = list(event.get("waiting_on", []))
+                for key, value in event.items():
+                    if key in _CHAIN_EVENT_META_KEYS:
+                        continue
+                    chain[key] = list(value) if key == "waiting_on" else value
         elif kind in ("chain_resolve", "chain_timeout_fired"):
             self.pending_chains.pop(event.get("chain_id"), None)
         elif kind == "intervention_dispatched":
