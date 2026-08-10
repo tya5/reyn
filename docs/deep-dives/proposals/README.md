@@ -87,11 +87,11 @@ Links to related ADRs, PRs, and docs.
 | [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | proposed | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | proposed | MEDIUM |
 | [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | proposed | SMALL |
-| [0022](0022-permission-tier-model.md) | Permission tier model — formalize two-axis framework + fix web_fetch/web_search asymmetry | proposed | SMALL |
-| [0023](0023-router-sp-quick-wins.md) | Router system prompt quick wins — cache efficiency, dedup, spawn-ack priority, delegate_to_agent rule, JA examples | proposed | SMALL |
-| [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | proposed | MEDIUM |
-| [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | proposed | SMALL |
-| [0026](0026-op-permission-cross-layer-coherence.md) | Op/Permission cross-layer coherence — `reyn skill validate` + auto-derived permission requirements from allowed_ops | proposed | SMALL |
+
+> **FP-0022–0026 files no longer exist in the repo** (their index rows pointed at
+> dead links — #4021 audit, 2026-08-10) — dropped rather than "fixed", since no
+> replacement file or tracking issue was found anywhere in the repo for any of
+> the five. If one of these proposals is later revived, re-add its row then.
 
 > **FP-0027–0030 were tracked directly in GitHub Issues** (see below) rather
 > than as files here. **FP-0044 onwards returned to file-based numbered

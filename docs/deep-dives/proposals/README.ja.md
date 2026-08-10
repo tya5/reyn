@@ -87,11 +87,11 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | proposed | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.ja.md) | OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する | proposed | MEDIUM |
 | [0021](0021-event-log-audit-completeness.ja.md) | イベントログ監査完全性 — 欠落 run_id/skill の追加 + permission_granted 新設 | proposed | SMALL |
-| [0022](0022-permission-tier-model.ja.md) | パーミッション Tier モデル正式化 — 2 軸フレームワーク明文化 + web_fetch/web_search 非対称修正 | proposed | SMALL |
-| [0023](0023-router-sp-quick-wins.ja.md) | Router システムプロンプト速攻改善 — キャッシュ効率・重複解消・spawn-ack 優先順位・delegate_to_agent ルール・JA 例文 | proposed | SMALL |
-| [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | proposed | MEDIUM |
-| [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | proposed | SMALL |
-| [0026](0026-op-permission-cross-layer-coherence.ja.md) | Op/Permission クロスレイヤー整合性 — `reyn skill validate` + allowed_ops からの permission 要求自動導出 | proposed | SMALL |
+
+> **FP-0022〜0026 のファイルはリポジトリに存在しません**(索引行が dead link を指していた —
+> #4021 監査、2026-08-10) — 「直す」のではなく削除しました。5件のいずれについても
+> 代替ファイルやtracking issueがリポジトリ内に見つからなかったため。これらのproposalが
+> 将来復活する場合は、その時点で行を再追加してください。
 
 > **FP-0027〜0030 は GitHub Issues で直接管理**されていました(下記参照)。**FP-0044 以降はファイルベースの番号付き proposal に戻っています** — #44 以降の proposal は全てこのディレクトリ内のファイルであり、issue スタブではありません。上記の注記は 0027〜0030 の歴史的記録としてのみ残しています。
 
