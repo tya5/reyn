@@ -126,14 +126,30 @@ audit-event fires (paired with a WARN log, `#3949`), naming the axis and why
 
 **This is deny-list visibility only, not a general "does this backend
 enforce everything configured" report (`#3951`).** A backend that simply
-does not enforce an axis at all — measured today for the Docker launch
-backend, which enforces none of `write_paths`/`network`/`subprocess` —
-produces no `sandbox_axis_unenforced` event and no WARN, because it isn't in
-the deny-list-incapable set `unenforced_axes()` checks. A clean/absent
-report from this mechanism does not mean every configured axis is being
-enforced; it means Landlock's specific deny-list limitation didn't fire on
-this call. Whether to extend coverage to Docker's own enforcement gap is
-tracked in `#3951`, undecided as of this writing.
+does not enforce an axis at all — `NoopBackend`, which enforces none of
+`write_paths`/`network`/`subprocess` (its docstring: argv is returned
+UNCHANGED, no enforcement; all other policy fields are recorded for audit
+only) — produces no `sandbox_axis_unenforced` event and no WARN, because it
+isn't in the deny-list-incapable set `unenforced_axes()` checks (that set
+names Landlock specifically, not "any backend that under-enforces"). A
+clean/absent report from this mechanism does not mean every configured axis
+is being enforced; it means Landlock's specific deny-list limitation didn't
+fire on this call. A quiet run under `NoopBackend` and a quiet run under
+`SeatbeltBackend` are indistinguishable from this signal alone — the
+per-backend table above, not this mechanism, is what answers "what does my
+backend actually enforce."
+
+Container (mount) mode is a **different mechanism entirely, not a sandbox
+backend** — `unenforced_axes()` is only ever called with one of the 3 real
+`SandboxBackend` names (`seatbelt`/`landlock`/`noop`, `sandboxed_exec.py`'s
+own call site), and `DockerEnvironmentBackend`
+(`src/reyn/environment/container_backend.py`) lives on a completely separate
+dispatch path this function never sees. An earlier draft of this paragraph
+named "the Docker launch backend" as an example of the same silent gap —
+category error, corrected by `#3951`'s own investigation
+([guide: configure-sandbox](../../guide/for-users/configure-sandbox.md)):
+container mode was never a candidate input to this function in the first
+place, so there is no coverage question to extend here for it.
 
 ## `reyn.yaml` configuration
 
