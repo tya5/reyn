@@ -876,6 +876,94 @@ correct throughout, and the verdicts attached to its members were not.
   what the first one's classification step missed, rather than trusting a
   repeated pass by the same method.
 
+## 21. The search's shape decides the population — and a predicate can leave a gap no item falls into
+
+§20 is about a population that was closed and verdicts that were not. This
+section is the step before: the population itself was never whole, because
+the *form* of the search — not its scope, not its spelling — excluded a class
+of item silently. Three independent mechanisms hit this on one night
+(2026-08-09/10), each in a different form, and **no two of them would have
+been caught by fixing the other**.
+
+- **A two-branch predicate with a gap between the branches (#4019).** The
+  `b` gate's `_references_a_fixed_tests_location()` asked
+  `if target.parent == tests_dir` — the target must be a *direct child* of
+  `tests/`. For `tests/fixtures/llm/fp0063_arc_witness`, `.parent` is
+  `tests/fixtures/llm`, so branch (b) was False; branch (a) ("outside
+  `tests/`") was also False, because it is inside. The issue's own summary:
+  「**穴の 形は «`.parent` 単発» でも «多段 join» でも ありません** ——
+  **«tests-root peer の «中» に 何階層か 入った» という 深さです。**
+  `tests/fixtures` 直下なら 捕まり、`tests/fixtures/llm/...` だと 抜ける」.
+  The item was not misclassified — **it received no verdict at all**, because
+  the two branches did not partition the space.
+
+- **A population taken from the moving side (#4025).** The `core` bucket
+  audit enumerated 「移動する 274 件」. The reference that broke lived in
+  `tests/builtin/` — a directory that was **not moving** (it had already
+  migrated in #4003): a `_REPO_ROOT / "tests" / "test_workspace_glob_outside_root_perm.py"`
+  existence assert pointing at a file this PR moved away. The reviewer's
+  correction: 「**«移動する ファイルの 中の 参照» を いくら 数えても この 1 件は
+  出ません。正しい 母集団は «移動する 集合を 参照している 全ファイル» —— 向きが 逆**」.
+  Scope was not the problem; **reading every moving file, without limit, never
+  produces this item.**
+
+- **A literal that must begin where the pattern expects (#4006).** The census
+  grep required the quote to be immediately followed by `tests/`, so a string
+  such as `"REDded tests/test_X.py::…"` — the path appearing mid-literal —
+  never matched. Re-measured: 「従来 知られていた 母集団 17 件 / 取り直した
+  母集団 287 件」. This one is §3/§4's token-spelling shape and §17's
+  census-scope shape wearing a third face, and is included here only because
+  it fired the same night through a third mechanism.
+
+**Why these are three axes and not one.** Widening the file-set (§17) fixes
+the third and neither of the first two. Fixing the predicate's branches fixes
+the first and neither of the others. Reversing the direction fixes the second
+alone. They share a single sentence — *the form of the search decided which
+items could ever appear* — and share no remedy.
+
+⚠️ **The author of this section committed the second one while writing the
+surrounding work.** The #4021 link-gate specification, written the same night,
+defined its population as "links **from** `deep-dives/{decisions,proposals,
+contributing,spec}`" — outgoing only. Links pointing **into** those directories
+(50 of them, from the built docs) were left unguarded, and the omission was
+found by a peer's pin rather than by re-reading the spec. Having just written
+"time-tense decides which directories are in scope," the direction axis was
+dropped in the same paragraph: **finding one axis feels like having found the
+axis.**
+
+### What actually closed them
+
+Not a checklist. All three were caught by a mechanism performing the real
+operation and observing the result:
+
+- #4019 — a **pre-move audit that actually moved files**, not a predicate about
+  what a move would do
+- #4025 — **CI's own pytest run** after the move landed
+- #4006 — a **re-measurement triggered by #4025's red**, not by re-reading the
+  original grep
+
+This is §20's last bullet at population scope: the sweep does not find its own
+blind spot. It is also why `a′` (#4009) is the shape to copy — it **re-resolves
+the expression against the file's real post-move location** instead of
+classifying whether a move would break it. A predicate reasons about a
+population it has already narrowed; performing the operation cannot narrow what
+it has not yet touched.
+
+**Apply**:
+
+- For any move or rename, take **two** populations and say so: ① what the
+  moving set references, ② **what references the moving set**. ②'s search runs
+  in the opposite direction — build the list of names being moved and match it
+  against string literals across the whole repo; a `__file__`-resolution scan
+  cannot produce it.
+- When a gate's predicate has branches, ask what falls into **neither**. Two
+  conditions that both return False are indistinguishable from a clean item;
+  a predicate that partitions ("inside its own home, at any depth" vs "not")
+  has no such gap, while one built from two positive tests does.
+- State the population's **form** alongside its size, the way §17 asks for
+  scope: "287, matched by `<pattern>`, over `<file-set>`, in the `<direction>`
+  direction." A bare count carries none of the three.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
