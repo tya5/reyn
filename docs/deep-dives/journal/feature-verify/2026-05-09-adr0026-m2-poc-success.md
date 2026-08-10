@@ -12,7 +12,7 @@ it. No stop signals were triggered.
 | Gate | Status | Detail |
 |---|---|---|
 | Byte-identity for LLMReplay fixtures | GREEN | `tests/test_replay_skill_router.py` — 11 passed, 0 failures; no fixture re-recording required |
-| Drift test | GREEN | `tests/test_web_search_unified.py` — 14 new Tier 2 invariants pass; description and parameters constants verified byte-identical to legacy `ToolSpec` literal |
+| Drift test | GREEN | `tests/core/test_web_search_unified.py` — 14 new Tier 2 invariants pass; description and parameters constants verified byte-identical to legacy `ToolSpec` literal |
 | Full suite | GREEN | 1500 passed / 2 xfailed (delta: +14 from M1 baseline of 1486) |
 | mkdocs strict | GREEN | `mkdocs build --strict` — no errors or warnings |
 

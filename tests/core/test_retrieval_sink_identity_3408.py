@@ -27,7 +27,7 @@ from tests._support.agent_session import make_session
 
 class _EventSink:
     """A real (non-mock) audit-event subscriber — a plain callback collector
-    (mirrors tests/test_agent_delta_audit_event_3288.py's ``_EventSink``)."""
+    (mirrors tests/interfaces/test_agent_delta_audit_event_3288.py's ``_EventSink``)."""
 
     def __init__(self) -> None:
         self.events: list[Event] = []

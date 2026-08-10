@@ -2,7 +2,7 @@
 not a hand-list) + taxonomy completeness gate, mirroring the
 ``OP_KIND_MODEL_MAP`` <-> ``control-ir.md`` sync discipline (CLAUDE.md hard
 rule) and ``BUILTIN_HOOK_SCHEMAS``'s registry-walk gate
-(``tests/test_hook_event_schema_registry_sync_0059.py``).
+(``tests/hooks/test_hook_event_schema_registry_sync_0059.py``).
 
 ``reyn.core.part_type_registry.PART_TYPE_REGISTRY`` is BUILT by walking the
 ``reyn.core.part_types`` package and collecting every ``PART_TYPE_SPEC``

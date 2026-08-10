@@ -113,7 +113,7 @@ def test_mkdocs_docs_dir_unaffected() -> None:
     [
         "pyproject.toml",
         "CLAUDE.md",
-        "tests/test_0061_repo_self_access_parity.py",
+        "tests/runtime/test_0061_repo_self_access_parity.py",
         "scripts/wheel_reachability_smoke.py",
         "dogfood/scenarios",
         "pipelines",

@@ -224,7 +224,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     interim honest disclosure while Gap 1+2 work landed; this PR
     (= Gap 3 Z-c) flips them back to ``True`` now that the producers
     are wired. Each claim is pinned to its concrete in-source wire by
-    ``tests/test_a2a_capability_claim_interim.py``.
+    ``tests/interfaces/test_a2a_capability_claim_interim.py``.
     """
     from reyn.core.events.state_log import StateLog
     from reyn.interfaces.web.deps import get_registry

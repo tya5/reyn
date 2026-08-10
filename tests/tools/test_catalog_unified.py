@@ -184,7 +184,7 @@ def test_registry_lookup_returns_correct_instances():
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. Handler activated (M4 Phase 3) — require router_state.<fn>
 #    Activation tests with happy-path delegation live in
-#    tests/test_tool_registry_handlers.py.  These tests pin the
+#    tests/tools/test_tool_registry_handlers.py.  These tests pin the
 #    mis-wiring contract: missing router_state → RuntimeError.
 # ══════════════════════════════════════════════════════════════════════════════
 

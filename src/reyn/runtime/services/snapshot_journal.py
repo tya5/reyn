@@ -234,7 +234,7 @@ class SnapshotJournal:
         held the (never-pruned) item would resurrect it. Pruning
         ``self._snapshot.inbox`` HERE, synchronously, at cancel-record time —
         exactly mirroring ``consume_inbox``'s shape — closes that window
-        unconditionally (see ``tests/test_3300_p3_cancel_by_id.py``'s
+        unconditionally (see ``tests/interfaces/test_3300_p3_cancel_by_id.py``'s
         truncate-falsify gate).
 
         ★F (no-await critical section, #3300 P3 design-pass pin F): this

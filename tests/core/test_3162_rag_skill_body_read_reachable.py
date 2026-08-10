@@ -5,7 +5,7 @@ folded back into the standard one-skill + bundled-`references/` shape).
 
 Plugin-body reads (`reyn.plugins.body_read.read_plugin_body_bytes`) became
 default-allowed for a registered plugin's `skills/**` only in #3174 — the
-generic mechanism is covered by `tests/test_3162_plugin_body_read_parity.py`
+generic mechanism is covered by `tests/core/test_3162_plugin_body_read_parity.py`
 (a synthetic fixture plugin). This file is the SAME positive-witness shape
 (`test_witness4_registered_plugin_body_reachable_without_approval`), applied
 against the REAL, on-disk RAG skill directory's actual content (its router
@@ -18,7 +18,7 @@ tree byte-for-byte (a synthetic manifest declaring only the `skills`
 capability, so install never touches `mcp`/`pipelines` or shells out to
 `uv` — no `requirements.txt` in the copied source, same "keep the real-
 install witness independent of materialisation infrastructure" reasoning as
-`tests/test_3162_plugin_body_read_parity.py`'s own fixture docstring) — not
+`tests/core/test_3162_plugin_body_read_parity.py`'s own fixture docstring) — not
 a hand-typed placeholder standing in for the skill's content.
 
 No mocks: real `PluginInstallIROp` → real `plugin_install.handle` → a real

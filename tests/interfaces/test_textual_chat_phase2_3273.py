@@ -402,7 +402,7 @@ def test_failure_rows_carry_coral_background_tint() -> None:
     whole-row background, while a non-error row carries none. Pins the
     ``_body_and_background`` contract directly. The tint is the dark failure
     BLOCK, distinct from the coral ``_CC_ERR`` text drawn on top of it — see
-    ``tests/test_textual_chat_row_contrast_3367.py`` for the legibility gate
+    ``tests/interfaces/test_textual_chat_row_contrast_3367.py`` for the legibility gate
     over every (kind, state) pairing."""
     _, bg_failed = _body_and_background(_failed("z"))
     assert bg_failed == _CC_ERR_BG

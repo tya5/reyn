@@ -129,7 +129,7 @@ display kind を誤って落としてしまう):
 > #3362 で訂正。本節は以前、両センチネルとも registry forwarder が swallow するため
 > 「AG-UI tap に到達しない」と記述していたが、いずれも到達する。forwarder の
 > `continue` は subscriber-local である。実 forwarder + 実 tap で計測
-> (`tests/test_agui_control_filter.py`)。
+> (`tests/interfaces/test_agui_control_filter.py`)。
 
 #### Text lifecycle(適合する triplet — plain と streamed)
 
@@ -421,7 +421,7 @@ streaming-notification 軸**である——下記の行、および `frames.py` 
 name ではなく)標準の `TEXT_MESSAGE_CONTENT` surface にマップする(#3288 ③d — 上記
 *Text lifecycle* 参照)——実際に client が受け取るワイヤー上ではこの `CUSTOM` name は
 現れない。この行が記述しているのは plain codec 関数が単体で行うこと
-(`tests/test_agent_delta_audit_event_3288.py` が直接検証する)であり、接続済みの
+(`tests/interfaces/test_agent_delta_audit_event_3288.py` が直接検証する)であり、接続済みの
 ワイヤー上で起きることではない。
 
 | Custom `name`                        | Meaning                                          |

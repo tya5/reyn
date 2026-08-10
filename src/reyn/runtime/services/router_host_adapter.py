@@ -247,7 +247,7 @@ class RouterHostAdapter:
     # were non-empty, and 6 of them were measurably false. The predicate is
     # computable, so it is COMPUTED —
     # ``scripts/measure_router_host_adapter_consumers.py`` measures each param's
-    # consumer set and ``tests/test_router_host_adapter_param_gate_3482.py``
+    # consumer set and ``tests/runtime/test_router_host_adapter_param_gate_3482.py``
     # fails the moment a bare param acquires an exact-match partner (it must
     # become a bundle) or a written claim contradicts the measurement. Only the
     # residue a measurement CANNOT settle is written down, in
@@ -2406,7 +2406,7 @@ class RouterHostAdapter:
 # The question "may this param stay a bare scalar?" has a computable answer:
 # is any OTHER param carried to exactly the same set of destinations? So it is
 # COMPUTED, by scripts/measure_router_host_adapter_consumers.py, and enforced
-# by tests/test_router_host_adapter_param_gate_3482.py:
+# by tests/runtime/test_router_host_adapter_param_gate_3482.py:
 #
 #   * bare param that acquires an exact-match partner  -> RED (bundle them)
 #   * bare param with no measurable consumer           -> RED unless shelved

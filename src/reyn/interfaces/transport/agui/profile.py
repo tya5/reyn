@@ -27,7 +27,7 @@ Three namespaces:
   so this is an **open namespace** profiled at the prefix level with a fixed value
   schema (:data:`OPEN_NAMESPACES`), not a closed member set.
 
-**Non-circular completeness gate.** ``tests/test_agui_profile_completeness.py``
+**Non-circular completeness gate.** ``tests/interfaces/test_agui_profile_completeness.py``
 enumerates the reyn-mapped vocabulary *from the source vocabulary* — display kinds
 + ``forwarded_frame_kinds`` (encoded through the codec, ``CUSTOM`` names collected)
 AND the intervention frontend-tool encoder's real ``toolName`` — and asserts each

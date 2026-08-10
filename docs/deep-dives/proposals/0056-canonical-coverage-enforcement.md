@@ -206,7 +206,7 @@ Stamped after reading the merged sources/tests directly (not a rubber-stamp — 
 counts below correct the approximate figures used during dispatch).
 
 1. **Ratchet (§2a) landed as an EQUALITY assert.**
-   `tests/test_fp0056_canonical_coverage_gate.py` holds
+   `tests/core/test_fp0056_canonical_coverage_gate.py` holds
    `_CANONICAL_TODO_GRANDFATHERED = frozenset({…})` (**52 entries**) and asserts
    `live_todo == set(_CANONICAL_TODO_GRANDFATHERED)` — so *adding* a producer to the
    marker (new debt) OR *forgetting to remove* one after mapping (stale) both go red.

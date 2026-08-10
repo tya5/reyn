@@ -51,7 +51,7 @@ BOTH modes: a non-declared dev-only path (``pyproject.toml``, ``tests/``,
 absent in the wheel" — the dev==wheel parity invariant this proposal
 exists to establish. The wheel-side half of the same SSoT drives
 ``pyproject.toml``'s ``force-include`` map (kept in literal sync; see
-``tests/test_0061_repo_self_access_parity.py``, which fails if the two
+``tests/runtime/test_0061_repo_self_access_parity.py``, which fails if the two
 drift).
 
 P7-clean: this module is OS infrastructure; it carries no
@@ -81,7 +81,7 @@ REACHABLE_TOP_LEVEL_ENTRIES: tuple[str, ...] = ("README.md", "CHANGELOG.md", "do
 # via `pyproject.toml`'s `[tool.hatch.build.targets.wheel.force-include]`
 # (`src` isn't listed there because Hatchling's `packages = ["src/reyn"]`
 # already ships the package tree by its own, separate mechanism — see
-# `tests/test_0061_repo_self_access_parity.py`, which cross-checks BOTH
+# `tests/runtime/test_0061_repo_self_access_parity.py`, which cross-checks BOTH
 # halves of this SSoT against `pyproject.toml` so they cannot drift).
 FORCE_INCLUDE_ENTRIES: tuple[str, ...] = ("README.md", "CHANGELOG.md", "docs")
 

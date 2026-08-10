@@ -13,7 +13,7 @@ MODEL OUTPUT (an agent step's prompt arrived as ``kind="user"``, so a ``/``-pref
 line short-circuited to ``_maybe_handle_slash`` before any router turn), which made an
 un-narrowed child an escape. ★ #3595 step 1 ruled that reachability a DEFECT and closed
 it: the agent-step prompt now rides its own inbox kind, and
-``tests/test_3561_spawn_session_seam_reachability.py`` measures its absence
+``tests/runtime/test_3561_spawn_session_seam_reachability.py`` measures its absence
 (``test_model_output_cannot_reach_slash_dispatch_and_spawns_nothing``) next to an
 operator control. So the escape argument is retired, and this file does not rest on it.
 
@@ -49,7 +49,7 @@ operator can re-open from an unnarrowed session), whereas the over-wide child th
 code produced announced nothing at all.
 
 The completeness half of this gate — which spawn sites exist and what each declares —
-lives in ``tests/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is
+lives in ``tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py``; this module is
 what its declaration for ``interfaces/slash/session.py::session_cmd`` now points at.
 """
 from __future__ import annotations
@@ -146,7 +146,7 @@ def _written(tmp_path: Path, out_name: str) -> "list[str]":
 
 def _registry(tmp_path: Path, scripted: "_WritesOnceLLM") -> AgentRegistry:
     """Real ``AgentRegistry`` + real ``Session`` factory — the harness shape
-    ``tests/test_3561_spawn_session_seam_reachability.py`` uses, including the
+    ``tests/runtime/test_3561_spawn_session_seam_reachability.py`` uses, including the
     ``holder`` deferred-registry-ref (so a spawned session gets ``registry=``) and a
     real-litellm-name resolver (so a spawned session's model-support pre-check has a
     name to resolve).
@@ -213,7 +213,7 @@ async def _drive_command(session: Session, text: str) -> "list[OutboxMessage]":
     CLIENT does (``reyn.interfaces.slash.dispatch``), over the transport seam every
     reyn client writes through, and that is what is driven here. A producer that is not
     an operator has no way to reach the command at all, which is
-    ``tests/test_3561_spawn_session_seam_reachability.py``'s subject.
+    ``tests/runtime/test_3561_spawn_session_seam_reachability.py``'s subject.
 
     Returns the messages a client would have rendered, which is where a slash reply
     lands — the same observable the outbox collection gave before."""

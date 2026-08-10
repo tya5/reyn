@@ -32,7 +32,7 @@ schema check — ``event_schema.EVENT_AUDIT_REQUIREMENTS`` declares required
 FIELDS for the kinds it covers, not which kinds exist), so a member that no
 producer emits degrades the stream silently: the ordinal counter still
 increments, and a subscribing peer cannot distinguish a degraded stream from a
-quiet run. ``tests/test_progress_lifecycle_fanout_3357.py`` is the liveness
+quiet run. ``tests/interfaces/test_progress_lifecycle_fanout_3357.py`` is the liveness
 gate that keeps that from happening again (#3357).
 
 The payload of the forwarded notification carries the event kind plus the

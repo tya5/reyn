@@ -18,7 +18,7 @@ handlers.
 
 Tests (real PermissionResolver + a real-``RequestBus``-compatible Fake that
 pre-answers with a scripted choice — same pattern as
-tests/test_require_file_jit_ask_1505.py's ``_FakeBus`` — no mocks):
+tests/security/test_require_file_jit_ask_1505.py's ``_FakeBus`` — no mocks):
 
   1. skill_install: a ``SandboxPolicy`` whose ``write_paths`` excludes
      ``.reyn/config/`` narrows the config-write gate outside the effective

@@ -46,7 +46,7 @@ import pytest
 def _read_events_of_kind(events_dir: Path, kind: str) -> list[dict]:
     """Read every JSONL event of *kind* from anywhere under *events_dir*.
 
-    Mirrors tests/test_asyncio_diagnostics.py's helper of the same name — the
+    Mirrors tests/core/test_asyncio_diagnostics.py's helper of the same name — the
     canonical way to read back an ``emit_cli_event``-durable-captured event
     from a real ``.reyn/events/`` tree in a test.
     """

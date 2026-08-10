@@ -3,7 +3,7 @@
 
 The output is the SSoT for one predicate: *does this constructor param share
 an exact consumer set with another param* (= is it half of a real bundle)?
-``tests/test_router_host_adapter_param_gate_3482.py`` imports this module and
+``tests/runtime/test_router_host_adapter_param_gate_3482.py`` imports this module and
 DERIVES that predicate instead of trusting prose — the #3482 defect was a
 registry of 58 hand-written "no shared-consumer partner" reasons whose truth
 nothing checked, and 6 of which were measurably false.

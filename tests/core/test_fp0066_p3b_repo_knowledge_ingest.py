@@ -30,7 +30,7 @@ Covers (per the architect's P3 firm §1/§3/§4 + the P3b task brief):
 No mocks — real ``SqliteIndexBackend``, real ``SourceManifest``, real
 ``IndexCoordinator``/``OpContext``/``Workspace``; a plain
 ``_FakeEmbeddingProvider`` (established convention, see
-``tests/test_fp0066_p3a_knowledge_ingest.py``) stands in for the litellm
+``tests/core/test_fp0066_p3a_knowledge_ingest.py``) stands in for the litellm
 boundary via the ``get_provider`` monkeypatch seam. The repo CONTENT
 itself is a synthetic fake tree under ``tmp_path`` (``resolve_reyn_root``
 monkeypatched to it) rather than this actual checkout — deterministic,
@@ -68,7 +68,7 @@ def _run(coro: Any) -> Any:
 
 class _FakeEmbeddingProvider:
     """Deterministic canned vectors, one per input text — no litellm call.
-    Mirrors ``tests/test_fp0066_p3a_knowledge_ingest.py::_FakeEmbeddingProvider``."""
+    Mirrors ``tests/core/test_fp0066_p3a_knowledge_ingest.py::_FakeEmbeddingProvider``."""
 
     def __init__(self, *, fail: bool = False, delay: float = 0.0) -> None:
         self.fail = fail

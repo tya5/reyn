@@ -450,5 +450,5 @@ def test_mcp_drop_server_tool_scope_enum_three_tiers() -> None:
 # in-workspace write stays allowed) pinned a mechanism that no longer exists at
 # this layer — FILE_WRITE is ⊤ on SandboxLayer by design now, not by a
 # threading bug, so neither assertion is a live contract to guard. Deleted as
-# a pair, same reasoning as tests/test_1199_effective_permission.py's #3901
+# a pair, same reasoning as tests/security/test_1199_effective_permission.py's #3901
 # note.

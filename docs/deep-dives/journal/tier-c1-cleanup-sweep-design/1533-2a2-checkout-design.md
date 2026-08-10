@@ -3,7 +3,7 @@
 **Status**: IMPLEMENTED on `feat/1533-2a2-checkout` (2a-1 merged in #1558). Author: dogfood-coder.
 **Depends on**: 2a-1 branch-registry (`branch_ids_for` / `list_branches`, abandoned-interval-grounded). Refactors `rewind_to`.
 
-> Landed: substrate `checkout(state_log, *, target_seq)` (unconditional) + `rewind` guarded-delegate; registry `checkout(seq)` + `rewind_to` thin wrapper; `_abandoned_intervals` docstring updated. Tests: `tests/test_registry_checkout_2a2.py` (full-path runtime + two-substrate round-trip + equivalence + preserved-guard). The interval-layer caveat below is now closed by the real-instance integration tests.
+> Landed: substrate `checkout(state_log, *, target_seq)` (unconditional) + `rewind` guarded-delegate; registry `checkout(seq)` + `rewind_to` thin wrapper; `_abandoned_intervals` docstring updated. Tests: `tests/core/test_registry_checkout_2a2.py` (full-path runtime + two-substrate round-trip + equivalence + preserved-guard). The interval-layer caveat below is now closed by the real-instance integration tests.
 
 ## Goal
 

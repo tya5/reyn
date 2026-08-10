@@ -6,7 +6,7 @@ reaches via ``RouterCallerState.spawn_session_fn`` — but calls it directly, wi
 no ``RouterLoopHost`` / ``RouterCallerState`` / router-loop object anywhere on
 the path. These tests assert gate-equivalence (same WAL event shape, same
 narrowing enforcement) against the existing tool-path tests
-(``tests/test_2103_s1bc_session_spawn_tool.py``), plus the router-free property
+(``tests/runtime/test_2103_s1bc_session_spawn_tool.py``), plus the router-free property
 that is the whole point of this seam.
 
 Real AgentRegistry + real Session factory + real StateLog (no mocks).

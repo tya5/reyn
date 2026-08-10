@@ -22,7 +22,7 @@ The forward-set (:func:`forwarded_frame_kinds`) is mostly **DERIVED** from the
 renderer's own vocabulary — ``_WAITING_ON_BY_EVENT`` (the tool-axis table) plus
 the turn / intervention-answer events ``on_audit_event`` handles — never
 hand-listed. The dual-stream completeness gate
-(``tests/test_transport_dual_stream_completeness.py``) binds the transport's
+(``tests/interfaces/test_transport_dual_stream_completeness.py``) binds the transport's
 coverage to that vocabulary so a renderer event the transport does not forward
 fails CI instead of silently vanishing on the wire (the A2 dual-stream bug,
 designed out). The ONE deliberate exception is :data:`_STREAMING_EVENTS`
@@ -133,7 +133,7 @@ _SESSION_LIFECYCLE_EVENTS = frozenset({"session_attached"})
 # any consumer — ③c has since added the textual_chat coalescing handler
 # (``TextualChatApp._handle_agent_delta_event``), but the plain/repl renderer
 # still branches on nothing for it (and may never). This is legal per the
-# dual-stream completeness gate's actual direction (``tests/test_transport_dual_stream_completeness.py``:
+# dual-stream completeness gate's actual direction (``tests/interfaces/test_transport_dual_stream_completeness.py``:
 # ``consumed ⊆ forwarded``, never the reverse) — a forwarded event nobody
 # consumes yet is not a coverage gap, and a surface with no handler for an
 # EVENT frame consumes-but-drops it (never renders it), unlike an unknown
@@ -162,7 +162,7 @@ def forwarded_frame_kinds() -> frozenset[str]:
     - :data:`_TURN_AND_ANSWER_EVENTS` — the turn-lifecycle / intervention-answer
       / user-submitted events ``renderer.on_audit_event`` branches on directly
       (DERIVED from the renderer's own vocabulary, never hand-listed for this
-      half — see ``tests/test_transport_dual_stream_completeness.py``).
+      half — see ``tests/interfaces/test_transport_dual_stream_completeness.py``).
     - :data:`_STREAMING_EVENTS` (#3288 ③b) — the ONE deliberate exception to
       "derived, not hand-listed": forwarded ahead of any consumer in THIS
       (plain/repl) renderer, which still has no ``agent_delta`` branch and

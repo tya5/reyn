@@ -94,7 +94,7 @@ class QueueTransport(ClientTransport):
         # ``test_reset_pending_interventions_...`` uses to discriminate
         # ``_pending_ivs.clear()`` independently of the panel's own
         # ``collapse_all()`` (mirrors ``RecordingTransport.answered_choice_ids``
-        # in ``tests/test_textual_chat_intervention_panel_3299.py``).
+        # in ``tests/interfaces/test_textual_chat_intervention_panel_3299.py``).
         self.answered_choice_ids: "list[str | None]" = []
 
     def start(self) -> None:  # pragma: no cover - trivial
@@ -650,7 +650,7 @@ async def test_reset_streaming_replies_stale_chain_id_does_not_finalize_into_gho
 
 def _install_hanging_run_turn(session: Session):
     """Same no-mock seam ``tests/interfaces/test_3300_p2a_queue_state_publish.py`` uses
-    (itself mirroring ``tests/test_2242_hard_cancel.py``): a real, plain
+    (itself mirroring ``tests/core/test_2242_hard_cancel.py``): a real, plain
     async function method-assigned onto the instance standing in for a
     genuinely in-flight LLM call, so a turn can be held BUSY (never touching
     a real LLM) while a SECOND submission queues behind it."""

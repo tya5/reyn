@@ -78,7 +78,7 @@ def test_flat_shape_and_completeness_bar():
         # #3429: the assertion here used to be ``"__" in e["name"]`` — that a
         # catalog entry carries the QUALIFIED spelling. There is one spelling
         # now, and the check that no name carries the separator lives in
-        # tests/test_no_qualified_tool_names_3429.py.
+        # tests/tools/test_no_qualified_tool_names_3429.py.
         assert isinstance(e["parameters"], dict), f"completeness bar (never None): {e['name']}"
         assert isinstance(e["description"], str)
 

@@ -9,7 +9,7 @@ known-status tables must stay a superset of the LIVE status vocabulary
 op_runtime actually returns.
 
 This is an "enumerate, don't curate" gate (#3075 idiom, mirrored from
-`tests/test_network_egress_env_completeness_3075.py`): it AST-walks every
+`tests/security/test_network_egress_env_completeness_3075.py`): it AST-walks every
 `op_runtime/*.py` file for dict-literal `"status": "<value>"` entries
 rather than hand-maintaining a second copy of the status list, so a new
 status value added anywhere in op_runtime is caught automatically instead

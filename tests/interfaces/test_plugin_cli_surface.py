@@ -21,7 +21,7 @@ prove:
 No unittest.mock anywhere. Real ``PermissionResolver`` / ``EventLog`` /
 ``Workspace`` / op_runtime handlers throughout; ``HOME`` is monkeypatched per
 test so ``~/.reyn/plugins/`` never touches the real home dir (mirrors
-``tests/test_plugin_install.py``).
+``tests/core/test_plugin_install.py``).
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ from reyn.interfaces.cli.commands import plugin as plugin_cli
 def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
     """A real local git repo holding a minimal plugin (skills capability only —
     no requirements.txt ⇒ no dep-materialisation http.get), usable as a
-    ``file://`` git source (mirrors tests/test_plugin_install.py::
+    ``file://`` git source (mirrors tests/core/test_plugin_install.py::
     _make_git_plugin_repo). Using a REAL, reachable repo is what makes the
     run-code-gate strip-falsify meaningful: with the gate stripped the clone
     SUCCEEDS and the install proceeds, so the test flips RED — an unreachable
@@ -70,7 +70,7 @@ def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
 
 def _write_local_plugin(base: Path, name: str = "myplugin") -> Path:
     """A minimal real local plugin dir: manifest + one skills capability
-    (mirrors tests/test_plugin_install.py::_make_plugin_source)."""
+    (mirrors tests/core/test_plugin_install.py::_make_plugin_source)."""
     plugin_dir = base / name
     (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
     (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(

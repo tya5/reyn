@@ -512,7 +512,7 @@ async def test_upstream_consumed_sentinels_stay_out_of_the_conversation() -> Non
     On the REMOTE path they differ, which is why this gate feeds them in as
     frames (the remote shape) rather than asserting they cannot arrive:
     ``__attach_request__`` really IS emitted as an AG-UI display frame — measured
-    in ``tests/test_agui_control_filter.py``, since the forwarder's ``continue``
+    in ``tests/interfaces/test_agui_control_filter.py``, since the forwarder's ``continue``
     is subscriber-local and does not gate the wire — so skipping it here is
     load-bearing. ``__session_switch_request__`` is consumed by the AG-UI tap and
     filtered besides, so its entry is a true fail-safe. Either way neither may

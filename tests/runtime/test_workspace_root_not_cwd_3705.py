@@ -3,7 +3,7 @@ explicit workspace root when the caller supplies one, and a repo-wide AST
 sweep enumerates every remaining cwd-relative `.reyn` literal so none of
 them can silently reappear (or silently spread) without this test noticing.
 
-Companion to `tests/test_session_writes_stay_in_its_workspace_3705.py`
+Companion to `tests/runtime/test_session_writes_stay_in_its_workspace_3705.py`
 (the falsifiable, end-to-end RED gate a session's `history.jsonl` write must
 pass). This file covers the OTHER Session-owned sites the incident's
 full-repo sweep found (`agent.py`'s `workspace_dir`, `recovery.py`'s

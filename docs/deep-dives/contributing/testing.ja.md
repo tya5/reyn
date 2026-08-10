@@ -400,7 +400,7 @@ REYN_LLM_RECORD=1 python -m pytest tests/test_replay_my_area.py -v
 動作しますが、それは好みの問題であり正しさの要件ではありません — 詳細は
 `write-replay-tests.md` の Step 4 と `LLMReplay.flush` 自身の docstring、
 積層したフィクスチャが再度混入した場合に検出する CI ゲートである
-`tests/test_replay_fixture_no_stacking_3634.py` を参照してください。
+`tests/dev/test_replay_fixture_no_stacking_3634.py` を参照してください。
 
 ### ドリフト検出 — 各エリアで必須
 

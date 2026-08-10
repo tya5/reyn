@@ -18,7 +18,7 @@ failure mode.
 "which litellm functions might reach the network" — it is the SSoT for which
 top-level ``litellm.<attr>`` coroutine functions reyn's OWN source code
 actually calls, kept honest bidirectionally by
-``tests/test_network_gate_boundary_completeness_3451.py`` (mirroring #3437's
+``tests/dev/test_network_gate_boundary_completeness_3451.py`` (mirroring #3437's
 SSoT + bidirectional-gate shape):
 
 - **declared ⊆ real**: every name in this tuple is a real coroutine attribute
@@ -89,7 +89,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pytest
 
-# ── SSoT (kept honest by tests/test_network_gate_boundary_completeness_3451.py) ─
+# ── SSoT (kept honest by tests/dev/test_network_gate_boundary_completeness_3451.py) ─
 
 LLM_NETWORK_BOUNDARY_ATTRS: tuple[str, ...] = ("acompletion", "aembedding")
 
@@ -119,7 +119,7 @@ _originals: dict[str, Any] = {}
 #
 # Resolved fresh from the env var on every call (not frozen at import time)
 # so a test can point a nested pytest session at an isolated events file via
-# ``monkeypatch.setenv`` — see tests/test_network_gate_3451.py, which drives
+# ``monkeypatch.setenv`` — see tests/dev/test_network_gate_3451.py, which drives
 # exactly this via an in-process `pytester` run sharing this same module.
 def _events_path() -> Path:
     return Path(
@@ -260,7 +260,7 @@ def stale_allow_markers() -> set[str]:
 #
 # This module IS a pytest plugin (declared via `pytest_plugins =
 # ["reyn.dev.testing.network_gate"]` in tests/conftest.py) rather than logic
-# folded into that conftest — so tests/test_network_gate_3451.py can drive a
+# folded into that conftest — so tests/dev/test_network_gate_3451.py can drive a
 # real, isolated inner pytest session (`pytester` + `pytest_plugins =
 # ["reyn.dev.testing.network_gate"]`, no other fixtures) to exercise these
 # hooks end to end without depending on this repo's other, layout-specific

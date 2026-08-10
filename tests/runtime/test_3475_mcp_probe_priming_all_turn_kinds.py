@@ -25,7 +25,7 @@ first LLM call (see that method's own docstring) — making the guarantee
 structural instead of kind-dependent.
 
 Verified here via the SAME real-callable seam
-`tests/test_2242_hard_cancel.py` uses to isolate the mechanism under test
+`tests/core/test_2242_hard_cancel.py` uses to isolate the mechanism under test
 from RouterLoop's own internals: `Session._loop_driver.run_turn` is replaced
 with a plain async function (method-assigned onto the instance — not a
 mock) that captures `session.router_host.mcp_tools_cache_snapshot` (public
@@ -71,7 +71,7 @@ def _answers(by_server: dict[str, list[dict]]) -> dict[str, ToolsAnswered]:
 def _make_session(tmp_path: Path) -> Session:
     """A session with one configured MCP server, warm-startable from disk so
     `ensure_mcp_tools_cached()` never needs a real subprocess probe (mirrors
-    `tests/test_session_refresh_mcp_servers.py`'s own technique)."""
+    `tests/runtime/test_session_refresh_mcp_servers.py`'s own technique)."""
     write_cache(cache_file_path(tmp_path / ".reyn" / "state"), _answers({_SERVER: _TOOLS}))
     return make_session(
         agent_name="fp3475-agent",

@@ -17,7 +17,7 @@ Covers:
 axis; these cases now pin ``visibility="menu"`` where they pinned
 ``auto_invoke=True``. The ``on_demand`` state (SP-excluded but reachable via
 ``skill_list``) and the ``auto_invoke``-rejected-at-load contract are pinned in
-``tests/test_2971_skill_visibility.py``.
+``tests/tools/test_2971_skill_visibility.py``.
 """
 from __future__ import annotations
 

@@ -68,7 +68,7 @@ def test_the_child_directory_check_needs_no_curated_name(tmp_path: Path) -> None
 
 
 def test_a_target_nested_several_levels_inside_a_peer_is_flagged(tmp_path: Path) -> None:
-    """Tier 2: #4019 — THE real miss (`tests/test_fp0063_arc_witness.py`'s
+    """Tier 2: #4019 — THE real miss (`tests/runtime/test_fp0063_arc_witness.py`'s
     `Path(__file__).parent / "fixtures" / "llm" / "fp0063_arc_witness"`).
     A target several levels inside a peer directory is exactly as
     position-dependent as one directly under tests_dir — moving the file

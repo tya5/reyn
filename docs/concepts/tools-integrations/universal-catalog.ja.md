@@ -103,14 +103,14 @@ action-usage 追跡)。 7 を直しても 12 番目の subsystem が同じ賭け
 
 生き残った名前の命名規約は
 [`docs/reference/runtime/tool-naming.md`](../../reference/runtime/tool-naming.md)。
-gate は `tests/test_no_qualified_tool_names_3429.py` — live registry /
+gate は `tests/tools/test_no_qualified_tool_names_3429.py` — live registry /
 membership table / categories / 組み立て済み `tools=` payload を回り、 名前に
 `__` があれば落ちる。 (削除は状態、 gate が性質。)
 
 副次的効果として、 全ての名前が OpenAI native の function-name 文法
 `^[a-zA-Z0-9_-]{1,64}$` を構成上満たす。 qualified name を LiteLLM proxy 依存
 にしていたドット入り category はとうに無く、
-`tests/test_qualified_name_provider_grammar_1456.py` がこの性質を pin している。
+`tests/tools/test_qualified_name_provider_grammar_1456.py` がこの性質を pin している。
 
 ## 3 つの wrapper
 

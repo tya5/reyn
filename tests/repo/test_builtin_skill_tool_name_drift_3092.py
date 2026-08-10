@@ -1,7 +1,7 @@
 """Tier 2: OS invariant — generalized builtin SKILL.md tool-name drift gate
 (#3092).
 
-The #3090 gate (``tests/test_fp0063_p4_builtin_rag_skill.py``) checked ONE
+The #3090 gate (``tests/plugins/test_fp0063_p4_builtin_rag_skill.py``) checked ONE
 skill — the RAG plugin's ``build-and-query-rag-corpus`` — against the real
 enumerate-all catalog. Every OTHER builtin SKILL.md was unprotected, and
 #3092 found exactly the drift that gap predicts: the standing builtins

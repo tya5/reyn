@@ -8,7 +8,7 @@ Linux kernel feature this suite's CI runners mostly lack, hence that gate's
 standalone-script-with-FATAL-preconditions shape. ``--connect``'s only
 precondition is a loopback TCP bind + the ``web`` extra (fastapi/uvicorn) —
 BOTH already present in the standard ``pytest`` CI job (``test.yml`` installs
-``web`` unconditionally, and ``tests/test_mcp_client.py``'s
+``web`` unconditionally, and ``tests/mcp/test_mcp_client.py``'s
 ``_HttpEchoServer`` already runs a real bound ``127.0.0.1`` server, as a
 background asyncio task, inside that exact job today). So unlike Landlock,
 **this witness runs as an ordinary Tier 2 pytest test in the standard suite —
@@ -111,7 +111,7 @@ def _registry(tmp_path) -> AgentRegistry:
 class _RealServer:
     """A REAL ``uvicorn.Server`` bound to a REAL loopback socket, serving the
     REAL ``agui`` router — the server half of ``--connect``. Mirrors
-    ``tests/test_mcp_client.py``'s ``_HttpEchoServer`` (real bound socket, real
+    ``tests/mcp/test_mcp_client.py``'s ``_HttpEchoServer`` (real bound socket, real
     background asyncio task, no subprocess needed — that pattern already runs
     green in the standard CI ``pytest`` job today)."""
 

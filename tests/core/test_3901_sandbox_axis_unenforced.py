@@ -18,7 +18,7 @@ The pure ``unenforced_axes()`` function is tested directly (no backend/events
 needed); the audit-event wiring is driven through the REAL op handler + real
 OpContext with a real (non-mock) backend stand-in named "landlock" (the
 platform-dependent real LandlockBackend is exercised by
-tests/test_sandbox_landlock.py; injecting a stand-in with the same ``.name``
+tests/security/test_sandbox_landlock.py; injecting a stand-in with the same ``.name``
 lets this test run cross-platform without a real Linux kernel).
 """
 from __future__ import annotations
@@ -72,7 +72,7 @@ def test_noop_with_deny_lists_is_not_reported_as_landlock_incapable():
 
 class _LandlockShapedBackend:
     """Real (non-mock) SandboxBackend stand-in named "landlock" — the platform
-    real LandlockBackend is exercised by tests/test_sandbox_landlock.py; this
+    real LandlockBackend is exercised by tests/security/test_sandbox_landlock.py; this
     lets the audit-event wiring run cross-platform without a Linux kernel."""
 
     name = "landlock"

@@ -927,9 +927,9 @@ def test_something(out_of_process_reyn):
 
 The fixture derives the src root from the **in-process** `reyn` and verifies by measurement that a subprocess pinned to it reads that same `reyn` — so the test measures the tree under test, in a worktree as well as in CI.
 
-**An MCP stdio server needs the pin threaded through the server's *configured* env**, not inherited: the MCP SDK passes a six-key whitelist (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) that **drops `PYTHONPATH`**. See `tests/test_fp0063_p3_rag_pipelines.py`.
+**An MCP stdio server needs the pin threaded through the server's *configured* env**, not inherited: the MCP SDK passes a six-key whitelist (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`) that **drops `PYTHONPATH`**. See `tests/builtin/test_fp0063_p3_rag_pipelines.py`.
 
-**If your test runs a `[project.scripts]` console script by name** (e.g. `reyn` — the builtin RAG MCP servers' `reyn-rag-chunker`/`reyn-rag-vector-store` console scripts were retired under ADR 0064 P5; a builtin `rag` plugin test launches its scripts directly via `<interpreter> <script path>` instead, see `tests/test_fp0063_p2_builtin_mcp_rag.py` / `tests/security/test_sandbox_seccomp_network_3030.py`), also request **`reyn_console_scripts`**. A venv installed before an entry point was declared does not carry that script, and the failure says neither "absent" nor "stale venv" — it surfaces as `execvp() failed` or, through a stdio client, `McpError: Connection closed`, both of which read as a broken feature. The fixture skips with the absent subject named, and **fails under CI** (where the venv installs this checkout, so an absence there is a CI-setup defect rather than a reason to go green).
+**If your test runs a `[project.scripts]` console script by name** (e.g. `reyn` — the builtin RAG MCP servers' `reyn-rag-chunker`/`reyn-rag-vector-store` console scripts were retired under ADR 0064 P5; a builtin `rag` plugin test launches its scripts directly via `<interpreter> <script path>` instead, see `tests/builtin/test_fp0063_p2_builtin_mcp_rag.py` / `tests/security/test_sandbox_seccomp_network_3030.py`), also request **`reyn_console_scripts`**. A venv installed before an entry point was declared does not carry that script, and the failure says neither "absent" nor "stale venv" — it surfaces as `execvp() failed` or, through a stdio client, `McpError: Connection closed`, both of which read as a broken feature. The fixture skips with the absent subject named, and **fails under CI** (where the venv installs this checkout, so an absence there is a CI-setup defect rather than a reason to go green).
 
 To diagnose an environment directly — including outside pytest, e.g. a manual e2e or a co-vet run:
 
@@ -1013,7 +1013,7 @@ Deleting first (`rm tests/fixtures/llm/my_area/my_scenario.jsonl`) still
 works if you prefer an explicit "starting from nothing," but it is a
 preference, not a correctness requirement — see `write-replay-tests.md`
 Step 4 and ``reyn.dev.testing.replay.LLMReplay.flush``'s own docstring for
-the mechanism, and `tests/test_replay_fixture_no_stacking_3634.py` for the
+the mechanism, and `tests/dev/test_replay_fixture_no_stacking_3634.py` for the
 CI gate that would catch it if a stacked fixture landed anyway.
 
 ### Drift detection — required for each area
@@ -1096,7 +1096,7 @@ one run killed partway through before finishing at all (load average 17 on
 an 8-core machine, lead-coder's own measurement — plausible given multiple
 concurrent `-n auto` sessions, not independently re-measured here). Separately
 from the slowness, a local run — but never CI — reliably reports 6 failures
-that are not about your change: `tests/test_compaction_resolver_aware_1172.py`
+that are not about your change: `tests/llm/test_compaction_resolver_aware_1172.py`
 and 5 others fail whenever `reyn.local.yaml` exists on the machine running
 them. That file is gitignored, so it's present on most developer checkouts
 and absent on CI and any fresh worktree (#3791) — the suite was reading

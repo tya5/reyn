@@ -5,7 +5,7 @@ Pre-#2242, ``cancel_inflight()`` only set a COOPERATIVE flag
 router-loop iteration — i.e. BEFORE the next LLM call, never during one. A
 turn stuck mid-generation could not be interrupted; the spinner sat for the
 full duration of the in-flight LLM call (~20s UX gap, see
-``tests/test_turn_cancel_1468.py`` for that pre-existing cooperative layer,
+``tests/llm/test_turn_cancel_1468.py`` for that pre-existing cooperative layer,
 unchanged by this PR).
 
 #2242 makes the turn body a per-turn CANCELLABLE SUB-TASK
@@ -39,9 +39,9 @@ comment):
 Real ``Session`` / ``StateLog`` / ``AgentSnapshot`` (no mocks) — only the LLM
 boundary is replaced with a plain, controllable async function assigned onto
 ``session._loop_driver.run_turn``, exactly the seam
-``tests/test_2884_hook_driven_turns_truncation_falsify.py`` uses to isolate
+``tests/core/test_2884_hook_driven_turns_truncation_falsify.py`` uses to isolate
 the mechanism under test from RouterLoop's own internals (already covered by
-``tests/test_turn_cancel_1468.py``).
+``tests/llm/test_turn_cancel_1468.py``).
 """
 from __future__ import annotations
 

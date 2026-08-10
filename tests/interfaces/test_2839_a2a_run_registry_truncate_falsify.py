@@ -27,7 +27,7 @@ Real ``Session`` / ``StateLog`` / ``AgentSnapshot`` / ``RunRegistry`` /
 ``A2AInterventionBus`` throughout — no mocks (CLAUDE.md mock ban). The only
 stand-in is the LLM boundary, which this test never reaches (the intervention
 is dispatched directly via ``Session.handle_intervention``, mirroring how
-``tests/test_2884_hook_driven_turns_truncation_falsify.py`` isolates the WAL
+``tests/core/test_2884_hook_driven_turns_truncation_falsify.py`` isolates the WAL
 mechanism from the router/LLM loop).
 """
 from __future__ import annotations

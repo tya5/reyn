@@ -27,7 +27,7 @@ separate decision. So this gate enumerates the shipping surfaces only.
 name list.** A gate that hard-codes the four post-#3567 strings would certify
 the four names already fixed and say nothing about the fifth skill someone adds
 next month, which is the only failure this gate exists to catch. The two
-surfaces (mirroring ``tests/test_skill_md_default_inline_cap_gate.py``, which
+surfaces (mirroring ``tests/builtin/test_skill_md_default_inline_cap_gate.py``, which
 unions the same pair for the same reason):
 
 1. ``BUILTIN_SKILLS`` (``src/reyn/builtin/registry.py``) -- the always-on

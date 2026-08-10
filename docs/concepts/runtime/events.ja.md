@@ -63,9 +63,9 @@ run_id    — 実行の uuid（run スコープの audit-event の多くに存�
 は `run_id`、`actor`、`phase` を要求します）。権威ある最新の registry は
 `src/reyn/core/events/event_schema.py`（`EVENT_AUDIT_REQUIREMENTS`）にあります
 — このリストは時間とともに増え続けているため、ここには複製しません。
-各 feature 専用の不変条件テスト(例: `tests/test_session_lifecycle_events_1800.py`、
-`tests/test_mcp_search_tool_invariants.py`、
-`tests/test_chat_turn_completed_inline.py`)が、それぞれの event 種がここに
+各 feature 専用の不変条件テスト(例: `tests/core/test_session_lifecycle_events_1800.py`、
+`tests/runtime/test_mcp_search_tool_invariants.py`、
+`tests/dev/test_chat_turn_completed_inline.py`)が、それぞれの event 種がここに
 正しい必須フィールドで宣言されていることを CI の各実行で検証します。
 
 enforcement はテスト時のみ（`emit()` ランタイムではなし）で、本番オーバーヘッドをゼロに保ちます。

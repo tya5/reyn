@@ -31,7 +31,7 @@ Harness: drives ``_ingest_body`` (the real pipeline doc, loaded from the
 real ``rag_ingest.yaml`` via the real ``PipelineExecutor`` + ``PipelineRegistry``)
 against a REAL ``PermissionResolver`` (interactive) + a REAL, RequestBus-
 compatible Fake that pre-answers with a scripted choice (mirrors
-``tests/test_require_file_jit_ask_1505.py``'s ``_FakeBus`` -- no mocks) and
+``tests/security/test_require_file_jit_ask_1505.py``'s ``_FakeBus`` -- no mocks) and
 the REAL ``glob_files`` tool handler (``reyn.tools.file._handle_glob`` via
 ``reyn.tools.pipeline_verbs._make_tool_dispatch`` -- the exact seam a
 ``tool:`` pipeline step dispatches through in production). The corpus
@@ -50,7 +50,7 @@ distinguished from a permission-path abort by its error text.
 
 strip-falsify (verified manually while developing the fix, documented here
 per the ``test_ingest_file_discovery_aborts_clean_on_unreadable_input_path``
-precedent in ``tests/test_fp0063_p3_rag_pipelines.py``): reverting
+precedent in ``tests/builtin/test_fp0063_p3_rag_pipelines.py``): reverting
 ``rag_ingest.yaml`` to fold ``input_path`` back into the parallel
 ``for_each`` (the pre-#3101 shape: 7 patterns, ``max_parallel: 4``, no
 upfront gate) against ``test_upfront_gate_answers_exactly_once`` below
@@ -84,8 +84,8 @@ _INGEST_PATH = _RAG_PLUGIN_DIR / "pipelines" / "rag_ingest.yaml"
 
 class _FakeBus:
     """Real RequestBus-compatible Fake that pre-answers with a scripted
-    choice -- same pattern as ``tests/test_require_file_jit_ask_1505.py``'s
-    ``_FakeBus`` / ``tests/test_config_write_jit_bus_3086.py``'s -- no mocks."""
+    choice -- same pattern as ``tests/security/test_require_file_jit_ask_1505.py``'s
+    ``_FakeBus`` / ``tests/core/test_config_write_jit_bus_3086.py``'s -- no mocks."""
 
     def __init__(self, choice: str) -> None:
         self._choice = choice

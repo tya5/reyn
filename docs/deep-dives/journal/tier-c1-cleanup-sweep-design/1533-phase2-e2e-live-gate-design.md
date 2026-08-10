@@ -2,7 +2,7 @@
 
 **Status**: design-first, pending lead review (then impl). Author: dogfood-coder.
 The Phase-2 (A)-equivalent of the Phase-1 deterministic gate
-(`tests/test_live_rewind_gate.py`).
+(`tests/runtime/test_live_rewind_gate.py`).
 
 ## The scope question (lead): does a session-level gate add value over 2a-2?
 
@@ -67,7 +67,7 @@ the Phase-1 gate already separates).
 
 ## Plan
 
-Design → #1533 comment → lead review/lock → impl (`tests/test_live_fork_gate.py`
+Design → #1533 comment → lead review/lock → impl (`tests/runtime/test_live_fork_gate.py`
 or extend `test_live_rewind_gate.py`), real-instance, `-W error::RuntimeWarning`,
 tier-audit first-line `"""Tier 2: ..."""`. (B) tmux live UX = tui-coder (P1-P3
 after 2b); I stay on the deterministic (A)-equivalent.

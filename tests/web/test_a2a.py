@@ -149,7 +149,7 @@ def test_agent_card_returns_canonical_shape(tmp_path):
     pushNotifications both ``True`` after Gap 1 SSE producer wiring
     PR #288 + Gap 2 webhook trigger expansion PR #286 landed; each
     claim is pinned to its in-source wire in
-    ``tests/test_a2a_capability_claim_interim.py``).
+    ``tests/interfaces/test_a2a_capability_claim_interim.py``).
     """
     client, _ = _client_with_registry(tmp_path, [("default", "general assistant")])
     try:

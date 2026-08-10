@@ -47,7 +47,7 @@ Component B と Component C が this wave で着地。
 - dylib ロードに必要な `/usr/lib`、`/System/Library`、`/usr/bin`、`/bin`、`/usr/share` 等を読み取り専用で自動許可。
 - 利用条件: `platform.system() == "Darwin"` かつ `sandbox-exec` が PATH に存在し、かつ macOS < 26。条件を満たさない場合は `NoopBackend` にフォールバック。
 - 上流で非推奨（Apple が macOS 26 で削除予定）— 初回使用時にランタイム WARN を出力し、将来の `AppleContainerBackend` への移行を促す。
-- 対象ファイル: `src/reyn/sandbox/backends/seatbelt.py`、`tests/test_sandbox_seatbelt.py`。
+- 対象ファイル: `src/reyn/sandbox/backends/seatbelt.py`、`tests/security/test_sandbox_seatbelt.py`。
 
 **Component B — `LandlockBackend`（Linux 5.13+）**
 
@@ -58,7 +58,7 @@ Linux カーネル 5.13+ 向けのファイルシステム + ネットワーク�
 - `read_paths` / `write_paths` に対して `LANDLOCK_RULE_PATH_BENEATH` ルールを適用。
 - ネットワーク制限（`LANDLOCK_RULE_NET_PORT`）は ABI v4 以上（Linux 6.7+）でのみ有効。
 - **コントリビュータ向けトラック**: 主要メンテナーの開発環境は macOS のみのため、Linux 環境を持つコントリビュータが独立に検証することを歓迎する。
-- 対象ファイル: `src/reyn/sandbox/backends/landlock.py`、`tests/test_sandbox_landlock.py`。
+- 対象ファイル: `src/reyn/sandbox/backends/landlock.py`、`tests/security/test_sandbox_landlock.py`。
 
 **Component B（seccomp 部分）— syscall フィルタービルダー**
 
@@ -69,7 +69,7 @@ Linux カーネル 5.13+ 向けのファイルシステム + ネットワーク�
 - `policy.network` / `policy.allow_subprocess` の値に応じてネットワーク syscall・プロセス生成 syscall を追加許可。
 - ファイルシステム操作（Landlock が担当）および既知の脱出経路（`ptrace`、`process_vm_readv` 等）は拒否リストに固定。
 - Landlock と seccomp-BPF は直交する — Landlock はパス/ポート制限、seccomp-BPF は syscall サーフェス削減。
-- 対象ファイル: `src/reyn/sandbox/backends/seccomp.py`、`tests/test_sandbox_seccomp.py`。
+- 対象ファイル: `src/reyn/sandbox/backends/seccomp.py`、`tests/security/test_sandbox_seccomp.py`。
 
 **バックエンド自動選択 + `SandboxConfig`**
 
@@ -78,7 +78,7 @@ Linux カーネル 5.13+ 向けのファイルシステム + ネットワーク�
 - `reyn.yaml` の `sandbox:` セクション（`backend: auto|seatbelt|landlock|noop`、`on_unsupported: warn|error|ignore`）で設定。
 - `auto` はプラットフォームと利用可能な extra を確認してバックエンドを選択。詳細は [concepts/runtime/sandbox.md](../../concepts/runtime/sandbox.md) を参照。
 - `on_unsupported: error` は要求バックエンドが利用不可の場合にスキルディスパッチを失敗させる（本番環境での強制保証用途）。
-- 対象ファイル: `src/reyn/config.py`、`src/reyn/sandbox/__init__.py`、`tests/test_sandbox_factory.py`。
+- 対象ファイル: `src/reyn/config.py`、`src/reyn/sandbox/__init__.py`、`tests/security/test_sandbox_factory.py`。
 
 ### Post-dogfood fix — macOS 26 compatibility（commit `b477508`）
 

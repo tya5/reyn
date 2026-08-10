@@ -24,7 +24,7 @@ should not have been:
 
 ★ What must NOT change is that the nudge still runs a turn — that is the whole
 job of the message, and it is how an attached pipeline run starts at all. One
-test here holds that; ``tests/test_pipeline_is6_attached.py`` holds the real
+test here holds that; ``tests/core/test_pipeline_is6_attached.py`` holds the real
 end-to-end.
 
 The last test in this file is about the TYPE rather than about the nudge, and it

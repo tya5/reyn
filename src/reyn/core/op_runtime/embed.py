@@ -78,7 +78,7 @@ def _resolve_provider():
     cross-module import of semantic_search's private function) so each
     op-runtime module stays self-contained and independently testable via
     monkeypatching its own module-level `get_provider` name (established
-    op_runtime test convention, see `tests/test_op_semantic_search.py`).
+    op_runtime test convention, see `tests/core/test_op_semantic_search.py`).
     """
     name = os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
     if name == "litellm":

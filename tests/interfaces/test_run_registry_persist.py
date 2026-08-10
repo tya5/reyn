@@ -154,7 +154,7 @@ def test_restored_pending_intervention_has_fresh_future(tmp_path: Path) -> None:
 
     # issue #292 (α): iv state lives in Session, not RunRegistry.
     # Restart simulation just mirrors the public status; iv restore is
-    # tested in tests/test_intervention_restore.py via AgentSnapshot.
+    # tested in tests/runtime/test_intervention_restore.py via AgentSnapshot.
     registry_a.update(entry.run_id, status="input-required")
 
     # Restart: restored RunEntry has the status mirror; iv state is

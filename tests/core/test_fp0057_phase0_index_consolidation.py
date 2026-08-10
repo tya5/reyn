@@ -64,7 +64,7 @@ def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
     route the embed call through ``execute_op(EmbedIROp(...), ctx)`` (the
     shared `embed` op) instead of calling a caller-held provider directly —
     tests monkeypatch the op-runtime module's ``get_provider`` (the
-    established convention, see ``tests/test_op_embed.py``) instead of
+    established convention, see ``tests/core/test_op_embed.py``) instead of
     passing the fake provider as a positional argument.
     """
     import reyn.core.op_runtime.embed as _embed_mod

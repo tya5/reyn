@@ -117,7 +117,7 @@ def test_httpx_exception_classification_still_resolves_lazily(out_of_process_rey
     classification `_is_retryable_exc` / `_is_llm_timeout_exc` depend on.
 
     Behavioral tests for the classification itself already live in
-    `tests/test_llm_call_retry.py` (test_httpx_errors_retried,
+    `tests/llm/test_llm_call_retry.py` (test_httpx_errors_retried,
     test_is_retryable_exc_classification) — this test pins only the
     lazy-resolution invariant those tests rely on.
     """

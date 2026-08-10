@@ -18,7 +18,7 @@ nobody's decision," a report nobody reads is not meaningfully different from
 a check nobody runs.
 
 So this is a **ratchet**, the same skeleton as
-``tests/test_3595_s4_slash_handler_seam.py``'s ``_SESSION_RESIDUE``: a
+``tests/interfaces/test_3595_s4_slash_handler_seam.py``'s ``_SESSION_RESIDUE``: a
 committed BASELINE of every ``(file, error-code)`` pair the tree currently
 carries. A pair not in the baseline is new — CI fails, immediately, the same
 day the defect lands. A pair that WAS in the baseline and is gone because

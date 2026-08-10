@@ -33,8 +33,8 @@ Policy compliance (docs/deep-dives/contributing/testing.md): no
 unittest.mock.MagicMock/AsyncMock/patch anywhere — real ``RouterLoop`` /
 ``Session`` / ``AgentRegistry`` / ``PipelineExecutorDriver`` collaborators, a
 plain-class fake host only where a full ``RouterHostAdapter`` isn't needed
-(mirrors the precedent in ``tests/test_router_caller_state_mcp_servers.py``
-and ``tests/test_pipeline_is5_surfacing.py``).
+(mirrors the precedent in ``tests/runtime/test_router_caller_state_mcp_servers.py``
+and ``tests/tools/test_pipeline_is5_surfacing.py``).
 """
 from __future__ import annotations
 
@@ -63,8 +63,8 @@ class _FakeHost:
     """RouterLoopHost stub exposing every accessor
     ``_build_router_caller_state`` / ``build_resource_caller_state`` read —
     real shape (no mock framework), mirrors the established precedent in
-    ``tests/test_router_caller_state_mcp_servers.py`` /
-    ``tests/test_pipeline_is5_surfacing.py``, extended to cover every
+    ``tests/runtime/test_router_caller_state_mcp_servers.py`` /
+    ``tests/tools/test_pipeline_is5_surfacing.py``, extended to cover every
     host-derived (a)-field so the equivalence check is exhaustive."""
 
     agent_name: str = "test-agent"
@@ -168,7 +168,7 @@ async def test_resource_caller_state_factory_matches_router_loop_build(
 def _worker_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     """Real AgentRegistry + real Session factory, Session configured with an
     MCP server roster (so list_mcp_servers has something real to report) —
-    mirrors ``tests/test_pipeline_is2_driver_session.py``'s ``_agent_registry``
+    mirrors ``tests/core/test_pipeline_is2_driver_session.py``'s ``_agent_registry``
     helper, extended with ``mcp_servers=``."""
     holder: dict = {}
 

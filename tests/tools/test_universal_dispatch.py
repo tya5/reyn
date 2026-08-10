@@ -74,7 +74,7 @@ def test_no_action_name_carries_the_catalog_separator() -> None:
     """Tier 2: #3429 — the abolished spelling is absent from the action set.
 
     The repo-wide, registry-derived form of this gate is
-    ``tests/test_no_qualified_tool_names_3429.py``; this is the module-local
+    ``tests/tools/test_no_qualified_tool_names_3429.py``; this is the module-local
     arm, so a table edit fails here first."""
     offenders = sorted(n for n in KNOWN_ACTION_NAMES if "__" in n)
     assert offenders == [], f"qualified action name(s) reintroduced: {offenders}"

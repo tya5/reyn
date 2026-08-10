@@ -100,7 +100,7 @@ The correct design has one resolution (the bridge chain) and one construction se
 chooses to *use* it. When a new IV-raising router-op seam is added, it inherits origin-delivery
 for free by building its bus through `_make_router_intervention_bus`. A seam that instead
 constructs its own self-bound bus reintroduces the #3049 orphan for any attached spawn — the
-structural guard in `tests/test_3049_driver_router_op_intervention_reaches_originator.py`
+structural guard in `tests/runtime/test_3049_driver_router_op_intervention_reaches_originator.py`
 fails on exactly that.
 
 ## The sibling gap that closed it uniformly (#3053)
@@ -116,7 +116,7 @@ and a distinct (fail-safe, not hung) symptom, since `handle_limit_exceeded` trea
 listener-less auto-refusal as a plain "deny" rather than parking a future forever. #3053 routed
 both buses through `_make_router_intervention_bus`, closing the gap: every IV-raising leaf in the
 codebase now resolves through the single construction seam described above. The structural guard
-in `tests/test_3053_budget_bus_bridge_aware.py` fails if a future limit/budget-style bus
+in `tests/runtime/test_3053_budget_bus_bridge_aware.py` fails if a future limit/budget-style bus
 reintroduces a frozen self-bound `_dispatch_intervention` capture.
 
 ## Where the origin-pin stall check lives (#268)

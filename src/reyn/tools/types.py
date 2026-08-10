@@ -362,7 +362,7 @@ def parameters_for_export(parameters: Mapping[str, Any]) -> dict[str, Any]:
     ``dict(x.parameters)`` expression, so seam five would have been written the
     same way. Owning the responsibility on the projection, not at each source,
     is what makes the next seam correct by default. The behavioural gates in
-    ``tests/test_tool_schema_3383_process_history_independence.py`` still assert
+    ``tests/tools/test_tool_schema_3383_process_history_independence.py`` still assert
     it PER SEAM — "a helper with the right contract exists" and "every escape
     point goes through the helper" are different claims, and only the second is
     the invariant.
@@ -461,7 +461,7 @@ class ToolDefinition:
     # "Control-IR ops (class)" BROKEN — no op names a doc at all, unlike
     # hooks_add's hand-written pointer). None = not yet declared (most tools;
     # not every tool needs one — this is populated for the reachability-audit
-    # spec-bearing set, see tests/test_0060_d5d_doc_ref_registry_gate.py).
+    # spec-bearing set, see tests/core/test_0060_d5d_doc_ref_registry_gate.py).
     # Surfaced at describe_action (universal_dispatch.py) and consumed by the
     # D5c error-rail (reyn.core.doc_ref_rail) to teach a parse/validation
     # failure where the full spec lives.

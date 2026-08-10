@@ -575,4 +575,4 @@ def test_mcp_install_op_registered_in_default_registry():
 # there by design, not by a threading bug. The property this test pinned
 # ("a write outside write_paths is denied via the permission ∩") no longer
 # holds anywhere in the permission layer; deleted rather than axis-swapped,
-# same reasoning as tests/test_1199_effective_permission.py's #3901 note.
+# same reasoning as tests/security/test_1199_effective_permission.py's #3901 note.

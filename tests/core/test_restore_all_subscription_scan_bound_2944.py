@@ -16,7 +16,7 @@ reused for every entry (O(M) instead of O(M^2)).
 Real seam: real ``AgentRegistry`` + real ``StateLog`` + the real ``checkout`` reset-
 record primitive, with a ``StateLog`` subclass counting ``iter_from`` calls (a
 public-method override, not a private-state peek) to assert the SCAN COUNT bound
-directly — mirrors ``tests/test_active_branch_history_scan_bound_2941.py``.
+directly — mirrors ``tests/core/test_active_branch_history_scan_bound_2941.py``.
 
 This test must FLIP RED if the per-entry ``is_active_seq`` scan is restored: locally
 reverting the ``restore_all`` hoist to

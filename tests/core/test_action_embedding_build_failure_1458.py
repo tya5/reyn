@@ -36,8 +36,8 @@ build_failed(source_id)`` (the single state owner).
 No mocks. The build path is exercised via a real ``RouterLoop`` subclass
 (minimal-subclass shim for ``_build_router_caller_state`` /
 ``_get_index_coordinator`` — same convention as
-``tests/test_index_coordinator_3247_p2b.py`` /
-``tests/test_index_coordinator_3247_p2d.py``) driving a REAL
+``tests/core/test_index_coordinator_3247_p2b.py`` /
+``tests/core/test_index_coordinator_3247_p2d.py``) driving a REAL
 ``IndexCoordinator`` + a REAL ``ActionEmbeddingIndex`` against a real
 (monkeypatched-provider) ``embed`` op; the fake embedding provider raises a
 real ``RuntimeError`` to trigger the failure path — non-vacuity: since the
@@ -102,7 +102,7 @@ class _UnsupportedParamProvider:
 
 def _op_ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch, events: EventLog) -> OpContext:
     """Real OpContext whose `embed` op resolves to ``provider`` (mirrors
-    ``tests/test_index_coordinator_3247_p2b.py``/``_p2d.py``'s
+    ``tests/core/test_index_coordinator_3247_p2b.py``/``_p2d.py``'s
     ``_op_ctx_for``)."""
     import reyn.core.op_runtime.embed as _embed_mod
 
@@ -132,7 +132,7 @@ class _LoopWithFailingBuild(RouterLoop):
     """RouterLoop subclass exercising the production
     ``_ensure_action_index_built`` orchestration without a full
     host/chain/session setup — same minimal-subclass pattern as
-    ``tests/test_index_coordinator_3247_p2b.py``'s ``_LoopForP2b``."""
+    ``tests/core/test_index_coordinator_3247_p2b.py``'s ``_LoopForP2b``."""
 
     def __init__(self, workspace_root: Path, op_ctx: Any, events: EventLog) -> None:
         self.host = _StubHost(op_ctx, events)  # type: ignore[assignment]

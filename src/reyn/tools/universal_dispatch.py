@@ -24,7 +24,7 @@ have left the twelfth subsystem to flip the same coin. The cause was the second
 name, so the second name is what was removed.
 
 The property that keeps it removed is a gate, not this docstring:
-``tests/test_no_qualified_tool_names_3429.py`` enumerates the live registry and
+``tests/tools/test_no_qualified_tool_names_3429.py`` enumerates the live registry and
 this table and fails on any ``__`` in a name — so a *new* qualified name is a
 red CI run rather than a silent re-opening. Deletion is a state; the gate is
 the property.
@@ -45,7 +45,7 @@ pipelines the operator has accumulated. #879 → #1647 is the cautionary tale:
 #879 collapsed the mcp resource categories, #1647 re-added one action per MCP
 tool citing two motivations that were both already closed. Before enumerating
 per-resource actions again, verify the motivating gap is still open — twice now
-it was not — and note that ``tests/test_resource_collapse_invariant_3026.py``
+it was not — and note that ``tests/tools/test_resource_collapse_invariant_3026.py``
 will fail if you do.
 """
 from __future__ import annotations
@@ -86,7 +86,7 @@ class UnknownActionError(ValueError):
 # category → the FLAT registry tool names that category browses. The names
 # here are the ONLY names the catalog knows; each must resolve in
 # ``get_default_registry()`` (pinned by
-# ``tests/test_universal_catalog.py``).
+# ``tests/tools/test_universal_catalog.py``).
 #
 # A category is a browsing axis, not a namespace: nothing here rewrites a
 # name, and there is no arg transform layer. An action's advertised schema IS

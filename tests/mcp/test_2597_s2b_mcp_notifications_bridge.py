@@ -80,7 +80,7 @@ def _make_adapter(*, tmp_path: Path, events: EventLog) -> RouterHostAdapter:
     """Real RouterHostAdapter with one configured server ("srv"), an isolated
     per-test state_dir (never reads a stale on-disk tools cache), and a probe
     callback that returns a fixed tool list — mirrors
-    tests/test_mcp_lazy_tools_cache.py's construction helper."""
+    tests/core/test_mcp_lazy_tools_cache.py's construction helper."""
 
     async def _probe(server: str) -> list[dict]:
         return [{"name": f"{server}_tool", "description": "d"}]

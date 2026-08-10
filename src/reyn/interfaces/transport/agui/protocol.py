@@ -155,7 +155,7 @@ _REYN = "_reyn"
 # per-kind by the tap and by this set, never by the forwarder.
 #
 # Measured with the real registry forwarder + real tap, not reasoned
-# (``tests/test_agui_control_filter.py``'s reachability gate):
+# (``tests/interfaces/test_agui_control_filter.py``'s reachability gate):
 #   - ``__attach_request__``          → lands on the wire.
 #   - ``__session_switch_request__``  → does not. Removing it from this set alone
 #     changes nothing (the tap already consumed it); removing it from this set AND

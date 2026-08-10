@@ -304,7 +304,7 @@ src/reyn/tools/
 - `_DISPATCH_KIND` continues as a derived alias (backward compat for the
   test that pins `plan` as async; see commit `77d6db6`).
 
-**New tests:** `tests/test_tool_registry_invariants.py` (Tier 2) — registry
+**New tests:** `tests/tools/test_tool_registry_invariants.py` (Tier 2) — registry
 loads without exception, all entries have required fields, all gate
 combinations are valid, `render_for_router()` output matches current
 `build_tools()` for zero-arg invocations.

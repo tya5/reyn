@@ -22,7 +22,7 @@ This file pins the contract independently of the mcp SDK:
 
 End-to-end repro of a self-made server crash is out of scope (= would
 require spinning a subprocess); the SDK-level integration is verified
-by the existing ``tests/test_mcp_client.py`` round-trip.
+by the existing ``tests/mcp/test_mcp_client.py`` round-trip.
 """
 from __future__ import annotations
 

@@ -80,7 +80,7 @@ fix wave 前に Agent J レポートを参照すること。
 **変更ファイル**:
 - `src/reyn/chat/router_system_prompt.py` — `describe_skill` 後コミット or
   説明ルールを `before invoke_skill.` 行の直後に追加
-- `tests/test_router_system_prompt.py` — `TestBehaviourRulesAfterF3F9Fix`
+- `tests/runtime/test_router_system_prompt.py` — `TestBehaviourRulesAfterF3F9Fix`
   クラスに `test_post_describe_commit_or_explain` を追加 (Tier 2)
 
 **非変更**: RouterLoop のコードパスは無変更 (prompt-only fix)。

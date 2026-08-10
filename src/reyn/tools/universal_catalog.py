@@ -158,7 +158,7 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # plugin_install / plugin_uninstall, so the LLM could never
     # discover — let alone call — them. See
     # ``test_categories_covers_every_dispatch_wired_category`` in
-    # ``tests/test_universal_catalog.py`` for the routing-table-derived
+    # ``tests/tools/test_universal_catalog.py`` for the routing-table-derived
     # gate that now guards against a category being dispatch-wired without
     # a matching CATEGORIES entry.
     "plugin_management",
@@ -1043,7 +1043,7 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     None ``router_state`` yields a superset-shaped list that is not the "usable
     this session" set. Note the count does NOT depend on how much the operator
     has accumulated; that invariant is pinned in
-    ``tests/test_resource_collapse_invariant_3026.py``.
+    ``tests/tools/test_resource_collapse_invariant_3026.py``.
     """
     from reyn.tools import get_default_registry
 

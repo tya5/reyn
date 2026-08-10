@@ -20,11 +20,11 @@ now validated eagerly and unconditionally by ``_build_embedding_config`` at
 parse time (independent of ``enabled``), so the "dangling class" scenario
 this file used to test against ``_reconcile_embedding_class`` is instead a
 ``_build_embedding_config`` ValueError — covered in
-``tests/test_embedding_config.py``, not duplicated here.
+``tests/config/test_embedding_config.py``, not duplicated here.
 
 No mocks: drives the real ``load_config`` end to end against a real
 ``reyn.yaml`` on disk (mirrors the pattern in
-``tests/test_action_retrieval_wiring.py``).
+``tests/runtime/test_action_retrieval_wiring.py``).
 """
 from __future__ import annotations
 

@@ -12,7 +12,7 @@ control flow (which section renders when, in what order, joined how) stays in
 Byte-identical relocation (SP Phase 1, agent-facing A-D): every string below is
 an exact copy of what ``build_system_prompt`` previously inlined — see
 ``tests/scaffold/test_sp_prompt_package_phase1_byte_identical.py`` for the
-before/after golden-diff proof, and ``tests/test_llm_facing_text_english_only.py``
+before/after golden-diff proof, and ``tests/tools/test_llm_facing_text_english_only.py``
 for the permanent CJK-free + tool-name-liveness gates that continue to run
 against the post-relocation assembled output.
 """

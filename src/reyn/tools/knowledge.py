@@ -46,7 +46,7 @@ duplicate of the wrap).
 _NOT_EXTERNAL), ``search_knowledge``'s role is DISCOVERY — it re-surfaces
 operator/user-authored skill/memory/repo text without activating it, the
 same role class as ``skill_list`` (_EXTERNAL). ``returns_external_content
-=True`` below; ``tests/test_returns_external_content_flagset_1822.py``
+=True`` below; ``tests/tools/test_returns_external_content_flagset_1822.py``
 pins the classification.
 
 **visibility (firm §6)**: the ``knowledge`` category (and therefore

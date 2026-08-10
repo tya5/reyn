@@ -1,7 +1,7 @@
 """Tier 1: Contract — a missing @replay fixture fails loud, never records
 automatically (#3662).
 
-Mirrors ``tests/test_network_gate_3451.py``'s own pytester technique (a real,
+Mirrors ``tests/dev/test_network_gate_3451.py``'s own pytester technique (a real,
 isolated inner pytest session — not a mock of pytest.Item) rather than
 loading this repo's whole ``tests/conftest.py`` (which the sibling file's
 module docstring explains is unsafe inside pytester's throwaway rootdir: it
@@ -19,7 +19,7 @@ already captured with a real traceback in #3660's and #3662's issue
 comments (a real fixture deleted, `ConnectionRefusedError` reaching a real
 socket, silently swallowed, test green) — reproducing it here would mean
 maintaining a second, parallel copy of the OLD buggy logic purely to keep
-proving a historical fact. ``tests/test_network_gate_3451.py``'s new #3662
+proving a historical fact. ``tests/dev/test_network_gate_3451.py``'s new #3662
 tests DO carry a live RED/GREEN pair, for the ``network_gate.py`` half of
 this fix specifically.
 """

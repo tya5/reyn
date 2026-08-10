@@ -480,7 +480,7 @@ async def test_semantic_search_query_embed_redacts_secret_at_egress(
     ctx = _make_ctx(tmp_path)
     collected = collect_events(ctx.events)
     # A secret-shaped query (matches the FP-0050 redact_secrets patterns —
-    # same shape as tests/test_op_embed.py's PRE-embed seam test).
+    # same shape as tests/core/test_op_embed.py's PRE-embed seam test).
     secret_query = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
     op = SemanticSearchIROp(
         kind="semantic_search", query=secret_query, sources=["docs"], top_k=5,

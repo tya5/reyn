@@ -28,9 +28,9 @@ jobs:
       - name: Install dependencies
         # Install all optional extras the test suite touches:
         #   dev  — pytest + pytest-asyncio + ruff + mypy
-        #   mcp  — `fastmcp` (v3.4.2; #2597 S1), used by tests/test_mcp_client.py
+        #   mcp  — `fastmcp` (v3.4.2; #2597 S1), used by tests/mcp/test_mcp_client.py
         #   web  — fastapi + uvicorn + websockets, used by tests/web/
-        #   fs-watch — `watchdog` (#2608 H4), used by tests/test_2608_h4_fs_watcher.py
+        #   fs-watch — `watchdog` (#2608 H4), used by tests/runtime/test_2608_h4_fs_watcher.py
         #   observability — opentelemetry SDK, used by tests/observability/
         #   builtin-rag — sqlite-vec + apsw + chonkie (FP-0063 P2), used by
         #     tests/builtin/test_fp0063_p2_builtin_mcp_rag.py. Load-bearing: that file
@@ -115,7 +115,7 @@ jobs:
       # only fails on a (file, error-code) pair NOT already in the committed
       # baseline (scripts/mypy_ratchet_baseline.json); see that script's module
       # docstring for why this is a ratchet (same skeleton as
-      # tests/test_3595_s4_slash_handler_seam.py's residue gate) rather than a
+      # tests/interfaces/test_3595_s4_slash_handler_seam.py's residue gate) rather than a
       # blocking full-adoption gate or a report-only job nobody's decision
       # depends on.
       #

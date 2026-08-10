@@ -1,5 +1,5 @@
 """Tier 2: OS invariant -- BUILTIN_PLUGINS <-> disk parity gate (#3202
-symptom 3), sibling of ``tests/test_builtin_registry_disk_parity.py`` for
+symptom 3), sibling of ``tests/builtin/test_builtin_registry_disk_parity.py`` for
 ``src/reyn/builtin/plugins/``.
 
 **Motivation.** ``BUILTIN_PLUGINS`` (``src/reyn/builtin/registry.py``) is

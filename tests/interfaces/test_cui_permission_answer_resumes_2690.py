@@ -127,7 +127,7 @@ def _make_session(project_root: Path, *, wal: Path, snap: Path) -> Session:
         workspace_base_dir=project_root,
     )
     # run_repl registers this listener on the attached session (see
-    # tests/test_repl_intervention_listener.py) — without it the
+    # tests/core/test_repl_intervention_listener.py) — without it the
     # listener-presence guard auto-refuses every intervention.
     session.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     return session
