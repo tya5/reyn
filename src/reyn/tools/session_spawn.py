@@ -25,7 +25,7 @@ own sid-keyed narrowing into it (``compose_narrowing_mappings`` — denies union
 intersect, an absent allow key is ⊤) before the child's ``config.yaml`` is written. Until
 #3556 the argument WAS the whole value, and a narrowed session could hand a sibling a
 wider envelope than its own. Measured by
-``tests/test_3556_session_spawn_narrowing_inheritance.py``; the layers this does NOT
+``tests/runtime/test_3556_session_spawn_narrowing_inheritance.py``; the layers this does NOT
 carry (the #2285 ``/visibility`` toggle, the #1827-S4b ephemeral untrusted-context
 narrowing) are the same ones the sibling spawn sites leave behind.
 """

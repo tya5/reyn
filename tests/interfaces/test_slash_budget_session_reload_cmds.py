@@ -105,7 +105,7 @@ class _FakeRegistry:
         handler's inheritance branch is inert and these tests keep measuring the
         dispatch paths they were written for. ★ The inheritance is measured against real
         instances — by a denied tool's real side effect — in
-        ``tests/test_3562_slash_session_new_narrowing_inheritance.py``, never here: a
+        ``tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py``, never here: a
         stand-in that answers None can only exercise the empty case."""
         return None
 

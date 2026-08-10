@@ -50,7 +50,7 @@ def _inherited_restriction_lines(reg, name: str, sid: str) -> "list[str]":
     works: ``capability_visibility_state`` re-resolves with the sid on every read, and
     was GREEN on the broken code #3561 fixed, where the same envelope was resolvable
     but not enforced. What proves the inheritance is a denied tool's side effect not
-    happening (``tests/test_3562_slash_session_new_narrowing_inheritance.py``); this
+    happening (``tests/runtime/test_3562_slash_session_new_narrowing_inheritance.py``); this
     surface has its own separate test, for its own separate claim.
 
     Empty when the child session is not retrievable (nothing truthful to say).
