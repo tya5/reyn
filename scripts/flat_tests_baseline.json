@@ -82,6 +82,5 @@
   "test_tier_audit_source_segment_cache_3670.py",
   "test_user_intervention_serialization.py",
   "test_verify_package_move_root_config.py",
-  "test_wire_toolpair_repair.py",
   "test_ws_consolidation_complete.py"
 ]
