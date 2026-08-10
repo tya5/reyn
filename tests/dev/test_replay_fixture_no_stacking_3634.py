@@ -56,8 +56,20 @@ from reyn.dev.testing.replay_stacking import (
     STACKING_MEASURABILITY,
     all_entry_kinds,
 )
+from tests._support.paths import REPO_ROOT
 
-_FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "llm"
+# #4019: this used to be `Path(__file__).parent / "fixtures" / "llm"` — broke
+# silently when this file moved from flat tests/ into tests/dev/ (M4): the
+# expression kept resolving relative to the FILE's new location
+# (tests/dev/fixtures/llm, which doesn't exist) instead of the real, shared
+# tests/fixtures/llm/ directory. `_FIXTURE_FILES` then globbed to an empty
+# list and every parametrized test in this file silently SKIPPED ("got empty
+# parameter set") rather than failing — exactly the kind of silent breakage
+# this whole file exists to catch for LLM replay fixtures, just for this
+# file's own fixture-discovery path instead. Anchored on REPO_ROOT now
+# (depth-independent, tests/_support/paths.py) so a future move can't repeat
+# this.
+_FIXTURES_ROOT = REPO_ROOT / "tests" / "fixtures" / "llm"
 _FIXTURE_FILES = sorted(_FIXTURES_ROOT.rglob("*.jsonl"))
 
 
