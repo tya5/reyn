@@ -719,8 +719,9 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 
 > **Design only, not yet implemented:** [ADR-0040](deep-dives/decisions/0040-task-as-os-concept.md) +
 > [proposal 0067](deep-dives/proposals/0067-task-model-and-arbiter.md) (accepted 2026-08-10, tracking
-> #3978) unify `run_pipeline_async`, `delegate_to_agent`, `session_spawn`, and the A2A async run
-> under one `task` concept (one execution + a handle) with a single collection surface, retiring
+> #3978) unify `run_pipeline_async`, `delegate_to_agent`, `spawn_session` (renamed from
+> `session_spawn` by #4004/#4017), and the A2A async run under one `task` concept (one execution
+> and a handle) with a single collection surface, retiring
 > `delegate_to_agent` and the three `run_pipeline_*` async variants in favor of `run_prompt` /
 > `run_pipeline(collect=…)`. The table above describes the CURRENT, shipped mechanism —
 > `delegate_to_agent` is live and unchanged until this arc's own PRs land.
