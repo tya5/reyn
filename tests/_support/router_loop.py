@@ -76,8 +76,8 @@ class FakeRouterHost:
         # Protocol member + RouterHostAdapter implementation both had zero
         # callers after #3978/#4144). This list now stays permanently empty —
         # kept only because test_3378_advertise_enforce_agreement.py still
-        # asserts on it. Flagged as a follow-up, not resolved here (out of
-        # scope for the CI-fix this PR was already carrying).
+        # asserts on it. That assertion is vacuous (#4155): filed, not
+        # resolved here (out of scope for the CI-fix this PR was carrying).
         self.agent_sends: list[dict] = []
         # Proposal 0067 P1' (#3978)
         self.mark_task_pending_calls: int = 0
