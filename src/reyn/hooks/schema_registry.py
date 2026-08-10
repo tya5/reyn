@@ -20,7 +20,7 @@ per-``event_name`` value allowlist — the future OUT-set config file layers
 name-level curation ON TOP of this structural gate, it does not replace it.
 
 ``BUILTIN_HOOK_SCHEMAS`` is the single source of truth for what field-set
-each of reyn's 9 builtin hook-points carries — mirroring the
+each of reyn's builtin hook-points carries — mirroring the
 ``OP_KIND_MODEL_MAP`` ↔ ``control-ir.md`` sync discipline (CLAUDE.md hard
 rule): every dispatch call site MUST build its payload through
 ``build_hook_payload`` (below), which validates the assembled dict against
