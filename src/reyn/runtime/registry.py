@@ -3543,7 +3543,21 @@ class AgentRegistry:
         error, not raced against — the architect-ruled fix is refusal, not a new
         lock (the production ``get_agent_lock`` acquire path does not cover a
         session's own run-loop, so adding one here would not actually serialize
-        the two pumps; see issue #4113's measurement of the sibling MCP hazard)."""
+        the two pumps; see issue #4113's measurement of the sibling MCP hazard).
+
+        ⚠️ **This predicate covers only HALF the invariant, and the name invites
+        the other half to be assumed.** It answers "is `(name, sid)` self-running
+        its own background loop" — it does NOT answer "is anyone driving this
+        session right now": a session someone ELSE is currently pumping INLINE
+        (e.g. a concurrent ``run_prompt`` call, or `mcp.server._get_session`'s
+        no-run-loop path) has no `self._tasks` entry at all, so this returns
+        ``False`` for it — a FALSE "nobody is driving this" reading. It is
+        therefore not a witness that a target is safe to drive; it is only a
+        witness that ONE particular way of being unsafe (self-running) is
+        absent. Issue #4113 is the registry-owned "who is driving this session
+        right now" marker that would cover BOTH axes — this method is the
+        interim, self-running-only half, and callers that need the full
+        invariant (this one included) must not treat it as more than that."""
         key = (name, sid)
         return key in self._tasks and not self._tasks[key].done()
 

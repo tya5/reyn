@@ -166,6 +166,16 @@ async def test_mutual_run_prompt_deadlock_resolves_via_timeout_not_a_hang(tmp_pa
                 prompt="hi from beta", timeout=1.0,
             )
 
+    # This outer wait_for is currently INERT, not the active bound — the
+    # falsify above measured that directly (removing production's
+    # asyncio.timeout made the whole gather hang past an external
+    # `timeout 30` shell wrapper, past this 10.0 too, with no output at
+    # all). It stays as a safety net for a future change: if lock
+    # acquisition ever becomes cancellable (asyncio.Lock's acquire()
+    # honours cancellation today, but nothing here currently cancels it —
+    # production's own asyncio.timeout is what unblocks each side), this
+    # would then become the active bound instead. Do not read a green run
+    # here as "the 10.0 is what's keeping this from hanging."
     results = await asyncio.wait_for(
         asyncio.gather(alpha_side(), beta_side()), timeout=10.0,
     )
