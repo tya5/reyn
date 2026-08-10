@@ -310,7 +310,7 @@ def main() -> int:
         f"{abi}). Scope: one ABI, one kernel, the write + spawn + network axes "
         "through wrap_command. NOT witnessed here: ABI 1-2, read_deny_paths "
         "(inexpressible on Landlock), io_uring specifically (see "
-        "tests/test_sandbox_seccomp_network_3030.py), or the run() preexec path."
+        "tests/security/test_sandbox_seccomp_network_3030.py), or the run() preexec path."
     )
     return 0
 
