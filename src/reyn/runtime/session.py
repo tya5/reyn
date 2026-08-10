@@ -3307,7 +3307,7 @@ class Session:
 
         Closes the #3036/#3061 gap the RAG turnkey flow hit: a programmatic spawn
         (``AgentRegistry.spawn_session_recorded`` — every agent-step ephemeral
-        worker, pipeline driver-session, and ``session_spawn``/``delegate_to_agent``
+        worker, pipeline driver-session, and ``spawn_session``/``delegate_to_agent``
         target) never fires a chat "turn boundary" of its own before its first
         dispatch, so every one of its config-derived projections (MCP roster,
         pipeline/presentation/skill registries, hooks, per-agent capability, the
@@ -3956,7 +3956,7 @@ class Session:
 
         router_host = RouterHostAdapter(
             # #2175: the safety.on_limit checkpoint + the shared per-run extension dict —
-            # so the spawn SEAM (agent_spawn / topology_create) routes spawn-limit exceeds
+            # so the spawn SEAM (spawn_agent / create_topology) routes spawn-limit exceeds
             # through the same mode-driven framework as inter_agent_messaging's max_agent_hops.
             handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
             safety_extensions=self._safety_extensions,

@@ -118,7 +118,7 @@ def test_strip_direct_advertisement_route_makes_the_gate_fire() -> None:
     RED if this ever happened for real, instead of the assertion being
     vacuously satisfied.
 
-    ``topology_create`` is confirmed (asserted below against the live set)
+    ``create_topology`` is confirmed (asserted below against the live set)
     to not be a catalog action -- it is direct-route-only, so stripping its
     lookup call site removes it from BOTH routes' union, unlike stripping
     e.g. ``web_search`` (a catalog action) which would still be reachable
@@ -127,22 +127,22 @@ def test_strip_direct_advertisement_route_makes_the_gate_fire() -> None:
     from reyn.runtime.router_tools import build_tools
 
     real_source = inspect.getsource(build_tools)
-    anchor = '_registry.lookup("topology_create")'
+    anchor = '_registry.lookup("create_topology")'
     assert real_source.count(anchor) == 1, (
         "strip anchor must be unique or this falsifies the wrong call site"
     )
     stripped_source = real_source.replace(anchor, '_registry.lookup("__stripped_3464__")')
 
     invoke_reachable = compute_invoke_action_reachable_tool_names()
-    assert "topology_create" not in invoke_reachable, (
-        "topology_create must be direct-route-only for this strip to be a valid probe"
+    assert "create_topology" not in invoke_reachable, (
+        "create_topology must be direct-route-only for this strip to be a valid probe"
     )
 
     baseline_unreachable = compute_unreachable_router_allow_tool_names()
-    assert "topology_create" not in baseline_unreachable
+    assert "create_topology" not in baseline_unreachable
 
     stripped_unreachable = compute_unreachable_router_allow_tool_names(source_text=stripped_source)
-    assert "topology_create" in stripped_unreachable
+    assert "create_topology" in stripped_unreachable
 
     with pytest.raises(AssertionError):
         _assert_reachability_gate(stripped_unreachable)

@@ -561,14 +561,14 @@ They operate in sequence: authorization resolution (AgentLayer) determines wheth
 
 ## LLM spawn capability model {#llm-spawn-capability-model}
 
-When an LLM uses `agent_spawn` or `topology_create` to build an org at runtime,
+When an LLM uses `spawn_agent` or `create_topology` to build an org at runtime,
 the resulting agents and topology members operate under a **⊆-parent capability
 model**: every spawned agent's effective capability is capped at a subset of its
 spawner's, recursively, with no path to escalate via spawn.
 
 ### How the cap is enforced
 
-The OS, not the LLM, sets the spawn lineage. When `agent_spawn` creates a new
+The OS, not the LLM, sets the spawn lineage. When `spawn_agent` creates a new
 agent, the registry records `parent=<spawner>` from the calling context — the
 LLM never supplies this link (forge-guard). At gate time, the spawned agent's
 `ContextualLayer` composes the spawner's **live resolved effective capability**
@@ -584,7 +584,7 @@ the child cannot exceed the parent on any axis. This holds recursively: a
 grandchild is capped at ⊆ the child, which is itself ⊆ the parent.
 
 The default-deny `_delegate` floor also applies to spawned agents: an unbound spawned
-agent receives the least-privilege `_delegate` profile unless a `topology_create`
+agent receives the least-privilege `_delegate` profile unless a `create_topology`
 binding explicitly re-grants within the ⊆-parent envelope.
 
 ### No-escalation-via-spawn: the closed class
@@ -597,11 +597,11 @@ Five specific escalation avenues are closed by construction:
 | Rewind drop (lineage lost, constraint lifted) | Lineage is WAL-tracked; rewind reconstruction restores the parent link |
 | Absent parent (parent purged, constraint lifted) | Absent-parent path fails closed — gate treats missing lineage as deny |
 | Name reuse (new agent reuses purged name, fresh identity) | Identity-keyed lineage: the OS key is not the name but an internal ID; a re-used name cannot inherit the prior agent's purged lineage |
-| Absent/malformed bound profile (a `topology_create` member's declared `capability_profile` file is deleted or corrupted, constraint lifted) | Same fail-closed philosophy generalised to the profile-binding path: a **declared-but-unresolvable** binding composes the restrictive `_delegate` floor rather than silently skipping the narrowing. The discriminator is existence-of-declaration — a member with no binding at all stays genuinely unrestricted; only a binding that names a profile that can no longer be read fails closed. |
+| Absent/malformed bound profile (a `create_topology` member's declared `capability_profile` file is deleted or corrupted, constraint lifted) | Same fail-closed philosophy generalised to the profile-binding path: a **declared-but-unresolvable** binding composes the restrictive `_delegate` floor rather than silently skipping the narrowing. The discriminator is existence-of-declaration — a member with no binding at all stays genuinely unrestricted; only a binding that names a profile that can no longer be read fails closed. |
 
-### `topology_create` profiles stay inside the envelope
+### `create_topology` profiles stay inside the envelope
 
-When `topology_create` assigns a `capability_profile` to a member, the profile
+When `create_topology` assigns a `capability_profile` to a member, the profile
 is a further **narrowing within the ⊆-parent envelope** — it can only restrict,
 never re-grant. Because every member of a topology must already be in the
 creator's spawn subtree (subtree-restriction gate), the profile binding is safe
@@ -632,4 +632,4 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` subcommand and `mcp_install` gate interaction
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
 - [Concepts: Capability profile](../runtime/capability-profile.md) — per-agent ProfileLayer spec (workflow / MCP / tool / category axes) and agent self-edit guide
-- [Concepts: LLM org-design tools](../multi-agent/org-design.md) — `agent_spawn` / `session_spawn` / `topology_create` and the ⊆-parent model in practice
+- [Concepts: LLM org-design tools](../multi-agent/org-design.md) — `spawn_agent` / `spawn_session` / `create_topology` and the ⊆-parent model in practice

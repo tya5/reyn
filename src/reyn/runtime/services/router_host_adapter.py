@@ -1181,7 +1181,7 @@ class RouterHostAdapter:
         (returns a spawn-ack)."""
         if self._registry is None:
             raise RuntimeError(
-                "session_spawn requires a registry (multi-session host) — unavailable "
+                "spawn_session requires a registry (multi-session host) — unavailable "
                 "in this context."
             )
         # #2130: the spawning session's LIVE sid — threaded as ``from_sid`` so the spawned
@@ -1191,7 +1191,7 @@ class RouterHostAdapter:
         # non-main-spawn guard: a non-main session may now spawn — its result routes back
         # correctly by (agent, from_sid). (None / "main" → main-case, byte-identical.)
         from_sid = self.live_session_id
-        # #2708 P3-item3 (co-vet must-fix): the LLM session_spawn tool spawns a background sub-agent
+        # #2708 P3-item3 (co-vet must-fix): the LLM spawn_session tool spawns a background sub-agent
         # that is NOT self-attachable by a human — it is LLM-initiated, so no operator is guaranteed
         # to know the child sid to attach + drain (unlike /session new, which a human starts + attaches
         # to). A self-bound (ReviewedNA) child would hit the SAME origin-pin park/hang this PR closes:
@@ -1209,8 +1209,8 @@ class RouterHostAdapter:
             if parent_session is not None
             else AuditOnlyNoSurface()
         )
-        # #2737: session_spawn NESTING depth cap — PARITY with agent_spawn's max_spawn_depth
-        # gate (this method's sibling ``spawn_agent`` below). The LLM session_spawn path
+        # #2737: spawn_session NESTING depth cap — PARITY with spawn_agent's max_spawn_depth
+        # gate (this method's sibling ``spawn_agent`` below). The LLM spawn_session path
         # re-exposes spawn_session on EVERY spawned child's router host, so unbounded
         # grandchildren/great-grandchildren are reachable; and the compositional
         # ``SpawnBridgeInterventionListener.bus()`` walk (#2735) recurses once per nesting
@@ -1219,7 +1219,7 @@ class RouterHostAdapter:
         # (``safety.spawn.max_depth`` = ``registry.max_spawn_depth``) bounds BOTH by
         # construction (capped nesting depth ⇒ bounded bus() recursion, since the depth is
         # exactly that walk's length). Routed through the SAME on_limit checkpoint and the
-        # SAME typed ``spawn_limit_exceeded`` error as agent_spawn (uniform sibling), with a
+        # SAME typed ``spawn_limit_exceeded`` error as spawn_agent (uniform sibling), with a
         # SEPARATE extension key — session nesting ≠ agent-tree depth, so an approved widen of
         # one must not silently widen the other (the #2175 approval-scoping principle).
         base_depth = self._registry.max_spawn_depth
@@ -1257,7 +1257,7 @@ class RouterHostAdapter:
                         ),
                     }
         # #3556: the spawner's OWN sid-keyed #2103-S1a narrowing composes IN. ``narrowing``
-        # arrives here as a ``session_spawn`` tool argument — i.e. whatever THIS session's
+        # arrives here as a ``spawn_session`` tool argument — i.e. whatever THIS session's
         # LLM asked for — so without this line the spawned sibling is born under the LLM's
         # requested envelope alone, and a narrowed session widens itself by spawning. The
         # tool's own parameter description promises the model the opposite ("restrict-only,
@@ -1330,10 +1330,10 @@ class RouterHostAdapter:
         carried on ``agent_created`` for rewind-reconstruction. By B-core, the new
         agent's effective capability is then capped at ⊆ the spawner by construction
         (resolved_profile_for composes the spawner's live resolved as a conjunct).
-        Narrowing the child below the spawner is via ``topology_create`` (C)."""
+        Narrowing the child below the spawner is via ``create_topology`` (C)."""
         if self._registry is None:
             raise RuntimeError(
-                "agent_spawn requires a registry (multi-agent host) — unavailable in "
+                "spawn_agent requires a registry (multi-agent host) — unavailable in "
                 "this context."
             )
         parent = self._agent_name
@@ -1410,7 +1410,7 @@ class RouterHostAdapter:
             "parent": parent,
             "note": (
                 "New agent created; its capabilities are capped at ⊆ yours (the spawn "
-                "lineage). Use topology_create to narrow it further / wire messaging."
+                "lineage). Use create_topology to narrow it further / wire messaging."
             ),
         }
 
@@ -1439,13 +1439,13 @@ class RouterHostAdapter:
         unrestricted (operator-authority); this seam is the LLM-tool path only."""
         if self._registry is None:
             raise RuntimeError(
-                "topology_create requires a registry (multi-agent host) — unavailable "
+                "create_topology requires a registry (multi-agent host) — unavailable "
                 "in this context."
             )
         creator = self._agent_name
         members = list(members)
         # #2175: max_children governs topology SIZE too (org fan-out), routed through the
-        # on_limit checkpoint. SEPARATE extension key from agent_spawn fan-out (approving a
+        # on_limit checkpoint. SEPARATE extension key from spawn_agent fan-out (approving a
         # bigger org ≠ approving more direct children — different intents, Q3). A bulk
         # create extends by the exact gap so the approval covers this topology.
         base_children = self._registry.max_spawn_children
@@ -1481,9 +1481,9 @@ class RouterHostAdapter:
                 "status": "error",
                 "kind": "member_outside_subtree",
                 "error": (
-                    f"topology_create: {sorted(outside)} are not in your spawn subtree "
+                    f"create_topology: {sorted(outside)} are not in your spawn subtree "
                     "— you may only wire agents you spawned (or yourself). Use "
-                    "agent_spawn to create them under your authority first."
+                    "spawn_agent to create them under your authority first."
                 ),
             }
         from reyn.runtime.topology import Topology

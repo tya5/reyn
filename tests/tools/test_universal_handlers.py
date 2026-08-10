@@ -599,8 +599,8 @@ def test_invoke_action_refuses_a_registered_tool_outside_the_catalog() -> None:
     """Tier 2: #3429 — ``invoke_action`` dispatches CATALOG actions, not "any
     registered tool by name".
 
-    ``present`` / ``session_spawn`` / ``agent_spawn`` are live registered tools
-    that the catalog deliberately does not browse; ``session_spawn`` is also on
+    ``present`` / ``spawn_session`` / ``spawn_agent`` are live registered tools
+    that the catalog deliberately does not browse; ``spawn_session`` is also on
     the exclusive-wrapper strip list, i.e. a surface reduction the wrapper mode
     makes on purpose. A wrapper that dispatched anything the registry could
     look up would hand every one of them back, under the one tool that mode
@@ -609,7 +609,7 @@ def test_invoke_action_refuses_a_registered_tool_outside_the_catalog() -> None:
     The membership check is what refuses them — a registry lookup alone would
     SUCCEED here, which is why this arm exists rather than relying on the
     lookup's own None branch."""
-    for name in ("present", "session_spawn", "agent_spawn"):
+    for name in ("present", "spawn_session", "spawn_agent"):
         result = _run(INVOKE_ACTION.handler({"action_name": name}, _make_ctx()))
         assert "error" in result, f"invoke_action dispatched non-catalog tool {name!r}"
         assert result["action_name"] == name

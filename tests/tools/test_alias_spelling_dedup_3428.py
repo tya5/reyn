@@ -147,7 +147,7 @@ def test_entries_that_are_not_aliases_pass_through_untouched() -> None:
     The helper sits between composition and ``descriptors_from_entries``, which
     classifies an entry by its exact key set; a rule that reshaped an entry on
     the way through would reclassify it as a provider-native passthrough."""
-    entries = [_nested("session_spawn"), _nested("run_pipeline")]
+    entries = [_nested("spawn_session"), _nested("run_pipeline")]
     kept = without_duplicate_names(entries)
     assert [id(e) for e in kept] == [id(e) for e in entries]
 

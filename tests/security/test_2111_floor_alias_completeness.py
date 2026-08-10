@@ -86,11 +86,11 @@ def test_every_floored_name_is_a_registered_tool() -> None:
 
 
 def test_session_spawn_is_floored() -> None:
-    """Tier 2: #2103 S1bc — session_spawn (a new spawning capability) is in the floor,
+    """Tier 2: #2103 S1bc — spawn_session (a new spawning capability) is in the floor,
     so an unbound-delegate-under-deny / untrusted-content turn cannot spawn unbounded
     sub-sessions (DoS). (Live-gate denial across both floors is covered by the
-    parametrized tests below, which enumerate session_spawn via _all_floored_forms.)"""
-    assert "session_spawn" in _BUILTIN_UNTRUSTED_DENY
+    parametrized tests below, which enumerate spawn_session via _all_floored_forms.)"""
+    assert "spawn_session" in _BUILTIN_UNTRUSTED_DENY
 
 
 def test_bare_memory_write_aliases_present() -> None:

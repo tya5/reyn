@@ -119,9 +119,9 @@ _WRAPPER_SUPERSEDED_BASE_TOOLS: frozenset[str] = frozenset({
     "describe_mcp_tool",
     # Spawning a sub-session is not a catalog action; it is stripped here as a
     # deliberate surface reduction, and has been since the exclusive-wrapper
-    # mode landed. (``agent_spawn`` / ``topology_create`` are deliberately NOT
+    # mode landed. (``spawn_agent`` / ``create_topology`` are deliberately NOT
     # stripped — the org-design surface stays reachable.)
-    "session_spawn",
+    "spawn_session",  # renamed from session_spawn — #4004
 })
 
 
@@ -388,14 +388,15 @@ def build_tools(
             dispatch_kind=_delegate_def.dispatch_kind,
         ))
 
-    # ── B2b: session_spawn (#2103 S1bc / #2120 fix) ──────────────────────
+    # ── B2b: spawn_session (#2103 S1bc / #2120 fix; renamed from session_spawn
+    # — #4004) ─────────────────────────────────────────────────────────────
     # Router-only spawn primitive. Static schema (no schema_enricher / per-call
     # enum) → render without state, like remember_shared. (Registered + floored in
     # S1bc but the advertising block was missed — the #1953/#2120 router=allow-but-
     # unadvertised drift. test_2120_session_spawn_advertised.py pins reachability
     # here + the wrappers-mode strip pairing below; a blanket "every router=allow
     # advertised-or-exempt" guard is mode/condition-dependent — flagged for lead.)
-    _session_spawn_def = _registry.lookup("session_spawn")
+    _session_spawn_def = _registry.lookup("spawn_session")
     if _session_spawn_def is not None and _session_spawn_def.gates.router == "allow":
         _session_spawn_rendered = _session_spawn_def.render_for_router()
         specs.append(ToolSpec(
@@ -405,11 +406,11 @@ def build_tools(
             dispatch_kind=_session_spawn_def.dispatch_kind,
         ))
 
-    # ── B2c: agent_spawn (#2103 B-tool) ──────────────────────────────────
+    # ── B2c: spawn_agent (#2103 B-tool; renamed from agent_spawn — #4004) ──
     # Router-only org-design spawn primitive (static schema → render without state).
-    # Advertised here alongside session_spawn so the router=allow tool is actually
+    # Advertised here alongside spawn_session so the router=allow tool is actually
     # reachable (the #2120 advertise-drift lesson); dispatch + floor pair below.
-    _agent_spawn_def = _registry.lookup("agent_spawn")
+    _agent_spawn_def = _registry.lookup("spawn_agent")
     if _agent_spawn_def is not None and _agent_spawn_def.gates.router == "allow":
         _agent_spawn_rendered = _agent_spawn_def.render_for_router()
         specs.append(ToolSpec(
@@ -419,11 +420,11 @@ def build_tools(
             dispatch_kind=_agent_spawn_def.dispatch_kind,
         ))
 
-    # ── B2d: topology_create (#2103 C1) ───────────────────────────────────
+    # ── B2d: create_topology (#2103 C1; renamed from topology_create — #4004) ─
     # Router-only org-wiring primitive (static schema → render without state).
-    # Advertised alongside agent_spawn so the router=allow tool is reachable (the
+    # Advertised alongside spawn_agent so the router=allow tool is reachable (the
     # #2120 advertise-drift lesson); dispatch + floor pair land with it.
-    _topology_create_def = _registry.lookup("topology_create")
+    _topology_create_def = _registry.lookup("create_topology")
     if _topology_create_def is not None and _topology_create_def.gates.router == "allow":
         _topology_create_rendered = _topology_create_def.render_for_router()
         specs.append(ToolSpec(

@@ -1,7 +1,7 @@
 """Programmatic session-spawn + run+collect entry points for non-LLM callers.
 
 ``AgentRegistry.spawn_session_recorded`` is the clean action-layer seam behind
-``session_spawn`` (the LLM tool): it spawns a fresh-context session, persists +
+``spawn_session`` (the LLM tool): it spawns a fresh-context session, persists +
 enforces any capability narrowing, and emits the rewind-tracked
 ``session_spawned`` WAL event. The LLM tool path reaches it only through
 ``RouterCallerState.spawn_session_fn``, a closure the router loop builds — so a
@@ -152,7 +152,7 @@ async def spawn_ephemeral_session(
 
     Thin, direct wrapper over ``registry.spawn_session_recorded(identity,
     mode="ephemeral", narrowing=narrowing)`` — the same call the
-    ``session_spawn`` tool's handler reaches via ``spawn_session_fn``, so the
+    ``spawn_session`` tool's handler reaches via ``spawn_session_fn``, so the
     emitted ``session_spawned`` WAL event + the spawned session's narrowing
     enforcement are byte-identical to the tool path. Returns the new session id
     (the ``session_spawned`` event's ``sid``).
@@ -546,7 +546,7 @@ async def _spawn_pipeline_driver_session(
     # invoker's sid-keyed narrowing has to be handed to it explicitly — sharing the
     # invoker's IDENTITY re-derives only the name-keyed layers (see this function's
     # docstring, step 1). Sibling parity: the two other ``spawn_session_recorded``
-    # call sites (``session_spawn``'s router host, the ``agent`` step) already pass
+    # call sites (``spawn_session``'s router host, the ``agent`` step) already pass
     # ``narrowing=``; this was the one that did not.
     sid = await registry.spawn_session_recorded(
         reply_to_agent, mode="persistent",

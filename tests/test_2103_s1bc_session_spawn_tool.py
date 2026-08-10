@@ -1,6 +1,6 @@
-"""Tier 2: #2103 S1bc — the session_spawn tool + the spawn_session_recorded seam.
+"""Tier 2: #2103 S1bc — the spawn_session tool + the spawn_session_recorded seam.
 
-session_spawn (router-only, async-dispatch) spawns a fresh-context session under the
+spawn_session (router-only, async-dispatch) spawns a fresh-context session under the
 agent + records it (config-complete session_spawned + per-session config.yaml narrowing)
 + submits the task. The spawned session RUNS the task; routing the result BACK is the
 S1bc-exec follow-on (Stage-4), so the tool returns a spawn-ack (#1822 not-external).
@@ -102,10 +102,10 @@ async def test_spawn_session_recorded_no_narrowing_is_inert(tmp_path: Path) -> N
 
 
 def test_session_spawn_registered_with_schema() -> None:
-    """Tier 2: session_spawn is router-callable + its schema gates the spawn-time mode
+    """Tier 2: spawn_session is router-callable + its schema gates the spawn-time mode
     (ephemeral|persistent) + requires request."""
     from reyn.tools import get_default_registry
-    assert "session_spawn" in get_default_registry()
+    assert "spawn_session" in get_default_registry()
     params = SESSION_SPAWN.parameters
     assert params["properties"]["mode"]["enum"] == ["ephemeral", "persistent"]
     assert params["required"] == ["request"]

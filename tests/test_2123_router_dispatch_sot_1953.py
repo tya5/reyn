@@ -29,7 +29,7 @@ from reyn.tools import get_default_registry
 # require deliberate updates to their exhaustiveness lists.
 _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_agents", "describe_agent", "delegate_to_agent",
-    "session_spawn", "agent_spawn", "topology_create",
+    "spawn_session", "spawn_agent", "create_topology",
     "reyn_repo_list", "reyn_repo_read",
     "web_search", "web_fetch",
     "read_file", "write_file", "delete_file", "list_directory",

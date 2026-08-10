@@ -679,7 +679,7 @@ class AgentRegistry:
         """#2103 C1: True iff ``agent`` is ``ancestor`` itself OR a transitive spawn-
         descendant of it (walk ``agent``'s lineage chain upward; acyclic → terminates).
 
-        The subtree-membership predicate the ``topology_create`` spawn-seam uses to
+        The subtree-membership predicate the ``create_topology`` spawn-seam uses to
         forge-guard which agents an LLM may wire into a topology: members must be ⊆ the
         creator's spawn subtree. That restriction is what makes C's profile bindings
         safe BY CONSTRUCTION — every LLM-bindable member is a lineage descendant of the
@@ -752,12 +752,12 @@ class AgentRegistry:
         return n
 
     def session_nesting_depth(self, name: str, sid: "str | None" = None) -> int:
-        """#2737: the LLM ``session_spawn`` NESTING depth of session ``(name, sid)`` — a
-        root/main session = 0, each ``session_spawn`` edge +1. Walks the
+        """#2737: the LLM ``spawn_session`` NESTING depth of session ``(name, sid)`` — a
+        root/main session = 0, each ``spawn_session`` edge +1. Walks the
         ``SpawnBridgeInterventionListener`` parent-linkage chain — the SAME parent linkage
         ``SpawnBridgeInterventionListener.bus()`` recurses over to resolve an ``ask_user``
         toward the root operator (#2735) — so the depth this returns is exactly that
-        ``bus()`` recursion depth. Capping it at the ``session_spawn`` seam therefore bounds
+        ``bus()`` recursion depth. Capping it at the ``spawn_session`` seam therefore bounds
         BOTH unbounded session nesting (resource) AND the compositional ``bus()`` recursion
         (a deep-chain ``RecursionError``) by construction — the #2708 P3-item3 co-vet edge.
 
@@ -3058,7 +3058,7 @@ class AgentRegistry:
         # #3036/#3097: every programmatic spawn funnels through here (agent-step
         # ephemeral workers via spawn_ephemeral_session, pipeline driver-sessions via
         # _spawn_pipeline_driver_session — mode="persistent" — and delegate_to_agent's
-        # session_spawn tool). None of these callers ever fire a "turn boundary" of
+        # spawn_session tool). None of these callers ever fire a "turn boundary" of
         # their own BEFORE their first programmatic step runs — that trigger is a
         # RouterLoopDriver-only chat-turn concept (Session._run_router_loop), and the
         # spawned session's config-derived projections are otherwise frozen at

@@ -81,7 +81,7 @@ async def test_missing_bound_profile_fails_closed(tmp_path):
     c1, _ = reg.resolved_profile_for("m")
     assert c1 is not None  # a skip would yield None (no layer) = unrestricted = ESCALATION
     assert tool_contextually_denied(c1, "exec")  # a floored ("spawn"-peer) class
-    assert tool_contextually_denied(c1, "agent_spawn")     # the spawn class, floored
+    assert tool_contextually_denied(c1, "spawn_agent")     # the spawn class, floored
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_no_binding_declared_stays_unrestricted(tmp_path):
 
 @pytest.mark.asyncio
 async def test_topology_create_edges_confined_to_subtree_members(tmp_path):
-    """Tier 2: a topology_create'd network permits messaging only AMONG its members — and
+    """Tier 2: a create_topology'd network permits messaging only AMONG its members — and
     since C1 restricts members to the creator's spawn subtree, the edges are confined to
     the subtree by construction (gate-2, no broader reach-check). An agent outside the
     topology shares no edge with a member."""

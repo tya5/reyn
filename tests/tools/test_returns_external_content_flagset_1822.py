@@ -70,17 +70,17 @@ _NOT_EXTERNAL = {
     # sub-agent's output. The peer reply arrives via the A3 inbound seam
     # (EP5, handle_agent_response → history) and is fenced there in S4.
     "delegate_to_agent",
-    # #2103 S1bc: session_spawn → async dispatch, returns a "spawned" ACK
+    # #2103 S1bc: spawn_session → async dispatch, returns a "spawned" ACK
     # {status, sid, mode}, not the spawned session's output (result-routing-back is
     # the S1bc-exec/Stage-4 follow-on, fenced there).
-    "session_spawn",
-    # #2103 B-tool: agent_spawn → returns an OS-generated spawn ACK
+    "spawn_session",
+    # #2103 B-tool: spawn_agent → returns an OS-generated spawn ACK
     # {status, name, parent, note}, not external content (it creates an agent; any
     # output the new agent later produces is fenced on its own path).
-    "agent_spawn",
-    # #2103 C1: topology_create → returns an OS-generated create ACK
+    "spawn_agent",
+    # #2103 C1: create_topology → returns an OS-generated create ACK
     # {status, name, kind, members, ...}, not external content (it wires a topology).
-    "topology_create",
+    "create_topology",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file",
     "remember_shared", "remember_agent", "forget_memory",
@@ -99,7 +99,7 @@ _NOT_EXTERNAL = {
     # {status, server, uri} subscribe-confirmation ACK, never resource CONTENT (the
     # push notification itself carries no payload — a caller re-reads via
     # read_mcp_resource, which IS fenced above). Same "status ACK, not content"
-    # classification rationale as mcp_install_local / topology_create.
+    # classification rationale as mcp_install_local / create_topology.
     "subscribe_mcp_resource", "unsubscribe_mcp_resource",
     "skill_install_source",
     # FP-0066 P0 (#3254): load_skill returns a skill body that becomes agent
@@ -175,7 +175,7 @@ _NOT_EXTERNAL = {
     # — presentation (#2692, part of the #2688 sweep) —
     # present: fire-and-continue → returns a compact ACK (reached-user + view-bind
     # stats), NOT the presented data itself → no external content forwarded (same
-    # "status ACK, not content" rationale as topology_create / the installers).
+    # "status ACK, not content" rationale as create_topology / the installers).
     "present",
     # render_template: returns the rendered string, derived from a template + data.
     # A data_ref/template_ref reads file content — the same agent-work-product /
@@ -194,7 +194,7 @@ _NOT_EXTERNAL = {
     # internal step execution, not fetched external content. Any external
     # content a tool/agent step's own result carries is fenced on THAT step's
     # own tool-result path when it runs (same "ACK here, fenced at its own
-    # seam" pattern as delegate_to_agent / session_spawn above).
+    # seam" pattern as delegate_to_agent / spawn_session above).
     "run_pipeline",
     # IS-2: run_pipeline_async returns only {status: started, run_id} — an
     # OS-assembled launch ACK, no content at all. The eventual result arrives

@@ -11,9 +11,9 @@ organisation at runtime:
 
 | Tool | What it does |
 |------|-------------|
-| `agent_spawn` | Create a child agent with a name + role, capped at ⊆ your capabilities |
-| `session_spawn` | Start a fresh-context sub-session to run a task in isolation |
-| `topology_create` | Wire agents you spawned into a communication topology and optionally narrow each member's capabilities |
+| `spawn_agent` | Create a child agent with a name + role, capped at ⊆ your capabilities |
+| `spawn_session` | Start a fresh-context sub-session to run a task in isolation |
+| `create_topology` | Wire agents you spawned into a communication topology and optionally narrow each member's capabilities |
 
 These tools are **router-only** (not available inside a Phase): they are
 org-design decisions made by the running agent, not instructions authored in a
@@ -30,10 +30,10 @@ workflow.
 
 ---
 
-## `agent_spawn` — create a child agent
+## `spawn_agent` — create a child agent
 
 ```text
-agent_spawn(name: str, role: str = "")
+spawn_agent(name: str, role: str = "")
 ```
 
 Creates a new agent in the registry under your authority. The new agent's
@@ -42,22 +42,22 @@ never supplies the parent link). The new agent's effective capability is
 **capped at a subset of yours by construction** — it can never do anything
 you cannot (see [⊆-parent capability model](../runtime/permission-model.md#llm-spawn-capability-model)).
 
-Use `agent_spawn` to design the *identity* layer of your org: who exists
+Use `spawn_agent` to design the *identity* layer of your org: who exists
 and what their role is. To control *who-can-talk-to-whom* and narrow
-capabilities further, use `topology_create`.
+capabilities further, use `create_topology`.
 
 ### What the return value tells you
 
-`agent_spawn` returns a spawn-ack (synchronous) — the agent is created and
+`spawn_agent` returns a spawn-ack (synchronous) — the agent is created and
 registered before the tool returns. The ack includes the new agent's name
-so you can reference it in a subsequent `topology_create` call.
+so you can reference it in a subsequent `create_topology` call.
 
 ---
 
-## `session_spawn` — run a task in a fresh context
+## `spawn_session` — run a task in a fresh context
 
 ```text
-session_spawn(request: str, mode: "ephemeral" | "persistent" = "persistent",
+spawn_session(request: str, mode: "ephemeral" | "persistent" = "persistent",
               narrowing: dict | None = None)
 ```
 
@@ -69,11 +69,11 @@ dispatch).
 
 ⚠️ **Exclusive-wrapper mode has no catalog route for this tool.** When
 [`action_retrieval.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
-is `true`, `session_spawn`'s individual per-tool entry is stripped (like
+is `true`, `spawn_session`'s individual per-tool entry is stripped (like
 `delegate_to_agent`'s) — but unlike `delegate_to_agent`, which stays
 reachable through the `multi_agent` category's catalog dispatch,
-`session_spawn` has no catalog-channel equivalent today. An operator
-enabling exclusive-wrapper mode loses `session_spawn` reachability
+`spawn_session` has no catalog-channel equivalent today. An operator
+enabling exclusive-wrapper mode loses `spawn_session` reachability
 entirely, with no compensating route.
 
 **`mode`**:
@@ -84,7 +84,7 @@ entirely, with no compensating route.
   has itself delegated to a peer and is awaiting that peer's response, a
   transiently-empty inbox mid-wait does not trigger teardown — vanishing
   before the response lands would purge the session the reply is
-  addressed to. A spawned session may itself call `session_spawn` again
+  addressed to. A spawned session may itself call `spawn_session` again
   (nesting is supported); its result still routes back correctly.
 - `persistent` — the session stays registered after the task. Use when
   you need to refer back to it or continue work there.
@@ -111,10 +111,10 @@ dropped during rewind reconstruction.
 
 ---
 
-## `topology_create` — wire and narrow your spawn subtree
+## `create_topology` — wire and narrow your spawn subtree
 
 ```text
-topology_create(
+create_topology(
     name: str,
     kind: "network" | "team" | "pipeline",
     members: list[str],
@@ -124,7 +124,7 @@ topology_create(
 ```
 
 Creates a named communication topology from agents **in your spawn
-subtree** (yourself plus any agent you created via `agent_spawn`,
+subtree** (yourself plus any agent you created via `spawn_agent`,
 transitively). The `can_send(A, B)` rule follows the same three kinds as
 operator-authored topologies:
 
@@ -165,11 +165,11 @@ The topology is WAL-tracked so it survives crash recovery and rewind.
 
 ```text
 # 1. Create team members
-agent_spawn(name="researcher", role="gather background on topic X")
-agent_spawn(name="writer",     role="draft the section from findings")
+spawn_agent(name="researcher", role="gather background on topic X")
+spawn_agent(name="writer",     role="draft the section from findings")
 
 # 2. Wire them and optionally narrow
-topology_create(
+create_topology(
     name="research_team",
     kind="team",
     leader="researcher",   # researcher coordinates writer
@@ -178,7 +178,7 @@ topology_create(
 )
 
 # 3. Spawn an isolated task for a one-off need
-session_spawn(
+spawn_session(
     request="translate the draft to Japanese",
     mode="ephemeral",
 )
@@ -196,7 +196,7 @@ to raise its own base limit (the config is the restart-only OUT layer).
 | Key | Default | Effect |
 |-----|---------|--------|
 | `safety.spawn.max_depth` | `10` | Maximum spawn-lineage chain depth (0 = unlimited) |
-| `safety.spawn.max_children` | `20` | Maximum direct spawn-children per parent, and maximum member count in a `topology_create` call |
+| `safety.spawn.max_children` | `20` | Maximum direct spawn-children per parent, and maximum member count in a `create_topology` call |
 
 When a spawn would exceed a limit, the `safety.on_limit` checkpoint fires — the same
 mode-driven framework used by loop and budget caps:

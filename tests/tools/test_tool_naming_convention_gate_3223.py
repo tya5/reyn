@@ -43,6 +43,10 @@ CANONICAL_VERBS: frozenset[str] = frozenset(
         "present", "compact", "ask", "edit", "emit", "glob", "grep", "invoke",
         "subscribe", "unsubscribe", "write", "delegate", "embed", "exec",
         "register", "unregister", "enable", "disable",
+        # #4004: added for create_topology (renamed from topology_create) —
+        # owner-ratified rename sweep, see docs/reference/runtime/tool-naming.md
+        # § "family-prefix validity condition".
+        "create",
     }
 )
 
@@ -78,8 +82,9 @@ _COMPOUND_VERBS: tuple[str, ...] = (
 # anomalies per the doc's "Grandfathered anomalies" section.
 FLAT_GRANDFATHER: frozenset[str] = frozenset(
     {
-        # spawn-family (long-lived entity creation), object_verb order
-        "agent_spawn", "session_spawn",
+        # #4004: agent_spawn/session_spawn renamed to spawn_agent/spawn_session
+        # (owner-ratified rename sweep) — both are now compliant verb_object
+        # names ("spawn" is already in CANONICAL_VERBS), no longer grandfathered.
         # cron_* family (R1 family-prefix grandfather). NOTE: cron_disable /
         # cron_enable / cron_register / cron_unregister are NOT here — they
         # now pass structurally via LIFECYCLE_TOGGLE_VERBS suffix matching
@@ -117,8 +122,9 @@ FLAT_GRANDFATHER: frozenset[str] = frozenset(
         # retired along with the layer-1 agent tool it named.
         # skill_* family (R1 family-prefix grandfather)
         "skill_install_local", "skill_install_source", "skill_list",
-        # sole tool of its shape, no established family, predates convention
-        "topology_create",
+        # #4004: topology_create renamed to create_topology (owner-ratified
+        # rename sweep) — now a compliant verb_object name using the newly
+        # added "create" canonical verb, no longer an anomaly grandfather.
         # web_* family (R1 family-prefix grandfather), object_verb order
         "web_fetch", "web_search",
     }

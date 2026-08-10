@@ -217,7 +217,7 @@ class SpawnBridgeInterventionListener:
 
         - The parent is ITSELF a bridged/audit-only spawn (it carries an
           ``intervention_bridge``) → recurse into it. So a chain of spawns (a sub-agent that
-          ``session_spawn``s a grandchild) resolves TRANSITIVELY toward the first ancestor that
+          ``spawn_session``s a grandchild) resolves TRANSITIVELY toward the first ancestor that
           can actually serve an operator — a grandchild's ``ask_user`` reaches the human via an
           attached ancestor, NOT the immediate (headless, listener-less) parent's registry where
           it would origin-pin park (the #2708 co-vet recursive hang edge).

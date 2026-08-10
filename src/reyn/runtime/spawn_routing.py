@@ -19,7 +19,7 @@ concrete pair a site forwards:
 - :class:`BridgeToParent` — the child bridges its user-reaching capabilities to its spawning
   PARENT: ``present`` renders to the parent's sink and ``ask_user`` reaches the parent's live
   operator listener (the P3.1 / P3.2a ``SpawnBridge*`` seams). Used by the attached pipeline
-  driver spawn AND the LLM ``session_spawn`` tool (a delegated sub-agent's ask_user must reach
+  driver spawn AND the LLM ``spawn_session`` tool (a delegated sub-agent's ask_user must reach
   the operator, "delegated-work-can-ask") — since the parent is a live session with its own
   declared routing, this is hang-safe by construction (parent attached → operator; a parent
   that cannot serve degrades to that parent's own reviewed fail-mode, never an unbounded park).
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 #                           is gone, the result routes via the inbox reply address.
 #   - session_cmd:          ``/session new`` opens a real attachable conversation session under the
 #                           agent — a HUMAN starts it and ``/session switch``es to focus + drain it.
-# NB: the LLM ``session_spawn`` tool (``router_host_adapter.spawn_session``) is deliberately NOT
+# NB: the LLM ``spawn_session`` tool (``router_host_adapter.spawn_session``) is deliberately NOT
 # here — it is LLM-initiated + backgrounded, so no operator is guaranteed to know the child sid to
 # attach + drain, and a self-bound child would hit the very origin-pin ask_user hang this gate
 # closes. It routes ``BridgeToParent`` instead (delegated-work-can-ask), NOT self-bound.

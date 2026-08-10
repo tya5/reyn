@@ -411,8 +411,8 @@ def _build_render_template_config(raw: object) -> "RenderTemplateConfig":
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 
-    A DoS guard: the LLM spawn primitives (``agent_spawn`` create a child,
-    ``topology_create`` wire an org) must not let an agent mint an unbounded
+    A DoS guard: the LLM spawn primitives (``spawn_agent`` create a child,
+    ``create_topology`` wire an org) must not let an agent mint an unbounded
     spawn tree. These caps are **operator-set in reyn.yaml** (the restart-only OUT
     layer) — an LLM has no runtime path to raise its own limit (a self-raisable
     limit is no limit). Enforced at the LLM spawn SEAMS (host adapter): an operator
@@ -430,8 +430,8 @@ class SpawnConfig:
             this is rejected. ``0`` = unlimited.
         max_children:
             Maximum FAN-OUT. Governs BOTH (a) the number of direct spawn-children a
-            single parent may have (``agent_spawn``) AND (b) the member count of a
-            ``topology_create``d topology (org size). A spawn/wire that would exceed
+            single parent may have (``spawn_agent``) AND (b) the member count of a
+            ``create_topology``d topology (org size). A spawn/wire that would exceed
             it is rejected. ``0`` = unlimited.
         max_pipeline_fan_out_depth:
             Pipeline S5 guard (b): the maximum NESTING depth of ``for_each``

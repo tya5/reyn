@@ -93,7 +93,7 @@ def _make_tool_shim(channel: _ControlChannel):
 
     ``name`` is **positional-only** (#3041). It means "which tool to call", but
     ``**args`` carries the TARGET tool's own schema keys — and ~20 registered tools
-    (``mcp_install_local``, ``agent_spawn``, ``remember_shared``, ``run_pipeline``
+    (``mcp_install_local``, ``spawn_agent``, ``remember_shared``, ``run_pipeline``
     …) declare a parameter literally called ``name``. Without the ``/``, that key
     binds to this function's own ``name`` slot, which ``_make_action_stub`` has
     ALREADY filled positionally, and Python raises ``TypeError: got multiple values

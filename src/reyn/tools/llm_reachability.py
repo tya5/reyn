@@ -27,7 +27,7 @@ can deliver it to the model:
       tuple/list assignment (covers the wrapper-name loop, which looks
       up a loop variable rather than a literal). Structural, not one
       execution with one args tuple: several of these tools (the D5-D11
-      MCP resource/prompt verbs, ``compact``, ``session_spawn``,
+      MCP resource/prompt verbs, ``compact``, ``spawn_session``,
       ``search_actions``) are only emitted under a *particular*
       configuration (MCP servers configured / context near budget /
       embedding enabled) — that is correct conditional gating, not an
@@ -165,7 +165,7 @@ def compute_direct_advertisable_tool_names(*, source_text: str | None = None) ->
     Structural (AST) census, not one execution with one args tuple — see the
     module docstring for why a single ``build_tools([])`` call produces false
     positives for correctly-conditional tools (MCP resource verbs, ``compact``,
-    ``session_spawn``, ``search_actions``).
+    ``spawn_session``, ``search_actions``).
 
     ``source_text`` defaults to the real ``build_tools`` source (via
     ``inspect.getsource``); tests pass a modified string to strip-falsify

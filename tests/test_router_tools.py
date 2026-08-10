@@ -21,9 +21,9 @@ EXPECTED_TOOL_NAMES = [
     "list_memory",
     "read_memory_body",
     "delegate_to_agent",
-    "session_spawn",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
-    "agent_spawn",     # #2103 B-tool: router-only org-design spawn primitive
-    "topology_create",  # #2103 C1: router-only org-wiring primitive
+    "spawn_session",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
+    "spawn_agent",     # #2103 B-tool: router-only org-design spawn primitive
+    "create_topology",  # #2103 C1: router-only org-wiring primitive
     "remember_shared",
     "remember_agent",
     "forget_memory",
@@ -364,18 +364,18 @@ def test_nested_objects_max_depth_1_full_permissions():
 
 
 def test_session_spawn_in_dispatch_registry():
-    """Tier 2: session_spawn is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+    """Tier 2: spawn_session is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
 
-    #2120 fix (tui live-probe): session_spawn was registered + floored + advertised
+    #2120 fix (tui live-probe): spawn_session was registered + floored + advertised
     (build_tools B2b) but NOT dispatch-routed → the LLM called it and hit
-    {"error": "unhandled tool: session_spawn"} (the advertised-but-not-dispatched class,
+    {"error": "unhandled tool: spawn_session"} (the advertised-but-not-dispatched class,
     same as read_tool_result / recall). Without this membership the bare name (no "__")
     falls through to the unhandled-tool branch.
     """
     from reyn.runtime.router_loop import RouterLoop
     # Paired with the delegate_to_agent sentinel (the async router-only peer it mirrors)
-    # so the test pins the shared dispatch family, not a session_spawn-only fluke.
+    # so the test pins the shared dispatch family, not a spawn_session-only fluke.
     assert "delegate_to_agent" in RouterLoop.REGISTRY_DISPATCH_TOOLS
-    assert "session_spawn" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
-        "'session_spawn' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
+    assert "spawn_session" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
+        "'spawn_session' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )

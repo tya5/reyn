@@ -1,4 +1,7 @@
-"""topology_create ToolDefinition — #2103 C1 (LLM topology-create primitive, org-design).
+"""create_topology ToolDefinition — #2103 C1 (LLM topology-create primitive, org-design).
+Renamed from topology_create (#4004) — the module and its internal
+identifiers keep the old spelling; only the registered ``name=`` (the
+LLM-visible string) and everything keyed off it changed.
 
 Router-only (gates.router=allow). The LLM DESIGNS an org's WIRING: it
 groups agents it spawned into a topology (who-can-message-whom, by kind) and optionally
@@ -11,11 +14,11 @@ Forge-guard (#2103 C1, lead-approved Q1): the host seam restricts members to the
 creator's spawn SUBTREE (itself + transitive spawn-descendants). That makes the profile
 bindings safe BY CONSTRUCTION — every bound member is already ⊆ the creator via the
 B-core lineage conjunct, so a binding only narrows within that envelope, never re-grants.
-The LLM never wires a non-descendant peer it doesn't own. Pairs with agent_spawn:
-agent_spawn creates children ⊆ self (identity + lineage); topology_create wires/narrows
+The LLM never wires a non-descendant peer it doesn't own. Pairs with spawn_agent:
+spawn_agent creates children ⊆ self (identity + lineage); create_topology wires/narrows
 THOSE children (the capability assignment) — cleanly split.
 
-The #2081 floor also applies (topology_create is in the floored "spawn" class).
+The #2081 floor also applies (create_topology is in the floored "spawn" class).
 """
 from __future__ import annotations
 
@@ -34,25 +37,25 @@ _TOPOLOGY_CREATE_PARAMETERS: dict[str, Any] = {
     "properties": {
         "name": {
             "type": "string",
-            "description": _delegation_descriptions.PARAMS["topology_create"]["name"].text,
+            "description": _delegation_descriptions.PARAMS["create_topology"]["name"].text,
         },
         "kind": {
             "type": "string",
             "enum": ["network", "team", "pipeline"],
-            "description": _delegation_descriptions.PARAMS["topology_create"]["kind"].text,
+            "description": _delegation_descriptions.PARAMS["create_topology"]["kind"].text,
         },
         "members": {
             "type": "array",
             "items": {"type": "string"},
-            "description": _delegation_descriptions.PARAMS["topology_create"]["members"].text,
+            "description": _delegation_descriptions.PARAMS["create_topology"]["members"].text,
         },
         "leader": {
             "type": "string",
-            "description": _delegation_descriptions.PARAMS["topology_create"]["leader"].text,
+            "description": _delegation_descriptions.PARAMS["create_topology"]["leader"].text,
         },
         "profiles": {
             "type": "object",
-            "description": _delegation_descriptions.PARAMS["topology_create"]["profiles"].text,
+            "description": _delegation_descriptions.PARAMS["create_topology"]["profiles"].text,
         },
     },
     "required": ["name", "kind", "members"],
@@ -67,7 +70,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     rs = ctx.router_state
     if rs is None or getattr(rs, "topology_create_fn", None) is None:
         raise RuntimeError(
-            "topology_create requires ctx.router_state.topology_create_fn — unavailable "
+            "create_topology requires ctx.router_state.topology_create_fn — unavailable "
             "(host does not support topology-create / mis-wired dispatcher)."
         )
     name = args.get("name")
@@ -75,21 +78,21 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         return {
             "status": "error",
             "kind": "invalid_name",
-            "error": "topology_create requires a non-empty 'name'.",
+            "error": "create_topology requires a non-empty 'name'.",
         }
     kind = args.get("kind")
     if not isinstance(kind, str) or not kind.strip():
         return {
             "status": "error",
             "kind": "invalid_kind",
-            "error": "topology_create requires a 'kind' (network|team|pipeline).",
+            "error": "create_topology requires a 'kind' (network|team|pipeline).",
         }
     members_raw = args.get("members")
     if not isinstance(members_raw, list) or not members_raw:
         return {
             "status": "error",
             "kind": "invalid_members",
-            "error": "topology_create requires a non-empty 'members' list.",
+            "error": "create_topology requires a non-empty 'members' list.",
         }
     members = [str(m) for m in members_raw]
     leader = args.get("leader")
@@ -112,7 +115,7 @@ from reyn.core.offload.canonical import topology_create_to_canonical  # noqa: E4
 
 TOPOLOGY_CREATE = ToolDefinition(
     canonical=topology_create_to_canonical,
-    name="topology_create",
+    name="create_topology",
     router_dispatched=True,
     description=_TOPOLOGY_CREATE_DESCRIPTION,
     parameters=_TOPOLOGY_CREATE_PARAMETERS,
