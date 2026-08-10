@@ -43,6 +43,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 | [0006](0006-schema-version-refuse-policy.md) | Schema version refuse + --reset (pre-1.0 policy) |
 | [0010](0010-restore-cli-flags.md) | --no-restore / --reset CLI flag semantics |
 | [0013](0013-exception-aware-crash-lifecycle.md) | Exception-aware skill completion in finally clause |
+| [0031](0031-config-cascade-3-layer.md) | 3-layer config cascade — deprecate `<project>/.reyn/config.yaml` (**Accepted** 2026-05-09) |
 
 ### Resume UX and policy
 
@@ -50,6 +51,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0007](0007-bulk-resume-prompt-ux.md) | ~~Bulk 2-choice resume prompt UX~~ — superseded by [0012](0012-auto-resume-default.md) |
 | [0012](0012-auto-resume-default.md) | Auto-resume default + retry policy |
+| [0038](0038-user-facing-time-travel-rewind.md) | User-facing time-travel — global consistent-cut rewind + PITR snapshot generations (**Accepted + Implemented** 2026-06-13) |
 
 ### User intervention
 
@@ -64,6 +66,8 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0017](0017-parent-run-id-nested-skill-path.md) | parent_run_id for nested skill path display |
 | [0018](0018-cross-agent-discard-notify.md) | Cross-agent discard chain notification |
+| [0034](0034-a2a-task-lifecycle.md) | A2A task lifecycle (FP-0001) (**Accepted + Implemented** 2026-05-16) |
+| [0040](0040-task-as-os-concept.md) | `task` as an OS-level concept — vocabulary, collection, and who authors state (**Accepted** 2026-08-10, not yet implemented; extends 0034) — sequencing in [proposal 0067](../proposals/0067-task-model-and-arbiter.md) |
 
 ### Web UI scope
 
@@ -76,6 +80,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 | ADR | Topic |
 |---|---|
 | [0020](0020-skill-only-permissions.md) | Skill-only permissions — Phase.permissions field removed (案 2) |
+| [0037](0037-sandbox-permission-separation.md) | Sandbox / permission separation — agent-level containment unification (**Accepted + Implemented** 2026-06-05) |
 
 ### Architecture
 
@@ -93,6 +98,8 @@ historical value with status updated to "superseded by ADR-XXXX").
 
 | ADR | Topic |
 |---|---|
+| [0035](0035-phase-tool-calls-unification.md) | Phase op-execution via native tool_calls (Phase ↔ chat/planner unification) (**Accepted, fully implemented** 2026-06-02) |
+| [0036](0036-history-compaction-force-close-unification.md) | Chat/plan/phase within-unit history + compaction + force-close unification (Fork 1: RouterLoop convergence) (**Accepted**) |
 | [0039](0039-thin-client-single-writer-server.md) | N thin CUI clients × one single-writer server — UI-path unification, four-surface separation (Proposed) |
 
 ## Format

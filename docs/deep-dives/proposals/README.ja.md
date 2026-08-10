@@ -116,3 +116,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; Phase 1-4 landed(#2837/#2849/#2850)、Phase 5(任意 refactor fold)は未着手 | LARGE |
 | [0059](0059-hook-event-redesign.md) | Hook-Event Redesign(Event Bus / reactivity substrate) | owner-ratified; Phase 1-5 landed(#2871–#2885) | LARGE |
 | [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — agent が構築したものを実際に使うための基盤 | closed(2026-07-13); floor + show 済み、Addendum A/B/C 確定、enhancement/loop layer は owner により de-scope | LARGE |
+| [0067](0067-task-model-and-arbiter.md) | タスクモデルと inbox arbiter — [ADR-0040](../decisions/0040-task-as-os-concept.md) の sequencing/interface | Accepted(2026-08-10、owner)— **未実装**; tracking #3978 | LARGE |
