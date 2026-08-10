@@ -324,6 +324,32 @@ never wait on a hook action — dispatch is scheduled as a fire-and-forget
 background task, so a slow hook (e.g. a multi-second `exec`) can never
 stall the ingress that triggered it.
 
+## Task points
+
+A **task point** is neither a session lifecycle transition nor an external
+ingress signal — it fires when an async unit of work reaches a terminal
+disposition. Proposal 0067 P3 adds the first (and today, only) one.
+
+### `task_settled`
+
+Fires after a `run_pipeline`-launched async pipeline's result has been
+delivered to the issuing session's history (delivery-anchored — the hook
+fires only once `submit_pipeline_result` has succeeded). `delegate_to_agent`'s
+own chain-resolve completion path is a separate, still-unwired "settle"-shaped
+mechanism today — folding it into this same point is deferred (recorded as an
+open remainder in `BUILTIN_HOOK_SCHEMAS`'s own code comment, not silently
+dropped).
+
+Template vars:
+
+| Var | Meaning |
+|-----|---------|
+| `task_id` | The settled task's handle. |
+| `kind` | The task kind (e.g. `pipeline`). |
+| `status` | The terminal status the task settled with. |
+| `session` | The issuing session. |
+| `result` | The task's own LLM-authored output. **Not** `context_safe` (ADR-0040 D3) — cannot be interpolated into a `template_push`'s `message`; use `include` (below) to carry it as fenced, attributed content instead. |
+
 ## Matcher: narrowing which events fire a hook
 
 A hook may set `matcher`, a `dict[str, str]` of field → pattern, evaluated
@@ -341,8 +367,8 @@ hooks:
   `path`, which match via a shell-style glob (`fnmatch`) — so
   `file:///repo/**` matches any URI under that prefix, and `/repo/src/**`
   matches any watched path under that directory.
-- For the 10 **builtin** hook points (6 lifecycle + `mcp_resource_updated` /
-  `file_changed` / `cron_fired` / `webhook_received`), a matcher field must be
+- For the 9 **builtin** hook points (the 4 lifecycle points + `mcp_resource_updated` /
+  `file_changed` / `cron_fired` / `webhook_received` + `task_settled`), a matcher field must be
   one the point's builtin schema actually carries — a typo'd or nonexistent
   field name (e.g. a lifecycle point's matcher naming `server`/`uri`, or
   `payload.srever`) is a **load-time `HookConfigError`**, rejected before the
