@@ -55,8 +55,16 @@ _TESTS_DIR = _ROOT / "tests"
 def measured_flat_files(tests_dir: Path = _TESTS_DIR) -> "set[str]":
     """Every ``.py`` file that is a DIRECT child of ``tests_dir`` right now —
     ``tests_dir.glob("*.py")`` does not recurse, so a file already moved into
-    a subdirectory is correctly absent."""
-    return {p.name for p in tests_dir.glob("*.py")}
+    a subdirectory is correctly absent.
+
+    ``__init__.py`` is excluded: it is a package marker (#4001 — makes
+    ``tests/`` a real package so pytest's import-mode walk never stops at
+    ``tests/`` itself, closing the tests/<bucket>/ name-collision class),
+    not a test file. This ratchet's INVARIANT is about new flat TESTS, and a
+    package marker is not one — the same class of exclusion
+    ``check_migration_diff_shape.py`` already grants an empty
+    ``tests/<pkg>/__init__.py`` bucket-marker addition."""
+    return {p.name for p in tests_dir.glob("*.py") if p.name != "__init__.py"}
 
 
 def load_baseline(path: Path = _BASELINE_PATH) -> "set[str]":
