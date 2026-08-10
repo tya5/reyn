@@ -102,12 +102,15 @@ def _capture_task_settled(monkeypatch, captured: list) -> None:
 
 
 async def _wait_for(predicate, *, delay: float = 0.02) -> bool:
+    """Wait on ``predicate`` unboundedly (CLAUDE.md testing policy: no
+    wait-budget constant in the body — a bounded ``range(N)`` loop that
+    falls through to ``return predicate()`` fails silent on a slow machine,
+    dropping the "what was I waiting for" diagnostic). CI's own
+    ``--timeout=120`` kill switch is the only bound."""
     import asyncio
-    for _ in range(500):
-        if predicate():
-            return True
+    while not predicate():
         await asyncio.sleep(delay)
-    return predicate()
+    return True
 
 
 @pytest.mark.asyncio
