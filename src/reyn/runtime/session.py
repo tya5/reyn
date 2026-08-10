@@ -84,7 +84,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
     SnapshotJournal,
 )
 from reyn.runtime.services.chain_manager import _PendingChain
@@ -3764,10 +3763,9 @@ class Session:
         comment above ``record_spawned_task`` below). Eager-izing any of them
         would freeze a per-turn value at construction time — the Family 3/5
         deferred/eager pitfall repeated here for a third and heavier family.
-        ``record_spawned_task`` (a bound method) and the two tracker lambdas
-        (``send_to_agent_inputs.delegation_tracker`` /
-        ``put_outbox_inputs.agent_replies_tracker``) are likewise kept
-        verbatim, still closing over ``self``.
+        ``record_spawned_task`` (a bound method) and
+        ``put_outbox_inputs.agent_replies_tracker`` (a tracker lambda) are
+        likewise kept verbatim, still closing over ``self``.
 
         PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
         RouterLoopHost implementation extracted from Session. Constructed
@@ -3884,16 +3882,18 @@ class Session:
             mcp_agent_id=self._agent.agent_id,
             ephemeral_fn=lambda: self._ephemeral,
         )
-        # #3482: three more measured consumer-set clusters (sole readers:
-        # RouterHostAdapter.send_to_agent / .put_outbox / .live_session_id).
-        # Same values, same call-time semantics as the flat kwargs they
-        # replace — the trackers stay lambdas over the live Session fields and
-        # live_session_id_fn stays a deferred read (the constructor's cached
-        # session_id is stale for a spawned session).
-        _send_to_agent_inputs = SendToAgentInputs(
-            send_to_agent=self._send_to_agent,
-            delegation_tracker=lambda: self._router_loop_delegations,
-        )
+        # #3482: two more measured consumer-set clusters (sole readers:
+        # RouterHostAdapter.put_outbox / .live_session_id) — #4150 retired
+        # the third (send_to_agent_inputs): the adapter's own send_to_agent
+        # method it fed had zero callers after P6 (#3978) removed the sole
+        # producer of the closure that used to reach it. self._send_to_agent
+        # (the callback it wrapped) stays live — it's P4e's own transport,
+        # reached directly via Session._send_to_agent, not through this
+        # bundle or this adapter. Same values, same call-time semantics as
+        # the flat kwargs they replace — the trackers stay lambdas over the
+        # live Session fields and live_session_id_fn stays a deferred read
+        # (the constructor's cached session_id is stale for a spawned
+        # session).
         _put_outbox_inputs = PutOutboxInputs(
             put_outbox=self._put_outbox,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
@@ -3968,7 +3968,6 @@ class Session:
             # gateway-identity inputs need threading through (mcp_gateway_inputs
             # bundle, built above), not a callback per listing method.
             mcp_gateway_inputs=_mcp_gateway_inputs,
-            send_to_agent_inputs=_send_to_agent_inputs,  # #3482
             put_outbox_inputs=_put_outbox_inputs,  # #3482
             append_history=self._append_history,
             # #3792: mid-turn CLIENT_INPUT injection.

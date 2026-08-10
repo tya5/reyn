@@ -146,7 +146,6 @@ def test_adapter_put_outbox_persist_false_skips_history_append(tmp_path):
         MemoryService,
         PutOutboxInputs,
         RouterHostAdapter,
-        SendToAgentInputs,
     )
     from tests._support.router_host_adapter import (
         make_op_context_source,
@@ -155,7 +154,6 @@ def test_adapter_put_outbox_persist_false_skips_history_append(tmp_path):
         null_file_regen,
         null_file_write,
         null_mcp_call_tool,
-        null_send_to_agent,
     )
 
     outbox: list[dict] = []
@@ -193,9 +191,6 @@ def test_adapter_put_outbox_persist_false_skips_history_append(tmp_path):
         mcp_call_tool=null_mcp_call_tool,
         mcp_gateway_inputs=McpGatewayInputs(
             mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
-        ),
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=null_send_to_agent, delegation_tracker=lambda: None,
         ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_put_outbox, agent_replies_tracker=lambda: None,

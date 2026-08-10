@@ -29,7 +29,6 @@ from reyn.runtime.services.router_host_adapter import (
     McpGatewayInputs,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
 )
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
@@ -83,9 +82,6 @@ def _make_adapter(
         agent_workspace_dir=Path("/tmp"),
         mcp_call_tool=_noop_callable,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_noop_callable, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_noop_callable, agent_replies_tracker=lambda: None,
         ),

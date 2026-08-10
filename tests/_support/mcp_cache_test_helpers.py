@@ -17,7 +17,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
 )
 from tests._support.router_host_adapter import (
     make_op_context_source,
@@ -28,7 +27,6 @@ from tests._support.router_host_adapter import (
     null_file_write,
     null_mcp_call_tool,
     null_put_outbox,
-    null_send_to_agent,
 )
 
 _EMPTY_OP_CTX = make_op_context_source()
@@ -82,9 +80,6 @@ def make_mcp_cache_adapter(
         agent_workspace_dir=workspace,
         mcp_call_tool=null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=null_send_to_agent, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=null_put_outbox, agent_replies_tracker=lambda: None,
         ),

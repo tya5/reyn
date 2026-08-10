@@ -20,7 +20,6 @@ from reyn.runtime.services import (
     MemoryService,
     PutOutboxInputs,
     RouterHostAdapter,
-    SendToAgentInputs,
 )
 
 # ---------------------------------------------------------------------------
@@ -81,9 +80,6 @@ from tests._support.router_host_adapter import (
 )
 from tests._support.router_host_adapter import (
     null_put_outbox as _null_put_outbox,
-)
-from tests._support.router_host_adapter import (
-    null_send_to_agent as _null_send_to_agent,
 )
 
 # ---------------------------------------------------------------------------
@@ -167,64 +163,15 @@ def test_events_identity(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 4: delegation tracker via callback
+# (Formerly) Test 4: delegation tracker via callback — deleted in #4150.
+# RouterHostAdapter.send_to_agent() (and the RouterLoopHost protocol member
+# it implemented) had zero callers after P6 (#3978) removed the sole
+# producer of the closure that used to reach it (router_loop.py's
+# _send_to_agent_bound, removed in #4144) — this test drove the now-deleted
+# method directly, so its subject is gone. The live peer-dispatch transport,
+# InterAgentMessaging.send_to_agent (reached via Session._send_to_agent),
+# never went through this adapter method and is untouched.
 # ---------------------------------------------------------------------------
-
-def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
-    """Tier 2: send_to_agent appends to the delegation tracker list supplied via callback.
-
-    When the delegation_tracker callback returns a mutable list, calling
-    send_to_agent must append a dict with 'to' and 'request' keys.
-    """
-    tracker: list[dict] = []
-    calls: list[dict] = []
-
-    async def fake_send(*, to, request, depth, chain_id) -> None:
-        calls.append({"to": to, "request": request})
-
-    adapter = RouterHostAdapter(
-        agent_name="alpha",
-        agent_role="role",
-        output_language=None,
-        op_context_source=_EMPTY_OP_CTX,
-        permission_resolver=None,
-        mcp_servers=None,
-        project_context="",
-        events=EventLog(subscribers=[]),
-        resolver=ModelResolver({}),
-        memory=MemoryService(
-            agent_workspace_dir=tmp_path / "agents" / "alpha",
-            events=EventLog(subscribers=[]),
-            file_write=_null_file_write,
-            file_read=_null_file_read,
-            file_delete=_null_file_delete,
-            file_regenerate_index=_null_file_regen,
-        ),
-        journal=None,
-        agent_registry=None,
-        agent_workspace_dir=tmp_path / "agents" / "alpha",
-        mcp_call_tool=_null_mcp_call_tool,
-        mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=fake_send, delegation_tracker=lambda: tracker,
-        ),
-        put_outbox_inputs=PutOutboxInputs(
-            put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
-        ),
-        append_history=_null_append_history,
-        live_session_id_inputs=LiveSessionIdInputs(
-            session_id=None, live_session_id_fn=None,
-        ),
-    )
-
-    asyncio.run(adapter.send_to_agent(
-        to="beta", request="hello from alpha", depth=1, chain_id="chain-x",
-    ))
-
-    (entry,) = tracker
-    assert entry["to"] == "beta"
-    assert entry["request"] == "hello from alpha"
-
 
 # ---------------------------------------------------------------------------
 # #53 regression — permission_resolver property + intervention_bus wiring
@@ -277,9 +224,6 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         agent_workspace_dir=workspace,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
         ),
@@ -338,9 +282,6 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
         agent_workspace_dir=workspace,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
         ),
@@ -396,9 +337,6 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         agent_workspace_dir=workspace,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
         ),
@@ -468,9 +406,6 @@ def test_get_inbox_depth_tolerates_a_registry_without_get_session(tmp_path):
         agent_workspace_dir=workspace,
         mcp_call_tool=_null_mcp_call_tool,
         mcp_gateway_inputs=_EMPTY_MCP_GATEWAY,
-        send_to_agent_inputs=SendToAgentInputs(
-            send_to_agent=_null_send_to_agent, delegation_tracker=lambda: None,
-        ),
         put_outbox_inputs=PutOutboxInputs(
             put_outbox=_null_put_outbox, agent_replies_tracker=lambda: None,
         ),

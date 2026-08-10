@@ -467,7 +467,7 @@ class RouterLoopCore(Protocol):
     is the only production implementor today.)
 
     The chat-extras (agents/mcp/memory/web/file/reyn_repo/embedding/
-    discovery/spawn/send_to_agent) live on ``RouterLoopHost`` below; they are
+    discovery/spawn) live on ``RouterLoopHost`` below; they are
     reached only via the chat-discovery setup, the chat system-prompt build, or
     chat-dispatch handlers.
     """
@@ -620,10 +620,6 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def reyn_repo_read(self, *, path: str) -> dict:
         """RouterLoopHost: read the file at ``<reyn_root>/path`` as text."""
         ...
-
-    # Action callbacks (async)
-    async def send_to_agent(self, *, to: str, request: str, depth: int,
-                            chain_id: str) -> None: ...
 
     # Proposal 0067 P1' (#3978): mark the session's current_task as
     # outstanding — called from the async-dispatch block below, right before
@@ -4089,7 +4085,7 @@ class RouterLoop:
         # Proposal 0067 P5 (#3978): send_to_session binding (mirror
         # session-spawn). Only multi-session hosts implement it; a host
         # without it leaves this None. No pre-bound identity — target
-        # agent/session are per-call args, unlike send_to_agent's chain_id.
+        # agent/session are per-call args.
         _send_to_session_bound: Any = None
         if hasattr(self.host, "send_to_session") and callable(
             getattr(self.host, "send_to_session", None)

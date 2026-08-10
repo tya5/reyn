@@ -72,6 +72,12 @@ class FakeRouterHost:
         # so both producers of a #3633-shaped duplicate are exercised.
         self.history: list[dict] = []
         self.skill_calls: list[dict] = []
+        # #4150: the send_to_agent method that appended here is retired (its
+        # Protocol member + RouterHostAdapter implementation both had zero
+        # callers after #3978/#4144). This list now stays permanently empty —
+        # kept only because test_3378_advertise_enforce_agreement.py still
+        # asserts on it. That assertion is vacuous (#4155): filed, not
+        # resolved here (out of scope for the CI-fix this PR was carrying).
         self.agent_sends: list[dict] = []
         # Proposal 0067 P1' (#3978)
         self.mark_task_pending_calls: int = 0
@@ -172,11 +178,6 @@ class FakeRouterHost:
                                    chain_id: str) -> dict:
         self.skill_calls.append({"skill": skill, "input": input, "chain_id": chain_id})
         return {"status": "ok", "skill": skill}
-
-    async def send_to_agent(self, *, to: str, request: str, depth: int,
-                            chain_id: str) -> None:
-        self.agent_sends.append({"to": to, "request": request, "depth": depth,
-                                  "chain_id": chain_id})
 
     def mark_task_pending(self) -> None:
         """Proposal 0067 P1' (#3978): records the call so a test can assert

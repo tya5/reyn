@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Protocol
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.router_loop import RouterLoopHost
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
@@ -120,25 +122,44 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 # Test 4: RouterLoopHost protocol satisfied by Session
 # ---------------------------------------------------------------------------
 
+def _router_loop_host_member_names() -> list[str]:
+    """Walk RouterLoopHost's MRO and collect every declared public member
+    name (methods + property/annotation-only attributes), across it and its
+    RouterLoopCore base — the same set `hasattr` needs to probe for a real
+    Protocol-conformance check.
+
+    #4153 post-mortem: a hand-written mirror of this list (a hardcoded
+    ``required = [...]``) went stale the moment ``send_to_agent`` was
+    removed from the Protocol — the mirror kept the retired name and the
+    test asserted for it forever, independent of what the Protocol actually
+    declares. Deriving the set here means a future member addition/removal
+    on the Protocol is reflected automatically, with nothing to keep in
+    sync by hand."""
+    names: set[str] = set()
+    for klass in RouterLoopHost.__mro__:
+        if klass is object or klass is Protocol or klass.__module__ == "typing":
+            continue
+        names.update(k for k in vars(klass) if not k.startswith("_"))
+        names.update(
+            k for k in getattr(klass, "__annotations__", {}) if not k.startswith("_")
+        )
+    return sorted(names)
+
+
 def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
-    """Tier 1: public contract — RouterHostAdapter (session.router_host) exposes all RouterLoopHost required methods and property types. Protocol compliance test; fails when required API is removed or renamed from the adapter."""
+    """Tier 1: public contract — RouterHostAdapter (session.router_host) exposes every RouterLoopHost Protocol member. Protocol compliance test; fails when required API is removed or renamed from the adapter."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     host = session.router_host
 
-    required = [
-        "chat_id", "agent_name", "agent_role",
-        "list_available_agents",
-        "get_memory_index", "get_file_permissions", "get_mcp_servers",
-        # #3607: the memory-store capability, in place of the two path helpers
-        # (memory_path / memory_dir) + four file primitives (file_read /
-        # file_write / file_delete / file_regenerate_index) the router used to
-        # assemble the memory operations out of.
-        "memory",
-        "send_to_agent", "put_outbox",
-        "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
-        "resolve_model",
-    ]
+    required = _router_loop_host_member_names()
+    # lead-coder review: a derivation that silently returns [] (e.g. the
+    # vars()/__annotations__ walk stops finding anything after an unrelated
+    # typing-internals change) makes `missing` vacuously [] too — green
+    # without checking anything. Guard the derivation itself, not just its
+    # result. Falsify-verified: with the derivation forced to return [],
+    # this assert fires (not the missing== one).
+    assert required, "Protocol member derivation returned nothing — the gate would pass vacuously"
     missing = [m for m in required if not hasattr(host, m)]
     assert missing == [], f"Missing protocol members on RouterHostAdapter: {missing}"
 
