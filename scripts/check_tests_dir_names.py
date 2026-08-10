@@ -45,7 +45,21 @@ predate this gate entirely). A NEW top-level ``tests/<name>/`` directory
 
   ① ``src/reyn/<name>/`` is a real package, OR ``name == "repo"`` (the
     special case for AST-guard/CI-structure tests that import zero
-    ``reyn.*`` — no ``src/reyn/repo/`` exists or ever will).
+    ``reyn.*`` — no ``src/reyn/repo/`` exists or ever will), OR ``name``
+    is one of a small explicit non-mirror allowlist (owner ruling via
+    lead-coder, broker 2026-08-10, adopting option b over widening ① to
+    "any coherent subject" — that would make the vocabulary check
+    meaningless, since every flat file has SOME subject; an explicit
+    allowlist keeps each new non-mirror name a reviewed gate edit instead
+    of a silent accretion): ``intervention`` (``user_intervention.py`` /
+    ``intervention_choices.py`` — the human-in-the-loop intervention
+    mechanism's own shared vocabulary/type surface, both top-level
+    single-file modules with no ``src/reyn/intervention/`` package to
+    mirror) and ``http_safety`` (``_ssrf_guard.py`` / ``_ssrf_pin.py`` /
+    ``_http_limits.py`` — the outbound-HTTP-request safety family: SSRF
+    redirect-following denial, DNS-rebind connect-time IP pinning, and
+    response-body byte ceiling; same shape, three top-level modules, no
+    package).
   ② ``name`` is not one of the reserved legacy names (``scaffold``,
     ``_support`` — different axis, lifespan-scoped/non-test, not a
     src-mirror bucket at all; ``web``, ``cli``, ``chat`` — the
@@ -75,6 +89,12 @@ _REPO_SPECIAL_CASE = "repo"
 # docstring's VOCABULARY section) — a NEW Stage-1 destination must not
 # reuse one of these names.
 _RESERVED_NAMES = frozenset({"scaffold", "_support", "web", "cli", "chat"})
+# Explicit non-mirror allowlist for rule ① — see module docstring's
+# VOCABULARY section for why each name is here and what it groups. Adding
+# a name here is a reviewed gate edit (owner/lead-coder sign-off), never a
+# baseline hand-edit — that's the whole point of an allowlist over
+# widening rule ① itself.
+_NON_MIRROR_ALLOWED_NAMES = frozenset({"intervention", "http_safety"})
 # Directories the SHADOW/VOCABULARY scan itself must not treat as data:
 # never a candidate `tests/<name>/` name, never counted as an "importable
 # repo-root name" (the venv/build/vcs machinery, not code).
@@ -169,7 +189,11 @@ def is_allowed_new_name(name: str, src_packages: "set[str]") -> bool:
     module docstring's VOCABULARY section."""
     if name in _RESERVED_NAMES:
         return False
-    return name == _REPO_SPECIAL_CASE or name in src_packages
+    return (
+        name == _REPO_SPECIAL_CASE
+        or name in src_packages
+        or name in _NON_MIRROR_ALLOWED_NAMES
+    )
 
 
 def load_baseline(path: Path = _BASELINE_PATH) -> "set[str]":
