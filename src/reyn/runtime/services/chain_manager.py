@@ -60,13 +60,16 @@ class _PendingChain:
     origin_sid: "str | None" = None
     # proposal 0067 P4 (#3978): the task kind (prompt/pipeline/exec) this
     # handle represents — None for a delegate-relay chain, which stays
-    # OUTSIDE the task vocabulary permanently (architect ruling, #3978: a
-    # chain with |waiting_on| >= 1 registered via the old delegate_to_agent
-    # relay path is not a D1 task and never gets folded in — P6 retired the
-    # tool with no replacement producer, so no new such chains form, but
-    # already-registered/restored ones keep kind=None for their remaining
-    # lifetime). ``describe_task``/``list_tasks`` read this; a handle
-    # registered with no ``kind`` is not describable as a typed task.
+    # OUTSIDE the task vocabulary permanently. NOT because of its
+    # |waiting_on| cardinality (architect ruling, #3978: |waiting_on| == 1
+    # is a prompt task, |waiting_on| >= 2 is a join — a permanently
+    # non-task shape by ITS OWN cardinality rule, independent of producer)
+    # — a relay chain stays kind=None because P6 retired delegate_to_agent
+    # with no fold, so no relay chain, single-waiter or not, ever receives
+    # a kind through this arc. Already-registered/restored relay chains
+    # keep kind=None for their remaining lifetime; no new ones form.
+    # ``describe_task``/``list_tasks`` read this; a handle registered with
+    # no ``kind`` is not describable as a typed task.
     kind: "str | None" = None
     # proposal 0067 P4 (#3978): describe_task's status field (architect
     # ruling, 2026-08-10) — typed RunStatus, not a bare string, so a LATER
