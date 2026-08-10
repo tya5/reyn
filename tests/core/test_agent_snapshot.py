@@ -354,3 +354,54 @@ def test_truncate_falsify_chain_update_field_survives_wal_truncation(tmp_path: P
     truncated = AgentSnapshot.load("agent_x", tmp_path / "snap-ttl.json")
     truncated.apply_events([])  # seq 3/4 events truncated
     assert "c-walonly" not in truncated.pending_chains  # WAL-only state LOST
+
+
+def test_chain_update_replay_writes_only_real_pending_chain_fields():
+    """Tier 2: architect's #4110 co-vet, non-blocking residue — closes it in
+    this same PR rather than deferring to P8.
+
+    ``test_chain_update_replay_does_not_leak_routing_meta_keys`` above checks
+    against ``_CHAIN_EVENT_META_KEYS`` itself — a deny-list a future chokepoint
+    change could grow without this probe ever noticing, since the probe and the
+    code it's checking would drift in lockstep. This test checks against a
+    DIFFERENT, independent source of truth instead: ``_PendingChain``'s own
+    dataclass field names, read via ``dataclasses.fields`` — the one place the
+    real schema is declared. ``core/events/`` (where ``agent_snapshot.py``
+    lives) cannot import ``runtime/services/chain_manager.py`` at the MODULE
+    level (the established layering direction is the reverse — see
+    ``_CHAIN_EVENT_META_KEYS``'s comment), but a TEST has no such constraint,
+    so the allow-list inversion architect proposed for the module is done here
+    instead, at the seam where it's actually reachable."""
+    import dataclasses
+
+    from reyn.runtime.services.chain_manager import _PendingChain
+
+    # `status`/`cancel` are VOLATILE (chain_manager.py's own field comments:
+    # "deliberately NOT threaded through register()'s persisted `fields`
+    # dict") — they never reach a WAL event or a pending_chains snapshot
+    # entry, so a real replay can never write them; excluding them keeps this
+    # an allow-list of what CAN legitimately appear, not "every declared
+    # field regardless of whether it's ever persisted".
+    # `kind` persists under the dict key "task_kind" (agent_snapshot.py's own
+    # chain_register branch, same collision note as `_CHAIN_EVENT_META_KEYS`:
+    # "kind" is already the WAL event's own type-discriminator key).
+    allowed = {
+        ("task_kind" if f.name == "kind" else f.name)
+        for f in dataclasses.fields(_PendingChain)
+        if f.name not in ("status", "cancel")
+    }
+    snap = _snap("agent_x")
+    snap.apply_events([
+        _event(
+            "chain_register", seq=1, chain_id="c-schema",
+            origin_agent="a", origin_depth=0, original_request="x",
+        ),
+        _event("chain_update", seq=2, chain_id="c-schema", waiting_on=["z"]),
+    ])
+    chain = snap.pending_chains["c-schema"]
+    leaked = set(chain) - allowed
+    assert not leaked, (
+        f"chain_update replay wrote key(s) {leaked} into pending_chains that "
+        "_PendingChain has no field for — a real schema mismatch, not just "
+        "absence from the deny-list"
+    )
