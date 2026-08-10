@@ -1,0 +1,41 @@
+name: fastmcp-import-boundary gate
+
+# #3698: reject a direct `import fastmcp` anywhere under src/reyn/mcp/ except
+# _fastmcp_boundary.py (P2, #4053) — the single seam every reyn-side fastmcp
+# import goes through, so a future SDK swap edits one file's function
+# bodies, not scattered call sites. P2 landed the boundary as a CONVENTION,
+# explicitly not enforced (its own PR body said so); this gate is the
+# enforcement half, landed once P3 (#4055) removed the one remaining
+# inheritance-based exception. See scripts/check_fastmcp_import_boundary.py's
+# module docstring for the full design rationale (issue #3698).
+#
+# No diff/base-ref needed — a whole-directory scan against a baseline of
+# zero, same shape as file-depth-reference-gate.yml /
+# bare-tests-import-reference-gate.yml. A shallow checkout is enough.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/mcp/**"
+
+permissions:
+  contents: read
+
+jobs:
+  fastmcp-import-boundary:
+    name: fastmcp-import-boundary gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_fastmcp_import_boundary.py is stdlib-only (ast /
+      # pathlib / sys). No pip install needed.
+      - name: Check no src/reyn/mcp/ file imports fastmcp outside the boundary
+        run: |
+          python scripts/check_fastmcp_import_boundary.py
